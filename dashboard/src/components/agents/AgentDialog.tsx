@@ -47,6 +47,18 @@ function daysOf(summary: AutomationSummary | null): Weekday[] {
 }
 
 /**
+ * What a create opens WITH: one of the first run's starter agents (C9). Name, prompt, mode and
+ * schedule arrive filled in; the owner reads them, changes what they like, and approves.
+ */
+export interface AgentDialogInitial {
+  title: string;
+  description: string;
+  mode: AutomationMode;
+  days?: Weekday[];
+  at?: string;
+}
+
+/**
  * New agent / Edit agent.
  *
  * ONE dialog for both, because they are the same form with two verbs — a
@@ -74,6 +86,7 @@ export function AgentDialog({
   onClose,
   onToast,
   onCreated,
+  initial,
 }: {
   /** null ⇒ create. */
   agent: AutomationSummary | null;
@@ -83,14 +96,17 @@ export function AgentDialog({
    *  opened this can show the owner the agent they just made rather than
    *  leaving them where they were. */
   onCreated?: (slug: string) => void;
+  /** A create's starting values (a starter agent). Ignored on an edit. */
+  initial?: AgentDialogInitial;
 }) {
   const editing = agent !== null;
+  const start = editing ? undefined : initial;
 
-  const [title, setTitle] = useState(agent?.title ?? '');
-  const [prompt, setPrompt] = useState(agent?.description ?? '');
-  const [mode, setMode] = useState<AutomationMode>(agent?.mode ?? 'sched');
-  const [days, setDays] = useState<Weekday[]>(daysOf(agent));
-  const [at, setAt] = useState(agent?.schedule?.at ?? '09:00');
+  const [title, setTitle] = useState(agent?.title ?? start?.title ?? '');
+  const [prompt, setPrompt] = useState(agent?.description ?? start?.description ?? '');
+  const [mode, setMode] = useState<AutomationMode>(agent?.mode ?? start?.mode ?? 'sched');
+  const [days, setDays] = useState<Weekday[]>(agent ? daysOf(agent) : start?.days ?? daysOf(null));
+  const [at, setAt] = useState(agent?.schedule?.at ?? start?.at ?? '09:00');
   const [model, setModel] = useState(agent?.model ?? 'opus');
   const [effort, setEffort] = useState<string>(agent?.effort ?? 'medium');
 
@@ -109,8 +125,10 @@ export function AgentDialog({
    * owner edits". A field that keeps re-deriving itself is a field that eats
    * what you typed the moment you go back to fix a typo in the description.
    */
-  const titleTouched = useRef(editing);
-  const atTouched = useRef(editing);
+  // A starter's name and time were chosen for it, so they count as the owner's: editing its
+  // description must not rename it to the description's first clause.
+  const titleTouched = useRef(editing || !!start);
+  const atTouched = useRef(editing || !!start?.at);
 
   const [armedDelete, setArmedDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);

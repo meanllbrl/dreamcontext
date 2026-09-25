@@ -43,8 +43,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import {
-  chromeText, contrast, dashLines, dispatcherState, distIndex, fillContrast, lineTops, minGradientContrast, mockDispatcher,
-  overlapArea, rect, resolveColor, scratchDir, setTheme, shotsDir,
+  chromeText, contrast, dashLines, dispatcherState, distIndex, effectiveBg, faceWidths, fillContrast, linePitch, lineTops,
+  minGradientContrast, mockDispatcher, movingUnder, overlapArea, rawKeys, rect, resolveColor, scratchDir, setTheme, shotsDir,
+  STRONG_RGB, strongFills, textLadder,
 } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -70,7 +71,7 @@ const REPORT_POST = 'Signups fell **31%** this week, and the trial step is where
 
 const report = { pass: 0, fail: 0 };
 function check(label, ok, ev = '') {
-  if (ok) { report.pass++; console.log(`  ✓ ${label}`); }
+  if (ok) { report.pass++; console.log(`  ✓ ${label}${ev && /^\[(C\d+|guard)\]/.test(label) ? `\n      ${ev}` : ''}`); }
   else { report.fail++; console.log(`  ✗ ${label}${ev ? `\n      ${ev}` : ''}`); }
 }
 
@@ -362,6 +363,13 @@ async function main() {
       `found ${await page.locator('.agent-msg').count()}`);
     await page.screenshot({ path: join(SHOTS, '2-feed.png'), fullPage: false });
 
+    // C3: one accent moment per screen. No question is pending yet, so New agent is the one
+    // filled strong-accent control; the selected All chip used to be a second.
+    await page.mouse.move(1, 1);
+    const fillsNoQ = await strongFills(page, '.agents-page');
+    check(`[C3] with no question pending, at most one strong-accent fill on the page (was 2: the All chip and New agent)`,
+      fillsNoQ.length <= 1, `fills=${fillsNoQ.length} ${JSON.stringify(fillsNoQ)}`);
+
     const digestMsg = page.locator('.agent-msg', { hasText: 'Daily insight digest' }).first();
     check('the message shows the agent\'s NAME', (await digestMsg.locator('.agent-msg-name').innerText()).trim() === 'Daily insight digest');
     check('…a photo, not initials', await digestMsg.locator('.agent-msg-av .agent-av img').count() === 1);
@@ -449,6 +457,26 @@ async function main() {
     await digestMsg.locator('.agent-thread-bar').click();
     const panel = page.locator('.agent-thread');
     check('it opens on the right', await until(async () => (await panel.count()) > 0, 10000));
+    // C5: the split thread ENTERS, on Chat's own SlideOver keyframe and the page's one enter
+    // curve. Read from the computed style, not getAnimations(): a 240ms animation is often
+    // finished (and gone from the list) before the first poll sees the panel.
+    const splitAnim = await panel.first().evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { name: cs.animationName, timing: cs.animationTimingFunction, duration: cs.animationDuration };
+    }).catch(() => null);
+    check('[C5] the split thread animates in: chat-slideover-in on cubic-bezier(0.2, 0, 0, 1), at most 300ms (was no animation)',
+      splitAnim?.name === 'chat-slideover-in' && splitAnim.timing === 'cubic-bezier(0.2, 0, 0, 1)'
+      && parseFloat(splitAnim.duration) * (splitAnim.duration.endsWith('ms') ? 1 : 1000) <= 300, JSON.stringify(splitAnim));
+    // C5: the row whose thread is open stays marked while the panel is open, in light too.
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(300);
+    const canvas = await resolveColor(page, 'var(--color-bg)', '.agents-page');
+    const openRow = await digestMsg.evaluate((el) => ({
+      current: el.getAttribute('aria-current'), bg: getComputedStyle(el).backgroundColor,
+    })).catch(() => null);
+    const opaque = (c) => { const n = (c.match(/[\d.]+/g) || []).map(Number); return n.length < 4 || n[3] >= 1; };
+    check('[C5] the row whose thread is open carries aria-current="true" and a fill that is not the canvas (was no mark at all)',
+      openRow?.current === 'true' && opaque(openRow.bg) && openRow.bg !== canvas, `${JSON.stringify(openRow)} canvas=${canvas}`);
     const sysRows = panel.locator('.agent-thread-sys');
     // The panel FETCHES its entries, so the assertion has to wait for the
     // fetch rather than race it — asserting on the first paint passed or
@@ -599,7 +627,9 @@ async function main() {
       await until(async () => (await you.count()) > 0, 8000));
     const yourText = await you.last().locator('.agent-msg-md').first().innerText();
     check('…carrying what you typed, without the @address', yourText.trim() === ASK, `got: "${yourText}"`);
-    check('…and saying who it went to', (await you.last().locator('.agent-msg-meta').innerText()).includes('Daily insight digest'));
+    // REWRITE (C4): scoped to the row's own head. The running answer's preview now carries a
+    // live elapsed time in a `.agent-msg-meta` of its own, so the unscoped locator matched two.
+    check('…and saying who it went to', (await you.last().locator('.agent-msg-head .agent-msg-meta').first().innerText()).includes('Daily insight digest'));
     check('the field clears on send', (await field.inputValue()) === '');
 
     // AND THE MENTION OPENS ITS THREAD — the step-4 criterion. The panel needs a real
@@ -870,6 +900,36 @@ async function main() {
     check('[F5] the thread-line count reads at >=4.5:1 on paper (was 4.15)',
       await contrast(reporterAsk.locator('.agent-thread-bar-count')) >= 4.5,
       `contrast=${await contrast(reporterAsk.locator('.agent-thread-bar-count')).catch(() => '?')}`);
+    // C3: the count rests in text ink and takes the accent only under the pointer.
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(250);
+    const textInk = await resolveColor(page, 'var(--color-text)', '.agents-page');
+    const accentInk = await resolveColor(page, 'var(--color-accent-ink)', '.agents-page');
+    const countEl = reporterAsk.locator('.agent-thread-bar-count');
+    const countRest = await countEl.evaluate((el) => getComputedStyle(el).color).catch(() => null);
+    check(`[C3] a reply count rests in text ink, not the accent (was ${accentInk})`, countRest === textInk,
+      `ink=${countRest} text=${textInk}`);
+    // C1: hovering the thread line APPENDS "View thread", it never paints over "Last reply".
+    await reporterAsk.locator('.agent-thread-bar').hover();
+    await page.waitForTimeout(350);
+    const countHover = await countEl.evaluate((el) => getComputedStyle(el).color).catch(() => null);
+    check('[guard] …and takes accent ink on hover', countHover === accentInk, `hover=${countHover} accent-ink=${accentInk}`);
+    const swap = await reporterAsk.locator('.agent-thread-bar').evaluate((bar) => {
+      const box = (s) => { const e = bar.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+      const go = bar.querySelector('.agent-thread-bar-go');
+      return { last: box('.agent-thread-bar-last'), go: box('.agent-thread-bar-go'), goOpacity: go ? getComputedStyle(go).opacity : null };
+    });
+    const swapOverlap = overlapArea(swap.last, swap.go);
+    check('[C1] hovered, "Last reply" and "View thread" paint in separate places (was one grid cell, overlapping)',
+      swapOverlap === 0 && swap.goOpacity === '1', `overlap=${swapOverlap}px² goOpacity=${swap.goOpacity}`);
+    await page.mouse.move(1, 1);
+    // C1: "needs you" is the status size, not the body's 16px.
+    const needsSize = await namedRow('Pricing watch').evaluate((el) => ({
+      needs: getComputedStyle(el.querySelector('.agent-msg-needs') ?? el).fontSize,
+      status: getComputedStyle(el.querySelector('.agent-msg-status') ?? el).fontSize,
+    })).catch(() => null);
+    check('[C1] "Needs you" is set at the status size (was 16px beside 12px)',
+      !!needsSize && needsSize.needs === needsSize.status && needsSize.needs === '12px', JSON.stringify(needsSize));
     const toR = await rect(reporterAsk.locator('.agent-msg-to'));
     const nameR = await rect(namedRow('Daily insight digest').locator('.agent-msg-name'));
     check('[F18] the agent name and the "to <agent>" link are 24px targets (was 21 / 18)', nameR.height >= 24 && toR.height >= 24,
@@ -944,6 +1004,66 @@ async function main() {
       /did not run/i.test(skipSys) && !skipSys.includes('—'), skipSys);
     await closeThread();
 
+    // C11 on an ASK: the root is the reader's question, not the reason, so the closing row
+    // keeps its whole sentence. Nothing to trim, and the reason is still on screen once.
+    await flakyAsk.locator('.agent-thread-bar').click();
+    await until(async () => (await page.locator('.agent-thread-sys').count()) > 0, 8000);
+    await page.waitForTimeout(1000);
+    const flakySys = (await page.locator('.agent-thread-sys').allInnerTexts()).join(' | ');
+    check('[guard] a failed ASK\'s closing row keeps its full reason (no root text to echo)',
+      /(Failed|Timed out) after [^:|]+: \S/.test(flakySys), flakySys);
+    await closeThread();
+
+    // C2 + C12, measured with an ask thread open: the header, the chips, the feed and the
+    // thread at once. Excluded: Chat's answer card, Chat's composer and close atom, a board,
+    // aria-hidden glyphs (monograms, file-type squares, dots, arrows), the sr-only heading,
+    // and the STRUCTURE inside agent markdown (its body size is asserted on its own below).
+    await reporterAsk.locator('.agent-thread-bar').click();
+    await until(async () => (await page.locator('.agent-thread-answer .chat-msg-assistant-body').count()) > 0, 10000);
+    await page.waitForTimeout(1200);
+    await page.mouse.move(1, 1);
+    const LADDER_EXCLUDE = ['.chat-msg-assistant-body', '.chat-cmp', '.chat-slideover-close', '.chat-board',
+      '[aria-hidden="true"]', '.sr-only', '.agent-msg-md .markdown-body'];
+    const ladder = await textLadder(page, '.agents-page', LADDER_EXCLUDE);
+    check('[C2] every painted text in the channel is 12 or 14px, weight 400 or 600 (was 11/13/15/16/18px, 500/700)',
+      ladder.offenders.length === 0, `sizes=${ladder.sizes} weights=${ladder.weights} ${ladder.offenders.join(' | ')}`);
+    const mdSizes = await page.evaluate(() => [...new Set([...document.querySelectorAll('.agent-msg-md .markdown-body')]
+      .map((n) => getComputedStyle(n).fontSize))]);
+    check('[C2] an agent\'s words in the feed and thread are 14px (was 15px, Chat\'s reading size)',
+      mdSizes.length > 0 && mdSizes.every((v) => v === '14px'), JSON.stringify(mdSizes));
+    const onGrid = (gaps) => gaps.length > 0 && gaps.every((g) => g % 4 === 0);
+    const previewGaps = await linePitch(reporterAsk.locator('.agent-reply-preview-text'));
+    // The post's LONGEST paragraph: the first one can fit on a single line at the panel's width.
+    const postPs = page.locator('.agent-thread .agent-thread-post-text .markdown-body p');
+    const tallest = await postPs.evaluateAll((ps) => ps.reduce((best, p, i, all) => (p.getBoundingClientRect().height > all[best].getBoundingClientRect().height ? i : best), 0)).catch(() => -1);
+    const postGaps = tallest >= 0 ? await linePitch(postPs.nth(tallest)) : [];
+    check('[C2] prose lines sit on the 4px grid: 20px pitch in the preview and the thread post (was 22/23 and 26)',
+      onGrid(previewGaps) && onGrid(postGaps), `preview=${JSON.stringify(previewGaps)} post=${JSON.stringify(postGaps)}`);
+    const rhythm = await page.evaluate(() => {
+      const px = (el, p) => parseFloat(getComputedStyle(el)[p]);
+      const row = document.querySelector('.agents-feed-scroll article.agent-msg');
+      const bad = [];
+      for (const el of document.querySelectorAll('.agents-feed-scroll article.agent-msg, .agents-feed-scroll .agent-msg-head, .agents-feed-scroll .agent-msg-from, .agents-feed-scroll .agent-msg-files, .agents-feed-scroll .agent-msg-actions')) {
+        for (const p of ['paddingTop', 'paddingBottom', 'marginTop', 'marginBottom']) {
+          const v = px(el, p);
+          if (v % 4 !== 0 && bad.length < 6) bad.push(`${el.className.split(' ')[0]}.${p}=${v}`);
+        }
+      }
+      const head = document.querySelector('.agents-feed-scroll .agent-msg-head');
+      return { padTop: row ? px(row, 'paddingTop') : null, headGap: head ? px(head, 'marginBottom') : null, bad };
+    });
+    check('[C2] row rhythm on the grid: row padding 12, head to body 4, every row spacing a multiple of 4 (was 8 and 2)',
+      rhythm.padTop === 12 && rhythm.headGap === 4 && rhythm.bad.length === 0, JSON.stringify(rhythm));
+    const faces = await faceWidths(page, '.agents-feed');
+    check('[C12] faces on the feed and in the thread are 20 or 32px wide (was 18/20/22/28/36)',
+      faces.length > 0 && faces.every((w) => w === 20 || w === 32), JSON.stringify(faces));
+    const youBorder = await page.locator('.agents-feed .agent-you-av').first().evaluate((el) => getComputedStyle(el).borderTopStyle).catch(() => null);
+    check('[C12] "You" is a solid face, not a dashed outline (was dashed)', !!youBorder && youBorder !== 'dashed', `border-style=${youBorder}`);
+    const keys = await rawKeys(page, '.agents-page');
+    check('[guard] no raw i18n key is painted anywhere on the page', keys.length === 0, JSON.stringify(keys));
+    await page.screenshot({ path: join(SHOTS, '11b-ladder-thread.png') });
+    await closeThread();
+
     // T8 + F9 + R2-4 — a run started through the SERVER, not by this page. Round 2 (owner
     // decision 4): the run slot is PER AGENT. The channel field used to go read-only for the
     // whole project while any agent ran; now only a draft that names the RUNNING agent is
@@ -1008,6 +1128,135 @@ async function main() {
       `say=${s4.status} ${s4.body.slice(0, 120)} reporterDone=${reporterDone} slowStillRunning=${slowStillRunning}`);
     await slotFree();
 
+    // ── 12c. A run in progress (C4) and a still page under reduced motion (X5) ──
+    // A fresh slow run, started from outside the page, so the checks below have its whole
+    // 25s window rather than squeezing into the R2-4 block's.
+    console.log('\n═══ 12c. A run in progress ═══');
+    await openChannel();
+    const again = await fetch(`${base}/api/automations/slowpoke/run`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' }, body: '{}',
+    });
+    check('[guard] a second slow run is started from outside the page', again.ok, `status=${again.status}`);
+    const liveRow = namedRow('Slow crawler');
+    await until(async () => (await liveRow.locator('.agent-msg-status--running').count()) > 0, 20000);
+    await page.waitForTimeout(1500);
+    const dot = liveRow.locator('.agent-msg-live-dot');
+    const dotState = (await dot.count()) ? await dot.first().evaluate((el) => ({
+      name: getComputedStyle(el).animationName, duration: getComputedStyle(el).animationDuration,
+      running: el.getAnimations().length, opacity: getComputedStyle(el).opacity,
+    })) : null;
+    check('[C4] a running row shows a dot breathing on --motion-breath: one agents-breath animation of 1.6s (absent pre-fix: a running row had no life)',
+      dotState?.name === 'agents-breath' && dotState.duration === '1.6s' && dotState.running === 1, JSON.stringify(dotState));
+    const elapsedEl = liveRow.locator('.agent-msg-elapsed');
+    const readElapsed = async () => ((await elapsedEl.count()) ? (await elapsedEl.first().innerText()).trim() : null);
+    const e1 = await readElapsed();
+    await page.waitForTimeout(1100);
+    const e2 = await readElapsed();
+    check('[C4] …and a live elapsed time that climbs: two reads 1.1s apart differ (absent pre-fix)',
+      !!e1 && !!e2 && e1 !== e2, `${e1} -> ${e2}`);
+    const runStyle = await liveRow.locator('.agent-msg-status--running').first().evaluate((el) => getComputedStyle(el).fontStyle).catch(() => null);
+    check('[C4] "running" is upright secondary ink, not italic (was italic)', runStyle === 'normal', `font-style=${runStyle}`);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.waitForTimeout(400);
+    const dotStill = (await dot.count()) ? await dot.first().evaluate((el) => ({
+      running: el.getAnimations().length, opacity: getComputedStyle(el).opacity,
+    })) : null;
+    const r1 = await readElapsed();
+    await page.waitForTimeout(1100);
+    const r2 = await readElapsed();
+    check('[C4] under reduced motion the dot is still and fully drawn, and the time keeps climbing (absent pre-fix: no dot, no time)',
+      dotStill?.running === 0 && dotStill.opacity === '1' && !!r1 && !!r2 && r1 !== r2, `${JSON.stringify(dotStill)} ${r1} -> ${r2}`);
+    // X5: with a row running AND its thread open, nothing on the page moves (Chat's composer,
+    // which the page mounts but does not own, is left out).
+    await liveRow.locator('.agent-thread-bar').click();
+    await until(async () => (await page.locator('.agent-thread').count()) === 1, 8000);
+    await page.waitForTimeout(800);
+    const moving = await movingUnder(page, '.agents-page', ['.chat-cmp']);
+    // [guard], not FIX: styles/global.css already resets every duration to 0.01ms under
+    // reduced motion on BOTH builds, so this cannot fail on the pre-fix build. It holds the
+    // line that nothing the pass added (the breath, the arrival, the split) escapes the reset.
+    check('[guard] under reduced motion nothing on the page animates or transitions, with a run live and its thread open',
+      moving.length === 0, moving.join(' | '));
+    await closeThread();
+    await page.emulateMedia({ reducedMotion: null });
+    await page.screenshot({ path: join(SHOTS, '12c-running.png') });
+    await slotFree();
+    await until(async () => (await liveRow.locator('.agent-msg-status--running').count()) === 0, 40000);
+
+    // ── 12a. The channel keeps your place (C5) ──
+    console.log('\n═══ 12a. The channel keeps your place ═══');
+    await openChannel();
+    const feedScroll = page.locator('.agents-feed-scroll');
+    const toTop = () => feedScroll.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    const scrollState = () => feedScroll.evaluate((el) => ({ top: Math.round(el.scrollTop), gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight) }));
+    const newPill = page.locator('.agents-feed-newpill');
+    await toTop();
+    await page.waitForTimeout(700);
+    const before12a = await scrollState();
+    await say('reporter', 'first line while you read');
+    const landed = await until(async () => (await askRow('first line while you read').count()) > 0, 20000);
+    await page.waitForTimeout(2500);
+    const after12a = await scrollState();
+    const pillText = (await newPill.count()) ? (await newPill.first().innerText()).trim() : '';
+    check('[C5] scrolled up, a new message leaves your place alone and a "1 new message" pill appears (was: the feed jumped to the bottom, no pill)',
+      landed && Math.abs(after12a.top - before12a.top) <= 1 && /1 new message/.test(pillText),
+      `landed=${landed} top ${before12a.top} -> ${after12a.top} pill="${pillText}"`);
+    if (await newPill.count()) await newPill.first().click();
+    await page.waitForTimeout(1200);
+    const afterPill = await scrollState();
+    check('[C5] the pill takes you to the newest message and goes (absent pre-fix)',
+      pillText.length > 0 && afterPill.gap <= 48 && (await newPill.count()) === 0, `${JSON.stringify(afterPill)} pill=${await newPill.count()}`);
+    await slotFree();
+    // A row that arrives while you are at the bottom fades and rises in. The observer records
+    // the moment a wrapper gains `--arrived`, so a 240ms animation cannot finish unseen.
+    const watchArrivals = () => page.evaluate(() => {
+      window.__arrivals = [];
+      const note = (el) => {
+        if (!(el instanceof HTMLElement) || !el.matches('.agents-feed-item--arrived')) return;
+        const cs = getComputedStyle(el);
+        window.__arrivals.push({ name: cs.animationName, timing: cs.animationTimingFunction, anims: el.getAnimations().length });
+      };
+      const mo = new MutationObserver((recs) => {
+        for (const r of recs) {
+          if (r.type === 'attributes') note(r.target);
+          for (const n of r.addedNodes) { note(n); if (n instanceof HTMLElement) n.querySelectorAll('.agents-feed-item--arrived').forEach(note); }
+        }
+      });
+      mo.observe(document.querySelector('.agents-feed-scroll'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      window.__arrivalsStop = () => mo.disconnect();
+    });
+    await watchArrivals();
+    await say('reporter', 'second line at the bottom');
+    await until(async () => (await askRow('second line at the bottom').count()) > 0, 20000);
+    await page.waitForTimeout(1500);
+    const arrivals = await page.evaluate(() => { window.__arrivalsStop?.(); return window.__arrivals; });
+    check('[C5] at the bottom, a new row fades and rises in: agents-arrive on cubic-bezier(0.2, 0, 0, 1) (was no animation)',
+      arrivals.some((a) => a.name === 'agents-arrive' && a.timing === 'cubic-bezier(0.2, 0, 0, 1)'), JSON.stringify(arrivals));
+    await slotFree();
+    // Under reduced motion: the pill still counts, nothing enters with motion.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.waitForTimeout(300);
+    await toTop();
+    await page.waitForTimeout(700);
+    const beforeR = await scrollState();
+    await watchArrivals();
+    await say('reporter', 'third line under reduced motion');
+    await until(async () => (await askRow('third line under reduced motion').count()) > 0, 20000);
+    await page.waitForTimeout(2500);
+    const afterR = await scrollState();
+    const quietArrivals = await page.evaluate(() => { window.__arrivalsStop?.(); return window.__arrivals; });
+    check('[C5] under reduced motion the pill still appears and your place holds (absent pre-fix)',
+      (await newPill.count()) > 0 && Math.abs(afterR.top - beforeR.top) <= 1, `pill=${await newPill.count()} top ${beforeR.top} -> ${afterR.top}`);
+    check('[guard] …and the new row enters without an animation', quietArrivals.every((a) => a.name === 'none' || a.anims === 0),
+      JSON.stringify(quietArrivals));
+    await namedRow('Daily insight digest').locator('.agent-thread-bar').click();
+    await until(async () => (await page.locator('.agent-thread').count()) === 1, 8000);
+    const quietThread = await page.locator('.agent-thread').first().evaluate((el) => getComputedStyle(el).animationName).catch(() => '?');
+    check('[guard] …and the split thread opens without one', quietThread === 'none', `animation-name=${quietThread}`);
+    await closeThread();
+    await page.emulateMedia({ reducedMotion: null });
+    await slotFree();
+
     // R2-5 (owner decision 5a) — every filled accent control that carries text reads at >=4.5:1.
     // White on --color-accent was 4.15:1 in light (#7b68ee) and 2.75:1 in dark (#9d8cff); the
     // strong token (#6647f0) reads 5.64 in both. Measured as the control paints: fill and text
@@ -1031,7 +1280,29 @@ async function main() {
       await openChannel();
       const was = theme === 'light' ? '4.15' : '2.75';
       const inks = {};
-      inks.chipOn = await fillContrast(page.locator('.agents-chip--on').first());
+      // REWRITE (C3): the selected chip left this set. It is a neutral surface now (the
+      // dialog's own selected-chip recipe), measured below as a [C3] check of its own; its
+      // contrast requirement is kept there. Every control left here still paints text on a fill.
+      await page.mouse.move(1, 1);
+      const fillsQ = await strongFills(page, '.agents-page');
+      check(`[C3] ${theme}: with a question pending, at most two strong-accent fills: New agent and the first choice (was 4)`,
+        fillsQ.length <= 2, `fills=${fillsQ.length} ${JSON.stringify(fillsQ)}`);
+      const chipOn = page.locator('.agents-chip--on').first();
+      const chipOnFill = await chipOn.evaluate((el) => getComputedStyle(el).backgroundColor).catch(() => null);
+      const chipOnInk = await contrast(chipOn).catch(() => 0);
+      check(`[C3] ${theme}: the selected chip is a neutral surface, its label >=4.5:1 (was the strong accent fill)`,
+        !!chipOnFill && chipOnFill !== STRONG_RGB && chipOnInk >= 4.5, `fill=${chipOnFill} contrast=${chipOnInk}`);
+      const alt = page.locator('.agent-msg-question-choice').nth(1);
+      const altState = (await alt.count()) ? await alt.evaluate((el) => ({ fill: getComputedStyle(el).backgroundColor })) : null;
+      const altInk = (await alt.count()) ? await contrast(alt) : 0;
+      check(`[C3] ${theme}: the second choice is tinted, not filled, and reads >=4.5:1 (was a second strong fill)`,
+        !!altState && altState.fill !== STRONG_RGB && altInk >= 4.5, `${JSON.stringify(altState)} contrast=${altInk}`);
+      if (theme === 'dark') {
+        const headBg = await page.locator('.agents-head').evaluate((el) => getComputedStyle(el).backgroundColor);
+        const pageBg = await page.locator('.agents-page').evaluate((el) => getComputedStyle(el).backgroundColor);
+        check('[C8] dark: the header is the page\'s own canvas, not a raised slab (was rgb(28, 31, 42) on rgb(20, 23, 31))',
+          headBg === pageBg, `head=${headBg} page=${pageBg}`);
+      }
       const choice = page.locator('.agent-msg-question-choice').first();
       if (await choice.count()) {
         await choice.scrollIntoViewIfNeeded();
@@ -1047,7 +1318,7 @@ async function main() {
       inks.send = await fillContrast(page.locator('[data-verify-probe]'));
       await page.evaluate(() => document.querySelectorAll('[data-verify-probe]').forEach((e) => e.remove()));
       inks.newAgent = await minGradientContrast(page.locator('.agents-new-btn').first());
-      check(`[R2-5] ${theme}: the selected chip, a question's choices (at rest and hovered), its Send and "New agent" all read at >=4.5:1 (was ${was})`,
+      check(`[R2-5] ${theme}: a question's first choice (at rest and hovered), its Send and "New agent" all read at >=4.5:1 on their fill (was ${was})`,
         Object.values(inks).every((v) => v !== null && v >= 4.5), JSON.stringify(inks));
       if (theme === 'dark') {
         // The unread badge was dark ink on the light violet in dark (6.51) — already fine, so
@@ -1071,18 +1342,75 @@ async function main() {
     await until(async () => (await page.locator('.agent-thread').count()) === 1, 8000);
     await page.waitForTimeout(600);
     const chips = page.locator('.agents-chips');
-    const mask = await chips.evaluate((el) => ({
-      mask: getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage,
-      more: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
-    }));
-    check('[F11] an overflowing chip row fades at its edge (was a hard cut, no cue)', mask.more && mask.mask !== 'none', JSON.stringify(mask));
-    const untitled = await chips.evaluate((el) => [...el.querySelectorAll('.agents-chip-label')]
+    // REWRITE (C7): "[F11] an overflowing chip row fades at its edge" is retired. C7 replaces
+    // the fade with a "+N agents" menu by design, so the row no longer scrolls or fades; what
+    // the old check protected (no agent hidden without a cue) is the [C7] check below.
+    const agentTotal = await page.evaluate(async () => (await (await fetch('/api/automations/threads', { headers: { 'x-dreamcontext-vault': 'proj' } })).json()).agents?.length ?? 0);
+    const fit = await chips.evaluate((row) => {
+      const r = row.getBoundingClientRect();
+      const all = [...row.querySelectorAll('.agents-chip')].filter((c) => getComputedStyle(c).visibility !== 'hidden' && c.getClientRects().length);
+      const inside = (c) => { const q = c.getBoundingClientRect(); return q.left >= r.left - 0.5 && q.right <= r.right + 0.5; };
+      const clipped = all.filter((c) => !inside(c)).map((c) => (c.textContent || '').trim().slice(0, 20));
+      // Agent chips: the ones that carry a slug; pre-fix there was no marker, so everything
+      // after the four status chips.
+      const agentChips = row.querySelector('[data-chip-slug]') ? all.filter((c) => c.dataset.chipSlug) : all.filter((c) => !c.classList.contains('agents-chip--more')).slice(4);
+      const more = row.querySelector('.agents-chip--more');
+      const n = more ? Number((/\+(\d+)/.exec(more.textContent || '') || [])[1] || 0) : 0;
+      return { clipped, shown: agentChips.filter(inside).length, n };
+    });
+    check(`[C7] no chip is clipped by the row, and the agent chips shown plus "+N" count every agent (${agentTotal}) (was chips cut at the edge, no count)`,
+      agentTotal > 0 && fit.clipped.length === 0 && fit.shown + fit.n === agentTotal, `${JSON.stringify(fit)} agents=${agentTotal}`);
+    // Below 900px the thread is an OVERLAY whose scrim covers the channel, so it is closed
+    // before anything in the chip row is clicked. The overlay does not narrow the row, so the
+    // fit measured above stands.
+    await closeThread();
+    const moreChip = page.locator('.agents-chips .agents-chip--more');
+    let menuOk = null;
+    if (fit.n > 0 && (await moreChip.count())) {
+      await moreChip.first().click();
+      const menu = page.locator('.agents-chips-menu');
+      await until(async () => (await menu.count()) > 0 && (await menu.first().evaluate((el) => getComputedStyle(el).visibility)) === 'visible', 4000);
+      const menuGeo = await menu.first().evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const rows = [...el.querySelectorAll('[role="menuitemradio"]')].map((b) => ({
+          name: (b.querySelector('.agents-chips-menu-label')?.textContent || '').trim(),
+          count: Number((b.querySelector('.agents-chip-count')?.textContent || '0').trim()),
+        }));
+        return { inView: r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight + 0.5 && r.right <= innerWidth + 0.5, rows, focused: el.contains(document.activeElement) };
+      });
+      // Pick BY NAME: the hidden agent with the most runs.
+      const target = [...menuGeo.rows].sort((a, b) => b.count - a.count)[0];
+      await page.locator('.agents-chips-menu [role="menuitemradio"]', { hasText: target.name }).first().click();
+      await page.waitForTimeout(600);
+      const after = await page.evaluate((name) => {
+        const names = [...document.querySelectorAll('.agents-feed-scroll article.agent-msg')]
+          .map((a) => ((a.querySelector('.agent-msg-to') ?? a.querySelector('.agent-msg-name'))?.textContent || '').trim());
+        const sel = document.querySelector('.agents-chips [role="tab"][aria-selected="true"]');
+        return { names: [...new Set(names)], selected: (sel?.getAttribute('title') || '').trim(), menuOpen: !!document.querySelector('.agents-chips-menu') };
+      }, target.name);
+      menuOk = { menuGeo, target, after };
+    }
+    check('[C7] "+N agents" opens a menu inside the window listing each folded agent with its count; picking one by name filters to it and keeps its chip selected (absent pre-fix)',
+      !!menuOk && menuOk.menuGeo.inView && menuOk.menuGeo.rows.length === fit.n && menuOk.menuGeo.focused
+      && menuOk.after.selected === menuOk.target.name && !menuOk.after.menuOpen
+      && menuOk.after.names.every((nm) => nm === menuOk.target.name), JSON.stringify(menuOk));
+    await page.locator('.agents-chip', { hasText: 'All' }).first().click();
+    await page.waitForTimeout(400);
+    // REWRITE (C7): the tooltip check keeps its claim (a cut-off name is never lost) but drops
+    // its "some chip is clipped" precondition: with C7 the long names may all sit in the menu.
+    // It now covers every ellipsised label, chip or menu row.
+    if (await moreChip.count()) {
+      await moreChip.first().click();
+      await page.waitForTimeout(500);
+    }
+    const untitled = await page.evaluate(() => [...document.querySelectorAll('.agents-chips .agents-chip-label, .agents-chips-menu .agents-chips-menu-label')]
       .filter((l) => l.scrollWidth > l.clientWidth + 1)
-      .filter((l) => l.closest('.agents-chip')?.getAttribute('title') !== l.textContent)
+      .filter((l) => l.closest('button')?.getAttribute('title') !== l.textContent)
       .map((l) => l.textContent));
-    const clipped = await chips.evaluate((el) => [...el.querySelectorAll('.agents-chip-label')].filter((l) => l.scrollWidth > l.clientWidth + 1).length);
-    check('[F11] every cut-off chip label carries its full name as a tooltip (was none)', clipped > 0 && untitled.length === 0,
-      `clipped=${clipped} untitled=${JSON.stringify(untitled)}`);
+    check('[guard] every cut-off agent name (a chip or a menu row) carries its full name as a tooltip', untitled.length === 0,
+      `untitled=${JSON.stringify(untitled)}`);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
     await chips.evaluate((el) => { el.scrollLeft = el.scrollWidth; el.dispatchEvent(new Event('scroll')); });
     await page.waitForTimeout(400);
     const maskEnd = await chips.evaluate((el) => getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage);
@@ -1103,9 +1431,19 @@ async function main() {
 
     // F13 — the header row at four widths.
     console.log('\n═══ 14. The header at four widths ═══');
+    // The scheduler pill only draws for a known, healthy dispatcher; pinned to "off" so the
+    // word under test does not depend on the machine running the suite.
+    await mockDispatcher(page, dispatcherState({ installed: false }));
+    await openChannel();
     for (const w of [1500, 1100, 900, 760]) {
       await page.setViewportSize({ width: w, height: 950 });
       await page.waitForTimeout(500);
+      const pillWord = await page.evaluate(() => {
+        const p = document.querySelector('.agents-head .auto-dispatch-pill');
+        return p ? p.innerText.trim() : null;
+      });
+      check(`${w === 760 ? '[C1]' : '[guard]'} at ${w} the scheduler control keeps its status word (was a bare dot at 760)`,
+        !!pillWord && /Scheduler (on|off)/.test(pillWord), `pill="${pillWord}"`);
       const head = await page.evaluate(() => {
         const rowEl = document.querySelector('.agents-head-row');
         if (!rowEl) return null;
@@ -1130,12 +1468,57 @@ async function main() {
     await openChannel();
     const warnBar = page.locator('.auto-dispatch--warn').first();
     await until(async () => (await warnBar.count()) > 0, 10000);
+    await until(async () => (await page.locator('.agents-needyou').count()) > 0, 10000);
     const heights = await page.evaluate(() => {
       const h = (s) => document.querySelector(s)?.getBoundingClientRect().height ?? 0;
       return { head: h('.agents-head'), notice: h('.agents-needyou'), warn: h('.auto-dispatch--warn'), feed: h('.agents-feed-scroll') };
     });
-    check('[F15] with a WARN bar and a waiting agent at 1100x950 the feed keeps >=500px (was 447, head+notice 225)',
-      heights.head + heights.notice <= 170 && heights.warn <= 48 && heights.feed >= 500, JSON.stringify(heights));
+    // REWRITE (C6): the head+notice sum is dropped. The needs-you notice now lives INSIDE
+    // `.agents-head` (one tray), so adding the two counts it twice. The WARN row's height and
+    // the feed's floor keep their claim; the header's real budget is the [C6] check below.
+    check('[F15] with a WARN bar and a waiting agent at 1100x950 the WARN row is one line and the feed keeps >=500px (was 447)',
+      heights.warn <= 48 && heights.feed >= 500, JSON.stringify(heights));
+    // C6: the header subtracts. No painted title, nothing at 18px, the count leads, one tray.
+    const headText = await page.evaluate(() => {
+      const out = [];
+      const head = document.querySelector('.agents-head');
+      const walker = document.createTreeWalker(head, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const p = n.parentElement;
+        if (!n.textContent.trim() || !p || p.closest('.sr-only')) continue;
+        const r = document.createRange(); r.selectNodeContents(n);
+        if (![...r.getClientRects()].some((q) => q.width > 1 && q.height > 1)) continue;
+        out.push({ text: n.textContent.trim(), size: getComputedStyle(p).fontSize });
+      }
+      const row = document.querySelector('.agents-head-row');
+      return { out, first: row?.firstElementChild?.className ?? null };
+    });
+    const titled = headText.out.filter((x) => x.text === 'Agentic Automations');
+    const big = headText.out.filter((x) => x.size === '18px');
+    check('[C6] the header paints no repeated title and nothing at 18px (was "Agentic Automations" at 18px)',
+      titled.length === 0 && big.length === 0, JSON.stringify({ titled, big }));
+    check('[C6] the count sentence leads the header row (was the title)', headText.first === 'agents-channel-sub', `first=${headText.first}`);
+    const tray = await page.evaluate(() => ({
+      warn: !!document.querySelector('.agents-head .agents-tray .auto-dispatch--warn'),
+      needs: !!document.querySelector('.agents-head .agents-tray .agents-needyou'),
+    }));
+    check('[C6] the scheduler WARN and the needs-you notice share one tray inside the header (was two cards, the notice in the body)',
+      tray.warn && tray.needs, JSON.stringify(tray));
+    await page.locator('.agents-feed-scroll').evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await page.waitForTimeout(500);
+    const firstAt = await page.evaluate(() => {
+      const pageTop = document.querySelector('.agents-page').getBoundingClientRect().top;
+      const first = document.querySelector('.agents-feed-scroll article.agent-msg');
+      const scroll = document.querySelector('.agents-feed-scroll');
+      const firstItem = scroll?.firstElementChild;
+      return {
+        first: first ? Math.round(first.getBoundingClientRect().top - pageTop) : null,
+        feedTop: scroll ? Math.round(scroll.getBoundingClientRect().top - pageTop) : null,
+        newDividerFirst: !!firstItem?.querySelector('.agents-feed-new'),
+      };
+    });
+    check('[C6] with both notices at 1100x950, the first message starts at most 210px below the page top (was ~265)',
+      firstAt.first !== null && firstAt.first <= 210, JSON.stringify(firstAt));
     await page.screenshot({ path: join(SHOTS, '15-warn-1100.png') });
     const warnInks = {};
     const warnHover = {};

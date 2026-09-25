@@ -2,7 +2,8 @@
  * The Agents page — a CHANNEL with a roster behind it.
  *
  * Accent budget (K8): the New agent button's fill and focus rings. The header,
- * the members pill and the selected view are all neutral surfaces.
+ * the members pill and the selected view are all neutral surfaces. One filled
+ * accent per screen (C3): New agent, or a pending question's first choice.
  */
 
 .agents-page {
@@ -22,7 +23,9 @@
 
 .agents-head {
   flex-shrink: 0;
-  background: var(--color-bg-secondary);
+  /* The canvas, in both themes. `--color-bg-secondary` equals the canvas in light and is a
+     raised band in dark, so the two themes had two different layouts (C8). */
+  background: var(--color-bg);
   border-bottom: 1px solid var(--color-border);
   /* No bottom padding: the scheduler is a pill on the row now, and the only thing that
      can sit under the row is a warn bar, which brings its own margin. */
@@ -36,51 +39,28 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 56px;
+  height: var(--space-12);
   min-width: 0;
 }
 
-/* K1: one title. `#agents` is the channel's name and nothing repeats it. */
-.agents-channel {
-  margin: 0;
-  font-family: var(--font-display, inherit);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.4px;
-  color: var(--color-text);
-  flex-shrink: 0;
-}
-
-/* K31: says what is in here, rather than restating the name. */
+/* K31 + C6: the row LEADS with what is in here. The sidebar names the page, so no title
+   repeats it (the page's name is an `sr-only` heading for assistive tech). */
 .agents-channel-sub {
-  font-size: 13px;
+  min-width: 0;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.agents-channel-sub-count {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
 .agents-head-spacer {
   flex: 1;
-}
-
-/* The faces, as decoration beside a sentence that already gives the count —
-   NOT a control. As a control they rendered "AI MI SM 3": three clipped
-   monograms and a bare number, which is the exact opposite of a readable
-   choice. */
-.agents-faces {
-  display: flex;
-  flex-shrink: 0;
-}
-
-.agents-faces .agent-av {
-  margin-left: -7px;
-  border: 2px solid var(--color-bg-secondary);
-  border-radius: 8px;
-}
-
-.agents-faces .agent-av:first-child {
-  margin-left: 0;
 }
 
 /* The view switch. Both destinations NAMED and both always visible, so the
@@ -88,8 +68,8 @@
    never an accent fill (K8) — the accent on this page belongs to New agent. */
 .agents-switch {
   display: inline-flex;
-  gap: 2px;
-  padding: 3px;
+  gap: var(--space-1);
+  padding: var(--space-1);
   border-radius: var(--radius-md);
   background: var(--color-bg-tertiary);
   flex-shrink: 0;
@@ -98,19 +78,19 @@
 .agents-switch-opt {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 12px;
+  gap: var(--space-2);
+  height: var(--space-7);
+  padding: 0 var(--space-3);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 150ms, color 150ms;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .agents-switch-opt:hover {
@@ -120,18 +100,17 @@
 .agents-switch-opt--on {
   background: var(--color-bg-secondary);
   color: var(--color-text);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: var(--shadow-sm);
 }
 
 .agents-switch-count {
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);
   background: var(--color-bg-tertiary);
-  border-radius: 999px;
-  padding: 1px 6px;
-  min-width: 18px;
+  border-radius: var(--radius-full);
+  padding: 0 var(--space-2);
   text-align: center;
 }
 
@@ -148,15 +127,15 @@
 /* The one accent fill on this page (K8). */
 .agents-new-btn {
   flex-shrink: 0;
-  height: 34px;
-  padding: 0 14px;
+  height: var(--space-8);
+  padding: 0 var(--space-4);
   border: none;
   border-radius: var(--radius-md);
   background: var(--gradient-brand-strong);
   color: var(--color-accent-text);
   font: inherit;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition: filter var(--transition-fast), transform var(--transition-fast);
 }
@@ -164,8 +143,7 @@
 .agents-new-btn:hover { filter: brightness(1.06); }
 .agents-new-btn:active { transform: scale(0.98); }
 
-.agents-new-btn:focus-visible,
-.agents-inline-link:focus-visible {
+.agents-new-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-bg-secondary), 0 0 0 4px var(--color-accent);
 }
@@ -194,68 +172,33 @@
   padding: 0;
 }
 
-/* K31 + K5: an empty channel answers the question you arrived with, in body-
-   sized sentences — not an 11px grey footnote about a mechanism. */
-.agents-channel-empty {
-  max-width: 460px;
-  text-align: center;
-}
-
-.agents-channel-empty-lede {
-  margin: 0 0 6px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.agents-channel-empty-note {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--color-text-secondary);
-}
-
-.agents-inline-link {
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
-  font-weight: 600;
-  color: var(--color-text);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  border-radius: 3px;
-}
-
 /* ─── toast ─── */
 
+/* Lifted over whatever owns the bottom-right corner: the composer strip the feed publishes
+   (`--dc-bottom-strip`) and the floating Agent button the page publishes
+   (`--agents-floater-clearance`, `useFloaterClearance`). It used to sit ON that button (C1). */
 .agents-toast {
   position: absolute;
   right: var(--space-5);
-  bottom: var(--space-5);
+  bottom: calc(var(--space-5) + var(--dc-bottom-strip, 0px) + var(--agents-floater-clearance, 0px));
   z-index: 70;
   max-width: 420px;
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
   color: var(--color-text);
-  font-size: 13px;
-  line-height: 1.45;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  box-shadow: var(--shadow-lg);
 }
 
 /* The header row gives way in steps, least useful first, so nothing is ever cut mid-word
-   or pushed past the edge: the "· N on a schedule" half, then the whole subtitle and the
-   pill's words (its dot and tooltip stay), then the row wraps onto a second line. */
-@container agents-head (max-width: 900px) {
-  .agents-channel-sub-sched { display: none; }
-}
-
+   or pushed past the edge: the "· N on a schedule" half, then the row wraps onto a second
+   line. The scheduler keeps its WORD at every width (C1): with no title on the row there is
+   room for it, and a bare dot said nothing. */
 @container agents-head (max-width: 760px) {
-  .agents-channel-sub,
-  .agents-head .auto-dispatch-pill-label { display: none; }
+  .agents-channel-sub-sched { display: none; }
 }
 
 @container agents-head (max-width: 620px) {
@@ -267,41 +210,63 @@
   }
 }
 
-/* "2 agents are waiting on you" — a NOTICE in the channel, not the feed. It
-   exists because the channel is the default view and a question nobody can see
-   from it is a question nobody answers. Step 2 replaces it with real unread
-   messages carrying the question itself. */
+/* ─── the notice tray ───────────────────────────────────────────────────
+   One container inside the header for the notices, one hairline between them: the
+   scheduler's WARN row and "N agents are waiting on you". Full bleed (the header's own
+   inset is taken back), each row exactly one 32px line, so both notices together cost the
+   channel ~65px at 1100 instead of ~110 (C6). Nothing to say, nothing drawn. */
+.agents-tray {
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc(-1 * var(--space-5));
+  border-top: 1px solid var(--color-border);
+}
+
+.agents-tray:empty {
+  display: none;
+}
+
+.agents-tray > * + * {
+  border-top: 1px solid var(--color-border);
+}
+
+/* Who is waiting on you. A way in (to the roster), drawn as a row, not a card. Warning ink
+   is spent on the DOT only (K26/K40, owner): a question is not a fault, and the scheduler
+   row above it is the one that is genuinely hot. */
 .agents-needyou {
   display: flex;
   align-items: center;
-  gap: 12px;
-  /* Full width, matching the scheduler bar it sits directly under — it is
-     the same KIND of thing (a channel-level notice with a way out), and a
-     520px card centred beneath an edge-to-edge bar read as two unrelated
-     notices rather than two rows of the same header. */
-  margin: var(--space-3) var(--space-5) 0;
-  /* One line: the headline and the way in. Two lines here, stacked under a WARN bar, left
-     the channel under half the window at 1100px. */
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-border);
-  border-left: 3px solid var(--color-warning);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-secondary);
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--space-8);
+  padding: 0 var(--space-5);
+  border: 0;
+  background: transparent;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 150ms, box-shadow 150ms;
 }
 
-.agents-needyou:hover {
-  border-color: var(--color-border-hover);
-  border-left-color: var(--color-warning);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+.agents-needyou:hover .agents-needyou-text strong {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agents-needyou:hover .agents-needyou-go {
+  color: var(--color-text);
 }
 
 .agents-needyou:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+.agents-needyou-dot {
+  flex-shrink: 0;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-warning);
 }
 
 .agents-needyou-faces {
@@ -310,9 +275,8 @@
 }
 
 .agents-needyou-faces .agent-av {
-  margin-left: -8px;
-  border: 2px solid var(--color-bg-secondary);
-  border-radius: 9px;
+  margin-left: calc(-1 * var(--space-2));
+  border: 2px solid var(--color-bg);
 }
 
 .agents-needyou-faces .agent-av:first-child {
@@ -324,26 +288,38 @@
   min-width: 0;
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
   align-items: baseline;
   column-gap: var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .agents-needyou-text strong {
-  font-size: 14px;
-  font-weight: 600;
+  flex-shrink: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
 
 .agents-needyou-text span {
-  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
 .agents-needyou-go {
   flex-shrink: 0;
   color: var(--color-text-secondary);
-  font-size: 15px;
+  font-size: var(--font-size-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-switch-opt,
+  .agents-new-btn {
+    transition: none;
+  }
 }
 
 /* NOTE: the second `.agents-channel-body` rule that used to live here — the

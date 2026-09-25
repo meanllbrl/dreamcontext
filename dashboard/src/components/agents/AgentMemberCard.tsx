@@ -2,6 +2,7 @@ import type { AutomationSummary, RunStatus } from '../../hooks/useAutomations';
 import { useSetAutomationEnabled } from '../../hooks/useAutomations';
 import { summarize } from '../../lib/markdownToText';
 import { AgentAvatar } from './AgentAvatar';
+import { useI18n } from '../../context/I18nContext';
 import './AgentMemberCard.css';
 
 /** The word for a run's outcome. K26/K40: a status is a WORD, not a coloured
@@ -64,8 +65,9 @@ function fmtWhen(iso: string | null): string | null {
  *      card showing `> **BOLD**` is the defect the owner reported. The real
  *      markdown is rendered in the profile popover, which has room to be a
  *      document.
- *   4. a hairline, then a RECESSED footer (K10: nested surfaces differ by a
- *      tone) carrying the status word and the actions.
+ *   4. a hairline, then the footer ON THE CARD'S OWN SURFACE, carrying the
+ *      status word and the actions. It used to be a recessed grey slab, which
+ *      made "has not run yet" the loudest thing on a card that had done nothing.
  *
  * WHAT IS DELIBERATELY NOT HERE: the open question. An "Approval needed" /
  * "Waiting for your verdict" block used to sit between the description and the
@@ -92,6 +94,7 @@ export function AgentMemberCard({
   onOpenDetail: (slug: string) => void;
   onToast: (msg: string) => void;
 }) {
+  const { t } = useI18n();
   const setEnabled = useSetAutomationEnabled();
   const scheduled = summary.mode === 'sched';
   const lastWhen = fmtWhen(summary.cache?.lastFireAt ?? summary.cache?.lastRunAt ?? null);
@@ -103,7 +106,11 @@ export function AgentMemberCard({
     const next = !summary.enabled;
     setEnabled.mutate({ slug: summary.slug, enabled: next }, {
       onSuccess: () => onToast(`${summary.title}: ${next ? 'resumed' : 'paused'}.`),
-      onError: (err) => onToast(`${summary.title}: could not ${next ? 'resume' : 'pause'} — ${(err as Error).message}`),
+      onError: (err) => onToast(
+        t(next ? 'agents.card.resumeFailed' : 'agents.card.pauseFailed')
+          .replace('{name}', summary.title)
+          .replace('{reason}', (err as Error).message),
+      ),
     });
   };
 
@@ -144,10 +151,10 @@ export function AgentMemberCard({
             className={`agent-switch${summary.enabled ? ' agent-switch--on' : ''}`}
             role="switch"
             aria-checked={summary.enabled}
-            aria-label={`${summary.title} — scheduled`}
+            aria-label={t('agents.card.scheduledAria').replace('{name}', summary.title)}
             onClick={toggle}
             disabled={setEnabled.isPending}
-            title={summary.enabled ? 'Running on its schedule. Click to pause.' : 'Paused — the scheduler skips it. Click to resume.'}
+            title={t(summary.enabled ? 'agents.card.pause' : 'agents.card.resume')}
           >
             <span className="agent-switch-knob" aria-hidden="true" />
           </button>
@@ -160,7 +167,10 @@ export function AgentMemberCard({
 
       <footer className="agent-card-foot">
         <p className="agent-card-status">
-          <span className="agent-card-status-word">{statusWord(summary.cache?.status ?? null)}</span>
+          {/* "has not run yet" is a fact, not news: regular weight, secondary ink. */}
+          <span className={`agent-card-status-word${summary.cache?.status ? '' : ' agent-card-status-word--none'}`}>
+            {statusWord(summary.cache?.status ?? null)}
+          </span>
           {lastWhen && <span className="agent-card-status-when">{lastWhen}</span>}
           {!summary.approved && summary.approvalReason === 'never-approved' && (
             <span className="agent-card-status-note">needs approval</span>
@@ -172,16 +182,5 @@ export function AgentMemberCard({
         </div>
       </footer>
     </article>
-  );
-}
-
-/** The dashed tile that opens the New agent dialog — last in the grid, so it
- *  reads as "and one more" rather than a toolbar item. */
-export function AgentNewCard({ onClick }: { onClick: () => void }) {
-  return (
-    <button type="button" className="agent-card agent-card--new" onClick={onClick}>
-      <span className="agent-card-new-plus" aria-hidden="true">+</span>
-      <span>New agent</span>
-    </button>
   );
 }

@@ -47,7 +47,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { contrast, distIndex, overlapArea, rect, scratchDir, setTheme, shotsDir } from './lib/measure.mjs';
+import { contrast, distIndex, faceWidths, overlapArea, rect, scratchDir, setTheme, shotsDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_INDEX = distIndex(REPO);
@@ -70,7 +70,7 @@ const CHOICE_B = 'Keep measuring';
 
 const report = { pass: 0, fail: 0 };
 function check(label, ok, ev = '') {
-  if (ok) { report.pass++; console.log(`  ✓ ${label}`); }
+  if (ok) { report.pass++; console.log(`  ✓ ${label}${ev && /^\[(C\d+|guard)\]/.test(label) ? `\n      ${ev}` : ''}`); }
   else { report.fail++; console.log(`  ✗ ${label}${ev ? `\n      ${ev}` : ''}`); }
 }
 
@@ -812,6 +812,9 @@ async function main() {
       await row.locator('.agent-thread-bar').click();
       await until(async () => (await thread.count()) === 1, 8000);
       await until(async () => (await thread.locator('.agent-thread-sys, .agent-thread-post').count()) > 0, 10000);
+      // The split panel slides in (C5): let it land before anything measures or drags its
+      // parts, or a 24px-in-flight handle is missed (T12 flaked 1 in 3 without this).
+      await thread.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished))).catch(() => {});
     };
     const closePanel = async () => {
       if (await thread.count()) {
@@ -853,6 +856,27 @@ async function main() {
       return answer.compareDocumentPosition(failed) & Node.DOCUMENT_POSITION_FOLLOWING ? 'answer-first' : 'failed-first';
     });
     check('[T9] …and its report sits BEFORE the Failed row (was after it)', order === 'answer-first', order);
+
+    // C11: the reason is said ONCE outside the report. The closing row used to repeat the
+    // root's sentence verbatim ("Failed after 0s: Could not reach …").
+    const echo = await thread.evaluate((el) => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let times = 0;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n.parentElement?.closest('.agent-thread-answer')) continue;
+        times += (n.textContent.match(/401 Unauthorized/g) || []).length;
+      }
+      const sys = [...el.querySelectorAll('.agent-thread-sys')].map((r) => r.innerText.replace(/\s+/g, ' ').trim());
+      const status = el.querySelector('.agent-msg--root .agent-msg-status')?.textContent?.trim() ?? null;
+      return { times, sys, status };
+    });
+    check('[C11] the failed thread says its reason once outside the report (was twice: the root and the Failed row)',
+      echo.times === 1, JSON.stringify(echo));
+    check('[guard] …and still says "failed" and how long it took',
+      echo.status === 'failed' && echo.sys.some((t) => /Failed after \d+(m|s)/.test(t)), JSON.stringify(echo));
+    const threadFaces = await faceWidths(page, '.agent-thread');
+    check('[C12] faces in the thread are 20 or 32px wide (was 36 on the root and 28 on its rows)',
+      threadFaces.length > 0 && threadFaces.every((w) => w === 20 || w === 32), JSON.stringify(threadFaces));
 
     // T13, T14 — targets.
     const closeR = await rect(thread.locator('.agent-thread-close'));

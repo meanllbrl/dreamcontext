@@ -9,6 +9,7 @@ import {
 } from '../../hooks/useAutomations';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentFiles, AgentMessage, AgentProse } from './AgentMessage';
+import { trimFailureEcho } from './agentRunState';
 import { ProseSegment } from '../sleepy/chat/TranscriptItem';
 // The answer is drawn with the chat's own card (`.chat-msg-assistant-body`), whose rules
 // live here — imported by the panel that uses them rather than borrowed from whichever
@@ -57,21 +58,26 @@ function hhmm(iso: string): string {
 
 /** A system row's own words, already written by the runner. The panel adds the
  *  time and nothing else — re-phrasing them here would put the same event in
- *  two vocabularies, one of which would go stale. */
-function SystemRow({ entry }: { entry: ThreadEntry }) {
+ *  two vocabularies, one of which would go stale. The one liberty: a failure row
+ *  whose reason the root already shows is cut to its new fact, "Failed after 3s"
+ *  (`trimFailureEcho`), so the thread does not say one sentence twice. */
+function SystemRow({ entry, rootText }: { entry: ThreadEntry; rootText: string | null }) {
+  const text = entry.event === 'failed' || entry.event === 'timeout'
+    ? trimFailureEcho(entry.text, rootText)
+    : entry.text;
   return (
     <div className="agent-thread-sys">
       <span className="agent-thread-sys-time">{hhmm(entry.at)}</span>
-      <span className="agent-thread-sys-text">{entry.text}</span>
+      <span className="agent-thread-sys-text">{text}</span>
     </div>
   );
 }
 
-/** Who wrote a thread row: your placeholder face, or the agent's photo. */
+/** Who wrote a thread row: your placeholder face, or the agent's photo. One size for both. */
 function RowFace({ who, message }: { who: 'user' | 'agent'; message: FeedMessage }) {
   return who === 'user'
-    ? <span className="agent-you-av agent-you-av--sm" aria-hidden="true">You</span>
-    : <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={28} version={message.runId} />;
+    ? <span className="agent-you-av" aria-hidden="true">You</span>
+    : <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={32} version={message.runId} />;
 }
 
 function AuthoredRow({
@@ -503,7 +509,8 @@ export function AgentThreadPanel({
           <Fragment key={e.id}>
             {i === answerAt && answer && <AnswerRow answer={answer} message={message} onOpenFile={onOpenFile} />}
             {e.kind === 'system'
-              ? <SystemRow entry={e} />
+              // An ask's root is the reader's question, not the reason, so nothing is trimmed.
+              ? <SystemRow entry={e} rootText={message.ask ? null : message.text} />
               : <AuthoredRow entry={e} message={message} onOpenFile={onOpenFile} />}
           </Fragment>
         ))}

@@ -152,6 +152,20 @@ describe('AgentMessage — the rich blocks are mounted, not re-implemented', () 
     // locator multi-match, and innerText() on that is a strict-mode violation.
     expect(source).toContain('agent-msg-needs');
   });
+
+  /** C1: every string the row prints goes through the catalogue, including the quiet one. */
+  it('says "Nothing to report." through t(), never as a literal', () => {
+    expect(source).toContain("t('agents.nothingToReport')");
+    expect(source).not.toContain("'Nothing to report.'");
+    expect(source).not.toContain('>Nothing to report.<');
+  });
+
+  /** C1: "View thread" is APPENDED after "Last reply", never stacked into its grid cell. */
+  it('appends the thread line\'s hover label instead of swapping it into one cell', () => {
+    expect(source).not.toContain('agent-thread-bar-swap');
+    expect(source).toContain("t('agents.thread.lastReply')");
+    expect(source).toContain('agent-thread-bar-go');
+  });
 });
 
 describe('AgentQuestionBlock — answers through the existing HITL route', () => {

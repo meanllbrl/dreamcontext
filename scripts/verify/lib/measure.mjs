@@ -250,3 +250,135 @@ export async function mockDispatcher(page, state, { installDelayMs = null } = {}
     });
   }
 }
+
+// ─── The Elevated UX pass (C1-C13): shared measurements ────────────────────────────────
+
+/** The strong accent as Chromium serialises it (`--color-accent-strong`, #6647f0). */
+export const STRONG_RGB = 'rgb(102, 71, 240)';
+
+/**
+ * Visible elements under `rootSel` whose FILL is the strong accent: a flat `background-color`
+ * or any stop of a `background-image` gradient (`--gradient-brand-strong` ends on it). What
+ * "one filled accent per screen" counts.
+ */
+export async function strongFills(page, rootSel) {
+  return page.evaluate(([sel, strong]) => {
+    const out = [];
+    for (const root of document.querySelectorAll(sel)) {
+      for (const el of root.querySelectorAll('*')) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) continue;
+        const cs = getComputedStyle(el);
+        if (cs.visibility === 'hidden' || Number(cs.opacity) === 0) continue;
+        if (cs.backgroundColor === strong || cs.backgroundImage.includes(strong)) {
+          out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ').filter(Boolean).join('.')}:${(el.textContent || '').trim().slice(0, 24)}`);
+        }
+      }
+    }
+    return out;
+  }, [rootSel, STRONG_RGB]);
+}
+
+/**
+ * The page's type ladder as painted: every text node under `rootSel` that paints (has a
+ * client rect wider than 1px, so an `sr-only` heading is skipped), outside the subtrees in
+ * `exclude`, grouped by computed font-size and font-weight. `offenders` names the first few
+ * nodes whose size or weight is outside the allowed sets.
+ */
+export async function textLadder(page, rootSel, exclude, allowSizes = ['12px', '14px'], allowWeights = ['400', '600']) {
+  return page.evaluate(([sel, ex, sizesOk, weightsOk]) => {
+    const skip = ex.join(',');
+    const sizes = new Set();
+    const weights = new Set();
+    const offenders = [];
+    for (const root of document.querySelectorAll(sel)) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (!n.textContent.trim()) continue;
+        const p = n.parentElement;
+        if (!p || (skip && p.closest(skip))) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const painted = [...range.getClientRects()].some((q) => q.width > 1 && q.height > 1);
+        if (!painted) continue;
+        const cs = getComputedStyle(p);
+        if (cs.visibility === 'hidden') continue;
+        sizes.add(cs.fontSize);
+        weights.add(cs.fontWeight);
+        if ((!sizesOk.includes(cs.fontSize) || !weightsOk.includes(cs.fontWeight)) && offenders.length < 8) {
+          offenders.push(`${p.tagName.toLowerCase()}.${String(p.className).split(' ').filter(Boolean).join('.')} ${cs.fontSize}/${cs.fontWeight} "${n.textContent.trim().slice(0, 20)}"`);
+        }
+      }
+    }
+    return { sizes: [...sizes].sort(), weights: [...weights].sort(), offenders };
+  }, [rootSel, exclude, allowSizes, allowWeights]);
+}
+
+/** The line pitch of a wrapped block: the gaps between its painted line tops. */
+export async function linePitch(locator) {
+  const tops = await lineTops(locator);
+  return tops.slice(1).map((t, i) => t - tops[i]);
+}
+
+/** Rendered widths of every face (agent avatar, "You") under `rootSel`, outside Chat's composer. */
+export async function faceWidths(page, rootSel) {
+  return page.evaluate((sel) => {
+    const out = new Set();
+    for (const root of document.querySelectorAll(sel)) {
+      for (const el of root.querySelectorAll('.agent-av, .agent-you-av')) {
+        if (el.closest('.chat-cmp')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 1) continue;
+        out.add(Math.round(r.width));
+      }
+    }
+    return [...out].sort((a, b) => a - b);
+  }, rootSel);
+}
+
+/** The background a box PAINTS: its own fill if opaque, else the first opaque ancestor's. */
+export async function effectiveBg(locator) {
+  return locator.evaluate((el) => {
+    for (let n = el; n; n = n.parentElement) {
+      const bg = getComputedStyle(n).backgroundColor;
+      const nums = (bg.match(/[\d.]+/g) || []).map(Number);
+      const a = nums.length > 3 ? nums[3] : 1;
+      if (a >= 1) return bg;
+    }
+    return getComputedStyle(document.documentElement).backgroundColor;
+  });
+}
+
+/**
+ * Motion under reduced motion: every element under `rootSel` (outside `exclude`) whose
+ * computed animation or transition still has a non-zero duration. Empty means the page is
+ * still. `animation-name: none` counts as still whatever its duration says.
+ */
+export async function movingUnder(page, rootSel, exclude = []) {
+  return page.evaluate(([sel, ex]) => {
+    const skip = ex.join(',');
+    // The app's own global reduced-motion reset (styles/global.css) writes 0.01ms, not 0: a
+    // duration at or under that is still.
+    const secs = (d) => (d.trim().endsWith('ms') ? parseFloat(d) / 1000 : parseFloat(d));
+    const nonZero = (v) => v.split(',').some((d) => secs(d) > 0.00001);
+    const out = [];
+    for (const root of document.querySelectorAll(sel)) {
+      for (const el of [root, ...root.querySelectorAll('*')]) {
+        if (skip && el.closest(skip)) continue;
+        const cs = getComputedStyle(el);
+        const anim = cs.animationName !== 'none' && nonZero(cs.animationDuration);
+        const trans = cs.transitionProperty !== 'none' && nonZero(cs.transitionDuration);
+        if ((anim || trans) && out.length < 10) {
+          out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ').filter(Boolean).join('.')} ${anim ? `anim ${cs.animationName} ${cs.animationDuration}` : ''}${trans ? ` trans ${cs.transitionProperty} ${cs.transitionDuration}` : ''}`);
+        }
+      }
+    }
+    return out;
+  }, [rootSel, exclude]);
+}
+
+/** Painted i18n keys (`agents.x.y`) under `rootSel`: a missing catalogue entry renders its key. */
+export async function rawKeys(page, rootSel) {
+  const text = await chromeText(page, rootSel, []);
+  return [...new Set(text.match(/\b(?:agents|scheduler)\.[a-zA-Z]+\.[a-zA-Z.]+\b/g) || [])];
+}

@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type AnimationEvent,
+} from 'react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentMessage } from './AgentMessage';
 import { AgentThreadPanel } from './AgentThreadPanel';
+import { AgentsFeedFilters, type FeedChip, type FeedFilter } from './AgentsFeedFilters';
 import { agentMention, useAgentsChannelHost } from './agentsChannelHost';
 import { Composer } from '../sleepy/chat/Composer';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
@@ -39,12 +42,6 @@ import './AgentsFeed.css';
  *    a route rendered is how an unread badge stops meaning anything.
  */
 
-type Filter = { kind: 'all' } | { kind: 'unread' } | { kind: 'needs' } | { kind: 'failed' } | { kind: 'agent'; slug: string };
-
-function sameFilter(a: Filter, b: Filter): boolean {
-  return a.kind === b.kind && (a.kind !== 'agent' || b.kind !== 'agent' || a.slug === b.slug);
-}
-
 /** "Today" / "Yesterday" / "Fri 19 Sep" — a date header only says the date
  *  when the date is not one of the two a person already has a word for. */
 function dayLabel(iso: string): string {
@@ -59,6 +56,25 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+/** Whether a message passes a filter. One predicate for the list and for the new-messages pill,
+ *  so the pill never counts a row the reader's filter would not show them. */
+function matchesFilter(m: FeedMessage, filter: FeedFilter): boolean {
+  switch (filter.kind) {
+    case 'all': return true;
+    case 'unread': return m.unread;
+    // `needsYou`, not the status word: a finished run with an unanswered
+    // question is waiting on the reader too, and the chip's COUNT is the
+    // server's own `needsYouTotal` — a filter keyed on something narrower
+    // would show fewer rows than the number on the chip that opened it.
+    case 'needs': return m.needsYou;
+    case 'failed': return m.status === 'failed' || m.status === 'timeout';
+    case 'agent': return m.slug === filter.slug;
+  }
+}
+
+/** The arrivals of a poll that brought none. Shared so an empty poll does not re-render. */
+const NO_ARRIVALS: ReadonlySet<string> = new Set();
+
 function dayKey(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -67,10 +83,10 @@ function dayKey(iso: string): string {
 /** The id the open thread panel wears, and the one its thread line points at (`aria-controls`). */
 const THREAD_PANEL_ID = 'agents-thread-panel';
 
-/** The bottom-right floater the app draws on every page: the Agent button, or the session dock
- *  when sessions exist. The dock's `--floating` copy sits over the expanded overlay, not over
- *  this page, so it is not the one to clear. */
-const FLOATER_SELECTOR = '.agent-fab, .agent-dock:not(.agent-dock--floating)';
+/** How close to the bottom (px) still counts as "at the bottom": a reader this near the newest
+ *  message is following the channel, so what arrives is scrolled into view rather than counted
+ *  on the new-messages pill. */
+const NEAR_BOTTOM_PX = 48;
 /** The channel's width (px) below which a thread OVERLAYS it, as Chat's SlideOver does,
  *  instead of splitting the row with it: under this, a 360px thread leaves the feed too
  *  narrow to read. Measured on the `.agents-feed` row, not the window. */
@@ -104,11 +120,10 @@ export function AgentsFeed({
   // second poll is what makes a run started elsewhere (another tab, "run now") visible here.
   const { data, isLoading } = useAgentFeed();
   const runSlots = useMemo(() => data?.runSlots ?? {}, [data]);
-  const live = Object.keys(runSlots).length > 0;
   const markRead = useMarkThreadRead();
   const { vault } = useVault();
   const { data: dispatcher } = useAutomationDispatcher();
-  const [filter, setFilter] = useState<Filter>({ kind: 'all' });
+  const [filter, setFilter] = useState<FeedFilter>({ kind: 'all' });
   const [openThread, setOpenThread] = useState<OpenThread | null>(null);
   /** Owned HERE rather than taken as a prop: the only thing that raises one is
    *  an answer this feed's own question block could not record, and threading a
@@ -135,37 +150,87 @@ export function AgentsFeed({
     setDividerKey(messages.find((m) => m.unread)?.key ?? null);
   }, [messages]);
 
-  const visible = useMemo(() => messages.filter((m) => {
-    switch (filter.kind) {
-      case 'all': return true;
-      case 'unread': return m.unread;
-      // `needsYou`, not the status word: a finished run with an unanswered
-      // question is waiting on the reader too, and the chip's COUNT is the
-      // server's own `needsYouTotal` — a filter keyed on something narrower
-      // would show fewer rows than the number on the chip that opened it.
-      case 'needs': return m.needsYou;
-      case 'failed': return m.status === 'failed' || m.status === 'timeout';
-      case 'agent': return m.slug === filter.slug;
+  const visible = useMemo(() => messages.filter((m) => matchesFilter(m, filter)), [messages, filter]);
+
+  /**
+   * KEEP THE READER'S PLACE. The channel follows its newest end only while the reader is AT it:
+   * a row that arrives (or grows, as "Working" turns into the answer) is scrolled into view then,
+   * and counted on the "N new messages" pill otherwise. It used to scroll to the bottom on every
+   * poll while any agent ran, which yanked a reader out of scrollback every two seconds.
+   *
+   * `atBottomRef` is a ref, not state: it is read inside layout effects and written on every
+   * scroll event, and nothing renders from it directly (the pill renders from `unseen`).
+   */
+  const atBottomRef = useRef(true);
+  const [unseen, setUnseen] = useState(0);
+  const toBottom = useCallback((smooth: boolean) => {
+    const el = scrollRef.current;
+    atBottomRef.current = true;
+    setUnseen(0);
+    if (!el) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduce ? 'smooth' : 'auto' });
+  }, []);
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const at = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+    atBottomRef.current = at;
+    if (at) setUnseen(0);
+  }, []);
+
+  // Land at the bottom on the first load and on a filter change: a channel is read from its
+  // newest end, and a new filter is a new list.
+  useEffect(() => {
+    toBottom(false);
+  }, [filter, isLoading, toBottom]);
+
+  // Before paint, so a row that arrives or grows while the reader is at the bottom never shows
+  // for a frame below the fold.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [visible]);
+
+  /**
+   * WHICH ROWS ARRIVED. The first read is the channel as it was when the page opened, so none of
+   * it animates; every key seen after that is an arrival. An arrival that the filter shows fades
+   * and rises in (`--arrived`), and, when the reader is up in the scrollback, is counted on the
+   * pill instead of moving them. The set is replaced on every poll, so a key never outlives the
+   * poll after it (under reduced motion there is no `animationend` to clear it).
+   */
+  const seenKeys = useRef<Set<string> | null>(null);
+  const [arrived, setArrived] = useState<ReadonlySet<string>>(NO_ARRIVALS);
+  useEffect(() => {
+    if (isLoading || !data) return;
+    if (seenKeys.current === null) {
+      seenKeys.current = new Set(messages.map((m) => m.key));
+      return;
     }
-  }), [messages, filter]);
-
-  // Land at the bottom — a channel is read from its newest end. Only on the
-  // first load and on a filter change: re-anchoring on every 15s poll would
-  // yank the page while someone is reading scrollback.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [filter, isLoading]);
-
-  // …and again while a run you started is in flight. Its answer lands at the
-  // bottom, and a channel that made you scroll to find the reply to your own
-  // question would be missing the point.
-  const newestKey = messages[messages.length - 1]?.key ?? null;
-  useEffect(() => {
-    if (!live) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [live, newestKey, messages]);
+    const seen = seenKeys.current;
+    const fresh = messages.filter((m) => !seen.has(m.key));
+    for (const m of fresh) seen.add(m.key);
+    const shown = fresh.filter((m) => matchesFilter(m, filter)).map((m) => m.key);
+    setArrived((prev) => (shown.length > 0 ? new Set(shown) : prev.size > 0 ? NO_ARRIVALS : prev));
+    if (shown.length > 0 && !atBottomRef.current) setUnseen((n) => n + shown.length);
+    // `filter` is read for the answer it gives at the moment a poll lands, not a trigger: a
+    // filter change is not an arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, isLoading, data]);
+  // A new filter is a new list: nothing in it has just arrived.
+  useEffect(() => { setArrived(NO_ARRIVALS); }, [filter]);
+  /** The arrival animation ran; the row is an ordinary row now. Bubbled events (a child's own
+   *  animation) are not this row's. */
+  const onArrived = useCallback((e: AnimationEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    const key = e.currentTarget.dataset.msgKey;
+    setArrived((prev) => {
+      if (!key || !prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
 
   /**
    * The watermark. One observer over the list: a message that has been at
@@ -203,7 +268,7 @@ export function AgentsFeed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, visible.length]);
 
-  const chips: { id: string; label: string; count: number; filter: Filter; slug?: string; title?: string; hasPhoto?: boolean }[] = [
+  const chips: FeedChip[] = [
     { id: 'all', label: 'All', count: messages.length, filter: { kind: 'all' } },
     { id: 'unread', label: 'Unread', count: messages.filter((m) => m.unread).length, filter: { kind: 'unread' } },
     // THE SERVER'S OWN NUMBER. Deriving it here a second way is what let the
@@ -215,7 +280,7 @@ export function AgentsFeed({
       id: `agent:${a.slug}`,
       label: a.title,
       count: messages.filter((m) => m.slug === a.slug).length,
-      filter: { kind: 'agent', slug: a.slug } as Filter,
+      filter: { kind: 'agent', slug: a.slug } as FeedFilter,
       slug: a.slug,
       title: a.title,
       hasPhoto: a.hasPhoto,
@@ -252,7 +317,8 @@ export function AgentsFeed({
   const restoreRef = useRef<() => void>(() => {});
   const onSend = useCallback((target: { slug: string }, body: string) => {
     say.mutate({ slug: target.slug, text: body }, {
-      onSuccess: (res) => setPendingOpen({ slug: res.slug, runId: res.runId }),
+      // The reader's own message: follow it to the bottom, wherever they were.
+      onSuccess: (res) => { setPendingOpen({ slug: res.slug, runId: res.runId }); toBottom(true); },
       // The composer has already emptied the field by the time this lands, so the refusal
       // puts it back: the server's own sentence under the field, and the words the reader
       // typed in it, ready to fix and resend.
@@ -261,7 +327,7 @@ export function AgentsFeed({
         restoreRef.current();
       },
     });
-  }, [say]);
+  }, [say, toBottom]);
 
   useEffect(() => {
     if (!pendingOpen) return;
@@ -326,10 +392,9 @@ export function AgentsFeed({
   // bottom edge, and it is the taller of the two whenever it carries a note, so the floater is
   // lifted over whichever is higher rather than straddling the thread's body/foot seam.
   //
-  // AND THE FLOATER'S OWN HEIGHT, published back onto this feed (`--agents-floater-clearance`)
-  // so the feed and the thread can leave room under their last message for the button that
-  // now sits over it. It is found by class and followed with a MutationObserver because it is
-  // not this page's element: it mounts, unmounts and swaps for the session dock on its own.
+  // The floater's OWN height (`--agents-floater-clearance`, the room the feed and the thread
+  // leave under their last message) is the PAGE's to publish now (`useFloaterClearance` on
+  // `.agents-page`), because the page's toast needs it in every view, not only this one.
   const composerWrapRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const [footEl, setFootEl] = useState<HTMLElement | null>(null);
@@ -338,73 +403,30 @@ export function AgentsFeed({
     const feed = feedRef.current;
     if (!el || !feed) return;
     const root = document.documentElement;
-    let floater: HTMLElement | null = null;
     const publish = () => {
       const strip = Math.max(
         el.getBoundingClientRect().height,
         footEl?.isConnected ? footEl.getBoundingClientRect().height : 0,
       );
       root.style.setProperty('--dc-bottom-strip', `${Math.round(strip)}px`);
-      if (floater?.isConnected) {
-        const h = Math.round(floater.getBoundingClientRect().height);
-        feed.style.setProperty('--agents-floater-clearance', `calc(${h}px + var(--space-5) + var(--space-2))`);
-      } else {
-        feed.style.removeProperty('--agents-floater-clearance');
-      }
     };
     // It grows with the textarea, with the attachment chips and with the note under it, so a
     // one-shot measurement would be wrong the moment anyone types a second line.
     const ro = new ResizeObserver(publish);
     ro.observe(el);
     if (footEl) ro.observe(footEl);
+    publish();
     // The same observer decides split or overlay: it already watches this row's size.
     const decide = () => setOverlay(feed.getBoundingClientRect().width < THREAD_OVERLAY_BELOW);
     decide();
     const rowRo = new ResizeObserver(decide);
     rowRo.observe(feed);
-    const findFloater = () => {
-      const next = document.querySelector<HTMLElement>(FLOATER_SELECTOR);
-      if (next === floater) return;
-      if (floater) ro.unobserve(floater);
-      floater = next;
-      if (floater) ro.observe(floater);
-      publish();
-    };
-    findFloater();
-    let frame = 0;
-    const mo = new MutationObserver(() => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => { frame = 0; findFloater(); });
-    });
-    mo.observe(document.body, { childList: true, subtree: true });
     return () => {
       ro.disconnect();
       rowRo.disconnect();
-      mo.disconnect();
-      if (frame) cancelAnimationFrame(frame);
       root.style.removeProperty('--dc-bottom-strip');
-      feed.style.removeProperty('--agents-floater-clearance');
     };
   }, [footEl]);
-
-  /**
-   * The chip row fades at its right edge while there is more of it to scroll to. The scrollbar
-   * is hidden (the row is one line of controls, not a pane), so without the fade the last chip
-   * is simply cut at the edge with nothing saying the row goes on.
-   */
-  const chipsRef = useRef<HTMLDivElement>(null);
-  const [chipsMore, setChipsMore] = useState(false);
-  useEffect(() => {
-    const row = chipsRef.current;
-    if (!row) return;
-    const measure = () => setChipsMore(row.scrollLeft + row.clientWidth < row.scrollWidth - 1);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(row);
-    for (const chip of row.children) ro.observe(chip);
-    row.addEventListener('scroll', measure, { passive: true });
-    return () => { ro.disconnect(); row.removeEventListener('scroll', measure); };
-  }, [messages.length, data?.agents.length]);
 
   // Model and effort: required by the composer's prop type, and behind a trigger this surface
   // does not draw. Read once from the app-global pick — there is nothing here that changes it.
@@ -425,35 +447,10 @@ export function AgentsFeed({
         {/* No chips on an empty channel: five filters counting zero are five controls with
             nothing behind them. */}
         {messages.length > 0 && (
-        <div
-          ref={chipsRef}
-          className={`agents-chips${chipsMore ? ' agents-chips--more' : ''}`}
-          role="tablist"
-          aria-label="Filter the channel"
-        >
-          {chips.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              role="tab"
-              aria-selected={sameFilter(filter, c.filter)}
-              className={`agents-chip${sameFilter(filter, c.filter) ? ' agents-chip--on' : ''}`}
-              onClick={() => setFilter(c.filter)}
-              // The label is capped and ellipsised (a long agent name), so the whole name
-              // rides on the chip.
-              title={c.label}
-            >
-              {c.slug && (
-                <AgentAvatar slug={c.slug} title={c.title ?? c.slug} hasPhoto={c.hasPhoto ?? false} size={18} />
-              )}
-              <span className="agents-chip-label">{c.label}</span>
-              <span className="agents-chip-count">{c.count}</span>
-            </button>
-          ))}
-        </div>
+          <AgentsFeedFilters chips={chips} filter={filter} onSelect={setFilter} />
         )}
 
-        <div className="agents-feed-scroll" ref={scrollRef}>
+        <div className="agents-feed-scroll" ref={scrollRef} onScroll={onScroll}>
           {isLoading && messages.length === 0 && <p className="agents-feed-note">Reading the channel…</p>}
 
           {!isLoading && messages.length === 0 && (
@@ -483,7 +480,12 @@ export function AgentsFeed({
             const newDay = key !== lastDay;
             lastDay = key;
             return (
-              <div key={m.key} data-msg-key={m.key}>
+              <div
+                key={m.key}
+                data-msg-key={m.key}
+                className={`agents-feed-item${arrived.has(m.key) ? ' agents-feed-item--arrived' : ''}`}
+                onAnimationEnd={onArrived}
+              >
                 {newDay && (
                   <div className="agents-feed-day">
                     <span>{dayLabel(m.at)}</span>
@@ -502,10 +504,25 @@ export function AgentsFeed({
                   onToast={setToast}
                   threadOpen={openThread?.message.key === m.key}
                   panelId={THREAD_PANEL_ID}
+                  // The run's own start, from the slot it holds, for the live elapsed time.
+                  runStartedAt={m.status === 'running' ? (runSlots[m.slug]?.startedAt ?? null) : null}
                 />
               </div>
             );
           })}
+
+          {/* Up in the scrollback, what arrives is COUNTED here instead of moving the reader.
+              Sticky to the scroller's bottom edge, so it sits just above the composer. */}
+          {unseen > 0 && (
+            <div className="agents-feed-newpill-wrap">
+              <button type="button" className="agents-feed-newpill" onClick={() => toBottom(true)}>
+                {unseen === 1
+                  ? t('agents.feed.newMessages.one')
+                  : t('agents.feed.newMessages.many').replace('{n}', String(unseen))}
+                <span aria-hidden="true"> ↓</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* The channel's text field IS the chat's composer — see `agentsChannelHost.ts` for

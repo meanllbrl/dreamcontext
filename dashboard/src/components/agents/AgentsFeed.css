@@ -1,19 +1,27 @@
 /*
  * The #agents channel — the feed, a message, and the read-only thread panel.
  *
- * ACCENT BUDGET (K8) on this screen: the selected filter chip, the unread bar
- * on a message, and focus rings. Nothing else is tinted. The New divider and
- * the `needs you` status word spend the WARNING colour, not the accent, and
- * they are the only two things that do.
+ * ACCENT BUDGET (K8) on this screen: the unread bar on a message, focus rings,
+ * and, while a question waits, its FIRST choice (the one filled accent in the
+ * feed; the page's other is New agent). The selected filter chip is a neutral
+ * surface. The New divider and the `needs you` word keep their own inks.
+ *
+ * TYPE LADDER (Elevated pass, 2026-09-25): 14px for names and prose, 12px for
+ * every meta, status, caption and count; weights 400 and 600 only; every
+ * spatial step on the 4px grid. Chat's answer card in the thread keeps Chat's
+ * own size. Motion: entering things use `--ease-out`, the running dot breathes
+ * on `--motion-breath`, and all of it stands down under reduced motion (end of
+ * this file).
  */
 
 .agents-feed {
   /* The anchor for the thread's overlay scrim (Chat's `.chat-slideover-scrim`, which is
      `position: absolute; inset: 0`), so it covers the channel and not the page header. */
   position: relative;
-  /* The chips row's height — its 30px chips plus its padding and rule — which the thread
-     panel's header matches, so the two dividers under them are one line across the page. */
-  --agents-toolbar-h: calc(30px + 2 * var(--space-3) + 1px);
+  /* The chips row's height — its 28px chips plus its padding and rule — which the thread
+     panel's header matches, so the two dividers under them are one line across the page.
+     `AgentsFeedFilters.css` builds the row to exactly this. */
+  --agents-toolbar-h: calc(var(--space-7) + 2 * var(--space-2) + 1px);
   flex: 1;
   min-height: 0;
   display: flex;
@@ -41,70 +49,7 @@
 
 /* ─── filter chips ─── */
 
-.agents-chips {
-  flex-shrink: 0;
-  box-sizing: border-box;
-  min-height: var(--agents-toolbar-h);
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-5);
-  overflow-x: auto;
-  scrollbar-width: none;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.agents-chips::-webkit-scrollbar { display: none; }
-
-/* More chips than room: the row fades at its right edge, which is what says "this scrolls"
-   when the scrollbar is hidden. Toggled by the feed while the row is not scrolled to its end. */
-.agents-chips--more {
-  -webkit-mask-image: linear-gradient(to right, black calc(100% - var(--space-8)), transparent);
-  mask-image: linear-gradient(to right, black calc(100% - var(--space-8)), transparent);
-}
-
-.agents-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 15px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 220ms ease, color 220ms ease, border-color 220ms ease;
-}
-
-.agents-chip:hover {
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-}
-
-.agents-chip--on {
-  /* A fill that carries text takes the strong accent: white on the plain accent is 4.15:1
-     in light and 2.75:1 in dark, on the strong one 5.64:1 in both. */
-  background: var(--color-accent-strong);
-  border-color: var(--color-accent-strong);
-  color: var(--color-accent-text);
-}
-
-.agents-chip-label {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The count is the chip's VALUE — it answers the filter before it is clicked,
-   so it is never hidden and never a separate badge floating off the edge. */
-.agents-chip-count {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
+/* The row and its chips live in `AgentsFeedFilters.css`, with the component that draws them. */
 
 /* ─── the scroller ─── */
 
@@ -115,13 +60,19 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-3) 0 calc(var(--space-6) + var(--agents-floater-clearance, 0px));
+  padding: var(--space-1) 0 calc(var(--space-6) + var(--agents-floater-clearance, 0px));
+}
+
+/* The channel's first line of content sits right under the chips: the first day label drops
+   its top margin, so the page spends as little height as it can above the first message. */
+.agents-feed-scroll > .agents-feed-item:first-child .agents-feed-day {
+  margin-top: 0;
 }
 
 .agents-feed-note {
   margin: 0;
   padding: var(--space-6) var(--space-5);
-  font-size: 14px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
@@ -131,16 +82,16 @@
 }
 
 .agents-feed-zero-lede {
-  margin: 0 0 6px;
-  font-size: 15px;
-  font-weight: 600;
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
 
 .agents-feed-zero-note {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   color: var(--color-text-secondary);
 }
 
@@ -162,8 +113,8 @@
 }
 
 .agents-feed-day span {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);
 }
 
@@ -184,9 +135,8 @@
 }
 
 .agents-feed-new span {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-error);
 }
 
@@ -195,12 +145,20 @@
 .agent-msg {
   display: flex;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-3) var(--space-5);
   border-left: 2px solid transparent;
 }
 
 .agent-msg:hover {
   background: var(--color-bg-secondary);
+}
+
+/* YOU ARE HERE: the row whose thread is open keeps a quiet fill until the panel closes. Mixed
+   toward the tertiary surface so it shows in light too, where the secondary surface IS the
+   canvas. A surface, not the accent: it marks a place, it does not call for anything. */
+.agent-msg--open,
+.agent-msg--open:hover {
+  background: color-mix(in srgb, var(--color-bg-secondary) 60%, var(--color-bg-tertiary));
 }
 
 /* Unread is a BAR, not a fill: a tint across the row says "this whole message
@@ -224,7 +182,6 @@
 
 .agent-msg-av {
   flex-shrink: 0;
-  padding-top: 2px;
 }
 
 .agent-msg-body {
@@ -236,8 +193,8 @@
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 2px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .agent-msg-name {
@@ -248,8 +205,8 @@
   border: 0;
   background: none;
   font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
   cursor: pointer;
 }
@@ -258,7 +215,7 @@
 
 .agent-msg-time,
 .agent-msg-meta {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
@@ -267,7 +224,7 @@
    not "it went fine" — and `needs you` is warning, not danger, because a
    question is not a fault. */
 .agent-msg-status {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
@@ -278,20 +235,46 @@
 
 .agent-msg-status--needs-you {
   color: var(--color-warning-ink);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* The same ink as the status word's needs-you state, on its own class: this
    says the reader still owes the run an answer, which a FINISHED run can also
    be doing — so it cannot be a second `.agent-msg-status` (see AgentMessage). */
 .agent-msg-needs {
+  font-size: var(--font-size-xs);
   color: var(--color-warning-ink);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
+/* RUNNING, ALIVE BUT CALM (orthogonal-encoding-channels): the colour stays the plain status ink,
+   and the MOTION says "in progress": one small dot that breathes, beside a time that climbs
+   (`.agent-msg-elapsed`), so a four-minute run and a hung one no longer look alike. Upright, not
+   italic: the word is a status like the others. */
 .agent-msg-status--running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   color: var(--color-text-secondary);
-  font-style: italic;
+}
+
+.agent-msg-live-dot {
+  flex-shrink: 0;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-text-secondary);
+  animation: agents-breath var(--motion-breath) ease-in-out infinite;
+}
+
+@keyframes agents-breath {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* The live elapsed time. Tabular, so the row does not jitter as the seconds change. */
+.agent-msg-elapsed {
+  font-variant-numeric: tabular-nums;
 }
 
 /* The ROW spans the channel; the PROSE does not. A message that ran the full
@@ -302,8 +285,8 @@
 .agent-msg-text {
   max-width: 92ch;
   margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   color: var(--color-text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -314,8 +297,8 @@
 }
 
 .agent-msg-from {
-  margin: 2px 0 0;
-  font-size: 12px;
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
@@ -348,16 +331,18 @@
   gap: var(--space-3);
   max-width: 340px;
   min-height: 48px;
-  padding: 6px 14px 6px 6px;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 13px;
+  /* A caption card, 12px: a middle-truncated 40-character name has to fit its 270px column
+     whole (verify:agent-attachments A11), which at 14px it would not. */
+  font-size: var(--font-size-xs);
   text-align: left;
   cursor: pointer;
-  transition: border-color 220ms ease, background 220ms ease;
+  transition: border-color var(--transition-normal), background var(--transition-normal);
 }
 
 .agent-msg-file:hover { border-color: var(--color-text-secondary); background: var(--color-bg); }
@@ -371,19 +356,18 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: 6px;
-  background: var(--color-bg-tertiary, var(--color-bg));
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* A glyph (♪, ▦) is drawn at reading size; the 10px type-word size made it a speck. */
 .agent-msg-file-type--glyph {
   font-size: var(--font-size-base);
-  font-weight: 400;
+  font-weight: var(--font-weight-normal);
 }
 
 .agent-msg-file--pdf .agent-msg-file-type {
@@ -394,7 +378,7 @@
 .agent-msg-file-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -402,17 +386,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* What the card is, or (for a board off-desktop) where it opens instead of
    drawing an empty canvas. */
 .agent-msg-file-note {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
-.agent-msg-file--audio { cursor: default; padding-right: 10px; }
+.agent-msg-file--audio { cursor: default; padding-right: var(--space-3); }
 /* A board the server will not draw here: a card with its reason, and nothing to press. */
 div.agent-msg-file--board { cursor: default; }
 div.agent-msg-file--board:hover { border-color: var(--color-border); background: var(--color-bg-secondary); }
@@ -435,11 +419,11 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   max-width: var(--chat-card-width);
   padding: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   overflow: hidden;
   cursor: zoom-in;
-  transition: border-color 220ms ease;
+  transition: border-color var(--transition-normal);
 }
 
 .agent-msg-img:hover { border-color: var(--color-text-secondary); }
@@ -472,17 +456,18 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   max-width: 100%;
   margin: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   overflow: hidden;
 }
 
+/* The letterbox around a clip whose ratio the box has not learned yet: black in both themes. */
 .agent-msg-video video {
   display: block;
   width: 100%;
   height: auto;
   aspect-ratio: var(--agent-clip-ratio, 16 / 9);
-  background: #000;
+  background: var(--color-obsidian);
 }
 
 .agent-msg-media-cap {
@@ -490,18 +475,18 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
-.agent-msg-media-cap .agent-msg-file-name { min-width: 0; font-weight: 500; color: var(--color-text); }
+.agent-msg-media-cap .agent-msg-file-name { min-width: 0; font-weight: var(--font-weight-normal); color: var(--color-text); }
 
 .agent-msg-media-open {
   flex-shrink: 0;
   min-height: 24px;
   min-width: 24px;
-  padding: 2px 6px;
+  padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
@@ -520,7 +505,7 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   flex-wrap: wrap;
   align-items: baseline;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
@@ -544,7 +529,7 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 .agent-msg-kv {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   margin: var(--space-2) 0 0;
 }
 
@@ -556,16 +541,16 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 
 .agent-msg-kv-key {
   flex: 0 0 auto;
-  min-width: 120px;
+  min-width: var(--space-24);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 }
 
 .agent-msg-kv-value {
   margin: 0;
   color: var(--color-text);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
 /* ─── the question a run stopped to ask ─── */
@@ -578,15 +563,15 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   margin-top: var(--space-2);
   padding: var(--space-3);
   border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-secondary));
 }
 
 .agent-msg-question-text {
   margin: 0 0 var(--space-2);
   color: var(--color-text);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
 }
 
@@ -597,23 +582,37 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 }
 
 .agent-msg-question-choice {
-  min-height: 32px;
-  padding: 0 12px;
+  min-height: var(--space-8);
+  padding: 0 var(--space-3);
   border: 1px solid var(--color-accent-strong);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-family: inherit;
-  font-size: 13px;
-  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: filter 220ms ease;
+  transition: filter var(--transition-fast);
 }
 
 /* Brightened, not faded: an 0.88 opacity over the page lands at 4.52:1, a hair from failing;
    brightness(1.06) keeps the label at 5.15:1. */
 .agent-msg-question-choice:hover:not(:disabled) { filter: brightness(1.06); }
 .agent-msg-question-choice:disabled { opacity: 0.5; cursor: default; }
+
+/* Every choice AFTER the first is a TINTED button (tinted-surface-not-filled-swatch): the accent
+   mixed a little into a surface, further into the border, body ink on top. Two filled buttons
+   side by side said "both are the default"; now the first is the one accent moment. */
+.agent-msg-question-choice--alt {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-tertiary));
+  color: var(--color-text);
+}
+
+.agent-msg-question-choice--alt:hover:not(:disabled) {
+  filter: none;
+  border-color: var(--color-accent);
+}
 
 /* A question with no options is answered in prose, so it gets a field — a
    question that offered nothing to press and no way to type would strand the
@@ -627,14 +626,14 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   flex: 1 1 auto;
   min-width: 0;
   /* K2: a field is 40px. */
-  height: 40px;
-  padding: 0 12px;
+  height: var(--space-10);
+  padding: 0 var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-bg);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
 .agent-msg-question-input:focus-visible {
@@ -644,15 +643,15 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 
 .agent-msg-question-send {
   flex: 0 0 auto;
-  height: 40px;
-  padding: 0 14px;
+  height: var(--space-10);
+  padding: 0 var(--space-4);
   border: 1px solid var(--color-accent-strong);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-family: inherit;
-  font-size: 13px;
-  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
 }
 
@@ -668,7 +667,7 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 .agent-msg-question-receipt {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 }
 
 /* ─── the replies row ─── */
@@ -676,18 +675,18 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 .agent-msg-replies {
   display: inline-flex;
   align-items: baseline;
-  gap: 8px;
-  margin-top: 4px;
-  padding: 2px 0;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  padding: 0;
   border: 0;
   background: none;
   font-family: inherit;
-  font-size: 13px;
-  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
   cursor: pointer;
 }
 
-.agent-msg-replies span { color: var(--color-text-secondary); font-size: 12px; }
+.agent-msg-replies span { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 
 .agent-msg-replies:hover { text-decoration: underline; }
 
@@ -719,6 +718,11 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   width: 560px;
   max-width: 60%;
   background: var(--color-bg);
+  /* It ENTERS the way the overlay does: Chat's own SlideOver motion (the keyframe comes with
+     `overlays.css`, which the panel imports), on the page's deceleration curve. Translate and
+     fade rather than growing the width, which would re-lay out the feed on every frame. */
+  animation: chat-slideover-in var(--transition-normal);
+  animation-timing-function: var(--ease-out);
 }
 
 /* THE OVERLAY (a narrower channel). The panel is Chat's SlideOver: `.chat-slideover-panel`
@@ -765,15 +769,15 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 }
 
 .agent-thread-title {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
 
 .agent-thread-sub {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -806,14 +810,14 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 }
 
 .agent-thread-divider span {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
 .agent-thread-empty {
   margin: 0;
   padding: var(--space-4);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
@@ -823,8 +827,8 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 .agent-thread-sys {
   display: flex;
   gap: var(--space-2);
-  padding: 3px var(--space-4);
-  font-size: 12px;
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
@@ -852,38 +856,23 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 .agent-thread-post-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .agent-thread-post-who {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
 
 .agent-thread-post-time {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .agent-thread-post-text {
-  margin-top: 2px;
-}
-
-.agent-thread-post-files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.agent-thread-post-file {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
+  margin-top: var(--space-1);
 }
 
 /* ─── the inert composer ─── */
@@ -905,41 +894,25 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 }
 
 .agent-thread-blocked-action {
-  min-height: 28px;
+  min-height: var(--space-7);
   padding: 0 var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-bg);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 13px;
-  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
 }
 
 .agent-thread-blocked-action:hover:not(:disabled) { border-color: var(--color-text-tertiary); }
 .agent-thread-blocked-action:disabled { opacity: 0.6; cursor: default; }
 
-/* K2: a 40px field. Disabled, but still the real shape — a shrunken or absent
-   composer would make the reader wonder whether replying exists at all. */
-.agent-thread-input {
-  width: 100%;
-  height: 40px;
-  padding: 10px var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: 14px;
-  resize: none;
-  cursor: not-allowed;
-}
-
 /* K5: one sentence, and it answers the question the disabled field raises. */
 .agent-thread-note {
-  margin: 6px 0 0;
-  font-size: 13px;
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
@@ -987,33 +960,35 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 
 /* K5: one sentence, 14px, under the field. */
 .agents-composer-note {
-  margin: 6px 0 0;
-  font-size: 14px;
-  line-height: 1.45;
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   color: var(--color-text-secondary);
 }
 
 .agents-composer-note--error { color: var(--color-error); }
-.agents-composer-note strong { font-weight: 600; color: var(--color-text); }
+.agents-composer-note strong { font-weight: var(--font-weight-semibold); color: var(--color-text); }
 
 /* ─── your own row ───────────────────────────────────────────────────────
    Your ask, above the answer it produced. Deliberately NOT a bubble and not
    right-aligned: this is a channel, and in a channel your message is a row
    like everyone else's. The only difference is the avatar, because you do not
-   have a photo here.
+   have a photo here: a SOLID circle, the agents' 32px, because a dashed outline
+   read as a drop target or an empty slot rather than a person.
    ──────────────────────────────────────────────────────────────────────── */
 
 .agent-you-av {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  flex-shrink: 0;
+  width: var(--space-8);
+  height: var(--space-8);
   border-radius: var(--radius-full);
-  border: 1px dashed var(--color-border);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
 }
 
 .agent-msg-name--plain { cursor: default; }
@@ -1025,13 +1000,14 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   color: var(--color-warning-ink);
 }
 
-/* ─── the chat's reading type, in the channel ────────────────────────────
-   An agent's words are markdown, set at the chat's reading size and leading
-   (`--chat-text`, `--chat-line-height`, declared on `.chat-pane`, which both
-   the feed column and the thread panel wear). Without this a run's report
-   printed its own asterisks at 14px/1.55 beside a chat that reads at 15/1.75.
-   MarkdownPreview's own document chrome (border, padding, fill) is flattened:
-   a channel row is not a card.
+/* ─── an agent's words, in the channel ───────────────────────────────────
+   An agent's words are markdown. They
+   was once set at the chat's reading size (15/1.75). The Elevated pass puts it
+   on the page's ladder instead: 14px on a 20px line box, the same as every
+   other line of prose in a row, so the eye has one reading size in the channel.
+   It is still MARKDOWN (no stray asterisks). The whole report, in the thread's
+   answer card, keeps Chat's own size. MarkdownPreview's document chrome
+   (border, padding, fill) is flattened: a channel row is not a card.
    ──────────────────────────────────────────────────────────────────────── */
 
 .agent-msg-md {
@@ -1049,8 +1025,8 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 }
 
 .agent-msg-md .md-preview .markdown-body {
-  font-size: var(--chat-text, 15px);
-  line-height: var(--chat-line-height, 1.75);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
 }
 
 .agent-msg-md .md-preview .markdown-body > :first-child { margin-top: 0; }
@@ -1063,7 +1039,7 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 }
 
 .agent-msg-md .md-preview .markdown-body li {
-  line-height: var(--chat-line-height, 1.75);
+  line-height: var(--line-height-relaxed);
 }
 
 /* ─── your ask, and the answer's opening inside it ───────────────────────
@@ -1080,7 +1056,7 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   border: 0;
   background: none;
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);
   cursor: pointer;
 }
@@ -1090,14 +1066,14 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 .agent-reply-preview {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   width: 100%;
   max-width: 92ch;
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
   border-left: 3px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--color-bg);
   font-family: inherit;
   text-align: left;
@@ -1114,12 +1090,12 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .agent-reply-preview-name {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
 
@@ -1130,8 +1106,8 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   color: var(--color-text);
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1144,7 +1120,6 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 
 .agent-reply-preview--running .agent-reply-preview-text {
   color: var(--color-text-secondary);
-  font-style: italic;
 }
 
 /* ─── the thread line ────────────────────────────────────────────────────
@@ -1165,14 +1140,14 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 .agent-thread-bar {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 3px 10px 3px 4px;
+  gap: var(--space-2);
+  min-height: var(--space-8);
+  padding: 0 var(--space-3) 0 var(--space-1);
   border: 1px solid transparent;
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: none;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }
@@ -1186,54 +1161,49 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   display: inline-flex;
 }
 
-/* Accent INK, not the accent swatch: 13px text on paper needs the darker one (4.15:1 → 5.6:1
-   in light; the same token in dark). The swatch stays for fills. */
+/* Text ink at rest, accent INK on hover (C3): six rows of accent counts competed with the one
+   accent moment the page has. The count still reads at body contrast, and hovering the line
+   is when it becomes the way in. */
 .agent-thread-bar-count {
-  font-weight: 700;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.agent-thread-bar:hover .agent-thread-bar-count,
+.agent-thread-bar:focus-visible .agent-thread-bar-count {
   color: var(--color-accent-ink);
 }
 
 .agent-thread-bar-last {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
-.agent-thread-bar-swap {
-  display: inline-grid;
-}
-
-.agent-thread-bar-swap > * {
-  grid-area: 1 / 1;
-  transition: opacity var(--transition-fast);
-}
-
+/* "View thread ›" is APPENDED after "Last reply", not stacked on it. The two used to share one
+   grid cell and crossfade, and two strings of different length crossfading in one cell were
+   painted over each other ("LastView thread PM"). Its room is reserved at rest, so the line
+   never shifts under the pointer; it only becomes visible. */
 .agent-thread-bar-go {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
   color: var(--color-text);
   opacity: 0;
+  transition: opacity var(--transition-fast);
 }
 
 .agent-thread-bar:hover .agent-thread-bar-go,
 .agent-thread-bar:focus-visible .agent-thread-bar-go { opacity: 1; }
 
-.agent-thread-bar:hover .agent-thread-bar-last,
-.agent-thread-bar:focus-visible .agent-thread-bar-last { opacity: 0; }
-
 .agent-thread-bar-quiet {
-  padding-left: 6px;
+  padding-left: var(--space-2);
   color: var(--color-text-secondary);
 }
 
 .agent-thread-bar:hover .agent-thread-bar-quiet { color: var(--color-text); }
 
 /* ─── the thread's rows ─── */
-
-.agent-you-av--sm {
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  font-size: 9px;
-}
 
 .agent-thread-post > .agent-av,
 .agent-thread-post > .agent-you-av {
@@ -1252,14 +1222,83 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   display: inline-flex;
   align-items: center;
   min-height: 24px;
-  padding: 1px 8px;
+  padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
   background: none;
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   cursor: pointer;
 }
 
 .agent-thread-answer-file:hover { color: var(--color-text); border-color: var(--color-text-tertiary); }
+
+/* ─── motion that keeps your place ───────────────────────────────────────
+   A row that arrives after the first paint fades in and rises 4px, on the
+   page's one deceleration curve. Scrolled up, it is COUNTED on a pill instead
+   of moving the reader (AgentsFeed.tsx `unseen`); the pill sits on the
+   scroller's bottom edge, just above the composer.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.agents-feed-item--arrived {
+  animation: agents-arrive var(--transition-normal);
+  animation-timing-function: var(--ease-out);
+}
+
+@keyframes agents-arrive {
+  from { opacity: 0; transform: translateY(var(--space-1)); }
+}
+
+.agents-feed-newpill-wrap {
+  position: sticky;
+  bottom: var(--space-3);
+  display: flex;
+  justify-content: center;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.agents-feed-newpill {
+  pointer-events: auto;
+  transform: translateY(-100%);
+  min-height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-md);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  animation: agents-arrive var(--transition-normal);
+  animation-timing-function: var(--ease-out);
+}
+
+.agents-feed-newpill:hover { border-color: var(--color-text-tertiary); }
+
+.agents-feed-newpill:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* Reduced motion: everything this sheet animates or transitions stands down. The running dot
+   stops breathing and holds full ink; the elapsed time keeps counting (it is information, not
+   motion), and the pill still appears, it just does not rise. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-msg-live-dot { animation: none; opacity: 1; }
+
+  .agents-feed-item--arrived,
+  .agents-feed-newpill,
+  .agent-thread:not(.agent-thread--overlay) { animation: none; }
+
+  .agent-msg-file,
+  .agent-msg-img,
+  .agent-msg-question-choice,
+  .agent-reply-preview,
+  .agent-thread-bar,
+  .agent-thread-bar-go { transition: none; }
+}

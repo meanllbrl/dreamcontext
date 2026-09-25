@@ -1,55 +1,86 @@
 import { BrandMark } from '../brand/BrandMark';
 import { AutomationsShowcase } from './AutomationsShowcase';
 import { AutomationsDispatcherBar } from './AutomationsDispatcherBar';
+import { useI18n } from '../../context/I18nContext';
+import type { AgentDialogInitial } from '../agents/AgentDialog';
+import type { AutomationMode, Weekday } from '../../hooks/useAutomations';
 import './AutomationsEmptyState.css';
 
+/** The three agents a first-time owner can start from. The words live in i18n; the schedule
+ *  is data, and it matches the sentence each prompt says out loud. */
+const STARTERS: { key: string; mode: AutomationMode; days?: Weekday[]; at?: string }[] = [
+  { key: 'digest', mode: 'sched', days: ['mon', 'tue', 'wed', 'thu', 'fri'], at: '09:00' },
+  { key: 'weekly', mode: 'sched', days: ['fri'], at: '17:00' },
+  { key: 'research', mode: 'call' },
+];
+
 /**
- * Automations' zero-state, built in the same shape as Council's and Lab's: with
- * no automations to list, the board's chrome would be noise, so it shows a
- * compact "What is Automations?" explainer instead — brand mark · kicker ·
- * gradient heading · lead · the animated cadence stage — ending in the one thing
- * a user can do about it: turn the scheduler on (the one thing that IS doable
- * from here with nothing created yet), then scaffold their first automation
- * from the CLI. The footnote carries the security stance, because the approval
- * tripwire is the thing a first-time reader most needs to understand about
- * this page.
+ * Automations' zero-state, built in the same shape as Council's and Lab's: with no agents to
+ * list, the channel's chrome would be noise, so it shows a compact explainer instead — brand
+ * mark · heading · lead · three agents to start from · the animated cadence stage.
  *
- * `onNewAgent` is NOT optional in practice, and leaving it out is a dead end:
- * this screen replaces the whole page while a vault has zero agents, so
- * without it the one flow a first-time owner needs — create the first agent —
- * is reachable only from the CLI, and the New agent dialog they are meant to
- * meet here is behind a wall they cannot see through. The CLI line stays, as
- * the alternative it always was.
+ * FIRST RUN STARTS SOMETHING (C9). The lead is outcome words, not implementation words (no
+ * `claude -p`, no dispatcher, no hash above the fold), and the way in is three starter agents
+ * that open the New agent dialog already filled in, one click from a working first agent. A
+ * blank start stays, quieter. The safety line sits right under them, because "nothing runs until
+ * you approve it" is what a first-time reader needs before pressing anything.
+ *
+ * `onNewAgent` / `onStart` are NOT optional in practice: this screen replaces the whole page
+ * while a vault has zero agents, so without them the only way to a first agent is the CLI.
  */
 export function AutomationsEmptyState({
   onToast,
   onNewAgent,
+  onStart,
 }: {
   onToast?: (msg: string) => void;
   onNewAgent?: () => void;
+  onStart?: (initial: AgentDialogInitial) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="auto-intro">
       <div className="auto-intro-mark">
         <BrandMark size={40} glow />
       </div>
 
-      <p className="auto-intro-kicker">Lab · Automations</p>
       <h2 className="auto-intro-title">
         Put the brain <span>on a schedule</span>.
       </h2>
-      <p className="auto-intro-lead">
-        An agent runs a headless <code>claude -p</code> session — on a cadence you set, or
-        only when you call it. You describe the job in plain language; one dispatcher wakes
-        every five minutes, runs what is due, writes a dated markdown file, and tells you what
-        it found. Every run leaves a lesson behind, so the next one starts smarter.
-      </p>
+      <p className="auto-intro-lead">{t('agents.empty.lead')}</p>
+
+      {onStart && (
+        <>
+          <p className="auto-intro-starters-label">{t('agents.empty.starters')}</p>
+          <div className="auto-intro-starters">
+            {STARTERS.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                className="auto-intro-starter"
+                onClick={() => onStart({
+                  title: t(`agents.starter.${s.key}.title`),
+                  description: t(`agents.starter.${s.key}.prompt`),
+                  mode: s.mode,
+                  days: s.days,
+                  at: s.at,
+                })}
+              >
+                <span className="auto-intro-starter-title">{t(`agents.starter.${s.key}.title`)}</span>
+                <span className="auto-intro-starter-sub">{t(`agents.starter.${s.key}.sub`)}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {onNewAgent && (
         <button type="button" className="auto-intro-new-btn" onClick={onNewAgent}>
-          New agent
+          {t('agents.empty.blank')}
         </button>
       )}
+
+      <p className="auto-intro-safety">{t('agents.empty.safety')}</p>
 
       <AutomationsShowcase />
 
@@ -59,12 +90,6 @@ export function AutomationsEmptyState({
       <code className="auto-intro-cmd">
         dreamcontext automations create &lt;slug&gt; --title "Daily digest" --days daily --at 18:00
       </code>
-      <p className="auto-intro-foot">
-        Agents are experimental and ship fully disabled: nothing runs until you install the
-        dispatcher and approve each agent on this machine. Runs use{' '}
-        <code>bypassPermissions</code>, which is exactly why approval is pinned to a SHA256 of
-        the prompt — edit it, and the job stops until you approve it again.
-      </p>
     </div>
   );
 }

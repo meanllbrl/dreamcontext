@@ -48,9 +48,10 @@ function headAndRest(text: string): [string, string] {
  *   inline  — the page header's pill: only the two HEALTHY states (on / off), as one small
  *             control on the header row. They are true every time the page opens, so a
  *             full-width bar for them was 60px of channel spent on the same news forever.
- *   alerts  — only the two WARN states, as ONE line under the header: the headline and the
- *             button, with the "why" on the button's tooltip. The paragraph version took the
- *             channel down to under half the window at 1100px; the full variant keeps it.
+ *   alerts  — only the two WARN states, as ONE flat row of the header's notice tray: the
+ *             headline and the button, with the "why" on the headline's and the button's
+ *             tooltip. The paragraph version took the channel down to under half the window at
+ *             1100px; the full variant keeps it.
  */
 export function AutomationsDispatcherBar({
   onToast,
@@ -156,10 +157,10 @@ export function AutomationsDispatcherBar({
   if (dispatcher.installed && !dispatcher.current) {
     const why = t('scheduler.stale.why');
     return (
-      <div className={`auto-dispatch auto-dispatch--warn${oneLine ? ' auto-dispatch--tight' : ''}`}>
+      <div className={`auto-dispatch auto-dispatch--warn${oneLine ? ' auto-dispatch--row' : ''}`}>
         <span className="auto-dispatch-dot" aria-hidden="true" />
         <div className="auto-dispatch-text">
-          <strong>The scheduler is out of date.</strong>
+          <strong title={oneLine ? why : undefined}>The scheduler is out of date.</strong>
           {!oneLine && <span>{why}</span>}
         </div>
         <button className="auto-dispatch-btn" onClick={() => doInstall(true)} disabled={busy} title={why}>
@@ -174,10 +175,10 @@ export function AutomationsDispatcherBar({
   if (dispatcher.installed && !dispatcher.projectRegistered) {
     const why = t('scheduler.unwatched.why');
     return (
-      <div className={`auto-dispatch auto-dispatch--warn${oneLine ? ' auto-dispatch--tight' : ''}`}>
+      <div className={`auto-dispatch auto-dispatch--warn${oneLine ? ' auto-dispatch--row' : ''}`}>
         <span className="auto-dispatch-dot" aria-hidden="true" />
         <div className="auto-dispatch-text">
-          <strong>The scheduler is on, but it isn't watching this project.</strong>
+          <strong title={oneLine ? why : undefined}>The scheduler is on, but it isn't watching this project.</strong>
           {!oneLine && <span>{why}</span>}
         </div>
         <button className="auto-dispatch-btn" onClick={() => doInstall(false)} disabled={busy} title={why}>

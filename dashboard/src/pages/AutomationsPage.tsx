@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AgentsMembers } from '../components/agents/AgentsMembers';
 import { AgentAvatar } from '../components/agents/AgentAvatar';
-import { AgentDialog } from '../components/agents/AgentDialog';
+import { AgentDialog, type AgentDialogInitial } from '../components/agents/AgentDialog';
+import { useFloaterClearance } from '../components/agents/useFloaterClearance';
 import { AgentsFeed } from '../components/agents/AgentsFeed';
 import { SlideOver } from '../components/sleepy/chat/SlideOver';
 import { Lightbox } from '../components/sleepy/chat/Lightbox';
@@ -140,9 +141,13 @@ export function AutomationsPage() {
   }, []);
 
   const [toast, setToast] = useState<string | null>(null);
-  /** The zero-state owns a create path of its own: with no agents there is no
-   *  roster grid and so no dashed "New agent" card. */
-  const [creating, setCreating] = useState(false);
+  /** The create dialog, open or not, and what it opens with: nothing (a blank agent) or one
+   *  of the first run's starters, prefilled. */
+  const [creating, setCreating] = useState<{ initial?: AgentDialogInitial } | null>(null);
+  /** The page element, held in state so the floater clearance follows it across the switch
+   *  between the zero-state and the channel (two branches, one page). */
+  const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null);
+  useFloaterClearance(pageEl);
   /** A document opened from a message's file card. Brain-relative as the feed
    *  reports it; prefixed for the project-root-scoped file route at the point
    *  of use, so only one spelling travels through this page's state. */
@@ -176,32 +181,42 @@ export function AutomationsPage() {
     [agents],
   );
 
-  /** "3 agents · 2 on a schedule" — the subtitle answers the question a person
-   *  opens a channel with, rather than restating its name (K31). Two spans so a
-   *  narrow header drops the schedule half whole instead of cutting it mid-word. */
+  /** "3 agents · 2 on a schedule". It LEADS the header now: the sidebar already names the
+   *  page, so the row opens on what is in it rather than repeating the title (K31, C6). Two
+   *  spans so a narrow header drops the schedule half whole instead of cutting it mid-word. */
   const subtitleCount = agents.length === 0
-    ? 'no agents yet'
-    : `${agents.length} agent${agents.length === 1 ? '' : 's'}`;
-  const subtitleSched = agents.length > 0 && scheduledCount > 0 ? ` · ${scheduledCount} on a schedule` : '';
+    ? t('agents.head.count.none')
+    : agents.length === 1 ? t('agents.head.count.one') : t('agents.head.count.many').replace('{n}', String(agents.length));
+  const subtitleSched = agents.length > 0 && scheduledCount > 0
+    ? ` · ${t('agents.head.sched').replace('{n}', String(scheduledCount))}`
+    : '';
 
   // The zero-state replaces the whole page: with nothing created, a channel
   // header over an empty channel and an empty roster is two dead ends where
   // one door belongs.
   if (!isLoading && agents.length === 0) {
     return (
-      <div className="agents-page agents-page--empty">
-        <AutomationsEmptyState onToast={setToast} onNewAgent={() => setCreating(true)} />
-        {creating && <AgentDialog agent={null} onClose={() => setCreating(false)} onToast={setToast} />}
-        {toast && <div className="agents-toast">{toast}</div>}
+      <div ref={setPageEl} className="agents-page agents-page--empty">
+        <AutomationsEmptyState
+          onToast={setToast}
+          onNewAgent={() => setCreating({})}
+          onStart={(initial) => setCreating({ initial })}
+        />
+        {creating && (
+          <AgentDialog agent={null} initial={creating.initial} onClose={() => setCreating(null)} onToast={setToast} />
+        )}
+        {toast && <div className="agents-toast" role="status">{toast}</div>}
       </div>
     );
   }
 
   return (
-    <div className="agents-page">
+    <div ref={setPageEl} className="agents-page">
       <header className="agents-head">
+        {/* The page's name for assistive tech only: the sidebar label is the visible title
+            (no page headlines), and painting it again cost the row ~190px (C6). */}
+        <h2 className="sr-only">{t('nav.automations')}</h2>
         <div className="agents-head-row">
-          <h2 className="agents-channel">{t('nav.automations')}</h2>
           <span className="agents-channel-sub">
             <span className="agents-channel-sub-count">{subtitleCount}</span>
             {subtitleSched && <span className="agents-channel-sub-sched">{subtitleSched}</span>}
@@ -247,26 +262,23 @@ export function AutomationsPage() {
             </button>
           </div>
 
-          <button type="button" className="agents-new-btn" onClick={() => setCreating(true)}>
+          <button type="button" className="agents-new-btn" onClick={() => setCreating({})}>
             New agent
           </button>
         </div>
 
-        {/* The scheduler's state is a PAGE-level truth, not a roster one: an
-            out-of-date dispatcher means nothing in the channel will ever
-            arrive, so it belongs above both views. */}
-        <AutomationsDispatcherBar variant="alerts" onToast={setToast} />
-      </header>
-
-      {view === 'messages' ? (
-        <div className="agents-channel-body">
-          {/* Above the feed, not in it. An agent blocked on a FIRST APPROVAL has
-              never run, so it has no message to carry the fact — it would be
-              invisible in a feed of runs. The question a RUN asked does reach
-              the feed, as a `needs you` message; this notice is for the state
-              that has no run behind it. */}
-          {needYou.length > 0 && (
+        {/* ONE TRAY for the notices, inside the header: the scheduler's WARN row (a page-level
+            truth, so every view shows it) and, in the channel, who is waiting on you. They used
+            to be two stacked cards with their own margins, and at 1100px a third of the
+            channel was header before any message (C6). Empty, the tray draws nothing. */}
+        <div className="agents-tray">
+          <AutomationsDispatcherBar variant="alerts" onToast={setToast} />
+          {/* An agent blocked on a FIRST APPROVAL has never run, so it has no message to carry
+              the fact; the question a RUN asked also reaches the feed, as a `needs you` row.
+              Warning ink on the dot only (K26/K40): a question is not a fault. */}
+          {view === 'messages' && needYou.length > 0 && (
             <button type="button" className="agents-needyou" onClick={() => setView('agents')}>
+              <span className="agents-needyou-dot" aria-hidden="true" />
               <span className="agents-needyou-faces" aria-hidden="true">
                 {needYou.slice(0, 3).map((a) => (
                   <AgentAvatar
@@ -274,7 +286,7 @@ export function AutomationsPage() {
                     slug={a.slug}
                     title={a.title}
                     hasPhoto={a.hasPhoto}
-                    size={22}
+                    size={20}
                     version={a.cache?.lastRunAt ?? undefined}
                   />
                 ))}
@@ -282,14 +294,19 @@ export function AutomationsPage() {
               <span className="agents-needyou-text">
                 <strong>
                   {needYou.length === 1
-                    ? `${needYou[0].title} is waiting on you.`
-                    : `${needYou.length} agents are waiting on you.`}
+                    ? t('agents.needYou.one').replace('{name}', needYou[0].title)
+                    : t('agents.needYou.many').replace('{n}', String(needYou.length))}
                 </strong>
                 <span>{t(needYou.length === 1 ? 'agents.needYou.openOne' : 'agents.needYou.openMany')}</span>
               </span>
               <span className="agents-needyou-go" aria-hidden="true">→</span>
             </button>
           )}
+        </div>
+      </header>
+
+      {view === 'messages' ? (
+        <div className="agents-channel-body">
           <AgentsFeed
             // While a file viewer is open over the page, Esc belongs to the viewer: the
             // thread panel under it must not close in the same keystroke.
@@ -301,13 +318,13 @@ export function AutomationsPage() {
       ) : view === 'files' ? (
         <AgentsFiles onOpenFile={setOpenFile} />
       ) : (
-        <AgentsMembers onToast={setToast} onNewAgent={() => setCreating(true)} />
+        <AgentsMembers onToast={setToast} />
       )}
 
       {creating && (
         <AgentDialog
           agent={null}
-          onClose={() => setCreating(false)}
+          onClose={() => setCreating(null)}
           onToast={setToast}
           /* Creating from the CHANNEL and landing back on an empty channel is
              a create that looks like it did nothing — the new agent is the one
@@ -381,7 +398,7 @@ export function AutomationsPage() {
           />
         );
       })()}
-      {toast && <div className="agents-toast">{toast}</div>}
+      {toast && <div className="agents-toast" role="status">{toast}</div>}
     </div>
   );
 }

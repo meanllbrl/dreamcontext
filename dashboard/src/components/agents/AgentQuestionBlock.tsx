@@ -77,11 +77,13 @@ export function AgentQuestionBlock({
 
       {question.choices.length > 0 ? (
         <div className="agent-msg-question-choices">
-          {question.choices.map((choice) => (
+          {/* The FIRST choice is the one filled accent a pending question spends; the rest are
+              tinted. Two filled buttons side by side say "both are the default". */}
+          {question.choices.map((choice, i) => (
             <button
               key={choice}
               type="button"
-              className="agent-msg-question-choice"
+              className={i === 0 ? 'agent-msg-question-choice' : 'agent-msg-question-choice agent-msg-question-choice--alt'}
               disabled={answerQuestion.isPending}
               onClick={() => answer(choice)}
             >

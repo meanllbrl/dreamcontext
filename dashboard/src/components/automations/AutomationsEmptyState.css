@@ -1,7 +1,8 @@
 /* ────────────────────────────────────────
    Zero-state explainer ("What is Automations?")
-   Same anatomy as the Council and Lab zero-states: brand mark · kicker ·
-   gradient heading · lead · animated stage · CLI scaffold · footnote.
+   Same anatomy as the Council and Lab zero-states: brand mark · gradient
+   heading · lead · three starter agents · safety line · animated stage ·
+   CLI scaffold. No kicker: it said "Lab", a word retired from the UI.
    ──────────────────────────────────────── */
 
 .auto-intro {
@@ -37,20 +38,11 @@
   margin-bottom: var(--space-1);
 }
 
-.auto-intro-kicker {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-}
-
 .auto-intro-title {
   margin: 0;
   font-family: var(--font-family-display);
   font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-snug);
   letter-spacing: var(--letter-spacing-heading);
   color: var(--color-text);
@@ -67,20 +59,72 @@
   margin: 0;
   max-width: 580px;
   font-size: var(--font-size-base);
-  line-height: 1.6;
+  line-height: var(--line-height-normal);
   color: var(--color-text-secondary);
 }
 
-/* Inline code inside the prose (`claude -p`, `bypassPermissions`) — tinted, not
-   boxed, so it reads as a term rather than a second command block. */
-.auto-intro-lead code,
-.auto-intro-foot code {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
+/* ─── three agents to start from (C9) ───
+   Neutral cards, not buttons that shout: each is a whole first agent, one click from a
+   prefilled dialog. The accent arrives only on hover, in the border (a tinted edge, not a
+   fill), so this screen spends no filled accent at all until the owner commits. */
+.auto-intro-starters-label {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.auto-intro-starters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--space-28), 1fr));
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.auto-intro-starter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-sm);
   color: var(--color-text);
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-sm);
-  padding: 1px 5px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.auto-intro-starter:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  box-shadow: var(--shadow-md);
+}
+
+.auto-intro-starter:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.auto-intro-starter-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-relaxed);
+}
+
+.auto-intro-starter-sub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* What stops anything happening by surprise, right under the ways in. */
+.auto-intro-safety {
+  margin: 0;
+  max-width: 560px;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-secondary);
 }
 
 .auto-intro-scaffold {
@@ -91,24 +135,16 @@
 
 .auto-intro-cmd {
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   color: var(--color-text);
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   max-width: 100%;
   overflow-x: auto;
   white-space: pre;
-}
-
-.auto-intro-foot {
-  margin: var(--space-1) 0 0;
-  max-width: 560px;
-  font-size: var(--font-size-xs);
-  line-height: 1.6;
-  color: var(--color-text-tertiary);
 }
 
 /* Showcase stage — the animated cadence diagram, framed like the Council and Lab
@@ -126,20 +162,12 @@
   box-shadow: var(--shadow-md);
 }
 
+/* The corner seat of the app's own maturity tag (`MaturityTag`, "Beta"): its ink and shape
+   are the tag's; only where it sits is set here. */
 .auto-stage-tag {
   position: absolute;
   top: var(--space-4);
   left: var(--space-5);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-  background: var(--color-accent-soft);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
 }
 
 .auto-stage-flow { max-width: 600px; }
@@ -148,33 +176,36 @@
   .auto-intro { padding-top: var(--space-6); }
 }
 
-/* The zero-state's primary action — the one accent fill on this screen (K8),
-   and the reason a vault with no agents is no longer a dead end that only the
-   CLI can open. */
+/* The BLANK start. Quieter than the starters on purpose (C9): a neutral outline, so the eye
+   lands on the three agents that are one click from working. Same class as ever, so the
+   first-run flow and its checks still find it. */
 .auto-intro-new-btn {
   align-self: center;
-  border: none;
+  height: var(--space-8);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 0 18px;
-  height: 38px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
   font: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  background: var(--gradient-brand-strong);
-  color: var(--color-accent-text);
-  transition: filter var(--transition-fast), transform var(--transition-fast);
+  transition: border-color var(--transition-fast);
 }
 
 .auto-intro-new-btn:hover {
-  filter: brightness(1.06);
-}
-
-.auto-intro-new-btn:active {
-  transform: scale(0.98);
+  border-color: var(--color-text-tertiary);
 }
 
 .auto-intro-new-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auto-intro-starter,
+  .auto-intro-new-btn {
+    transition: none;
+  }
 }

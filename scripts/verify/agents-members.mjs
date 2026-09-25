@@ -39,7 +39,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { dispatcherState, distIndex, mockDispatcher, scratchDir, shotsDir } from './lib/measure.mjs';
+import { chromeText, dashLines, dispatcherState, distIndex, effectiveBg, mockDispatcher, overlapArea, rect, scratchDir, shotsDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_INDEX = distIndex(REPO);
@@ -56,7 +56,7 @@ const CALL_DESC = 'Çağırdığımda verdiğim konuyu derinlemesine araştır';
 
 const report = { pass: 0, fail: 0 };
 function check(label, ok, ev = '') {
-  if (ok) { report.pass++; console.log(`  ✓ ${label}`); }
+  if (ok) { report.pass++; console.log(`  ✓ ${label}${ev && /^\[(C\d+|guard)\]/.test(label) ? `\n      ${ev}` : ''}`); }
   else { report.fail++; console.log(`  ✗ ${label}${ev ? `\n      ${ev}` : ''}`); }
 }
 
@@ -189,6 +189,45 @@ async function main() {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
 
+    // C9: the first run speaks outcome words and starts something. Swept as the app's own
+    // text: painted text plus every title, aria-label and placeholder under the zero-state.
+    const introText = await chromeText(page, '.auto-intro', []);
+    const introDashes = dashLines(introText);
+    const introLab = introText.split('\n').filter((l) => /\bLab\b/.test(l)).map((l) => l.trim()).slice(0, 4);
+    check('[C9] the first-run screen carries no em dash and no "Lab" in its text, titles or labels (was "Lab · Automations" twice and two em dashes)',
+      introDashes.length === 0 && introLab.length === 0, JSON.stringify({ introDashes, introLab }));
+    const starters = page.locator('.auto-intro-starter');
+    const starterCount = await starters.count();
+    let prefill = null;
+    if (starterCount > 0) {
+      const title = (await starters.first().locator('.auto-intro-starter-title').innerText()).trim();
+      await starters.first().click();
+      await until(async () => (await page.locator('.agent-modal').count()) > 0, 8000);
+      prefill = {
+        title,
+        desc: await page.locator('.agent-modal .agent-textarea').inputValue().catch(() => ''),
+        name: await page.locator('.agent-modal .agent-input').first().inputValue().catch(() => ''),
+      };
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(400);
+    }
+    check('[C9] three starter cards, and the first opens the dialog prefilled: a description and its own name (absent pre-fix)',
+      starterCount === 3 && !!prefill && prefill.desc.length > 20 && prefill.name === prefill.title, JSON.stringify({ starterCount, prefill }));
+    const jargon = await page.evaluate(() => {
+      const first = document.querySelector('.auto-intro-starter');
+      const line = first ? first.getBoundingClientRect().top : Infinity;
+      const hits = [];
+      const walker = document.createTreeWalker(document.querySelector('.auto-intro'), NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (!/claude -p|bypassPermissions/.test(n.textContent)) continue;
+        const r = document.createRange(); r.selectNodeContents(n);
+        for (const q of r.getClientRects()) if (q.width > 1 && q.top < line) hits.push(`${n.textContent.trim().slice(0, 30)}@${Math.round(q.top)}`);
+      }
+      return { starterTop: Number.isFinite(line) ? Math.round(line) : null, hits };
+    });
+    check('[C9] "claude -p" and "bypassPermissions" paint nowhere above the first starter card (was in the lead, with no starter at all)',
+      jargon.starterTop !== null && jargon.hits.length === 0, JSON.stringify(jargon));
+
     // The first agent is then seeded through the API so the checks below start
     // from a known manifest; every SUBSEQUENT create goes through the dialog.
     const created = await page.evaluate(async ({ b, desc }) => {
@@ -261,7 +300,25 @@ async function main() {
     check('the description is prose, with no markdown syntax left in it',
       !/[*_`]|^>|\|/.test(cardText.split('\n').slice(2).join(' ')), cardText.slice(0, 300));
     check('initials render when there is no photo', (await page.locator('.agent-av').first().innerText()).trim() === 'DI');
-    check('a dashed "New agent" card is present', await page.locator('.agent-card--new').count() === 1);
+    // REWRITE (C13): was "a dashed New agent card is present". C13 removes that card on
+    // purpose (the header button is the one way in, and an empty roster has its own state),
+    // so the check now asserts the opposite fact: exactly one "New agent" on the screen.
+    const newAgents = await page.locator('.agents-page').getByText('New agent', { exact: true }).count();
+    check('[C13] exactly one "New agent" in the members view (was 2: the header button and the dashed card)', newAgents === 1, `found ${newAgents}`);
+    const foot = page.locator('.agent-card:not(.agent-card--new) .agent-card-foot').first();
+    const footBg = await effectiveBg(foot).catch(() => null);
+    const cardBg = await effectiveBg(page.locator('.agent-card:not(.agent-card--new)').first()).catch(() => null);
+    check('[C13] the card footer is the card\'s own surface, not a grey slab (was rgb(233, 235, 240) on white)',
+      !!footBg && footBg === cardBg, `foot=${footBg} card=${cardBg}`);
+    const neverRan = await page.locator('.agent-card-status-word', { hasText: 'has not run yet' }).first().evaluate((el) => ({
+      weight: getComputedStyle(el).fontWeight, color: getComputedStyle(el).color,
+      secondary: (() => { const p = document.createElement('span'); p.style.color = 'var(--color-text-secondary)'; el.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; })(),
+    })).catch(() => null);
+    check('[C13] "has not run yet" reads as a fact: regular weight, secondary ink (was 600 in full ink)',
+      !!neverRan && neverRan.weight === '400' && neverRan.color === neverRan.secondary, JSON.stringify(neverRan));
+    const rosterDashes = dashLines(await chromeText(page, '.agents-page', ['.agent-card-desc']));
+    check('[C13] no em dash in the members view\'s own text, titles or labels (was "Daily insight digest — scheduled")',
+      rosterDashes.length === 0, rosterDashes.join(' | '));
     // An unanswered question is a MESSAGE for the channel, not something
     // stapled to an identity card (owner, 2026-09-20).
     check('no approval/verdict block is stapled to a card',
@@ -304,6 +361,14 @@ async function main() {
     await page.screenshot({ path: join(SHOTS, '2-new-agent-dialog.png') });
 
     await page.locator('.agent-btn--primary').click();
+    // C1: the page toast lands clear of the floating Agent button (it used to sit on it).
+    const toastEl = page.locator('.agents-toast').first();
+    const toastUp = await until(async () => (await toastEl.count()) > 0, 10000);
+    const floaterEl = page.locator('.agent-fab, .agent-dock:not(.agent-dock--floating)').first();
+    const toastR = toastUp ? await rect(toastEl).catch(() => null) : null;
+    const floaterR = (await floaterEl.count()) ? await rect(floaterEl) : null;
+    check('[C1] the page toast clears the floating Agent button (was overlapping it)',
+      !!toastR && !!floaterR && overlapArea(toastR, floaterR) === 0, `toast=${JSON.stringify(toastR)} floater=${JSON.stringify(floaterR)}`);
     // Wait for the LAST write of the create sequence (manifest, then the photo
     // upload that patches `photo:` into it), not the first.
     const callCard = await until(async () => /^photo: automations\/photos\//m.test(manifestText('researcher')), 25000);

@@ -4,7 +4,7 @@ import type { AutomationSummary } from '../../hooks/useAutomations';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { AutomationDetailPanel } from '../automations/AutomationDetailPanel';
 import { AgentDialog } from './AgentDialog';
-import { AgentMemberCard, AgentNewCard } from './AgentMemberCard';
+import { AgentMemberCard } from './AgentMemberCard';
 import { AgentProfilePopover } from './AgentProfilePopover';
 import './AgentsMembers.css';
 
@@ -27,15 +27,16 @@ interface ProfileAnchor {
   rect: DOMRect;
 }
 
-/** Which dialog this view owns. CREATE is NOT here — the page owns it, because
- *  the header's New agent button and the roster's dashed tile must open the
- *  same one dialog, and two mounted copies of a create form is how they drift. */
+/** Which dialog this view owns. CREATE is NOT here: the page owns it, and the
+ *  header's New agent button is the one way in (a second, dashed "New agent"
+ *  tile in the grid was the same action twice on one screen). */
 type DialogState = { kind: 'closed' } | { kind: 'edit'; slug: string };
 
 /**
  * The Agents tab — the member list.
  *
- * One card per agent plus a dashed "New agent" tile. What this deliberately is
+ * One card per agent, and nothing else in the grid: New agent is the header's
+ * button, once per screen (C13). What this deliberately is
  * NOT: a replacement for `AutomationDetailPanel`. Run history, the approval
  * review, pending questions and "Open chat" all still live there and every
  * card carries a button to it — a member list that swallowed those would be a
@@ -47,10 +48,8 @@ type DialogState = { kind: 'closed' } | { kind: 'edit'; slug: string };
  */
 export function AgentsMembers({
   onToast,
-  onNewAgent,
 }: {
   onToast: (msg: string) => void;
-  onNewAgent: () => void;
 }) {
   const { data: automations, isLoading, isError, error } = useAutomations();
   const [order] = usePersistedState<string[]>('automations:order:v1', []);
@@ -95,7 +94,6 @@ export function AgentsMembers({
             onToast={onToast}
           />
         ))}
-        <AgentNewCard onClick={onNewAgent} />
       </div>
 
       {profile && profileAgent && (

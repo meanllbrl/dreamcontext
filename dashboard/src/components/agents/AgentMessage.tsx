@@ -4,6 +4,7 @@ import { AgentQuestionBlock } from './AgentQuestionBlock';
 import { AgentSummaryBlock } from './AgentSummaryBlock';
 import { BoardEmbed } from '../sleepy/chat/BoardEmbed';
 import { boardName } from '../sleepy/chat/BoardEmbed';
+import { MediaEmbed } from '../sleepy/chat/MediaEmbed';
 import { MarkdownPreview } from '../core/MarkdownPreview';
 import { graphContentUrl } from '../../api/client';
 import { useVault } from '../../context/VaultContext';
@@ -12,6 +13,7 @@ import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { markdownToText } from '../../lib/markdownToText';
 import { middleTruncate } from '../../lib/fileLabel';
 import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
+import { runDuration, useNow } from './agentRunState';
 import {
   useAutomation, useAutomationSession, type FeedMessage, type FeedStatus,
 } from '../../hooks/useAutomations';
@@ -203,7 +205,7 @@ export function AgentFiles({
                         {t('agents.file.open')}
                       </button>
                     </span>
-                    <audio src={graphContentUrl(vault, f.path, { raw: true })} controls preload="metadata" />
+                    <MediaEmbed kind="audio" src={graphContentUrl(vault, f.path, { raw: true })} />
                   </span>
                 </div>
               );
@@ -261,16 +263,7 @@ function AgentClip({ path, name, onOpen }: { path: string; name: string; onOpen:
   const style = ratio === null ? undefined : ({ '--agent-clip-ratio': String(ratio) } as CSSProperties);
   return (
     <figure className="agent-msg-video" style={style}>
-      <video
-        src={graphContentUrl(vault, path, { raw: true })}
-        controls
-        preload="metadata"
-        playsInline
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget;
-          if (v.videoWidth > 0 && v.videoHeight > 0) setRatio(v.videoWidth / v.videoHeight);
-        }}
-      />
+      <MediaEmbed kind="video" src={graphContentUrl(vault, path, { raw: true })} onRatio={setRatio} />
       <figcaption className="agent-msg-media-cap">
         <span className="agent-msg-file-name" title={name}>{middleTruncate(name, 40)}</span>
         <button type="button" className="agent-msg-media-open" onClick={onOpen}>
@@ -387,17 +380,6 @@ function OpenSessionButton({ message, onToast }: { message: FeedMessage; onToast
   );
 }
 
-/** "4m 12s" / "41s". Matches the runner's own wording in the thread's system
- *  rows, so the same run never reports its length two different ways. */
-function duration(ms: number | null): string | null {
-  if (ms === null || !Number.isFinite(ms)) return null;
-  const total = Math.max(0, Math.round(ms / 1000));
-  if (total < 60) return `${total}s`;
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return s === 0 ? `${m}m` : `${m}m ${s}s`;
-}
-
 /** Cost is shown to the cent below a dollar and to the cent above it — an
  *  automation's run is a few cents and `$0.3100000004` is not a number a human
  *  reads. Null (a run that never reported one) shows nothing at all rather
@@ -458,7 +440,7 @@ function ThreadBar({
     >
       {replies > 0 && (
         <span className="agent-thread-bar-faces" aria-hidden="true">
-          <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={22} version={message.runId} />
+          <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={20} version={message.runId} />
         </span>
       )}
       {replies > 0 ? (
@@ -466,13 +448,17 @@ function ThreadBar({
           <strong className="agent-thread-bar-count">
             {replies} {replies === 1 ? 'reply' : 'replies'}
           </strong>
-          {/* Slack's swap: "Last reply" and "View thread" share one cell, and hover trades
-              one for the other — so the line never grows a gap for a word that is hidden.
-              The hover word is hidden from the accessible name: it is the same action the
-              button already is, and reading both halves of the swap said it twice. */}
-          <span className="agent-thread-bar-swap">
-            <span className="agent-thread-bar-last">{lastAt ? `Last reply ${hhmm(lastAt)}` : ''}</span>
-            <span className="agent-thread-bar-go" aria-hidden="true">{t('agents.thread.view')}</span>
+          {/* "Last reply" stays where it is and "View thread ›" is APPENDED after it, shown
+              on hover. The two used to share one grid cell and crossfade, and two strings of
+              different length fading through each other were legible at no point of the fade.
+              The hover label is hidden from the accessible name: it is the same action the
+              button already is, and reading both said it twice. */}
+          {lastAt && (
+            <span className="agent-thread-bar-last">{t('agents.thread.lastReply').replace('{time}', hhmm(lastAt))}</span>
+          )}
+          <span className="agent-thread-bar-go" aria-hidden="true">
+            {t('agents.thread.view')}
+            <span className="agent-thread-bar-chev">›</span>
           </span>
         </>
       ) : (
@@ -491,6 +477,7 @@ export function AgentMessage({
   variant = 'feed',
   threadOpen = false,
   panelId,
+  runStartedAt,
 }: {
   message: FeedMessage;
   /** `opener` is the control that was used, so closing the thread can give it focus back. */
@@ -508,10 +495,41 @@ export function AgentMessage({
   threadOpen?: boolean;
   /** The open panel's id, for the thread line's `aria-controls`. */
   panelId?: string;
+  /** When this agent's run slot was taken (epoch ms, `runSlots[slug].startedAt`), so a running
+   *  row can show how long it has been going. Absent, the run's own fire time stands in. */
+  runStartedAt?: number | null;
 }) {
   const { t } = useI18n();
-  const meta = [duration(message.durationMs), cost(message.costUsd)].filter(Boolean).join(' · ');
+  const running = message.status === 'running';
+  // Called on every render, before the ask row's early return: a hook's order cannot depend on
+  // which kind of row this is.
+  const now = useNow(running);
+  const startedAt = runStartedAt ?? Date.parse(message.ask?.at ?? message.at);
+  const elapsed = running && Number.isFinite(startedAt) ? runDuration(now - startedAt) : null;
+  const meta = running
+    ? null
+    : [runDuration(message.durationMs), cost(message.costUsd)].filter(Boolean).join(' · ');
   const root = variant === 'root';
+  const open = !root && threadOpen;
+
+  /**
+   * A run's status word, and while it runs, the thing that says it is ALIVE: a dot that
+   * breathes (motion carries "in progress", the word keeps carrying the status, per
+   * `orthogonal-encoding-channels`) and the time since it started, climbing each second. A
+   * hung run is then visible as a timer nobody stopped, where it used to look exactly like a
+   * dead one.
+   */
+  const statusWord = (
+    <span className={`agent-msg-status agent-msg-status--${message.status}`}>
+      {running && <span className="agent-msg-live-dot" aria-hidden="true" />}
+      {STATUS_WORD[message.status]}
+    </span>
+  );
+  const metaLine = running
+    ? elapsed && <span className="agent-msg-meta agent-msg-elapsed">{elapsed}</span>
+    : meta && <span className="agent-msg-meta">{meta}</span>;
+  /** The row whose thread is open keeps a "you are here" mark until the panel closes. */
+  const openProps = open ? { 'aria-current': 'true' as const } : {};
 
   // ── AN ASK IS A THREAD ON YOUR MESSAGE ─────────────────────────────────────
   //
@@ -523,7 +541,10 @@ export function AgentMessage({
   if (!root && message.ask) {
     const parts = attachmentParts(message.files);
     return (
-      <article className={`agent-msg agent-msg--you${message.unread ? ' agent-msg--unread' : ''}`}>
+      <article
+        className={`agent-msg agent-msg--you${message.unread ? ' agent-msg--unread' : ''}${open ? ' agent-msg--open' : ''}`}
+        {...openProps}
+      >
         <div className="agent-msg-av">
           <span className="agent-you-av" aria-hidden="true">You</span>
         </div>
@@ -555,19 +576,21 @@ export function AgentMessage({
             <span className="agent-reply-preview-head">
               <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={20} version={message.runId} />
               <span className="agent-reply-preview-name">{message.title}</span>
-              <span className={`agent-msg-status agent-msg-status--${message.status}`}>
-                {STATUS_WORD[message.status]}
-              </span>
-              {meta && <span className="agent-msg-meta">{meta}</span>}
+              {statusWord}
+              {metaLine}
             </span>
             {/* A failed run's text is its REASON, not an answer, so it wears the reason's
                 ink rather than the answer's. */}
             <span
               className={`agent-reply-preview-text${message.textFrom === 'error' ? ' agent-reply-preview-text--error' : ''}`}
             >
-              {message.status === 'running' && !message.text
-                ? t('agents.thread.working')
-                : message.text ? markdownToText(message.text) : 'Nothing to report.'}
+              {running && !message.text
+                // When it started, not only that it is working: with the timer in the head, a
+                // run that has been "working" since this morning says so.
+                ? (Number.isFinite(startedAt)
+                  ? t('agents.run.startedAt').replace('{time}', hhmm(new Date(startedAt).toISOString()))
+                  : t('agents.thread.working'))
+                : message.text ? markdownToText(message.text) : t('agents.nothingToReport')}
             </span>
             {parts.length > 0 && (
               <span className="agent-reply-preview-files">
@@ -611,14 +634,15 @@ export function AgentMessage({
 
   return (
     <article
-      className={`agent-msg${root ? ' agent-msg--root' : ''}${!root && message.unread ? ' agent-msg--unread' : ''}`}
+      className={`agent-msg${root ? ' agent-msg--root' : ''}${!root && message.unread ? ' agent-msg--unread' : ''}${open ? ' agent-msg--open' : ''}`}
+      {...openProps}
     >
       <div className="agent-msg-av">
         <AgentAvatar
           slug={message.slug}
           title={message.title}
           hasPhoto={message.hasPhoto}
-          size={36}
+          size={32}
           version={message.runId}
         />
       </div>
@@ -630,10 +654,8 @@ export function AgentMessage({
           <div className="agent-msg-head">
             <span className="agent-msg-name agent-msg-name--plain">{message.title}</span>
             <span className="agent-msg-time">{hhmm(message.at)}</span>
-            <span className={`agent-msg-status agent-msg-status--${message.status}`}>
-              {STATUS_WORD[message.status]}
-            </span>
-            {meta && <span className="agent-msg-meta">{meta}</span>}
+            {statusWord}
+            {metaLine}
           </div>
         ) : (
           <div className="agent-msg-head">
@@ -644,9 +666,7 @@ export function AgentMessage({
               {message.title}
             </button>
             <span className="agent-msg-time">{hhmm(message.at)}</span>
-            <span className={`agent-msg-status agent-msg-status--${message.status}`}>
-              {STATUS_WORD[message.status]}
-            </span>
+            {statusWord}
             {/* A run can be FINISHED and still be waiting on you: it asked, the
                 answer resumed it, it ran on and completed — and a second
                 question is open, or the first never got answered. The status
@@ -658,7 +678,7 @@ export function AgentMessage({
             {message.needsYou && message.status !== 'needs-you' && (
               <span className="agent-msg-needs">{t('agents.needsYou')}</span>
             )}
-            {meta && <span className="agent-msg-meta">{meta}</span>}
+            {metaLine}
           </div>
         )}
 
@@ -671,7 +691,7 @@ export function AgentMessage({
           // state; an empty row reads as a message that failed to load.
           <p className="agent-msg-text agent-msg-text--quiet">{t('agents.thread.working')}</p>
         ) : (
-          <p className="agent-msg-text agent-msg-text--quiet">Nothing to report.</p>
+          <p className="agent-msg-text agent-msg-text--quiet">{t('agents.nothingToReport')}</p>
         )}
 
         {/* WHERE THE WORDS CAME FROM. An agent that chose to post and an agent
