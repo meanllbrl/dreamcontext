@@ -4,6 +4,12 @@ import { AgentAvatar } from '../components/agents/AgentAvatar';
 import { AgentDialog } from '../components/agents/AgentDialog';
 import { AgentsFeed } from '../components/agents/AgentsFeed';
 import { SlideOver } from '../components/sleepy/chat/SlideOver';
+import { Lightbox } from '../components/sleepy/chat/Lightbox';
+import { PdfViewer } from '../components/sleepy/chat/PdfViewer';
+import { BoardFullscreen } from '../components/sleepy/chat/BoardEmbed';
+import { agentFileKind } from '../components/agents/AgentMessage';
+import { agentFileUrl, graphContentUrl } from '../api/client';
+import { useVault } from '../context/VaultContext';
 import { dropScratch } from '../components/sleepy/chat/composerScratch';
 import { dropThreadScratch } from '../components/agents/agentsChannelHost';
 import { classifyReference } from '../components/sleepy/chat/chatEntities';
@@ -11,6 +17,8 @@ import '../components/sleepy/chat/overlays.css';
 import { useAgentFeed, useAutomations } from '../hooks/useAutomations';
 import { AutomationsEmptyState } from '../components/automations/AutomationsEmptyState';
 import { AutomationsDispatcherBar } from '../components/automations/AutomationsDispatcherBar';
+import { useI18n } from '../context/I18nContext';
+import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import './AutomationsPage.css';
 
 /** The page's three views. `messages` is the channel — the feed of what the
@@ -57,7 +65,9 @@ function AgentsFiles({ onOpenFile }: { onOpenFile: (path: string) => void }) {
     // Newest message first: the feed is oldest-first (chat reading order), and a
     // file list is a search surface, where the thing you just made is at the top.
     for (const m of [...(data?.messages ?? [])].reverse()) {
-      for (const f of m.files) {
+      // The run's own document rides on `document`, no longer in `files`: the feed shows it
+      // as the thread's report, but it is still a file this list must find.
+      for (const f of m.document ? [...m.files, m.document] : m.files) {
         if (seen.has(f.path)) continue;
         seen.add(f.path);
         out.push({ path: f.path, name: f.name, title: m.title, at: m.at });
@@ -96,6 +106,11 @@ function AgentsFiles({ onOpenFile }: { onOpenFile: (path: string) => void }) {
 }
 
 export function AutomationsPage() {
+  const { t } = useI18n();
+  const { vault } = useVault();
+  // The server's own desktop gate, the one `AgentFiles` reads to decide whether a board
+  // draws: the route an `.svg` opens through is desktop-only, so off desktop it stays a card.
+  const desktop = useAgentCapabilities().data?.desktop === true;
   const [view, setView] = useState<AgentsView>('messages');
 
   /**
@@ -162,11 +177,12 @@ export function AutomationsPage() {
   );
 
   /** "3 agents · 2 on a schedule" — the subtitle answers the question a person
-   *  opens a channel with, rather than restating its name (K31). */
-  const subtitle = agents.length === 0
+   *  opens a channel with, rather than restating its name (K31). Two spans so a
+   *  narrow header drops the schedule half whole instead of cutting it mid-word. */
+  const subtitleCount = agents.length === 0
     ? 'no agents yet'
-    : `${agents.length} agent${agents.length === 1 ? '' : 's'}`
-      + (scheduledCount > 0 ? ` · ${scheduledCount} on a schedule` : '');
+    : `${agents.length} agent${agents.length === 1 ? '' : 's'}`;
+  const subtitleSched = agents.length > 0 && scheduledCount > 0 ? ` · ${scheduledCount} on a schedule` : '';
 
   // The zero-state replaces the whole page: with nothing created, a channel
   // header over an empty channel and an empty roster is two dead ends where
@@ -185,9 +201,15 @@ export function AutomationsPage() {
     <div className="agents-page">
       <header className="agents-head">
         <div className="agents-head-row">
-          <h2 className="agents-channel">#agents</h2>
-          <span className="agents-channel-sub">{subtitle}</span>
+          <h2 className="agents-channel">{t('nav.automations')}</h2>
+          <span className="agents-channel-sub">
+            <span className="agents-channel-sub-count">{subtitleCount}</span>
+            {subtitleSched && <span className="agents-channel-sub-sched">{subtitleSched}</span>}
+          </span>
           <span className="agents-head-spacer" />
+
+          {/* The scheduler's healthy state is one pill on this row, not a bar under it. */}
+          <AutomationsDispatcherBar variant="inline" onToast={setToast} />
 
           {/* A LABELLED two-option switch, not a face-stack you have to decode.
               The first version was avatars plus a bare count, which rendered as
@@ -233,7 +255,7 @@ export function AutomationsPage() {
         {/* The scheduler's state is a PAGE-level truth, not a roster one: an
             out-of-date dispatcher means nothing in the channel will ever
             arrive, so it belongs above both views. */}
-        <AutomationsDispatcherBar onToast={setToast} />
+        <AutomationsDispatcherBar variant="alerts" onToast={setToast} />
       </header>
 
       {view === 'messages' ? (
@@ -252,7 +274,7 @@ export function AutomationsPage() {
                     slug={a.slug}
                     title={a.title}
                     hasPhoto={a.hasPhoto}
-                    size={26}
+                    size={22}
                     version={a.cache?.lastRunAt ?? undefined}
                   />
                 ))}
@@ -263,12 +285,15 @@ export function AutomationsPage() {
                     ? `${needYou[0].title} is waiting on you.`
                     : `${needYou.length} agents are waiting on you.`}
                 </strong>
-                <span>Open them to read what they are asking.</span>
+                <span>{t(needYou.length === 1 ? 'agents.needYou.openOne' : 'agents.needYou.openMany')}</span>
               </span>
               <span className="agents-needyou-go" aria-hidden="true">→</span>
             </button>
           )}
           <AgentsFeed
+            // While a file viewer is open over the page, Esc belongs to the viewer: the
+            // thread panel under it must not close in the same keystroke.
+            fileOpen={openFile !== null}
             onOpenFile={setOpenFile}
             onOpenAgent={() => setView('agents')}
           />
@@ -296,16 +321,66 @@ export function AutomationsPage() {
           first time any of those changed. `/agent/file` is PROJECT-root
           scoped, so the brain-relative path the feed reports is prefixed here
           — the one place that conversion happens. */}
-      {openFile && (
-        <SlideOver
-          mode="file"
-          path={`_dream_context/${openFile}`}
-          reference={classifyReference(openFile)}
-          onClose={() => setOpenFile(null)}
-          onNavApp={() => setOpenFile(null)}
-          onOpenPath={(p) => setOpenFile(p.replace(/^_dream_context\//, ''))}
-        />
-      )}
+      {openFile && (() => {
+        // ROUTED BY TYPE, exactly as the chat routes a file it opens (`ChatPane`'s
+        // `handleOpenFile`): a board is drawn fullscreen, a picture opens in the lightbox,
+        // a PDF gets the full-window viewer, and everything else (markdown, text, a clip)
+        // opens in the slide-over. The slide-over alone was wrong for three of those — it
+        // asks the text endpoint for a PDF's bytes and shows a board as raw JSON.
+        // Paths arrive brain-relative; the chat's viewers read project-relative ones, and
+        // the vault route (`graphContentUrl`) reads brain-relative bytes off-desktop too.
+        const projectPath = `_dream_context/${openFile}`;
+        const close = () => setOpenFile(null);
+        const kind = agentFileKind(openFile);
+        if (kind === 'board') return <BoardFullscreen path={projectPath} onClose={close} />;
+        // An `.svg` is a PICTURE, and it opens as one, exactly as Chat opens it: in the
+        // lightbox, as an `<img>`, from the desktop file route (which serves it as an image
+        // under a sandbox CSP, so a script inside it never runs). Never from the vault route,
+        // which is generic and refuses script-bearing types. Off desktop it stays a card and
+        // opens in the slide-over below, as any other document does.
+        if (openFile.toLowerCase().endsWith('.svg') && desktop) {
+          return (
+            <Lightbox
+              src={agentFileUrl(vault, projectPath, { raw: true })}
+              caption={openFile.split('/').pop()}
+              path={projectPath}
+              onClose={close}
+            />
+          );
+        }
+        if (kind === 'image') {
+          return (
+            <Lightbox
+              src={graphContentUrl(vault, openFile, { raw: true })}
+              caption={openFile.split('/').pop()}
+              path={projectPath}
+              onClose={close}
+            />
+          );
+        }
+        if (kind === 'pdf') {
+          return (
+            <PdfViewer
+              path={projectPath}
+              src={graphContentUrl(vault, openFile, { raw: true })}
+              label={openFile.split('/').pop()}
+              onClose={close}
+            />
+          );
+        }
+        return (
+          <SlideOver
+            mode="file"
+            path={projectPath}
+            // Classified on the PROJECT path: the task/knowledge/board matchers all key off
+            // the `_dream_context/` prefix, so the bare brain path matched none of them.
+            reference={classifyReference(projectPath)}
+            onClose={close}
+            onNavApp={close}
+            onOpenPath={(p) => setOpenFile(p.replace(/^_dream_context\//, ''))}
+          />
+        );
+      })()}
       {toast && <div className="agents-toast">{toast}</div>}
     </div>
   );

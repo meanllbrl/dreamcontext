@@ -908,9 +908,22 @@ export interface FeedMessage {
    *  What the "Needs you" chip counts — derived server-side so the chip and the
    *  rows can never disagree. */
   needsYou: boolean;
-  /** Authored entries beyond the body. System rows are not replies. */
+  /** The rows the thread draws under its root — every authored entry except
+   *  the root, plus the report when there is one. The server computes it, and
+   *  the thread route returns the same number; nothing here adds to it. */
   replyCount: number;
   lastReplyAt: string | null;
+  /** The run's published document, kept OUT of `files`: the thread shows it as
+   *  the agent's report, and the Files view lists it. */
+  document: FeedFile | null;
+  /** The recorded run whose session backs this message — what "Open session"
+   *  resolves by `firedAt`. The run itself for a recorded run; for a RESUMED turn
+   *  (an @mention or reply to an agent with a session) the earlier run whose
+   *  session it continued, since a resume records no row of its own. */
+  sessionRunId: string | null;
+  /** Whether "Open session" can work: a session backs it, and it is neither
+   *  still running nor a fire that never ran. */
+  sessionOpenable: boolean;
   unread: boolean;
   newestId: string | null;
 }
@@ -924,6 +937,11 @@ export interface AgentFeed {
    *  channel the way `unread` already proved they can. */
   needsYouTotal: number;
   agents: { slug: string; title: string; hasPhoto: boolean }[];
+  /** One entry per AGENT with a run in flight (an @mention, "run now", another tab),
+   *  keyed by slug; `{}` when nothing runs. Rides on the feed so the channel shows who
+   *  is busy with no poll of its own. Different agents run side by side; only the
+   *  named agent's own slot refuses a new message. */
+  runSlots: Record<string, { runId: string | null; startedAt: number }>;
 }
 
 /** One row of a posted summary — a figure that moved, not prose. Mirrors
@@ -965,19 +983,39 @@ export function useAgentFeed(
   return useQuery({
     queryKey: ['automations-feed'],
     queryFn: () => api.get<AgentFeed>('/automations/threads'),
-    refetchInterval: live ? 2_000 : 15_000,
+    // Fast while a run is in flight — one this window started, or one the feed
+    // itself reports holding a slot — so its answer lands as it is written.
+    refetchInterval: (query) => (live || Object.keys(query.state.data?.runSlots ?? {}).length > 0 ? 2_000 : 15_000),
     refetchOnWindowFocus: true,
     retry: 0,
   });
 }
 
 /** One run's thread, for the panel. Polled only while open. */
+/** A run's whole published document — the detail behind the feed's one line.
+ *  Served with the thread (never with the feed poll). */
+export interface RunAnswer {
+  path: string;
+  text: string;
+  truncated: boolean;
+}
+
 export function useAgentThread(slug: string | null, runId: string | null) {
   const api = useApi();
   return useQuery({
     queryKey: ['automations', slug, 'thread', runId],
     queryFn: () =>
-      api.get<{ slug: string; title: string; entries: ThreadEntry[] }>(
+      api.get<{
+        slug: string;
+        title: string;
+        entries: ThreadEntry[];
+        answer?: RunAnswer | null;
+        /** The entry the panel draws as the root, so it is not listed again. */
+        rootId?: string | null;
+        /** The feed row's own count, from the same server function. */
+        replyCount?: number;
+        lastReplyAt?: string | null;
+      }>(
         `/automations/${slug}/thread?run=${encodeURIComponent(runId ?? '')}`,
       ),
     enabled: !!slug && !!runId,
@@ -1205,5 +1243,21 @@ export function useReplyDelivery(slug: string | null, runId: string | null) {
     // no endpoint for "how did the last reply go", only for one job by id.
     queryFn: () => ({ status: 'running', reason: null }),
     enabled: false,
+  });
+}
+
+/**
+ * This project's `/` menu for a composer with no chat process behind it (the channel and
+ * its thread panel). The server's cached list — the same one a new chat is handed at
+ * connect — so the channel's menu and the chat's cannot drift apart. It changes only when a
+ * chat turn reports a new list, so one read per page visit is plenty.
+ */
+export function useProjectSlashCommands() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent', 'slash-commands'],
+    queryFn: () => api.get<{ commands: string[] }>('/agent/slash-commands'),
+    staleTime: 5 * 60_000,
+    retry: 0,
   });
 }

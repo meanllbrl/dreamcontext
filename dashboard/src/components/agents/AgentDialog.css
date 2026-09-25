@@ -348,15 +348,15 @@
 
 /* The ONE accent fill in this dialog (K8). */
 .agent-btn--primary {
-  background: var(--gradient-brand);
+  background: var(--gradient-brand-strong);
   border-color: transparent;
-  color: var(--color-text-on-brand);
+  color: var(--color-accent-text);
   font-weight: 600;
 }
 
 .agent-btn--primary:hover:not(:disabled) {
   filter: brightness(1.06);
-  background: var(--gradient-brand);
+  background: var(--gradient-brand-strong);
 }
 
 .agent-btn--danger {

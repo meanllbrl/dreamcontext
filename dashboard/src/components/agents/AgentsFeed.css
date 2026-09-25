@@ -8,6 +8,12 @@
  */
 
 .agents-feed {
+  /* The anchor for the thread's overlay scrim (Chat's `.chat-slideover-scrim`, which is
+     `position: absolute; inset: 0`), so it covers the channel and not the page header. */
+  position: relative;
+  /* The chips row's height — its 30px chips plus its padding and rule — which the thread
+     panel's header matches, so the two dividers under them are one line across the page. */
+  --agents-toolbar-h: calc(30px + 2 * var(--space-3) + 1px);
   flex: 1;
   min-height: 0;
   display: flex;
@@ -37,6 +43,8 @@
 
 .agents-chips {
   flex-shrink: 0;
+  box-sizing: border-box;
+  min-height: var(--agents-toolbar-h);
   display: flex;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
@@ -46,6 +54,13 @@
 }
 
 .agents-chips::-webkit-scrollbar { display: none; }
+
+/* More chips than room: the row fades at its right edge, which is what says "this scrolls"
+   when the scrollbar is hidden. Toggled by the feed while the row is not scrolled to its end. */
+.agents-chips--more {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - var(--space-8)), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - var(--space-8)), transparent);
+}
 
 .agents-chip {
   display: inline-flex;
@@ -70,9 +85,11 @@
 }
 
 .agents-chip--on {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-accent-contrast, #fff);
+  /* A fill that carries text takes the strong accent: white on the plain accent is 4.15:1
+     in light and 2.75:1 in dark, on the strong one 5.64:1 in both. */
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .agents-chip-label {
@@ -87,16 +104,18 @@
 .agents-chip-count {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
 }
 
 /* ─── the scroller ─── */
 
+/* The bottom reserve grows by the floating Agent button's clearance when one is on screen
+   (`--agents-floater-clearance`, published by the feed), so the last message can scroll clear
+   of it instead of sitting under it. Zero where there is no floater. */
 .agents-feed-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-3) 0 var(--space-6);
+  padding: var(--space-3) 0 calc(var(--space-6) + var(--agents-floater-clearance, 0px));
 }
 
 .agents-feed-note {
@@ -161,14 +180,14 @@
   content: '';
   flex: 1;
   height: 1px;
-  background: var(--color-danger, #e5484d);
+  background: var(--color-error);
 }
 
 .agents-feed-new span {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.3px;
-  color: var(--color-danger, #e5484d);
+  color: var(--color-error);
 }
 
 /* ─── one message ─── */
@@ -187,7 +206,20 @@
 /* Unread is a BAR, not a fill: a tint across the row says "this whole message
    is special", where the truth is only "you have not seen this yet". */
 .agent-msg--unread {
-  border-left-color: var(--color-accent);
+  position: relative;
+}
+
+/* Inset top and bottom, so two unread rows in a row read as two marks rather than one rule
+   running down the feed. Drawn in the space the row's transparent border reserves. */
+.agent-msg--unread::before {
+  content: '';
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  left: -2px;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
 }
 
 .agent-msg-av {
@@ -209,6 +241,9 @@
 }
 
 .agent-msg-name {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   padding: 0;
   border: 0;
   background: none;
@@ -238,11 +273,11 @@
 
 .agent-msg-status--failed,
 .agent-msg-status--timeout {
-  color: var(--color-danger, #e5484d);
+  color: var(--color-error);
 }
 
 .agent-msg-status--needs-you {
-  color: var(--color-warning, #f5a623);
+  color: var(--color-warning-ink);
   font-weight: 600;
 }
 
@@ -250,7 +285,7 @@
    says the reader still owes the run an answer, which a FINISHED run can also
    be doing — so it cannot be a second `.agent-msg-status` (see AgentMessage). */
 .agent-msg-needs {
-  color: var(--color-warning, #f5a623);
+  color: var(--color-warning-ink);
   font-weight: 600;
 }
 
@@ -284,67 +319,126 @@
   color: var(--color-text-secondary);
 }
 
-/* ─── the file card ─── */
+/* ─── the files on a post ───────────────────────────────────────────────
+   Two tiers, in this order. VISUALS (a board, a picture, a clip) are what you
+   LOOK at, so each takes the prose column's width. DOCUMENTS (a PDF, a note,
+   a CSV) are what you OPEN, so they sit as a row of cards under the visuals,
+   each leading with its type. Every piece is bounded: a message is a row in a
+   channel, and a full-height screenshot would push the next agent off screen.
+   ──────────────────────────────────────────────────────────────────────── */
 
 .agent-msg-files {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 92ch;
+  margin-top: var(--space-2);
+}
+
+.agent-msg-cards {
+  display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .agent-msg-file {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: 320px;
-  height: 32px;
-  padding: 0 10px;
+  gap: var(--space-3);
+  max-width: 340px;
+  min-height: 48px;
+  padding: 6px 14px 6px 6px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 8px);
   background: var(--color-bg-secondary);
   color: var(--color-text);
   font-family: inherit;
   font-size: 13px;
+  text-align: left;
   cursor: pointer;
-  transition: border-color 220ms ease;
+  transition: border-color 220ms ease, background 220ms ease;
 }
 
-.agent-msg-file:hover { border-color: var(--color-text-secondary); }
+.agent-msg-file:hover { border-color: var(--color-text-secondary); background: var(--color-bg); }
 
-.agent-msg-file-glyph {
+/* The type leads: "PDF", "MD", "CSV" in a small square, so a row of cards is
+   read by what each IS before its name. Neutral ink; a type is not a state. */
+.agent-msg-file-type {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background: var(--color-bg-tertiary, var(--color-bg));
+  border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+/* A glyph (♪, ▦) is drawn at reading size; the 10px type-word size made it a speck. */
+.agent-msg-file-type--glyph {
+  font-size: var(--font-size-base);
+  font-weight: 400;
+}
+
+.agent-msg-file--pdf .agent-msg-file-type {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 30%, var(--color-border));
+}
+
+.agent-msg-file-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .agent-msg-file-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
 }
 
-/* Why a board is a chip here at all (K5, one sentence): off-desktop its canvas
-   would render empty, so the chip says where it opens instead of drawing a lie. */
+/* What the card is, or (for a board off-desktop) where it opens instead of
+   drawing an empty canvas. */
 .agent-msg-file-note {
   color: var(--color-text-tertiary);
   font-size: 11px;
 }
 
+.agent-msg-file--audio { cursor: default; padding-right: 10px; }
+/* A board the server will not draw here: a card with its reason, and nothing to press. */
+div.agent-msg-file--board { cursor: default; }
+div.agent-msg-file--board:hover { border-color: var(--color-border); background: var(--color-bg-secondary); }
+.agent-msg-file--audio audio { height: 32px; max-width: 260px; }
+
+.agent-msg-audio-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 /* ─── a posted image ─── */
 
-/* A button, not a bare <img>: it opens the same viewer the chip does, so the
-   picture is the affordance rather than a thing you have to find a chip for.
-   Bounded because a message is a ROW in a channel — a full-height screenshot
-   would push the next agent off the screen. */
+/* A button, not a bare <img>: it opens the lightbox, so the picture is the
+   affordance rather than a thing you have to find a chip for. */
 .agent-msg-img {
   display: block;
-  max-width: 320px;
+  max-width: var(--chat-card-width);
   padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 8px);
   background: var(--color-bg-secondary);
   overflow: hidden;
-  cursor: pointer;
+  cursor: zoom-in;
   transition: border-color 220ms ease;
 }
 
@@ -353,8 +447,92 @@
 .agent-msg-img img {
   display: block;
   max-width: 100%;
-  max-height: 220px;
+  max-height: var(--chat-media-max-h);
   object-fit: contain;
+}
+
+/* ─── a posted board: the chat's own live canvas, at the column's width ─── */
+
+.agent-msg-board {
+  width: 100%;
+  max-width: var(--chat-card-width);
+}
+
+.agent-msg-board .chat-board { margin: 0; }
+
+/* ─── a posted clip: it PLAYS here ─── */
+
+/* Every visual in a post shares one cap — the chat's card width — so a board, a picture and a
+   clip line up instead of stepping 758 / 520 / 558. A clip's box is then set by ITS ratio
+   (`--agent-clip-ratio`, 16:9 until the file says otherwise): as wide as the cap allows, but no
+   taller than the chat's media height, so a portrait reel is a tall narrow player rather than
+   a strip between black slabs, and no clip changes size when its metadata arrives. */
+.agent-msg-video {
+  width: min(var(--chat-card-width), calc(var(--chat-media-max-h) * var(--agent-clip-ratio, 16 / 9)));
+  max-width: 100%;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+
+.agent-msg-video video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: var(--agent-clip-ratio, 16 / 9);
+  background: #000;
+}
+
+.agent-msg-media-cap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.agent-msg-media-cap .agent-msg-file-name { min-width: 0; font-weight: 500; color: var(--color-text); }
+
+.agent-msg-media-open {
+  flex-shrink: 0;
+  min-height: 24px;
+  min-width: 24px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.agent-msg-media-open:hover { color: var(--color-text); text-decoration: underline; }
+
+/* The attachments line inside an ask's preview: what came back, by kind. One piece per
+   file, each cut on its own and wrapping as a whole, so a long first name no longer hides
+   every file after it. */
+.agent-reply-preview-files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.agent-reply-preview-file {
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-reply-preview-sep {
+  white-space: pre;
 }
 
 /* ─── the figures a post carried (--kv) ─── */
@@ -421,18 +599,20 @@
 .agent-msg-question-choice {
   min-height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--color-accent);
+  border: 1px solid var(--color-accent-strong);
   border-radius: var(--radius-md, 8px);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-family: inherit;
   font-size: 13px;
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: opacity 220ms ease;
+  transition: filter 220ms ease;
 }
 
-.agent-msg-question-choice:hover:not(:disabled) { opacity: 0.88; }
+/* Brightened, not faded: an 0.88 opacity over the page lands at 4.52:1, a hair from failing;
+   brightness(1.06) keeps the label at 5.15:1. */
+.agent-msg-question-choice:hover:not(:disabled) { filter: brightness(1.06); }
 .agent-msg-question-choice:disabled { opacity: 0.5; cursor: default; }
 
 /* A question with no options is answered in prose, so it gets a field — a
@@ -466,9 +646,9 @@
   flex: 0 0 auto;
   height: 40px;
   padding: 0 14px;
-  border: 1px solid var(--color-accent);
+  border: 1px solid var(--color-accent-strong);
   border-radius: var(--radius-md, 8px);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-family: inherit;
   font-size: 13px;
@@ -525,20 +705,61 @@
 
 .agent-thread {
   flex-shrink: 0;
-  width: 380px;
-  max-width: 45%;
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* THE SPLIT (a channel 900px or wider). Wide enough to READ in: the panel carries the run's
+   whole report in the chat's answer card. The reader sets the width with the handle on the
+   left edge (remembered); this is only the first paint's, and the ceiling matches the
+   handle's. */
+.agent-thread:not(.agent-thread--overlay) {
+  width: 560px;
+  max-width: 60%;
   background: var(--color-bg);
+}
+
+/* THE OVERLAY (a narrower channel). The panel is Chat's SlideOver: `.chat-slideover-panel`
+   gives it the SlideOver's width, height, edge, shadow and slide-in, inside Chat's own scrim.
+   Only the surface is pinned here, because `.chat-pane` (which the panel also wears for the
+   composer's tokens) sets a background of equal specificity and whichever sheet loads last
+   would win. */
+.agent-thread.agent-thread--overlay {
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+}
+
+/* The left edge is a handle: drag it, or focus it and use the arrow keys. A strip wider
+   than the 1px rule it sits on, so it can be grabbed without aiming. */
+.agent-thread-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.agent-thread-resize:hover,
+.agent-thread-resize:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.agent-thread-resize:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .agent-thread-head {
   flex-shrink: 0;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
-  height: 48px;
+  box-sizing: border-box;
+  height: var(--agents-toolbar-h);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
@@ -559,22 +780,15 @@
   white-space: nowrap;
 }
 
-.agent-thread-close {
-  border: 0;
-  background: none;
-  color: var(--color-text-secondary);
-  font-size: 14px;
-  cursor: pointer;
-  padding: 4px;
-}
-
-.agent-thread-close:hover { color: var(--color-text); }
+/* The close button is the chat's own SlideOver close atom (`.chat-slideover-close`); only its
+   seat in this header is set here. */
+.agent-thread-close { align-self: center; }
 
 .agent-thread-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: var(--space-4);
+  padding-bottom: calc(var(--space-4) + var(--agents-floater-clearance, 0px));
 }
 
 .agent-thread-divider {
@@ -619,7 +833,20 @@
 .agent-thread-sys-text { overflow-wrap: anywhere; }
 
 .agent-thread-post {
-  padding: var(--space-2) var(--space-4);
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.agent-thread-post-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The root is the question the thread hangs off; it gets the room a Slack
+   thread's first message gets, and the divider under it does the separating. */
+.agent-thread-root {
+  padding-top: var(--space-4);
 }
 
 .agent-thread-post-head {
@@ -641,12 +868,7 @@
 }
 
 .agent-thread-post-text {
-  margin: 2px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--color-text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  margin-top: 2px;
 }
 
 .agent-thread-post-files {
@@ -666,11 +888,37 @@
 
 /* ─── the inert composer ─── */
 
+/* The same strip as the channel's `.agents-composer`, so the two composers' top rules and
+   fields line up across the page. */
 .agent-thread-foot {
   flex-shrink: 0;
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  padding: var(--space-3) var(--space-5) var(--space-4);
   border-top: 1px solid var(--color-border);
 }
+
+/* A turned-off or unapproved agent: the reason, and the one control that fixes it. */
+.agent-thread-blocked {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.agent-thread-blocked-action {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.agent-thread-blocked-action:hover:not(:disabled) { border-color: var(--color-text-tertiary); }
+.agent-thread-blocked-action:disabled { opacity: 0.6; cursor: default; }
 
 /* K2: a 40px field. Disabled, but still the real shape — a shrunken or absent
    composer would make the reader wonder whether replying exists at all. */
@@ -730,7 +978,8 @@
    measured from, and what lines the field up with the notice in the page header. The
    composer's copy would draw a second rule 20px inside the first, so it is suppressed —
    everything else the card carries is exactly what is wanted. */
-.agents-composer .chat-cmp {
+.agents-composer .chat-cmp,
+.agent-thread-composer .chat-cmp {
   padding: 0;
   border-top: 0;
   background: none;
@@ -744,7 +993,7 @@
   color: var(--color-text-secondary);
 }
 
-.agents-composer-note--error { color: var(--color-danger, #e5484d); }
+.agents-composer-note--error { color: var(--color-error); }
 .agents-composer-note strong { font-weight: 600; color: var(--color-text); }
 
 /* ─── your own row ───────────────────────────────────────────────────────
@@ -773,5 +1022,244 @@
 /* A fire that never became a run. Reported, not alarmed — nothing broke, it
    just did not happen, and the body says why. */
 .agent-msg-status--skipped {
-  color: var(--color-warning, #f5a623);
+  color: var(--color-warning-ink);
 }
+
+/* ─── the chat's reading type, in the channel ────────────────────────────
+   An agent's words are markdown, set at the chat's reading size and leading
+   (`--chat-text`, `--chat-line-height`, declared on `.chat-pane`, which both
+   the feed column and the thread panel wear). Without this a run's report
+   printed its own asterisks at 14px/1.55 beside a chat that reads at 15/1.75.
+   MarkdownPreview's own document chrome (border, padding, fill) is flattened:
+   a channel row is not a card.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.agent-msg-md {
+  max-width: 92ch;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.agent-msg-md .md-preview {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+
+.agent-msg-md .md-preview .markdown-body {
+  font-size: var(--chat-text, 15px);
+  line-height: var(--chat-line-height, 1.75);
+}
+
+.agent-msg-md .md-preview .markdown-body > :first-child { margin-top: 0; }
+.agent-msg-md .md-preview .markdown-body > :last-child { margin-bottom: 0; }
+
+.agent-msg-md .md-preview .markdown-body p,
+.agent-msg-md .md-preview .markdown-body ul,
+.agent-msg-md .md-preview .markdown-body ol {
+  margin-bottom: var(--space-2);
+}
+
+.agent-msg-md .md-preview .markdown-body li {
+  line-height: var(--chat-line-height, 1.75);
+}
+
+/* ─── your ask, and the answer's opening inside it ───────────────────────
+   Slack's shape: the thread hangs off YOUR message. The agent's first words
+   are previewed inside it, as an inset quote, so "what I asked / what it
+   said" reads without a click; the whole answer is in the thread.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.agent-msg-to {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.agent-msg-to:hover { color: var(--color-text); text-decoration: underline; }
+
+.agent-reply-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 92ch;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.agent-reply-preview:hover {
+  border-color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+}
+
+.agent-reply-preview-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-reply-preview-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+/* A preview: the opening of the answer, three lines at most. The rest is one
+   click away, in the thread. */
+.agent-reply-preview-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* A failed run's preview is its REASON, in the reason's ink, not an answer's. */
+.agent-reply-preview-text--error {
+  color: var(--color-text-secondary);
+}
+
+.agent-reply-preview--running .agent-reply-preview-text {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* ─── the thread line ────────────────────────────────────────────────────
+   Faces, "N replies", when the last one landed, and "View thread" revealed on
+   hover, as Slack draws it. Beside it, Open session.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.agent-msg-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.agent-msg-actions .agent-msg-replies { margin-top: 0; }
+
+.agent-thread-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 3px 10px 3px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 8px);
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.agent-thread-bar:hover {
+  border-color: var(--color-border);
+  background: var(--color-bg);
+}
+
+.agent-thread-bar-faces {
+  display: inline-flex;
+}
+
+/* Accent INK, not the accent swatch: 13px text on paper needs the darker one (4.15:1 → 5.6:1
+   in light; the same token in dark). The swatch stays for fills. */
+.agent-thread-bar-count {
+  font-weight: 700;
+  color: var(--color-accent-ink);
+}
+
+.agent-thread-bar-last {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.agent-thread-bar-swap {
+  display: inline-grid;
+}
+
+.agent-thread-bar-swap > * {
+  grid-area: 1 / 1;
+  transition: opacity var(--transition-fast);
+}
+
+.agent-thread-bar-go {
+  font-size: 12px;
+  color: var(--color-text);
+  opacity: 0;
+}
+
+.agent-thread-bar:hover .agent-thread-bar-go,
+.agent-thread-bar:focus-visible .agent-thread-bar-go { opacity: 1; }
+
+.agent-thread-bar:hover .agent-thread-bar-last,
+.agent-thread-bar:focus-visible .agent-thread-bar-last { opacity: 0; }
+
+.agent-thread-bar-quiet {
+  padding-left: 6px;
+  color: var(--color-text-secondary);
+}
+
+.agent-thread-bar:hover .agent-thread-bar-quiet { color: var(--color-text); }
+
+/* ─── the thread's rows ─── */
+
+.agent-you-av--sm {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  font-size: 9px;
+}
+
+.agent-thread-post > .agent-av,
+.agent-thread-post > .agent-you-av {
+  flex-shrink: 0;
+}
+
+/* The whole answer, in the chat's own answer card. The card hugs short answers
+   in the chat; here it is the report, so it takes the column. */
+.agent-thread-answer .chat-msg-assistant-body {
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+}
+
+.agent-thread-answer-file {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 1px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: none;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.agent-thread-answer-file:hover { color: var(--color-text); border-color: var(--color-text-tertiary); }

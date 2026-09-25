@@ -155,6 +155,89 @@ describe('refusals quote the server, except the one rung a user reaches by accid
   });
 });
 
+// ── The audit pass: what a refusal, a busy slot and the keyboard now do ─────────────────
+
+describe('a refused reply gives the words back', () => {
+  it('restores the sent text from inside the reply mutation\'s onError', () => {
+    // The composer empties the field the moment the host accepts a send, before the server
+    // answers. Without this a 409 took the reply with it (audit T3).
+    const onError = panel.slice(panel.indexOf('onError:'), panel.indexOf('const slashCommands'));
+    expect(onError).toMatch(/restoreRef\.current\(\)/);
+    expect(panel).toMatch(/restoreRef\.current = restoreLastSent/);
+  });
+
+  it('both hosts expose restoreLastSent', () => {
+    const channel = host.slice(host.indexOf('export function useAgentsChannelHost'), host.indexOf('export function useAgentThreadHost'));
+    const thread = host.slice(host.indexOf('export function useAgentThreadHost'));
+    expect(channel).toMatch(/restoreLastSent/);
+    expect(thread).toMatch(/restoreLastSent/);
+  });
+});
+
+describe('thread drafts belong to their agent', () => {
+  it('keeps one draft per agent, dropped with the page\'s buckets', () => {
+    // Audit T2: a draft typed in one agent's thread was still in the field when the next
+    // agent's thread opened, one Enter away from the wrong recipient.
+    expect(host).toMatch(/const threadDrafts = new Map<string, string>\(\)/);
+    const drop = host.slice(host.indexOf('export function dropThreadScratch'), host.indexOf('export function useAgentThreadHost'));
+    expect(drop).toMatch(/threadDrafts\.clear\(\)/);
+  });
+});
+
+describe('the thread composer is honest about what it can reach', () => {
+  it('offers no @ list: a thread has one recipient', () => {
+    // Without an explicit empty list the shared composer fetches this machine's CONNECTED
+    // PROJECTS and offers them in a thread whose every message goes to one agent (T11).
+    expect(panel).toMatch(/mentions=\{\[\]\}/);
+  });
+
+  it('goes down while another run holds the slot, as the server refuses a reply then', () => {
+    expect(panel).toMatch(/unavailable=\{busyWith \?/);
+  });
+});
+
+describe('the panel answers the keyboard', () => {
+  it('closes on Escape, but not while a file viewer owns the key', () => {
+    expect(panel).toMatch(/e\.key !== 'Escape' \|\| !closeOnEscape/);
+    expect(panel).toMatch(/onKeyDown=\{onKeyDown\}/);
+  });
+
+  it('draws its root through the message\'s own root variant', () => {
+    expect(panel).toMatch(/variant="root"/);
+    expect(message).toMatch(/variant === 'root'/);
+  });
+});
+
+// ── A narrow channel gets Chat's SlideOver, not a squeezed split ─────────────────────────
+
+describe('the overlay is Chat\'s SlideOver, and only a split can be resized', () => {
+  it('wears the SlideOver panel class when it overlays', () => {
+    expect(panel).toMatch(/overlay \? ' chat-slideover-panel agent-thread--overlay' : ''/);
+  });
+
+  it('keeps a click on the panel from reaching the scrim that closes it', () => {
+    expect(panel).toMatch(/onClick=\{overlay \? \(e\) => e\.stopPropagation\(\) : undefined\}/);
+  });
+
+  it('draws the resize handle only on the split', () => {
+    expect(panel).toMatch(/\{!overlay && \(\s*<div\s+className="agent-thread-resize"/);
+  });
+});
+
+// ── One run slot per agent: only the agent named is refused ──────────────────────────────
+
+describe('the channel refuses only a message to an agent that is already running', () => {
+  const channel = host.slice(host.indexOf('export function useAgentsChannelHost'), host.indexOf('export function useAgentThreadHost'));
+
+  it('asks isBusy about the agent the draft names', () => {
+    expect(channel).toMatch(/live\.current\.isBusy\(target\.slug\)/);
+  });
+
+  it('refuses it without clearing, so the draft and its chips stay', () => {
+    expect(channel).toMatch(/if \(live\.current\.isBusy\(target\.slug\)\) \{[\s\S]{0,300}return false as const;/);
+  });
+});
+
 // ── The message's two controls ───────────────────────────────────────────────────────────
 
 describe('the message names actions it can now perform', () => {

@@ -8,7 +8,9 @@
  * commands — so these tests pin the plumbing and the matching rules, not a fixed menu.
  */
 import { describe, it, expect } from 'vitest';
-import { slashQueryAt, filterSlashCommands, applySlashCommand } from '../../dashboard/src/lib/agentComposer.js';
+import {
+  slashQueryAt, filterSlashCommands, applySlashCommand, filterPeerMentions, foldForMatch, type PeerMention,
+} from '../../dashboard/src/lib/agentComposer.js';
 import { parseChatLine } from '../../dashboard/src/lib/chatProtocol.js';
 
 describe('slashQueryAt', () => {
@@ -75,6 +77,56 @@ describe('filterSlashCommands', () => {
 
   it('returns nothing when nothing matches (the menu then stays closed)', () => {
     expect(filterSlashCommands(COMMANDS, 'zzz')).toEqual([]);
+  });
+});
+
+describe('Turkish names in the / and @ menus', () => {
+  // A Tilki-shaped command list. `toLowerCase()` turned "İ" into "i" + a combining dot and left
+  // "ı"/"I" unpaired, so the first three of these were unreachable by what a person types.
+  const TR = ['İçerik-planı', 'ılık-özet', 'çözüm-raporu', 'review', 'İstatistik'];
+
+  it('"/içerik" and "/İÇERİK" both find İçerik-planı', () => {
+    expect(filterSlashCommands(TR, 'içerik')).toEqual(['İçerik-planı']);
+    expect(filterSlashCommands(TR, 'İÇERİK')).toEqual(['İçerik-planı']);
+  });
+
+  it('"/ILIK" and "/ılık" find ılık-özet (the dotless i has a pair now)', () => {
+    expect(filterSlashCommands(TR, 'ILIK')).toEqual(['ılık-özet']);
+    expect(filterSlashCommands(TR, 'ılık')).toEqual(['ılık-özet']);
+  });
+
+  it('an ASCII keyboard reaches accented names: "/cozum" finds çözüm-raporu', () => {
+    expect(filterSlashCommands(TR, 'cozum')).toEqual(['çözüm-raporu']);
+  });
+
+  it('"/ist" is a real prefix hit on İstatistik, not a substring accident', () => {
+    expect(filterSlashCommands(TR, 'ist')).toEqual(['İstatistik']);
+  });
+
+  it('folds ASCII exactly as toLowerCase did, so plain menus rank as before', () => {
+    for (const s of ['Compact', 'DREAM-SYNC', 'review', 'Issue']) expect(foldForMatch(s)).toBe(s.toLowerCase());
+  });
+});
+
+describe('filterPeerMentions: aliases', () => {
+  const peer = (vault: string, extra: Partial<PeerMention> = {}): PeerMention => ({ vault, agent: vault, whatItIs: '', ...extra });
+  const AGENTS = [peer('oncall', { aliases: ['Deep researcher'], whatItIs: 'Deep researcher' }), peer('digest', { aliases: ['Daily insight digest'] })];
+
+  it('finds an agent by any word of its title, as a prefix match', () => {
+    expect(filterPeerMentions(AGENTS, 'deep').map((p) => p.vault)).toEqual(['oncall']);
+    expect(filterPeerMentions(AGENTS, 'res').map((p) => p.vault)).toEqual(['oncall']);
+  });
+
+  it('still finds by the slug that is written into the draft', () => {
+    expect(filterPeerMentions(AGENTS, 'onc').map((p) => p.vault)).toEqual(['oncall']);
+  });
+
+  it('a peer with no aliases (the chat\'s connected projects) matches exactly as before', () => {
+    const PROJECTS = [peer('tilki', { whatItIs: 'Deep tutoring product' }), peer('acme', { agent: 'peer-acme-payments' })];
+    // `whatItIs` is NOT searched, so a description never pulls a project into the list.
+    expect(filterPeerMentions(PROJECTS, 'deep')).toEqual([]);
+    expect(filterPeerMentions(PROJECTS, 'til').map((p) => p.vault)).toEqual(['tilki']);
+    expect(filterPeerMentions(PROJECTS, 'payments').map((p) => p.vault)).toEqual(['acme']);
   });
 });
 

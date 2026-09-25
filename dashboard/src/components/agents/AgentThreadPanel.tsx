@@ -1,9 +1,21 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  useAgentThread, useAutomations, useReplyDelivery, useReplyToAgentThread,
-  type FeedMessage, type ThreadEntry,
+  Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent,
+} from 'react';
+import {
+  useAgentThread, useAutomations, useProjectSlashCommands, useReplyDelivery, useReplyToAgentThread,
+  useSetAutomationEnabled,
+  type FeedMessage, type RunAnswer, type ThreadEntry,
 } from '../../hooks/useAutomations';
-import { AgentFiles, AgentMessage } from './AgentMessage';
+import { AgentAvatar } from './AgentAvatar';
+import { AgentFiles, AgentMessage, AgentProse } from './AgentMessage';
+import { ProseSegment } from '../sleepy/chat/TranscriptItem';
+// The answer is drawn with the chat's own card (`.chat-msg-assistant-body`), whose rules
+// live here — imported by the panel that uses them rather than borrowed from whichever
+// surface happened to load first, as the meeting room does.
+import '../sleepy/chat/cards.css';
+// The close button is the chat's own SlideOver close atom (`.chat-slideover-close`), from here.
+import '../sleepy/chat/overlays.css';
 import { AgentQuestionBlock } from './AgentQuestionBlock';
 import { AgentSummaryBlock } from './AgentSummaryBlock';
 import { useAgentThreadHost } from './agentsChannelHost';
@@ -55,22 +67,31 @@ function SystemRow({ entry }: { entry: ThreadEntry }) {
   );
 }
 
+/** Who wrote a thread row: your placeholder face, or the agent's photo. */
+function RowFace({ who, message }: { who: 'user' | 'agent'; message: FeedMessage }) {
+  return who === 'user'
+    ? <span className="agent-you-av agent-you-av--sm" aria-hidden="true">You</span>
+    : <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={28} version={message.runId} />;
+}
+
 function AuthoredRow({
   entry,
-  title,
+  message,
   onOpenFile,
 }: {
   entry: ThreadEntry;
-  title: string;
+  message: FeedMessage;
   onOpenFile: (path: string) => void;
 }) {
   return (
     <div className={`agent-thread-post agent-thread-post--${entry.kind}`}>
+      <RowFace who={entry.kind === 'user' ? 'user' : 'agent'} message={message} />
+      <div className="agent-thread-post-main">
       <div className="agent-thread-post-head">
-        <span className="agent-thread-post-who">{entry.kind === 'user' ? 'You' : title}</span>
+        <span className="agent-thread-post-who">{entry.kind === 'user' ? 'You' : message.title}</span>
         <span className="agent-thread-post-time">{hhmm(entry.at)}</span>
       </div>
-      <p className="agent-thread-post-text">{entry.text}</p>
+      <AgentProse text={entry.text} className="agent-thread-post-text" />
       {entry.summary && entry.summary.length > 0 && <AgentSummaryBlock rows={entry.summary} />}
       {/* The SAME renderer the feed uses, on purpose: a board that draws itself
           in the message and turns into a dead filename in the thread would make
@@ -83,6 +104,53 @@ function AuthoredRow({
           onOpenFile={onOpenFile}
         />
       )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * THE WHOLE ANSWER — the run's published document, as a reply from the agent.
+ *
+ * This is the detail the feed's one line stands for. It is drawn with the chat's own answer
+ * card (`ProseSegment`: markdown, the chat's reading size and leading, clickable paths, code
+ * blocks with Copy), so reading an agent's report here is the same experience as reading an
+ * answer in Chat — which is what the owner asked for, and what a plain paragraph was not.
+ */
+function AnswerRow({
+  answer,
+  message,
+  onOpenFile,
+}: {
+  answer: RunAnswer;
+  message: FeedMessage;
+  onOpenFile: (path: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="agent-thread-post agent-thread-post--agent agent-thread-answer">
+      <RowFace who="agent" message={message} />
+      <div className="agent-thread-post-main">
+        <div className="agent-thread-post-head">
+          <span className="agent-thread-post-who">{message.title}</span>
+          <button
+            type="button"
+            className="agent-thread-answer-file"
+            onClick={() => onOpenFile(answer.path)}
+            title={answer.path}
+          >
+            {answer.path.split('/').pop()}
+          </button>
+        </div>
+        {answer.text
+          ? <ProseSegment text={answer.text} onOpenFile={onOpenFile} />
+          // A document that is only frontmatter is still the run's document: the pill above
+          // opens it, and this says why there is nothing to read here.
+          : <p className="agent-thread-note">{t('agents.thread.answerEmpty')}</p>}
+        {answer.truncated && (
+          <p className="agent-thread-note">{t('agents.thread.more')}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -108,12 +176,47 @@ function deliveryNote(
   }
 }
 
+/**
+ * THE PANEL'S WIDTH — the reader's, remembered.
+ *
+ * A fixed 560px (at most half the row) squeezed the feed and the report alike at narrow widths,
+ * and suited nobody at wide ones. So the left edge is a handle: drag it, or focus it and use the
+ * arrow keys, and the width is kept on this machine for the next thread. The default is two
+ * fifths of the row the panel shares with the feed; the floor keeps a report readable and the
+ * ceiling keeps the channel beside it.
+ */
+const THREAD_WIDTH_KEY = 'dreamcontext.agents.threadWidth';
+const THREAD_MIN_WIDTH = 360;
+const THREAD_MAX_SHARE = 0.6;
+const THREAD_DEFAULT_SHARE = 0.4;
+/** One arrow-key press, in px. */
+const THREAD_WIDTH_STEP = 16;
+
+function readThreadWidth(): number | null {
+  try {
+    const n = Number.parseFloat(localStorage.getItem(THREAD_WIDTH_KEY) ?? '');
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeThreadWidth(px: number): void {
+  try { localStorage.setItem(THREAD_WIDTH_KEY, String(Math.round(px))); } catch { /* private mode: not remembered */ }
+}
+
 export function AgentThreadPanel({
   message,
   onClose,
   onOpenFile,
   onOpenAgent,
   onToast,
+  busyWith,
+  closeOnEscape,
+  autoFocus,
+  footRef,
+  panelId,
+  overlay,
 }: {
   message: FeedMessage;
   onClose: () => void;
@@ -122,27 +225,74 @@ export function AgentThreadPanel({
   /** Where an answer that could not be recorded is reported — the inline
    *  question block needs one, and the panel has no toast surface of its own. */
   onToast?: (msg: string) => void;
+  /** This thread's agent, by title, while it holds its own run slot; null otherwise. The
+   *  server refuses a reply (`busy`) to an agent that is mid-run, so the field goes down and
+   *  says so. Another agent's run never holds this one down. */
+  busyWith: string | null;
+  /** False while a file viewer is open over the page: Esc there closes the viewer, and
+   *  must not close the thread under it in the same keystroke. */
+  closeOnEscape: boolean;
+  /** Move focus to the close button on open — a keyboard user who opened the thread lands
+   *  in it rather than having to Tab through the whole channel to reach it. */
+  autoFocus: boolean;
+  /** The footer, measured by the page so the floating Agent button steps over it. */
+  footRef: (el: HTMLElement | null) => void;
+  /** The panel's id, which the thread line's `aria-controls` points at. */
+  panelId: string;
+  /** The channel is too narrow to split: the panel is drawn as Chat's SlideOver, over the
+   *  channel inside its scrim, at the SlideOver's own width. No handle, no remembered width. */
+  overlay: boolean;
 }) {
   const { t } = useI18n();
   const { data, isLoading } = useAgentThread(message.slug, message.runId);
-  const entries = data?.entries ?? [];
+  const answer = data?.answer ?? null;
+  // The thread's ROOT is drawn above the divider — your question for an ask, the agent's
+  // post for a scheduled run — so its entry is not repeated as a reply under itself. The
+  // server names it (`rootId`, the same rule its reply count uses); the ask rule is the
+  // fallback for a response without it.
+  const entries = useMemo(() => {
+    const all = data?.entries ?? [];
+    const rootId = data?.rootId ?? (message.ask ? all.find((e) => e.kind === 'user')?.id : undefined);
+    return rootId ? all.filter((e) => e.id !== rootId) : all;
+  }, [data, message.ask]);
+  /** Where the whole answer goes: just before the row that ended the run, so it reads in
+   *  the order it happened — the agent's posts while working, then its report, then
+   *  "Finished" (or "Failed": a failed run's report is its reason, and it belongs before
+   *  the row that announces the failure). A run with no terminal row yet puts it last. */
+  const answerAt = useMemo(() => {
+    if (!answer) return -1;
+    const i = entries.findIndex((e) => e.kind === 'system'
+      && (e.event === 'ok' || e.event === 'replied' || e.event === 'failed' || e.event === 'timeout'));
+    return i >= 0 ? i : entries.length;
+  }, [answer, entries]);
+  // The server's count, the one the feed row prints too.
+  const replyCount = data?.replyCount ?? message.replyCount;
 
   // ── Replying ──────────────────────────────────────────────────────────────
   //
   // The agent's own state decides whether a field is drawn at all. `enabled` and
   // `approved` are the first two rungs of the server's refusal ladder, so a
   // composer on an agent failing either is a control that can only ever be told
-  // no — and the reader learns why from the note instead of from a 409.
+  // no — and the reader learns why from the note, next to the one thing that fixes it.
   const { data: automations } = useAutomations();
   const agent = useMemo(
     () => (automations ?? []).find((a) => a.slug === message.slug) ?? null,
     [automations, message.slug],
   );
-  const blocked = agent
+  const setEnabled = useSetAutomationEnabled();
+  const blocked: { text: string; action: string; run: () => void } | null = agent
     ? (!agent.enabled
-      ? `${message.title} is turned off. Turn it on to reply.`
+      ? {
+        text: t('agents.thread.off').replace('{name}', message.title),
+        action: t('agents.thread.turnOn'),
+        run: () => setEnabled.mutate({ slug: message.slug, enabled: true }),
+      }
       : !agent.approved
-        ? `${message.title} is not approved on this machine yet — approve it and reply again.`
+        ? {
+          text: t('agents.thread.unapproved').replace('{name}', message.title),
+          action: t('agents.thread.review').replace('{name}', message.title),
+          run: () => onOpenAgent(message.slug),
+        }
         : null)
     : null;
 
@@ -156,6 +306,7 @@ export function AgentThreadPanel({
   const [askInline, setAskInline] = useState(false);
 
   const noteRef = useRef<(n: { kind: 'error' | 'hint'; text: string } | null) => void>(() => {});
+  const restoreRef = useRef<() => void>(() => {});
   const onSend = useCallback((text: string) => {
     setRefusal(null);
     setAskInline(false);
@@ -170,15 +321,22 @@ export function AgentThreadPanel({
         setRefusal(text2);
         noteRef.current({ kind: 'error', text: text2 });
         if (code === 'question_pending') setAskInline(true);
+        // The composer emptied the field when the host accepted the send, before the
+        // server answered. A refusal puts the words back, so a 409 costs a retry, never
+        // the reply itself.
+        restoreRef.current();
       },
     });
   }, [reply, message.slug, message.runId, t]);
 
-  const { host, note, setNote } = useAgentThreadHost(
+  const slashCommands = useProjectSlashCommands().data?.commands;
+  const { host, note, setNote, restoreLastSent } = useAgentThreadHost(
     { slug: message.slug, title: message.title, runId: message.runId },
     onSend,
+    slashCommands,
   );
   noteRef.current = setNote;
+  restoreRef.current = restoreLastSent;
 
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   const [model] = useState(() => readAgentSettings().chatDefaultModel);
@@ -188,6 +346,65 @@ export function AgentThreadPanel({
   // and the host's own note (an empty reply) outranks both because it is the
   // thing the user did last.
   const footNote = note ?? (refusal ? { kind: 'error' as const, text: refusal } : deliveryNote(delivery, t));
+
+  // ── Keyboard and focus ────────────────────────────────────────────────────
+  const closeBtn = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (autoFocus) closeBtn.current?.focus();
+    // Once, on open: the panel remounts per thread, so "open" is "mount".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /** Esc closes the thread from anywhere inside it. A composer menu that is open consumes
+   *  its own Esc first (it prevents default and stops the event), so Esc there closes the
+   *  menu and only the next one closes the panel. */
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'Escape' || !closeOnEscape || e.defaultPrevented) return;
+    e.preventDefault();
+    onClose();
+  };
+
+  // ── Width ─────────────────────────────────────────────────────────────────
+  const asideRef = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  const clampWidth = useCallback((px: number) => {
+    const row = asideRef.current?.parentElement?.getBoundingClientRect().width ?? 0;
+    const max = row > 0 ? row * THREAD_MAX_SHARE : px;
+    return Math.round(Math.max(THREAD_MIN_WIDTH, Math.min(px, Math.max(THREAD_MIN_WIDTH, max))));
+  }, []);
+  // Before paint, so the panel never draws at one width and jumps to another.
+  useLayoutEffect(() => {
+    if (overlay) return;
+    const row = asideRef.current?.parentElement?.getBoundingClientRect().width ?? 0;
+    setWidth(clampWidth(readThreadWidth() ?? row * THREAD_DEFAULT_SHARE));
+  }, [clampWidth, overlay]);
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const onHandleDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, w: asideRef.current?.getBoundingClientRect().width ?? width ?? 0 };
+  };
+  const onHandleMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    // The handle is the LEFT edge: moving it left widens the panel, one pixel for one.
+    setWidth(clampWidth(drag.current.w + (drag.current.x - e.clientX)));
+  };
+  const onHandleUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    drag.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    const w = asideRef.current?.getBoundingClientRect().width;
+    if (w) writeThreadWidth(w);
+  };
+  const onHandleKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const current = asideRef.current?.getBoundingClientRect().width ?? width ?? 0;
+    const next = clampWidth(current + (e.key === 'ArrowLeft' ? THREAD_WIDTH_STEP : -THREAD_WIDTH_STEP));
+    setWidth(next);
+    writeThreadWidth(next);
+  };
+  const rowWidth = asideRef.current?.parentElement?.getBoundingClientRect().width ?? 0;
 
   return (
     /* `chat-pane` on the PANEL, not on the composer wrapper, and the one rule it carries that
@@ -206,50 +423,96 @@ export function AgentThreadPanel({
        rule does not transfer, and the meeting room does the same. Putting the class on the
        FOOTER without the override is what shipped a composer stretched over the entire panel:
        it covered the close button, so the panel could not be dismissed and then intercepted
-       every click aimed at the channel behind it. The equivalent rule belongs beside the
-       other two in `AgentsFeed.css`; it is inline here only because this lane does not own
-       that stylesheet, and it is two declarations rather than a layout of its own. */
+       every click aimed at the channel behind it. */
     <aside
-      className="agent-thread chat-pane"
-      style={{ position: 'relative', inset: 'auto' }}
-      aria-label={`Thread — ${message.title}`}
+      ref={asideRef}
+      id={panelId}
+      className={`agent-thread chat-pane${overlay ? ' chat-slideover-panel agent-thread--overlay' : ''}`}
+      style={{ position: 'relative', inset: 'auto', ...(overlay || width === null ? {} : { width }) }}
+      // Inside the scrim, a click on the panel must not reach the scrim, which closes it.
+      onClick={overlay ? (e) => e.stopPropagation() : undefined}
+      aria-label={t('agents.thread.aria').replace('{name}', message.title)}
+      onKeyDown={onKeyDown}
     >
+      {!overlay && (
+      <div
+        className="agent-thread-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('agents.thread.resize')}
+        aria-valuemin={THREAD_MIN_WIDTH}
+        aria-valuemax={Math.round(Math.max(THREAD_MIN_WIDTH, rowWidth * THREAD_MAX_SHARE))}
+        aria-valuenow={width ?? undefined}
+        tabIndex={0}
+        onPointerDown={onHandleDown}
+        onPointerMove={onHandleMove}
+        onPointerUp={onHandleUp}
+        onPointerCancel={onHandleUp}
+        onKeyDown={onHandleKey}
+      />
+      )}
       <header className="agent-thread-head">
         <span className="agent-thread-title">Thread</span>
         <span className="agent-thread-sub">{message.title}</span>
-        <button type="button" className="agent-thread-close" onClick={onClose} aria-label="Close thread">
+        <button
+          ref={closeBtn}
+          type="button"
+          className="agent-thread-close chat-slideover-close"
+          onClick={onClose}
+          aria-label="Close thread"
+        >
           ✕
         </button>
       </header>
 
       <div className="agent-thread-body">
-        {/* The root: the same message, rendered by the same component, without
-            its header — the panel's own header already says whose it is. */}
-        <AgentMessage
-          message={message}
-          showHead={false}
-          onOpenThread={() => {}}
-          onOpenFile={onOpenFile}
-          onOpenAgent={onOpenAgent}
-        />
+        {/* THE ROOT. Your question when this run was an ask — the thread hangs off
+            your message, as in Slack — otherwise the agent's own post, rendered by
+            the same component as the feed, as the thread's root. */}
+        {message.ask ? (
+          <div className="agent-thread-post agent-thread-post--user agent-thread-root">
+            <RowFace who="user" message={message} />
+            <div className="agent-thread-post-main">
+              <div className="agent-thread-post-head">
+                <span className="agent-thread-post-who">You</span>
+                <span className="agent-thread-post-time">{hhmm(message.ask.at)}</span>
+              </div>
+              <AgentProse text={message.ask.text} className="agent-thread-post-text" />
+            </div>
+          </div>
+        ) : (
+          <AgentMessage
+            message={message}
+            variant="root"
+            onOpenThread={() => {}}
+            onOpenFile={onOpenFile}
+            onOpenAgent={onOpenAgent}
+          />
+        )}
 
         <div className="agent-thread-divider">
-          <span>{entries.length} {entries.length === 1 ? 'entry' : 'entries'} in this run</span>
+          <span>{replyCount} {replyCount === 1 ? 'reply' : 'replies'}</span>
         </div>
 
         {isLoading && entries.length === 0 && <p className="agent-thread-empty">Reading the thread…</p>}
-        {!isLoading && entries.length === 0 && (
+        {!isLoading && entries.length === 0 && !answer && (
           <p className="agent-thread-empty">This run left nothing in its thread.</p>
         )}
 
-        {entries.map((e) =>
-          e.kind === 'system'
-            ? <SystemRow key={e.id} entry={e} />
-            : <AuthoredRow key={e.id} entry={e} title={message.title} onOpenFile={onOpenFile} />,
+        {entries.map((e, i) => (
+          <Fragment key={e.id}>
+            {i === answerAt && answer && <AnswerRow answer={answer} message={message} onOpenFile={onOpenFile} />}
+            {e.kind === 'system'
+              ? <SystemRow entry={e} />
+              : <AuthoredRow entry={e} message={message} onOpenFile={onOpenFile} />}
+          </Fragment>
+        ))}
+        {answer && answerAt === entries.length && (
+          <AnswerRow answer={answer} message={message} onOpenFile={onOpenFile} />
         )}
       </div>
 
-      <footer className="agent-thread-foot">
+      <footer className="agent-thread-foot" ref={footRef}>
         {/* THE QUESTION THE SERVER POINTED AT. A `question_pending` refusal is
             not a dead end — it names the one thing that has to happen before a
             reply can land, so the block that does it is rendered right where
@@ -267,13 +530,20 @@ export function AgentThreadPanel({
         {blocked ? (
           // NO FIELD AT ALL. The server refuses a disabled or unapproved agent
           // before it reads the body, so a composer here could only ever be
-          // told no — and a control whose every use is already decided against
-          // is worse than its absence plus the reason.
-          // `.agents-composer-note--error` is the channel's existing error ink,
-          // reused rather than re-declared: this lane does not own that
-          // stylesheet, and a second red for the same meaning is a second thing
-          // to keep in step.
-          <p className="agent-thread-note agents-composer-note--error">{blocked}</p>
+          // told no. The reason, and next to it the one control that fixes it:
+          // turning the agent on, or opening it to review and approve.
+          // `.agents-composer-note--error` is the channel's existing error ink.
+          <p className="agent-thread-note agents-composer-note--error agent-thread-blocked">
+            <span>{blocked.text}</span>
+            <button
+              type="button"
+              className="agent-thread-blocked-action"
+              onClick={blocked.run}
+              disabled={setEnabled.isPending}
+            >
+              {blocked.action}
+            </button>
+          </p>
         ) : (
           <>
             {/* `chat-pane` carries the composer's reading tokens (`--chat-text`,
@@ -295,9 +565,15 @@ export function AgentThreadPanel({
                 // There is no turn to steer into: the reply is a JOB, polled.
                 busy={false}
                 connected
+                // The run slot, exactly as the channel reports it: the server refuses a
+                // reply (`busy`) while another agent holds it, so the field says so first.
+                unavailable={busyWith ? { reason: t('agents.busy').replace('{name}', busyWith) } : undefined}
                 idlePlaceholder={`Reply to ${message.title}…`}
                 quote={null}
                 onClearQuote={() => {}}
+                // No `@` here: a thread has one recipient. Without this empty list the
+                // composer would fetch and offer this machine's CONNECTED PROJECTS.
+                mentions={[]}
                 onSignIn={() => {}}
               />
             </div>

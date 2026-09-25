@@ -24,7 +24,12 @@
   flex-shrink: 0;
   background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);
-  padding: 0 var(--space-5) var(--space-3);
+  /* No bottom padding: the scheduler is a pill on the row now, and the only thing that
+     can sit under the row is a warn bar, which brings its own margin. */
+  padding: 0 var(--space-5);
+  /* The row answers to ITS width, not the viewport's: the sidebar and the page share the
+     window, so a viewport breakpoint fires at the wrong place for this row. */
+  container: agents-head / inline-size;
 }
 
 .agents-head-row {
@@ -147,8 +152,8 @@
   padding: 0 14px;
   border: none;
   border-radius: var(--radius-md);
-  background: var(--gradient-brand);
-  color: var(--color-text-on-brand);
+  background: var(--gradient-brand-strong);
+  color: var(--color-accent-text);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -241,8 +246,25 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
 }
 
-@media (max-width: 720px) {
-  .agents-channel-sub { display: none; }
+/* The header row gives way in steps, least useful first, so nothing is ever cut mid-word
+   or pushed past the edge: the "· N on a schedule" half, then the whole subtitle and the
+   pill's words (its dot and tooltip stay), then the row wraps onto a second line. */
+@container agents-head (max-width: 900px) {
+  .agents-channel-sub-sched { display: none; }
+}
+
+@container agents-head (max-width: 760px) {
+  .agents-channel-sub,
+  .agents-head .auto-dispatch-pill-label { display: none; }
+}
+
+@container agents-head (max-width: 620px) {
+  .agents-head-row {
+    flex-wrap: wrap;
+    height: auto;
+    padding-block: var(--space-2);
+    row-gap: var(--space-2);
+  }
 }
 
 /* "2 agents are waiting on you" — a NOTICE in the channel, not the feed. It
@@ -258,7 +280,9 @@
      520px card centred beneath an edge-to-edge bar read as two unrelated
      notices rather than two rows of the same header. */
   margin: var(--space-3) var(--space-5) 0;
-  padding: 12px 14px;
+  /* One line: the headline and the way in. Two lines here, stacked under a WARN bar, left
+     the channel under half the window at 1100px. */
+  padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
   border-left: 3px solid var(--color-warning);
   border-radius: var(--radius-lg);
@@ -299,8 +323,10 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
 }
 
 .agents-needyou-text strong {

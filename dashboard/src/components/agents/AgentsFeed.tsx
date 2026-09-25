@@ -8,8 +8,10 @@ import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { readAgentSettings } from '../../lib/agentSettings';
 import { useVault } from '../../context/VaultContext';
+import { useI18n } from '../../context/I18nContext';
 import {
-  useAgentFeed, useAutomationRunJob, useMarkThreadRead, useSayInChannel, type FeedMessage,
+  useAgentFeed, useAutomationDispatcher, useMarkThreadRead, useProjectSlashCommands, useSayInChannel,
+  type FeedMessage,
 } from '../../hooks/useAutomations';
 // The chat composer's own stylesheets, in the order `ChatPane` imports them — the channel
 // mounts the real `<Composer>`, so it needs the real CSS. `ChatPane.css` is here for its
@@ -62,23 +64,52 @@ function dayKey(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
+/** The id the open thread panel wears, and the one its thread line points at (`aria-controls`). */
+const THREAD_PANEL_ID = 'agents-thread-panel';
+
+/** The bottom-right floater the app draws on every page: the Agent button, or the session dock
+ *  when sessions exist. The dock's `--floating` copy sits over the expanded overlay, not over
+ *  this page, so it is not the one to clear. */
+const FLOATER_SELECTOR = '.agent-fab, .agent-dock:not(.agent-dock--floating)';
+/** The channel's width (px) below which a thread OVERLAYS it, as Chat's SlideOver does,
+ *  instead of splitting the row with it: under this, a 360px thread leaves the feed too
+ *  narrow to read. Measured on the `.agents-feed` row, not the window. */
+const THREAD_OVERLAY_BELOW = 900;
+
+/** The open thread, and where it was opened from — focus goes back there when it closes. */
+interface OpenThread {
+  message: FeedMessage;
+  opener: HTMLElement | null;
+  /** Move focus into the panel on open. False when the panel opens by itself after an @mention,
+   *  where the reader is still in the channel composer. */
+  focus: boolean;
+}
+
 export function AgentsFeed({
   onOpenFile,
   onOpenAgent,
+  fileOpen,
 }: {
   onOpenFile: (path: string) => void;
   onOpenAgent: (slug: string) => void;
+  /** A document viewer is open over the page. It owns Esc while it is, so the thread does not
+   *  close underneath it. */
+  fileOpen: boolean;
 }) {
-  // The project's one run slot. It drives two things: the composer's busy
-  // note, and how fast the channel refreshes — an agent you called by hand is
-  // watched, not caught up on.
-  const { data: runJob } = useAutomationRunJob();
-  const live = runJob?.status === 'running';
-  const { data, isLoading } = useAgentFeed(live);
+  const { t } = useI18n();
+  // The agents running right now, one slot per agent, as the feed itself reports them
+  // (`runSlots`). They drive two things: which agent a composer refuses (only the one that is
+  // running; the others can be called at the same time), and how fast the channel refreshes
+  // (the hook polls every 2s while any slot is held). Reading them off the feed rather than a
+  // second poll is what makes a run started elsewhere (another tab, "run now") visible here.
+  const { data, isLoading } = useAgentFeed();
+  const runSlots = useMemo(() => data?.runSlots ?? {}, [data]);
+  const live = Object.keys(runSlots).length > 0;
   const markRead = useMarkThreadRead();
   const { vault } = useVault();
+  const { data: dispatcher } = useAutomationDispatcher();
   const [filter, setFilter] = useState<Filter>({ kind: 'all' });
-  const [openThread, setOpenThread] = useState<FeedMessage | null>(null);
+  const [openThread, setOpenThread] = useState<OpenThread | null>(null);
   /** Owned HERE rather than taken as a prop: the only thing that raises one is
    *  an answer this feed's own question block could not record, and threading a
    *  callback down from the page for that would make the page responsible for a
@@ -193,14 +224,16 @@ export function AgentsFeed({
 
   // ── The composer ────────────────────────────────────────────────────────
   //
-  // The agent holding the project's one run slot, when one is — its title, for the note that
-  // replaces the placeholder while the field is down.
-  const busyWith = live
-    ? (data?.agents.find((a) => a.slug === runJob?.slug)?.title ?? runJob?.slug ?? null)
-    : null;
+  // A running agent's title, for the sentence that says it is busy: under the channel field when
+  // a draft names it, and in its own thread's composer. Null for an agent that is free.
+  const agents = useMemo(() => data?.agents ?? [], [data]);
+  const busyTitle = useCallback(
+    (slug: string) => (slug in runSlots ? (agents.find((a) => a.slug === slug)?.title ?? slug) : null),
+    [runSlots, agents],
+  );
+  const isBusy = useCallback((slug: string) => slug in runSlots, [runSlots]);
 
   const say = useSayInChannel();
-  const agents = useMemo(() => data?.agents ?? [], [data]);
   const mentions = useMemo(() => agents.map((a) => agentMention(a, vault)), [agents, vault]);
 
   // One sentence under the field, one owner: the host derives it from the live draft, and a
@@ -216,13 +249,17 @@ export function AgentsFeed({
    * matching message appears, rather than the feed inventing a half-message to show now.
    */
   const [pendingOpen, setPendingOpen] = useState<{ slug: string; runId: string } | null>(null);
+  const restoreRef = useRef<() => void>(() => {});
   const onSend = useCallback((target: { slug: string }, body: string) => {
     say.mutate({ slug: target.slug, text: body }, {
       onSuccess: (res) => setPendingOpen({ slug: res.slug, runId: res.runId }),
-      // The composer has already emptied the field by the time this lands, so what a refusal
-      // can still save is the REASON, on screen. Retyping is the cost of a 409; losing both
-      // the sentence AND the explanation is not a cost anyone agreed to.
-      onError: (err) => noteRef.current({ kind: 'error', text: (err as Error).message }),
+      // The composer has already emptied the field by the time this lands, so the refusal
+      // puts it back: the server's own sentence under the field, and the words the reader
+      // typed in it, ready to fix and resend.
+      onError: (err) => {
+        noteRef.current({ kind: 'error', text: (err as Error).message });
+        restoreRef.current();
+      },
     });
   }, [say]);
 
@@ -230,12 +267,44 @@ export function AgentsFeed({
     if (!pendingOpen) return;
     const m = messages.find((x) => x.slug === pendingOpen.slug && x.runId === pendingOpen.runId);
     if (!m) return;
-    setOpenThread(m);
+    setOpenThread({ message: m, opener: null, focus: false });
     setPendingOpen(null);
   }, [pendingOpen, messages]);
 
-  const { host, note, setNote } = useAgentsChannelHost(agents, onSend);
+  const slashCommands = useProjectSlashCommands().data?.commands;
+  const { host, note, setNote, focusComposer, restoreLastSent } = useAgentsChannelHost(
+    agents, onSend, slashCommands, isBusy,
+  );
   noteRef.current = setNote;
+  restoreRef.current = restoreLastSent;
+
+  // A "still running" note is about a slot, not about a keystroke: when the agent it names
+  // finishes, the note goes with it, rather than waiting for the reader to type again.
+  const slotKey = Object.keys(runSlots).sort().join();
+  const noteNow = useRef(note);
+  noteNow.current = note;
+  useEffect(() => {
+    const busySlug = noteNow.current?.busySlug;
+    if (busySlug && !(busySlug in runSlots)) setNote(null);
+    // `slotKey` is the trigger; `runSlots` is read for the answer it gives at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotKey, setNote]);
+
+  // Narrower than this, the thread slides over the channel the way Chat's SlideOver does,
+  // rather than squeezing the two into a split neither can be read in.
+  const [overlay, setOverlay] = useState(false);
+
+  const openFromRow = useCallback((m: FeedMessage, opener: HTMLElement) => {
+    setOpenThread({ message: m, opener, focus: true });
+  }, []);
+  /** Close the thread and give focus back to what opened it: the thread line, or the channel
+   *  composer when that line has gone (a filter hid it, or the panel opened itself). */
+  const closeThread = useCallback(() => {
+    const opener = openThread?.opener ?? null;
+    setOpenThread(null);
+    if (opener?.isConnected) opener.focus();
+    else focusComposer();
+  }, [openThread, focusComposer]);
 
   /**
    * PUBLISH THIS STRIP'S HEIGHT, so the app's bottom-right floaters can step over it.
@@ -252,19 +321,90 @@ export function AgentsFeed({
    * sessions exist), so a gutter reserved in CSS here would be dead space on every page that
    * has no floater. Unmounting clears it, so no other screen pays for this one.
    */
+  //
+  // TWO STRIPS, the taller wins. With a thread open its composer foot runs along the same
+  // bottom edge, and it is the taller of the two whenever it carries a note, so the floater is
+  // lifted over whichever is higher rather than straddling the thread's body/foot seam.
+  //
+  // AND THE FLOATER'S OWN HEIGHT, published back onto this feed (`--agents-floater-clearance`)
+  // so the feed and the thread can leave room under their last message for the button that
+  // now sits over it. It is found by class and followed with a MutationObserver because it is
+  // not this page's element: it mounts, unmounts and swaps for the session dock on its own.
   const composerWrapRef = useRef<HTMLDivElement>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const [footEl, setFootEl] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const el = composerWrapRef.current;
-    if (!el) return;
+    const feed = feedRef.current;
+    if (!el || !feed) return;
     const root = document.documentElement;
-    const publish = () => root.style.setProperty('--dc-bottom-strip', `${Math.round(el.getBoundingClientRect().height)}px`);
-    publish();
+    let floater: HTMLElement | null = null;
+    const publish = () => {
+      const strip = Math.max(
+        el.getBoundingClientRect().height,
+        footEl?.isConnected ? footEl.getBoundingClientRect().height : 0,
+      );
+      root.style.setProperty('--dc-bottom-strip', `${Math.round(strip)}px`);
+      if (floater?.isConnected) {
+        const h = Math.round(floater.getBoundingClientRect().height);
+        feed.style.setProperty('--agents-floater-clearance', `calc(${h}px + var(--space-5) + var(--space-2))`);
+      } else {
+        feed.style.removeProperty('--agents-floater-clearance');
+      }
+    };
     // It grows with the textarea, with the attachment chips and with the note under it, so a
     // one-shot measurement would be wrong the moment anyone types a second line.
     const ro = new ResizeObserver(publish);
     ro.observe(el);
-    return () => { ro.disconnect(); root.style.removeProperty('--dc-bottom-strip'); };
-  }, []);
+    if (footEl) ro.observe(footEl);
+    // The same observer decides split or overlay: it already watches this row's size.
+    const decide = () => setOverlay(feed.getBoundingClientRect().width < THREAD_OVERLAY_BELOW);
+    decide();
+    const rowRo = new ResizeObserver(decide);
+    rowRo.observe(feed);
+    const findFloater = () => {
+      const next = document.querySelector<HTMLElement>(FLOATER_SELECTOR);
+      if (next === floater) return;
+      if (floater) ro.unobserve(floater);
+      floater = next;
+      if (floater) ro.observe(floater);
+      publish();
+    };
+    findFloater();
+    let frame = 0;
+    const mo = new MutationObserver(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; findFloater(); });
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      ro.disconnect();
+      rowRo.disconnect();
+      mo.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+      root.style.removeProperty('--dc-bottom-strip');
+      feed.style.removeProperty('--agents-floater-clearance');
+    };
+  }, [footEl]);
+
+  /**
+   * The chip row fades at its right edge while there is more of it to scroll to. The scrollbar
+   * is hidden (the row is one line of controls, not a pane), so without the fade the last chip
+   * is simply cut at the edge with nothing saying the row goes on.
+   */
+  const chipsRef = useRef<HTMLDivElement>(null);
+  const [chipsMore, setChipsMore] = useState(false);
+  useEffect(() => {
+    const row = chipsRef.current;
+    if (!row) return;
+    const measure = () => setChipsMore(row.scrollLeft + row.clientWidth < row.scrollWidth - 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    for (const chip of row.children) ro.observe(chip);
+    row.addEventListener('scroll', measure, { passive: true });
+    return () => { ro.disconnect(); row.removeEventListener('scroll', measure); };
+  }, [messages.length, data?.agents.length]);
 
   // Model and effort: required by the composer's prop type, and behind a trigger this surface
   // does not draw. Read once from the app-global pick — there is nothing here that changes it.
@@ -275,14 +415,22 @@ export function AgentsFeed({
   let lastDay = '';
 
   return (
-    <div className="agents-feed">
+    <div className="agents-feed" ref={feedRef}>
       {/* `chat-pane` is not decoration: `composerHeight.ts` finds the pane whose half-height
           is the composer's auto-grow ceiling with `closest('.chat-pane')`, so this column
           wearing the class is what makes the field grow to half the CHANNEL rather than half
           the viewport. It also carries the chat's reading tokens, which the composer's own
           rules read. One class instead of a second sizing rule. */}
-      <div className={`agents-feed-main chat-pane${openThread ? ' agents-feed-main--split' : ''}`}>
-        <div className="agents-chips" role="tablist" aria-label="Filter the channel">
+      <div className={`agents-feed-main chat-pane${openThread && !overlay ? ' agents-feed-main--split' : ''}`}>
+        {/* No chips on an empty channel: five filters counting zero are five controls with
+            nothing behind them. */}
+        {messages.length > 0 && (
+        <div
+          ref={chipsRef}
+          className={`agents-chips${chipsMore ? ' agents-chips--more' : ''}`}
+          role="tablist"
+          aria-label="Filter the channel"
+        >
           {chips.map((c) => (
             <button
               key={c.id}
@@ -291,6 +439,9 @@ export function AgentsFeed({
               aria-selected={sameFilter(filter, c.filter)}
               className={`agents-chip${sameFilter(filter, c.filter) ? ' agents-chip--on' : ''}`}
               onClick={() => setFilter(c.filter)}
+              // The label is capped and ellipsised (a long agent name), so the whole name
+              // rides on the chip.
+              title={c.label}
             >
               {c.slug && (
                 <AgentAvatar slug={c.slug} title={c.title ?? c.slug} hasPhoto={c.hasPhoto ?? false} size={18} />
@@ -300,6 +451,7 @@ export function AgentsFeed({
             </button>
           ))}
         </div>
+        )}
 
         <div className="agents-feed-scroll" ref={scrollRef}>
           {isLoading && messages.length === 0 && <p className="agents-feed-note">Reading the channel…</p>}
@@ -307,9 +459,10 @@ export function AgentsFeed({
           {!isLoading && messages.length === 0 && (
             <div className="agents-feed-zero">
               <p className="agents-feed-zero-lede">Nothing has been posted here yet.</p>
+              {/* Lead with what the reader can do right now, and say what the scheduler will add
+                  in the state it is actually in, never promising a run that is switched off. */}
               <p className="agents-feed-zero-note">
-                The next scheduled run opens the first thread. Each one lands here as a message
-                you can read without opening its session.
+                {t(dispatcher?.installed ? 'agents.feed.empty.on' : 'agents.feed.empty.off')}
               </p>
             </div>
           )}
@@ -318,7 +471,7 @@ export function AgentsFeed({
               than showing the same blank slate as an empty channel. */}
           {messages.length > 0 && visible.length === 0 && (
             <p className="agents-feed-note">
-              {filter.kind === 'unread' && 'Nothing unread — you are caught up.'}
+              {filter.kind === 'unread' && t('agents.filter.empty.unread')}
               {filter.kind === 'needs' && 'No agent is waiting on you.'}
               {filter.kind === 'failed' && 'No run has failed.'}
               {filter.kind === 'agent' && 'This agent has not run yet.'}
@@ -343,10 +496,12 @@ export function AgentsFeed({
                 )}
                 <AgentMessage
                   message={m}
-                  onOpenThread={setOpenThread}
+                  onOpenThread={openFromRow}
                   onOpenFile={onOpenFile}
                   onOpenAgent={onOpenAgent}
                   onToast={setToast}
+                  threadOpen={openThread?.message.key === m.key}
+                  panelId={THREAD_PANEL_ID}
                 />
               </div>
             );
@@ -372,15 +527,12 @@ export function AgentsFeed({
             showModel={false}
             // FALSE on purpose. `busy` means "a turn is running and ⏎ steers into it" — there
             // is no turn here, only a headless run, and the ⇡ queue button it would draw has
-            // nothing to queue into. The run slot is reported by `connected` instead.
+            // nothing to queue into. A running agent is refused by the host instead.
             busy={false}
-            // The transport is fine; what is missing is the RUN SLOT. One run per project at
-            // a time, enforced in `startAutomationJob` — so the field goes down and says who
-            // is holding it rather than failing on send. Expressed as `unavailable` and NOT as
-            // `connected: false`, which is what the first pass did and which froze the
-            // account's usage caps for the whole duration of every run (see the prop's docs).
+            // Never down for the whole channel: agents run in parallel, one slot EACH, so the
+            // only thing that cannot be sent is a message to an agent that is already running.
+            // The host refuses that one, naming it, and keeps the draft (see `isBusy`).
             connected
-            unavailable={busyWith ? { reason: `${busyWith} is still running — one at a time for now.` } : undefined}
             idlePlaceholder={'Type "@" to call an agent, then say what you need.'}
             // No `quote`: the channel has no quote-reply (replying at all is step 4).
             quote={null}
@@ -389,6 +541,14 @@ export function AgentsFeed({
             // resolved by the HOST, against this channel's own rule (a mention anywhere
             // addresses, not just a leading one — see `agentChannelMention.ts`).
             mentions={mentions}
+            // Agents have faces, so the picker never falls back to the connected-project glyph:
+            // the agent's photo where it has one (the picker's own logo image, on the URL
+            // `agentMention` already carries), and the feed's initials avatar where it does not.
+            renderMentionFace={(p) => (p.logo && p.logoUrl
+              ? <img className="chat-cmp-mention-logo" src={p.logoUrl} alt="" />
+              : <AgentAvatar slug={p.vault} title={p.whatItIs} hasPhoto={false} size={16} />
+            )}
+            mentionsLabel={t('agents.composer.mentions')}
             onSignIn={() => {}}
           />
           {/* K5: one sentence, 14px, under the field — and only ever one of them. */}
@@ -400,18 +560,36 @@ export function AgentsFeed({
         </div>
       </div>
 
-      {openThread && (
+      {openThread && (() => {
+        const panel = (
         <AgentThreadPanel
+          // One mount per thread. Without the key the panel (and the composer inside it) was
+          // REUSED across threads, so a half-written reply and a refusal note carried over to
+          // the next agent, one Enter away from being sent to the wrong one.
+          key={openThread.message.key}
           // Re-read from the live feed so the panel's root message follows the
           // poll — a run that finishes while its thread is open must not keep
           // saying "running" in the header above its own `ok` row.
-          message={messages.find((m) => m.key === openThread.key) ?? openThread}
-          onClose={() => setOpenThread(null)}
+          message={messages.find((m) => m.key === openThread.message.key) ?? openThread.message}
+          onClose={closeThread}
           onOpenFile={onOpenFile}
           onOpenAgent={onOpenAgent}
           onToast={setToast}
+          // Only THIS thread's agent can hold its composer down; another agent's run does not.
+          busyWith={busyTitle(openThread.message.slug)}
+          closeOnEscape={!fileOpen}
+          autoFocus={openThread.focus}
+          footRef={setFootEl}
+          panelId={THREAD_PANEL_ID}
+          overlay={overlay}
         />
-      )}
+        );
+        // Narrow: Chat's own SlideOver scrim, which dims the channel and closes on a click
+        // outside the panel. Wide: the split, as before.
+        return overlay
+          ? <div className="chat-slideover-scrim agents-thread-scrim" onClick={closeThread}>{panel}</div>
+          : panel;
+      })()}
 
       {/* Click to dismiss — an answer that failed to record is something the
           reader needs to have SEEN, so it does not time itself out from under

@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useReducer, useRef, useState } from 'react';
+import { useI18n } from '../../context/I18nContext';
 import type { ComposerHost, ComposerHostModel } from '../sleepy/chat/composerHost';
 import type { PeerMention } from '../../lib/agentComposer';
 import { automationPhotoUrl } from '../../api/client';
@@ -35,6 +36,9 @@ export function agentMention(a: ComposerAgent, vault: string | null): PeerMentio
     agent: a.slug,
     whatItIs: a.title,
     logo: a.hasPhoto,
+    // The picker matches the agent's NAME as well as its slug: "@deep" is how a person reaches
+    // "Deep researcher", whose slug may be anything.
+    aliases: [a.title],
     ...(a.hasPhoto ? { logoUrl: automationPhotoUrl(vault, a.slug) } : {}),
   };
 }
@@ -49,6 +53,9 @@ export interface ChannelSend {
 export interface ChannelNote {
   kind: 'error' | 'hint';
   text: string;
+  /** Set when the note says this agent is still running, so the page can retire it the
+   *  moment that agent's run slot frees rather than waiting for the next keystroke. */
+  busySlug?: string;
 }
 
 export interface AgentsChannelComposer {
@@ -67,6 +74,15 @@ export interface AgentsChannelComposer {
   setNote: (n: ChannelNote | null) => void;
   /** Focus the field (the composer registers it). */
   focusComposer: () => void;
+  /**
+   * Put the last message this host accepted back into the field.
+   *
+   * The host answers `send` before the server does, so the composer has already cleared the
+   * field by the time a refusal (a 409) lands. Called from the mutation's `onError`, this is
+   * what keeps a refused sentence from simply vanishing: it bumps `draftEpoch`, which is the
+   * composer's own signal to adopt the host's draft wholesale.
+   */
+  restoreLastSent: () => void;
 }
 
 /** Two notes that say the same thing, so `setNote` can hand back the previous object and let
@@ -75,7 +91,7 @@ export interface AgentsChannelComposer {
 function sameNote(a: ChannelNote | null, b: ChannelNote | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return a.kind === b.kind && a.text === b.text;
+  return a.kind === b.kind && a.text === b.text && a.busySlug === b.busySlug;
 }
 
 /**
@@ -90,17 +106,38 @@ function sameNote(a: ChannelNote | null, b: ChannelNote | null): boolean {
 export function useAgentsChannelHost(
   agents: ComposerAgent[],
   send: ChannelSend,
+  /** This project's skills and commands, for the `/` menu — see `useProjectSlashCommands`. */
+  slashCommands: string[] = [],
+  /** Whether this agent holds its run slot right now. Agents run in parallel, one slot each,
+   *  so the channel refuses only a message to the agent that is already running. */
+  isBusy: (slug: string) => boolean = () => false,
 ): AgentsChannelComposer {
-  const live = useRef({ agents, send });
+  const live = useRef({ agents, send, slashCommands, isBusy });
   live.current.agents = agents;
   live.current.send = send;
+  live.current.slashCommands = slashCommands;
+  live.current.isBusy = isBusy;
 
   // The draft lives in a ref rather than state because nothing here RENDERS it — the composer
   // owns the textarea and mirrors every keystroke down via `syncDraft`. Its only readers are
   // the composer's own mount and the refusal path below.
+  const { t } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const draft = useRef('');
+  /** The last full text `send` accepted, for {@link AgentsChannelComposer.restoreLastSent}. */
+  const lastSent = useRef('');
+  /** Bumped when the draft is replaced wholesale; read by the composer through `getModel`. */
+  const epoch = useRef(0);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
   const focusTarget = useRef<HTMLElement | null>(null);
   const [note, setNote] = useState<ChannelNote | null>(null);
+  const busyNote = (target: ComposerAgent): ChannelNote => ({
+    kind: 'error',
+    text: tRef.current('agents.busy').replace('{name}', target.title),
+    busySlug: target.slug,
+  });
 
   const host = useMemo<ComposerHost>(() => ({
     // No conversation to measure: `useAgentSessionStats` is gated on a truthy id, so the
@@ -112,20 +149,20 @@ export function useAgentsChannelHost(
     scratchId: 'agents-channel',
     getModel: (): ComposerHostModel => ({
       draft: draft.current,
-      // Never moves off 0: this channel has no rewind and no external `sendText`, so it never
-      // replaces the draft wholesale and the composer never adopts over free typing. A refusal
-      // does not need it either — `send` returning false means the field was never cleared, so
-      // there is nothing to put back.
-      draftEpoch: 0,
+      // Moves only when `restoreLastSent` puts a refused message back. A refusal the HOST makes
+      // needs no epoch — `send` returning false means the field was never cleared — but a
+      // refusal the SERVER makes arrives after the clear, and adopting is how the text returns.
+      draftEpoch: epoch.current,
       history: [],
       // The transcript is the CHANNEL, rendered by `AgentsFeed` above this composer as agent
       // messages with photos, status words and thread rows — not as `ItemView` chat items. So
       // the composer is handed none: `items` feeds ↑/↓ prompt history, and a history walk
       // through other agents' posts would recall text the user never wrote.
       items: [],
-      // No CLI reported any commands here, so `/` opens nothing. Empty rather than absent, to
-      // say that deliberately.
-      slashCommands: [],
+      // No CLI process reports commands here, so the list is the project's CACHED one — the
+      // same list a new chat is handed at connect. A `/name` picked from it rides into the ask,
+      // and the run's brief tells it to load that skill (`buildAskBlock`).
+      slashCommands: live.current.slashCommands,
       context: null,
     }),
     syncDraft: (text) => {
@@ -135,9 +172,11 @@ export function useAgentsChannelHost(
       // are still typing — the question the old hand-rolled field answered and the chat's
       // composer, which knows nothing about agents, cannot.
       const target = mentionedIn(text, live.current.agents);
-      const next: ChannelNote | null = target
-        ? { kind: 'hint', text: `${target.title} runs once, with what you wrote. Enter sends, Shift+Enter is a new line.` }
-        : null;
+      const next: ChannelNote | null = !target
+        ? null
+        : live.current.isBusy(target.slug)
+          ? busyNote(target)
+          : { kind: 'hint', text: `${target.title} runs once, with what you wrote. Enter sends, Shift+Enter is a new line.` };
       setNote((prev) => (sameNote(prev, next) ? prev : next));
     },
     setFocusTarget: (el) => { focusTarget.current = el; },
@@ -161,14 +200,21 @@ export function useAgentsChannelHost(
       };
       const target = mentionedIn(text, live.current.agents);
       if (!target) {
-        return refuse('Name an agent with @ — nobody is listening to the channel itself yet.');
+        return refuse(tRef.current('agents.composer.noAgent'));
       }
       const body = withoutMention(text, target);
       if (!body) {
         // A bare `@agent` with nothing after it is someone mid-sentence, not a request. Refuse
         // rather than starting a run with an empty prompt.
-        return refuse(`Say what you need from ${target.title} — the address on its own is not a question.`);
+        return refuse(tRef.current('agents.composer.noBody').replace('{name}', target.title));
       }
+      if (live.current.isBusy(target.slug)) {
+        // The agent named is mid-run, and a second run of one agent would write into the same
+        // thread. Refused HERE, with the draft and chips kept, rather than sent to a 409.
+        setNote(busyNote(target));
+        return false as const;
+      }
+      lastSent.current = text;
       draft.current = '';
       setNote(null);
       live.current.send(target, body);
@@ -187,7 +233,14 @@ export function useAgentsChannelHost(
     interrupt: () => {},
   }), []);
 
-  return { host, note, setNote, focusComposer: () => focusTarget.current?.focus() };
+  const restoreLastSent = () => {
+    if (!lastSent.current) return;
+    draft.current = lastSent.current;
+    epoch.current += 1;
+    rerender();
+  };
+
+  return { host, note, setNote, focusComposer: () => focusTarget.current?.focus(), restoreLastSent };
 }
 
 /**
@@ -230,6 +283,16 @@ export function useAgentsChannelHost(
  */
 const threadScratchIds = new Set<string>();
 
+/**
+ * Each agent's unsent thread reply, by slug.
+ *
+ * The panel remounts for every thread it shows (`key` on the run), so the draft cannot live in
+ * the host alone: switching to another agent's thread and back would lose it, and NOT
+ * remounting is how one agent's half-written reply used to sit under another agent's name.
+ * Per slug for the same reason as the scratch bucket, and cleared with it when the page goes.
+ */
+const threadDrafts = new Map<string, string>();
+
 /** The bucket for one agent's thread composer, recorded so the page can revoke it. */
 function threadScratchId(slug: string): string {
   const id = `agents-thread-${slug}`;
@@ -247,17 +310,23 @@ function threadScratchId(slug: string): string {
 export function dropThreadScratch(): void {
   for (const id of threadScratchIds) dropScratch(id);
   threadScratchIds.clear();
+  threadDrafts.clear();
 }
 
 export function useAgentThreadHost(
   target: { slug: string; title: string; runId: string },
   send: (text: string) => void,
+  slashCommands: string[] = [],
 ): AgentsChannelComposer {
-  const live = useRef({ target, send });
+  const live = useRef({ target, send, slashCommands });
   live.current.target = target;
   live.current.send = send;
+  live.current.slashCommands = slashCommands;
 
-  const draft = useRef('');
+  const draft = useRef(threadDrafts.get(target.slug) ?? '');
+  const lastSent = useRef('');
+  const epoch = useRef(0);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
   const focusTarget = useRef<HTMLElement | null>(null);
   const [note, setNote] = useState<ChannelNote | null>(null);
 
@@ -270,16 +339,20 @@ export function useAgentThreadHost(
     scratchId: threadScratchId(live.current.target.slug),
     getModel: (): ComposerHostModel => ({
       draft: draft.current,
-      draftEpoch: 0,
+      draftEpoch: epoch.current,
       history: [],
       // Same reasoning as the channel: the transcript is rendered ABOVE this composer by the
       // panel itself, as thread entries. Handing them over as `items` would put other
       // people's posts into ↑/↓ prompt history.
       items: [],
-      slashCommands: [],
+      slashCommands: live.current.slashCommands,
       context: null,
     }),
-    syncDraft: (text) => { draft.current = text; },
+    syncDraft: (text) => {
+      draft.current = text;
+      if (text) threadDrafts.set(live.current.target.slug, text);
+      else threadDrafts.delete(live.current.target.slug);
+    },
     setFocusTarget: (el) => { focusTarget.current = el; },
     send: (text) => {
       const body = text.trim();
@@ -289,7 +362,9 @@ export function useAgentThreadHost(
         // refusal exactly as they do in the channel.
         return false as const;
       }
+      lastSent.current = text;
       draft.current = '';
+      threadDrafts.delete(live.current.target.slug);
       setNote(null);
       live.current.send(body);
       return undefined;
@@ -299,5 +374,13 @@ export function useAgentThreadHost(
     interrupt: () => {},
   }), []);
 
-  return { host, note, setNote, focusComposer: () => focusTarget.current?.focus() };
+  const restoreLastSent = () => {
+    if (!lastSent.current) return;
+    draft.current = lastSent.current;
+    threadDrafts.set(target.slug, lastSent.current);
+    epoch.current += 1;
+    rerender();
+  };
+
+  return { host, note, setNote, focusComposer: () => focusTarget.current?.focus(), restoreLastSent };
 }

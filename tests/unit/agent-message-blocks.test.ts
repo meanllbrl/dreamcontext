@@ -55,7 +55,7 @@ describe('AgentMessage — the rich blocks are mounted, not re-implemented', () 
    */
   it('serves posted images through the vault route, not the desktop-gated one', () => {
     expect(source).toMatch(/import\s*\{\s*graphContentUrl\s*\}\s*from\s*'\.\.\/\.\.\/api\/client'/);
-    expect(source).toContain('graphContentUrl(vault, f.path, { raw: true })');
+    expect(source).toMatch(/graphContentUrl\(vault, (f\.)?path, \{ raw: true \}\)/);
     expect(source).not.toContain('agentFileUrl');
   });
 
@@ -81,10 +81,63 @@ describe('AgentMessage — the rich blocks are mounted, not re-implemented', () 
     expect(served.map(([, ext]) => ext)).not.toContain('.svg');
   });
 
-  /** A board off-desktop must say where it opens, not paint an empty canvas. */
-  it('degrades a board to a chip off-desktop', () => {
-    expect(source).toContain('isDesktop()');
+  /** Video and audio PLAY in a thread only if the vault route streams them, so the
+   *  client's lists must equal the route's `video/*` and `audio/*` rows exactly. */
+  it('mirrors the server media allowlist for video and audio', () => {
+    const graph = read(join(import.meta.dirname, '..', '..', 'src', 'server', 'routes', 'graph.ts'));
+    const table = /GRAPH_RAW_CONTENT_TYPE: Record<string, string> = \{([\s\S]*?)\}/.exec(graph);
+    const served = [...table![1].matchAll(/'(\.[a-z0-9]+)':\s*'([^']+)'/g)];
+    for (const [name, prefix] of [['VIDEO_EXTENSIONS', 'video/'], ['AUDIO_EXTENSIONS', 'audio/']] as const) {
+      const block = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(source);
+      expect(block, `${name} must stay a plain array literal`).toBeTruthy();
+      const mirrored = [...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      const onServer = served.filter(([, , type]) => type.startsWith(prefix)).map(([, ext]) => ext);
+      expect(new Set(mirrored)).toEqual(new Set(onServer));
+    }
+  });
+
+  /** The board pipeline is the chat's and reads PROJECT-relative paths; a post carries
+   *  BRAIN-relative ones. Without the prefix every posted board drew "couldn't be read". */
+  it('hands the board embed a project-relative path', () => {
+    expect(source).toContain('<BoardEmbed path={`_dream_context/${f.path}`}');
+  });
+
+  /**
+   * A10: whether a board DRAWS is the SERVER's call — its desktop gate on `/api/agent/*` —
+   * read through `useAgentCapabilities`, the same probe the chat surface uses. The client's
+   * `isDesktop()` (a Tauri check) disagreed with it: a browser tab on a desktop server showed
+   * a card saying boards open in the desktop app, then drew the board fullscreen on click.
+   */
+  it('decides board drawing by the server\'s capability, and degrades to a card with a reason', () => {
+    expect(source).toMatch(/import\s*\{[^}]*\buseAgentCapabilities\b[^}]*\}\s*from\s*'\.\.\/\.\.\/hooks\/useAgentCapabilities'/);
+    expect(source).toMatch(/useAgentCapabilities\(\)\.data\?\.desktop/);
+    expect(source).not.toContain('isDesktop()');
     expect(source).toContain("t('agents.boardDesktopOnly')");
+  });
+
+  /** A5/A17: a board is named by its board name everywhere, via the chat's own helper. */
+  it('names boards with the chat\'s boardName, not the raw filename', () => {
+    expect(source).toMatch(/import\s*\{[^}]*\bboardName\b[^}]*\}\s*from\s*'\.\.\/sleepy\/chat\/BoardEmbed'/);
+    expect(source).toMatch(/boardName\(/);
+  });
+
+  /** A17: a PDF and a plain document no longer share one glyph in the "what came back" line. */
+  it('gives documents their own glyph, distinct from a PDF\'s', () => {
+    expect(source).toMatch(/pdf:\s*'◧'/);
+    expect(source).toMatch(/doc:\s*'▤'/);
+  });
+
+  /** F1: the ask preview is prose — the shared markdown-to-text pass, not raw asterisks. */
+  it('previews the answer through markdownToText', () => {
+    expect(source).toMatch(/import\s*\{[^}]*\bmarkdownToText\b[^}]*\}\s*from\s*'\.\.\/\.\.\/lib\/markdownToText'/);
+    expect(source).toMatch(/markdownToText\(message\.text\)/);
+  });
+
+  /** A4 / T19: the feed folds a post's extra visuals; the thread root is its own variant. */
+  it('lays files out per surface and gives the thread root its own variant', () => {
+    expect(source).toMatch(/layout=\{?[^\n]*['"]feed['"]/);
+    expect(source).toContain('agent-msg-file--folded');
+    expect(source).toContain('agent-msg--root');
   });
 
   /**

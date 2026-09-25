@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentQuestionBlock } from './AgentQuestionBlock';
 import { AgentSummaryBlock } from './AgentSummaryBlock';
 import { BoardEmbed } from '../sleepy/chat/BoardEmbed';
+import { boardName } from '../sleepy/chat/BoardEmbed';
+import { MarkdownPreview } from '../core/MarkdownPreview';
 import { graphContentUrl } from '../../api/client';
 import { useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
-import { isDesktop } from '../../lib/desktop';
+import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
+import { markdownToText } from '../../lib/markdownToText';
+import { middleTruncate } from '../../lib/fileLabel';
 import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import {
   useAutomation, useAutomationSession, type FeedMessage, type FeedStatus,
@@ -56,73 +60,98 @@ function hhmm(iso: string): string {
  * URL to an iframe. It falls through to a chip here, which is the whole point.
  */
 const RASTER_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+/** Media the same route streams with byte ranges — mirrors its `video/*` and `audio/*` rows. */
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov'];
+const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav'];
 
-export type AgentFileKind = 'board' | 'image' | 'doc';
+export type AgentFileKind = 'board' | 'image' | 'video' | 'audio' | 'pdf' | 'doc';
 
 /**
  * What a posted path should be DRAWN as. Extension-only and total: an unknown
- * type is a `doc`, which is the chip — the treatment that works for anything.
+ * type is a `doc`, which is the card — the treatment that works for anything.
  */
 export function agentFileKind(path: string): AgentFileKind {
   const lower = path.toLowerCase();
+  const has = (list: string[]) => list.some((ext) => lower.endsWith(ext));
   if (lower.endsWith('.excalidraw.md')) return 'board';
-  return RASTER_EXTENSIONS.some((ext) => lower.endsWith(ext)) ? 'image' : 'doc';
+  if (has(RASTER_EXTENSIONS)) return 'image';
+  if (has(VIDEO_EXTENSIONS)) return 'video';
+  if (has(AUDIO_EXTENSIONS)) return 'audio';
+  if (lower.endsWith('.pdf')) return 'pdf';
+  return 'doc';
+}
+
+/** The short type word a document card leads with: `PDF`, `MD`, `CSV`… */
+function typeWord(name: string): string {
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1) : '';
+  return (ext || 'FILE').slice(0, 4).toUpperCase();
 }
 
 /**
  * THE FILES ON A POST — up to four, each drawn as what it is.
  *
  * Shared by the message and the thread panel so a document does not change
- * shape depending on which of the two you are reading it in.
+ * shape depending on which of the two you are reading it in. VISUALS FIRST (a
+ * diagram, a screenshot, a clip is the thing to look at), then DOCUMENTS as a row
+ * of cards (things to open). Every one opens through `onOpenFile`, and the page
+ * routes that to the viewer the chat uses for the same type: a board fullscreen, a
+ * picture in the lightbox, a PDF full window.
+ *
+ * `layout` is the surface. The THREAD draws every visual at the column's width;
+ * the FEED draws the first one and folds the rest into cards, because a channel
+ * row with four full-size visuals was taller than the window (1248px at 1000) and
+ * pushed every other agent off screen. The thread is one click away and has room.
+ *
+ * PATHS: posts carry BRAIN-relative paths. The vault route (`graphContentUrl`)
+ * takes them as they are; the board's pipeline is the chat's own and reads
+ * PROJECT-relative paths, so a board gets the `_dream_context/` prefix — without
+ * it, every board posted to a thread drew "couldn't be read".
  *
  * THE TWO ROUTES ARE NOT INTERCHANGEABLE, and picking the wrong one is how this
  * silently breaks outside the desktop app:
- *   • An IMAGE goes through `graphContentUrl` — `/api/graph/content`, which is
- *     vault-scoped and NOT desktop-gated, so a screenshot an agent posted is
- *     visible in a browser tab and on a phone over the tailnet.
+ *   • IMAGES and MEDIA go through `graphContentUrl` — `/api/graph/content`, which
+ *     is vault-scoped and NOT desktop-gated, so a screenshot or a clip an agent
+ *     posted plays in a browser tab and on a phone over the tailnet.
  *   • A BOARD goes through `BoardEmbed`, whose asset pipeline is `/api/agent/*`
- *     and IS desktop-gated. Off-desktop it would render an empty canvas, so it
- *     degrades to a chip that says where boards open instead of drawing a lie.
- *   • Everything else is a chip that opens the existing file viewer.
+ *     and IS desktop-gated. Whether it draws is therefore the SERVER's answer
+ *     (`useAgentCapabilities`), not the client's own Tauri check: the two used to
+ *     disagree, and a browser tab showed "boards open in the desktop app" on a card
+ *     that then drew the board fullscreen when clicked. Where the server says no,
+ *     the board is a plain card with that reason and nothing to click.
  */
 export function AgentFiles({
   files,
   onOpenFile,
+  layout = 'thread',
 }: {
   files: { path: string; name: string }[];
   onOpenFile: (path: string) => void;
+  layout?: 'feed' | 'thread';
 }) {
   const { vault } = useVault();
   const { t } = useI18n();
+  const desktop = useAgentCapabilities().data?.desktop === true;
   if (files.length === 0) return null;
+
+  const visual = (k: AgentFileKind) => k === 'image' || k === 'video' || (k === 'board' && desktop);
+  const typed = files.map((f) => ({ ...f, kind: agentFileKind(f.path) }));
+  const allVisuals = typed.filter((f) => visual(f.kind));
+  const shown = layout === 'feed' ? allVisuals.slice(0, 1) : allVisuals;
+  const folded = layout === 'feed' ? allVisuals.slice(1) : [];
+  const cards = typed.filter((f) => !visual(f.kind));
 
   return (
     <div className="agent-msg-files">
-      {files.map((f) => {
-        const kind = agentFileKind(f.path);
-
-        if (kind === 'board') {
-          // `isDesktop()` rather than a capability probe: the board's assets are
-          // fetched from a route that answers 403 off-desktop, and an empty
-          // canvas reads as a broken board rather than an unavailable one.
-          return isDesktop() ? (
-            <BoardEmbed key={f.path} path={f.path} onOpenBoard={onOpenFile} />
-          ) : (
-            <button
-              key={f.path}
-              type="button"
-              className="agent-msg-file"
-              onClick={() => onOpenFile(f.path)}
-              title={f.path}
-            >
-              <span className="agent-msg-file-glyph" aria-hidden="true">▦</span>
-              <span className="agent-msg-file-name">{f.name}</span>
-              <span className="agent-msg-file-note">{t('agents.boardDesktopOnly')}</span>
-            </button>
+      {shown.map((f) => {
+        if (f.kind === 'board') {
+          return (
+            <div key={f.path} className="agent-msg-board">
+              <BoardEmbed path={`_dream_context/${f.path}`} onOpenBoard={() => onOpenFile(f.path)} />
+            </div>
           );
         }
-
-        if (kind === 'image') {
+        if (f.kind === 'image') {
           return (
             <button
               key={f.path}
@@ -135,22 +164,148 @@ export function AgentFiles({
             </button>
           );
         }
-
-        return (
-          <button
-            key={f.path}
-            type="button"
-            className="agent-msg-file"
-            onClick={() => onOpenFile(f.path)}
-            title={f.path}
-          >
-            <span className="agent-msg-file-glyph" aria-hidden="true">◧</span>
-            <span className="agent-msg-file-name">{f.name}</span>
-          </button>
-        );
+        return <AgentClip key={f.path} path={f.path} name={f.name} onOpen={() => onOpenFile(f.path)} />;
       })}
+
+      {folded.length + cards.length > 0 && (
+        <div className="agent-msg-cards">
+          {/* A visual the FEED folded: the same card a document gets, typed by what it is,
+              opening the same viewer the full-size one would. */}
+          {folded.map((f) => (
+            <button
+              key={f.path}
+              type="button"
+              className={`agent-msg-file agent-msg-file--folded agent-msg-file--${f.kind}`}
+              onClick={() => onOpenFile(f.path)}
+              title={f.path}
+            >
+              {f.kind === 'board'
+                ? <span className="agent-msg-file-type agent-msg-file-type--glyph" aria-hidden="true">▦</span>
+                : <span className="agent-msg-file-type" aria-hidden="true">{typeWord(f.name)}</span>}
+              <span className="agent-msg-file-text">
+                <span className="agent-msg-file-name">
+                  {f.kind === 'board' ? boardName(f.path) : middleTruncate(f.name, 40)}
+                </span>
+              </span>
+            </button>
+          ))}
+          {cards.map((f) => {
+            if (f.kind === 'audio') {
+              return (
+                <div key={f.path} className="agent-msg-file agent-msg-file--audio" title={f.path}>
+                  <span className="agent-msg-file-type agent-msg-file-type--glyph" aria-hidden="true">♪</span>
+                  <span className="agent-msg-file-text">
+                    {/* The name and Open share a line above the player: beside it, the
+                        player's own width ran over the button. */}
+                    <span className="agent-msg-audio-head">
+                      <span className="agent-msg-file-name">{middleTruncate(f.name, 40)}</span>
+                      <button type="button" className="agent-msg-media-open" onClick={() => onOpenFile(f.path)}>
+                        {t('agents.file.open')}
+                      </button>
+                    </span>
+                    <audio src={graphContentUrl(vault, f.path, { raw: true })} controls preload="metadata" />
+                  </span>
+                </div>
+              );
+            }
+            if (f.kind === 'board') {
+              // The server will not serve this board's canvas here, so there is nothing to
+              // open either: a card that says where boards open, and no click that pretends.
+              return (
+                <div key={f.path} className="agent-msg-file agent-msg-file--board" title={f.path}>
+                  <span className="agent-msg-file-type agent-msg-file-type--glyph" aria-hidden="true">▦</span>
+                  <span className="agent-msg-file-text">
+                    <span className="agent-msg-file-name">{boardName(f.path)}</span>
+                    <span className="agent-msg-file-note">{t('agents.boardDesktopOnly')}</span>
+                  </span>
+                </div>
+              );
+            }
+            // A document is led by its type word ("PDF", "MD") and named; a filler note
+            // under the name ("Document") said nothing the type square had not.
+            return (
+              <button
+                key={f.path}
+                type="button"
+                className={`agent-msg-file agent-msg-file--${f.kind}`}
+                onClick={() => onOpenFile(f.path)}
+                title={f.path}
+              >
+                <span className="agent-msg-file-type" aria-hidden="true">{typeWord(f.name)}</span>
+                <span className="agent-msg-file-text">
+                  <span className="agent-msg-file-name">{middleTruncate(f.name, 40)}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * A posted clip, PLAYING in the post.
+ *
+ * Its box is reserved before the file says anything: 16:9 until `loadedmetadata`,
+ * then the clip's own ratio. Without the reservation every clip loaded at the
+ * browser's default height and then jumped (a media post grew 910 → 1330px as its
+ * clips arrived), and without the clip's own ratio a portrait reel played as a thin
+ * strip between two slabs of black. The ratio drives the figure's width through
+ * `--agent-clip-ratio` (AgentsFeed.css), within the chat's media caps.
+ */
+function AgentClip({ path, name, onOpen }: { path: string; name: string; onOpen: () => void }) {
+  const { vault } = useVault();
+  const { t } = useI18n();
+  const [ratio, setRatio] = useState<number | null>(null);
+  const style = ratio === null ? undefined : ({ '--agent-clip-ratio': String(ratio) } as CSSProperties);
+  return (
+    <figure className="agent-msg-video" style={style}>
+      <video
+        src={graphContentUrl(vault, path, { raw: true })}
+        controls
+        preload="metadata"
+        playsInline
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (v.videoWidth > 0 && v.videoHeight > 0) setRatio(v.videoWidth / v.videoHeight);
+        }}
+      />
+      <figcaption className="agent-msg-media-cap">
+        <span className="agent-msg-file-name" title={name}>{middleTruncate(name, 40)}</span>
+        <button type="button" className="agent-msg-media-open" onClick={onOpen}>
+          {t('agents.file.open')}
+        </button>
+      </figcaption>
+    </figure>
+  );
+}
+
+/** What each kind of file is called in the ask preview's "what came back" line. A PDF
+ *  and a plain document used to share one glyph; they are different things to open. */
+const KIND_GLYPH: Record<AgentFileKind, string> = {
+  board: '▦', image: '▣', video: '▶', audio: '♪', pdf: '◧', doc: '▤',
+};
+
+/**
+ * The thread's attachments as the ask preview names them — what came back, by kind,
+ * so "it made a diagram and a PDF" reads without opening the thread. One PART per
+ * file, each cut on its own (in the middle, so the distinguishing end survives) and
+ * carrying its full name as a title: one ellipsis over the whole line used to hide
+ * every file after a long first name.
+ */
+export function attachmentParts(
+  files: { path: string; name: string }[],
+): { key: string; glyph: string; label: string; title: string }[] {
+  return files.map((f) => {
+    const kind = agentFileKind(f.path);
+    return {
+      key: f.path,
+      glyph: KIND_GLYPH[kind],
+      label: kind === 'board' ? boardName(f.path) : middleTruncate(f.name, 24),
+      title: f.name,
+    };
+  });
 }
 
 /**
@@ -179,12 +334,14 @@ function OpenSessionButton({ message, onToast }: { message: FeedMessage; onToast
   const sent = useRef(false);
 
   const { data: detail } = useAutomation(armed ? message.slug : null);
-  // 1-based, newest-first — the same numbering `resolveRunSession` indexes by.
+  // 1-based, newest-first — the same numbering `resolveRunSession` indexes by. Keyed by
+  // `sessionRunId`, not `runId`: a resumed @mention turn has no history row of its own, and
+  // the session it continued belongs to the run the server names there.
   const runNumber = useMemo(() => {
     const history = detail?.cache?.history ?? [];
-    const idx = history.findIndex((e) => e.firedAt === message.runId);
+    const idx = history.findIndex((e) => e.firedAt === message.sessionRunId);
     return idx >= 0 ? idx + 1 : null;
-  }, [detail, message.runId]);
+  }, [detail, message.sessionRunId]);
   const { data: session } = useAutomationSession(armed && runNumber !== null ? message.slug : null, runNumber);
 
   useEffect(() => {
@@ -249,51 +406,213 @@ function cost(usd: number | null): string | null {
   return usd === null || !Number.isFinite(usd) ? null : `$${usd.toFixed(2)}`;
 }
 
+/**
+ * An agent's words, set the way the chat sets them — markdown, the chat's reading size and
+ * leading — rather than as a raw `pre-wrap` paragraph. A run writes markdown (bold, lists,
+ * backticked paths), and printing its asterisks is what made the channel harder to read than
+ * the chat it sits beside. No card here: a channel row is not a bubble (see the header note);
+ * the thread panel is where an answer gets the chat's full card.
+ */
+export function AgentProse({ text, className = '' }: { text: string; className?: string }) {
+  return (
+    <div className={`agent-msg-md ${className}`.trim()}>
+      <MarkdownPreview content={text} />
+    </div>
+  );
+}
+
+/**
+ * THE SLACK THREAD LINE — faces, "N replies", when the last one landed, and a way in.
+ *
+ * The faces are who spoke in the thread. We know the agent did whenever it answered; a reply
+ * of yours is counted but not attributed per author on the wire, so the stack stays honest
+ * and shows only the face we are sure of.
+ *
+ * The count is the SERVER's (`replyCount`, `threadReplies` in feed.ts): the rows the thread
+ * draws under its root, the report included. The feed used to add the answer here while the
+ * panel added it there, and the same ask read "1 reply" in one and "2 replies" in the other.
+ */
+function ThreadBar({
+  message,
+  replies,
+  lastAt,
+  open,
+  panelId,
+  onOpen,
+}: {
+  message: FeedMessage;
+  replies: number;
+  lastAt: string | null;
+  open: boolean;
+  panelId?: string;
+  onOpen: (opener: HTMLElement) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      className="agent-thread-bar"
+      onClick={(e) => onOpen(e.currentTarget)}
+      aria-expanded={open}
+      aria-controls={open ? panelId : undefined}
+    >
+      {replies > 0 && (
+        <span className="agent-thread-bar-faces" aria-hidden="true">
+          <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={22} version={message.runId} />
+        </span>
+      )}
+      {replies > 0 ? (
+        <>
+          <strong className="agent-thread-bar-count">
+            {replies} {replies === 1 ? 'reply' : 'replies'}
+          </strong>
+          {/* Slack's swap: "Last reply" and "View thread" share one cell, and hover trades
+              one for the other — so the line never grows a gap for a word that is hidden.
+              The hover word is hidden from the accessible name: it is the same action the
+              button already is, and reading both halves of the swap said it twice. */}
+          <span className="agent-thread-bar-swap">
+            <span className="agent-thread-bar-last">{lastAt ? `Last reply ${hhmm(lastAt)}` : ''}</span>
+            <span className="agent-thread-bar-go" aria-hidden="true">{t('agents.thread.view')}</span>
+          </span>
+        </>
+      ) : (
+        <span className="agent-thread-bar-quiet">{t('agents.thread.reply')}</span>
+      )}
+    </button>
+  );
+}
+
 export function AgentMessage({
   message,
   onOpenThread,
   onOpenFile,
   onOpenAgent,
   onToast,
-  showHead = true,
+  variant = 'feed',
+  threadOpen = false,
+  panelId,
 }: {
   message: FeedMessage;
-  onOpenThread: (m: FeedMessage) => void;
+  /** `opener` is the control that was used, so closing the thread can give it focus back. */
+  onOpenThread: (m: FeedMessage, opener: HTMLElement) => void;
   onOpenFile: (path: string) => void;
   onOpenAgent: (slug: string) => void;
   /** Where an answer that could not be recorded is reported. Optional so the
    *  thread panel, which mounts this as its read-only root, need not pass one. */
   onToast?: (msg: string) => void;
-  /** False inside the thread panel, where the message is the root and its
-   *  header is already the panel's own. */
-  showHead?: boolean;
+  /** `root` inside the thread panel, where the message is the thread's first row: it is
+   *  named and timed like every other row there, and carries none of the feed's chrome
+   *  (no unread bar, no question, no thread line). */
+  variant?: 'feed' | 'root';
+  /** This message's thread is the one open in the panel (the thread line's `aria-expanded`). */
+  threadOpen?: boolean;
+  /** The open panel's id, for the thread line's `aria-controls`. */
+  panelId?: string;
 }) {
   const { t } = useI18n();
   const meta = [duration(message.durationMs), cost(message.costUsd)].filter(Boolean).join(' · ');
+  const root = variant === 'root';
+
+  // ── AN ASK IS A THREAD ON YOUR MESSAGE ─────────────────────────────────────
+  //
+  // The owner's words, Slack's shape: when you ask an agent something, the channel shows
+  // YOUR message, and the answer lives in its thread — its opening line previewed inside
+  // your message so the exchange reads at a glance, and the whole answer one click away.
+  // The agent's reply used to be a second top-level row under yours, which made every
+  // question two messages to scroll past and put the detail nowhere.
+  if (!root && message.ask) {
+    const parts = attachmentParts(message.files);
+    return (
+      <article className={`agent-msg agent-msg--you${message.unread ? ' agent-msg--unread' : ''}`}>
+        <div className="agent-msg-av">
+          <span className="agent-you-av" aria-hidden="true">You</span>
+        </div>
+        <div className="agent-msg-body">
+          <div className="agent-msg-head">
+            <span className="agent-msg-name agent-msg-name--plain">You</span>
+            <span className="agent-msg-time">{hhmm(message.ask.at)}</span>
+            <span className="agent-msg-meta">
+              to{' '}
+              <button type="button" className="agent-msg-to" onClick={() => onOpenAgent(message.slug)}>
+                {message.title}
+              </button>
+            </span>
+          </div>
+          <AgentProse text={message.ask.text} />
+
+          {/* THE ANSWER'S OPENING, inside your message. A preview, not the answer: it is
+              clamped, and clicking it opens the thread where the whole thing is. It is
+              PROSE — the answer's markdown with its syntax taken out — because a clamp of
+              three lines cannot hold a list or a table, and printing `**31%**` with its
+              asterisks (and a blank line eating one of the three) was the complaint. Its
+              name is the action, not the whole card read aloud. */}
+          <button
+            type="button"
+            className={`agent-reply-preview${message.status === 'running' ? ' agent-reply-preview--running' : ''}`}
+            onClick={(e) => onOpenThread(message, e.currentTarget)}
+            aria-label={t('agents.preview.open').replace('{name}', message.title)}
+          >
+            <span className="agent-reply-preview-head">
+              <AgentAvatar slug={message.slug} title={message.title} hasPhoto={message.hasPhoto} size={20} version={message.runId} />
+              <span className="agent-reply-preview-name">{message.title}</span>
+              <span className={`agent-msg-status agent-msg-status--${message.status}`}>
+                {STATUS_WORD[message.status]}
+              </span>
+              {meta && <span className="agent-msg-meta">{meta}</span>}
+            </span>
+            {/* A failed run's text is its REASON, not an answer, so it wears the reason's
+                ink rather than the answer's. */}
+            <span
+              className={`agent-reply-preview-text${message.textFrom === 'error' ? ' agent-reply-preview-text--error' : ''}`}
+            >
+              {message.status === 'running' && !message.text
+                ? t('agents.thread.working')
+                : message.text ? markdownToText(message.text) : 'Nothing to report.'}
+            </span>
+            {parts.length > 0 && (
+              <span className="agent-reply-preview-files">
+                {parts.map((p, i) => (
+                  <Fragment key={p.key}>
+                    {i > 0 && <span className="agent-reply-preview-sep" aria-hidden="true"> · </span>}
+                    <span className="agent-reply-preview-file" title={p.title}>{p.glyph} {p.label}</span>
+                  </Fragment>
+                ))}
+              </span>
+            )}
+          </button>
+
+          {message.question && onToast && (
+            <AgentQuestionBlock
+              slug={message.slug}
+              title={message.title}
+              question={message.question}
+              onToast={onToast}
+            />
+          )}
+
+          <div className="agent-msg-actions">
+            <ThreadBar
+              message={message}
+              replies={message.replyCount}
+              lastAt={message.lastReplyAt}
+              open={threadOpen}
+              panelId={panelId}
+              onOpen={(opener) => onOpenThread(message, opener)}
+            />
+            {/* Only a run the cache recorded, and that actually ran, has a session to
+                reopen. Offering it on a running or skipped run only ever toasted
+                "Couldn't open the session". */}
+            {onToast && message.sessionOpenable && <OpenSessionButton message={message} onToast={onToast} />}
+          </div>
+        </div>
+      </article>
+    );
+  }
 
   return (
-    <>
-      {/* THE ASK. A run the owner started by typing opens with their own words,
-          as their own row — the exchange reads the way it happened, question
-          then answer, rather than burying the question in a thread nobody
-          opens. Not repeated inside the thread panel (`showHead === false`):
-          the panel lists every entry already, this one included. */}
-      {showHead && message.ask && (
-        <article className="agent-msg agent-msg--you">
-          <div className="agent-msg-av">
-            <span className="agent-you-av" aria-hidden="true">You</span>
-          </div>
-          <div className="agent-msg-body">
-            <div className="agent-msg-head">
-              <span className="agent-msg-name agent-msg-name--plain">You</span>
-              <span className="agent-msg-time">{hhmm(message.ask.at)}</span>
-              <span className="agent-msg-meta">asked {message.title}</span>
-            </div>
-            <p className="agent-msg-text">{message.ask.text}</p>
-          </div>
-        </article>
-      )}
-    <article className={`agent-msg${message.unread ? ' agent-msg--unread' : ''}`}>
+    <article
+      className={`agent-msg${root ? ' agent-msg--root' : ''}${!root && message.unread ? ' agent-msg--unread' : ''}`}
+    >
       <div className="agent-msg-av">
         <AgentAvatar
           slug={message.slug}
@@ -305,7 +624,18 @@ export function AgentMessage({
       </div>
 
       <div className="agent-msg-body">
-        {showHead && (
+        {root ? (
+          // THE THREAD'S ROOT is named and timed like every row under it. The name is
+          // plain text here: the panel is already about this agent, so it opens nothing.
+          <div className="agent-msg-head">
+            <span className="agent-msg-name agent-msg-name--plain">{message.title}</span>
+            <span className="agent-msg-time">{hhmm(message.at)}</span>
+            <span className={`agent-msg-status agent-msg-status--${message.status}`}>
+              {STATUS_WORD[message.status]}
+            </span>
+            {meta && <span className="agent-msg-meta">{meta}</span>}
+          </div>
+        ) : (
           <div className="agent-msg-head">
             {/* The name opens the agent — the prototype's "click an agent's
                 name" affordance. A button, not a link: it changes what this
@@ -321,13 +651,10 @@ export function AgentMessage({
                 answer resumed it, it ran on and completed — and a second
                 question is open, or the first never got answered. The status
                 word describes the run; this says the reader still owes it
-                something. Only when the two differ, or it would say it twice. */}
-            {/* Its OWN class, not a second `.agent-msg-status`. Two elements
-                sharing that class would make `.agent-msg-status` a multi-match
-                locator, and the feed's verify script reads it with innerText() —
-                a strict-mode violation the moment a run is both finished and
-                still asking. The word is also not the run's status, so sharing
-                the class was wrong twice over. */}
+                something. Only when the two differ, or it would say it twice.
+                Its OWN class, not a second `.agent-msg-status`: the feed's
+                verify script reads that class with innerText(), and the word
+                is not the run's status anyway. */}
             {message.needsYou && message.status !== 'needs-you' && (
               <span className="agent-msg-needs">{t('agents.needsYou')}</span>
             )}
@@ -336,13 +663,13 @@ export function AgentMessage({
         )}
 
         {message.text ? (
-          <p className={`agent-msg-text${message.textFrom === 'error' ? ' agent-msg-text--error' : ''}`}>
-            {message.text}
-          </p>
+          message.textFrom === 'error' || message.textFrom === 'skipped'
+            ? <p className="agent-msg-text agent-msg-text--error">{message.text}</p>
+            : <AgentProse text={message.text} />
         ) : message.status === 'running' ? (
           // A run in flight has nothing to say YET. Saying so is the honest
           // state; an empty row reads as a message that failed to load.
-          <p className="agent-msg-text agent-msg-text--quiet">Working…</p>
+          <p className="agent-msg-text agent-msg-text--quiet">{t('agents.thread.working')}</p>
         ) : (
           <p className="agent-msg-text agent-msg-text--quiet">Nothing to report.</p>
         )}
@@ -350,30 +677,30 @@ export function AgentMessage({
         {/* WHERE THE WORDS CAME FROM. An agent that chose to post and an agent
             that said nothing (so we are showing its document's opening line)
             are different claims, and a reader deciding whether to open the
-            thread is entitled to know which one they are looking at. */}
+            thread is entitled to know which one they are looking at. A
+            caption, kept on purpose (the owner's call). */}
         {message.textFrom === 'result' && message.text && (
-          <p className="agent-msg-from">from its document — it posted nothing</p>
+          <p className="agent-msg-from">{t('agents.from.result')}</p>
         )}
         {message.textFrom === 'error' && message.text && (
-          <p className="agent-msg-from">the run's own error — it never published</p>
+          <p className="agent-msg-from">{t('agents.from.error')}</p>
         )}
 
         {/* THE FIGURES, between the words and the files. They belong to the
             post's prose — "WAU is down 4%" and the rows that show it are one
-            statement — so they sit under it, above the attachments, which are
-            things to go and open rather than things to read here. */}
+            statement — so they sit under it, above the attachments. */}
         {message.summary && message.summary.length > 0 && (
           <AgentSummaryBlock rows={message.summary} />
         )}
 
-        <AgentFiles files={message.files} onOpenFile={onOpenFile} />
+        {root
+          ? <AgentFiles files={message.files} onOpenFile={onOpenFile} layout="thread" />
+          : <AgentFiles files={message.files} onOpenFile={onOpenFile} layout="feed" />}
 
-        {/* THE QUESTION LAST, closest to the reply affordance. It is the reason
-            to stop scrolling: everything above is a report, and this is the one
-            thing the run cannot finish without. Only in the feed — the thread
-            panel mounts this component headless as its root, and answering the
+        {/* THE QUESTION LAST, closest to the reply affordance. Only in the feed —
+            the thread panel mounts this component as its root, and answering the
             same question twice on one screen is not an affordance. */}
-        {showHead && message.question && onToast && (
+        {!root && message.question && onToast && (
           <AgentQuestionBlock
             slug={message.slug}
             title={message.title}
@@ -382,41 +709,24 @@ export function AgentMessage({
           />
         )}
 
-        {/* The two controls are adjacent `.agent-msg-replies` buttons — both are
-            inline-flex, so they sit on one line with the explicit space below
-            and wrap together. No wrapper element, and so no new rule: this lane
-            does not own the channel's stylesheet. */}
-        {showHead && (
-          <>
-            {message.replyCount > 0 ? (
-              <button type="button" className="agent-msg-replies" onClick={() => onOpenThread(message)}>
-                <strong>
-                  {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
-                </strong>
-                {message.lastReplyAt && <span>last {hhmm(message.lastReplyAt)}</span>}
-              </button>
-            ) : (
-              // "Reply in thread" now, not "Open thread": the step-2 wording was
-              // deliberate — a control must not name an action it cannot perform —
-              // and the reason it could not is gone. The panel this opens carries
-              // a real composer.
-              <button
-                type="button"
-                className="agent-msg-replies agent-msg-replies--quiet"
-                onClick={() => onOpenThread(message)}
-              >
-                {t('agents.thread.reply')}
-              </button>
-            )}
-            {' '}
+        {!root && (
+          <div className="agent-msg-actions">
+            <ThreadBar
+              message={message}
+              replies={message.replyCount}
+              lastAt={message.lastReplyAt}
+              open={threadOpen}
+              panelId={panelId}
+              onOpen={(opener) => onOpenThread(message, opener)}
+            />
             {/* Only where a toast can be reported: the ACK is the whole point of
                 this button, and a surface with nowhere to say "couldn't open it"
-                would swallow exactly the outcome the bridge exists to surface. */}
-            {onToast && <OpenSessionButton message={message} onToast={onToast} />}
-          </>
+                would swallow exactly the outcome the bridge exists to surface. And
+                only on a run that has a session to open. */}
+            {onToast && message.sessionOpenable && <OpenSessionButton message={message} onToast={onToast} />}
+          </div>
         )}
       </div>
     </article>
-    </>
   );
 }

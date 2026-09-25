@@ -56,7 +56,7 @@ export function AgentQuestionBlock({
     answerQuestion.mutate({ id: question.id, kind: 'flow-hitl', answer: body }, {
       onError: (err) => {
         setDecided(null);
-        onToast(`${title}: could not record that — ${(err as Error).message}`);
+        onToast(t('agents.question.failed').replace('{name}', title).replace('{reason}', (err as Error).message));
       },
     });
   };

@@ -392,17 +392,32 @@ export function slashQueryAt(text: string, caret: number): string | null {
 }
 
 /**
+ * One spelling for matching a typed query against a name, so a Turkish project's commands and
+ * agents are findable however they were typed.
+ *
+ * `toLowerCase()` alone got Turkish wrong in both directions: it turns "İ" into "i" plus a
+ * combining dot (so "İçerik" never matched "/içerik"), and it has no pair for "ı" at all (so
+ * "/ILIK" missed "ılık-özet"). The Turkish locale fixes the case pairs, stripping combining
+ * marks makes "cozum" find "çözüm", and folding the dotless "ı" to "i" lets an ASCII keyboard
+ * reach it. ASCII input folds to exactly what `toLowerCase()` gave, so plain names rank as before.
+ */
+export function foldForMatch(s: string): string {
+  return s.toLocaleLowerCase('tr').normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i');
+}
+
+/**
  * `commands` filtered by `query`, prefix matches first (what the user is most likely
  * reaching for) then the rest of the substring matches, each group keeping the CLI's own
- * ordering. Case-insensitive; an empty query returns everything.
+ * ordering. Case- and diacritic-insensitive ({@link foldForMatch}); an empty query returns
+ * everything.
  */
 export function filterSlashCommands(commands: string[], query: string): string[] {
-  const q = query.toLowerCase();
+  const q = foldForMatch(query);
   if (!q) return [...commands];
   const prefix: string[] = [];
   const contains: string[] = [];
   for (const c of commands) {
-    const lc = c.toLowerCase();
+    const lc = foldForMatch(c);
     if (lc.startsWith(q)) prefix.push(c);
     else if (lc.includes(q)) contains.push(c);
   }
@@ -486,6 +501,13 @@ export interface PeerMention {
    * Set it only alongside `logo: true`; the row falls back to the `◈` glyph otherwise.
    */
   logoUrl?: string;
+  /**
+   * Other names the picker should find this entry by — for the agents channel, the agent's
+   * TITLE ("Deep researcher"), since what is written into the draft is its slug (`oncall`)
+   * and nobody remembers a slug. Matched after `vault`/`agent`. Connected projects carry none,
+   * so the chat's own `@` menu is unchanged.
+   */
+  aliases?: string[];
 }
 
 /**
@@ -552,16 +574,24 @@ export function mentionQueryAt(text: string, caret: number): string | null {
   return m ? m[1] : null;
 }
 
-/** `peers` filtered by `query`, prefix matches first. Case-insensitive. */
+/**
+ * `peers` filtered by `query`, prefix matches first. Case- and diacritic-insensitive
+ * ({@link foldForMatch}). An alias counts as a prefix match when any of its WORDS starts with
+ * the query ("res" finds "Deep researcher"), and as a substring match anywhere in it.
+ */
 export function filterPeerMentions(peers: PeerMention[], query: string): PeerMention[] {
-  const q = query.toLowerCase();
+  const q = foldForMatch(query);
   if (!q) return [...peers];
   const prefix: PeerMention[] = [];
   const contains: PeerMention[] = [];
   for (const p of peers) {
-    const lc = p.vault.toLowerCase();
-    if (lc.startsWith(q)) prefix.push(p);
-    else if (lc.includes(q) || p.agent.toLowerCase().includes(q)) contains.push(p);
+    const vault = foldForMatch(p.vault);
+    const aliases = (p.aliases ?? []).map(foldForMatch);
+    if (vault.startsWith(q) || aliases.some((a) => a.split(/\s+/).some((w) => w.startsWith(q)))) {
+      prefix.push(p);
+    } else if (vault.includes(q) || foldForMatch(p.agent).includes(q) || aliases.some((a) => a.includes(q))) {
+      contains.push(p);
+    }
   }
   return [...prefix, ...contains];
 }
