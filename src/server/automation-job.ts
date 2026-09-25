@@ -47,35 +47,70 @@ export interface AutomationAsk {
  * words for, and a status missing from it is not a bug.
  */
 const SKIP_REASON: Record<string, string> = {
-  blocked: 'It did not run — this agent is not approved on this machine yet. Approve it and ask again.',
-  deferred: 'It did not run — a sleep cycle holds the lock right now. Ask again once it finishes.',
-  orphaned: 'It did not run — the run was orphaned before it started.',
-  'awaiting-review': 'It did not run — an earlier run of this agent is still waiting on your verdict. Clear that first.',
-  'awaiting-approval': 'It did not run — the agent was edited since you approved it, so it asked about the change instead.',
+  blocked: 'It did not run. This agent is not approved on this machine yet. Approve it, then ask again.',
+  deferred: 'It did not run. A sleep cycle holds the lock right now. Ask again once it finishes.',
+  orphaned: 'It did not run. The run was orphaned before it started.',
+  'awaiting-review': 'It did not run. An earlier run of this agent is still waiting on your verdict. Clear that first.',
+  'awaiting-approval': 'It did not run. The agent was edited since you approved it, so it asked about the change instead.',
 };
 
-const jobs = new Map<string, AutomationJobState>(); // contextRoot → latest job
+/**
+ * contextRoot → slug → that AGENT's latest job.
+ *
+ * One slot per agent, not per project (owner decision 2026-09-25): two different agents
+ * run side by side, and only a second run of the SAME agent is refused, because both
+ * would write into one thread and resume one session. Same-agent overlap that does not
+ * come through here — a scheduler fire, a CLI run, a reply turn — is still refused by the
+ * per-slug run lock inside the runner (`runner.ts`, the lock check after the sleep lock).
+ */
+const jobs = new Map<string, Map<string, AutomationJobState>>();
 
 /** Settled jobs older than this are pruned — the server runs indefinitely. */
 const JOB_TTL_MS = 60 * 60 * 1000;
 
 function pruneSettledJobs(): void {
   const cutoff = Date.now() - JOB_TTL_MS;
-  for (const [root, job] of jobs) {
-    if (job.status !== 'running' && (job.finishedAt ?? 0) < cutoff) jobs.delete(root);
+  for (const [root, bySlug] of jobs) {
+    for (const [slug, job] of bySlug) {
+      if (job.status !== 'running' && (job.finishedAt ?? 0) < cutoff) bySlug.delete(slug);
+    }
+    if (bySlug.size === 0) jobs.delete(root);
   }
 }
 
-export function currentAutomationJob(contextRoot: string): AutomationJobState | null {
+/**
+ * One agent's job when `slug` is given. Without it, the project's NEWEST job — a running
+ * one before any settled one — which is what the single-slot callers (`GET /runs`, the
+ * "run now" poll) always read, so they keep their meaning.
+ */
+export function currentAutomationJob(contextRoot: string, slug?: string): AutomationJobState | null {
   pruneSettledJobs();
-  return jobs.get(contextRoot) ?? null;
+  const bySlug = jobs.get(contextRoot);
+  if (!bySlug) return null;
+  if (slug !== undefined) return bySlug.get(slug) ?? null;
+  let best: AutomationJobState | null = null;
+  for (const job of bySlug.values()) {
+    if (!best) { best = job; continue; }
+    const running = job.status === 'running';
+    const bestRunning = best.status === 'running';
+    if (running !== bestRunning ? running : job.startedAt > best.startedAt) best = job;
+  }
+  return best;
+}
+
+/** Every agent with a run in flight in this project, oldest first. */
+export function runningAutomationJobs(contextRoot: string): AutomationJobState[] {
+  pruneSettledJobs();
+  return [...(jobs.get(contextRoot)?.values() ?? [])]
+    .filter((j) => j.status === 'running')
+    .sort((a, b) => a.startedAt - b.startedAt);
 }
 
 /**
- * Start a background "run now" job (or adopt the one already running — never
- * two engines for one project, mirroring `startSyncJob`). Returns immediately;
- * poll `currentAutomationJob` for progress. Approval, the sleep-lock deferral,
- * and the orphan guard are all enforced INSIDE `runAutomation` — this function
+ * Start a background "run now" job for one agent (or adopt that agent's job when it is
+ * already running — never two engines for one AGENT; different agents run in parallel).
+ * Returns immediately; poll `currentAutomationJob` for progress. Approval, the sleep-lock
+ * deferral, and the orphan guard are all enforced INSIDE `runAutomation` — this function
  * carries no prompt and no bypass of its own.
  */
 export function startAutomationJob(
@@ -87,7 +122,8 @@ export function startAutomationJob(
   ask?: AutomationAsk,
 ): { job: AutomationJobState; started: boolean } {
   pruneSettledJobs();
-  const existing = jobs.get(contextRoot);
+  let bySlug = jobs.get(contextRoot);
+  const existing = bySlug?.get(slug);
   if (existing?.status === 'running') return { job: existing, started: false };
   const job: AutomationJobState = {
     id: `aj_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
@@ -99,7 +135,8 @@ export function startAutomationJob(
     error: null,
     runId: ask ? ask.fireAt.toISOString() : null,
   };
-  jobs.set(contextRoot, job);
+  if (!bySlug) { bySlug = new Map(); jobs.set(contextRoot, bySlug); }
+  bySlug.set(slug, job);
   void runJob(contextRoot, job, ask);
   return { job, started: true };
 }
@@ -149,7 +186,10 @@ function answerIfSilent(contextRoot: string, slug: string, runId: string, text: 
 /** The sentence for a fire that said nothing, best available. */
 function skipText(status: string, error: string | null): string {
   return SKIP_REASON[status]
-    ?? `It did not run${error ? ` — ${error}` : ` — the run ended as "${status}" without starting.`}`;
+    ?? `It did not run. ${error
+      // A runner error can start lower-case; it follows a full stop here.
+      ? `${error.charAt(0).toUpperCase()}${error.slice(1)}`
+      : `The run ended as "${status}" without starting.`}`;
 }
 
 async function runJob(contextRoot: string, job: AutomationJobState, ask?: AutomationAsk): Promise<void> {
@@ -181,7 +221,7 @@ async function runJob(contextRoot: string, job: AutomationJobState, ask?: Automa
     job.status = 'error';
     job.error = (err as Error).message ?? String(err);
     if (ask && job.runId) {
-      answerIfSilent(contextRoot, job.slug, job.runId, 'It did not run — the run could not be started on this machine.');
+      answerIfSilent(contextRoot, job.slug, job.runId, 'It did not run. The run could not be started on this machine.');
     }
     // `runAutomation` REJECTS only for the two precondition violations it
     // documents (a non-POSIX platform, a broken `host:"server"` contract) —
@@ -236,9 +276,9 @@ export interface ReplyJobState {
 /**
  * Keyed by JOB ID, not by `contextRoot`.
  *
- * `jobs` above is ONE SLOT per project and ADOPTS a job that is already running —
- * correct for "run now" (never two engines for one project) and exactly wrong here,
- * because two different agents must be repliable at the same time. Concurrency is not
+ * `jobs` above is ONE SLOT per agent and ADOPTS that agent's job when it is already
+ * running — correct for "run now" (never two engines for one agent) and exactly wrong
+ * here, where a job is one reply turn and its id is what the client polls. Concurrency is not
  * this map's business at all: it is owned end to end by the per-slug run lock inside
  * `resumeWithMessage`, which refuses with its own sentence when a run holds it.
  */
@@ -343,8 +383,8 @@ function settleReplyThread(
       event: ok ? 'replied' : 'failed',
       via: 'runner',
       text: ok
-        ? `Reply turn finished${took ? ` · ${took}` : ''}${spent ? ` · ${spent}` : ''}.`
-        : `Reply not delivered${took ? ` · ${took}` : ''}${spent ? ` · ${spent}` : ''}${job.reason ? ` — ${job.reason}` : ''}`,
+        ? `Reply delivered${took ? ` · ${took}` : ''}${spent ? ` · ${spent}` : ''}.`
+        : `Reply not delivered${took ? ` · ${took}` : ''}${spent ? ` · ${spent}` : ''}${job.reason ? `: ${job.reason}` : ''}`,
     });
 
     // THE ZERO-POST MIRROR. The resumed child is told to answer by POSTING, and a good
@@ -507,7 +547,7 @@ async function doReconcileReplyThreads(
           kind: 'system',
           event: 'replied',
           via: 'runner',
-          text: 'Outcome unknown — the server restarted during this reply.',
+          text: 'Outcome unknown: the server restarted during this reply.',
         });
       } catch {
         // One slug that refuses the write must not stop the rest of the vault.

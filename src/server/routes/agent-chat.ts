@@ -107,6 +107,22 @@ function writeSlashCache(contextRoot: string, commands: string[]): void {
   try { writeFileSync(slashCachePath(contextRoot), JSON.stringify({ commands }), 'utf-8'); } catch { /* best-effort */ }
 }
 
+/**
+ * `GET /api/agent/slash-commands` → `{ commands }`: the same cached list a new chat is
+ * handed at connect, for a composer that has NO chat process to be handed it — the
+ * `#agents` channel and its thread panel. Their `/` menu offers this project's skills and
+ * commands from the same source the chat's does, so the two menus cannot disagree.
+ * An empty list on a project that has never run a turn, exactly as a cold chat gets.
+ */
+export async function handleAgentSlashCommands(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
+  sendJson(res, 200, { commands: (contextRoot ? readSlashCache(contextRoot) : null) ?? [] });
+}
+
 /** Conversation ids currently attached to a live chat process in THIS server. Prevents
  *  two chat sessions from double-attaching the same conversation (a Claude conversation
  *  must have at most one writer). Does NOT know about the terminal route's own Set —
@@ -1750,9 +1766,11 @@ export async function handleAgentBackgroundOutput(
  *  image bytes so a huge PNG can't be requested through this endpoint either. */
 const AGENT_FILE_MAX_BYTES = 512 * 1024;
 
-/** Extensions servable as raw image bytes via `?raw=1`. SVG is deliberately EXCLUDED — an SVG
- *  can embed `<script>`/`foreignObject`, so it is only ever returned as a TEXT preview (falls
- *  through to the text branch below), never as `image/svg+xml`, even with `raw=1`. */
+/** Extensions servable as raw image bytes via `?raw=1`. SVG is NOT in this map: it can embed
+ *  `<script>`/`foreignObject`, so it has its own arm in `handleAgentFile` — raw bytes for an
+ *  `<img>` (which never runs an SVG's script) under a `sandbox` CSP that keeps a direct
+ *  navigation inert too, and the TEXT preview without `raw=1`. The vault route
+ *  (`graph.ts`) never serves an SVG raw at all. */
 const AGENT_FILE_IMAGE_CONTENT_TYPE: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -1960,6 +1978,19 @@ export async function handleAgentFile(
   const ext = extname(abs).toLowerCase();
   const rawType = AGENT_FILE_RAW_CONTENT_TYPE[ext];
   const wantsRaw = url.searchParams.get('raw') === '1';
+
+  // AN SVG, AS AN IMAGE — for the Lightbox's `<img>` (Chat and the Agents page both open an
+  // `.svg` there). An `<img>` never executes an SVG's script; `sandbox` plus `default-src
+  // 'none'` makes the same URL inert if it is navigated to directly (scripts off, opaque
+  // origin, nothing fetched); `nosniff` is set above. Capped like a text preview: an SVG is
+  // markup, and a huge one is a generated artifact, not a picture.
+  if (wantsRaw && ext === '.svg') {
+    if (st.size > AGENT_FILE_MAX_BYTES) { sendError(res, 413, 'too_large', 'File exceeds the preview size cap.'); return; }
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    res.setHeader('Content-Disposition', 'inline');
+    serveMedia(req, res, abs, st.size, 'image/svg+xml');
+    return;
+  }
 
   if (wantsRaw && rawType) {
     if (st.size > AGENT_MEDIA_MAX_BYTES) { sendError(res, 413, 'too_large', 'File is too large to stream.'); return; }

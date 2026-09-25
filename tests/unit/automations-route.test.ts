@@ -54,6 +54,7 @@ import {
 import {
   startAutomationJob,
   currentAutomationJob,
+  runningAutomationJobs,
 } from '../../src/server/automation-job.js';
 
 /**
@@ -369,7 +370,42 @@ describe('POST /api/automations/:slug/run', () => {
     expect(mockedSpawn).not.toHaveBeenCalled();
   });
 
-  it('one job per contextRoot: a second run-now while one is in flight adopts it (started:false)', async () => {
+  it('one job per AGENT: two different agents run side by side, each adopting only its own repeat', async () => {
+    makeAutomation('agent-a', { approve: true });
+    makeAutomation('agent-b', { approve: true });
+    const resolvers: Record<string, (o: RunOutcome) => void> = {};
+    const held = (_root: string, slug: string) => new Promise<RunOutcome>((resolve) => { resolvers[slug] = resolve; });
+    vi.mocked(runAutomation).mockImplementationOnce(held).mockImplementationOnce(held);
+
+    const a = makeRes();
+    await handleAutomationsRunNow(makePostReq(), a.res, { slug: 'agent-a' }, contextRoot);
+    const b = makeRes();
+    await handleAutomationsRunNow(makePostReq(), b.res, { slug: 'agent-b' }, contextRoot);
+    // Parallel across agents: B is NOT adopted into A's job.
+    expect(a.body().started).toBe(true);
+    expect(b.body().started).toBe(true);
+    expect((b.body().job as { slug: string }).slug).toBe('agent-b');
+
+    // Same agent again: adopted, same id.
+    const a2 = makeRes();
+    await handleAutomationsRunNow(makePostReq(), a2.res, { slug: 'agent-a' }, contextRoot);
+    expect(a2.body().started).toBe(false);
+    expect((a2.body().job as { id: string }).id).toBe((a.body().job as { id: string }).id);
+
+    expect(currentAutomationJob(contextRoot, 'agent-a')?.slug).toBe('agent-a');
+    expect(currentAutomationJob(contextRoot, 'agent-b')?.slug).toBe('agent-b');
+    expect(runningAutomationJobs(contextRoot).map((j) => j.slug)).toEqual(['agent-a', 'agent-b']);
+
+    resolvers['agent-a'](fakeOutcome('agent-a', 'ok'));
+    await vi.waitFor(() => expect(currentAutomationJob(contextRoot, 'agent-a')?.status).toBe('success'));
+    // A settled; B still holds its own slot, and the project-wide read prefers the running one.
+    expect(runningAutomationJobs(contextRoot).map((j) => j.slug)).toEqual(['agent-b']);
+    expect(currentAutomationJob(contextRoot)?.slug).toBe('agent-b');
+    resolvers['agent-b'](fakeOutcome('agent-b', 'ok'));
+    await vi.waitFor(() => expect(currentAutomationJob(contextRoot, 'agent-b')?.status).toBe('success'));
+  });
+
+  it('one job per agent: a second run-now of the same agent while one is in flight adopts it (started:false)', async () => {
     makeAutomation('slow-job', { approve: true });
     let resolveRun!: (o: RunOutcome) => void;
     vi.mocked(runAutomation).mockImplementationOnce(

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -28,8 +28,9 @@ const {
   handleAutomationsReplyJob,
   handleAutomationsSay,
 } = await import('../../src/server/routes/automations.js');
-const { createAutomation, getAutomation, setAutomationEnabled } =
+const { createAutomation, getAutomation, recordRun, setAutomationEnabled } =
   await import('../../src/lib/automations/store.js');
+const { buildAskBlock } = await import('../../src/lib/automations/runner.js');
 const { appendThreadEntry, readThread } = await import('../../src/lib/automations/threads.js');
 const { approveAutomation, revokeApproval } = await import('../../src/lib/automations/registry.js');
 const { createQuestion } = await import('../../src/lib/automations/hitl.js');
@@ -101,6 +102,29 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+describe('GET /api/automations/threads — the run slots ride on the feed, one per agent', () => {
+  it('is {} while nothing runs, and carries one entry per agent with a run in flight', async () => {
+    const idle = makeRes();
+    await handleAutomationsThreads(makeGetReq('/api/automations/threads'), idle.res, {}, contextRoot);
+    expect((idle.body() as unknown as { runSlots: unknown }).runSlots).toEqual({});
+
+    createAutomation(contextRoot, { slug: 'crawler', title: 'Slow crawler', days: 'daily', at: '09:00', prompt: 'go' });
+    const { startAutomationJob } = await import('../../src/server/automation-job.js');
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
+    startAutomationJob(contextRoot, 'digest');
+    startAutomationJob(contextRoot, 'crawler');
+    const busy = makeRes();
+    await handleAutomationsThreads(makeGetReq('/api/automations/threads'), busy.res, {}, contextRoot);
+    const slots = (busy.body() as unknown as { runSlots: Record<string, { startedAt: number }> }).runSlots;
+    // Parallel across agents: BOTH are in flight, neither adopted into the other.
+    expect(Object.keys(slots).sort()).toEqual(['crawler', 'digest']);
+    expect(typeof slots.digest.startedAt).toBe('number');
+    expect((busy.body() as unknown as { runSlot?: unknown }).runSlot).toBeUndefined();
+    spy.mockRestore();
+  });
+});
+
 describe('GET /api/automations/threads', () => {
   it('returns one message per run with its unread counts and the agent roster', async () => {
     const { res, status, body } = makeRes();
@@ -162,6 +186,102 @@ describe('GET /api/automations/:slug/thread', () => {
     const { res, status } = makeRes();
     await handleAutomationsThreadGet(makeGetReq('/api/automations/nope/thread'), res, { slug: 'nope' }, contextRoot);
     expect(status()).toBe(404);
+  });
+});
+
+describe('GET /api/automations/:slug/thread — the run\'s whole answer', () => {
+  /** A finished run whose published document is at `outputPath`. */
+  function recordFinished(outputPath: string): void {
+    recordRun(contextRoot, 'digest', {
+      firedAt: RUN_B, startedAt: RUN_B, finishedAt: RUN_B, status: 'ok', durationMs: 1000,
+      outputPath, error: null, exitCode: 0, sessionId: null, costUsd: null, numTurns: null,
+      permissionDenials: 0,
+    });
+  }
+  async function answerOf(): Promise<{ path: string; text: string; truncated: boolean } | null> {
+    const { res, body } = makeRes();
+    await handleAutomationsThreadGet(
+      makeGetReq(`/api/automations/digest/thread?run=${encodeURIComponent(RUN_B)}`),
+      res, { slug: 'digest' }, contextRoot,
+    );
+    return (body() as unknown as { answer: { path: string; text: string; truncated: boolean } | null }).answer;
+  }
+
+  it('carries the published document, brain-relative and frontmatter-free — the detail behind the feed\'s one line', async () => {
+    const dir = join(contextRoot, 'automations', 'output', 'digest');
+    mkdirSync(dir, { recursive: true });
+    const doc = join(dir, '2026-09-20.md');
+    writeFileSync(doc, '---\nx: 1\n---\nWAU is down 4%.\n\n# Detail\n\nThree cohorts moved.\n');
+    recordFinished(doc);
+    const answer = await answerOf();
+    expect(answer).not.toBeNull();
+    expect(answer!.path).toBe(join('automations', 'output', 'digest', '2026-09-20.md'));
+    expect(answer!.text.startsWith('WAU is down 4%.')).toBe(true);
+    expect(answer!.text).toContain('Three cohorts moved.');
+    expect(answer!.truncated).toBe(false);
+  });
+
+  it('refuses a document that is a symlink — a shared brain must not print what a link points at', async () => {
+    const outside = join(projectRoot, 'secret.txt');
+    writeFileSync(outside, 'apiKey=hunter2');
+    const dir = join(contextRoot, 'automations', 'output', 'digest');
+    mkdirSync(dir, { recursive: true });
+    const link = join(dir, 'linked.md');
+    symlinkSync(outside, link);
+    recordFinished(link);
+    expect(await answerOf()).toBeNull();
+  });
+
+  it('a frontmatter-only document is still a document — an empty answer, not null', async () => {
+    const dir = join(contextRoot, 'automations', 'output', 'digest');
+    mkdirSync(dir, { recursive: true });
+    const doc = join(dir, '2026-09-20.md');
+    writeFileSync(doc, '---\nx: 1\n---\n');
+    recordFinished(doc);
+    const answer = await answerOf();
+    expect(answer).not.toBeNull();
+    expect(answer!.text).toBe('');
+  });
+
+  it('returns rootId and replyCount equal to the feed message for the same run', async () => {
+    const dir = join(contextRoot, 'automations', 'output', 'digest');
+    mkdirSync(dir, { recursive: true });
+    const doc = join(dir, '2026-09-20.md');
+    writeFileSync(doc, 'WAU is down 4%.\n');
+    recordFinished(doc);
+
+    const thread = makeRes();
+    await handleAutomationsThreadGet(
+      makeGetReq(`/api/automations/digest/thread?run=${encodeURIComponent(RUN_B)}`),
+      thread.res, { slug: 'digest' }, contextRoot,
+    );
+    const t = thread.body() as unknown as { rootId: string | null; replyCount: number; entries: { id: string; kind: string }[] };
+    // The root is the agent's post (a scheduled run), so the panel does not repeat it.
+    expect(t.rootId).toBe(t.entries.find((e) => e.kind === 'agent')?.id);
+
+    const feed = makeRes();
+    await handleAutomationsThreads(makeGetReq('/api/automations/threads'), feed.res, {}, contextRoot);
+    const msg = (feed.body() as unknown as { messages: { runId: string; replyCount: number }[] })
+      .messages.find((m) => m.runId === RUN_B);
+    // The post is the root; the report is the one reply — in both places.
+    expect(t.replyCount).toBe(1);
+    expect(msg?.replyCount).toBe(t.replyCount);
+  });
+
+  it('is null for a run with no document, and for the whole-channel read', async () => {
+    expect(await answerOf()).toBeNull();
+    const { res, body } = makeRes();
+    await handleAutomationsThreadGet(makeGetReq('/api/automations/digest/thread'), res, { slug: 'digest' }, contextRoot);
+    expect((body() as unknown as { answer: unknown }).answer).toBeNull();
+  });
+});
+
+describe('buildAskBlock — a `/name` picked from the channel\'s menu', () => {
+  it('tells the run to load that skill, and says nothing when no `/name` was written', () => {
+    expect(buildAskBlock('/whatsapp summarise unread')).toContain('Skill tool');
+    expect(buildAskBlock('summarise my unread messages')).not.toContain('Skill tool');
+    // A path is not a pick: `a/b` has no boundary before the slash.
+    expect(buildAskBlock('look at src/lib and report')).not.toContain('Skill tool');
   });
 });
 
@@ -315,7 +435,22 @@ describe('POST /api/automations/:slug/thread/reply — the refusal ladder, in or
     const { status, body } = await reply({ text: 'hi', runId: NEWEST });
     expect(status()).toBe(409);
     expect(body().error).toBe('busy');
+    // Names THIS agent, in the per-agent wording (the project-wide "one at a time" is gone).
+    expect(body().message).toBe('Daily digest is still running. Try again when it finishes.');
     expect(readThread(contextRoot, 'digest')).toHaveLength(before);
+    spy.mockRestore();
+  });
+
+  it('per agent — another agent\'s run in flight does NOT block a reply here', async () => {
+    makeRepliable();
+    createAutomation(contextRoot, { slug: 'crawler', title: 'Slow crawler', days: 'daily', at: '09:00', prompt: 'go' });
+    const { startAutomationJob } = await import('../../src/server/automation-job.js');
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
+    startAutomationJob(contextRoot, 'crawler');
+
+    const { status } = await reply({ text: 'what changed?', runId: NEWEST });
+    expect(status()).toBe(202);
     spy.mockRestore();
   });
 
@@ -382,6 +517,33 @@ describe('POST /api/automations/threads/say — one route, two things an @mentio
     const payload = body() as unknown as { job: { kind: string }; runId: string };
     expect(payload.job.kind).toBe('run');
     expect(readThread(contextRoot, 'digest', { runId: payload.runId })[0].kind).toBe('user');
+    spy.mockRestore();
+  });
+
+  it('per agent — an @mention of a DIFFERENT agent runs while one is in flight; the running one is refused by name', async () => {
+    const manifest = getAutomation(contextRoot, 'digest')!;
+    approveAutomation(projectRoot, manifest, new Date(), home);
+    createAutomation(contextRoot, { slug: 'crawler', title: 'Slow crawler', days: 'daily', at: '09:00', prompt: 'go' });
+    approveAutomation(projectRoot, getAutomation(contextRoot, 'crawler')!, new Date(), home);
+    latestBoundSession.mockReturnValue(null);
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
+
+    const first = await say({ slug: 'crawler', text: 'crawl please' });
+    expect(first.status()).toBe(200);
+    // A different agent, while the crawler runs: accepted, and its own run starts.
+    const other = await say({ slug: 'digest', text: 'and you?' });
+    expect(other.status()).toBe(200);
+    const payload = other.body() as unknown as { started: boolean; runId: string };
+    expect(payload.started).toBe(true);
+    expect(readThread(contextRoot, 'digest', { runId: payload.runId })[0].text).toBe('and you?');
+    // The SAME agent again: refused, naming it, and nothing is written.
+    const before = readThread(contextRoot, 'crawler').length;
+    const again = await say({ slug: 'crawler', text: 'again?' });
+    expect(again.status()).toBe(409);
+    expect(again.body().error).toBe('say_busy');
+    expect(again.body().message).toBe('Slow crawler is still running. Try again when it finishes.');
+    expect(readThread(contextRoot, 'crawler')).toHaveLength(before);
     spy.mockRestore();
   });
 

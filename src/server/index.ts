@@ -161,7 +161,7 @@ import {
   handleAgentMcpProjectGet, handleAgentMcpProjectAdopt, handleAgentMcpProjectRemove,
 } from './routes/agent-mcp-project.js';
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
-import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
@@ -423,6 +423,8 @@ export function buildRouter(): Router {
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
+  // The project's cached `/` list, for composers with no chat process (the #agents channel).
+  router.get('/api/agent/slash-commands', handleAgentSlashCommands);
   // Every past conversation of THIS project, for the surface's "Past chats" picker —
   // registered before the bare /chat-history above only in reading order; they are
   // distinct exact paths.

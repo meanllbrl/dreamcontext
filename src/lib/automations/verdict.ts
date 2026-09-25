@@ -53,6 +53,7 @@ import {
 } from './store.js';
 import {
   executeClaudeDetached,
+  extractNotificationSummary,
   sanitizeAutomationPrompt,
   type ClaudeExecution,
   type SpawnImpl,
@@ -63,6 +64,12 @@ import {
   type AutomationQuestion,
   type ReviewChannel,
 } from './types.js';
+
+/** The reader's WHY for an `is_error` envelope: the result's own opening line,
+ *  never the flag itself — "is_error: true" tells a person nothing. */
+function errorReason(result: string | null): string {
+  return extractNotificationSummary(result ?? '') || 'The session ended with an error and gave no reason.';
+}
 
 // ─── The propose guard ──────────────────────────────────────────────────────
 
@@ -498,7 +505,7 @@ export async function resumeWithAnswer(
     }
     const parsed = execution.result;
     if (!parsed?.parsed || parsed.isError) {
-      const detail = execution.stderrTail || (parsed?.parsed ? 'claude reported is_error: true' : 'unparseable CLI output');
+      const detail = execution.stderrTail || (parsed?.parsed ? errorReason(parsed.result) : 'unparseable CLI output');
       return {
         question: noteQuestionResolution(contextRoot, claimed, { error: detail }),
         status: 'failed',
@@ -704,7 +711,7 @@ export async function resumeWithMessage(
   if (pendingQuestion(contextRoot, slug)) {
     return {
       status: 'refused',
-      error: 'this automation is waiting for your answer to its own question — answer that first',
+      error: 'This agent is waiting for your answer to its own question, so answer that first.',
       result: null,
       costUsd: null,
     };
@@ -717,7 +724,7 @@ export async function resumeWithMessage(
   if (!sessionId) {
     return {
       status: 'refused',
-      error: 'this automation has no session to talk to yet — it has not completed a run on this machine',
+      error: 'This agent has no session to talk to yet. It needs one finished run on this machine first.',
       result: null,
       costUsd: null,
     };
@@ -752,7 +759,7 @@ export async function resumeWithMessage(
     }
     const parsed = execution.result;
     if (!parsed?.parsed || parsed.isError) {
-      const detail = execution.stderrTail || (parsed?.parsed ? 'claude reported is_error: true' : 'unparseable CLI output');
+      const detail = execution.stderrTail || (parsed?.parsed ? errorReason(parsed.result) : 'unparseable CLI output');
       // A parseable envelope that reported is_error STILL carries its cost; an
       // unparseable one has none to give.
       return { status: 'failed', error: detail, result: null, costUsd: parsed?.costUsd ?? null };

@@ -150,10 +150,10 @@ describe('B1/B2 — a capped run fails honestly and publishes nothing', () => {
     // B1 — the disposition. `is_error` was false; the gate is what makes this `failed`.
     expect(outcome.status).toBe('failed');
     expect(outcome.error).toBe(
-      'It stopped at the 5-hour usage limit — nothing was published. Try again once the window resets.',
+      'It stopped at the 5-hour usage limit. Nothing was published. Try again once the window resets.',
     );
     // ONE sentence, and it says the thing that matters: nothing was published.
-    expect(outcome.error).toMatch(/nothing was published/);
+    expect(outcome.error).toMatch(/Nothing was published/);
 
     // B1 — nothing published. The outcome carries no path, and no file was written.
     expect(outcome.outputPath).toBeNull();
@@ -172,7 +172,7 @@ describe('B1/B2 — a capped run fails honestly and publishes nothing', () => {
     const entries = readThread(contextRoot, manifest.slug);
     expect(entries.map((e) => e.event)).toEqual(['started', 'failed']);
     expect(entries[1].text).toContain('usage limit');
-    expect(entries[1].text).toContain('nothing was published');
+    expect(entries[1].text).toContain('Nothing was published');
   });
 
   it('names the WEEKLY window and the reset when the envelope carries them', async () => {
@@ -181,7 +181,7 @@ describe('B1/B2 — a capped run fails honestly and publishes nothing', () => {
       manifest.slug,
       cappedEnvelope({ quotaLimits: { status: 'rejected', rateLimitType: 'seven_day', resetsAt: 1788546600 } }),
     );
-    expect(outcome.error).toMatch(/^It stopped at the weekly usage limit — nothing was published\. The window reopens /);
+    expect(outcome.error).toMatch(/^It stopped at the weekly usage limit\. Nothing was published\. The window reopens /);
   });
 });
 

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildFeed, buildFeedMessage } from '../../src/lib/automations/feed.js';
+import { buildFeed, buildFeedMessage, threadReplies, threadRootId } from '../../src/lib/automations/feed.js';
 import { appendThreadEntry, markThreadRead } from '../../src/lib/automations/threads.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
 import { createQuestion } from '../../src/lib/automations/hitl.js';
@@ -94,10 +94,12 @@ describe('one run becomes one message', () => {
 
     expect(m.text).toBe('Flat week: 3 insights synced, nothing moved more than 1%.');
     expect(m.textFrom).toBe('result');
-    expect(m.replyCount).toBe(0);
-    // The published document is a file card even though no post attached it,
-    // and it is brain-RELATIVE so it opens the same way a posted path does.
-    expect(m.files).toEqual([{ path: 'automations/output/digest/2026-09-20.md', name: '2026-09-20.md' }]);
+    // The report IS the thread's one reply — the panel draws it under the root.
+    expect(m.replyCount).toBe(1);
+    // The published document is NOT a feed card any more: it rides on its own
+    // field, brain-RELATIVE so it opens the same way a posted path does.
+    expect(m.files).toEqual([]);
+    expect(m.document).toEqual({ path: 'automations/output/digest/2026-09-20.md', name: '2026-09-20.md' });
   });
 
   it('a FAILED run says why — never "nothing to report" over a real failure', () => {
@@ -114,9 +116,11 @@ describe('one run becomes one message', () => {
     expect(m.status).toBe('failed');
     expect(m.text).toBe('the site returned 403');
     expect(m.textFrom).toBe('error');
-    // A card is a promise there is something to read. The run never wrote the
-    // file, so offering it would open on "not found".
+    // A document is a promise there is something to read. The run never wrote
+    // the file, so offering it would open on "not found" — and it is no reply.
     expect(m.files).toEqual([]);
+    expect(m.document).toBeNull();
+    expect(m.replyCount).toBe(0);
   });
 
   it('does NOT offer a ZERO-BYTE document — the runner leaves one behind on failure', () => {
@@ -128,6 +132,7 @@ describe('one run becomes one message', () => {
       [entry({ kind: 'system', event: 'failed', text: 'Failed.' })],
       runEvent({ status: 'failed', error: 'unparseable CLI output', outputPath }), null);
     expect(m.files).toEqual([]);
+    expect(m.document).toBeNull();
     expect(m.text).toBe('unparseable CLI output');
   });
 
@@ -138,7 +143,113 @@ describe('one run becomes one message', () => {
     writeFileSync(outputPath, 'It published.\n', 'utf-8');
     const m = buildFeedMessage(contextRoot, MANIFEST, false, RUN,
       [entry({ kind: 'system', event: 'ok', text: 'Finished.' })], runEvent({ outputPath }), null);
-    expect(m.files.map((f) => f.name)).toEqual(['2026-09-20.md']);
+    expect(m.document?.name).toBe('2026-09-20.md');
+    expect(m.files).toEqual([]);
+  });
+
+  it('refuses a SYMLINKED document — no card, and it is not counted', () => {
+    const dir = join(contextRoot, 'automations', 'output', 'digest');
+    mkdirSync(dir, { recursive: true });
+    const target = join(projectRoot, 'outside.md');
+    writeFileSync(target, 'Somewhere else entirely.\n', 'utf-8');
+    const outputPath = join(dir, '2026-09-20.md');
+    symlinkSync(target, outputPath);
+    const m = buildFeedMessage(contextRoot, MANIFEST, false, RUN,
+      [entry({ kind: 'system', event: 'ok', text: 'Finished.' })], runEvent({ outputPath }), null);
+    expect(m.document).toBeNull();
+    expect(m.replyCount).toBe(0);
+  });
+
+  it('Open session is offered only for a run the cache recorded that finished', () => {
+    const done = [
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'system', event: 'ok', text: 'Finished.' }),
+    ];
+    expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, done, runEvent(), null).sessionOpenable).toBe(true);
+    // No cache row (an @mention reply turn): nothing to resolve.
+    expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, done, null, null).sessionOpenable).toBe(false);
+    // Still in flight.
+    const running = [entry({ kind: 'system', event: 'started', text: 'Run started.' })];
+    expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, running, null, null).sessionOpenable).toBe(false);
+    // A fire that never ran.
+    const skipped = [entry({ kind: 'system', event: 'skipped', text: 'It did not run.' })];
+    expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, skipped, runEvent(), null).sessionOpenable).toBe(false);
+    // Recorded, but the run never produced a session (failed before claude spoke).
+    const noSession = buildFeedMessage(contextRoot, MANIFEST, false, RUN, done, runEvent({ sessionId: null }), null);
+    expect(noSession.sessionRunId).toBeNull();
+    expect(noSession.sessionOpenable).toBe(false);
+  });
+
+  it('a RESUMED turn opens the session it continued — the earlier recorded run', () => {
+    // An @mention to a scheduled agent with a session: no `started` (a resume
+    // spawns no run), no cache row under its fresh id, closed by `replied`.
+    const turn = [
+      entry({ kind: 'user', via: 'dashboard', text: 'and the refunds?' }),
+      entry({ kind: 'agent', via: 'cli', text: 'Refunds are flat.' }),
+      entry({ kind: 'system', event: 'replied', text: 'Reply delivered · 9s.' }),
+    ];
+    const earlier = runEvent({ firedAt: '2026-09-20T09:00:00.000Z', sessionId: 'sess_morning' });
+    const later = runEvent({ firedAt: '2026-09-21T09:00:00.000Z', sessionId: 'sess_tomorrow' });
+    const m = buildFeedMessage(contextRoot, MANIFEST, false, RUN, turn, null, null, null, [later, earlier]);
+    // The newest recorded session that fired no later than the turn itself.
+    expect(m.sessionRunId).toBe(earlier.firedAt);
+    expect(m.sessionOpenable).toBe(true);
+
+    // Nothing recorded to continue from: nothing to open.
+    const orphan = buildFeedMessage(contextRoot, MANIFEST, false, RUN, turn, null, null, null, []);
+    expect(orphan.sessionRunId).toBeNull();
+    expect(orphan.sessionOpenable).toBe(false);
+  });
+
+  it('a recorded run opens its own session', () => {
+    const done = [
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'system', event: 'ok', text: 'Finished.' }),
+    ];
+    const m = buildFeedMessage(contextRoot, MANIFEST, false, RUN, done, runEvent(), null);
+    expect(m.sessionRunId).toBe(RUN);
+  });
+});
+
+describe('THE reply count — one function, printed by the feed row and the thread panel', () => {
+  it('an ask with a post and a report counts both (the ask never does)', () => {
+    const entries = [
+      entry({ kind: 'user', via: 'dashboard', text: 'why did signups drop?' }),
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'agent', via: 'cli', text: 'Signups fell 12%.' }),
+      entry({ kind: 'system', event: 'ok', text: 'Finished in 9s.' }),
+    ];
+    expect(threadRootId(entries)).toBe(entries[0].id);
+    const r = threadReplies(entries, true);
+    expect(r.count).toBe(2);
+    // The report lands with the row that ended the run.
+    expect(r.lastAt).toBe(entries[3].at);
+  });
+
+  it('a scheduled post with a report counts 1 — the post is the root', () => {
+    const entries = [
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'agent', via: 'cli', text: 'Signups fell 12%.' }),
+      entry({ kind: 'system', event: 'ok', text: 'Finished in 9s.' }),
+    ];
+    expect(threadRootId(entries)).toBe(entries[1].id);
+    expect(threadReplies(entries, true).count).toBe(1);
+  });
+
+  it('a failed ask with no post and no report counts 0', () => {
+    const entries = [
+      entry({ kind: 'user', via: 'dashboard', text: 'check the competitors' }),
+      entry({ kind: 'system', event: 'started', text: 'Run started.' }),
+      entry({ kind: 'system', event: 'failed', text: 'Failed after 3s: command not found' }),
+    ];
+    const r = threadReplies(entries, false);
+    expect(r.count).toBe(0);
+    expect(r.lastAt).toBeNull();
+  });
+
+  it('a silent run with no ask and no post has no root to repeat', () => {
+    const entries = [entry({ kind: 'system', event: 'started', text: 'Run started.' })];
+    expect(threadRootId(entries)).toBeNull();
   });
 
   it('reports no text rather than inventing one when a run neither posted nor published', () => {
@@ -355,9 +466,9 @@ describe('a run the owner asked for', () => {
     expect(m.ask?.text).toBe('only the paywall numbers');
     expect(m.text).toBe('Paywall conversion is flat at 3.1%.');
     expect(m.textFrom).toBe('post');
-    // THE POINT: an exchange of one question and one answer has no replies.
-    // Counting the ask would put "1 reply" on every message the owner started.
-    expect(m.replyCount).toBe(0);
+    // THE POINT: the ask is the root and never a reply; the agent's answer is
+    // the first reply — exactly the one row the panel draws under the root.
+    expect(m.replyCount).toBe(1);
     // And the exchange is stamped when the PERSON spoke, not when the runner
     // got around to spawning.
     expect(m.at).toBe(entries[0].at);

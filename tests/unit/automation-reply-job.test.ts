@@ -93,7 +93,7 @@ describe('the reply job owns its own completion', () => {
     expect(terminal).toHaveLength(1);
     expect(terminal[0].event).toBe('replied');
     // A6's shape: what it took and what it cost, to the cent — the channel's own precision.
-    expect(terminal[0].text).toMatch(/^Reply turn finished · \d+s · \$0\.03\.$/);
+    expect(terminal[0].text).toMatch(/^Reply delivered · \d+s · \$0\.03\.$/);
 
     // The child posted nothing, so the turn's own answer is mirrored rather than lost.
     const mirrored = entries.filter((e) => e.kind === 'agent');
@@ -119,7 +119,7 @@ describe('the reply job owns its own completion', () => {
 
       const terminal = readThread(contextRoot, 'digest', { runId: RUN }).filter((e) => e.kind === 'system');
       expect(terminal).toHaveLength(1);
-      expect(terminal[0].text).toMatch(/^Reply turn finished · \d+s\.$/);
+      expect(terminal[0].text).toMatch(/^Reply delivered · \d+s\.$/);
       expect(terminal[0].text).not.toContain('$');
     }
   });
@@ -133,7 +133,7 @@ describe('the reply job owns its own completion', () => {
 
     const terminal = readThread(contextRoot, 'digest', { runId: RUN }).filter((e) => e.kind === 'system');
     expect(terminal[0].event).toBe('failed');
-    expect(terminal[0].text).toMatch(/^Reply not delivered · \d+s · \$0\.07 — claude reported is_error: true$/);
+    expect(terminal[0].text).toMatch(/^Reply not delivered · \d+s · \$0\.07: claude reported is_error: true$/);
   });
 
   it('does NOT mirror when the resumed child posted for itself', async () => {

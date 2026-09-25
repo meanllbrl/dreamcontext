@@ -48,7 +48,7 @@ import { allPendingQuestions, claimQuestion, pendingQuestion } from '../../lib/a
 import { resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
 import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
-import { buildFeed } from '../../lib/automations/feed.js';
+import { buildFeed, readRunAnswer, threadReplies, threadRootId } from '../../lib/automations/feed.js';
 import {
   appendThreadEntry, listThreadRuns, markThreadRead, readThread, threadUnread,
 } from '../../lib/automations/threads.js';
@@ -56,7 +56,7 @@ import { latestBoundSession, readAutomationSession } from '../../lib/automations
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import {
-  startAutomationJob, currentAutomationJob,
+  startAutomationJob, currentAutomationJob, runningAutomationJobs,
   startAutomationReplyJob, currentReplyJob, reconcileReplyThreads,
 } from '../automation-job.js';
 
@@ -305,8 +305,8 @@ export async function handleAutomationsList(
 }
 
 /**
- * GET /api/automations/runs — poll the current "run now" job for this project
- * (one job per contextRoot, mirroring `GET /api/tasks/sync-jobs/current`).
+ * GET /api/automations/runs — poll the project's newest "run now" job (a running one
+ * first). Slots are per agent now; the per-agent view rides on the feed (`runSlots`).
  * MUST be registered before `/api/automations/:slug` — `runs` would otherwise
  * be captured as a slug.
  */
@@ -1553,7 +1553,15 @@ export async function handleAutomationsThreads(
     const url = new URL(req.url ?? '', 'http://localhost');
     const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, FEED_MAX_MESSAGES) : FEED_MAX_MESSAGES;
-    sendJson(res, 200, buildFeed(contextRoot, { limit }));
+    // THE RUN SLOTS ride on the feed, one per agent with a run in flight — started
+    // from another tab, by "run now", or by an @mention — so the channel knows who is
+    // busy without a second poll of its own. Only running jobs: a settled one is not a
+    // reason to refuse anything. Scheduler fires and reply turns are not here; the
+    // per-slug run lock settles those.
+    const runSlots = Object.fromEntries(runningAutomationJobs(contextRoot).map((j) => [
+      j.slug, { runId: j.runId ?? null, startedAt: j.startedAt },
+    ]));
+    sendJson(res, 200, { ...buildFeed(contextRoot, { limit }), runSlots });
   } catch {
     sendError(res, 500, 'feed_failed', 'Failed to read the agents channel.');
   }
@@ -1590,12 +1598,23 @@ export async function handleAutomationsThreadGet(
         && q.kind === 'flow-hitl'
         && (runId === undefined || q.runFiredAt === runId),
     );
+    // The run's whole document — the detail behind the one line the feed shows.
+    // Only for a single run: the whole-channel read has no one document to attach.
+    const answer = runId === undefined ? null : readRunAnswer(contextRoot, params.slug, runId);
+    // THE SAME COUNT the feed row prints, from the same function — the panel's
+    // divider and the thread line under the message cannot disagree. `rootId`
+    // is the entry the panel draws as the root, so it is not listed again.
+    const replies = runId === undefined ? null : threadReplies(entries, answer !== null);
     sendJson(res, 200, {
       slug: params.slug,
       title: manifest.title,
       runId: runId ?? null,
       entries,
       question: open ? { id: open.id, text: open.question, choices: open.choices } : null,
+      answer,
+      rootId: runId === undefined ? null : threadRootId(entries),
+      replyCount: replies?.count ?? 0,
+      lastReplyAt: replies?.lastAt ?? null,
       unread: threadUnread(contextRoot, params.slug),
     });
   } catch {
@@ -1698,17 +1717,18 @@ export async function handleAutomationsSay(
     if (!checkApproval(projectRoot, manifest).approved) {
       sendError(
         res, 409, 'say_unapproved',
-        `${manifest.title} is not approved on this machine yet — approve it and ask again.`,
+        `${manifest.title} is not approved on this machine yet. Approve it, then ask again.`,
       );
       return;
     }
     // ── synchronous from here to the job start ──
-    const busy = currentAutomationJob(contextRoot);
+    // Per AGENT: only a second run of THIS agent is refused — it would write into the same
+    // thread and resume the same session. Another agent's run is no reason to wait.
+    const busy = currentAutomationJob(contextRoot, slug);
     if (busy?.status === 'running') {
-      const other = getAutomation(contextRoot, busy.slug);
       sendError(
         res, 409, 'say_busy',
-        `${other?.title ?? busy.slug} is still running — one at a time for now. Try again when it finishes.`,
+        `${manifest.title} is still running. Try again when it finishes.`,
       );
       return;
     }
@@ -1754,7 +1774,7 @@ export async function handleAutomationsSay(
     if (!started) {
       appendThreadEntry(contextRoot, slug, {
         runId, kind: 'system', event: 'skipped', via: 'dashboard',
-        text: 'It did not run — another agent had already taken the run slot.',
+        text: 'It did not run. This agent was already running.',
       });
     }
     sendJson(res, 200, { job: { ...job, kind: 'run' }, started, runId, slug, mode: manifest.mode });
@@ -1805,7 +1825,7 @@ export async function handleAutomationsThreadReply(
     if (!checkApproval(dirname(contextRoot), manifest).approved) {
       sendError(
         res, 409, 'reply_unapproved',
-        `${manifest.title} is not approved on this machine yet — approve it and reply again.`,
+        `${manifest.title} is not approved on this machine yet. Approve it, then reply again.`,
       );
       return;
     }
@@ -1838,7 +1858,7 @@ export async function handleAutomationsThreadReply(
     // opened a newer run while the panel was sitting open.
     const newest = listThreadRuns(contextRoot, slug, 1)[0]?.runId ?? null;
     if (newest !== runId) {
-      sendError(res, 409, 'stale_run', 'This conversation moved on — reply on the newest run.');
+      sendError(res, 409, 'stale_run', 'This conversation moved on. Reply on the newest run.');
       return;
     }
 
@@ -1848,14 +1868,14 @@ export async function handleAutomationsThreadReply(
     if (!latestBoundSession(slug)) {
       sendError(
         res, 409, 'not_bound',
-        'this automation has no session to talk to yet — it has not completed a run on this machine',
+        `${manifest.title} has no session to talk to yet. It needs one finished run on this machine first.`,
       );
       return;
     }
     if (pendingQuestion(contextRoot, slug)) {
       sendError(
         res, 409, 'question_pending',
-        'this automation is waiting for your answer to its own question — answer that first',
+        `${manifest.title} is waiting for your answer to its own question, so answer that first.`,
       );
       return;
     }
@@ -1864,12 +1884,11 @@ export async function handleAutomationsThreadReply(
     // entry in the channel marked undelivered. The lock can still be taken between here
     // and the resume — that residual race settles inside the job, which appends its own
     // "not delivered" entry with the lock's own reason.
-    const busy = currentAutomationJob(contextRoot);
+    const busy = currentAutomationJob(contextRoot, slug);
     if (busy?.status === 'running') {
-      const other = getAutomation(contextRoot, busy.slug);
       sendError(
         res, 409, 'busy',
-        `${other?.title ?? busy.slug} is still running — one at a time for now. Try again when it finishes.`,
+        `${manifest.title} is still running. Try again when it finishes.`,
       );
       return;
     }

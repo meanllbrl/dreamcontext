@@ -116,6 +116,27 @@ describe('a scheduled run opens and closes exactly one thread', () => {
     expect(entries.map((e) => e.event)).toEqual(['started', 'failed']);
     expect(entries[1].text).toMatch(/^Failed after /);
   });
+
+  it('an is_error run leads with its result\'s opening line, never "claude reported is_error"', async () => {
+    const manifest = createApproved('digest-is-error');
+    const { child, emitClose, emitStdout } = makeFakeChild(4246);
+    const run = runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), killImpl: vi.fn(), notify: () => {},
+    });
+    emitStdout(JSON.stringify({
+      session_id: 'sess_err', result: 'Could not reach the analytics API: 401 Unauthorized.\n',
+      is_error: true, permission_denials: [], total_cost_usd: 0.01, num_turns: 1, duration_ms: 900, subtype: 'success',
+    }));
+    emitClose(0);
+    const outcome = await run;
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toContain('401 Unauthorized');
+
+    const failed = readThread(contextRoot, manifest.slug).find((e) => e.event === 'failed');
+    expect(failed?.text).toMatch(/^Failed after .*: Could not reach the analytics API: 401 Unauthorized\./);
+    expect(failed?.text).not.toContain('is_error');
+    expect(failed?.text).not.toContain('—');
+  });
 });
 
 describe('a fire that never ran writes NOTHING', () => {

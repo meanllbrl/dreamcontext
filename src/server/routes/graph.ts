@@ -55,6 +55,16 @@ const GRAPH_RAW_CONTENT_TYPE: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  // Media an agent attaches to its thread post PLAYS there (`AgentFiles` in the #agents
+  // channel). None of these can carry script, and `serveMedia` answers byte ranges, so a
+  // clip seeks. Streamed from this route rather than the desktop-gated `/agent/file` for
+  // the reason images are: a thread read in a browser tab must not be told "desktop only".
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
 };
 
 /** Ceiling for a raw vault read. Streamed, so this is not a memory bound — it is what stops a

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { basename, relative, isAbsolute } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, relative, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
@@ -86,11 +86,27 @@ export interface FeedMessage {
   /** Waiting on the READER: either the run stopped to ask, or it has an open
    *  question. What the "Needs you" chip counts. */
   needsYou: boolean;
-  /** AUTHORED entries beyond the body (agent posts + user replies). System
-   *  rows are not replies — they are bookkeeping, and counting them would say
-   *  "2 replies" about a run nobody has spoken in. */
+  /** The rows the thread panel draws under its root: every authored entry
+   *  (agent posts + user replies) except the root itself, plus the published
+   *  document when there is one. `threadReplies` computes it, and the thread
+   *  route returns the same number, so the feed row and the panel can never
+   *  disagree. System rows are not replies — they are bookkeeping. */
   replyCount: number;
   lastReplyAt: string | null;
+  /** The run's published document — the thread's report — kept OUT of
+   *  `files`: a dated card in the feed repeated what the thread already shows,
+   *  and the 4-file cap silently dropped it. The Files view lists it. */
+  document: FeedFile | null;
+  /** The run-cache row whose session this message's conversation lives in —
+   *  what "Open session" resolves (by `firedAt`). For a run the runner recorded
+   *  it is the run itself. For a RESUMED turn (an @mention or reply to an agent
+   *  with a session) it is the earlier run whose session the turn continued:
+   *  a resume writes no cache row of its own under its fresh run id. Null when
+   *  no recorded session backs this message. */
+  sessionRunId: string | null;
+  /** Whether "Open session" can work: a session backs it (`sessionRunId`), and
+   *  the message is neither still running nor a fire that never ran. */
+  sessionOpenable: boolean;
   unread: boolean;
   /** Newest entry id in this run — what `markThreadRead` is given when the
    *  message has been on screen. */
@@ -201,6 +217,119 @@ function hasContent(path: string): boolean {
   try { return existsSync(path) && statSync(path).size > 0; } catch { return false; }
 }
 
+/** How much of a run's document the thread panel is handed. A report is a few
+ *  KB; the cap only exists so a runaway document cannot become a runaway
+ *  response. */
+const ANSWER_READ_BYTES = 256 * 1024;
+
+export interface RunAnswer {
+  /** Brain-relative, so the panel can offer it as a file to open. */
+  path: string;
+  /** The document as markdown, frontmatter stripped. */
+  text: string;
+  truncated: boolean;
+}
+
+/**
+ * THE FULL ANSWER of one run — its published document — for the thread panel.
+ *
+ * The feed shows a run's opening line on purpose: it is a channel, read at a
+ * glance. But that line is a headline, and the reader who opens the thread is
+ * asking for the rest of it — the whole report the run wrote, which until now
+ * was one more click away in a file viewer. The thread is where Slack puts
+ * "the detail", so the thread is where this goes.
+ *
+ * Read once per thread open, never per feed poll. The path comes from the run
+ * cache (the runner's own record), and is still refused unless it is a plain
+ * file inside the brain: a shared brain repo can carry a hostile symlink, and
+ * this route would otherwise print whatever it points at.
+ */
+export function readRunAnswer(contextRoot: string, slug: string, runId: string): RunAnswer | null {
+  let run: RunEvent | undefined;
+  try {
+    run = readAutomationCache(contextRoot, slug)?.history.find((e) => e.firedAt === runId);
+  } catch {
+    return null;
+  }
+  const outputPath = runDocumentPath(contextRoot, run ?? null);
+  if (!outputPath) return null;
+  try {
+    const raw = readFileSync(realpathSync(outputPath), 'utf-8');
+    const truncated = raw.length > ANSWER_READ_BYTES;
+    const body = (truncated ? raw.slice(0, ANSWER_READ_BYTES) : raw)
+      .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+      .trim();
+    // An EMPTY body (a document that is only frontmatter) is still a document:
+    // `runDocumentPath` said so, and the feed counted it as a reply on that
+    // word. Returning null here would make the thread draw one row fewer than
+    // the number printed above it.
+    return { path: toBrainRelative(contextRoot, outputPath), text: body, truncated };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The run's published document, when it is a plain, non-empty file inside the
+ * brain — else null. ONE predicate for "this run has a document", shared by the
+ * feed poll (which must stay cheap: an lstat and two realpaths, never a read)
+ * and the thread route, so the reply count both print is the same number.
+ *
+ * Refuses a symlink and anything whose realpath leaves the brain: a shared
+ * brain repo can carry a hostile link. Never throws — this runs in a render path.
+ */
+export function runDocumentPath(contextRoot: string, run: RunEvent | null): string | null {
+  const outputPath = run?.outputPath;
+  if (!outputPath) return null;
+  try {
+    const link = lstatSync(outputPath);
+    if (link.isSymbolicLink() || !link.isFile() || link.size === 0) return null;
+    const real = realpathSync(outputPath);
+    const realRoot = realpathSync(contextRoot);
+    return real.startsWith(realRoot + sep) ? outputPath : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The entry a thread hangs off: the human's ask when the run opened with one
+ * (the rule `buildFeedMessage` keys the exchange on), otherwise the agent's
+ * first post. Null for a run with neither — a silent run, whose root in the
+ * panel is the feed message itself and so repeats no entry. `ordered` must be
+ * in id order.
+ */
+export function threadRootId(ordered: ThreadEntry[]): string | null {
+  if (ordered[0]?.kind === 'user') return ordered[0].id;
+  return ordered.find((e) => e.kind === 'agent')?.id ?? null;
+}
+
+/** Events that end a run; the document is placed before the first of them. */
+const ANSWER_ANCHORS = new Set(['ok', 'replied', 'failed', 'timeout']);
+
+/**
+ * "N replies", and when the last one landed — THE count, printed by the feed
+ * row and by the thread panel's divider alike.
+ *
+ * It is exactly the rows the panel draws under its root: every authored entry
+ * except the root, plus the published document when there is one. The ask
+ * never counts; the agent's posts and its report do. System rows never count.
+ * `ordered` must be in id order.
+ */
+export function threadReplies(
+  ordered: ThreadEntry[],
+  hasDocument: boolean,
+): { count: number; lastAt: string | null } {
+  const rootId = threadRootId(ordered);
+  const replies = ordered.filter((e) => (e.kind === 'agent' || e.kind === 'user') && e.id !== rootId);
+  let lastAt = replies[replies.length - 1]?.at ?? null;
+  if (hasDocument) {
+    const anchor = ordered.find((e) => e.kind === 'system' && e.event && ANSWER_ANCHORS.has(e.event));
+    if (anchor && (lastAt === null || anchor.at > lastAt)) lastAt = anchor.at;
+  }
+  return { count: replies.length + (hasDocument ? 1 : 0), lastAt };
+}
+
 function statusFor(entries: ThreadEntry[], run: RunEvent | null): FeedStatus {
   for (const e of entries) {
     if (e.kind === 'system' && e.event && TERMINAL[e.event]) return TERMINAL[e.event];
@@ -211,6 +340,24 @@ function statusFor(entries: ThreadEntry[], run: RunEvent | null): FeedStatus {
   // forever — the cache is the record, and it knows.
   if (run && TERMINAL[run.status]) return TERMINAL[run.status];
   return 'running';
+}
+
+/**
+ * Which recorded run's session backs this message — see `FeedMessage.sessionRunId`.
+ *
+ * A run the runner recorded carries its own `sessionId`. A RESUMED turn has no
+ * cache row at all: `resumeWithMessage` continues the slug's latest bound
+ * session under a fresh run id and records nothing, so the only trace of it is
+ * the thread — no `started` entry (a resume spawns no run) and a `replied` or
+ * `failed` close. Its session is the newest recorded run with a session that
+ * fired no later than the turn, which is the one the resume picked up.
+ */
+function sessionRunFor(runId: string, ordered: ThreadEntry[], run: RunEvent | null, history: RunEvent[]): string | null {
+  if (run) return run.sessionId ? run.firedAt : null;
+  const resumed = !ordered.some((e) => e.kind === 'system' && e.event === 'started')
+    && ordered.some((e) => e.kind === 'system' && (e.event === 'replied' || e.event === 'failed'));
+  if (!resumed) return null;
+  return history.find((e) => e.sessionId && e.firedAt <= runId)?.firedAt ?? null;
 }
 
 /** One run's message. Exported for the grouping fixture, which drives it with
@@ -226,6 +373,9 @@ export function buildFeedMessage(
   /** The slug's pending question for THIS run, when it has one. Resolved by the
    *  caller so the whole feed costs one questions read, not one per run. */
   question: AutomationQuestion | null = null,
+  /** The slug's run history, newest first (as `recordRun` stores it) — where a
+   *  resumed turn's session is found. Already read by the caller. */
+  history: RunEvent[] = [],
 ): FeedMessage {
   const ordered = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const started = ordered.find((e) => e.kind === 'system' && e.event === 'started');
@@ -237,13 +387,11 @@ export function buildFeedMessage(
   // reply: `#agents` renders it above the agent, and it must not inflate
   // "N replies" for a run nobody has actually replied in.
   const ask = ordered[0]?.kind === 'user' ? ordered[0] : null;
-  const authored = ordered.filter((e) => (e.kind === 'agent' || e.kind === 'user') && e.id !== ask?.id);
 
-  // The FIRST post is the message; everything authored after it is in the
-  // thread. That is the prototype's shape and it is also the honest one — an
-  // agent's opening line is what it wanted the human to read.
+  // The FIRST post is the message — that is the prototype's shape and it is
+  // also the honest one: an agent's opening line is what it wanted the human
+  // to read. What counts as a REPLY is `threadReplies`' business, below.
   const body = posts[0] ?? null;
-  const rest = authored.filter((e) => e.id !== body?.id);
 
   const files: FeedFile[] = [];
   const seen = new Set<string>();
@@ -252,20 +400,21 @@ export function buildFeedMessage(
       if (!seen.has(f)) { seen.add(f); files.push({ path: f, name: basename(f) }); }
     }
   }
-  // The published document is a file card even when no post attached it —
-  // "the run wrote something and here it is" is the one attachment every
-  // successful run has.
+  // The published document is NOT a file card here. The thread draws it whole,
+  // as the agent's report, and a dated card beside the post repeated that —
+  // while the 4-file cap below silently dropped it whenever a post already
+  // carried four. It rides on its own field, which the Files view reads.
   //
-  // CONTENT is checked, not existence. `RunEvent.outputPath` is the path the
-  // run WOULD have published to, and the runner creates that file whether or
-  // not the run produced anything — a failed run leaves a ZERO-BYTE document
-  // behind. So `existsSync` is true for a file there is nothing to read in,
-  // and the card it offered opened on a blank page. A card is a promise that
-  // there is something there; the promise is bytes, not an inode.
-  if (run?.outputPath && hasContent(run.outputPath)) {
-    const rel = toBrainRelative(contextRoot, run.outputPath);
-    if (!seen.has(rel)) { seen.add(rel); files.push({ path: rel, name: basename(rel) }); }
-  }
+  // `runDocumentPath` checks CONTENT, not existence: the runner creates the
+  // output file whether or not the run produced anything, so a failed run
+  // leaves a zero-byte document behind, and a promise of a report is bytes,
+  // not an inode. It also refuses a symlink or a path outside the brain.
+  const documentPath = runDocumentPath(contextRoot, run);
+  const document: FeedFile | null = documentPath
+    ? { path: toBrainRelative(contextRoot, documentPath), name: basename(documentPath) }
+    : null;
+  const replies = threadReplies(ordered, document !== null);
+  const sessionRunId = sessionRunFor(runId, ordered, run, history);
 
   // A run that failed and posted nothing still has something to say, and it is
   // the most important thing in the channel: WHY. Without this the message
@@ -312,8 +461,13 @@ export function buildFeedMessage(
     // and a run can be finished and still owe an answer, so neither implies
     // the other.
     needsYou: status === 'needs-you' || question !== null,
-    replyCount: rest.length,
-    lastReplyAt: rest[rest.length - 1]?.at ?? null,
+    replyCount: replies.count,
+    lastReplyAt: replies.lastAt,
+    document,
+    sessionRunId,
+    // Hidden only where opening cannot work: nothing recorded backs it, it is
+    // still in flight, or the fire never ran.
+    sessionOpenable: sessionRunId !== null && status !== 'running' && status !== 'skipped',
     // Your OWN replies never make a message unread — the same rule
     // `threadUnread` applies, kept identical here so the chip counts and the
     // per-message bar can never disagree.
@@ -393,6 +547,7 @@ export function buildFeed(
           contextRoot, manifest, hasPhoto, runId, runEntries,
           runsByFire.get(runId) ?? null, watermark,
           questionByRun.get(`${manifest.slug}::${runId}`) ?? null,
+          cache?.history ?? [],
         ),
       );
     }

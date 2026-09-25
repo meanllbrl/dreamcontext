@@ -1,3 +1,4 @@
+import { cliAwarePath } from './cli-path.js';
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -117,8 +118,14 @@ export function buildPreamble(
     // something to every post. Each clause names a real mechanism — `--kv`, `--file` and
     // `automations propose --choice` all exist; a preamble that names a verb the CLI does
     // not have spends the run's turn discovering that.
-    ' Attach up to 4 brain-relative paths with --file (markdown opens in a viewer, images ' +
-    'inline, .excalidraw.md as a live board), and up to 6 key=value rows with --kv — --kv ' +
+    // What each type BECOMES in the thread, so a run that made a diagram, a PDF or a clip
+    // knows posting it is worth it — and WHERE to save it, because `--file` refuses any
+    // path outside the brain and a run left to guess writes to /tmp or the project root.
+    ' Attach up to 4 brain-relative paths with --file: an .excalidraw.md draws as a live board, ' +
+    'images show inline, .mp4/.webm/.mov video and .mp3/.m4a/.wav audio play inline, a .pdf ' +
+    'opens in the viewer, markdown in a reader. Save anything you attach NEXT TO your document ' +
+    `(${attachmentDirHint(outputPath)}, ` +
+    'brain-relative). Also up to 6 key=value rows with --kv — --kv ' +
     'is for numbers, not prose. To ask with buttons: ' +
     `\`dreamcontext automations propose ${m.slug} --title … --body … --choice "A" --choice ` +
     '"B"` (≤4, ≤64 chars each; needs review on). Never post a question as plain text — it ' +
@@ -232,10 +239,10 @@ function formatRunDuration(ms: number): string {
 function limitReason(sig: LimitSignal): string {
   const window = sig.window === 'session' ? '5-hour' : sig.window === 'weekly' ? 'weekly' : 'account';
   if (sig.resetsAtMs === null) {
-    return `It stopped at the ${window} usage limit — nothing was published. Try again once the window resets.`;
+    return `It stopped at the ${window} usage limit. Nothing was published. Try again once the window resets.`;
   }
   const at = new Date(sig.resetsAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return `It stopped at the ${window} usage limit — nothing was published. The window reopens ${at}.`;
+  return `It stopped at the ${window} usage limit. Nothing was published. The window reopens ${at}.`;
 }
 
 /**
@@ -329,6 +336,19 @@ export function composePrompt(
 }
 
 /**
+ * Where a run should save what it attaches, as the BRAIN-relative folder its document
+ * lands in (`automations/output/<slug>/`) — the one place `--file` is sure to accept
+ * and the run already knows how to write. Falls back to words for an output path
+ * that is not under a brain, which only a test constructs.
+ */
+export function attachmentDirHint(outputPath: string): string {
+  const marker = '/_dream_context/';
+  const at = outputPath.indexOf(marker);
+  if (at < 0) return 'the folder your document is saved in';
+  return outputPath.slice(at + marker.length).replace(/[^/]+$/, '');
+}
+
+/**
  * The block that carries a human's live ask from `#agents`.
  *
  * WHY THIS IS NOT AN APPROVAL HOLE, since it is the obvious objection: the
@@ -356,6 +376,13 @@ export function buildAskBlock(ask: string): string {
     'they asked, within the job described above. If it narrows the job, narrow it; if it asks for',
     'something the job does not cover, do that instead and say so. Still nobody to ask follow-ups',
     'of, and the output contract is unchanged: your final message is the document.',
+    // The channel's `/` menu offers this project's skills and commands, so a `/name`
+    // in the ask is a PICK from that menu, not punctuation. Inside a `-p` brief the
+    // CLI will not expand it on its own; without this line the run reads "/whatsapp"
+    // as a word and never loads the skill the owner chose.
+    ...(/(^|\s)\/[\w:.-]+/.test(text)
+      ? ['A `/name` in what they said names a skill or command of this project: load it with the Skill tool (name without the slash) and follow it.']
+      : []),
   ].join('\n');
 }
 
@@ -698,7 +725,9 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     // `opts.env` last: the per-account `CLAUDE_CONFIG_DIR` must win over an inherited one —
     // including account #0, whose entry is `undefined` and therefore REMOVES the inherited
     // value rather than leaving it to redirect the child (see `accountEnvFor`).
-    env: { ...process.env, PATH: claudeAwarePath(), ...(opts.env ?? {}) },
+    // `cliAwarePath` so the run can call `dreamcontext` (post, propose, recall) even when it
+    // was started from the app, whose environment has no login-shell PATH — see cli-path.ts.
+    env: { ...process.env, PATH: cliAwarePath(claudeAwarePath()), ...(opts.env ?? {}) },
     stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
     detached: true,
   };
@@ -1061,7 +1090,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         params.status,
         params.status === 'ok'
           ? `Finished in ${formatRunDuration(params.durationMs)}.`
-          : `${params.status === 'timeout' ? 'Timed out' : 'Failed'} after ${formatRunDuration(params.durationMs)}${params.error ? ` — ${params.error}` : ''}`,
+          : `${params.status === 'timeout' ? 'Timed out' : 'Failed'} after ${formatRunDuration(params.durationMs)}${params.error ? `: ${params.error}` : ''}`,
         logFn,
       );
     }
@@ -1600,7 +1629,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       } else {
         status = claudeResult.isError ? 'failed' : 'ok';
         if (status === 'failed') {
-          error = execution.stderrTail || 'claude reported is_error: true';
+          // The reader's WHY, not the envelope's flag: the result's own opening
+          // line ("Could not reach the analytics API: 401 Unauthorized.") is what
+          // the thread and the feed lead with, and "is_error: true" says nothing.
+          error = execution.stderrTail
+            || extractNotificationSummary(claudeResult.result ?? '')
+            || 'The run ended with an error and gave no reason.';
         }
 
         // The run's conversation id only exists HERE, in the JSON envelope —
