@@ -1020,9 +1020,12 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-row-mark[data-status='error'] { color: var(--color-error-ink); }
 /* "open →" replaces the status mark on the row you are pointing at — the drill-in is the
    only thing a row does, so it names itself exactly when you can act on it. */
+/* One grid cell holds both, so the slot is as wide as "open →" whether or not it shows: the
+   meta ends before it and hovering shifts nothing. */
+.chat-subagents-row-end { flex: 0 0 auto; display: grid; justify-items: end; align-items: center; }
+.chat-subagents-row-end > * { grid-area: 1 / 1; }
 .chat-subagents-row-open {
-  position: absolute;
-  right: var(--space-4);
+  white-space: nowrap;
   color: var(--color-accent);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);

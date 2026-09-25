@@ -272,6 +272,13 @@ describe('deriveChatQuest: Plan', () => {
     expect(won.outcome).toMatchObject({ kind: 'sealed', taskSlug: 'quest-demo', rounds: 2, agents: 7 });
     expect(questVictoryCopy(won)?.headline).toBe('Plan sealed');
     expect(won.timeline[won.timeline.length - 1].stage).toBe('done');
+
+    // The seal stamps once: the same chat keeps talking after the win, and a scout it sends
+    // then (a ghost, no live run) or a fresh review round must not move "2 rounds · 7 agents".
+    const ghost = agent('g', 'Explore', 'Map the chat components');
+    const r3 = reviewRound(3, ['SOLID', 'SOLID', 'SOLID']);
+    const later = quest([...withTask, handoff, text('go', 'Filing it.'), ghost, ...r3.entries], [...doneRuns, ...r3.runs])!;
+    expect(later.outcome).toMatchObject({ kind: 'sealed', rounds: 2, agents: 7 });
   });
 
   it('shows Draft as done when the agent skipped its questions', () => {

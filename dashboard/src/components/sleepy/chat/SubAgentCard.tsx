@@ -246,12 +246,16 @@ export function SubAgentCard({
                   </span>
                 </span>
               </span>
-              <span className="chat-subagents-row-mark" data-status={run.status} aria-hidden>{statusMark(run.status)}</span>
-              {/* Says what the click actually does. A dispatch opens its sidechain transcript;
-                  a headless run has none on disk, so its drill-in is the live output panel —
-                  which is also where its Stop button lives. */}
-              <span className="chat-subagents-row-open" aria-hidden>
-                {isHeadlessAgentShell(run) ? 'output →' : 'open →'}
+              {/* The mark and "open →" share one slot, sized to the wider of the two, so the
+                  label that replaces the mark on hover never lands on the meta beside it. */}
+              <span className="chat-subagents-row-end">
+                <span className="chat-subagents-row-mark" data-status={run.status} aria-hidden>{statusMark(run.status)}</span>
+                {/* Says what the click actually does. A dispatch opens its sidechain transcript;
+                    a headless run has none on disk, so its drill-in is the live output panel —
+                    which is also where its Stop button lives. */}
+                <span className="chat-subagents-row-open" aria-hidden>
+                  {isHeadlessAgentShell(run) ? 'output →' : 'open →'}
+                </span>
               </span>
             </button>
             );

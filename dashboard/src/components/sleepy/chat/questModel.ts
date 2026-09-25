@@ -318,15 +318,15 @@ function succeededCommand(e: QuestEntry): string | null {
 }
 
 /** The newest successful `tasks status <slug> <state>` the chat ran, as the run's own verdict on itself. */
-function lastStatusCall(entries: readonly QuestEntry[]): { slug: string; state: string; at: number | null } | null {
-  let found: { slug: string; state: string; at: number | null } | null = null;
-  for (const e of entries) {
+function lastStatusCall(entries: readonly QuestEntry[]): { slug: string; state: string; at: number | null; index: number } | null {
+  let found: { slug: string; state: string; at: number | null; index: number } | null = null;
+  entries.forEach((e, index) => {
     const command = succeededCommand(e);
-    if (!command) continue;
+    if (!command) return;
     for (const a of parseDreamActions(command)) {
-      if (a.path === 'tasks status' && a.args.length >= 2) found = { slug: a.args[0], state: a.args[1], at: entryTime(e) };
+      if (a.path === 'tasks status' && a.args.length >= 2) found = { slug: a.args[0], state: a.args[1], at: entryTime(e), index };
     }
-  }
+  });
   return found;
 }
 
@@ -382,17 +382,18 @@ export function deriveChatQuest(i: {
     mark(stage, p.runs[0]?.startedAt ?? null, stage === 'draft' ? 1 : count);
   }
 
-  let won: { kind: QuestOutcomeKind; slug: string | null; at: number | null } | null = null;
+  // `index` is the winning entry's place in the transcript: what the outcome counts stops there.
+  let won: { kind: QuestOutcomeKind; slug: string | null; at: number | null; index: number } | null = null;
   if (mode === 'plan') {
     mark('ask', startedAt);
     if (users.length >= 2) mark('draft', entryTime(users[1]));
-    for (const e of entries) {
+    for (const [index, e] of entries.entries()) {
       if (e.kind === 'tool' && e.name === 'AskUserQuestion' && e.status === 'done') mark('draft', entryTime(e));
       const command = succeededCommand(e);
       if (command && parseDreamActions(command).some((a) => a.path === 'tasks create')) mark('task', entryTime(e));
       if (e.kind === 'text' && e.done && e.text) {
         const develop = parseChatActions(e.text).actions.find((a) => a.action === 'develop');
-        if (develop) won = { kind: 'sealed', slug: develop.id ?? progress?.slug ?? null, at: entryTime(e) };
+        if (develop) won = { kind: 'sealed', slug: develop.id ?? progress?.slug ?? null, at: entryTime(e), index };
       }
     }
     if (progress) mark('task', null);
@@ -400,7 +401,7 @@ export function deriveChatQuest(i: {
     mark('build', startedAt, parties.filter((p) => p.stage === 'build').length || 1);
     const status = lastStatusCall(entries);
     const kind = status ? developWin(status.state) : undefined;
-    if (status && kind) won = { kind, slug: status.slug, at: status.at };
+    if (status && kind) won = { kind, slug: status.slug, at: status.at, index: status.index };
   }
 
   // The furthest stage reached is the active one; everything before it counts as done, which
@@ -432,7 +433,20 @@ export function deriveChatQuest(i: {
   });
   const beatAt = latest?.runs[0]?.startedAt ?? null;
 
-  const judged = parties.filter((p) => (mode === 'plan' ? p.stage === 'review' : p.stage === 'boss' || p.stage === 'trial'));
+  // The seal stamps once: a won quest's tally is the parties sent up to the win, so a scout the
+  // chat sends afterwards (the same Plan chat keeps talking) cannot move "7 agents" to "8".
+  // Placed by the party's anchor entry, since a rebuilt run's clock can be missing; a trailing
+  // party with no anchor falls back to its start time.
+  const entryIndex = new Map(entries.map((e, idx) => [e.id, idx] as const));
+  const sentByWin = (p: Party): boolean => {
+    if (!won) return true;
+    const at = p.anchorEntryId != null ? entryIndex.get(p.anchorEntryId) : undefined;
+    if (at != null) return at <= won.index;
+    const t = p.runs[0]?.startedAt;
+    return t == null || won.at == null || t <= won.at;
+  };
+  const tallied = parties.filter(sentByWin);
+  const judged = tallied.filter((p) => (mode === 'plan' ? p.stage === 'review' : p.stage === 'boss' || p.stage === 'trial'));
   const timeline = template
     .flatMap((id) => {
       const at = reach.get(id)?.at;
@@ -454,7 +468,7 @@ export function deriveChatQuest(i: {
         kind: won.kind,
         taskSlug: won.slug,
         rounds: judged.length,
-        agents: parties.reduce((n, p) => n + p.runs.length, 0),
+        agents: tallied.reduce((n, p) => n + p.runs.length, 0),
         elapsedMs: won.at != null && startedAt != null ? Math.max(0, won.at - startedAt) : null,
       }
       : null,

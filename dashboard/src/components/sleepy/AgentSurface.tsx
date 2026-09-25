@@ -2590,8 +2590,9 @@ export function AgentSurface() {
       // listeners on one node run in registration order, so ours fired first and collapsed
       // the whole surface out from under the picture the user was closing (measured 09-06 by
       // scripts/verify/chat-file-preview.mjs). Presence, not focus, for the same reason the
-      // two menus above use it: these portal to <body>.
-      if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay')) return;
+      // two menus above use it: these portal to <body>. The quest receipt ("How this was
+      // built") is one of them: it portals its own dialog and closes itself on Esc.
+      if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay, .quest-receipt-scrim')) return;
       // The phone's session drawer owns Esc while it is open — same presence test, same
       // reason (it portals no focus of its own). Without this the one key closed the drawer
       // AND collapsed the surface behind it, which on a phone means the chat vanishes.
