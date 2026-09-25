@@ -1,5 +1,24 @@
 [
   {
+    "date": "2026-09-25",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Round-1 build plus audit-polish (2026-09-24/25) of the agents channel, still uncommitted in the working tree. An ask now renders as one row with an inset answer preview and a Slack-style thread line (server-computed reply count shared by feed and thread); opening the thread shows the run's whole published document as a chat-grade ProseSegment reply, and agent text everywhere reads at chat typography instead of raw markdown. The scheduler's healthy states collapse to a header pill; '/' opens this project's real skill list in both composers with Turkish-aware matching; the page is renamed 'Agentic Automations'. Runs started from the app can now call dreamcontext itself (a login-shell CLI shim is written and prepended only when nothing already resolves, never guessing an install dir), so a posted board, image, video/audio clip or PDF actually renders — media is served through the vault-scoped raw route rather than the desktop-gated agent-file route, keeping '.svg' out of every allowlist. Audit polish reworded refusal strings at the source (CLI and Telegram inherit the fix), made the thread panel resizable and Esc-closeable, fixed dark-mode contrast and control sizing across the page, and landed the owner's round-2 calls: a per-agent (not project-wide) run slot, the thread panel overlaying below ~900px, .svg opening only as a Lightbox <img> on desktop, an app-wide accent-strong token, and wrapping sidebar labels.",
+    "breaking": false,
+    "summary": "UNCOMMITTED (working tree): the agents channel answers under your ask like Slack, the run's full report lives in the thread, and diagrams/PDFs/clips an agent posts actually render",
+    "references": [
+      "task:agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render",
+      "file:src/lib/automations/cli-path.ts",
+      "file:src/lib/automations/feed.ts",
+      "file:src/server/routes/graph.ts",
+      "file:dashboard/src/components/agents/AgentThreadPanel.tsx",
+      "file:dashboard/src/components/agents/AgentMessage.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-22",
     "type": "feat",
     "scope": "agents",

@@ -103,6 +103,8 @@ sets only the ink.
 - `dashboard/src/components/sleepy/SleepDebtTracker.css` — the debt/level pills, where the recipe originated.
 - `dashboard/src/components/sleepy/chat/cards.css` `.chat-msg-user-bubble` — commit `fa06c2a`, the occurrence that turned the recipe into a rule.
 - `dashboard/src/components/sleepy/chat/chat-html-kit.css` `.dc-mark` — the inline marker above, re-inked as the same pen `styles/global.css` gives the transcript's own `==highlight==`. Pinned by `tests/unit/chat-html.test.ts`, which now refuses `var(--color-accent-text)` anywhere in the kit and checks every token the kit reads is one the sandbox actually resolves.
+- `dashboard/src/styles/tokens.css` `--color-accent-ink` / `--color-warning-ink` (2026-09-25): the same lesson for short text on paper. The accent and warning swatches measured 4.15:1 and 2.61:1 as 12 to 13px text in the #agents channel, so text now takes an ink token (5.64:1 and 5.39:1 in light) while fills keep the swatch.
+- `dashboard/src/styles/tokens.css` `--color-accent-strong` / `--gradient-brand-strong` (2026-09-25): the reverse case. A FILL that carries text (a button, an active chip, a count badge) takes the strong token, `#6647f0` in both themes (5.64:1 with white; white on the dark accent was 2.75:1), while text on paper takes an `-ink` token. Non-text fills keep `--color-accent`; `tests/unit/accent-strong.test.ts` fails on any new accent fill that is neither converted nor named as non-text.
 
 ## Related
 

@@ -152,6 +152,9 @@ change does not actually live — and that is a design finding, not a test findi
 
 ## Changelog
 
+### 2026-09-25 - Fourth occurrence: a whole pre-fix build as the mutant
+- The #agents audit polish kept a snapshot of the pre-fix build (`tmp/goal/dist-prefix`) and ran every new verify check against it. Each FIX check had to fail there on a measured value (a board 420px in a 340px box, Copy 21px tall, a placeholder at 3.56:1, a 1542px feed row) or on the absence of the element whose absence is the bug; checks that should hold on both builds are labelled `[guard]`. Both kinds were logged in `tmp/goal/mutation-prefix.md`. The same run's `verify:agent-attachments` fails with exactly `spawnSync dreamcontext ENOENT` when `cliAwarePath` is reverted. This is the protocol at build scale: one mutant for the whole wave, not one per assertion.
+
 ### 2026-09-22 - Third occurrence, and the stronger form
 - Three mutations in one build (agents epic T4 lstat, T5 choice caps, T11 rail-hue probe) each moved the DESIGN, not just the assertion. Added "The stronger form" section: when a mutation passes, ask why it was invisible — the answer is usually that the change lives in the wrong layer.
 

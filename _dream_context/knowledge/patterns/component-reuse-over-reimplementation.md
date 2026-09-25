@@ -101,6 +101,10 @@ Cost: ~1KB less CSS (the hand-rolled rules), zero feature drift risk, zero dupli
 
 **Lesson (generalizes past this surface):** When a new surface needs a chat-shaped thing, the session is the parameter; the components are not.
 
+## Occurrence: the Agents channel thread (2026-09-24)
+
+The thread under an agent's run needed the chat's answer, boards, images, PDFs and file viewer. Every one is the chat's component: the run's document is the chat's `ProseSegment` (exported from `TranscriptItem.tsx` for this), boards are `BoardEmbed`/`BoardFullscreen`, images the shared `Lightbox`, PDFs the shared `PdfViewer`, other files `SlideOver`, and a click routes by type exactly like `ChatPane.handleOpenFile`. The bugs found on the way were in the glue, not the components: a brain-relative path handed to a project-root route. Fixing the shared board fit (`.chat-board-canvas .excalidraw-preview { min-height: 0 }`) fixed Chat too.
+
 ## Related Patterns
 
 - **Surface Briefing Pattern** (`surface-briefing-pattern.md`) — how to brief an agent about what the surface CAN render, when the surface changes
@@ -108,4 +112,4 @@ Cost: ~1KB less CSS (the hand-rolled rules), zero feature drift risk, zero dupli
 
 ## Last Verified
 
-2026-08-26 (peer mail UI — `scripts/verify/peer-mail-ui.mjs`, 43 assertions, reuse proven by `.chat-cmp-*` selectors inside `.peer-panel`).
+2026-09-25 (Agents channel thread, `verify:agent-attachments` 44/44 and `verify:agent-threads` 108/108). Earlier: 2026-08-26 (peer mail UI — `scripts/verify/peer-mail-ui.mjs`, 43 assertions, reuse proven by `.chat-cmp-*` selectors inside `.peer-panel`).

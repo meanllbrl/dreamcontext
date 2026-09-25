@@ -7,14 +7,14 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-09-21'
+date: '2026-09-25'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-09-21 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-09-25 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
-### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/12 done (58%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
+### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/13 done (54%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - captures-never-graduate-age-scratch-by-date-and-promote-what-recurs-into-knowledge (todo) · BACKLOG
   - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set (completed) · v0.14.0
@@ -22,6 +22,7 @@ date: '2026-09-21'
   - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids (completed) · v0.14.0
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag (completed) · v0.14.0
   - finish-the-hybrid-recall-rollout-doctor-check-user-docs-npm-files-audit (todo) · BACKLOG
+  - nothing-records-which-patterns-actually-fire-so-forty-two-of-them-compete-for-one-budget-with-no-evidence (todo) · 0.28.0
   - patterns-tetiklenir-hale-gelir-otomatik-tetik-turetme-deterministik-kapi-ve-slash-girisleri (in_review)
   - recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter (completed) · 2026-07-28 → …
   - soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system (completed) · 0.23.0 · 2026-07-28 → …
@@ -29,7 +30,7 @@ date: '2026-09-21'
   - the-desktop-chat-surface-truncates-the-snapshot-to-a-2kb-preview-at-around-10k-chars (todo) · BACKLOG
   - the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview (completed) · 0.22.0 · 2026-07-28 → …
 
-### 🟡 **improve-sleep-quality** — Improve sleep quality · 20/29 done (69%) · target 2026-08-02 · forecast 2026-09-06 🔴 SLIPPING
+### 🟡 **improve-sleep-quality** — Improve sleep quality · 20/30 done (67%) · target 2026-08-02 · forecast 2026-09-06 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-merged-away-chore-gets-re-filed-as-an-empty-task-every-sleep-cycle (completed) · 0.26.0 · 2026-09-05 → 2026-09-05
   - automations-hitl-a-run-can-stop-and-ask-and-the-verdict-comes-back-from-wherever-you-are (completed) · 0.24.0 · 2026-08-03 → …
@@ -38,7 +39,7 @@ date: '2026-09-21'
   - captures-never-graduate-age-scratch-by-date-and-promote-what-recurs-into-knowledge (todo) · BACKLOG
   - distil-the-110kb-automations-task-body-under-the-github-issue-limit-so-its-mirror-syncs-again (todo) · 0.26.0
   - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (completed) · 0.18.0
-  - git-worktrees-split-the-brain-resolve-the-context-root-from-the-main-worktree (todo) · 0.26.0
+  - git-worktrees-split-the-brain-resolve-the-context-root-from-the-main-worktree (in_review) · 0.26.0
   - goal-skill-pack-headless-permission-flags-and-report-vs-work-gate (completed) · 0.20.0
   - improve-sleep-quality (completed) · 0.20.0 · 2026-07-18 → …
   - install-skill-and-setup-advance-setupversion-without-running-migrations-silently-skipping-them-forever (completed) · 0.23.0 · 2026-07-30 → …
@@ -51,6 +52,7 @@ date: '2026-09-21'
   - rescale-sleep-debt-scoring-weighted-sum-token-signal (completed) · 0.23.0
   - score-the-content-sleep-writes-signal-to-noise-staleness-inference-vs-observation (todo) · BACKLOG
   - sleep-connectors-pull-outside-sources-on-a-cadence-and-turn-them-into-knowledge-and-theses (completed) · BACKLOG · 2026-08-17 → 2026-08-24
+  - sleep-cycle-bookmarks-its-own-sub-agent-briefs-and-reports-as-star-star-decision-entries-mis-linked-to-an-arbitrary-task (todo) · BACKLOG
   - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_review) · 2026-09-10 → …
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
@@ -85,7 +87,7 @@ date: '2026-09-21'
   - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
   - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
 
-### 🔵 **simplified-ux** — Simplified UX · 76/95 done (80%) · target 2026-07-31 · forecast 2026-09-20 🔴 SLIPPING
+### 🔵 **simplified-ux** — Simplified UX · 76/100 done (76%) · target 2026-07-31 · forecast 2026-09-20 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-browser-run-shows-its-screenshots-in-chat-a-live-frame-while-it-runs-a-strip-when-it-lands (todo) · 0.28.0
   - a-declared-status-whose-key-collides-with-a-custom-field-is-accepted-by-the-settings-editor-then-silently-never-appears (todo) · 0.27.0
@@ -97,18 +99,23 @@ date: '2026-09-21'
   - agent-surface-polish-unified-chrome-composer-redesign-slash-menu-inline-images-reveal-endpoint (completed) · 0.21.0
   - agent-tab-auto-title-arrives-late-warm-the-cli-probe-and-let-a-chat-tab-carry-its-own-first-message (completed) · 0.23.0
   - agent-tab-right-click-menu-rename-the-auto-rename-switch-from-settings (completed) · 0.26.0 · 2026-08-24 → 2026-08-24
+  - agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render (in_progress) · 0.28.0
+  - agents-epic-finished-end-to-end-and-the-side-menu-gets-one-maturity-model-section-hues-and-honest-icons (in_review) · 0.28.0 · 2026-09-22 → …
   - agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
+  - agents-page-round-one-leftovers-members-view-copy-empty-state-and-answer-route-messages-short-diagram-box-height-and-two-hardening-nits (todo) · 0.28.0
   - agents-step-1-the-agents-page-becomes-a-member-list-where-i-create-and-edit-agents-with-a-photo-a-mode-and-a-model (completed) · 0.28.0 · 2026-09-20 → 2026-09-20
   - agents-step-2-a-finished-run-pushes-one-message-into-the-agents-feed-and-the-message-shape-is-the-design-to-approve (in_review) · 0.28.0
-  - agents-step-3-a-pushed-message-can-carry-a-question-with-options-a-structured-summary-several-files-and-a-board (todo) · 0.28.0
-  - agents-step-4-replying-in-a-thread-or-mentioning-an-agent-resumes-its-session-or-calls-it-and-the-answer-comes-back-as-a-post (todo) · 0.28.0
+  - agents-step-3-a-pushed-message-can-carry-a-question-with-options-a-structured-summary-several-files-and-a-board (in_review) · 0.28.0
+  - agents-step-4-replying-in-a-thread-or-mentioning-an-agent-resumes-its-session-or-calls-it-and-the-answer-comes-back-as-a-post (in_review) · 0.28.0
   - an-automation-run-opens-as-a-chat-session-not-an-inline-drill-in (completed) · 0.24.0
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
   - app-bundled-cli-reports-0-0-0-so-version-gated-migrations-never-fire-on-its-fallback-path (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
+  - automation-runs-must-degrade-gracefully-on-the-account-usage-limit (in_review) · 0.28.0
   - automations-are-undiscoverable-the-skill-description-omits-scheduling-entirely-and-the-snapshot-has-no-automations-channel (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
-  - automations-become-agents-every-automation-is-a-slack-like-thread-the-agent-posts-important-updates-to-and-the-user-replies-in (todo) · 0.28.0
+  - automations-become-agents-every-automation-is-a-slack-like-thread-the-agent-posts-important-updates-to-and-the-user-replies-in (in_review) · 0.28.0
+  - automations-must-not-publish-a-usage-limit-reply-as-their-document (cancelled) · 0.26.0
   - automations-redesign-the-flow-graph-is-the-manifest-the-run-asks-in-chat-and-the-queue-never-loses-a-fire (completed) · v0.24.0 · 2026-08-09 → …
   - call-the-planning-time-box-a-cycle-in-the-ui-and-cli-with-version-staying-canonical-on-disk (todo) · BACKLOG
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
@@ -177,6 +184,7 @@ date: '2026-09-21'
   - task-manager-show-the-agent-s-document-edits-as-a-git-style-diff (completed) · 0.18.0 · 2026-07-17 → …
   - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
   - telefon-cebe-girince-oturum-olmesin-kopan-soket-yeniden-baglansin-ve-canli-tur-devam-etsin (todo) · 0.28.0
+  - the-danger-colour-is-an-undefined-token-so-ten-stylesheets-each-pick-their-own-red (todo) · 0.28.0
   - the-dashboard-sub-package-build-leaves-the-served-directory-stale-so-a-verified-fix-is-not-in-the-app-you-run (todo) · 0.27.0
   - the-shelf-follows-a-session-into-a-linked-code-repo-not-just-the-vault-s-own (completed) · 0.27.0 · 2026-09-04 → 2026-09-04
   - two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file (completed) · 0.25.0 · 2026-08-23 → 2026-08-24

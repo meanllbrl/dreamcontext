@@ -2,7 +2,7 @@
 id: feat_ControlPanel_v06
 status: active
 created: '2026-05-31'
-updated: '2026-09-22'
+updated: '2026-09-25'
 released_version: v0.8.7
 tags:
   - control-panel
@@ -11,10 +11,9 @@ tags:
   - 'topic:dashboard'
   - 'kind:design'
 related_tasks:
-  - settings-dort-gruba-toplanir-tekrarlayan-metin-teklenir-ve-save-dugmesi-kalkar
-  - dashboard-settings-page-section-nav-menu
   - >-
-    agents-epic-finished-end-to-end-and-the-side-menu-gets-one-maturity-model-section-hues-and-honest-icons
+    settings-dort-gruba-toplanir-tekrarlayan-metin-teklenir-ve-save-dugmesi-kalkar
+  - dashboard-settings-page-section-nav-menu
 type: feature
 name: control-panel
 description: ''

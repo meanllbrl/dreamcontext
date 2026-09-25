@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-21'
+updated: '2026-09-25'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -71,11 +71,6 @@ related_tasks:
   - >-
     sir-girme-ve-komut-calistirma-sohbetin-icinde-olur-satir-ici-secret-karti-ve-oynat-dugmeli-canli-terminal
   - >-
-    mcp-sunuculari-takimla-paylasilir-repo-mcp-json-chat-ten-onay-ve-yetkilendirme
-  - >-
-    auto-bypass-loses-the-conversation-and-hits-every-pane-the-choice-and-the-pane-layout-are-forgotten-on-relaunch
-    chat-yuzeyi-telefonda-calisir-mobil-algilaninca-sadece-chat-acilir-oturumlar-sol-cekmeceden-secilir
-  - >-
     telefon-cebe-girince-oturum-olmesin-kopan-soket-yeniden-baglansin-ve-canli-tur-devam-etsin
 type: feature
 name: in-app-agent-terminal
@@ -85,7 +80,8 @@ description: >-
   cannot hold the shape — a `dream-html` block (prose is the default since
   2026-09-13). Since 2026-09-19 the surface also leaves the desk: it opens on a
   phone over a tailnet, takes a credential straight to `.env` without the agent
-  seeing it, and runs an interactive command in a real terminal in the transcript.
+  seeing it, and runs an interactive command in a real terminal in the
+  transcript.
 pinned: false
 date: '2026-06-28'
 ---
