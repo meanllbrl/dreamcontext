@@ -1651,7 +1651,9 @@ const GOAL_LIVE_FILE_RE = /^\.goal-skill-live(?:\..+)?\.json$/;
  *  its CURRENT conversation id into its own file as `session`. Every fresh live file is
  *  scanned; a pane gets the run whose stamp equals its pinned tab id OR its map-resolved
  *  current conversation id. No stamped match → an UNSTAMPED file (an older skill wrote
- *  it) stays visible to every pane — back-compat over silence; otherwise inactive.
+ *  it) stays visible to every pane — back-compat over silence; otherwise inactive. A
+ *  `done` unstamped file never falls back (it names no pane). Only regular files are
+ *  read: a symlinked live file is skipped.
  *  Vault-scoped (contextRoot from the vault header); no desktop gate — the plain
  *  browser dashboard renders the panel the same way. */
 export async function handleAgentGoalLive(
@@ -1670,7 +1672,9 @@ export async function handleAgentGoalLive(
     for (const name of readdirSync(dir)) {
       if (!GOAL_LIVE_FILE_RE.test(name)) continue;
       try {
-        const state = JSON.parse(readFileSync(join(dir, name), 'utf-8')) as Record<string, unknown>;
+        const path = join(dir, name);
+        if (!lstatSync(path).isFile()) continue; // a symlink or anything else is not vault content
+        const state = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
         const upd = Date.parse(String(state?.updated ?? state?.started ?? ''));
         if (!upd || Date.now() - upd > GOAL_LIVE_MAX_AGE_MS) continue; // abandoned run
         runs.push({ state, stamp: typeof state.session === 'string' ? state.session : '', upd });
@@ -1686,7 +1690,9 @@ export async function handleAgentGoalLive(
     const current = resolveAgentSession(contextRoot, claudeId);
     const mapped = current ? runs.find((r) => r.stamp === current) : undefined;
     if (mapped) { sendJson(res, 200, { active: true, state: mapped.state }); return; }
-    const unstamped = runs.find((r) => !r.stamp);
+    // A finished run keeps its file for the win beat; unstamped, it names no pane, so it
+    // would read "Quest cleared" in every one. Only a live unstamped run falls back.
+    const unstamped = runs.find((r) => !r.stamp && r.state.phase !== 'done');
     sendJson(res, 200, unstamped ? { active: true, state: unstamped.state } : GOAL_LIVE_INACTIVE);
     return;
   }

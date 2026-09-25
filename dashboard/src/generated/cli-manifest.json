@@ -978,6 +978,57 @@
       ]
     },
     {
+      "path": "goal-live",
+      "desc": "Write the goal-skill live run file the app draws as a quest map (silent; always exits 0)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "goal-live actor",
+      "desc": "Record agents joining the run: briefed, copied, brought back or called fresh",
+      "args": [
+        "<ids>"
+      ],
+      "valueFlags": [
+        "--kind",
+        "--role",
+        "--from",
+        "--round",
+        "--context-of"
+      ]
+    },
+    {
+      "path": "goal-live clear",
+      "desc": "Remove this session's live file (escalation or abort only)",
+      "args": []
+    },
+    {
+      "path": "goal-live phase",
+      "desc": "Record a phase transition",
+      "args": [
+        "<phase>"
+      ],
+      "valueFlags": [
+        "--wave",
+        "--waves"
+      ]
+    },
+    {
+      "path": "goal-live start",
+      "desc": "Begin a run: a fresh live file for this session (sweeps files abandoned for 3h)",
+      "args": [],
+      "valueFlags": [
+        "--goal"
+      ]
+    },
+    {
+      "path": "goal-live state",
+      "desc": "Update agents' states or verdicts",
+      "args": [
+        "<pairs...>"
+      ]
+    },
+    {
       "path": "hook",
       "desc": "Hook handlers for Claude Code (stop, session-start, subagent-start, pre-tool-use, user-prompt-submit, post-tool-use, pre-compact)",
       "args": [],

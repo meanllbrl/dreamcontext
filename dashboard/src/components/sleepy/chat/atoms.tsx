@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   toolGlyph, formatTokenCount, formatDuration, avatarHue, splitInlineCode, pathChipLabel,
 } from './chatEntities';
+import { AGENT_ROLES, type AgentRoleId, type RoleGlyphId } from '../../../lib/agentRoles';
+import { VERDICT_LABELS, type Carries, type Verdict } from '../../../lib/quest';
 import './atoms.css';
 
 /**
@@ -186,14 +188,62 @@ export function TypeBadge({ children }: { children: ReactNode }) {
  * project is recognisably THAT project at a glance, not another tinted Sleepy. The hue ring
  * stays (same derivation, so the color still matches everywhere the agent appears), and a
  * broken image falls back to the face rather than to an empty circle.
+ *
+ * `role` makes the avatar a CHARACTER from the quest party (lib/agentRoles.ts): the face or
+ * the role's emblem drawn in `--color-text` on a static tint of the role's hue family (maker,
+ * judge, neutral). The tint is chrome, never a status; `running` is the status, and it is
+ * carried by motion alone (`chat-a-work`), so the two never fight over the colour channel.
+ * At {@link BADGE_MIN_PX} and up the face wears the emblem as a corner badge; below that the
+ * emblem stands alone, because a face plus a badge at 16px is two smudges. The lead is always
+ * the face; a peer's logo beats both. No role (or the plain `agent`) renders the name-hued
+ * face exactly as before, so every surface that never passes a role is untouched.
  */
-export function AgentAvatar({ name, size = 32, src }: { name: string; size?: number; src?: string | null }) {
+export function AgentAvatar({ name, size = 32, src, role, running = false }: {
+  name: string;
+  size?: number;
+  src?: string | null;
+  role?: AgentRoleId;
+  running?: boolean;
+}) {
   const hue = avatarHue(name);
   const [imgFailed, setImgFailed] = useState(false);
+  const character = role && role !== 'agent' ? AGENT_ROLES[role] : null;
+  if (character) {
+    const logo = !!src && !imgFailed;
+    const isFace = character.glyph === 'face';
+    const big = size >= BADGE_MIN_PX;
+    const badge = Math.max(16, Math.round(size / 2));
+    return (
+      <span
+        className="chat-a-avatar"
+        data-role={character.id}
+        data-hue={character.hue}
+        data-logo={logo || undefined}
+        data-running={running || undefined}
+        style={{ width: size, height: size }}
+        aria-hidden
+      >
+        {logo ? (
+          <img className="chat-a-avatar-img" src={src ?? undefined} alt="" onError={() => setImgFailed(true)} />
+        ) : isFace || big ? (
+          // The 1px ring sits inside the box (border-box), so the face draws in what is left.
+          <RoleGlyph glyph="face" size={size - 2} />
+        ) : (
+          <RoleGlyph glyph={character.glyph} size={Math.round(size * 0.7)} />
+        )}
+        {!logo && !isFace && big && (
+          <span className="chat-a-avatar-badge" style={{ width: badge, height: badge }}>
+            <RoleGlyph glyph={character.glyph} size={badge - 4} />
+          </span>
+        )}
+      </span>
+    );
+  }
   return (
     <span
       className="chat-a-avatar"
       data-logo={(src && !imgFailed) || undefined}
+      data-running={running || undefined}
       style={{ width: size, height: size, '--avatar-hue': hue } as React.CSSProperties}
       aria-hidden
     >
@@ -206,6 +256,97 @@ export function AgentAvatar({ name, size = 32, src }: { name: string; size?: num
           <path d="M12 20 q4 3.5 8 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
       )}
+    </span>
+  );
+}
+
+/** The avatar size at which a character's face gains its emblem badge (lib/agentRoles.ts size table). */
+export const BADGE_MIN_PX = 30;
+
+/**
+ * Every role emblem, as stroke paths on a 24-unit grid. One line weight, outline only, drawn in
+ * `currentColor`: the tint behind it carries the role family, the drawing carries the role. The
+ * face is Sleepy's closed-eye face, the same character as the dock mascot, at a lighter stroke
+ * so it keeps the 2px line it has always had at 32px.
+ */
+const ROLE_GLYPH_PATHS: Readonly<Record<RoleGlyphId, readonly string[]>> = {
+  face: ['M6.75 11.25q1.875-2.25 3.75 0', 'M13.5 11.25q1.875-2.25 3.75 0', 'M9 15q3 2.625 6 0'],
+  pencil: ['M4 20l1-4L15.5 5.5a2.12 2.12 0 0 1 3 3L8 19z', 'M13.5 7.5l3 3'],
+  lens: ['M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13z', 'M15.3 15.3L20 20'],
+  scissors: [
+    'M9.5 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z',
+    'M19.5 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z',
+    'M8.6 15.6L18 4',
+    'M15.4 15.6L6 4',
+  ],
+  split: ['M12 21v-8', 'M12 13L6 5.5', 'M12 13l6-7.5', 'M4 6.5L6 4l2.5 1.5', 'M15.5 5.5L18 4l2 2.5'],
+  shield: ['M12 3l7 3v5c0 4.5-3 8-7 10c-4-2-7-5.5-7-10V6z', 'M9 12l2 2l4-4'],
+  // On the diagonal: upright, a hammer head over a handle reads as a "T" at 16px.
+  hammer: ['M12.9 4.1l7 7l-2.8 2.8l-7-7z', 'M13.6 10.4L4 20'],
+  crown: ['M4 17L3 7l5 4l4-6l4 6l5-4l-1 10z', 'M4 21h16'],
+  scales: [
+    'M12 4v16', 'M8 20h8', 'M5 8h14',
+    'M5 8l-2.5 6h5z', 'M2.5 14a2.5 2.5 0 0 0 5 0',
+    'M19 8l-2.5 6h5z', 'M16.5 14a2.5 2.5 0 0 0 5 0',
+  ],
+  compass: ['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z', 'M15.5 8.5l-2 5l-5 2l2-5z'],
+  diamond: ['M7 4h10l4 5l-9 11L3 9z', 'M3 9h18', 'M9.5 9L12 20l2.5-11'],
+  prompt: ['M5 7l5 5l-5 5', 'M12 17h7'],
+};
+
+/** One role emblem ({@link ROLE_GLYPH_PATHS}). Decorative: the row that owns it names the role. */
+export function RoleGlyph({ glyph, size = 16 }: { glyph: RoleGlyphId; size?: number }) {
+  return (
+    <svg
+      className="chat-a-roleglyph"
+      data-glyph={glyph}
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={glyph === 'face' ? 1.5 : 2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {ROLE_GLYPH_PATHS[glyph].map((d) => <path key={d} d={d} />)}
+    </svg>
+  );
+}
+
+const VERDICT_GOOD: Readonly<Record<Verdict, boolean>> = {
+  solid: true, pass: true, 'needs-work': false, fail: false,
+};
+
+/**
+ * A judge's verdict. The mark (✓ / ✗) and the word carry it, so it never rests on colour; the
+ * tint only confirms. Text stays `--color-text` on the tint (tinted surface, not a filled
+ * swatch), and "Needs work" is an error tint, never `--color-warning`: warning is reserved for
+ * genuinely hot things, and a sent-back plan is routine.
+ */
+export function VerdictChip({ verdict }: { verdict: Verdict }) {
+  const good = VERDICT_GOOD[verdict];
+  return (
+    <span className="chat-a-verdict" data-verdict={verdict} data-good={good || undefined}>
+      <span className="chat-a-verdict-mark" aria-hidden>{good ? '✓' : '✗'}</span>
+      {VERDICT_LABELS[verdict]}
+    </span>
+  );
+}
+
+const QUEST_BADGE_COPY: Readonly<Record<Carries, { label: string; title: string }>> = {
+  memory: { label: 'memory', title: 'Memory: it picked up the work so far instead of starting over' },
+  fresh: { label: 'fresh eyes', title: 'Fresh eyes: sees only the work, never the reasoning' },
+};
+
+/** What an agent carries into its work: the memory of what came before, or fresh eyes. The
+ *  explainer lives in `title`; a caller with a sharper one (the stage's) passes it. */
+export function QuestBadge({ carries, title }: { carries: Carries; title?: string }) {
+  const copy = QUEST_BADGE_COPY[carries];
+  return (
+    <span className="quest-badge" data-badge={carries} title={title ?? copy.title}>
+      {copy.label}
     </span>
   );
 }

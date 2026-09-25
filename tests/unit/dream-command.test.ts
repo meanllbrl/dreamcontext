@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseDreamActions, isDreamcontextCommand, describeDreamAction, dreamOutcome,
   splitShellSegments, tokenizeShell, domainNoun, cliEndpoint,
+  VERBS, DREAM_VERB_FORMS, dreamActionPhrase, isQuietDreamSegment,
 } from '../../dashboard/src/components/sleepy/chat/dreamCommand';
 
 /**
@@ -118,6 +119,22 @@ describe('parseDreamActions', () => {
     expect(isDreamcontextCommand('npm test')).toBe(false);
     expect(isDreamcontextCommand(undefined)).toBe(false);
   });
+
+  it('yields no action for quest-map bookkeeping, and keeps the work it is chained onto', () => {
+    // `goal-live` is the quest map drawing itself; a row for it would report bookkeeping as work.
+    expect(parseDreamActions('dreamcontext goal-live phase review')).toEqual([]);
+    expect(parseDreamActions('npx dreamcontext goal-live actor critic,pragmatist --kind fresh --round 2')).toEqual([]);
+    expect(isDreamcontextCommand('dreamcontext goal-live state critic=SOLID')).toBe(false);
+    const chained = parseDreamActions('dreamcontext goal-live state critic=NEEDS_WORK && dreamcontext tasks log quest-demo "sent back"');
+    expect(chained.map((a) => a.path)).toEqual(['tasks log']);
+  });
+
+  it('isQuietDreamSegment names one goal-live segment and nothing else', () => {
+    expect(isQuietDreamSegment('dreamcontext goal-live clear')).toBe(true);
+    expect(isQuietDreamSegment('DEBUG=1 npx dreamcontext goal-live phase done')).toBe(true);
+    expect(isQuietDreamSegment('dreamcontext tasks list')).toBe(false);
+    expect(isQuietDreamSegment('echo dreamcontext goal-live')).toBe(false);
+  });
 });
 
 describe('describeDreamAction', () => {
@@ -159,12 +176,81 @@ describe('describeDreamAction', () => {
     expect(describeDreamAction(action).label).toBe('Theses list');
   });
 
+  it('carries the verb key and the noun the label used, on every view', () => {
+    for (const command of [
+      'dreamcontext tasks create "A"', 'dreamcontext tasks list', 'dreamcontext snapshot',
+      'dreamcontext sleep status', 'dreamcontext theses promote x', 'dreamcontext frobnicate widgets',
+    ]) {
+      const v = view(command);
+      expect(typeof v.verbKey).toBe('string');
+      expect(typeof v.noun).toBe('string');
+      expect(v.label.startsWith(v.noun)).toBe(true);
+    }
+    expect(view('dreamcontext tasks list')).toMatchObject({ verbKey: 'list', noun: 'Tasks' });
+    expect(view('dreamcontext snapshot')).toMatchObject({ verbKey: '', noun: 'Snapshot' });
+  });
+
+  it('a verb token that names a prototype property is just an unknown verb', () => {
+    const v = view('dreamcontext frobnicate constructor');
+    expect(v).toMatchObject({ label: 'Frobnicate constructor', tone: 'write', verbKey: 'constructor' });
+    // Read off the prototype, `constructor` would be a function with no `failed` form to call.
+    expect(dreamActionPhrase(v, 'error')).toEqual({ verb: 'Frobnicate constructor', tail: 'failed' });
+  });
+
   it('domainNoun singularises without a table where the table is not needed', () => {
     expect(domainNoun('tasks')).toBe('Task');
     expect(domainNoun('connections')).toBe('Connection');
     expect(domainNoun('theses')).toBe('Thesis');
     expect(domainNoun('people')).toBe('Person');
     expect(domainNoun('tasks', true)).toBe('Tasks');
+  });
+});
+
+describe('dreamActionPhrase', () => {
+  const view = (command: string) => describeDreamAction(parseDreamActions(command)[0]);
+  const phrase = (command: string, status: 'running' | 'done' | 'error') => dreamActionPhrase(view(command), status);
+
+  // Irregular past forms a VERBS label can take without ending in "ed".
+  const IRREGULAR_PAST = new Set(['set', 'done', 'made', 'built', 'sent', 'run', 'ran', 'got', 'kept', 'left', 'lost', 'put', 'read', 'shut', 'split', 'taken', 'wrote', 'written']);
+
+  it('names a running and a failed form for every past-tense verb (read off VERBS, not copied)', () => {
+    const pastTense = Object.entries(VERBS)
+      .filter(([key, v]) => key !== 'set' && (/ed$/.test(v.text) || IRREGULAR_PAST.has(v.text)))
+      .map(([key]) => key);
+    expect(pastTense.length).toBeGreaterThanOrEqual(21);
+    for (const key of pastTense) expect(Object.prototype.hasOwnProperty.call(DREAM_VERB_FORMS, key), key).toBe(true);
+  });
+
+  it('covers every VERBS key, so the fallback applies only to verbs nobody named', () => {
+    for (const key of Object.keys(VERBS)) expect(Object.prototype.hasOwnProperty.call(DREAM_VERB_FORMS, key), key).toBe(true);
+  });
+
+  it('reads tasks create in all three tenses', () => {
+    expect(phrase('dreamcontext tasks create "Quest demo"', 'running')).toEqual({ verb: 'Creating task' });
+    expect(phrase('dreamcontext tasks create "Quest demo"', 'error')).toEqual({ verb: "Couldn't create task" });
+    expect(phrase('dreamcontext tasks create "Quest demo"', 'done')).toEqual({ verb: 'Task created' });
+  });
+
+  it('reads the other verbs by their own words', () => {
+    expect(phrase('dreamcontext tasks complete x', 'running')).toEqual({ verb: 'Completing task' });
+    expect(phrase('dreamcontext tasks delete x', 'error')).toEqual({ verb: "Couldn't delete task" });
+    expect(phrase('dreamcontext tasks insert x notes "y"', 'running')).toEqual({ verb: 'Adding to task' });
+    expect(phrase('dreamcontext tasks list', 'running')).toEqual({ verb: 'Listing tasks' });
+    expect(phrase('dreamcontext memory recall "context root"', 'error')).toEqual({ verb: "Couldn't recall memory" });
+  });
+
+  it('reads an arity-sensitive verb by what the call did', () => {
+    expect(phrase('dreamcontext sleep status', 'running')).toEqual({ verb: 'Checking sleep status' });
+    expect(phrase('dreamcontext sleep status', 'error')).toEqual({ verb: "Couldn't check sleep status" });
+    expect(phrase('dreamcontext tasks status x in_progress', 'running')).toEqual({ verb: 'Setting task status' });
+    expect(phrase('dreamcontext tasks status x in_progress', 'error')).toEqual({ verb: "Couldn't set task status" });
+    expect(phrase('dreamcontext tasks due x 2026-10-01', 'error')).toEqual({ verb: "Couldn't set task due date" });
+    expect(phrase('dreamcontext tasks status x in_progress', 'done')).toEqual({ verb: 'Task status' });
+  });
+
+  it('keeps the label for a verb nobody named, and says it failed', () => {
+    expect(phrase('dreamcontext theses promote x', 'error')).toEqual({ verb: 'Thesis promote', tail: 'failed' });
+    expect(phrase('dreamcontext theses promote x', 'running')).toEqual({ verb: 'Thesis promote' });
   });
 });
 

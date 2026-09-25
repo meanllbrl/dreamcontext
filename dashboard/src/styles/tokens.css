@@ -197,6 +197,23 @@
   --nav-hue-brain:     var(--chart-8);
   --nav-hue-control:   var(--chart-6);
 
+  /* ─── Agent ROLE identity (the quest party) ───
+     Same contract as the nav hues above: static chrome, never a status. A role's family is
+     spent as a TINTED DISC behind the agent's face (chat/atoms.css `.chat-a-avatar[data-role]`);
+     running keeps its own motion and status keeps its own ink. `maker` roles carry memory (the
+     planner and the builders it seeds), `judge` roles arrive with fresh eyes. Not --chart-1
+     (the accent), not --chart-7 (the asking magenta), not --chart-3/-5 (warning's neighbours).
+     Re-declared in the dark block for the same drift-test reason as the nav hues. */
+  --role-hue-maker:   var(--chart-2);
+  --role-hue-judge:   var(--chart-8);
+  --role-hue-neutral: var(--chart-6);
+  /* A step's status as INK on paper: "Reading ChatPane.tsx…" running, "Couldn't edit …" failed.
+     The base swatches are dot/fill colours and fail as 12px text on the tertiary chip surface.
+     Measured (WCAG, 2026-09-25) on bg / bg-secondary / bg-tertiary:
+     success-ink 6.10 / 6.10 / 5.11, error-ink 6.96 / 6.96 / 5.84. */
+  --color-success-ink: hsl(142 71% 26%);
+  --color-error-ink:   hsl(0 72% 40%);
+
   /* ─── Semantic Colors (data viz) ─── */
   --color-success: hsl(142 71% 40%);
   --color-success-subtle: hsl(142 71% 95%);
@@ -371,6 +388,16 @@
   --nav-hue-memory:    var(--chart-4);
   --nav-hue-brain:     var(--chart-8);
   --nav-hue-control:   var(--chart-6);
+
+  /* Agent role identity + status inks — see the :root block. The dark error ink is LIGHTER
+     than --color-error: #ff5a5f is 4.38:1 on the tertiary chip, under AA.
+     Measured on bg / bg-secondary / bg-tertiary:
+     success-ink 10.15 / 9.31 / 7.57, error-ink 6.66 / 6.10 / 4.96. */
+  --role-hue-maker:   var(--chart-2);
+  --role-hue-judge:   var(--chart-8);
+  --role-hue-neutral: var(--chart-6);
+  --color-success-ink: hsl(142 71% 55%);
+  --color-error-ink:   hsl(0 100% 72%);
 
   /* Semantic colors lifted for dark contrast */
   --color-success: hsl(142 71% 55%);

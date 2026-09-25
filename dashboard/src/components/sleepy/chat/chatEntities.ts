@@ -970,19 +970,25 @@ export const MIN_TOOL_RUN = 3;
  * Nothing is dropped or duplicated. Visible order is exact; an invisible item that sat
  * INTERIOR to a run comes back out just after it, which is unobservable by construction —
  * a run renders as ONE card, so there is no interior position for it to hold.
+ *
+ * `weightless` marks a groupable item that must not be what makes a run worth forming: the
+ * quest-map bookkeeping call, which the reader should never see as a step of its own. It
+ * rides inside a run that the real steps formed (as a quiet row), but it never lifts two real
+ * steps over `minRun`. Omitted, every groupable item weighs one, exactly as before.
  */
 export function segmentToolRuns<T>(
   items: readonly T[],
   isGroupable: (item: T) => boolean,
   minRun: number = MIN_TOOL_RUN,
   rendersNothing: (item: T) => boolean = () => false,
+  weightless: (item: T) => boolean = () => false,
 ): RunSegment<T>[] {
   const out: RunSegment<T>[] = [];
   /** The open stretch: groupable items plus any invisible ones caught between them. */
   let pending: { item: T; groupable: boolean }[] = [];
   const flush = () => {
     const run = pending.filter((p) => p.groupable).map((p) => p.item);
-    if (run.length >= minRun) {
+    if (run.filter((item) => !weightless(item)).length >= minRun) {
       out.push({ kind: 'run', items: run });
       for (const p of pending) if (!p.groupable) out.push({ kind: 'single', item: p.item });
     } else {

@@ -72,13 +72,20 @@
    with a hairline top edge is the right treatment against an xterm grid). On the chat
    rail they are cards, like every other chat surface — so the shared components keep one
    set of colors and only their edge treatment differs per host. `--goal-live-edge` /
-   `--council-live-edge` are published by the panels' own CSS files. */
+   `--council-live-edge` / `--chat-quest-edge` are published by the bars' own CSS files (a
+   finished bar re-publishes its edge on itself, so the border turns with the win).
+   The two quest bars hold the rail map (48px) in 7px of padding and a 1px edge: 64px, the
+   rail's ceiling. Keep vertical padding plus border at 16px or less. */
 .chat-live-rail .goal-live-bar,
+.chat-live-rail .chat-quest-bar,
 .chat-live-rail .council-live-bar {
   padding: 7px 11px;
   border-radius: var(--radius-md);
 }
 .chat-live-rail .goal-live-bar { border: 1px solid var(--goal-live-edge); }
+.chat-live-rail .chat-quest-bar { border: 1px solid var(--chat-quest-edge); }
+/* Left for your sign-off: drawn but not pressed, like its hollow seal. */
+.chat-live-rail .chat-quest-bar[data-won='awaiting-signoff'] { border-style: dashed; }
 .chat-live-rail .council-live-bar { border: 1px solid var(--council-live-edge); }
 .chat-context-task {
   display: flex;

@@ -3,11 +3,13 @@ import { useApi, useVault } from '../../../context/VaultContext';
 import { peerLogoUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
-import { AgentAvatar, TypeBadge } from './atoms';
+import { AgentAvatar, QuestBadge, VerdictChip } from './atoms';
 import {
-  runReportText, reportFromHistory, reportStandfirst,
+  runReportText, reportFromHistory, reportStandfirst, isHeadlessAgentShell,
   type ReportProbe, type SubAgentRun,
 } from './chatEntities';
+import { freshExplainer } from '../../../lib/quest';
+import { runCarries, runIdentity, runVerdict } from './questModel';
 
 /**
  * ORGANISM — a finished sub-agent's REPORT, as an object in the transcript rather than as
@@ -20,8 +22,9 @@ import {
  * sentence FALSE, and `chat-surface.ts` tells the model so: the report is named, summarised
  * in one line, and read in place.
  *
- * Collapsed is the resting state and costs three lines: whose report it is (face + name +
- * type badge), how it ended, and its own standfirst. Expanding fetches the report and
+ * Collapsed is the resting state and costs three lines: whose report it is (the character's
+ * emblem + name, its verdict and what it carried), how it ended, and its own standfirst. The
+ * `subagent_type` rides the head's `title`, not its text: the reader is meeting a teammate. Expanding fetches the report and
  * renders it as markdown — headings, lists and code as the agent wrote them, which is the
  * other half of the complaint (the wall was unreadable partly because it was flattened into
  * the surrounding conversation).
@@ -82,6 +85,10 @@ export function SubAgentReport({ run, conversationId, peers = [], onOpenFull }: 
 
   const peer = peerForAgent(run.subagentType, peers);
   const standfirst = reportStandfirst(run, inline);
+  const { role, stage } = runIdentity(run);
+  const verdict = runVerdict(run);
+  const carries = runCarries(run);
+  const kind = run.subagentType ?? (isHeadlessAgentShell(run) ? 'headless' : null);
 
   const toggle = useCallback(() => {
     const next = !open;
@@ -108,19 +115,21 @@ export function SubAgentReport({ run, conversationId, peers = [], onOpenFull }: 
         type="button"
         className="chat-subreport-head"
         aria-expanded={open}
+        title={kind ? `${run.name} · ${kind}` : run.name}
         onClick={toggle}
       >
         <AgentAvatar
           name={run.subagentType ?? run.name}
+          role={role}
           src={peer?.logo ? peerLogoUrl(vault, peer.vault) : undefined}
           size={28}
         />
         <span className="chat-subreport-head-text">
           <span className="chat-subreport-title">
             <span className="chat-subreport-name">{run.name}</span>
-            {peer
-              ? <TypeBadge><span className="chat-subagents-peer-mark" aria-hidden>◈</span>{peer.vault}</TypeBadge>
-              : run.subagentType && <TypeBadge>{run.subagentType}</TypeBadge>}
+            {peer && <span className="chat-subagents-row-vault">{peer.vault}</span>}
+            {verdict && <VerdictChip verdict={verdict} />}
+            {carries && <QuestBadge carries={carries} title={freshExplainer(stage) ?? undefined} />}
             <span className="chat-subreport-status" data-status={run.status}>{statusNote(run)}</span>
           </span>
           {/* The standfirst is the run's OWN words (its `task_notification.summary`, or its
@@ -142,7 +151,7 @@ export function SubAgentReport({ run, conversationId, peers = [], onOpenFull }: 
             <p className="chat-subreport-note">Loading the report…</p>
           ) : (
             <p className="chat-subreport-note">
-              This agent's transcript hasn't flushed to disk yet — its drill-in has whatever is known so far.
+              This agent's transcript hasn't reached the disk yet. The whole run has whatever is known so far.
             </p>
           )}
           <button type="button" className="chat-subreport-open" onClick={() => onOpenFull(run)}>

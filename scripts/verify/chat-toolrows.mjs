@@ -268,16 +268,25 @@ async function runTheme(chromium, base, theme, report) {
   ok('a Bash row WITH a description still shows it', runText.includes('Say hello'), runText.slice(0, 300));
   ok('a Bash row with NO description falls back to its command — never the bare word "Bash"',
     runText.includes('git rev-parse HEAD'), runText.slice(0, 300));
+  // The row element itself says which tool it is (`data-tool`) — the header no longer prints
+  // the tool's name, and a dreamcontext row (a `.chat-dreamcard`) is a Bash row too.
   const bashRows = await vis('.chat-toolrun .chat-toolcard').evaluateAll((els) => els
-    .filter((e) => /(^|\s)Bash(\s|$)/.test(e.querySelector('.chat-a-toolname')?.textContent ?? ''))
+    .filter((e) => e.matches('[data-tool="Bash"]'))
     .map((e) => ({
+      // The team log (quest-party goal) writes a described call as its own sentence ("Say
+      // hello") and an undescribed one as "Ran a command" with the command as subtitle; either
+      // way the row's words are the action line plus the subtitle.
+      action: (e.querySelector('.chat-m-toolhead-action')?.textContent ?? '').trim(),
       sub: (e.querySelector('.chat-m-toolhead-sub')?.textContent ?? '').trim(),
-      // On failure the HEAD is the evidence: it says whether the subtitle span is absent
-      // (the data never reached the card) or merely empty (it reached it and rendered blank).
+      // On failure the HEAD is the evidence: it says whether the spans are absent (the data
+      // never reached the card) or merely empty (it reached it and rendered blank).
       head: (e.querySelector('.chat-m-toolhead')?.outerHTML ?? '').slice(0, 400),
     })));
-  ok('NO Bash row is left nameless',
-    bashRows.length === 2 && bashRows.every((r) => r.sub.length > 0),
+  ok('NO Bash row is left nameless — each one says what it did, never the bare word "Bash"',
+    bashRows.length === 2
+      && bashRows.every((r) => r.action.length > 0 && r.action !== 'Bash')
+      && bashRows.some((r) => r.action.includes('Say hello'))
+      && bashRows.some((r) => r.action === 'Ran a command' && r.sub.includes('git rev-parse')),
     JSON.stringify(bashRows, null, 2));
   const cmdTitle = await vis('.chat-toolrun .chat-m-toolhead-sub').filter({ hasText: 'git rev-parse' }).first().getAttribute('title');
   ok('…and the full, uncondensed command is in its title', (cmdTitle ?? '').includes('git status --porcelain'), cmdTitle);

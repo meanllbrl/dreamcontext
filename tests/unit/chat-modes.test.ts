@@ -198,6 +198,14 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/auth, crypto, secrets or migrations/);
   });
 
+  // The chat reads a lens off the dispatch's NAME (agentRoles.ts `resolveAgentIdentity`), so
+  // a party card can show "Critic" and "Pragmatist" rather than three identical "Reviewer"s.
+  it('plan names each reviewer dispatch after its lens', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    expect(brief).toMatch(/Name each dispatch\s+after its lens/);
+    expect(brief).toContain('`critic lens`');
+  });
+
   it('plan ITERATES on the review, and escalates instead of proceeding when stuck', () => {
     const brief = modeBriefing('plan', { worktreeAllowed: false });
     expect(brief).toMatch(/SOLID/);
@@ -337,7 +345,11 @@ describe('modeBriefing', () => {
   // `develop` is allowed a little more than `plan` for a reason that is NOT its prose: it is
   // the only mode whose briefing concatenates the shared worktree paragraph (~490 chars in
   // the ALLOWED arm), so its mode-specific text is the shorter of the two.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2400, develop: 2600 };
+  //
+  // `plan` went 2400 → 2450 (2026-09-25) for one sentence: "Name each dispatch after its lens".
+  // It is part of the contract too: the chat reads the lens off the dispatch name, and
+  // without it three reviewers render as three identical "Reviewer"s.
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2450, develop: 2600 };
   const DEFAULT_CEILING = 1600;
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

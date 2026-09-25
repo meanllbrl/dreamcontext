@@ -1,24 +1,23 @@
-/* Goal-skill live panel — compact bar above the composer (terminal) or on the chat's
-   live rail, plus the expanded phase-graph popup.
+/* Goal-skill live panel: the quest bar above the composer (terminal strip) or on the chat's
+   live rail, the expanded quest popup, and the dock chip's quest line.
 
    Themed, not dark-only. The original pass hardcoded a terminal-dark palette (#17171c
    canvas, #d6d3e3 text) on the premise that this only ever sat flush against the xterm
-   chrome — but that chrome is itself token-driven, so the strip rendered as a dark slab
+   chrome, but that chrome is itself token-driven, so the strip rendered as a dark slab
    in light mode, and the Chat view (a fully tokenized surface) made it obvious. Every
    value below is a DS token or one of the namespaced `--goal-live-*` properties, so both
-   themes are automatic. Namespaced properties exist only where the theme ramp has no
-   token that means the thing (the RUNNING hue, and the three loop-heat tiers, which must
-   stay distinguishable from both done-green and fail-red) — same convention as
-   `theses.css`. */
+   themes are automatic. The running hue used to be an electric-blue hex per theme; it is
+   the accent INK now, which is measured for text in both themes.
+
+   The map, the win beat and the family tree draw themselves (quest/quest.css). This file
+   only seats them: the bar's chrome and height, the popup's frame, the roster and the
+   timeline. UI font throughout, sentence case, no monospace chips. */
 
 :root {
-  --goal-live-accent: var(--color-accent);
-  --goal-live-run: #0091ff;
-  --goal-live-done: var(--color-success);
+  --goal-live-run: var(--color-accent-ink);
+  --goal-live-done: var(--color-success-ink);
+  --goal-live-fail: var(--color-error-ink);
   --goal-live-idle: var(--color-text-tertiary);
-  --goal-live-heat-1: color-mix(in srgb, var(--color-warning) 62%, var(--color-text-tertiary));
-  --goal-live-heat-2: var(--color-warning);
-  --goal-live-heat-3: var(--color-error);
   --goal-live-edge: color-mix(in srgb, var(--color-accent) 30%, transparent);
   /* Opaque by construction (the accent is mixed INTO an opaque surface token): the strip
      overlays the terminal for a beat before the pane slot refits, and a translucent
@@ -27,97 +26,90 @@
   --goal-live-tint-hover: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-secondary));
 }
 
-[data-theme='dark'] {
-  /* Electric blue has no dark lift in the ramp and reads muddy on the navy canvas. */
-  --goal-live-run: #4dabf7;
-}
+/* ── Bar ─────────────────────────────────────────────────────────────────────── */
 
-/* ── Compact bar ─────────────────────────────────────────────────────────── */
-
+/* A full-width block, never shrink-to-fit: the quest map sizes itself to the slot it is
+   given, and its container query reads that width. */
 .goal-live-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 6px 12px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 var(--space-3);
   border: 0;
   border-top: 1px solid var(--goal-live-edge);
   background: var(--goal-live-tint);
   color: var(--color-text);
-  font: 500 11.5px/1.4 var(--font-mono, ui-monospace, monospace);
-  cursor: pointer;
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
   text-align: left;
   overflow: hidden;
-  white-space: nowrap;
   transition: background var(--transition-fast);
 }
-.goal-live-bar:hover { background: var(--goal-live-tint-hover); }
-.goal-live-bar:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+button.goal-live-bar { cursor: pointer; }
+button.goal-live-bar:hover { background: var(--goal-live-tint-hover); }
+button.goal-live-bar:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 
-.goal-live-mark { color: var(--goal-live-accent); font-weight: 700; }
-.goal-live-goal { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; max-width: 18ch; flex-shrink: 1; }
+/* The bar owns the padding; the map inside it lays out edge to edge. */
+.goal-live-bar .quest-map { padding: 0; }
+/* Strip: one 24px row inside a 32px bar. Rail: the map's two rows (24 + 4 + 20). */
+.goal-live-bar[data-variant='strip'] { height: 32px; }
+.goal-live-bar[data-variant='rail'] { padding-block: var(--space-2); }
 
-.goal-live-phases {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
+.goal-live-expand { flex: 0 0 auto; color: var(--color-text-secondary); }
+button.goal-live-bar:hover .goal-live-expand { color: var(--goal-live-run); }
+
+/* Won: the bar becomes the win beat. It takes the victory's success edge and tint itself
+   (the custom property is what the chat rail's card border reads), and the victory inside
+   drops its own frame so there is one card, not a card in a card. */
+.goal-live-bar[data-won] {
+  --goal-live-edge: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-secondary));
 }
-.goal-live-chip {
+.goal-live-bar[data-won='awaiting-signoff'] {
+  --goal-live-edge: var(--color-border-hover);
+  background: var(--color-bg-secondary);
+}
+.goal-live-bar .quest-victory {
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+/* The strip holds the beat to its 32px: a smaller seal, the stats beside the headline. */
+.goal-live-bar[data-variant='strip'] .quest-seal { width: 20px; height: 20px; }
+.goal-live-bar[data-variant='strip'] .quest-victory-body {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.goal-live-bar[data-variant='strip'] .quest-receipt-toggle { height: 24px; }
+
+.goal-live-open {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-  color: var(--goal-live-idle);
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
 }
-.goal-live-chip i { font-style: normal; }
-.goal-live-chip[data-state='done'] { color: var(--goal-live-done); }
-.goal-live-chip[data-state='active'] { color: var(--goal-live-run); font-weight: 700; }
-.goal-live-chip em { font-style: normal; color: var(--goal-live-heat-1); }
-.goal-live-chip[data-heat='2'] em { color: var(--goal-live-heat-2); }
-.goal-live-chip[data-heat='3'] em { color: var(--goal-live-heat-3); }
+.goal-live-open .goal-live-expand { color: inherit; }
+.goal-live-open:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.goal-live-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 
-.goal-live-forks { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; }
-.goal-live-forks b,
-.goal-live-dock-forks b {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--goal-live-idle);
-}
-.goal-live-forks b[data-s='done'], .goal-live-dock-forks b[data-s='done'] { background: var(--goal-live-done); }
-.goal-live-forks b[data-s='run'], .goal-live-dock-forks b[data-s='run'] { background: var(--goal-live-heat-2); animation: goal-live-pulse 1.4s ease-in-out infinite; }
-.goal-live-forks b[data-s='fail'], .goal-live-dock-forks b[data-s='fail'] { background: var(--goal-live-heat-3); }
-.goal-live-forks u { text-decoration: none; color: var(--goal-live-run); margin-left: 3px; }
+/* ── Expanded popup ──────────────────────────────────────────────────────────── */
 
-.goal-live-tail { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
-.goal-live-done { color: var(--goal-live-done); font-weight: 700; }
-.goal-live-mins { color: var(--color-text-secondary); }
-.goal-live-expand { color: var(--color-text-secondary); }
-.goal-live-bar:hover .goal-live-expand { color: var(--goal-live-accent); }
-
-@keyframes goal-live-pulse {
-  50% { opacity: 0.35; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .goal-live-forks b[data-s='run'],
-  .goal-live-dock-forks b[data-s='run'],
-  .goal-live-sat[data-s='run'] { animation: none; }
-}
-
-/* Narrow pane (container query context = agentpane): drop the goal name so phases keep room. */
-@container agentpane (max-width: 560px) {
-  .goal-live-goal { display: none; }
-  .goal-live-mins { display: none; }
-}
-
-/* ── Expanded popup ──────────────────────────────────────────────────────── */
-
-/* The scrim stays a fixed dark wash in BOTH themes — same convention as the chat's own
+/* The scrim stays a fixed dark wash in BOTH themes, same convention as the chat's own
    slide-over/lightbox scrims (overlays.css): a scrim dims the page behind a modal, it
-   doesn't participate in the surface ramp. */
+   doesn't participate in the surface ramp. The receipt (z-index 70) opens above it. */
 .goal-live-backdrop {
   position: fixed;
   inset: 0;
@@ -125,88 +117,159 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: var(--space-6);
   background: rgba(8, 8, 12, 0.55);
   backdrop-filter: blur(3px);
 }
 .goal-live-popup {
-  background: var(--color-bg-elevated, var(--color-bg-secondary));
-  border: 1px solid var(--goal-live-edge);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xl);
-  max-width: min(960px, calc(100vw - 48px));
-  max-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
+  width: min(880px, 100%);
+  max-height: calc(100vh - 64px);
   overflow: hidden;
+  border: 1px solid var(--goal-live-edge);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-xl);
   color: var(--color-text);
+  font-family: var(--font-family-text);
 }
 .goal-live-popup header {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 14px 18px 10px;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
   border-bottom: 1px solid var(--color-border);
 }
-.goal-live-popup h3 { margin: 0; font-size: 15px; color: var(--goal-live-accent); }
-.goal-live-popup-goal { color: var(--color-text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
-.goal-live-popup-meta { color: var(--color-text-secondary); font-size: 12px; font-family: var(--font-mono, monospace); flex-shrink: 0; }
+.goal-live-popup-heading { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.goal-live-popup-kicker {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+.goal-live-popup h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+.goal-live-popup-meta {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
 .goal-live-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 14px;
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  align-self: center;
 }
 .goal-live-close:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
+.goal-live-close:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 
-/* Responsive: the graph keeps its natural size and scrolls horizontally when the
-   viewport is narrower than the six-node row. */
-.goal-live-graph-scroll { overflow-x: auto; padding: 8px 8px 14px; }
-
-.goal-live-edge { stroke: var(--color-border-hover); stroke-width: 2; }
-.goal-live-arrowhead { fill: var(--color-border-hover); }
-
-/* Loop-back heat arcs. The tier drives `color` on the group, and both the arc and its
-   label inherit it — so the hex tiers that used to be JS constants passed through inline
-   `style` (invisible to the theme) now live here with everything else. */
-.goal-live-arcg { color: var(--goal-live-heat-1); }
-.goal-live-arcg[data-heat='2'] { color: var(--goal-live-heat-2); }
-.goal-live-arcg[data-heat='3'] { color: var(--goal-live-heat-3); }
-.goal-live-arc { fill: none; stroke: currentColor; stroke-width: 2; stroke-dasharray: 6 5; }
-.goal-live-arc-label { fill: currentColor; font: 700 12px var(--font-mono, monospace); text-anchor: middle; }
-
-.goal-live-node rect { fill: var(--color-bg-tertiary); stroke: var(--color-border-hover); stroke-width: 1.6; }
-.goal-live-node text {
-  fill: var(--color-text-secondary);
-  font: 600 13px var(--font-mono, monospace);
-  text-anchor: middle;
+.goal-live-popup-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-4) var(--space-4);
 }
-.goal-live-node[data-state='done'] rect { fill: color-mix(in srgb, var(--goal-live-done) 16%, transparent); stroke: var(--goal-live-done); }
-.goal-live-node[data-state='done'] text { fill: var(--goal-live-done); }
-.goal-live-node[data-state='active'] rect { fill: color-mix(in srgb, var(--goal-live-run) 16%, transparent); stroke: var(--goal-live-run); stroke-width: 2.4; }
-.goal-live-node[data-state='active'] text { fill: var(--goal-live-run); }
+.goal-live-popup-body .quest-map { padding-inline: 0; }
 
-.goal-live-sat-line { stroke: var(--color-border); stroke-width: 1.4; }
-/* Implementer fork satellites — same four states as the compact bar's dots. */
-.goal-live-sat { fill: var(--goal-live-idle); }
-.goal-live-sat[data-s='done'] { fill: var(--goal-live-done); }
-.goal-live-sat[data-s='run'] { fill: var(--goal-live-heat-2); animation: goal-live-pulse 1.4s ease-in-out infinite; }
-.goal-live-sat[data-s='fail'] { fill: var(--goal-live-heat-3); }
-.goal-live-wave { fill: var(--goal-live-run); font: 600 12px var(--font-mono, monospace); text-anchor: middle; }
+.goal-live-section h4 {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+.goal-live-section ul,
+.goal-live-section ol { margin: 0; padding: 0; list-style: none; }
 
-/* ── Dock badge (minimized chip) ─────────────────────────────────────────── */
+/* Who is on stage: one still row per character. Status is the word and its ink. */
+.goal-live-why {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.goal-live-roster ul { display: flex; flex-direction: column; gap: var(--space-1); }
+.goal-live-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 32px;
+  font-size: var(--font-size-sm);
+}
+.goal-live-member-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+}
+.goal-live-member-role { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.goal-live-member-state {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.goal-live-member .chat-a-verdict { margin-left: auto; }
+.goal-live-member[data-s='run'] .goal-live-member-state { color: var(--color-success-ink); font-weight: var(--font-weight-medium); }
+.goal-live-member[data-s='fail'] .goal-live-member-state { color: var(--color-error-ink); font-weight: var(--font-weight-medium); }
+
+/* Every stage change, left to right, wrapping in a narrow window. */
+.goal-live-timeline ol { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.goal-live-tick {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+}
+.goal-live-tick-label { color: var(--color-text); }
+.goal-live-tick[data-stage='done'] .goal-live-tick-label { color: var(--goal-live-done); font-weight: var(--font-weight-semibold); }
+.goal-live-tick-time { color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+
+/* ── Dock badge (minimized chip) ─────────────────────────────────────────────── */
 
 .goal-live-dock-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   margin-top: 2px;
-  font: 600 10px/1.2 var(--font-mono, monospace);
-  color: var(--goal-live-accent);
+  color: var(--goal-live-run);
+  font-family: var(--font-family-text);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
   white-space: nowrap;
 }
 .goal-live-dock-forks { display: inline-flex; gap: 2px; margin-left: 2px; }
-.goal-live-dock-forks b { width: 5px; height: 5px; }
+.goal-live-dock-forks b {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--goal-live-idle);
+}
+.goal-live-dock-forks b[data-s='done'] { background: var(--goal-live-done); }
+.goal-live-dock-forks b[data-s='run'] { background: var(--goal-live-run); animation: goal-live-pulse 1.4s ease-in-out infinite; }
+.goal-live-dock-forks b[data-s='fail'] { background: var(--goal-live-fail); }
+
+@keyframes goal-live-pulse {
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .goal-live-dock-forks b[data-s='run'] { animation: none; }
+}

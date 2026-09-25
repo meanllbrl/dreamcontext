@@ -1,0 +1,588 @@
+/* Quest surfaces: the map (strip / rail / full), the win beat and the receipt.
+
+   Tokens only, both themes. Status keeps its own channels and never borrows a role hue:
+   done = a success TINT with a check in success ink; the one active stage = an accent-tinted
+   ring with its label in `--color-accent-ink`; to come = hollow. No plain accent fill anywhere
+   (text never sits on `--color-accent`; see tinted-surface-not-filled-swatch). The one role hue
+   spent here is the branch block's maker tint: identity chrome, never a status.
+
+   Motion is one-shot and named: the path lighting up on `[data-just-won]`, the builders fanning
+   out on `[data-just-branched]`, the seal stamping. The cast never moves. Every animation stands
+   down under `prefers-reduced-motion`. */
+
+/* ── Map: shared ─────────────────────────────────────────────────────────────── */
+
+.quest-map {
+  /* Sized by its slot, never by its content: a caller that lays it in a flex row gets a
+     shrinking item, and the container query below reads the width it was given. */
+  container: quest-map / inline-size;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  box-sizing: border-box;
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.quest-map-path {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.quest-node {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  height: 24px;
+  white-space: nowrap;
+}
+
+/* The path between two stages; lit once the later stage has been reached. */
+.quest-node + .quest-node::before {
+  content: '';
+  flex: 0 0 auto;
+  width: var(--space-3);
+  height: 2px;
+  margin-right: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-border-hover);
+}
+.quest-node + .quest-node:not([data-state='todo'])::before {
+  background: color-mix(in srgb, var(--color-success) 55%, var(--color-border));
+}
+
+.quest-node-dot {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border-hover);
+  background: transparent;
+}
+.quest-node[data-state='done'] .quest-node-dot {
+  border-color: color-mix(in srgb, var(--color-success) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 22%, var(--color-bg-secondary));
+  color: var(--color-success-ink);
+}
+.quest-node[data-state='active'] .quest-node-dot {
+  border-color: var(--color-accent-ink);
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-secondary));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.quest-node[data-state='active'] .quest-node-dot::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-ink);
+}
+
+.quest-node-label { color: var(--color-text-secondary); }
+.quest-node[data-state='done'] .quest-node-label { color: var(--color-text); }
+.quest-node[data-state='active'] .quest-node-label {
+  color: var(--color-accent-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.quest-node-round {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* A stage that keeps looping is worth a second look: warm ink from round 3. */
+.quest-node-round[data-heat='3'] {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.quest-node-meta {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.quest-node-cast {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.quest-node-cast-more {
+  margin-left: 2px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.quest-map-elapsed {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The latest event. Its line is reserved even when empty, so the map never jumps. */
+.quest-beat {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  height: 20px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 20px;
+  color: var(--color-text);
+}
+.quest-beat[data-stale] { color: var(--color-text-secondary); }
+
+/* Screen-reader words the picture already says (a stage's state, a hidden label). */
+.quest-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── Map: rail (two rows, ≤ 64px) and strip (one row, ≤ 32px) ───────────────── */
+
+.quest-map[data-variant='rail'] {
+  grid-template-rows: 24px 20px;
+  row-gap: var(--space-1);
+  padding: 6px var(--space-3);
+  max-height: 64px;
+}
+
+.quest-map[data-variant='strip'] {
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto;
+  grid-template-rows: 24px;
+  padding: var(--space-1) var(--space-3);
+  max-height: 32px;
+}
+.quest-map[data-variant='strip'] .quest-beat { grid-column: 2; grid-row: 1; }
+.quest-map[data-variant='strip'] .quest-map-elapsed { grid-column: 3; }
+
+/* Narrow slot: the path keeps every stage and folds its labels in two steps. First the done
+   stages (their check already says it), then everything but the one being worked. Folded
+   labels stay in the accessibility tree and in each node's title. Thresholds are the measured
+   natural width of a busy path: six goal stages with a wave and three faces run ≈ 810px, the
+   three- and four-stage chat quests ≈ 460px. */
+@container quest-map (max-width: 820px) {
+  .quest-map[data-kind='goal']:not([data-variant='full']) .quest-node + .quest-node::before { width: var(--space-2); }
+  .quest-map[data-kind='goal']:not([data-variant='full']) .quest-node[data-state='done'] .quest-node-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+@container quest-map (max-width: 640px) {
+  .quest-map[data-kind='goal']:not([data-variant='full']) .quest-node:not([data-state='active']) .quest-node-label,
+  .quest-map[data-kind='goal']:not([data-variant='full']) .quest-node:not([data-state='active']) .quest-node-round,
+  .quest-map[data-kind='goal']:not([data-variant='full']) .quest-node:not([data-state='active']) .quest-node-meta {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+@container quest-map (max-width: 520px) {
+  .quest-map:not([data-kind='goal']):not([data-variant='full']) .quest-node[data-state='done'] .quest-node-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+@container quest-map (max-width: 400px) {
+  .quest-map:not([data-variant='full']) .quest-node:not([data-state='active']) .quest-node-label,
+  .quest-map:not([data-variant='full']) .quest-node:not([data-state='active']) .quest-node-round,
+  .quest-map:not([data-variant='full']) .quest-node:not([data-state='active']) .quest-node-meta {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+/* The strip's beat only gets the room the path leaves; below this it would be a stray letter. */
+@container quest-map (max-width: 900px) {
+  .quest-map[data-variant='strip'] .quest-beat { display: none; }
+}
+@container quest-map (max-width: 360px) {
+  .quest-map-elapsed { display: none; }
+}
+
+/* ── Map: full (the goal popup) ──────────────────────────────────────────────── */
+
+.quest-map[data-variant='full'] {
+  row-gap: var(--space-3);
+  padding: var(--space-4);
+  font-size: var(--font-size-sm);
+}
+.quest-map[data-variant='full'] .quest-map-path {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 0;
+}
+.quest-map[data-variant='full'] .quest-map-elapsed { align-self: start; }
+.quest-map[data-variant='full'] .quest-node {
+  flex-direction: column;
+  gap: var(--space-1);
+  height: auto;
+  padding: 0 var(--space-1);
+  text-align: center;
+  white-space: normal;
+}
+.quest-map[data-variant='full'] .quest-node + .quest-node::before {
+  position: absolute;
+  top: 9px;
+  left: calc(-50% + 14px);
+  right: calc(50% + 14px);
+  width: auto;
+  margin: 0;
+}
+.quest-map[data-variant='full'] .quest-node-dot { width: 20px; height: 20px; }
+.quest-map[data-variant='full'] .quest-node-round,
+.quest-map[data-variant='full'] .quest-node-meta { font-size: var(--font-size-xs); }
+.quest-map[data-variant='full'] .quest-node-cast { flex-wrap: wrap; justify-content: center; }
+.quest-map[data-variant='full'] .quest-beat {
+  grid-row: auto;
+  height: auto;
+  min-height: 20px;
+  white-space: normal;
+}
+/* The popup has room to spare, so an empty beat (the branch below says it) takes none. */
+.quest-map[data-variant='full'] .quest-beat:empty { display: none; }
+
+/* ── Branch: one memory copied into several builders ─────────────────────────── */
+
+.quest-branch {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.quest-branch-fan { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.quest-branch-lines { color: var(--color-border-hover); }
+.quest-branch-to { display: inline-flex; align-items: center; gap: 2px; }
+.quest-branch-caption { color: var(--color-text); }
+
+/* Rail: the second row, 20px, the caption ellipsised after the faces. */
+.quest-branch[data-compact] {
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 20px;
+}
+.quest-branch[data-compact] .quest-branch-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Full: a maker-tinted block, the builders listed under the fan. */
+.quest-branch:not([data-compact]) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--role-hue-maker) 40%, var(--color-border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--role-hue-maker) 8%, var(--color-bg-secondary));
+}
+.quest-branch:not([data-compact]) .quest-branch-to {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
+  border-left: 2px solid var(--color-border-hover);
+  list-style: none;
+}
+.quest-branch:not([data-compact]) .quest-branch-to li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.quest-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quest-branch:not([data-compact]) .quest-branch-caption { grid-column: 1 / -1; }
+
+/* ── Win beat ────────────────────────────────────────────────────────────────── */
+
+.quest-victory {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  box-sizing: border-box;
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-secondary));
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+}
+/* Waiting on you: the seal is drawn, not pressed. */
+.quest-victory[data-outcome='awaiting-signoff'] {
+  border-style: dashed;
+  border-color: var(--color-border-hover);
+  background: var(--color-bg-secondary);
+}
+
+.quest-seal { flex: 0 0 auto; overflow: visible; }
+.quest-seal-rim {
+  fill: color-mix(in srgb, var(--color-success) 22%, var(--color-bg-secondary));
+  stroke: var(--color-success-ink);
+  stroke-width: 1.5;
+}
+.quest-seal-bead { fill: var(--color-success-ink); }
+.quest-seal-face {
+  fill: none;
+  stroke: color-mix(in srgb, var(--color-success-ink) 50%, transparent);
+  stroke-width: 1;
+}
+.quest-seal-check {
+  fill: none;
+  stroke: var(--color-success-ink);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.quest-seal[data-hollow] .quest-seal-rim {
+  fill: none;
+  stroke: var(--color-text-secondary);
+  stroke-dasharray: 3 2.5;
+}
+.quest-seal[data-hollow] .quest-seal-face { stroke: none; }
+.quest-seal[data-hollow] .quest-seal-check { stroke: var(--color-text-secondary); stroke-width: 1.6; }
+
+.quest-victory-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.quest-victory-text {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+.quest-victory-stats {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.quest-receipt-toggle {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-hover);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+.quest-receipt-toggle:hover { background: var(--color-bg-tertiary); }
+.quest-receipt-toggle:active { transform: scale(0.97); }
+.quest-receipt-toggle:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+
+/* ── Receipt ─────────────────────────────────────────────────────────────────── */
+
+/* A scrim dims whatever is behind a modal in both themes, like the chat's other scrims. */
+.quest-receipt-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: hsl(240 20% 4% / 0.55);
+  animation: quest-fade-in var(--transition-normal);
+}
+.quest-receipt {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: calc(100vh - 64px);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  animation: quest-rise-in var(--transition-normal);
+}
+.quest-receipt-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.quest-receipt-heading { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.quest-receipt-kicker {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+.quest-receipt-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+.quest-receipt-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.quest-receipt-close:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.quest-receipt-close:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.quest-receipt-body { overflow: auto; padding: var(--space-3) var(--space-4) var(--space-4); }
+.quest-receipt-stats {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The family tree: each generation indented under a guide line from its parent's face. */
+.quest-lineage,
+.quest-lineage-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.quest-lineage-children {
+  margin-left: 9px;
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--color-border);
+}
+.quest-lineage-node { padding: var(--space-1) 0; }
+.quest-lineage-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.quest-lineage-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+.quest-lineage-rounds {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+.quest-lineage-note {
+  display: block;
+  padding-left: var(--space-7);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/* ── One-shot motion ─────────────────────────────────────────────────────────── */
+
+/* The win: the path lights up stage by stage. */
+.quest-map[data-just-won] .quest-node-dot {
+  animation: quest-light 480ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+@keyframes quest-light {
+  0% { transform: scale(0.6); }
+  60% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
+/* The seal presses down once. */
+.quest-victory[data-just-won] .quest-seal {
+  transform-origin: center;
+  animation: quest-stamp var(--transition-bounce) both;
+}
+@keyframes quest-stamp {
+  0% { transform: scale(1.6) rotate(-14deg); opacity: 0; }
+  60% { transform: scale(0.92) rotate(3deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+/* The branch: the lines draw, then the builders pop in one after another. */
+.quest-branch[data-just-branched] .quest-branch-lines path {
+  stroke-dasharray: 40;
+  animation: quest-draw 420ms var(--ease-out) both;
+}
+.quest-branch[data-just-branched] .quest-branch-to > * {
+  animation: quest-pop 360ms var(--ease-out) both;
+  animation-delay: calc(180ms + var(--i, 0) * 60ms);
+}
+@keyframes quest-draw { from { stroke-dashoffset: 40; } to { stroke-dashoffset: 0; } }
+@keyframes quest-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+@keyframes quest-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes quest-rise-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .quest-map[data-just-won] .quest-node-dot,
+  .quest-victory[data-just-won] .quest-seal,
+  .quest-branch[data-just-branched] .quest-branch-lines path,
+  .quest-branch[data-just-branched] .quest-branch-to > *,
+  .quest-receipt-scrim,
+  .quest-receipt {
+    animation: none;
+  }
+}

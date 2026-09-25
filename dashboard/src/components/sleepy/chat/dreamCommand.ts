@@ -253,6 +253,33 @@ export function mentionsDreamcontext(command: string | undefined): boolean {
 }
 
 /**
+ * Domains that are bookkeeping, not work. `goal-live` writes the quest map's own state file:
+ * the orchestrator chains it onto the real step it describes, so a row for it would report the
+ * map drawing itself. It never becomes an action; the step it rides on keeps its row.
+ */
+const QUIET_DOMAINS: ReadonlySet<string> = new Set(['goal-live']);
+
+/** The argv after the `dreamcontext` executable, or null when this segment runs something else. */
+function dreamcontextArgv(segment: string): string[] | null {
+  const tokens = tokenizeShell(segment);
+  let i = 0;
+  // Skip `FOO=bar`, wrappers, and their flags to reach the executable.
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || t.startsWith('-') || COMMAND_WRAPPERS.has(t)) { i += 1; continue; }
+    break;
+  }
+  const exe = tokens[i];
+  return exe && isDreamcontextExe(exe) ? tokens.slice(i + 1) : null;
+}
+
+/** Is this ONE shell segment a quest-map bookkeeping call (`dreamcontext goal-live …`)? */
+export function isQuietDreamSegment(segment: string): boolean {
+  const argv = dreamcontextArgv(segment);
+  return !!argv && QUIET_DOMAINS.has(argv[0] ?? '');
+}
+
+/**
  * Every dreamcontext invocation in a shell command, in order.
  *
  * A list, not a single value, because one `Bash` call routinely carries several: the agent
@@ -263,17 +290,8 @@ export function parseDreamActions(command: string | undefined): DreamAction[] {
   if (!mentionsDreamcontext(command)) return [];
   const out: DreamAction[] = [];
   for (const segment of splitShellSegments(command as string)) {
-    const tokens = tokenizeShell(segment);
-    let i = 0;
-    // Skip `FOO=bar`, wrappers, and their flags to reach the executable.
-    while (i < tokens.length) {
-      const t = tokens[i];
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || t.startsWith('-') || COMMAND_WRAPPERS.has(t)) { i += 1; continue; }
-      break;
-    }
-    const exe = tokens[i];
-    if (!exe || !isDreamcontextExe(exe)) continue;
-    const rest = tokens.slice(i + 1);
+    const rest = dreamcontextArgv(segment);
+    if (!rest || QUIET_DOMAINS.has(rest[0] ?? '')) continue;
     const { path, used, endpoint } = resolvePath(rest);
     const { args, flags } = readArgs(rest.slice(used), endpoint);
     if (path) {
@@ -311,7 +329,7 @@ export function isDreamcontextCommand(command: string | undefined): boolean {
  *  long turn actually needs: did this change something, or just look something up? */
 export type DreamTone = 'read' | 'write' | 'destructive';
 
-interface VerbLabel {
+export interface VerbLabel {
   /** Reads after the noun: `Task` + `created`. */
   text: string;
   tone: DreamTone;
@@ -325,8 +343,11 @@ interface VerbLabel {
  * NOT a registry of commands — an unknown verb falls through to itself, which is why a brand
  * new endpoint still renders as `Thesis promote` without anyone touching this file. Entries
  * exist only where English wanted a different word, or where the tone is not guessable.
+ *
+ * Exported so the test can hold {@link DREAM_VERB_FORMS} to it: every key here has a running
+ * and a failed form, read off this object rather than a hand-copied list.
  */
-const VERBS: Record<string, VerbLabel> = {
+export const VERBS: Readonly<Record<string, VerbLabel>> = {
   create: { text: 'created', tone: 'write' },
   add: { text: 'added', tone: 'write' },
   insert: { text: 'inserted', tone: 'write' },
@@ -408,6 +429,15 @@ export interface DreamActionView {
   detail?: string;
   /** The endpoint's own description, for the tooltip. */
   desc?: string;
+  /** The action token (`create`, `status`), `''` when the command has none. Keys the phrasing. */
+  verbKey: string;
+  /** The noun exactly as `label` uses it (`Task`, `Tasks`, `Sleep`). */
+  noun: string;
+}
+
+/** An own-property read: a verb token is user input, and `constructor` must not find a prototype. */
+function own<V>(table: Readonly<Record<string, V>>, key: string): V | undefined {
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
 }
 
 /**
@@ -420,7 +450,7 @@ export interface DreamActionView {
 export function describeDreamAction(action: DreamAction): DreamActionView {
   const verbKey = action.action ?? '';
   const arity = ARITY_SENSITIVE.has(verbKey) ? action.args.length : 0;
-  const known = VERBS[verbKey];
+  const known = own(VERBS, verbKey);
   const tone: DreamTone = ARITY_SENSITIVE.has(verbKey)
     ? (arity >= 2 ? 'write' : 'read')
     : known?.tone ?? (action.action ? 'write' : 'read');
@@ -434,7 +464,87 @@ export function describeDreamAction(action: DreamAction): DreamActionView {
     // otherwise run the section name straight into the content as one unreadable sentence.
     detail: action.args.length > 1 ? action.args.slice(1).join(' · ') : undefined,
     desc: action.desc,
+    verbKey,
+    noun,
   };
+}
+
+// ─── Saying it in the present, and saying it failed ────────────────────────────────
+
+type VerbForms = { running: (noun: string) => string; failed: (noun: string) => string };
+
+/** `Creating task` / `Couldn't create task`, from one verb and its infinitive. */
+function forms(running: string, infinitive: string, after = ''): VerbForms {
+  const tail = after ? ` ${after}` : '';
+  return {
+    running: (n) => `${running} ${n}${tail}`,
+    failed: (n) => `Couldn't ${infinitive} ${n}${tail}`,
+  };
+}
+
+/**
+ * How a row reads while it runs and when it fails, for every verb in {@link VERBS}.
+ *
+ * The label (`Task created`) is past tense by construction, so it is only true once the call
+ * landed. While it runs the row says what it is doing ("Creating task"), and a failure says so
+ * in words ("Couldn't create task") rather than leaving a success-shaped label next to a red
+ * mark. `n` is the noun lowercased: it follows the verb here instead of leading the label.
+ */
+export const DREAM_VERB_FORMS: Readonly<Record<string, VerbForms>> = {
+  create: forms('Creating', 'create'),
+  add: forms('Adding', 'add'),
+  insert: { running: (n) => `Adding to ${n}`, failed: (n) => `Couldn't add to ${n}` },
+  update: forms('Updating', 'update'),
+  set: forms('Setting', 'set'),
+  log: { running: (n) => `Logging to ${n}`, failed: (n) => `Couldn't log to ${n}` },
+  complete: forms('Completing', 'complete'),
+  remember: { running: (n) => `Saving to ${n}`, failed: (n) => `Couldn't save to ${n}` },
+  touch: forms('Touching', 'touch'),
+  move: forms('Moving', 'move'),
+  merge: forms('Merging', 'merge'),
+  rename: forms('Renaming', 'rename'),
+  index: forms('Indexing', 'index'),
+  sync: forms('Syncing', 'sync'),
+  start: forms('Starting', 'start'),
+  record: forms('Recording', 'record'),
+  dedup: forms('Deduping', 'dedupe'),
+  delete: forms('Deleting', 'delete'),
+  remove: forms('Removing', 'remove'),
+  rm: forms('Removing', 'remove'),
+  retire: forms('Retiring', 'retire'),
+  clear: forms('Clearing', 'clear'),
+  list: forms('Listing', 'list'),
+  ls: forms('Listing', 'list'),
+  recall: forms('Recalling', 'recall'),
+  search: forms('Searching', 'search'),
+  show: forms('Opening', 'open'),
+  get: forms('Reading', 'read'),
+  tags: forms('Listing', 'list', 'tags'),
+  vocab: forms('Reading', 'read', 'vocabulary'),
+  audit: forms('Auditing', 'audit'),
+  doctor: forms('Checking', 'check'),
+};
+
+/**
+ * The words a dreamcontext row wears for its status. Done is the label as it always was. An
+ * arity-sensitive verb reads by what the call DID (`sleep status` checks, `tasks status x y`
+ * sets), which `view.tone` already resolved. A verb nobody has named yet keeps its label while
+ * running and says "failed" after it: honest, if less natural than a real entry.
+ */
+export function dreamActionPhrase(
+  view: DreamActionView, status: 'running' | 'done' | 'error',
+): { verb: string; tail?: string } {
+  if (status === 'done') return { verb: view.label };
+  const n = view.noun.toLowerCase();
+  const running = status === 'running';
+  if (ARITY_SENSITIVE.has(view.verbKey)) {
+    const w = view.verbKey === 'due' ? 'due date' : view.verbKey;
+    if (view.tone === 'read') return { verb: running ? `Checking ${n} ${w}` : `Couldn't check ${n} ${w}` };
+    return { verb: running ? `Setting ${n} ${w}` : `Couldn't set ${n} ${w}` };
+  }
+  const known = own(DREAM_VERB_FORMS, view.verbKey);
+  if (known) return { verb: running ? known.running(n) : known.failed(n) };
+  return running ? { verb: view.label } : { verb: view.label, tail: 'failed' };
 }
 
 // ─── Saying what came back ─────────────────────────────────────────────────────────

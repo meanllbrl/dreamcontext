@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleAgentGoalLive } from '../../src/server/routes/agent-terminal.js';
@@ -145,6 +145,66 @@ describe('GET /api/agent/goal-live', () => {
     await handleAgentGoalLive(makeReq(`?claudeId=${ORCH}`), res, {}, ctxRoot);
     expect(body().active).toBe(true);
     expect(body().state.goal).toBe('alive');
+  });
+
+  // ── v3 schema: the route is a pass-through, so new fields reach the panel untouched ──
+
+  it('a v3 file (named forks, judges, history, lineage) passes through verbatim', async () => {
+    const at = new Date().toISOString();
+    const v3 = freshState({
+      session: ORCH,
+      impl: { wave: 1, waves: 2, forks: [{ s: 'run', id: 'T1', name: 'Role registry', role: 'implementer' }] },
+      judges: [{ s: 'done', id: 'critic', role: 'critic', v: 'NEEDS_WORK' }],
+      history: [{ p: 'plan', at }, { p: 'impl', at }],
+      lineage: [
+        { a: 'planner', role: 'planner', k: 'spawn', r: 1, at },
+        { a: 'T1', role: 'implementer', k: 'fork', from: 'planner', name: 'Role registry', at, ctx: 182000 },
+      ],
+    });
+    writeLive(v3, `.goal-skill-live.${ORCH}.json`);
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${ORCH}`), res, {}, ctxRoot);
+    expect(body().active).toBe(true);
+    expect(body().state).toEqual(v3);
+  });
+
+  // ── A finished run keeps its file: it must reach its own pane and no other ────
+  //    (plan §4.3: the success path leaves the `done` file in place for the win beat)
+
+  it('an unstamped DONE file is not served to a pane (it names no pane to win in)', async () => {
+    writeLive(freshState({ goal: 'demo-run', phase: 'done' }));
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${OTHER}`), res, {}, ctxRoot);
+    expect(body()).toEqual({ active: false });
+  });
+
+  it('an unstamped done file does not hide an older unstamped LIVE one', async () => {
+    const older = new Date(Date.now() - 60_000).toISOString();
+    writeLive({ goal: 'still-running', started: older, updated: older, phase: 'impl' }, '.goal-skill-live.legacy-a.json');
+    writeLive(freshState({ goal: 'finished', phase: 'done' }), '.goal-skill-live.legacy-b.json');
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${OTHER}`), res, {}, ctxRoot);
+    expect(body().active).toBe(true);
+    expect(body().state.goal).toBe('still-running');
+  });
+
+  it('a stamped done file still reaches its own pane', async () => {
+    writeLive(freshState({ goal: 'mine', session: ORCH, phase: 'done' }), `.goal-skill-live.${ORCH}.json`);
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${ORCH}`), res, {}, ctxRoot);
+    expect(body().active).toBe(true);
+    expect(body().state.phase).toBe('done');
+    expect(body().state.goal).toBe('mine');
+  });
+
+  it('a symlinked live file is skipped (vault reads reject symlinks)', async () => {
+    const outside = join(ctxRoot, '..', 'outside.json');
+    writeFileSync(outside, JSON.stringify(freshState({ goal: 'smuggled', session: ORCH })), 'utf-8');
+    mkdirSync(join(ctxRoot, 'tmp'), { recursive: true });
+    symlinkSync(outside, join(ctxRoot, 'tmp', `.goal-skill-live.${ORCH}.json`));
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${ORCH}`), res, {}, ctxRoot);
+    expect(body()).toEqual({ active: false });
   });
 
   it('no pane id + multiple runs → freshest run wins', async () => {

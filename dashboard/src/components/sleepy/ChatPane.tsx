@@ -1,19 +1,26 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
+import { useAgentGoalLive } from '../../hooks/useAgentCapabilities';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { ChatMode } from '../../lib/chatModes';
+import { isJudgeRole } from '../../lib/agentRoles';
+import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
+  isHeadlessAgentShell,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
 import { isDreamcontextCommand } from './chat/dreamCommand';
+import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/toolAction';
+import { chatLineage, deriveChatQuest, partyBatches, type Party } from './chat/questModel';
+import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
@@ -142,6 +149,18 @@ function primaryToolPath(input: unknown): string | null {
   return null;
 }
 
+/** What the quest model reads of the live items, as a memo key. A streamed token replaces the
+ *  items array but changes only an unfinished block's text, which the quest never reads (it
+ *  reads which items exist, a call's status, and whether a block is finished and non-empty).
+ *  Keying on this keeps the whole-conversation quest pass off the per-token render path. */
+function questItemsKey(items: readonly ChatItem[]): string {
+  return items.map((it) => (
+    it.kind === 'tool' ? `${it.id}:${it.status}`
+      : it.kind === 'user' ? it.id
+        : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}`
+  )).join('|');
+}
+
 // ─── Live rail — linked task chip + this conversation's live orchestration bars ─────
 //
 // The context/cost readout AC9 originally put here now lives in the redesigned
@@ -153,6 +172,11 @@ function primaryToolPath(input: unknown): string | null {
 // for chat and terminal panes, but only the goal one was ever mounted here: a `/council`
 // driven from a Chat tab rendered nothing at all, while the same debate from a terminal
 // tab showed the chamber strip (owner report 07-25). Both are mounted now.
+//
+// A Plan or Develop chat's own quest (read off the transcript, see `deriveChatQuest`) rides
+// here too, as the `ChatQuestBar`. It yields to a goal-skill run's live file while that file
+// exists, done or not: the file is the better record of the same work, and two maps of one
+// run would disagree about it.
 //
 // Each child renders NOTHING while its own state is inactive, so the rail has no element
 // children at all in the common case and `:empty` hides it — a plain conversation gets no
@@ -187,11 +211,21 @@ function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
   return info;
 }
 
-function ChatLiveRail({ session, taskSlug }: { session: ChatSession; taskSlug?: string }) {
+function ChatLiveRail({ session, taskSlug, quest, lineage }: {
+  session: ChatSession;
+  taskSlug?: string;
+  /** This chat's quest, or null outside Plan/Develop (and before the first message). */
+  quest: QuestView | null;
+  /** The Develop chat's "How this was built" tree; null for a plan, which built nothing. */
+  lineage: QuestLineage | null;
+}) {
   const link = useTaskLink(taskSlug);
   // Both panels poll regardless of whether a task is linked — a run is a property of the
   // conversation, not of the task chip that may or may not sit beside it.
   const live = session.status === 'open';
+  // The same query `GoalLivePanel` runs (shared key, so still one poll): read here only to
+  // know whether the goal-skill map has the rail.
+  const goalActive = !!useAgentGoalLive(session.claudeId, live).data?.active;
   return (
     <div className="chat-live-rail">
       {link && (
@@ -203,7 +237,8 @@ function ChatLiveRail({ session, taskSlug }: { session: ChatSession; taskSlug?: 
           ))}
         </div>
       )}
-      <GoalLivePanel claudeId={session.claudeId} enabled={live} />
+      {quest && !goalActive && <ChatQuestBar quest={quest} lineage={lineage} />}
+      <GoalLivePanel claudeId={session.claudeId} enabled={live} variant="rail" />
       <CouncilLivePanel claudeId={session.claudeId} enabled={live} />
     </div>
   );
@@ -769,6 +804,50 @@ export function ChatPane({
    *  must not close over one render's copy — the press outlives several renders. */
   const revealEarlierRef = useRef<() => void>(() => {});
 
+  // ── The quest: this chat's agent work as parties, a map, and a family tree ──────────
+  //
+  // Read off the WHOLE conversation, not the window: a round's number, a stage reached, a
+  // judge's second visit all depend on what came before, and scrolling must not renumber them.
+  // A party is one dispatch batch (see `partyBatches`), drawn as one card where its first call
+  // sat. Only Plan and Develop chats are quests; the parties are drawn in every mode.
+  const questKey = questItemsKey(conv.items);
+  // Keyed on `questKey`, not the items array: see `questItemsKey`.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const questEntries = useMemo(() => [...conv.history, ...conv.items], [conv.history, questKey]);
+  const parties = useMemo(() => partyBatches(questEntries, conv.subAgents), [questEntries, conv.subAgents]);
+  const questMode = mode === 'plan' || mode === 'develop' ? mode : null;
+  const shelfProgress = shelf.progress;
+  const quest = useMemo(
+    () => (questMode ? deriveChatQuest({ mode: questMode, entries: questEntries, parties, progress: shelfProgress }) : null),
+    [questMode, questEntries, parties, shelfProgress],
+  );
+  // A plan built nothing, so it has no receipt.
+  const lineage = useMemo(
+    () => (questMode === 'develop' ? chatLineage(parties, questEntries) : null),
+    [questMode, parties, questEntries],
+  );
+  /** Live runs only: a party can hold transcript calls rebuilt as "ghost" runs (a resumed
+   *  chat), which feed the quest but are not agents anyone can drill into. */
+  const liveRunIds = useMemo(() => new Set(conv.subAgents.map((r) => r.taskId)), [conv.subAgents]);
+  const liveRunsOf = (p: Party): SubAgentRun[] => p.runs.filter((r) => liveRunIds.has(r.taskId));
+  const drawnParties = parties.filter((p) => !p.ghost && liveRunsOf(p).length > 0);
+  /** The "fresh eyes" explainer is said once per chat: on the first judging party's card. */
+  const firstJudgePartyId = drawnParties.find((p) => isJudgeRole(p.lead))?.id ?? null;
+  const partyByAnchor = new Map<string, Party>();
+  for (const p of drawnParties) if (p.anchorEntryId) partyByAnchor.set(p.anchorEntryId, p);
+  /** The party the pinned rail summarizes: the newest one still at work, else the newest. The
+   *  rail only ever shows while a run is going, so the fallback just keeps the ref measured. */
+  const railParty = [...drawnParties].reverse().find((p) => liveRunsOf(p).some((r) => r.status === 'running'))
+    ?? drawnParties[drawnParties.length - 1] ?? null;
+  /** The Bash calls that started a headless teammate. Each keeps its own row (the party card
+   *  follows the first), so none may fold into a run of plain steps. */
+  const headlessToolUseIds = new Set(
+    conv.subAgents.filter(isHeadlessAgentShell).map((r) => r.toolUseId).filter((id): id is string => !!id),
+  );
+  /** Quest-map bookkeeping on its own (`dreamcontext goal-live …`): nothing alone, a quiet line
+   *  inside a work beat. A goal-live call chained onto real work is not this. */
+  const isQuestOnlyItem = (item: ChatItem): boolean => item.kind === 'tool' && isQuestOnlyCommand(bashCommand(item) ?? undefined);
+
   // ── What a slice RENDERS AS: the two predicates the window and the transcript share ──
   //
   // Declared here, above the window, rather than beside the transcript pass they were written
@@ -792,12 +871,20 @@ export function ChatPane({
   const isPlainToolCard = (item: ChatItem): boolean => {
     if (item.kind !== 'tool') return false;
     if (suppressedToolUseIds.has(item.toolUseId)) return false;
+    // A headless teammate's Bash call keeps its own row, and the first one of a batch is where
+    // its party card goes (just after it). A card cannot sit inside a folded run.
+    if (headlessToolUseIds.has(item.toolUseId) || partyByAnchor.has(item.id)) return false;
     const path = primaryToolPath(item.input);
     if (path && classifyReference(path).kind === 'board' && item.status !== 'running') return false;
     if (inBypass) {
       const command = bashCommand(item);
       if (command && isGuardedCommand(command)) return false;
     }
+    // Quest-map bookkeeping is a `dreamcontext` call too, but it is not news: it may ride
+    // inside a run (as a quiet line) and must never break one. Checked before the rule below,
+    // which would otherwise give it a row of its own. `segmentToolRuns` is told it weighs
+    // nothing, so it never lifts two real steps into a run by itself.
+    if (isQuestOnlyItem(item)) return true;
     // A dreamcontext CLI call keeps its own position in the transcript (owner call 08-01:
     // "break the grouping, let it be its own row"). These are the calls that CHANGE the brain
     // — a task created, a status moved, knowledge written — and folding them into a collapsed
@@ -818,15 +905,18 @@ export function ChatPane({
   // of ending the run — and the card count skips it for the same reason.
   //
   // Each branch mirrors an actual `return null` in the transcript's own components — nothing
-  // is guessed invisible. The one null branch deliberately NOT mirrored is the second and
-  // later sub-agent tool item (`itemNode`: the combined SubAgentCard is already shown): the
-  // FIRST one is visible and breaks the stretch anyway, so the rest can only ever follow a
-  // break, never sit interior to a run — mirroring it would buy nothing and would duplicate
-  // `subAgentCardShown`'s render-order bookkeeping in a predicate that runs before rendering.
+  // is guessed invisible. A quest-map bookkeeping call is the third: `itemNode` draws nothing
+  // for it on its own, so the card count and the live tail skip it too. (Inside a run it is
+  // still groupable, and `segmentToolRuns` asks that first, so it rides along as a quiet line.)
+  // The one null branch deliberately NOT mirrored is a party's second and later dispatch call
+  // (`itemNode`: the party's card is already shown at the first): the FIRST one is visible and
+  // breaks the stretch anyway, so the rest can only ever follow a break, never sit interior to
+  // a run — mirroring it would buy nothing and would duplicate `renderedParties`' render-order
+  // bookkeeping in a predicate that runs before rendering.
   const rendersNothing = (item: ChatItem): boolean => {
     if (item.kind === 'thinking') return !item.text;          // ThinkingBlock's own null branch
     if (item.kind === 'text') return !item.text && item.done;  // AssistantMessage's null branch
-    return false;
+    return isQuestOnlyItem(item);                              // itemNode's quest single
   };
 
   // ── Transcript window: how much of the conversation is actually mounted ─────────────
@@ -920,12 +1010,13 @@ export function ChatPane({
    * is, by definition, what the reader experiences.
    *
    * Several, because one of these nodes can be REPLACED rather than moved by the very commit
-   * being measured. Ordinary rows are keyed by `item.id` and survive a prepend, but the one
-   * combined `SubAgentCard` is keyed by the EARLIEST suppressed tool item in the window — so a
-   * reveal that mounts an older fan-out migrates its key, React unmounts the card, and a hold
-   * that happened to BE that card would leave the correction with nothing to measure and the
-   * reader jumped by the whole prepend. The spares make that unreachable without this code
-   * having to know anything about SubAgentCard.
+   * being measured. Ordinary rows are keyed by `item.id` and survive a prepend, and so does a
+   * party card anchored in the window (keyed by its party). But a party whose first call is
+   * still above the window trails the transcript while it runs — and a reveal that mounts that
+   * call moves the card up to it, so React unmounts the trailing one. A hold that happened to
+   * BE that card would leave the correction with nothing to measure and the reader jumped by
+   * the whole prepend. The spares make that unreachable without this code having to know
+   * anything about SubAgentCard.
    *
    * An OPEN run card is seen through, not held: its ROWS stand in as candidates. The card
    * groups a whole stretch of tool calls, and a reveal merges older calls into that same
@@ -1128,7 +1219,9 @@ export function ChatPane({
   const jumpToSubAgent = useCallback((taskId: string | null) => {
     const scroller = scrollRef.current;
     if (!scroller || !subAgentCardEl) return;
-    const rows = Array.from(subAgentCardEl.querySelectorAll<HTMLElement>('[data-subagent-row]'));
+    // Rows are looked up across the whole transcript, not just the rail's card: every party
+    // has its own card now, and a run's row lives in whichever one dispatched it.
+    const rows = Array.from(scroller.querySelectorAll<HTMLElement>('[data-subagent-row]'));
     const target = (taskId && rows.find((r) => r.dataset.subagentRow === taskId)) || subAgentCardEl;
     setStick(false);
     // Scrolled by delta against OUR scroller rather than `scrollIntoView`, which would also
@@ -1334,31 +1427,74 @@ export function ChatPane({
     }
   }, [handleNavApp, handleOpenFile, session, api, onHandoffToDevelop]);
 
-  // ── Transcript pass: skip the spawning Agent/Task tool's OWN card (state 9 — it's
-  //    already represented by ONE combined SubAgentCard, rendered at the position of the
-  //    EARLIEST such tool item so it reads in-place rather than always trailing); swap a
-  //    board-referencing tool item for the DRAWN board (BoardEmbed, state 4); render everything
-  //    else through the shared ItemView dispatcher (state 2/11). ─────────────────────────
+  // ── Transcript pass: a dispatch call's OWN row gives way to its party's card (state 9 —
+  //    one card per dispatch batch, drawn where the batch's first Agent call sat, so each
+  //    round reads in place; a headless teammate's Bash row stays and its card follows it);
+  //    swap a board-referencing tool item for the DRAWN board (BoardEmbed, state 4); render
+  //    everything else through the shared ItemView dispatcher (state 2/11). ──────────────
   //
   // `suppressedToolUseIds`, `inBypass` and the two run predicates this pass reads are declared
   // ABOVE the window section — the window measures itself in cards now, and it cannot ask what
   // a slice renders as without them.
-  let subAgentCardShown = false;
-  const itemNode = (item: ChatItem): React.ReactNode => {
-    if (item.kind === 'tool') {
-      if (suppressedToolUseIds.has(item.toolUseId)) {
-        if (subAgentCardShown) return null; // already represented by the one combined card
-        subAgentCardShown = true;
-        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} peers={peers} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} conversationId={session.claudeId} />;
-      }
-      // A tool that touched a board shows the BOARD, not a card about it — the same live
-      // canvas an answer's own `![](x.excalidraw.md)` renders, so "I drew this" and "I
-      // edited this" look alike. Only once the call has finished: a board mid-write is
-      // half a scene.
-      const path = primaryToolPath(item.input);
-      if (path && classifyReference(path).kind === 'board' && item.status !== 'running') {
-        return <BoardEmbed key={item.id} path={path} onOpenBoard={handleOpenBoard} />;
-      }
+
+  /** What one lone item draws. Decided once, and read by BOTH the renderer and the stretch
+   *  pass below, so "which rows open a stretch" can never disagree with what was drawn. */
+  type ItemShape =
+    | { draw: 'nothing' }
+    | { draw: 'card'; party: Party }
+    | { draw: 'board'; path: string }
+    /** A row, then (maybe) its party's card or the bypass receipt right after it. */
+    | { draw: 'row'; party: Party | null; guarded: { command: string; toolName: string } | null };
+
+  const shapeOf = (item: ChatItem): ItemShape => {
+    if (rendersNothing(item)) return { draw: 'nothing' };
+    if (item.kind !== 'tool') return { draw: 'row', party: null, guarded: null };
+    const party = partyByAnchor.get(item.id) ?? null;
+    // The rest of a batch is already drawn by the card at its first call.
+    if (suppressedToolUseIds.has(item.toolUseId)) return party ? { draw: 'card', party } : { draw: 'nothing' };
+    // A tool that touched a board shows the BOARD, not a card about it — the same live
+    // canvas an answer's own `![](x.excalidraw.md)` renders, so "I drew this" and "I
+    // edited this" look alike. Only once the call has finished: a board mid-write is
+    // half a scene.
+    const path = primaryToolPath(item.input);
+    if (path && classifyReference(path).kind === 'board' && item.status !== 'running') return { draw: 'board', path };
+    // Under bypass the CLI never asks — so the guarded commands it ran anyway get the
+    // receipt a permission card would have been. Only the guarded ones: a notice on every
+    // Bash call is noise, and noise is how a real one gets missed.
+    const command = inBypass ? bashCommand(item) : null;
+    return { draw: 'row', party, guarded: command && isGuardedCommand(command) ? { command, toolName: item.name } : null };
+  };
+
+  /** Parties drawn by this pass, so the ones it never reached can trail (see below). */
+  const renderedParties = new Set<string>();
+  const partyCard = (p: Party): React.ReactNode => {
+    renderedParties.add(p.id);
+    return (
+      <SubAgentCard
+        key={`subagents-${p.id}`}
+        // Live runs only: the card cannot drill into a call rebuilt from the transcript.
+        runs={liveRunsOf(p)}
+        party={p}
+        explain={p.id === firstJudgePartyId}
+        peers={peers}
+        onDrillIn={handleDrillIn}
+        // The rail pins over ONE card: the one its chips summarize.
+        rootRef={p === railParty ? setSubAgentCardEl : undefined}
+        highlightRunId={jumped?.id ?? null}
+        conversationId={session.claudeId}
+      />
+    );
+  };
+
+  type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
+
+  const itemNode = (item: ChatItem, stretch: Stretch): React.ReactNode => {
+    const shape = shapeOf(item);
+    switch (shape.draw) {
+      case 'nothing': return null;
+      case 'card': return partyCard(shape.party);
+      case 'board': return <BoardEmbed key={item.id} path={shape.path} onOpenBoard={handleOpenBoard} />;
+      case 'row': break;
     }
     const view = (
       <ItemView
@@ -1370,23 +1506,41 @@ export function ChatPane({
         onAction={handleAction}
         conversationId={session.claudeId}
         onQuote={handleQuote}
+        actor="lead"
+        stretch={stretch?.stretch}
+        stretchRunning={stretch?.running}
       />
     );
-    // Under bypass the CLI never asks — so the guarded commands it ran anyway get the
-    // receipt a permission card would have been. Only the guarded ones: a notice on every
-    // Bash call is noise, and noise is how a real one gets missed.
-    if (item.kind === 'tool' && inBypass) {
-      const command = bashCommand(item);
-      if (command && isGuardedCommand(command)) {
-        return (
-          <Fragment key={item.id}>
-            {view}
-            <BypassNoticeCard command={command} toolName={item.name} />
-          </Fragment>
-        );
-      }
+    if (!shape.party && !shape.guarded) return view;
+    // The row stays a direct child of the transcript (a Fragment adds no box), and whatever
+    // follows it sits right under it.
+    return (
+      <Fragment key={item.id}>
+        {view}
+        {shape.guarded && <BypassNoticeCard command={shape.guarded.command} toolName={shape.guarded.toolName} />}
+        {shape.party && partyCard(shape.party)}
+      </Fragment>
+    );
+  };
+
+  /** What a segment is to the stretch pass: step lines join their speaker's stretch, anything
+   *  else the reader can see ends it, and what draws nothing is skipped. Every step in the main
+   *  transcript is the lead's; a teammate's own steps live in its drill-in. */
+  const probesOf = (seg: RunSegment<ChatItem>, accruing: boolean): StretchProbe[] => {
+    if (seg.kind === 'run') {
+      const running = accruing || seg.items.some((it) => it.kind === 'tool' && it.status === 'running');
+      return [{ key: `run:${seg.items[0].id}`, step: true, invisible: false, actor: 'lead', running }];
     }
-    return view;
+    const item = seg.item;
+    const shape = shapeOf(item);
+    if (shape.draw !== 'row') {
+      return [{ key: item.id, step: false, invisible: shape.draw === 'nothing', actor: 'lead', running: false }];
+    }
+    const step = item.kind === 'tool' || item.kind === 'thinking';
+    const running = (item.kind === 'tool' && item.status === 'running') || (item.kind === 'thinking' && !item.done);
+    const probes: StretchProbe[] = [{ key: item.id, step, invisible: false, actor: 'lead', running }];
+    if (shape.party || shape.guarded) probes.push({ key: `${item.id}:after`, step: false, invisible: false, actor: 'lead', running: false });
+    return probes;
   };
 
   // `stillAccruing` (see `toolRunPhase`) is true only for a run that is the LAST thing in the
@@ -1399,15 +1553,18 @@ export function ChatPane({
   // first frame, every row node was rebuilt (so the anchor hold had nothing left to measure),
   // and "Show earlier messages" read as doing nothing at all (owner report 08-01, second
   // pass). See the helper's own doc for why the accruing tail keys off its head instead.
-  const renderSegment = (seg: RunSegment<ChatItem>, isLastLive: boolean): React.ReactNode => {
-    if (seg.kind === 'single') return itemNode(seg.item);
-    const accruing = isLastLive && session.busy;
+  const renderSegment = (seg: RunSegment<ChatItem>, accruing: boolean, stretches: Map<string, NonNullable<Stretch>>): React.ReactNode => {
+    if (seg.kind === 'single') return itemNode(seg.item, stretches.get(seg.item.id));
+    const stretch = stretches.get(`run:${seg.items[0].id}`);
     return (
       <ToolRunCard
         key={`run-${toolRunKeyItem(seg.items, accruing).id}`}
         items={seg.items as ChatToolItem[]}
         stillAccruing={accruing}
         onOpenFile={handleOpenFile}
+        actor="lead"
+        stretch={stretch?.stretch}
+        stretchRunning={stretch?.running}
       />
     );
   };
@@ -1417,10 +1574,12 @@ export function ChatPane({
   // bounds this pane's DOM and its memory regardless of how long the conversation runs.
   // Segmentation happens INSIDE each windowed slice, so a run can never straddle the window
   // edge (revealing older entries would otherwise re-shape a group the reader is looking at)
-  // nor the history/live boundary.
-  const historySegments = segmentToolRuns(conv.history.slice(historyFrom), isPlainToolCard, MIN_TOOL_RUN, rendersNothing);
-  const liveSegments = segmentToolRuns(conv.items.slice(itemsFrom), isPlainToolCard, MIN_TOOL_RUN, rendersNothing);
-  const historyNodes = historySegments.map((seg) => renderSegment(seg, false));
+  // nor the history/live boundary. Quest-map bookkeeping weighs nothing there: it rides in a
+  // run the real steps formed, and never forms one.
+  const historySlice = conv.history.slice(historyFrom);
+  const liveSlice = conv.items.slice(itemsFrom);
+  const historySegments = segmentToolRuns(historySlice, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
+  const liveSegments = segmentToolRuns(liveSlice, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
   // The accruing tail is the last segment that SHOWS something, not the last segment. An
   // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
   // and by array position alone that invisible single would demote the live run from tail to
@@ -1432,15 +1591,29 @@ export function ChatPane({
     if (seg.kind === 'run' || !rendersNothing(seg.item)) break;
     liveTail -= 1;
   }
-  const liveNodes = liveSegments.map((seg, i) => renderSegment(seg, i === liveTail));
-  // A sub-agent run whose spawning tool call never appeared as its own ChatToolItem (an
-  // edge case in raw frame ordering) still needs its card SOMEWHERE — append it once, after
-  // the live transcript, rather than silently dropping the whole group. This ALSO covers the
-  // case where the spawning tool item is simply older than the window: the group card falls
-  // back to trailing the transcript instead of vanishing with the item that anchored it.
-  const trailingSubAgentCard = !subAgentCardShown && conv.subAgents.length > 0
-    ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} peers={peers} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />
-    : null;
+  const accruingAt = (i: number) => i === liveTail && session.busy;
+  // Stretches, like consecutive Slack messages: one avatar opens each run of the lead's step
+  // lines and the rest are bare verbs under it (`stepStretches`). This pass only sets props;
+  // it never wraps rows, so every single stays a direct child of the transcript. The history
+  // divider is something the reader sees, so a stretch never runs across it.
+  const stretches = stepStretches([
+    ...historySegments.flatMap((seg) => probesOf(seg, false)),
+    { key: 'history-divider', step: false, invisible: !showsHistory, actor: 'lead', running: false },
+    ...liveSegments.flatMap((seg, i) => probesOf(seg, accruingAt(i))),
+  ]);
+  const historyNodes = historySegments.map((seg) => renderSegment(seg, false, stretches));
+  const liveNodes = liveSegments.map((seg, i) => renderSegment(seg, accruingAt(i), stretches));
+  // A party whose first call never appeared as its own ChatToolItem (an edge case in raw frame
+  // ordering), or whose first call folded into something that is not a row, still needs its
+  // card SOMEWHERE — it trails the live transcript rather than silently dropping. So does a
+  // party still at work whose first call is older than the window: a running team must never
+  // vanish with the call that sent it. A finished one out there waits for the reveal, which
+  // puts it back where it happened instead of at the bottom, out of order.
+  const mountedIds = new Set([...historySlice, ...liveSlice].map((it) => it.id));
+  const trailingParties = drawnParties
+    .filter((p) => !renderedParties.has(p.id))
+    .filter((p) => !p.anchorEntryId || mountedIds.has(p.anchorEntryId) || liveRunsOf(p).some((r) => r.status === 'running'))
+    .map(partyCard);
 
   // A real process exit (`meta-exit`) OR the WS having dropped — either way the composer
   // is replaced by the Session-ended banner (state 12); `status==='connecting'` never
@@ -1484,7 +1657,7 @@ export function ChatPane({
 
   return (
     <div className="chat-pane" ref={paneRef} data-status={session.status}>
-      <ChatLiveRail session={session} taskSlug={taskSlug} />
+      <ChatLiveRail session={session} taskSlug={taskSlug} quest={quest} lineage={lineage} />
       {session.status === 'connecting' && <ReconnectingChip />}
       <div className="chat-transcript">
         <div
@@ -1652,7 +1825,7 @@ export function ChatPane({
               </>
             )}
             {liveNodes}
-            {trailingSubAgentCard}
+            {trailingParties}
             {conv.pending
               .filter((p): p is PendingPermission => p.kind === 'permission')
               .map((p) => <PermissionCard key={p.requestId} item={p} session={session} permissionMode={permissionMode} />)}
@@ -1702,7 +1875,8 @@ export function ChatPane({
             nothing at all unless a run is still going. */}
         {railPinned && (
           <SubAgentRail
-            runs={conv.subAgents}
+            runs={railParty ? liveRunsOf(railParty) : []}
+            party={railParty}
             peers={peers}
             onJump={jumpToSubAgent}
             onWheel={forwardWheelToTranscript}

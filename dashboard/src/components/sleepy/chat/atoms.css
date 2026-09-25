@@ -242,6 +242,98 @@
   background: var(--color-bg-secondary);
 }
 
+/* A quest-party CHARACTER (atoms.tsx `AgentAvatar` with a `role`). The disc is a TINTED
+   SURFACE of the role's hue family, never a filled swatch: the face and emblem stay in
+   `--color-text`, so they read on the tint in both themes without an on-colour pair. The hue
+   is static chrome (tokens.css `--role-hue-*`); status never touches it. */
+.chat-a-avatar[data-role] {
+  position: relative;
+  --role-hue: var(--role-hue-neutral);
+  background: color-mix(in srgb, var(--role-hue, var(--role-hue-neutral)) 22%, var(--color-bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--role-hue, var(--role-hue-neutral)) 55%, var(--color-bg-secondary));
+  color: var(--color-text);
+}
+.chat-a-avatar[data-hue='maker'] { --role-hue: var(--role-hue-maker); }
+.chat-a-avatar[data-hue='judge'] { --role-hue: var(--role-hue-judge); }
+.chat-a-avatar[data-role] > .chat-a-roleglyph { flex: 0 0 auto; }
+
+/* The emblem on a face, at 30px and up. Its own small disc on the card surface, ringed in the
+   role hue, so it reads as a badge worn by the face rather than a second face. */
+.chat-a-avatar-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  border: 1px solid color-mix(in srgb, var(--role-hue, var(--role-hue-neutral)) 55%, var(--color-bg-secondary));
+  color: var(--color-text);
+}
+
+/* RUNNING is motion, never colour (★★★: colour = mood, movement = mode). The disc breathes on
+   the shared loop period, the same rhythm as a running agent's dot elsewhere, and scales rather
+   than fades so the face keeps its contrast at every frame. */
+.chat-a-avatar[data-running] {
+  animation: chat-a-work var(--motion-breath, 1600ms) ease-in-out infinite;
+}
+@keyframes chat-a-work {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+  50% { transform: scale(1.08); box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-hue, var(--color-text-tertiary)) 35%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-a-avatar[data-running] { animation: none; }
+}
+
+/* A judge's verdict: mark + word on a tint of its outcome. Text is body ink; the mark takes
+   the status INK (never --color-warning: a sent-back plan is routine, not hot). */
+.chat-a-verdict {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-error) 12%, var(--color-bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-error) 45%, var(--color-bg-secondary));
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+.chat-a-verdict[data-good] {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-bg-secondary));
+}
+.chat-a-verdict-mark { color: var(--color-error-ink); font-weight: var(--font-weight-semibold); }
+.chat-a-verdict[data-good] .chat-a-verdict-mark { color: var(--color-success-ink); }
+
+/* What an agent carries: `memory` (maker family) or `fresh eyes` (judge family). A quiet
+   outline in its family's hue; the word carries the meaning. */
+.quest-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--role-hue-neutral) 55%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--role-hue-neutral) 10%, var(--color-bg-secondary));
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: help;
+}
+.quest-badge[data-badge='memory'] {
+  border-color: color-mix(in srgb, var(--role-hue-maker) 55%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--role-hue-maker) 10%, var(--color-bg-secondary));
+}
+.quest-badge[data-badge='fresh'] {
+  border-color: color-mix(in srgb, var(--role-hue-judge) 55%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--role-hue-judge) 10%, var(--color-bg-secondary));
+}
+
 .chat-a-progress {
   flex: 0 0 auto;
   display: block;

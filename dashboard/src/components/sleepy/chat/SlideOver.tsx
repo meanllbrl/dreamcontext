@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { agentFileUrl, peerLogoUrl } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
@@ -10,8 +10,14 @@ import {
 } from './chatEntities';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
 import { FileUnavailable } from './FileUnavailable';
+import { MediaEmbed } from './MediaEmbed';
 import { McpPanel, type McpPanelProps } from './McpPanel';
 import { FileActions } from './FileActions';
+import { AgentAvatar, QuestBadge, VerdictChip } from './atoms';
+import { stepStretches } from './toolAction';
+import { runCarries, runIdentity, runVerdict } from './questModel';
+import { AGENT_ROLES } from '../../../lib/agentRoles';
+import { freshExplainer } from '../../../lib/quest';
 import type { ChatItem } from '../chatSession';
 
 /**
@@ -112,11 +118,8 @@ function MediaPreview({ path, kind }: { path: string; kind: 'image' | 'video' | 
   if (failed) {
     return <FileUnavailable src={src} kind={kind} onGranted={retry} />;
   }
-  if (kind === 'video') {
-    return <video className="chat-slideover-media" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
-  }
-  if (kind === 'audio') {
-    return <audio className="chat-slideover-media" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
+  if (kind === 'video' || kind === 'audio') {
+    return <MediaEmbed kind={kind} className="chat-slideover-media" src={src} onError={() => setFailed(true)} />;
   }
   return <img className="chat-slideover-media" src={src} alt={path} onError={() => setFailed(true)} />;
 }
@@ -330,6 +333,16 @@ function usageLine(usage: SubAgentRun['usage']): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
+/** Draws nothing in the drill-in (an empty thinking or text block): it neither joins a stretch nor breaks one. */
+function isEmptyItem(item: ChatItem): boolean {
+  return (item.kind === 'thinking' || item.kind === 'text') && !item.text.trim();
+}
+
+/** Renders as a step line: a tool row, or a thinking line with something in it. */
+function isStepItem(item: ChatItem): boolean {
+  return item.kind === 'tool' || (item.kind === 'thinking' && !!item.text.trim());
+}
+
 function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOverSubAgentProps) {
   const api = useApi();
   const { vault } = useVault();
@@ -354,27 +367,51 @@ function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOv
 
   const usage = usageLine(run.usage);
   const report = runReportText(run);
-  // The drill-in wears the PEER's identity when the run is an envoy: the vault's logo next
-  // to the breadcrumb and its name on the badge, instead of the generated `peer-<slug>`.
+  // The drill-in wears the PEER's identity when the run is an envoy: the vault's logo as the
+  // character's face and its name on the badge, instead of the generated `peer-<slug>`.
   const peer = peerForAgent(run.subagentType, peers);
   const logoSrc = peer?.logo ? peerLogoUrl(vault, peer.vault) : null;
+  // The header is the same CHARACTER the party row showed: face and emblem, its role, what it
+  // carried in, its verdict. `subagent_type` stays, as plain text, for whoever came here for it.
+  const { role, stage } = runIdentity(run);
+  const verdict = runVerdict(run);
+  const carries = runCarries(run);
+
+  // The sidechain is this teammate's own team log: its steps group into stretches exactly as
+  // the main transcript's do, with the teammate as the actor. Nothing here is still running
+  // (the history is what reached the disk), so no stretch lead ever animates.
+  const stretches = useMemo(() => stepStretches(state.items.map((item) => ({
+    key: item.id,
+    step: isStepItem(item),
+    invisible: isEmptyItem(item),
+    actor: role,
+    running: item.kind === 'tool' && item.status === 'running',
+  }))), [state.items, role]);
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const { away, jump } = useJumpToLatest(bodyRef, [state.items.length, state.loading]);
 
   return (
     <>
-      <div className="chat-slideover-head">
+      <div className="chat-slideover-head" data-role={role}>
+        <AgentAvatar
+          name={run.subagentType ?? run.name}
+          size={32}
+          role={role}
+          running={run.status === 'running'}
+          src={logoSrc}
+        />
         <div className="chat-slideover-head-text">
           <button type="button" className="chat-slideover-breadcrumb" onClick={onClose}>
-            <span aria-hidden>←</span> Main chat <span aria-hidden>▸</span>
-            {logoSrc && <img className="chat-slideover-peer-logo" src={logoSrc} alt="" aria-hidden />}
-            {' '}{run.name}
+            <span aria-hidden>←</span> Main chat <span aria-hidden>▸</span> {run.name}
           </button>
           <span className="chat-slideover-subagent-meta">
+            <span className="chat-slideover-subagent-role">{AGENT_ROLES[role].label}</span>
             {peer
               ? <span className="chat-slideover-subagent-badge" data-peer="1"><span aria-hidden>◈</span> {peer.vault}</span>
-              : run.subagentType && <span className="chat-slideover-subagent-badge">{run.subagentType}</span>}
+              : run.subagentType && <span className="chat-slideover-subagent-type">{run.subagentType}</span>}
+            {carries && <QuestBadge carries={carries} title={freshExplainer(stage) ?? undefined} />}
+            {verdict && run.status !== 'running' && <VerdictChip verdict={verdict} />}
             <span className="chat-slideover-subagent-status" data-status={run.status}>{run.status}</span>
           </span>
         </div>
@@ -384,15 +421,26 @@ function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOv
         {state.loading && <p className="chat-slideover-status">Loading transcript…</p>}
         {!state.loading && state.items.length > 0 && (
           <div className="chat-slideover-transcript">
-            {state.items.map((item) => (
-              <ItemView key={item.id} item={item} onOpenFile={() => {}} readOnly />
-            ))}
+            {state.items.map((item) => {
+              const s = stretches.get(item.id);
+              return (
+                <ItemView
+                  key={item.id}
+                  item={item}
+                  onOpenFile={() => {}}
+                  readOnly
+                  actor={role}
+                  stretch={s?.stretch}
+                  stretchRunning={s?.running}
+                />
+              );
+            })}
           </div>
         )}
         {!state.loading && state.items.length === 0 && (
           <div className="chat-slideover-fallback">
             <p className="chat-slideover-status">
-              This sub-agent's transcript hasn't flushed to disk yet — showing what's known so far.
+              This teammate's transcript hasn't reached the disk yet. Showing what's known so far.
             </p>
             {run.prompt && (
               <div className="chat-toolcard-section">

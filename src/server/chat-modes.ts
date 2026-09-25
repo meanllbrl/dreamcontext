@@ -70,10 +70,10 @@ You are planning, not building. Do not edit code in this session.
    \`goal-plan-reviewer\` sub-agents IN PARALLEL in ONE message, each fed only the plan text:
    **critic** (premise, assumptions, correctness), **pragmatist** (scope, YAGNI),
    **edge-cases** (empty/null, concurrency, partial failure, retries, rollback) — plus
-   **security** when the goal touches auth, crypto, secrets or migrations. Show the user every
-   verdict and its blocking findings. No \`goal-plan-reviewer\` in this project? Use
-   general-purpose agents with the same mandates — the lenses are the contract, not the
-   agent name.
+   **security** when the goal touches auth, crypto, secrets or migrations. Name each dispatch
+   after its lens (\`critic lens\`, …). Show the user every verdict and its blocking findings.
+   No \`goal-plan-reviewer\` in this project? Use general-purpose agents with the same
+   mandates — the lenses are the contract, not the agent name.
 5. **Iterate until every lens says SOLID.** New blocking findings → revise and re-review. The
    SAME finding twice → STOP and put it to the user; never quietly proceed past it.
 6. **End by creating the task** — the reviewed plan's only durable home:

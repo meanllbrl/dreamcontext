@@ -820,7 +820,10 @@ video.chat-msg-user-media-el { cursor: default; }
   font-size: var(--font-size-xs);
 }
 
-/* ── Sub-agents group card (state 9) ──────────────────────────────────────────────── */
+/* ── Party card: the sub-agents one dispatch sent, read as a team (state 9) ─────────
+   Status is carried by words, marks and motion (the running face's loop), never by the
+   role tint, which is chrome. Text on every tint stays body ink; the only status colours
+   are the measured `-ink` tokens, so each line holds AA on the card's surface. */
 
 .chat-subagents {
   align-self: flex-start;
@@ -831,12 +834,61 @@ video.chat-msg-user-media-el { cursor: default; }
   border: 1px solid var(--color-border);
   overflow: hidden;
 }
-.chat-subagents .chat-m-cardhead-glyph { color: var(--color-warning); }
+.chat-subagents .chat-m-cardhead-glyph { display: inline-flex; color: var(--color-text-secondary); }
+/* The stage kicker ("Plan review · round 2"), an eyebrow over the team sentence. It sits
+   OUTSIDE the header so the header's disclosure button keeps the headline as its name. */
+.chat-subagents-stage {
+  padding: var(--space-3) var(--space-4) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-body);
+}
+.chat-subagents-stage + .chat-m-cardhead { padding-top: var(--space-1); }
+/* The one "fresh eyes" explainer a chat gets, said under the first judged party's header. */
+.chat-subagents-why {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+.chat-subagents:not([data-open]) .chat-subagents-why:last-child { border-bottom: none; }
+/* Verdicts back so far ("2 Solid · 1 Needs work"). */
+.chat-subagents-tally {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* A finished judged party's stamp: "cleared" or "sent back" on a tint of its outcome. The
+   word carries it; the drawn seal takes the status ink. */
+.chat-subagents-seal {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-success) 45%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-secondary));
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.chat-subagents-seal svg { color: var(--color-success-ink); }
+.chat-subagents-seal[data-outcome='sent-back'] {
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-error) 12%, var(--color-bg-secondary));
+}
+.chat-subagents-seal[data-outcome='sent-back'] svg { color: var(--color-error-ink); }
 /* Collapsed, the header IS the card, so its divider would be a hairline hanging over
    nothing — the tool cards carry that border on the BODY for the same reason. */
 .chat-subagents:not([data-open]) .chat-m-cardhead { border-bottom: none; }
 .chat-subagents-elapsed {
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
@@ -845,7 +897,7 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-outcome {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-error);
+  color: var(--color-error-ink);
 }
 .chat-subagents-spinner {
   width: var(--space-3);
@@ -879,14 +931,22 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-row:last-child { border-bottom: none; }
 
 /* A peer envoy run is ANOTHER PROJECT working, and its row says so the way the docked
-   peer-session row does: the accent, on the badge that names the vault. The avatar slot
-   already carries the vault's logo (SubAgentCard.tsx). */
-.chat-subagents-row[data-peer] .chat-a-typebadge {
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+   peer-session row does: the accent, on the chip that names the vault. The avatar slot
+   already carries the vault's logo (SubAgentCard.tsx). Accent INK on a tint, never a fill. */
+.chat-subagents-row-vault {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary));
+  color: var(--color-accent-ink);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.chat-subagents-peer-mark { margin-right: 4px; }
-.chat-subagents-rail-chip[data-peer] .chat-subagents-rail-chip-label { color: var(--color-accent); }
+.chat-subagents-rail-chip[data-peer] .chat-subagents-rail-chip-label { color: var(--color-accent-ink); }
 /* The tint marks the row you are POINTING at, not the ones that happen to be running —
    a live run already says so through its sweeping bar and its accent-colored line. */
 .chat-subagents-row:hover,
@@ -898,31 +958,45 @@ video.chat-msg-user-media-el { cursor: default; }
 
 .chat-subagents-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .chat-subagents-row-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.chat-subagents-row-name {
+.chat-subagents-row-role {
+  flex: 0 0 auto;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
   color: var(--color-text);
+  white-space: nowrap;
+}
+/* The run's own words beside a role that does not say which one it is ("Builder", then
+   "T1 Role registry"). Yields first when the row runs out of room. */
+.chat-subagents-row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Activity text takes the slack and truncates; the meta chips keep their intrinsic width, so
-   a long "Running …" step never pushes the numbers off the row. */
+/* The doing line takes the slack and truncates; the meta chips keep their intrinsic width, so
+   a long "Reading …" step never pushes the numbers off the row. */
 .chat-subagents-row-sub {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
 }
-.chat-subagents-row-line {
+.chat-subagents-row-doing {
   flex: 1 1 auto;
+  min-width: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chat-subagents-row[data-status='running'] .chat-subagents-row-line { color: var(--color-accent); }
+/* A step's tense is its status: the present-tense line of a running teammate reads in the
+   team log's running ink, the same as a running step. A failure says so in words. */
+.chat-subagents-row[data-status='running'] .chat-subagents-row-doing { color: var(--color-success-ink); }
+.chat-subagents-row[data-status='error'] .chat-subagents-row-doing { color: var(--color-error-ink); }
 
 .chat-subagents-row-meta {
   flex: 0 0 auto;
@@ -942,8 +1016,8 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 
 .chat-subagents-row-mark { flex: 0 0 auto; width: var(--space-4); text-align: center; color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
-.chat-subagents-row-mark[data-status='completed'] { color: var(--color-success); }
-.chat-subagents-row-mark[data-status='error'] { color: var(--color-error); }
+.chat-subagents-row-mark[data-status='completed'] { color: var(--color-success-ink); }
+.chat-subagents-row-mark[data-status='error'] { color: var(--color-error-ink); }
 /* "open →" replaces the status mark on the row you are pointing at — the drill-in is the
    only thing a row does, so it names itself exactly when you can act on it. */
 .chat-subagents-row-open {
@@ -985,6 +1059,23 @@ video.chat-msg-user-media-el { cursor: default; }
   border-top: 1px solid var(--color-border);
 }
 .chat-subagents-reports > * + * { border-top: 1px solid var(--color-border); }
+/* A superseded round's reports, folded behind one line: the next round is the live one. */
+.chat-subagents-reports-toggle {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-subagents-reports-toggle:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-subagents-reports-toggle:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 
 .chat-subreport-head {
   display: flex;
@@ -1015,7 +1106,7 @@ video.chat-msg-user-media-el { cursor: default; }
   white-space: nowrap;
 }
 .chat-subreport-status { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
-.chat-subreport-status[data-status='error'] { color: var(--color-error); font-weight: var(--font-weight-semibold); }
+.chat-subreport-status[data-status='error'] { color: var(--color-error-ink); font-weight: var(--font-weight-semibold); }
 .chat-subreport-status[data-status='stopped'] { color: var(--color-warning); }
 /* The standfirst is the whole point of the collapsed state, so it gets TWO lines and the
    ellipsis — not one truncated line, which is what made the row alone insufficient. */
@@ -1121,7 +1212,8 @@ video.chat-msg-user-media-el { cursor: default; }
 /* The group's own summary — the card's header, compressed to a pill you can click to get
    back to it. */
 .chat-subagents-rail-summary {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1131,16 +1223,21 @@ video.chat-msg-user-media-el { cursor: default; }
   font-family: inherit;
   cursor: pointer;
 }
-.chat-subagents-rail-glyph { color: var(--color-warning); font-size: var(--font-size-sm); }
+.chat-subagents-rail-glyph { flex: 0 0 auto; display: inline-flex; color: var(--color-text-secondary); }
+/* The party's headline. It is a sentence, so it may be the thing that yields in a narrow pane. */
 .chat-subagents-rail-count {
+  min-width: 0;
   color: var(--color-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-bold);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .chat-subagents-rail-summary:hover .chat-subagents-rail-count { color: var(--color-accent); }
 .chat-subagents-rail-summary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
-.chat-subagents-rail .chat-subagents-elapsed { font-size: 10.5px; }
+.chat-subagents-rail .chat-subagents-elapsed { flex: 0 0 auto; font-size: 10.5px; }
+.chat-subagents-rail .chat-subagents-spinner { flex: 0 0 auto; }
 
 /* One chip per run. The strip scrolls sideways rather than wrapping: the rail is a fixed
    40px band over the transcript, and a fan-out of ten agents must not grow it into a wall. */
@@ -1180,8 +1277,7 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-rail-chip-label {
   max-width: 130px;
   color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1192,8 +1288,23 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-rail-chip:not([data-status='running']) .chat-a-avatar { opacity: 0.55; }
 .chat-subagents-rail-chip-mark { font-size: 10px; color: var(--color-text-tertiary); }
 .chat-subagents-rail-chip-mark[data-status='running'] { color: var(--color-accent); }
-.chat-subagents-rail-chip-mark[data-status='completed'] { color: var(--color-success); }
-.chat-subagents-rail-chip-mark[data-status='error'] { color: var(--color-error); }
+.chat-subagents-rail-chip-mark[data-status='completed'] { color: var(--color-success-ink); }
+.chat-subagents-rail-chip-mark[data-status='error'] { color: var(--color-error-ink); }
+
+/* ── The drill-in's header, as the same character the party row showed ──────────────
+   (SlideOver's sub-agent mode; the panel's own shell lives in overlays.css.) */
+.chat-slideover-head[data-role] > .chat-a-avatar { flex: 0 0 auto; }
+.chat-slideover-head[data-role] .chat-slideover-subagent-meta { flex-wrap: wrap; row-gap: var(--space-1); }
+.chat-slideover-subagent-role {
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+.chat-slideover-subagent-type {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
 
 /* ── Board preview card (state 4) ─────────────────────────────────────────────────── */
 
