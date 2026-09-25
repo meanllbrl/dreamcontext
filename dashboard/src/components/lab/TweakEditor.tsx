@@ -61,7 +61,7 @@ export function TweakEditor({
         style={{
           alignSelf: 'flex-start', padding: '5px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
           cursor: saving ? 'default' : 'pointer', border: 'none',
-          background: 'var(--color-accent)', color: 'var(--color-accent-text)', opacity: saving ? 0.6 : 1,
+          background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', opacity: saving ? 0.6 : 1,
         }}
       >{saving ? 'Saving…' : 'Save'}</button>
     </div>

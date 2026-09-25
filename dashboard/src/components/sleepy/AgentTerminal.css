@@ -201,11 +201,9 @@
   height: 28px;
   padding: 0 12px 0 10px;
   border-radius: var(--radius-full);
-  background: linear-gradient(150deg,
-    color-mix(in srgb, var(--color-accent) 92%, white),
-    var(--color-accent));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
-  color: var(--color-accent-text, #fff);
+  background: var(--gradient-brand-strong);
+  border: 1px solid color-mix(in srgb, var(--color-accent-strong) 60%, transparent);
+  color: var(--color-accent-text);
   font-family: var(--font-family-text, inherit);
   font-size: var(--font-size-xs);
   font-weight: 600;
@@ -232,11 +230,9 @@
   height: 28px; width: 22px;
   margin-left: 1px;
   border-radius: 0 var(--radius-full) var(--radius-full) 0;
-  background: linear-gradient(150deg,
-    color-mix(in srgb, var(--color-accent) 92%, white),
-    var(--color-accent));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
-  color: var(--color-accent-text, #fff);
+  background: var(--gradient-brand-strong);
+  border: 1px solid color-mix(in srgb, var(--color-accent-strong) 60%, transparent);
+  color: var(--color-accent-text);
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
@@ -468,11 +464,9 @@
   gap: 7px;
   height: 36px;
   border-radius: var(--radius-md);
-  background: linear-gradient(150deg,
-    color-mix(in srgb, var(--color-accent) 92%, white),
-    var(--color-accent));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
-  color: var(--color-accent-text, #fff);
+  background: var(--gradient-brand-strong);
+  border: 1px solid color-mix(in srgb, var(--color-accent-strong) 60%, transparent);
+  color: var(--color-accent-text);
   font-family: var(--font-family-text, inherit);
   font-size: var(--font-size-sm);
   font-weight: 600;
@@ -666,8 +660,8 @@
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  color: #fff;
-  background: linear-gradient(150deg, #8b7bff, #6f5ce0);
+  color: var(--color-accent-text);
+  background: var(--gradient-brand-strong);
   box-shadow: 0 6px 18px -7px rgba(123, 104, 238, 0.9);
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -1642,8 +1636,8 @@
 .agent-confirm-btn.danger:hover { box-shadow: 0 11px 24px -8px rgba(229, 72, 77, 0.95); }
 .agent-confirm-btn.danger:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 34%, transparent); }
 .agent-confirm-btn.accent {
-  color: #fff;
-  background: linear-gradient(150deg, #8b7bff, #6f5ce0);
+  color: var(--color-accent-text);
+  background: var(--gradient-brand-strong);
   box-shadow: 0 8px 20px -8px rgba(123, 104, 238, 0.85);
 }
 .agent-confirm-btn.accent:hover { box-shadow: 0 11px 24px -8px rgba(123, 104, 238, 0.95); }

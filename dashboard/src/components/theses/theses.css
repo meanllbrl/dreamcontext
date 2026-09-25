@@ -17,7 +17,7 @@
   --thesis-retired: #6b7186;
   --thesis-amber: #e3b341;
   --thesis-violet: #9d8cff;
-  --thesis-cta-gradient: linear-gradient(150deg, #8b7bff, #6f5ce0);
+  --thesis-cta-gradient: var(--gradient-brand-strong);
 }
 
 [data-theme='dark'] {
@@ -28,7 +28,7 @@
   --thesis-retired: #6b7186;
   --thesis-amber: #e3b341;
   --thesis-violet: #9d8cff;
-  --thesis-cta-gradient: linear-gradient(150deg, #8b7bff, #6f5ce0);
+  --thesis-cta-gradient: var(--gradient-brand-strong);
 }
 
 /* Status → color lookup as classes, so consumers can do

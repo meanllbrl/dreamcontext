@@ -28,7 +28,7 @@
   height: 18px;
   padding: 0 5px;
   border-radius: var(--radius-full);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-size: 11px;
   font-weight: var(--font-weight-semibold);
@@ -140,8 +140,8 @@
 
 /* K8 — the one accent-filled control on this card is the send, which is its primary action. */
 .chat-agentthread-btn.is-primary {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
   color: var(--color-accent-text);
 }
 

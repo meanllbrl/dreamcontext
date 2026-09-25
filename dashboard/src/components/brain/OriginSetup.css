@@ -49,8 +49,8 @@
 }
 
 .origin-setup-tab--active {
-  background: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .origin-setup-form {

@@ -126,7 +126,7 @@
   font-weight: var(--font-weight-semibold);
   padding: 10px var(--space-4);
   border-radius: var(--radius-md);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   text-decoration: none;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);

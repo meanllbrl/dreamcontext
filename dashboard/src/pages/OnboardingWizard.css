@@ -174,13 +174,13 @@
 }
 
 .wiz-btn-primary {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .wiz-btn-primary:hover:not(:disabled) {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   filter: brightness(1.08);
 }
 

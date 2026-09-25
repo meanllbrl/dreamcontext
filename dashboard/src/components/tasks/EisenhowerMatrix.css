@@ -119,7 +119,7 @@
 }
 
 .eisenhower-undo-btn:hover {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
 }
 

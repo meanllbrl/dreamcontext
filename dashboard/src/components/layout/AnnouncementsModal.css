@@ -200,9 +200,9 @@
 
 .announcements-modal-btn {
   padding: 8px var(--space-5);
-  border: 1px solid var(--color-accent);
+  border: 1px solid var(--color-accent-strong);
   border-radius: var(--radius-md);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);

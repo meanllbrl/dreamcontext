@@ -105,9 +105,9 @@
 .bsearch-intel:hover { color: var(--color-text); border-color: var(--color-border-hover); }
 
 .bsearch-intel--on {
-  color: #fff;
+  color: var(--color-accent-text);
   border-color: transparent;
-  background: var(--gradient-brand);
+  background: var(--gradient-brand-strong);
   box-shadow: 0 4px 18px -8px rgba(123, 104, 238, 0.7);
   animation: bsearchGlow 2.6s ease-in-out infinite;
 }
@@ -171,8 +171,8 @@
   background: var(--color-bg-tertiary);
 }
 .bsearch-mode--intel {
-  color: #fff;
-  background: var(--gradient-brand);
+  color: var(--color-accent-text);
+  background: var(--gradient-brand-strong);
 }
 
 /* ── Result row ──────────────────────────────────────────────────────── */
@@ -287,8 +287,8 @@
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
-  background: var(--gradient-brand);
-  color: #fff;
+  background: var(--gradient-brand-strong);
+  color: var(--color-accent-text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   box-shadow: 0 6px 18px -6px rgba(123, 104, 238, 0.8);

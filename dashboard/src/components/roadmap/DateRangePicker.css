@@ -118,11 +118,11 @@
   color: var(--color-text);
 }
 .drp-day--edge {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-weight: 700;
 }
-.drp-day--edge:hover { background: var(--color-accent); }
+.drp-day--edge:hover { background: var(--color-accent-strong); }
 
 .drp-foot {
   display: flex;

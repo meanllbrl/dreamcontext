@@ -231,24 +231,30 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
               const level: MaturityLevel | undefined = off ? 'off' : maturity;
               const tag = level ? t(`maturity.${level}`) : null;
               const isAbout = page === 'about';
+              const badgeCount = page === 'announcements' ? unread.length
+                : page === 'automations' ? agentUnread
+                  : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
                     className={`sidebar-item ${activePage === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
                     onClick={isAbout ? openAbout : () => onNavigate(page)}
-                    title={tag ? `${label} — ${tag}` : label}
+                    title={tag ? `${label} (${tag})` : label}
                     aria-current={activePage === page ? 'page' : undefined}
                     data-hero={hero || undefined}
                   >
                     <span className="sidebar-icon"><NavIcon page={page} /></span>
                     <span className="sidebar-label">{label}</span>
-                    {page === 'announcements' && unread.length > 0 && (
-                      <span className="sidebar-badge">{unread.length}</span>
+                    {/* The count and the maturity tag STACK at the row's trailing edge, so a long
+                        label keeps the width to wrap onto two lines in full ("Agentic Automations"
+                        read "Agentic A…" beside both). Only rendered when it holds something, so a
+                        plain row pays no extra gap. */}
+                    {(badgeCount > 0 || level) && (
+                      <span className="sidebar-item-end">
+                        {badgeCount > 0 && <span className="sidebar-badge">{badgeCount}</span>}
+                        <MaturityTag level={level} className="sidebar-maturity" />
+                      </span>
                     )}
-                    {page === 'automations' && agentUnread > 0 && (
-                      <span className="sidebar-badge">{agentUnread}</span>
-                    )}
-                    <MaturityTag level={level} className="sidebar-maturity" />
                   </button>
                 </li>
               );

@@ -156,7 +156,7 @@
   height: 30px;
   padding: 0 13px;
   border-radius: 8px;
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-size: 12.5px;
   font-weight: 600;

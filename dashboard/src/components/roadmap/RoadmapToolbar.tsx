@@ -98,7 +98,7 @@ export function RoadmapToolbar({
         <div className="bd-chip" onClick={() => toggle('filter')} style={chipTrigger(activeCount > 0)}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flex: '0 0 auto' }}><path d="M2 3.2h12L9.2 8.6V13L6.8 14V8.6L2 3.2Z" fill="currentColor" /></svg>
           <span>Filter</span>
-          {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent)', color: '#fff' }}>{activeCount}</span>}
+          {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)' }}>{activeCount}</span>}
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'filter' ? '▲' : '▼'}</span>
         </div>
         {openMenu === 'filter' && (
@@ -182,7 +182,7 @@ export function RoadmapToolbar({
       </div>
 
       {/* new objective */}
-      <div onClick={onNewObjective} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Objective</div>
+      <div onClick={onNewObjective} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Objective</div>
     </div>
   );
 }

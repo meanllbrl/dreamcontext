@@ -288,8 +288,8 @@
   margin-left: auto;
   flex-shrink: 0;
   border-radius: var(--radius-full);
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: var(--font-weight-bold);
@@ -540,11 +540,37 @@
   box-shadow: 0 0 0 1px var(--color-accent);
 }
 
+/* A long label WRAPS rather than truncating: "Agentic Automations" beside its count and Beta
+   tag read "Agentic A…" (owner, 2026-09-25). Two lines at most, and only a label longer than
+   that is ellipsed; every short label still sits on its one line at its old height. */
 .sidebar-label {
-  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: break-word;
   letter-spacing: var(--letter-spacing-body);
+}
+
+/* The row's trailing column: the count above the maturity tag rather than beside it, so the
+   pair costs the label the width of the wider one, not of both plus a gap. */
+.sidebar-item-end {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+/* Collapsed, the column must not exist as a box: in flow it would take the row's gap and its
+   auto margin would eat the space `justify-content: center` needs, knocking the icon off
+   centre. The badge inside is absolute (a corner dot anchored to `.sidebar-item`) and the tag
+   is hidden, so dissolving the wrapper changes nothing else. */
+.sidebar--collapsed .sidebar-item-end {
+  display: contents;
 }
 
 /* ─── Maturity tag ─────────────────────────────────────────────────────────────

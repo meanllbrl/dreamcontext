@@ -383,7 +383,7 @@
 
 .settings-provision-badge--new {
   color: var(--color-accent-text);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   border-color: transparent;
 }
 
@@ -493,9 +493,9 @@
 }
 
 .embed-model-btn--primary {
-  color: #fff;
-  background: var(--color-accent);
-  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
 }
 
 .embed-model-btn--primary:hover:not(:disabled) {

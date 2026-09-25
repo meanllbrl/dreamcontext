@@ -161,8 +161,8 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  background: var(--gradient-brand);
-  color: var(--color-text-on-brand);
+  background: var(--gradient-brand-strong);
+  color: var(--color-accent-text);
   transition: filter var(--transition-fast), transform var(--transition-fast);
 }
 

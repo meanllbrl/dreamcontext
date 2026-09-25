@@ -65,8 +65,8 @@
   height: 16px;
   padding: 0 4px;
   border-radius: var(--radius-full);
-  background: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-size: 9px;
   font-weight: var(--font-weight-bold);
   line-height: 1;

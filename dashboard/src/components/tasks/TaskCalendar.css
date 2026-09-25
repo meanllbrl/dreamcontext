@@ -165,8 +165,8 @@
 }
 
 .task-cal-cell--today .task-cal-cell-day {
-  background: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   border-radius: var(--radius-full);
   min-width: 18px;
   height: 18px;

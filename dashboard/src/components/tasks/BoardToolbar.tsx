@@ -317,7 +317,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
         <div className="bd-chip" onClick={() => toggle('filter')} style={chipTrigger(activeCount > 0)}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flex: '0 0 auto' }}><path d="M2 3.2h12L9.2 8.6V13L6.8 14V8.6L2 3.2Z" fill="currentColor" /></svg>
           <span>Filter</span>
-          {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent)', color: '#fff' }}>{activeCount}</span>}
+          {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)' }}>{activeCount}</span>}
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'filter' ? '▲' : '▼'}</span>
         </div>
         {openMenu === 'filter' && (
@@ -463,8 +463,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {agentReady ? (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', height: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
-            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600 }}>+ New Task</div>
-            <div onClick={() => toggle('newtask')} title="More ways to create a task" className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
+            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>+ New Task</div>
+            <div onClick={() => toggle('newtask')} title="More ways to create a task" className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
               <span style={{ fontSize: 9, opacity: 0.9, transform: openMenu === 'newtask' ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }}>▼</span>
             </div>
           </div>
@@ -488,7 +488,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
           )}
         </div>
       ) : (
-        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Task</div>
+        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Task</div>
       )}
     </div>
   );

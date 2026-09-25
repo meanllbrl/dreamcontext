@@ -362,8 +362,8 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 }
 .mchat-new {
   border: none;
-  background: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-weight: 600;
 }
 .mchat-new:active { filter: brightness(0.94); }

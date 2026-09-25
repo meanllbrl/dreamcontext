@@ -794,9 +794,9 @@
 }
 
 .space-btn--primary {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .space-btn--update {

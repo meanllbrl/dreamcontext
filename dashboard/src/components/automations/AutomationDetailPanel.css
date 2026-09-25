@@ -112,7 +112,7 @@
 
 .adp-approve-btn {
   border: none; border-radius: var(--radius-md); padding: 9px 18px; font-size: 13px; font-weight: 600;
-  cursor: pointer; background: var(--gradient-brand); color: var(--color-text-on-brand);
+  cursor: pointer; background: var(--gradient-brand-strong); color: var(--color-accent-text);
 }
 .adp-approve-btn:disabled { cursor: default; opacity: 0.65; }
 

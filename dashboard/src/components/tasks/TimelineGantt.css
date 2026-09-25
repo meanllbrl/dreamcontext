@@ -182,8 +182,8 @@
   transform: translateX(-50%);
   font-size: 9px;
   font-weight: var(--font-weight-semibold);
-  color: var(--color-text-on-brand);
-  background: var(--color-accent);
+  color: var(--color-accent-text);
+  background: var(--color-accent-strong);
   border-radius: var(--radius-full);
   padding: 1px 6px;
   white-space: nowrap;

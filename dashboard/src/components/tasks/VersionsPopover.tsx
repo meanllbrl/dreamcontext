@@ -160,7 +160,7 @@ export function VersionsPopover({ tasks, style }: VersionsPopoverProps) {
             style={{ flex: '0 0 110px', minWidth: 0, height: 30, padding: '0 10px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text)', fontSize: 12.5, fontFamily: 'var(--font-mono)', outline: 'none' }} />
           <input className="bd-input" value={newSummary} onChange={(e) => setNewSummary(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onCreate(); }} placeholder="summary (optional)" spellCheck={false}
             style={{ flex: 1, minWidth: 0, height: 30, padding: '0 10px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text)', fontSize: 12.5, fontFamily: 'var(--font-family-text)', outline: 'none' }} />
-          <span onClick={onCreate} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 30, padding: '0 12px', borderRadius: 8, background: 'var(--color-accent)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: '0 0 auto' }}>Add</span>
+          <span onClick={onCreate} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 30, padding: '0 12px', borderRadius: 8, background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: '0 0 auto' }}>Add</span>
         </div>
       </div>
 

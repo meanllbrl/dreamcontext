@@ -179,7 +179,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       </div>
       <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 22, color: 'var(--color-text)', letterSpacing: '-0.02em' }}>No objectives yet</div>
       <div style={{ fontSize: 14, color: 'var(--color-text-tertiary)', maxWidth: 440, lineHeight: 1.55 }}>A roadmap is a board of outcomes you're driving toward. Author your first objective — the system computes progress, forecasts and slip for you.</div>
-      <button onClick={onCreate} className="bd-chip" style={{ marginTop: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer', background: 'linear-gradient(150deg,#8b7bff,#6f5ce0)', color: '#fff', fontSize: 13.5, fontWeight: 600, border: 'none', boxShadow: '0 8px 20px -6px rgba(123,104,238,0.8)' }}>+ Create your first objective</button>
+      <button onClick={onCreate} className="bd-chip" style={{ marginTop: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer', background: 'var(--gradient-brand-strong)', color: 'var(--color-accent-text)', fontSize: 13.5, fontWeight: 600, border: 'none', boxShadow: '0 8px 20px -6px rgba(123,104,238,0.8)' }}>+ Create your first objective</button>
     </div>
   );
 }
