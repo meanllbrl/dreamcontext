@@ -27,6 +27,14 @@ import {
   type HandoffRecord,
 } from '../../lib/context-watch.js';
 import { liveTranscriptPath, findTranscriptBySessionId } from '../../lib/transcript-locate.js';
+import {
+  HANDOFF_FIELDS,
+  contextHandoffGaps,
+  renderHandoffEntry,
+  developHandoffGaps,
+  formatGaps,
+  type HandoffFields,
+} from '../../lib/handoff-readiness.js';
 import { distillTranscript } from './transcript.js';
 import { buildDigest, writeDigest } from '../../lib/session-digest.js';
 import { appendCompactionRecord } from '../../lib/sleep-consolidation.js';
@@ -1584,40 +1592,58 @@ export function registerTasksCommand(program: Command): void {
 
   // Context handoff — move this session's state into the task and stop.
   //
-  // The agent runs this AFTER writing its state with `tasks log`. Everything here
-  // is about making the NEXT session able to pick the work up cold: the task is the
-  // handoff document, the record is the signal, the digest is the recall safety net.
+  // Everything here is about making the NEXT session able to pick the work up cold:
+  // the task is the handoff document, the record is the signal, the digest is the
+  // recall safety net.
+  //
+  // ONE command, and it REFUSES a thin handoff. The protocol used to be `tasks log`
+  // then `tasks handoff`, and `handoff` never checked the log had happened — a bare
+  // `tasks handoff <slug>` pinned the task and sent the fresh session to a changelog
+  // entry that could be days old. Now the state arrives as required fields, is written
+  // here as ONE entry, and nothing at all (no status bump, no record, no digest) is
+  // written until every field is answered. See lib/handoff-readiness.ts.
   //
   // It deliberately does NOT write `state/.active-task`. An edge-case review removed
   // that pointer: it raced across tabs (two panes handing off would fight over one
   // global file) and broke auto-sleep's hands-off union.
-  tasks
+  const handoffCmd = tasks
     .command('handoff')
     .argument('<name>')
-    .argument('[note...]', 'Optional note to log before handing off')
-    .description('Hand this session off: log the note, pin the task, and let a fresh session continue it')
-    .action(async (name: string, noteParts: string[]) => {
+    .argument('[note...]', 'Optional extra note, written as the entry\'s last line')
+    .description('Hand this session off: write its full state into the task, pin it, and let a fresh session continue it (refuses while any part is missing)');
+  for (const f of HANDOFF_FIELDS) handoffCmd.option(`${f.flag} <text>`, `${f.label}: ${f.hint}`);
+  handoffCmd
+    .action(async (name: string, noteParts: string[], opts: HandoffFields) => {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
+
+      // 0. The gate. Before ANY write — a refused handoff must leave the task, the
+      //    record dir and the sleep log exactly as they were, so the agent's retry is
+      //    the first handoff, not a second one layered over a half-written state.
+      const gaps = contextHandoffGaps(opts);
+      if (gaps.length > 0) {
+        error(`Handoff refused: a fresh session would pick up ${slug} without everything it needs.\n${formatGaps(gaps)}`);
+        info(`Re-run with every part answered ("none" is a valid answer except for --done / --next):\n  dreamcontext tasks handoff ${slug} ${HANDOFF_FIELDS.map((f) => `${f.flag} "…"`).join(' ')}`);
+        process.exitCode = 1;
+        return;
+      }
       const root = ensureContextRoot();
 
-      // 1. The note, through the SAME changelog path `tasks log` uses — the banner
-      //    tells the next session to read "the latest changelog entry", so the
-      //    handoff note has to land there and nowhere else.
+      // 1. The state, through the SAME changelog path `tasks log` uses — the banner
+      //    tells the next session to read "the latest changelog entry", so the whole
+      //    handoff has to land there as ONE entry and nowhere else.
       const note = noteParts.join(' ').trim();
-      if (note) {
-        await backend.addChangelog(slug, `### ${today()} - Session Update\n- ${note}`, { fallbackAppend: true });
-      }
+      await backend.addChangelog(slug, renderHandoffEntry(today(), opts, note), { fallbackAppend: true });
 
       // 2. The task must be IN PROGRESS for the fresh session to find it: the nudge's
-      //    active-task lookup and the snapshot both key off status. Only write when it
-      //    is not already there, so we never churn `updated_at` for nothing.
+      //    active-task lookup and the snapshot both key off status. `updated_at` moves
+      //    either way, because step 1 always wrote an entry.
       const current = await backend.get(slug);
       const title = String(current?.name ?? slug).replace(/\s+/g, ' ').trim() || slug;
       if (current?.status !== 'in_progress') {
         await backend.updateFields(slug, { status: 'in_progress', updated_at: today() });
-      } else if (note) {
+      } else {
         await backend.updateFields(slug, { updated_at: today() });
       }
 
@@ -1682,6 +1708,28 @@ export function registerTasksCommand(program: Command): void {
       } else {
         info('Run /clear in this session to continue with the task pinned.');
       }
+    });
+
+  // The Plan → Develop gate, as a command the Plan briefing runs before it offers the
+  // "Go to development" button. The dashboard runs the SAME check (lib/handoff-readiness)
+  // server-side when the button is clicked, so skipping this only delays the refusal.
+  tasks
+    .command('ready')
+    .argument('<name>')
+    .description('Check a task carries everything a fresh Develop session needs: criteria, validation method, file-by-file plan')
+    .action(async (name: string) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const task = await backend.get(slug);
+      const gaps = developHandoffGaps(task ?? {});
+      if (gaps.length > 0) {
+        error(`${slug} is not ready to hand to a Develop session:\n${formatGaps(gaps)}`);
+        info(`Fill each with \`dreamcontext tasks insert ${slug} <section> "…"\`, then run this again.`);
+        process.exitCode = 1;
+        return;
+      }
+      success(`${slug} is ready for development.`);
     });
 
   // Sync with the remote backend (no-op for local)

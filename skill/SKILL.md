@@ -389,16 +389,20 @@ turn re-reads the whole window, so the same remaining work costs ~2–3× more f
 in a fresh session. Crossing into the severe band always earns its own note, even if the
 last one was recent.
 
-If you do hand off, it is two commands, in this order:
+If you do hand off, it is ONE command, and every part is required:
 
 ```bash
-dreamcontext tasks log <slug> "done / next / decisions / learnings / working style / open files"
-dreamcontext tasks handoff <slug>          # pin it; a fresh session picks the task up
+dreamcontext tasks handoff <slug> \
+  --done "<finished, with evidence>" --next "<the exact next step, what remains>" \
+  --decisions "<choices + why, or none>" --learned "<traps, dead ends, or none>" \
+  --style "<how you are working, or none>" --files "<files in flight + line anchors, or none>"
 ```
 
-The `log` is the handoff document — a fresh session is told to read the task's **latest
-changelog entry** before anything else, so write it for someone who was not here. `handoff`
-then sets the task `in_progress`, records the request, and writes a partial session digest.
+That entry is the whole handoff: a fresh session is told to read the task's **latest
+changelog entry** before anything else, so write it for someone who was not here. The
+command **refuses** — and writes nothing — while any part is missing or `--done`/`--next`
+is under a sentence; fix what it names and re-run. On success it writes the entry, sets the
+task `in_progress`, records the request, and writes a partial session digest.
 **In Chat a fresh session opens automatically after this turn — finish your sentence and
 stop.** In a terminal nothing rotates for you: the human runs `/clear`.
 

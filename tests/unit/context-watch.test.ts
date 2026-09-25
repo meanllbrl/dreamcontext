@@ -292,12 +292,15 @@ describe('nudge state round-trip', () => {
 // ─── the nudge text ───────────────────────────────────────────────────────────
 
 describe('renderNudge', () => {
-  it('names both commands with the real slug, the numbers, and the next rung', () => {
+  it('names the one command with the real slug, every required part, the numbers, and the next rung', () => {
     const text = renderNudge(240_000, LADDER, 'my-task');
     expect(text).toContain('240k');
     expect(text).toContain('200k');
-    expect(text).toContain('dreamcontext tasks log my-task');
     expect(text).toContain('dreamcontext tasks handoff my-task');
+    // The old two-step (`log` then `handoff`) let a session pin the task having skipped the
+    // log. Every part now rides on the one command, which refuses while any is missing.
+    expect(text).not.toContain('dreamcontext tasks log');
+    for (const flag of ['--done', '--next', '--decisions', '--learned', '--style', '--files']) expect(text).toContain(flag);
     expect(text).toContain('340k'); // 240k + remindEvery
   });
 
@@ -340,10 +343,9 @@ describe('renderNudge', () => {
     expect(renderNudge(600_000, LADDER, 'my-task')).toContain('HAND OFF NOW');
   });
 
-  it('spells both commands out in the severe register too — a blunt nudge that is hard to obey is noise', () => {
+  it('spells the command out in the severe register too — a blunt nudge that is hard to obey is noise', () => {
     const text = renderNudge(700_000, LADDER, 'my-task');
-    expect(text).toContain('dreamcontext tasks log my-task');
-    expect(text).toContain('dreamcontext tasks handoff my-task');
+    expect(text).toContain('dreamcontext tasks handoff my-task --done');
   });
 
   it('tells the agent to create a task first when none is in progress', () => {

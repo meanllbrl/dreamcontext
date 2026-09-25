@@ -10,6 +10,7 @@ import { listObjectives } from '../../lib/objectives-store.js';
 import { dueDateAfterStartMove, dateUpdatesForStatus } from '../../lib/task-dates.js';
 import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
+import { developHandoffGaps } from '../../lib/handoff-readiness.js';
 import {
   loadTaskOverride,
   loadStatuses,
@@ -833,6 +834,33 @@ export async function handleTasksGet(
   }
 
   sendJson(res, 200, { task: toApiTask(task) });
+}
+
+/**
+ * GET /api/tasks/:slug/readiness — may this task be handed to a fresh Develop session?
+ *
+ * The Plan → Develop button calls this BEFORE it opens the session: the new session
+ * inherits nothing but the task file, so a plan that never reached the file is lost.
+ * Same check as `dreamcontext tasks ready` (lib/handoff-readiness.ts). Always 200 for a
+ * real task — "not ready" is an answer, not an error.
+ */
+export async function handleTasksReadiness(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+
+  const task = await backendFor(contextRoot).get(slug);
+  if (!task) {
+    sendError(res, 404, 'not_found', `Task not found: ${slug}`);
+    return;
+  }
+
+  const gaps = developHandoffGaps(task);
+  sendJson(res, 200, { ready: gaps.length === 0, gaps });
 }
 
 /**

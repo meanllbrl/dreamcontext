@@ -1508,6 +1508,24 @@ export function AgentSurface() {
    */
   const handoffToDevelop = useCallback((cs: ChatSession, taskSlug: string) => {
     void (async () => {
+      // The Develop session inherits NOTHING but the task file, so a plan that never reached
+      // it is lost the moment this tab closes. Refuse while the task is missing a part the
+      // Plan briefing requires (lib/handoff-readiness.ts on the server, the same check as
+      // `dreamcontext tasks ready`). Fails OPEN on a failed request: the check is a guard on
+      // the plan's completeness, and an unreachable guard must not strand a finished plan.
+      try {
+        const r = await scopedApi.get<{ ready: boolean; gaps: Array<{ field: string; problem: string }> }>(
+          `/tasks/${encodeURIComponent(taskSlug)}/readiness`,
+        );
+        if (!r.ready) {
+          alert(`"${taskSlug}" is not ready to hand to a development session — the new session would start without:\n\n`
+            + r.gaps.map((g) => `• ${g.field}: ${g.problem}`).join('\n')
+            + '\n\nAsk the planning agent to fill these into the task, then click the button again.');
+          return;
+        }
+      } catch (err) {
+        console.warn('[agent-surface] Plan→Develop readiness check failed; handing off anyway:', err);
+      }
       let prepared: { inline: string; token: string };
       try {
         prepared = await preparePrompt(vault, developKickoffPrompt(taskSlug));
@@ -1538,7 +1556,7 @@ export function AgentSurface() {
       if (planPane) setActivePaneId(planPane.id);
       closeSessionById(cs.id);
     })();
-  }, [spawn, vault, panes, activePaneId, closeSessionById, modelForSession, effortForSession]);
+  }, [spawn, vault, scopedApi, panes, activePaneId, closeSessionById, modelForSession, effortForSession]);
 
   // ChatPane's "Open in app ↗" (state 3 — a dreamcontext entity referenced from chat).
   // AgentSurface is mounted beside Shell (under `ProjectInstance`) with no direct handle on

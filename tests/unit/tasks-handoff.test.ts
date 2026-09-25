@@ -11,6 +11,7 @@
  *   - state/.active-task is NEVER written (removed in review: it raced across tabs)
  *   - a second handoff OVERWRITES rather than accumulating
  *   - the key follows the pane, then the conversation
+ *   - a handoff missing ANY part of the state is REFUSED and writes nothing
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -39,6 +40,16 @@ async function cli(...argv: string[]): Promise<void> {
 
 const taskFile = (slug: string) => readFileSync(join(stateDir, `${slug}.md`), 'utf-8');
 
+/** Every required part, answered. A handoff without them is refused. */
+const STATE = [
+  '--done', 'Parser done and green: 14 unit tests pass, criteria 1-2 ticked.',
+  '--next', 'Write the serializer in src/writer.ts, then tick criterion 3.',
+  '--decisions', 'Kept the tokenizer streaming — the files are up to 2 GB.',
+  '--learned', 'none',
+  '--style', 'npm test after every edit; the user wants small commits.',
+  '--files', 'src/writer.ts:40',
+];
+
 beforeEach(async () => {
   const raw = join(tmpdir(), `dc-handoff-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(raw, { recursive: true });
@@ -58,6 +69,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   process.chdir(prevCwd);
   for (const [k, v] of Object.entries(prevEnv)) {
     if (v === undefined) delete process.env[k];
@@ -67,23 +79,47 @@ afterEach(() => {
 });
 
 describe('tasks handoff', () => {
-  it('logs the note to the task changelog and sets the task in_progress', async () => {
-    await cli('tasks', 'handoff', 'ship-the-thing', 'Done the parser; next is the writer.');
+  it('writes every part as ONE changelog entry and sets the task in_progress', async () => {
+    await cli('tasks', 'handoff', 'ship-the-thing', ...STATE, 'Ping the owner before merging.');
     const md = taskFile('ship-the-thing');
-    expect(md).toContain('Done the parser; next is the writer.');
+    const entry = md.slice(md.indexOf('- Handoff'));
+    expect(entry).toContain('**Done:** Parser done and green');
+    expect(entry).toContain('**Next:** Write the serializer');
+    expect(entry).toContain('**Decisions:** Kept the tokenizer streaming');
+    expect(entry).toContain('**Learned:** none');
+    expect(entry).toContain('**Working style:** npm test after every edit');
+    expect(entry).toContain('**Open files:** src/writer.ts:40');
+    expect(entry).toContain('**Note:** Ping the owner before merging.');
     expect(md).toContain('status: in_progress');
   });
 
-  it('works with NO note — the handoff itself is the signal', async () => {
+  it('REFUSES a bare handoff and writes nothing — no entry, no status, no record, no log', async () => {
+    const before = taskFile('ship-the-thing');
     await cli('tasks', 'handoff', 'ship-the-thing');
-    expect(taskFile('ship-the-thing')).toContain('status: in_progress');
-    expect(readHandoffRecord(contextRoot, readdirSync(handoffDir(contextRoot))[0].replace('.json', ''))).not.toBeNull();
+    expect(process.exitCode).toBe(1);
+    expect(taskFile('ship-the-thing')).toBe(before);
+    expect(existsSync(handoffDir(contextRoot))).toBe(false);
+    expect(existsSync(join(stateDir, '.sleep.json'))).toBe(false);
+  });
+
+  it('REFUSES when one part is missing, and when --done / --next are too thin', async () => {
+    const withoutFiles = STATE.slice(0, -2);
+    await cli('tasks', 'handoff', 'ship-the-thing', ...withoutFiles);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(handoffDir(contextRoot))).toBe(false);
+
+    process.exitCode = undefined;
+    const thinNext = [...STATE];
+    thinNext[3] = 'continue';
+    await cli('tasks', 'handoff', 'ship-the-thing', ...thinNext);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(handoffDir(contextRoot))).toBe(false);
   });
 
   it('writes the handoff record with the pinned schema, keyed by the PANE', async () => {
     process.env.DREAMCONTEXT_TAB_SESSION = TAB;
     process.env.CLAUDE_CODE_SESSION_ID = SES;
-    await cli('tasks', 'handoff', 'ship-the-thing', 'note');
+    await cli('tasks', 'handoff', 'ship-the-thing', ...STATE, 'note');
 
     const record = readHandoffRecord(contextRoot, TAB);
     expect(record).not.toBeNull();
@@ -102,7 +138,7 @@ describe('tasks handoff', () => {
 
   it('falls back to the CONVERSATION id when there is no pane', async () => {
     process.env.CLAUDE_CODE_SESSION_ID = SES;
-    await cli('tasks', 'handoff', 'ship-the-thing');
+    await cli('tasks', 'handoff', 'ship-the-thing', ...STATE);
     const record = readHandoffRecord(contextRoot, SES);
     expect(record?.task).toBe('ship-the-thing');
     expect(record?.tab).toBeNull();
@@ -110,16 +146,16 @@ describe('tasks handoff', () => {
 
   it('OVERWRITES on a second handoff instead of accumulating records', async () => {
     process.env.DREAMCONTEXT_TAB_SESSION = TAB;
-    await cli('tasks', 'handoff', 'ship-the-thing', 'first');
+    await cli('tasks', 'handoff', 'ship-the-thing', ...STATE, 'first');
     await cli('tasks', 'create', 'Other work', '-w', 'Also needs doing');
-    await cli('tasks', 'handoff', 'other-work', 'second');
+    await cli('tasks', 'handoff', 'other-work', ...STATE, 'second');
 
     expect(readdirSync(handoffDir(contextRoot)).filter((f) => f.endsWith('.json')).length).toBe(1);
     expect(readHandoffRecord(contextRoot, TAB)?.task).toBe('other-work');
   });
 
   it('appends a CompactionRecord {trigger:"handoff"} to the sleep state', async () => {
-    await cli('tasks', 'handoff', 'ship-the-thing');
+    await cli('tasks', 'handoff', 'ship-the-thing', ...STATE);
     const sleepPath = join(stateDir, '.sleep.json');
     expect(existsSync(sleepPath)).toBe(true);
     const state = JSON.parse(readFileSync(sleepPath, 'utf-8')) as {
@@ -133,12 +169,12 @@ describe('tasks handoff', () => {
 
   it('NEVER writes state/.active-task — removed in review (raced across tabs)', async () => {
     process.env.DREAMCONTEXT_TAB_SESSION = TAB;
-    await cli('tasks', 'handoff', 'ship-the-thing', 'note');
+    await cli('tasks', 'handoff', 'ship-the-thing', ...STATE, 'note');
     expect(existsSync(join(stateDir, '.active-task'))).toBe(false);
   });
 
   it('gitignores the handoff dir on first write', async () => {
-    await cli('tasks', 'handoff', 'ship-the-thing');
+    await cli('tasks', 'handoff', 'ship-the-thing', ...STATE);
     expect(readFileSync(join(projectRoot, '.gitignore'), 'utf-8'))
       .toContain('_dream_context/state/.handoff-requests/');
   });

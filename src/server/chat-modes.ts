@@ -89,6 +89,9 @@ dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of s
    Present it, and shelve it the moment it exists — emit
    \`\`\`dream-view {"type":"progress","task":"<the-slug>"}\`\`\` so the owner watches criteria land.
 
+7. **Prove it complete.** Develop inherits ONLY this task file: run
+   \`dreamcontext tasks ready <slug>\` and fill every gap it names until it passes. The button refuses until then.
+
 Then offer the handoff. Implementation runs in a NEW session in Develop mode, carrying the
 slug you just created:
 

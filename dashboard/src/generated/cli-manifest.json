@@ -2381,10 +2381,18 @@
     },
     {
       "path": "tasks handoff",
-      "desc": "Hand this session off: log the note, pin the task, and let a fresh session continue it",
+      "desc": "Hand this session off: write its full state into the task, pin it, and let a fresh session continue it (refuses while any part is missing)",
       "args": [
         "<name>",
         "[note...]"
+      ],
+      "valueFlags": [
+        "--done",
+        "--next",
+        "--decisions",
+        "--learned",
+        "--style",
+        "--files"
       ]
     },
     {
@@ -2445,6 +2453,13 @@
       "path": "tasks provision",
       "desc": "Create the recommended fields on the remote task container (urgency, summary, RICE, …)",
       "args": []
+    },
+    {
+      "path": "tasks ready",
+      "desc": "Check a task carries everything a fresh Develop session needs: criteria, validation method, file-by-file plan",
+      "args": [
+        "<name>"
+      ]
     },
     {
       "path": "tasks rename",
