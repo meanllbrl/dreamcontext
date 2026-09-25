@@ -4,7 +4,8 @@ name: Component Reuse Over Reimplementation
 description: >-
   When a new surface needs existing UI behavior (chat, permissions, composer),
   mount the existing components on the new context rather than hand-rolling
-  copies. The data is the parameter; the components are not.
+  copies. The data is the parameter; the components are not. A primitive two
+  surfaces share is one atom plus a guard test that fails on a local copy.
 tags:
   - 'kind:pattern'
   - frontend
@@ -76,6 +77,10 @@ await expect(page.locator('.peer-panel .chat-permcard')).toBeVisible();
 
 If the component is accidentally replaced with a hand-rolled copy, these selectors vanish and the test fails.
 
+### Step 4: A primitive used by two surfaces is ONE atom plus a guard test
+
+When two or more surfaces render the same primitive (a `<video>`, an `<audio>`, a player, a card), extract ONE atom and add a guard test that scans the source tree and **fails when any surface writes its own copy of the element**. Exceptions go in an allowlist where **each entry states its reason**, and the test also **fails on a stale entry** (the file no longer holds the element), so the list cannot rot. Pair it with an import assertion for the surfaces that must use the atom. The goal is the owner's rule: fix it in one place and every surface gets the fix.
+
 ## When to Make an Exception
 
 **When the existing component is TIGHTLY COUPLED to a single context and cannot be cleanly parameterized without a full refactor**, a new component is warranted. But that threshold is high. Signs the existing component IS reusable:
@@ -105,6 +110,10 @@ Cost: ~1KB less CSS (the hand-rolled rules), zero feature drift risk, zero dupli
 
 The thread under an agent's run needed the chat's answer, boards, images, PDFs and file viewer. Every one is the chat's component: the run's document is the chat's `ProseSegment` (exported from `TranscriptItem.tsx` for this), boards are `BoardEmbed`/`BoardFullscreen`, images the shared `Lightbox`, PDFs the shared `PdfViewer`, other files `SlideOver`, and a click routes by type exactly like `ChatPane.handleOpenFile`. The bugs found on the way were in the glue, not the components: a brain-relative path handed to a project-root route. Fixing the shared board fit (`.chat-board-canvas .excalidraw-preview { min-height: 0 }`) fixed Chat too.
 
+## Occurrence: MediaEmbed, owner correction (2026-09-25)
+
+The Agents feed and Chat (transcript + SlideOver) each wrote their own `<video>`/`<audio>`, so fixes landed in one surface only, and a Chat audio attachment was drawn inside a video box. Owner: "kapat tabii, bir yeri fixlediğimde o da fixlensin." Now `dashboard/src/components/sleepy/chat/MediaEmbed.tsx` is the only inline player; `tests/unit/media-embed.test.ts` enforces Step 4, with the About hero and announcement-story clips allowlisted as showcase clips (autoplay/poster/multi-source, a different element).
+
 ## Related Patterns
 
 - **Surface Briefing Pattern** (`surface-briefing-pattern.md`) — how to brief an agent about what the surface CAN render, when the surface changes
@@ -112,4 +121,4 @@ The thread under an agent's run needed the chat's answer, boards, images, PDFs a
 
 ## Last Verified
 
-2026-09-25 (Agents channel thread, `verify:agent-attachments` 44/44 and `verify:agent-threads` 108/108). Earlier: 2026-08-26 (peer mail UI — `scripts/verify/peer-mail-ui.mjs`, 43 assertions, reuse proven by `.chat-cmp-*` selectors inside `.peer-panel`).
+2026-09-25 (MediaEmbed guard `tests/unit/media-embed.test.ts`; Agents channel thread, `verify:agent-attachments` 44/44 and `verify:agent-threads` 108/108). Earlier: 2026-08-26 (peer mail UI — `scripts/verify/peer-mail-ui.mjs`, 43 assertions, reuse proven by `.chat-cmp-*` selectors inside `.peer-panel`).

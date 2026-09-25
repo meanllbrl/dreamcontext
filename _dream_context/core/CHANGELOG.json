@@ -1,6 +1,90 @@
 [
   {
     "date": "2026-09-25",
+    "type": "fix",
+    "scope": "handoff",
+    "description": "Fix both handoffs trusting the agent to have written everything down. tasks handoff is now ONE command requiring --done --next --decisions --learned --style --files (done/next a real sentence), written as a single changelog entry and refusing with exit 1 before writing anything. New tasks ready <slug> requires a checkbox criterion, a Validation method criterion and a technical_details plan naming a file; the Plan briefing runs it before offering the Develop button, which re-checks via GET /api/tasks/:slug/readiness.",
+    "breaking": false,
+    "summary": "Neither handoff can pass on a task missing its details: tasks handoff is one required-parts command, and new tasks ready gates Plan to Develop",
+    "references": [
+      "commit:6f8df1af"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-25",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Add the Elevated UX bundle for Agentic Automations from a parallel session, lanes A-D plus V and W: reworked AutomationsDispatcherBar, AutomationsEmptyState and AutomationsShowcase, and matching polish across the agents feed, member cards, thread panel and question block. Working tree is uncommitted.",
+    "breaking": false,
+    "summary": "UNCOMMITTED: Agentic Automations 'Elevated' UX bundle (lanes A-D, V, W) across the dispatcher bar, empty state, showcase and agents feed",
+    "references": [
+      "file:dashboard/src/components/automations/AutomationsDispatcherBar.tsx",
+      "file:dashboard/src/components/agents/AgentsFeed.tsx",
+      "feature:automations-scheduled-headless-claude-jobs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-25",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add the quest-party Chat UX from the goal-skill run (waves 1-3 landed, wave 4 building): new agentRoles, quest and goalLive libs; a new dreamcontext goal-live CLI (start/phase/actor/state/clear) that writes _dream_context/tmp/.goal-skill-live.<session>.json; team-log action lines replacing bare tool rows; party cards and a quest map; role hue tokens (maker chart-2, judge chart-8); and a 'game grammar, not theatre' style-guide rule. Working tree is uncommitted.",
+    "breaking": false,
+    "summary": "UNCOMMITTED: agent work in Chat reads as a quest party: party cards, quest map, team-log action lines, maker/judge role hues, and a goal-live CLI",
+    "references": [
+      "knowledge:quest-party-chat-ux-plan",
+      "file:dashboard/src/components/sleepy/GoalLivePanel.tsx",
+      "file:_dream_context/core/3.style_guide_and_branding.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-25",
+    "type": "refactor",
+    "scope": "chat",
+    "description": "A new MediaEmbed atom (dashboard/src/components/sleepy/chat/MediaEmbed.tsx) replaces three separate hand-written video/audio renderers in the Chat transcript (TranscriptItem), the SlideOver (MediaPreview) and the Agents feed (AgentMessage's audio card + AgentClip) — the aspect box, preload, range URL and dark controls had been fixed three times independently. Fixes a side effect for free: a Chat user attachment that is audio was previously drawn in a <video> element. Owner rule behind it (2026-09-25): 'bir yeri fixlediğimde o da fixlensin' (a fix in one place must land everywhere). Guarded by tests/unit/media-embed.test.ts. Working tree is uncommitted; suggested commit message: refactor(chat): one MediaEmbed atom for every inline clip and audio.",
+    "breaking": false,
+    "summary": "UNCOMMITTED: one MediaEmbed atom now draws every inline clip and audio in Chat, the SlideOver and the Agents feed",
+    "references": [
+      "file:dashboard/src/components/sleepy/chat/MediaEmbed.tsx",
+      "file:tests/unit/media-embed.test.ts",
+      "task:one-mediaembed-atom-draws-every-inline-clip-and-audio-in-chat-and-the-agents-channel-so-a-fix-in-one-place-lands-in-all-three"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-25",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Round 2 of the agents-channel work is committed and pushed to main (5a06cb30..3ebe3306, 8 commits), and round 1 (the Slack-shaped thread work from the prior cycle, previously logged UNCOMMITTED) is now committed too. Ships: per-agent run slots (a runSlots map keyed by agent so a busy refusal only blocks the named agent, never the whole channel field); the thread panel overlays as Chat's own SlideOver below 900px channel width; .svg served raw on the desktop file route under a sandboxed CSP and opened in the Lightbox; --color-accent-strong and --gradient-brand-strong applied to every text-carrying accent fill app-wide, enforced by tests/unit/accent-strong.test.ts; and long sidebar nav labels wrap to two lines.",
+    "breaking": false,
+    "summary": "Round 2 of the agents channel ships and lands on main: per-agent run slots, a thread overlay below 900px, raw .svg serving, and AA accent-fill text app-wide",
+    "references": [
+      "commit:5a06cb30",
+      "commit:f98631c0",
+      "commit:7a0aca34",
+      "commit:00c169ad",
+      "commit:e26c8a72",
+      "commit:3ebe3306",
+      "commit:69d63cda",
+      "commit:8efcbb5c",
+      "task:agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-25",
     "type": "feat",
     "scope": "agents",
     "description": "Round-1 build plus audit-polish (2026-09-24/25) of the agents channel, still uncommitted in the working tree. An ask now renders as one row with an inset answer preview and a Slack-style thread line (server-computed reply count shared by feed and thread); opening the thread shows the run's whole published document as a chat-grade ProseSegment reply, and agent text everywhere reads at chat typography instead of raw markdown. The scheduler's healthy states collapse to a header pill; '/' opens this project's real skill list in both composers with Turkish-aware matching; the page is renamed 'Agentic Automations'. Runs started from the app can now call dreamcontext itself (a login-shell CLI shim is written and prepended only when nothing already resolves, never guessing an install dir), so a posted board, image, video/audio clip or PDF actually renders — media is served through the vault-scoped raw route rather than the desktop-gated agent-file route, keeping '.svg' out of every allowlist. Audit polish reworded refusal strings at the source (CLI and Telegram inherit the fix), made the thread panel resizable and Esc-closeable, fixed dark-mode contrast and control sizing across the page, and landed the owner's round-2 calls: a per-agent (not project-wide) run slot, the thread panel overlaying below ~900px, .svg opening only as a Lightbox <img> on desktop, an app-wide accent-strong token, and wrapping sidebar labels.",

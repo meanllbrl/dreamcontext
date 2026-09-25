@@ -29,6 +29,8 @@ Verified live on 2026-07-17 with a minimal codeword probe (see **Evidence** belo
 
 Corollary: keep the planner's base session lean. Messy, exploratory reads that don't need to survive into the plan should happen in throwaway `Explore`-style agents dispatched *before* the planner does its final grounding pass — a fat base session taxes every fork that inherits it.
 
+The base also grows with every resume round. Observed 2026-09-25 (quest-party run): after 7 planner rounds a fork inherited about 674k tokens, roughly $23 per fork against $3 to $6 for a fresh session fed the plan doc. So fork for wave 1, then prefer fresh builders once the plan doc is self-contained.
+
 ## Builders Fork, Judges Never Fork
 
 This mechanic is deliberately **one-sided**. Builders (`goal-planner`, `goal-implementer` ×N) are CLI sessions that fork and resume, because their job benefits from continuity — the implementer should build on exactly what the planner already established. Judges (`goal-plan-reviewer`, the code `reviewer`, `goal-validator`) are Claude Code Agent-tool subagents, dispatched **clean and fresh every round**, and are never forked or resumed from a builder session or from each other.

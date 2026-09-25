@@ -58,6 +58,8 @@ related_tasks:
     agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render
   - >-
     agents-page-round-one-leftovers-members-view-copy-empty-state-and-answer-route-messages-short-diagram-box-height-and-two-hardening-nits
+  - >-
+    agentic-automations-reads-calm-and-alive-one-type-ladder-one-accent-per-screen-a-breathing-run-state-motion-that-keeps-your-place-and-a-first-run-that-starts-something
 ---
 
 ## Why
@@ -180,8 +182,36 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - [x] **Turkish-aware `/` and `@`**, `@` matching an agent's title with its face shown, and no connected projects offered inside a thread.
 - [x] **Contrast and copy:** status words, the New divider, the reply count, chip counts and the scheduler WARN button all reach AA in both themes; no em dash in the page's own copy; controls are at least 24px tall.
 
+### Elevated UX pass, 2026-09-25 (proposal C1 to C9, C11 to C13)
+
+> **Status: implemented 2026-09-25, UNCOMMITTED, validation in progress.** Owner chose the "Elevated" bundle of `tmp/design/agents-ux-proposal.md`; C10, C14 and the "agents at work" strip are out. Task: `agentic-automations-reads-calm-and-alive-…`.
+
+- [ ] **Four visible bugs fixed:** "Last reply" stays put and "View thread ›" appears after it on hover (no overprint); "Needs you" is the status size; the scheduler pill keeps its word at every width (the ≤760 rule that hid it is gone); the toast is lifted over the floating Agent button and the composer strip in every view (`useFloaterClearance` publishes the button's clearance on the page); "Nothing to report." goes through `t()`.
+- [ ] **One type ladder:** the page's text is 12px or 14px, weights 400/600, prose on a 20px line box, rows on the 4px grid; only the thread's answer card keeps Chat's reading size. File cards stay at 12px so an 86-character name still fits.
+- [ ] **One accent per screen:** New agent is the page's one filled accent, plus a pending question's first choice; the other choices are tinted buttons; the selected filter chip is a neutral surface (the dialog's selected-chip recipe); reply counts rest in text ink and take the accent ink on hover.
+- [ ] **A running row is alive:** an 8px dot breathing on `--motion-breath`, the word "running" upright, a live elapsed time from the feed's `runSlots`, and the ask preview reading "Working · started 02:41 PM". Under reduced motion the dot is still and the time keeps ticking.
+- [ ] **Motion that keeps your place:** the split thread slides in with Chat's own SlideOver keyframe on `--ease-out`; the row whose thread is open keeps a quiet fill and `aria-current`; new rows fade and rise; scrolled up, new messages show a "N new messages" pill instead of moving the scroll, and a growing row still lands when you are at the bottom. Reduced motion removes every animation and transition the page owns.
+- [ ] **Header by subtraction:** the repeated title is gone (a visually hidden heading keeps it for assistive tech); the count sentence leads; the scheduler WARN and the needs-you notice share one tray inside the header, one divider between them; the header is the canvas colour in both themes.
+- [ ] **A filter row that never hides an agent:** agent chips that do not fit fold into "+N agents", a page-owned menu that opens below the chip with arrow-key navigation and each agent's count; the active agent's chip always stays visible; zero-count chips drop to tertiary ink.
+- [ ] **A first run that starts something:** no "Lab", no em dash, plain-word copy; three starter cards (morning digest, weekly report, on-call researcher) open the New agent dialog prefilled with name, prompt, mode, days and time; the blank start stays as a quieter button; the safety line sits under the buttons; the showcase's corner tag is the app's Beta tag.
+- [ ] **Failed thread without the echo:** when the closing "Failed after 3s: <reason>" row repeats the root's reason, it shows "Failed after 3s"; the server's sentence is unchanged.
+- [ ] **Two face sizes:** 32px for rows and thread posts, 20px inline; "You" is a solid face, no dashed outline.
+- [ ] **Members card, quieter:** the footer shares the card surface behind a hairline; "has not run yet" is regular secondary ink; the dashed "New agent" card is gone (the header button is the one); card strings lost their em dashes.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-09-25: Elevated UX pass, the decisions it rests on
+
+- **Needs-you stays warning ink (K26/K40).** The proposal suggested the accent tint for the needs-you row; the owner's reply left it open, so the orchestrator kept warning rather than reverse a standing decision unasked. The tray's needs-you row leads with a warning dot, the scheduler WARN keeps its warning tint. Switching needs-you to the accent tint is a one-line change to `.agents-needyou-dot` if the owner wants it.
+- **Two new motion tokens, and only two.** `--ease-out: cubic-bezier(0.2, 0, 0, 1)` is the one curve for anything that enters (the split thread, a new row, the new-messages pill); `--motion-breath: 1600ms` is the loop period for something alive (the running dot, and the scheduler pill's busy dot). Every other colour, size, shadow and duration on the page is an existing token, and `tests/unit/agents-page-tokens.test.ts` keeps the seven page stylesheets that way.
+- **The accent-strong allowlist needed no change.** The tinted second question choice is a `color-mix()` of the accent into a surface, which `isAccentFillValue` in `tests/unit/accent-strong.test.ts` does not count as an accent fill, and no filled control gained or lost a listed selector, so no entry went stale. The test ran as a guard.
+- **The "+N agents" menu is page-owned, not Chat's `Popover`.** Chat's Popover always opens upward, which from the filter row starts above the viewport; changing it would be a Chat edit. The menu is portalled below the trigger with its own keyboard navigation and reuses Chat's menu-list rows unchanged.
+- **Deferred:** echoing a running thread's newest system row in the ask preview (feed messages carry no thread entries; it needs a per-row fetch or a server field). Out of this pass: C10 (feed zero, loading and failure states), C14 (which composer is which) and the "agents at work" strip.
+
+### 2026-09-25: Rounds 1+2 committed; Elevated UX pass starting
+
+- The agents-channel rounds 1 and 2 are committed (`5a06cb30..3ebe3306`). Next: an Elevated UX pass, owner-approved 2026-09-25; the proposal lives in `tmp/design/agents-ux-proposal.md` (not copied here).
 
 ### 2026-09-25: The owner's five channel decisions, implemented (round 2)
 

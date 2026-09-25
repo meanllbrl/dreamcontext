@@ -52,7 +52,7 @@ date: '2026-09-25'
   - rescale-sleep-debt-scoring-weighted-sum-token-signal (completed) · 0.23.0
   - score-the-content-sleep-writes-signal-to-noise-staleness-inference-vs-observation (todo) · BACKLOG
   - sleep-connectors-pull-outside-sources-on-a-cadence-and-turn-them-into-knowledge-and-theses (completed) · BACKLOG · 2026-08-17 → 2026-08-24
-  - sleep-cycle-bookmarks-its-own-sub-agent-briefs-and-reports-as-star-star-decision-entries-mis-linked-to-an-arbitrary-task (todo) · BACKLOG
+  - sleep-cycle-bookmarks-its-own-sub-agent-briefs-and-reports-as-star-star-decision-entries-mis-linked-to-an-arbitrary-task (in_review) · BACKLOG
   - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_review) · 2026-09-10 → …
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
@@ -87,7 +87,7 @@ date: '2026-09-25'
   - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
   - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
 
-### 🔵 **simplified-ux** — Simplified UX · 76/100 done (76%) · target 2026-07-31 · forecast 2026-09-20 🔴 SLIPPING
+### 🔵 **simplified-ux** — Simplified UX · 76/104 done (73%) · target 2026-07-31 · forecast 2026-09-20 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-browser-run-shows-its-screenshots-in-chat-a-live-frame-while-it-runs-a-strip-when-it-lands (todo) · 0.28.0
   - a-declared-status-whose-key-collides-with-a-custom-field-is-accepted-by-the-settings-editor-then-silently-never-appears (todo) · 0.27.0
@@ -99,7 +99,9 @@ date: '2026-09-25'
   - agent-surface-polish-unified-chrome-composer-redesign-slash-menu-inline-images-reveal-endpoint (completed) · 0.21.0
   - agent-tab-auto-title-arrives-late-warm-the-cli-probe-and-let-a-chat-tab-carry-its-own-first-message (completed) · 0.23.0
   - agent-tab-right-click-menu-rename-the-auto-rename-switch-from-settings (completed) · 0.26.0 · 2026-08-24 → 2026-08-24
-  - agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render (in_progress) · 0.28.0
+  - agent-work-in-chat-reads-as-a-quest-party-characters-a-quest-map-a-team-log-and-the-r-d-in-plain-words (in_progress) · 0.28.0 · 2026-09-25 → …
+  - agentic-automations-reads-calm-and-alive-one-type-ladder-one-accent-per-screen-a-breathing-run-state-motion-that-keeps-your-place-and-a-first-run-that-starts-something (in_progress) · 0.28.0 · 2026-09-25 → …
+  - agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render (in_review) · 0.28.0
   - agents-epic-finished-end-to-end-and-the-side-menu-gets-one-maturity-model-section-hues-and-honest-icons (in_review) · 0.28.0 · 2026-09-22 → …
   - agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
   - agents-page-round-one-leftovers-members-view-copy-empty-state-and-answer-route-messages-short-diagram-box-height-and-two-hardening-nits (todo) · 0.28.0
@@ -127,6 +129,7 @@ date: '2026-09-25'
   - chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder (completed) · 0.24.0
   - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s (completed) · 0.23.1
   - chat-queued-messages-steer-into-the-running-turn-instead-of-waiting-for-it-to-end (completed) · 0.23.0 · 2026-07-29 → …
+  - chat-s-command-parser-reads-the-right-characters-after-a-heredoc-and-the-file-panel-drops-its-emoji-em-dashes-and-dead-css (todo) · 0.28.0
   - chat-scroll-settles-before-the-window-mutates-momentum-safe-reveal-chunked-trim (completed) · 0.23.1
   - chat-tool-rows-name-their-object-not-their-type-plus-run-grouping-and-density (completed) · 0.23.0
   - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript (completed) · 0.21.0
@@ -164,6 +167,7 @@ date: '2026-09-25'
   - launcher-shows-one-task-board-across-every-registered-vault-for-portfolio-planning (todo) · BACKLOG
   - meeting-room-hidden-launcher-chat-where-all-agents-convene (completed) · 0.26.1 · 2026-08-26 → 2026-08-27
   - multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands (completed) · 0.27.0 · 2026-09-04 → 2026-09-06
+  - one-mediaembed-atom-draws-every-inline-clip-and-audio-in-chat-and-the-agents-channel-so-a-fix-in-one-place-lands-in-all-three (in_review) · 0.28.0
   - one-window-holds-every-open-project-as-a-live-chip-strip (completed) · v0.24.0 · 2026-08-09 → 2026-08-17
   - openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali (completed) · 0.27.0 · 2026-09-04 → 2026-09-10
   - opt-in-context-handoff-the-agent-is-told-at-200k-that-it-may-move-its-state-into-the-task-and-continue-in-a-fresh-session (completed) · 0.28.0 · 2026-09-13 → 2026-09-13
