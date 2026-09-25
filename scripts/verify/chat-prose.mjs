@@ -33,15 +33,21 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { contrast, distIndex, rect, scratchDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SCRATCH = join(tmpdir(), 'dreamcontext-verify-chat-prose');
+const DIST_INDEX = distIndex(REPO);
+const SCRATCH = scratchDir('dreamcontext-verify-chat-prose');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
 const ANSWER_FILE = join(SCRATCH, 'answer.md');
+// Round 2: a clip OUTSIDE the project (an "Allow access" card, the accent-filled button this
+// suite can reach) and an SVG inside it (opened from its path chip into the Lightbox).
+const OUTSIDE_CLIP = join(SCRATCH, 'outside', 'capture.mp4');
+const SVG_SOURCE = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60" viewBox="0 0 120 60">'
+  + '<rect width="120" height="60" fill="#7b68ee"/><script>window.parent.__svgRan = 1</script></svg>';
 
 // The answer is shaped like the one in the owner's screenshot: a verdict, then a numbered
 // findings list whose items run several lines each and are peppered with inline code. The
@@ -76,6 +82,16 @@ first-ever language-neutral message that silently drops behavior the old text co
 
 The wiring itself is ==+logically sound== but has zero test coverage, so nothing above would
 have been caught by the suite as it stands today.
+
+\`\`\`ts
+const drop = trial - paid;
+\`\`\`
+
+![](boards/short.excalidraw.md)
+
+The logo the run drew is \`assets/logo.svg\`, and the capture it left is here:
+
+![](${OUTSIDE_CLIP})
 `;
 
 // ─── the scripted `claude` ────────────────────────────────────────────────────────────
@@ -90,7 +106,7 @@ let busy = false;
 
 async function runTurn() {
   busy = true;
-  out({ type: 'system', subtype: 'init', session_id: 'verify-session', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'bypassPermissions', slash_commands: ['compact'] });
+  out({ type: 'system', subtype: 'init', session_id: 'verify-session', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'bypassPermissions', slash_commands: ['compact', 'review', 'release', 'rev-notes'] });
   await sleep(200);
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: ANSWER }] } });
   await sleep(200);
@@ -146,20 +162,39 @@ function setupScratch() {
   writeFileSync(join(HOME, '.dreamcontext', '.secrets.json'),
     '{"github":{"token":"gho_fake_verify_token","login":"verify-user"}}');
   writeFileSync(ANSWER_FILE, ANSWER);
+  // A SHORT, WIDE board — the shape that showed the shared canvas bug worst: the preview
+  // painted a 420px canvas into a 340px box, so a short drawing sat off-centre and clipped.
+  const spec = join(SCRATCH, 'short.spec.json');
+  mkdirSync(join(PROJ, 'boards'), { recursive: true });
+  writeFileSync(spec, JSON.stringify({
+    out: join(PROJ, 'boards', 'short.excalidraw.md'),
+    background: '#ffffff',
+    elements: [
+      { type: 'rectangle', x: 0, y: 0, width: 220, height: 80, strokeColor: '#1971c2', backgroundColor: '#a5d8ff', fillStyle: 'solid', strokeWidth: 2 },
+      { type: 'arrow', x: 230, y: 40, points: [[0, 0], [120, 0]], strokeColor: '#1e1e1e', strokeWidth: 2 },
+      { type: 'rectangle', x: 360, y: 0, width: 220, height: 80, strokeColor: '#2f9e44', backgroundColor: '#b2f2bb', fillStyle: 'solid', strokeWidth: 2 },
+    ],
+  }));
+  const built = spawnSync(process.execPath, [join(REPO, 'skill-packs', 'excalidraw', 'scripts', 'build_excalidraw.js'), spec], { encoding: 'utf-8' });
+  if (built.status !== 0) throw new Error(`board builder failed: ${built.stderr || built.stdout}`);
+  mkdirSync(join(PROJ, 'assets'), { recursive: true });
+  writeFileSync(join(PROJ, 'assets', 'logo.svg'), SVG_SOURCE);
+  mkdirSync(dirname(OUTSIDE_CLIP), { recursive: true });
+  writeFileSync(OUTSIDE_CLIP, 'not really a clip');
   spawnSync('git', ['init', '-q'], { cwd: PROJ });
 
   const bin = join(HOME, '.local', 'bin', 'claude');
   writeFileSync(bin, STANDIN);
   chmodSync(bin, 0o755);
 
-  const add = spawnSync(process.execPath, [join(REPO, 'dist', 'index.js'), 'vaults', 'add', 'proj', PROJ],
+  const add = spawnSync(process.execPath, [DIST_INDEX, 'vaults', 'add', 'proj', PROJ],
     { env: { ...process.env, HOME }, encoding: 'utf-8' });
   if (add.status !== 0) throw new Error(`vaults add failed: ${add.stderr || add.stdout}`);
 }
 
 async function startServer(port) {
   const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
-  const srv = spawn(process.execPath, [join(REPO, 'dist', 'index.js'), 'dashboard', '--no-open', '-p', String(port)], {
+  const srv = spawn(process.execPath, [DIST_INDEX, 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ,
     env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -289,6 +324,94 @@ async function runTheme(chromium, base, theme, report) {
   });
   ok('and two findings sit ≥6px apart — a multi-line item needs more than the 4px a one-liner does',
     (itemGap ?? 0) >= 6, `item gap=${itemGap}px`);
+
+  // ── shared chat pieces the #agents pass touched (a no-op or a fix for Chat too) ──
+  console.log('── shared pieces: board, Copy, placeholder, the / menu');
+  const canvasBox = page.locator('.chat-board-canvas').first();
+  const drew = await until(async () => (await page.locator('.chat-board-canvas .excalidraw-preview').count()) > 0, 20000);
+  if (drew) await page.locator('.chat-board').first().scrollIntoViewIfNeeded();
+  const boxR = drew ? await rect(canvasBox) : null;
+  const prevR = drew ? await rect(page.locator('.chat-board-canvas .excalidraw-preview').first()) : null;
+  ok('[A1] the board preview fills its 340px box exactly (was a 420px canvas clipped to 340)',
+    !!boxR && !!prevR && Math.abs(prevR.height - boxR.height) <= 1, `box=${boxR?.height} preview=${prevR?.height}`);
+  const border = drew ? await page.locator('.chat-board-canvas .excalidraw-preview').first().evaluate((el) => getComputedStyle(el).borderTopWidth) : null;
+  ok('[A15] the preview draws no second border inside the card (was 1px)', border === '0px', `border-top-width=${border}`);
+  const fullBtn = drew ? await rect(page.locator('.chat-board-open').first()) : null;
+  ok('[A13] "Full screen" is a 24px target (was 17px tall)', (fullBtn?.height ?? 0) >= 24, `h=${fullBtn?.height}`);
+  const copy = page.locator('.chat-msg-assistant-body .chat-code-copy').first();
+  const copyR = (await copy.count()) ? await rect(copy) : null;
+  ok('[T14] the code block Copy button is a 24px target (was 21px tall)', (copyR?.height ?? 0) >= 24, `h=${copyR?.height}`);
+  const videoCap = await page.evaluate(() => {
+    const host = document.querySelector('.chat-pane .markdown-body') || document.querySelector('.chat-pane') || document.body;
+    const v = document.createElement('video');
+    v.className = 'chat-md-media chat-md-video';
+    host.appendChild(v);
+    const cap = getComputedStyle(v).maxHeight;
+    v.remove();
+    return cap;
+  });
+  ok('[guard] a chat video still caps at 460px', videoCap === '460px', `max-height=${videoCap}`);
+
+  const input = vis('.chat-cmp-input').first();
+  if (theme === 'dark') {
+    const ph = await contrast(input, '::placeholder');
+    ok('[T15] the composer placeholder reads at >=4.5:1 in dark (was 3.56)', ph >= 4.5, `contrast=${ph}`);
+  } else {
+    const phColor = await input.evaluate((el) => getComputedStyle(el, '::placeholder').color);
+    ok('[guard] the light placeholder keeps its colour, rgb(117, 117, 117)', phColor === 'rgb(117, 117, 117)', `color=${phColor}`);
+  }
+
+  await input.click();
+  await input.fill('');
+  await input.type('/');
+  await until(async () => (await vis('.chat-cmp-slash-row').count()) >= 3, 5000);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  const aria = await input.evaluate((el) => {
+    const sel = document.querySelector('.chat-cmp-slash [role="option"][aria-selected="true"]');
+    return { active: el.getAttribute('aria-activedescendant'), selected: sel?.id || null };
+  });
+  ok('[T17] the field names the highlighted / option (aria-activedescendant; was absent)',
+    !!aria.active && aria.active === aria.selected, JSON.stringify(aria));
+  await page.keyboard.press('Escape');
+  await input.fill('');
+  await input.type('/rev');
+  await until(async () => (await vis('.chat-cmp-slash-row').count()) > 0, 5000);
+  const firstRev = (await vis('.chat-cmp-slash-row').first().innerText().catch(() => '')).trim();
+  ok('[guard] an ASCII "/rev" still lists "review" first', firstRev === '/review', `first="${firstRev}"`);
+  await page.keyboard.press('Escape');
+  await input.fill('');
+
+  // ── round 2: the .svg Lightbox and the strong accent fill, in Chat ─────────────────
+  console.log('── round 2: an .svg opens as a picture, and an accent button reads');
+  // R2-3: Chat's Lightbox asked `/api/agent/file?raw=1` for the SVG's bytes and got the JSON
+  // text preview, so the <img> could never load (naturalWidth 0). The route now serves it as
+  // image/svg+xml under a sandbox CSP.
+  const chip = page.locator('.chat-msg-assistant-body code.chat-md-path', { hasText: 'assets/logo.svg' }).first();
+  let svgImg = { viewer: false, width: 0 };
+  if (await chip.count()) {
+    await chip.scrollIntoViewIfNeeded();
+    await chip.click();
+    await until(async () => (await page.locator('.image-viewer').count()) > 0, 8000);
+    await until(async () => page.evaluate(() => (document.querySelector('.image-viewer img')?.naturalWidth ?? 0) > 0), 6000);
+    svgImg = await page.evaluate(() => ({
+      viewer: !!document.querySelector('.image-viewer'),
+      width: document.querySelector('.image-viewer img')?.naturalWidth ?? 0,
+      ran: window.__svgRan === 1,
+    }));
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+  }
+  ok('[R2-3] a backticked .svg path opens the Lightbox and the picture loads (was naturalWidth 0: the <img> got JSON)',
+    svgImg.viewer && svgImg.width > 0, JSON.stringify(svgImg));
+  ok('[guard] the SVG\'s own script never runs', svgImg.ran !== true, JSON.stringify(svgImg));
+  // R2-5: "Allow access" is a filled accent button carrying text. On --color-accent white text
+  // read 4.15:1 in light and 2.75:1 in dark; --color-accent-strong reads 5.64.
+  const allow = page.locator('.chat-md-blocked-allow').first();
+  const allowFound = await until(async () => (await allow.count()) > 0, 8000);
+  const allowRatio = allowFound ? await contrast(allow) : null;
+  ok(`[R2-5] "Allow access" reads at >=4.5:1 on its accent fill in ${theme} (was 4.15 light / 2.75 dark)`,
+    (allowRatio ?? 0) >= 4.5, `contrast=${allowRatio}`);
 
   // ── the highlighter ───────────────────────────────────────────────────────────────
   console.log('── highlighter: ==phrase== paints a marker stroke');

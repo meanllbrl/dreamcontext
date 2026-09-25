@@ -35,20 +35,20 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { PHASE, distIndex, scratchDir, shotsDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const DIST_INDEX = join(REPO, 'dist', 'index.js');
+const DIST_INDEX = distIndex(REPO);
 
-const SCRATCH = join(tmpdir(), 'dc-ui-sidebar-rail');
+const SCRATCH = scratchDir('dc-ui-sidebar-rail');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
 const CONTEXT_ROOT = join(PROJ, '_dream_context');
-const SHOTS = join(REPO, 'tmp', 'verify-sidebar-rail');
+const SHOTS = shotsDir(REPO, 'sidebar-rail');
 
 /** The four groups, in rail order, with the token each one's hue comes from. */
 const GROUPS = [
@@ -206,6 +206,7 @@ async function readRail(page) {
         maturity: (hero.querySelector('.sidebar-maturity')?.textContent || '').trim(),
         maturityTransform: cs(hero.querySelector('.sidebar-maturity'), 'text-transform'),
         isFirst: hero === firstItem,
+        title: hero.getAttribute('title'),
       } : null,
       plain: plain ? {
         weight: cs(plain, 'font-weight'),
@@ -221,6 +222,49 @@ async function readRail(page) {
     probe.remove();
     return out;
   }, GROUPS);
+}
+
+/**
+ * Round 2 (R2-1, AD-1): the GEOMETRY of every rail row, read off painted line boxes.
+ *
+ * `lines` counts the distinct tops of the label's text rects, and `spill` is how far the
+ * painted text runs past the label's own box: `getClientRects` is not clipped by
+ * `overflow`, so an ellipsised label reports the full width of the words it hides. For the
+ * collapsed rail, `iconOff` is the icon centre's distance from its row's centre.
+ */
+async function readGeometry(page) {
+  return page.evaluate(() => [...document.querySelectorAll('.sidebar-nav .sidebar-item, .sidebar-group .sidebar-item')]
+    .filter((el, i, all) => all.indexOf(el) === i)
+    .map((item) => {
+      const label = item.querySelector('.sidebar-label');
+      const icon = item.querySelector('.sidebar-icon');
+      const ir = item.getBoundingClientRect();
+      const out = {
+        hero: item.hasAttribute('data-hero'),
+        text: (label?.textContent || '').trim(),
+        rowH: Math.round(ir.height * 10) / 10,
+        iconOff: icon ? Math.abs((icon.getBoundingClientRect().left + icon.getBoundingClientRect().width / 2) - (ir.left + ir.width / 2)) : null,
+        lines: 0,
+        spill: 0,
+      };
+      if (label && label.getClientRects().length) {
+        const box = label.getBoundingClientRect();
+        const tops = [];
+        const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const range = document.createRange();
+          range.selectNodeContents(n);
+          for (const q of range.getClientRects()) {
+            if (q.width <= 0) continue;
+            tops.push(Math.round(q.top));
+            out.spill = Math.max(out.spill, Math.round((q.right - box.right) * 10) / 10, Math.round((q.bottom - box.bottom) * 10) / 10);
+          }
+        }
+        tops.sort((a, b) => a - b);
+        out.lines = tops.filter((t, i) => i === 0 || t - tops[i - 1] > 2).length;
+      }
+      return out;
+    }));
 }
 
 /** Load the rail under one theme/width combination, from a cold mount. */
@@ -272,6 +316,7 @@ async function main() {
         page.on('pageerror', (e) => pageErrors.push(`${key}: ${e}`));
         await load(page, base, { theme, collapsed });
         const snap = await readRail(page);
+        snap.geo = await readGeometry(page);
         snaps[key] = snap;
 
         const n = ['light-expanded', 'light-collapsed', 'dark-expanded', 'dark-collapsed'].indexOf(key) + 1;
@@ -284,9 +329,13 @@ async function main() {
     console.log('\n═══ 1. The Agents entry ═══');
     const le = snaps['light-expanded'];
     check('the rail has a hero item at all', !!le.hero, JSON.stringify(le.hero));
-    check('it reads "Agents" — the nav label IS the page title', le.hero?.label === 'Agents', `label="${le.hero?.label}"`);
+    check('it reads "Agentic Automations" — the nav label IS the page title', le.hero?.label === 'Agentic Automations', `label="${le.hero?.label}"`);
     check('…and it is FIRST in Workspace', le.hero?.isFirst === true);
     check('…wearing a Beta tag', le.hero?.maturity === 'Beta', `tag="${le.hero?.maturity}"`);
+    // F16: the tooltip is user-visible copy too, and it joined the label and the tag with an
+    // em dash ("Agentic Automations — Beta"). A parenthesis says the same without one.
+    check('[F16] the hero tooltip reads "Agentic Automations (Beta)", no em dash (was "Agentic Automations — Beta")',
+      le.hero?.title === 'Agentic Automations (Beta)', `title="${le.hero?.title}"`);
     check('…in sentence case, not shouted (K15)', le.hero?.maturityTransform === 'none',
       `text-transform: ${le.hero?.maturityTransform}`);
 
@@ -373,10 +422,45 @@ async function main() {
     check('nothing renders uppercase in dark either', de.uppercase.length === 0, de.uppercase.join(', '));
     check('…and nothing spends --color-warning in dark either', de.warned.length === 0, de.warned.join(', '));
     check('the hero is still first, named and Beta in dark',
-      de.hero?.label === 'Agents' && de.hero?.isFirst === true && de.hero?.maturity === 'Beta',
+      de.hero?.label === 'Agentic Automations' && de.hero?.isFirst === true && de.hero?.maturity === 'Beta',
       JSON.stringify(de.hero));
     check('dark collapsed keeps its four distinct hues', distinct(dc),
       GROUPS.map((g) => `${g.label}=${dc.sample[g.label]?.bg}`).join(' '));
+
+    // ── 8 (round 2): the label wraps instead of truncating ───────────────
+    // R2-1 (owner decision 1a): "Agentic Automations" wraps to two lines rather than
+    // painting as "Agentic A…". Pre-fix the label was `nowrap` + ellipsis in about 75px,
+    // so its text painted as ONE line running well past its box.
+    console.log('\n═══ 8. Round 2: the label wraps, the rail stays centred ═══');
+    const rowsFile = join(REPO, 'tmp', 'verify-sidebar-rail', 'rows-before-r2.json');
+    for (const theme of ['light', 'dark']) {
+      const geo = snaps[`${theme}-expanded`].geo;
+      const hero = geo.find((g) => g.hero);
+      check(`[R2-1] ${theme}: the hero label paints on 2 lines and fits its box (was 1 line spilling past it)`,
+        hero?.lines === 2 && hero.spill <= 0.5, JSON.stringify(hero));
+      const others = geo.filter((g) => !g.hero && g.text);
+      const bad = others.filter((g) => g.lines !== 1 || g.spill > 0.5);
+      check(`[guard] ${theme}: every other expanded label paints on one line inside its box`,
+        others.length > 0 && bad.length === 0, bad.length ? JSON.stringify(bad.slice(0, 3)) : `${others.length} rows`);
+      // Row heights are compared with the PRE-FIX build's, recorded by the before-r2 run.
+      // Only rows other than the hero: the hero is the one row allowed to grow.
+      if (PHASE === 'before-r2') {
+        mkdirSync(dirname(rowsFile), { recursive: true });
+        const prev = existsSync(rowsFile) ? JSON.parse(readFileSync(rowsFile, 'utf-8')) : {};
+        prev[theme] = Object.fromEntries(others.map((g) => [g.text, g.rowH]));
+        writeFileSync(rowsFile, JSON.stringify(prev, null, 2));
+      }
+      const baseline = existsSync(rowsFile) ? JSON.parse(readFileSync(rowsFile, 'utf-8'))[theme] : null;
+      const moved = baseline ? others.filter((g) => baseline[g.text] !== undefined && Math.abs(baseline[g.text] - g.rowH) > 1) : [];
+      check(`[guard] ${theme}: every other row keeps its pre-fix height ±1`,
+        baseline !== null && moved.length === 0,
+        baseline === null ? `no baseline at ${rowsFile}: run the before-r2 phase first` : moved.map((g) => `${g.text}: ${baseline[g.text]} → ${g.rowH}`).join(', ') || `${others.length} rows`);
+      // AD-1: the new end-of-row wrapper must not push a collapsed icon off centre.
+      const icons = snaps[`${theme}-collapsed`].geo.filter((g) => g.iconOff !== null);
+      const off = icons.filter((g) => g.iconOff > 1);
+      check(`[guard] ${theme} collapsed: every rail icon sits at its row's centre ±1px`,
+        icons.length > 0 && off.length === 0, off.length ? JSON.stringify(off.slice(0, 3)) : `${icons.length} icons`);
+    }
 
     check('no uncaught page errors', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } finally {

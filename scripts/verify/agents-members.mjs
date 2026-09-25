@@ -39,16 +39,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { dispatcherState, distIndex, mockDispatcher, scratchDir, shotsDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const DIST_INDEX = join(REPO, 'dist', 'index.js');
+const DIST_INDEX = distIndex(REPO);
 
-const SCRATCH = join(tmpdir(), 'dc-ui-agents-members');
+const SCRATCH = scratchDir('dc-ui-agents-members');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
 const CONTEXT_ROOT = join(PROJ, '_dream_context');
 const AUTOMATIONS_DIR = join(CONTEXT_ROOT, 'automations');
-const SHOTS = join(REPO, 'tmp', 'verify-agents-members');
+const SHOTS = shotsDir(REPO, 'agents-members');
 
 const SCHED_DESC = "Her sabah 09:00'da dünkü insight'ları oku ve üç maddelik özet çıkar";
 const CALL_DESC = 'Çağırdığımda verdiğim konuyu derinlemesine araştır';
@@ -163,12 +164,14 @@ async function main() {
     await page.waitForTimeout(2500);
     await dismissOverlays();
 
-    // ── 1: the sidebar says Agents ────────────────────────────────────────
+    // ── 1: the sidebar names the page ─────────────────────────────────────
+    // "Agentic Automations" since 2026-09-24 (owner's call). The item must be the ONLY
+    // one that says so — a second "Automations" entry would be the old page resurfacing.
     console.log('\n═══ 1. Sidebar and page ═══');
-    const agentsNav = page.locator('.sidebar-item', { hasText: 'Agents' }).first();
-    check('the sidebar reads "Agents"', await agentsNav.count() > 0);
-    const oldNav = await page.locator('.sidebar-item', { hasText: 'Automations' }).count();
-    check('…and no longer reads "Automations"', oldNav === 0, `found ${oldNav} Automations item(s)`);
+    const agentsNav = page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first();
+    check('the sidebar reads "Agentic Automations"', await agentsNav.count() > 0);
+    const navCount = await page.locator('.sidebar-item', { hasText: 'Automations' }).count();
+    check('…and it is the only Automations entry', navCount === 1, `found ${navCount} Automations item(s)`);
     await agentsNav.click();
     await page.waitForTimeout(1200);
     await page.screenshot({ path: join(SHOTS, '1-empty-state.png') });
@@ -207,7 +210,7 @@ async function main() {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
     await dismissOverlays();
-    await page.locator('.sidebar-item', { hasText: 'Agents' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
     // The page OPENS on the channel now, not the roster — the owner's own
     // correction after the first pass ("Slack mesaj alanı gibi açılacak").
     check('the page opens on the channel, not the roster',
@@ -219,6 +222,24 @@ async function main() {
     await until(async () => (await page.locator('.agents-feed-zero-lede').count()) > 0, 10000);
     check('…and the channel says why it is empty',
       (await page.locator('.agents-feed-zero-lede').innerText()).includes('Nothing has been posted here yet'));
+    // F17: the empty channel used to promise "the next scheduled run opens the first
+    // thread" right under a pill reading "Scheduler off", never mentioned the @-ask, and
+    // showed five filter chips all reading 0 above it. With the scheduler reported OFF, the
+    // note has to lead with the ask and the chips have to be gone.
+    await mockDispatcher(page, dispatcherState({ installed: false }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2000);
+    await dismissOverlays();
+    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await until(async () => (await page.locator('.agents-feed-zero-note').count()) > 0, 10000);
+    const zeroNote = await page.locator('.agents-feed-zero-note').innerText().catch(() => '');
+    check('[F17] with the scheduler off, the empty channel leads with the @-ask, not "the next scheduled run" (was the scheduled-run promise)',
+      zeroNote.includes('@') && !/next scheduled run/i.test(zeroNote), `note="${zeroNote}"`);
+    const zeroChips = await page.locator('.agents-chip').count();
+    check('[F17] …and no filter chips sit over an empty channel (was 5 chips reading 0)', zeroChips === 0, `chips=${zeroChips}`);
+    await page.screenshot({ path: join(SHOTS, '1b-empty-channel-scheduler-off.png') });
+    await page.unroute(/\/api\/automations\/dispatcher(\?|$)/);
+
     await showRoster();
     const cardShown = await until(async () => (await page.locator('.agent-card:not(.agent-card--new)').count()) > 0);
     check('the labelled Agents switch opens the roster and the card is there', cardShown);

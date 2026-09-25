@@ -44,20 +44,20 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { contrast, distIndex, overlapArea, rect, scratchDir, setTheme, shotsDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const DIST_INDEX = join(REPO, 'dist', 'index.js');
+const DIST_INDEX = distIndex(REPO);
 
-const SCRATCH = join(tmpdir(), 'dc-ui-agent-threads');
+const SCRATCH = scratchDir('dc-ui-agent-threads');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
 const CONTEXT_ROOT = join(PROJ, '_dream_context');
 const AUTOMATIONS_DIR = join(CONTEXT_ROOT, 'automations');
-const SHOTS = join(REPO, 'tmp', 'verify-agent-threads');
+const SHOTS = shotsDir(REPO, 'agent-threads');
 
 /** The marker every thread entry block opens with (`types.ts`). */
 const THREAD_ENTRY_MARKER = '<!-- dc-thread-entry -->';
@@ -127,6 +127,26 @@ if (ask) {
   run(['automations', 'post', slug, 'You asked for: ' + ask]);
   out({ session_id: 'standin-ask-' + slug, is_error: false, result: 'Answered.\\n\\n## Detail\\n\\nRows.\\n',
     total_cost_usd: 0.04, num_turns: 2, duration_ms: 9000, permission_denials: [] });
+  process.exit(0);
+}
+
+if (slug === 'failer') {
+  // is_error with a real report: the reason is the result's first line, and the report
+  // carries a code block (the answer card's Copy button).
+  const tick = String.fromCharCode(96).repeat(3);
+  out({ session_id: 'standin-failer', is_error: true,
+    result: 'Could not reach the analytics API: 401 Unauthorized.\\n\\n## What I tried\\n\\n' + tick + 'ts\\nconst r = await fetch(url);\\n' + tick + '\\n',
+    total_cost_usd: 0.02, num_turns: 1, duration_ms: 3000, permission_denials: [] });
+  process.exit(0);
+}
+
+if (slug === 'holder') {
+  // Holds the run slot for longer than one feed poll, so a page that only learns about
+  // runs from the feed still sees this one while it is live.
+  const until = Date.now() + 25000;
+  while (Date.now() < until) { /* hold the run slot */ }
+  out({ session_id: 'standin-holder', is_error: false, result: 'Held.\\n', total_cost_usd: 0.01,
+    num_turns: 1, duration_ms: 25000, permission_denials: [] });
   process.exit(0);
 }
 
@@ -231,12 +251,19 @@ function seed() {
   cli(['automations', 'create', 'offline', '--title', 'Retired watcher', '--days', 'daily', '--at', '12:00']);
   cli(['automations', 'create', 'orphan', '--title', 'Interrupted agent', '--days', 'daily', '--at', '13:00']);
   cli(['automations', 'create', 'orphan2', '--title', 'Interrupted again', '--days', 'daily', '--at', '14:00']);
+  cli(['automations', 'create', 'failer', '--title', 'Analytics puller', '--days', 'daily', '--at', '15:00']);
+  cli(['automations', 'create', 'holder', '--title', 'Nightly importer', '--days', 'daily', '--at', '16:00']);
+
+  // This project's skills and commands, as the chat caches them at connect (T7): Turkish
+  // names whose case does not fold with toLowerCase().
+  writeFileSync(join(CONTEXT_ROOT, 'state', '.slash-commands.json'),
+    JSON.stringify({ commands: ['review', 'release', 'İçerik-planı', 'ılık-özet', 'çözüm-raporu'] }));
 
   const digestPath = join(AUTOMATIONS_DIR, 'digest.md');
   writeFileSync(digestPath,
     readFileSync(digestPath, 'utf-8').replace(/^photo: null$/m, 'photo: automations/photos/digest.png'));
 
-  for (const slug of ['digest', 'asker', 'oncall', 'slowpoke', 'offline', 'orphan', 'orphan2']) {
+  for (const slug of ['digest', 'asker', 'oncall', 'slowpoke', 'offline', 'orphan', 'orphan2', 'failer', 'holder']) {
     cli(['automations', 'approve', slug, '--yes']);
   }
   // Turned OFF after approval, so the reply route's FIRST rung has a subject.
@@ -414,11 +441,11 @@ async function main() {
     await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
     await dismissOverlays();
-    await page.locator('.sidebar-item', { hasText: 'Agents' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
     check('the channel opens', await until(async () => (await page.locator('.agent-msg').count()) >= 2, 20000));
 
     const digestMsg = page.locator('.agent-msg', { hasText: 'Daily insight digest' }).first();
-    check('the body is the agent\'s own post', (await digestMsg.locator('.agent-msg-text').innerText()).trim() === POSTED);
+    check('the body is the agent\'s own post', (await digestMsg.locator('.agent-msg-md').innerText()).trim() === POSTED);
 
     const kv = digestMsg.locator('.agent-msg-kv-row');
     check('the --kv rows render as a summary block', await kv.count() === 3, `rows=${await kv.count()}`);
@@ -440,15 +467,20 @@ async function main() {
     const chipNames = await digestMsg.locator('.agent-msg-file .agent-msg-file-name').allInnerTexts();
     check('the markdown note is a chip', chipNames.some((n) => n.includes('note.md')), chipNames.join(', '));
     check('…the .svg is a chip too, never an image', chipNames.some((n) => n.includes('logo.svg')), chipNames.join(', '));
-    // Off desktop the board degrades rather than drawing an empty canvas.
-    check('…and the board degrades to a chip off desktop',
-      chipNames.some((n) => n.includes('plan.excalidraw.md')), chipNames.join(', '));
-    check('…saying where boards open',
-      (await digestMsg.locator('.agent-msg-file-note').first().innerText()).length > 0,
-      await digestMsg.locator('.agent-msg-file-note').first().innerText().catch(() => '(none)'));
-    check('no board canvas is drawn off desktop', await digestMsg.locator('.chat-board').count() === 0);
+    // A10: whether a board DRAWS is the SERVER's call (its desktop gate on `/api/agent/*`),
+    // not the tab's. This tab has no Tauri bridge, but the server it talks to is the desktop
+    // one, so the board draws. (Off a desktop server it degrades to a card: agent-attachments.)
+    // Asserted in the thread, where every visual of a post is drawn in full.
+    await digestMsg.locator('.agent-thread-bar').click();
+    const a10Panel = page.locator('.agent-thread');
+    await until(async () => (await a10Panel.count()) === 1, 8000);
+    check('[A10] a browser tab served by a DESKTOP server draws the board (absent pre-fix: a card said boards open in the desktop app)',
+      await until(async () => (await a10Panel.locator('.chat-board canvas').count()) > 0, 15000),
+      `boards=${await a10Panel.locator('.chat-board').count()} cards=${await a10Panel.locator('.agent-msg-file--board').count()}`);
+    await a10Panel.locator('.agent-thread-close').click();
+    await until(async () => (await page.locator('.agent-thread').count()) === 0, 5000);
 
-    await digestMsg.locator('.agent-msg-file').first().click();
+    await digestMsg.locator('.agent-msg-file--doc').first().click();
     check('a chip OPENS the document', await until(async () => (await page.locator('.chat-slideover-panel').count()) > 0, 10000));
     await page.keyboard.press('Escape');
     await until(async () => (await page.locator('.chat-slideover-panel').count()) === 0, 5000);
@@ -498,7 +530,7 @@ async function main() {
 
     // ── 5: the thread composer is the chat's own ─────────────────────────
     console.log('\n═══ 5. The thread composer ═══');
-    await digestMsg.locator('.agent-msg-replies').first().click();
+    await digestMsg.locator('.agent-thread-bar').click();
     const panel = page.locator('.agent-thread');
     check('the thread panel opens', await until(async () => (await panel.count()) > 0, 10000));
     // The proof BY CONSTRUCTION (pattern-component-reuse-over): a regression to a
@@ -570,15 +602,32 @@ async function main() {
     check('an agent with no session on this machine refuses 409 not_bound',
       notBound.status === 409 && /not_bound/.test(notBound.body), JSON.stringify(notBound));
 
-    // `busy`: a run genuinely in flight holds the project's one run slot.
+    // `busy`, round 2 (owner decision 4): the run slot is PER AGENT. A reply to an agent whose
+    // own run is in flight is refused; a reply to ANY OTHER agent is not, where it used to be
+    // (one slot per project). The same-agent case needs a bound session to get past
+    // `not_bound`, so the slow agent completes one run first.
+    runAgent('slowpoke');
+    const slowRuns = () => [...new Set(threadEntries('slowpoke').map((e) => e.runId))];
+    const firstSlowRuns = slowRuns().length;
     await page.evaluate(async () => {
       await fetch('/api/automations/slowpoke/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     });
-    await page.waitForTimeout(1200);
-    const busy = await replyTo('digest', { text: 'while busy', runId: digestRun });
-    check('a reply while a run holds the slot is refused 409 busy',
-      busy.status === 409 && /busy/.test(busy.body), JSON.stringify(busy));
-    check('…naming who is holding it', /Slow crawler/.test(busy.body), busy.body);
+    await until(async () => slowRuns().length > firstSlowRuns, 10000);
+    const slowRun = slowRuns().sort().pop();
+    const digestBefore = threadEntries('digest').length;
+    const other = await replyTo('digest', { text: 'while another agent runs', runId: digestRun });
+    const own = await replyTo('slowpoke', { text: 'while you run', runId: slowRun });
+    check('[R2-4] a reply to a DIFFERENT agent while one runs is accepted, 202 (was 409 busy naming the other agent)',
+      other.status === 202, JSON.stringify(other).slice(0, 240));
+    check('[R2-4] a reply to the agent that is running is refused 409 busy, "Slow crawler is still running. Try again when it finishes." (was "… One run at a time for now …")',
+      own.status === 409 && /"busy"/.test(own.body) && /Slow crawler is still running\. Try again when it finishes\./.test(own.body)
+        && !/One run at a time/.test(own.body), JSON.stringify(own).slice(0, 240));
+    // The accepted reply resumes the digest's own session; let it settle before the next
+    // section talks to the same agent (the per-agent run lock would refuse an overlap).
+    if (other.status === 202) {
+      await until(async () => threadEntries('digest').slice(digestBefore)
+        .some((e) => e.kind === 'system' && ['replied', 'failed'].includes(e.event ?? '')), 60000);
+    }
 
     // ── 8: calling an on-call agent by name ──────────────────────────────
     console.log('\n═══ 8. @mentioning an agent ═══');
@@ -643,8 +692,11 @@ async function main() {
     await deskPage.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
     await deskPage.waitForTimeout(2500);
     for (let i = 0; i < 4; i++) { await deskPage.keyboard.press('Escape'); await deskPage.waitForTimeout(200); }
-    await deskPage.locator('.sidebar-item', { hasText: 'Agents' }).first().click();
-    const deskDigest = deskPage.locator('.agent-msg', { hasText: 'Daily insight digest' }).first();
+    await deskPage.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    // In the THREAD: the feed row now draws only a post's first visual and folds the rest
+    // into cards (A4), and this post's first visual is its picture.
+    await deskPage.locator('.agent-msg', { hasText: 'Daily insight digest' }).first().locator('.agent-thread-bar').click();
+    const deskDigest = deskPage.locator('.agent-thread');
     const drew = await (async () => {
       const end = Date.now() + 20000;
       while (Date.now() < end) {
@@ -723,7 +775,7 @@ async function main() {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
     await dismissOverlays();
-    await page.locator('.sidebar-item', { hasText: 'Agents' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
     await until(async () => (await page.locator('.agent-msg').count()) >= 2, 20000);
     const openBtn = page.locator('.agent-msg', { hasText: 'Daily insight digest' }).first()
       .getByText('Open session').first();
@@ -736,6 +788,452 @@ async function main() {
     check('…and opening it is ACKed rather than silently doing nothing', acked,
       await page.locator('.agents-toast').innerText().catch(() => '(no toast)'));
     await page.screenshot({ path: join(SHOTS, '6-open-session.png') });
+
+    // ══ THE AUDIT PASS (goal-skill v2) ══════════════════════════════════════════════
+    // Seeded after every check above, so those keep meaning what they said. Every check
+    // MEASURES what painted; labels name the finding and the pre-fix value.
+    console.log('\n═══ 12. The thread panel, measured ═══');
+    const peerHits = [];
+    await page.route(/\/api\/peer\/peers/, (route) => {
+      peerHits.push(Date.now());
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ peers: [{ vault: 'tilki', agent: 'peer-tilki', whatItIs: 'A connected project', logo: false }] }) });
+    });
+    const openChannel = async (p = page) => {
+      await p.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
+      await p.waitForTimeout(2000);
+      for (let i = 0; i < 4; i++) { await p.keyboard.press('Escape'); await p.waitForTimeout(200); }
+      await p.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+      await p.locator('.agent-msg').first().waitFor({ timeout: 20000 }).catch(() => {});
+    };
+    const namedRow = (title, p = page) => p.locator('article.agent-msg', { has: p.locator('.agent-msg-name', { hasText: title }) }).first();
+    const thread = page.locator('.agent-thread');
+    const openThreadOf = async (row) => {
+      await row.locator('.agent-thread-bar').click();
+      await until(async () => (await thread.count()) === 1, 8000);
+      await until(async () => (await thread.locator('.agent-thread-sys, .agent-thread-post').count()) > 0, 10000);
+    };
+    const closePanel = async () => {
+      if (await thread.count()) {
+        await thread.locator('.agent-thread-close').click({ timeout: 5000 });
+        await until(async () => (await thread.count()) === 0, 5000);
+      }
+    };
+    const slotFree = () => until(async () => {
+      const j = await page.evaluate(async () => (await fetch('/api/automations/runs')).json().catch(() => null));
+      return !j?.job || j.job.status !== 'running';
+    }, 60000);
+
+    runAgent('failer');
+    await openChannel();
+    const failer = namedRow('Analytics puller');
+    const peersBefore = peerHits.length;
+    await openThreadOf(failer);
+    await until(async () => (await thread.locator('.agent-thread-answer').count()) > 0, 10000);
+    await page.screenshot({ path: join(SHOTS, '12-failed-thread.png') });
+
+    // T19 — the scheduled root, read while the run is still unread.
+    const root = thread.locator('article.agent-msg').first();
+    const rootEdge = await root.evaluate((el) => getComputedStyle(el).borderLeftColor).catch(() => null);
+    const rootName = thread.locator('.agent-msg--root .agent-msg-head .agent-msg-name--plain');
+    check('[T19] the scheduled root has its own head: the agent\'s name and time (absent pre-fix: the missing head is the bug)',
+      (await rootName.count()) > 0 && (await rootName.innerText()).trim() === 'Analytics puller'
+      && (await thread.locator('.agent-msg--root .agent-msg-time').count()) > 0);
+    check('[T19] …and no unread bar inside the panel (was the accent rule)', rootEdge === 'rgba(0, 0, 0, 0)', `border-left-color=${rootEdge}`);
+
+    // T9 — the real reason leads, and the report sits before the Failed row.
+    const rootText = await root.innerText().catch(() => '');
+    const panelText = await thread.innerText();
+    check('[T9] the failed root leads with the run\'s real reason (was "claude reported is_error: true")',
+      rootText.includes('401 Unauthorized') && !panelText.includes('is_error'), `root="${rootText.slice(0, 120)}"`);
+    const order = await thread.evaluate((el) => {
+      const answer = el.querySelector('.agent-thread-answer');
+      const failed = [...el.querySelectorAll('.agent-thread-sys')].find((n) => /Failed/.test(n.textContent));
+      if (!answer || !failed) return 'missing';
+      return answer.compareDocumentPosition(failed) & Node.DOCUMENT_POSITION_FOLLOWING ? 'answer-first' : 'failed-first';
+    });
+    check('[T9] …and its report sits BEFORE the Failed row (was after it)', order === 'answer-first', order);
+
+    // T13, T14 — targets.
+    const closeR = await rect(thread.locator('.agent-thread-close'));
+    const headR = await rect(thread.locator('.agent-thread-head'));
+    const centreGap = Math.abs((closeR.top + closeR.height / 2) - (headR.top + headR.height / 2));
+    check('[T13] the close button is a centred 24px target (was 18x29 pinned to the top)',
+      closeR.width >= 24 && closeR.height >= 24 && centreGap <= 1, `${Math.round(closeR.width)}x${Math.round(closeR.height)} centre gap=${centreGap}`);
+    const pillR = await rect(thread.locator('.agent-thread-answer-file').first());
+    const copyR = await rect(thread.locator('.agent-thread-answer .chat-code-copy').first());
+    check('[T14] the report\'s file pill and its code Copy are 24px targets (was 21 / 21)', pillR.height >= 24 && copyR.height >= 24,
+      `pill=${pillR.height} copy=${copyR.height}`);
+
+    // T16 — one rule line across the feed and the thread.
+    const rules = await page.evaluate(() => {
+      const r = (s) => document.querySelector(s)?.getBoundingClientRect();
+      const cmp = document.querySelector('.agent-thread-composer .chat-cmp');
+      return {
+        chips: r('.agents-chips')?.bottom, head: r('.agent-thread-head')?.bottom,
+        strip: r('.agents-composer')?.top, foot: r('.agent-thread-foot')?.top,
+        cmpBorder: cmp ? getComputedStyle(cmp).borderTopWidth : null,
+      };
+    });
+    check('[T16] chips and thread head share one bottom rule, composer strips share one top rule, one rule in the thread (was 7px, 21px, 1px)',
+      Math.abs(rules.chips - rules.head) <= 1 && Math.abs(rules.strip - rules.foot) <= 1 && rules.cmpBorder === '0px', JSON.stringify(rules));
+
+    // T17 — the thread line and the / menu speak their state.
+    const failerBar = failer.locator('.agent-thread-bar');
+    const barAria = { expanded: await failerBar.getAttribute('aria-expanded'), controls: await failerBar.getAttribute('aria-controls') };
+    check('[T17] the open thread\'s line says so: aria-expanded and aria-controls (was neither)',
+      barAria.expanded === 'true' && barAria.controls === 'agents-thread-panel', JSON.stringify(barAria));
+    const tInput = thread.locator('.chat-cmp-input');
+    await tInput.click();
+    await tInput.fill('');
+    await tInput.type('/');
+    await until(async () => (await thread.locator('.chat-cmp-slash-row').count()) >= 3, 5000);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    const act = await tInput.evaluate((el) => ({
+      active: el.getAttribute('aria-activedescendant'),
+      selected: el.closest('.chat-cmp')?.querySelector('[role="option"][aria-selected="true"]')?.id || null,
+    }));
+    check('[T17] the field names the highlighted / option (aria-activedescendant; was absent)', !!act.active && act.active === act.selected, JSON.stringify(act));
+    await page.keyboard.press('Escape');
+    check('[guard] Esc with the / menu open closes the menu and leaves the thread open',
+      (await thread.locator('.chat-cmp-slash-row').count()) === 0 && (await thread.count()) === 1);
+
+    // T7 — Turkish case, both composers.
+    const slashFinds = async (scope, typed, want) => {
+      const input = scope.locator('.chat-cmp-input');
+      await input.click();
+      await input.fill('');
+      await input.type(typed);
+      await page.waitForTimeout(300);
+      const rows = await scope.locator('.chat-cmp-slash-row').allInnerTexts();
+      await page.keyboard.press('Escape');
+      await input.fill('');
+      return rows.some((row) => row.includes(want)) ? null : `${typed} → ${JSON.stringify(rows)}`;
+    };
+    const misses = [];
+    for (const scope of [thread, page.locator('.agents-composer')]) {
+      for (const [typed, want] of [['/içerik', 'İçerik-planı'], ['/ILIK', 'ılık-özet'], ['/cozum', 'çözüm-raporu']]) {
+        const miss = await slashFinds(scope, typed, want);
+        if (miss) misses.push(miss);
+      }
+    }
+    check('[T7] / finds İçerik-planı, ılık-özet and çözüm-raporu from /içerik, /ILIK and /cozum in both composers (was 0 rows)',
+      misses.length === 0, misses.join(' | '));
+
+    // T11 — the thread composer offers no connected projects.
+    await tInput.click();
+    await tInput.type('@');
+    await page.waitForTimeout(500);
+    const threadMentions = await thread.locator('.chat-cmp-mention-row').count();
+    await tInput.fill('');
+    check('[T11] @ in a thread lists no connected project, and the panel never asks for them (was the project listed)',
+      threadMentions === 0 && peerHits.length === peersBefore, `rows=${threadMentions} peer requests=${peerHits.length - peersBefore}`);
+
+    // T12 — the panel resizes, remembers, and clamps.
+    const handle = thread.locator('.agent-thread-resize');
+    if ((await handle.count()) === 0) {
+      check('[T12] the thread panel has a resize handle (absent pre-fix: the missing handle is the bug)', false, 'no .agent-thread-resize');
+    } else {
+      const w0 = (await rect(thread)).width;
+      const h = await rect(handle);
+      await page.mouse.move(h.left + h.width / 2, h.top + h.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(h.left + h.width / 2 - 200, h.top + h.height / 2, { steps: 8 });
+      await page.mouse.up();
+      const w1 = (await rect(thread)).width;
+      await handle.focus();
+      await page.keyboard.press('ArrowLeft');
+      const w2 = (await rect(thread)).width;
+      await openChannel();
+      await openThreadOf(namedRow('Analytics puller'));
+      const w3 = (await rect(thread)).width;
+      const h2 = await rect(thread.locator('.agent-thread-resize'));
+      await page.mouse.move(h2.left + h2.width / 2, h2.top + h2.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(h2.left + 2000, h2.top + h2.height / 2, { steps: 8 });
+      await page.mouse.up();
+      const wMin = (await rect(thread)).width;
+      const h3 = await rect(thread.locator('.agent-thread-resize'));
+      await page.mouse.move(h3.left + h3.width / 2, h3.top + h3.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(0, h3.top + h3.height / 2, { steps: 8 });
+      await page.mouse.up();
+      const wMax = (await rect(thread)).width;
+      const parentW = await thread.evaluate((el) => el.parentElement.getBoundingClientRect().width);
+      check('[T12] the thread panel resizes by drag (+200) and by arrow (+16), remembers its width, and clamps to [360, 60%]',
+        Math.abs(w1 - w0 - 200) <= 2 && Math.abs(w2 - w1 - 16) <= 2 && Math.abs(w3 - w2) <= 2
+        && Math.abs(wMin - 360) <= 1 && wMax <= parentW * 0.6 + 1,
+        JSON.stringify({ w0, w1, w2, w3, wMin, wMax, parentW }));
+      await page.evaluate(() => localStorage.removeItem('dreamcontext.agents.threadWidth'));
+      await openChannel();
+      await openThreadOf(namedRow('Analytics puller'));
+    }
+
+    // T4 — keyboard: Enter opens and focuses, Esc and the close button return focus.
+    await closePanel();
+    const bar4 = namedRow('Analytics puller').locator('.agent-thread-bar');
+    await bar4.evaluate((el) => { el.dataset.probe = 'opener'; el.focus(); });
+    await page.keyboard.press('Enter');
+    await until(async () => (await thread.count()) === 1, 8000);
+    await page.waitForTimeout(400);
+    const onOpen = await page.evaluate(() => document.activeElement?.className ?? '');
+    check('[T4] opening a thread from the keyboard moves focus to its close button (was left on the thread line)',
+      onOpen.includes('agent-thread-close'), `active="${onOpen}"`);
+    await thread.locator('.chat-cmp-input').click();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    const afterEsc = { open: await thread.count(), probe: await page.evaluate(() => document.activeElement?.dataset?.probe ?? document.activeElement?.tagName) };
+    check('[T4] Esc closes the thread and gives focus back to the line that opened it (was: panel stayed, focus on BODY)',
+      afterEsc.open === 0 && afterEsc.probe === 'opener', JSON.stringify(afterEsc));
+    if (await thread.count()) await closePanel();
+    await bar4.click();
+    await until(async () => (await thread.count()) === 1, 8000);
+    await thread.locator('.agent-thread-close').click();
+    await page.waitForTimeout(400);
+    const afterClose = await page.evaluate(() => document.activeElement?.dataset?.probe ?? document.activeElement?.tagName);
+    check('[T4] closing with ✕ returns focus to the thread line (was BODY)', afterClose === 'opener', `active=${afterClose}`);
+    await openThreadOf(namedRow('Analytics puller'));
+    await thread.locator('.agent-thread-answer-file').first().click();
+    await until(async () => (await page.locator('.chat-slideover-panel').count()) > 0, 8000);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    check('[guard] Esc over a document opened from the thread closes the document, not the thread',
+      (await page.locator('.chat-slideover-panel').count()) === 0 && (await thread.count()) === 1);
+
+    // F14/T6 — the floating Agent button against the thread, at four widths.
+    for (const w of [1500, 1100, 900, 760]) {
+      await page.setViewportSize({ width: w, height: 950 });
+      await page.waitForTimeout(600);
+      const fab = page.locator('.agent-fab').first();
+      const fabR = (await fab.count()) ? await rect(fab) : null;
+      const footR = await rect(thread.locator('.agent-thread-foot'));
+      await thread.locator('.agent-thread-body').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      await page.waitForTimeout(300);
+      const lastR = await rect(thread.locator('.agent-thread-body > *').last());
+      check(`[F14/T6] at ${w} the floating Agent button clears the thread foot and its last row (was straddling the seam)`,
+        !!fabR && fabR.bottom <= footR.top + 0.5 && overlapArea(lastR, fabR) === 0,
+        `fab=${JSON.stringify(fabR && { top: Math.round(fabR.top), bottom: Math.round(fabR.bottom) })} footTop=${Math.round(footR.top)} overlap=${overlapArea(lastR, fabR)}`);
+    }
+    await page.setViewportSize({ width: 1500, height: 1000 });
+    await page.screenshot({ path: join(SHOTS, '13-thread-measured.png') });
+
+    // T2 — a draft stays with its own agent.
+    const DRAFT = 'draft for the analytics puller only';
+    await thread.locator('.chat-cmp-input').fill(DRAFT);
+    await namedRow('Daily insight digest').locator('.agent-thread-bar').click();
+    await until(async () => (await page.locator('.agent-thread-sub').innerText()).includes('Daily insight digest'), 8000);
+    await page.waitForTimeout(500);
+    const inOther = await thread.locator('.chat-cmp-input').inputValue();
+    await namedRow('Analytics puller').locator('.agent-thread-bar').click();
+    await until(async () => (await page.locator('.agent-thread-sub').innerText()).includes('Analytics puller'), 8000);
+    await page.waitForTimeout(500);
+    const backHome = await thread.locator('.chat-cmp-input').inputValue();
+    check('[T2] a draft stays with its agent: empty in the next thread, back in its own (was carried into the other agent\'s thread)',
+      inOther === '' && backHome === DRAFT, JSON.stringify({ inOther, backHome }));
+    await thread.locator('.chat-cmp-input').fill('');
+
+    // T1 — the scheduled post, once.
+    await namedRow('Daily insight digest').locator('.agent-thread-bar').click();
+    await until(async () => (await page.locator('.agent-thread-sub').innerText()).includes('Daily insight digest'), 8000);
+    await page.waitForTimeout(1200);
+    const postTimes = await thread.evaluate((el, s) => [...el.querySelectorAll('.agent-msg-md, .agent-thread-post-text')]
+      .filter((n) => !n.closest('.agent-thread-answer') && n.textContent.includes(s)).length, POSTED);
+    check('[T1] a scheduled run\'s post appears ONCE in its thread (was root + the same post as a reply)', postTimes === 1, `occurrences=${postTimes}`);
+    await closePanel();
+
+    // T3 + T20 — a refused reply keeps its words, and the refusal speaks plainly.
+    console.log('\n═══ 13. Refusals keep what you typed ═══');
+    const orphanRow = page.locator('.agent-msg', { hasText: 'Interrupted agent' }).first();
+    await openThreadOf(orphanRow);
+    const REFUSED = 'please retry the import from yesterday';
+    await thread.locator('.chat-cmp-input').fill(REFUSED);
+    await thread.locator('.chat-cmp-input').press('Enter');
+    const errNote = thread.locator('.agent-thread-note.agents-composer-note--error');
+    await until(async () => (await errNote.count()) > 0, 10000);
+    const kept = await thread.locator('.chat-cmp-input').inputValue();
+    const noteText = await errNote.innerText().catch(() => '');
+    check('[T3] a refused reply leaves the typed text in the field (was emptied)', kept === REFUSED, `field="${kept}"`);
+    check('[T20] the refusal speaks plainly: "has no session to talk to yet", no em dash (was "this automation … — it has not completed …")',
+      noteText.includes('has no session to talk to yet') && !noteText.includes('—'), `note="${noteText}"`);
+    await thread.locator('.chat-cmp-input').fill('');
+    await closePanel();
+    const channelField = page.locator('.agents-composer .chat-cmp-input');
+    const SAY_OFF = '@offline please check the import';
+    await channelField.fill(SAY_OFF);
+    await channelField.press('Enter');
+    await until(async () => (await page.locator('.agents-composer-note--error').count()) > 0, 10000);
+    await page.waitForTimeout(400);
+    const channelKept = await channelField.inputValue();
+    check('[T3] a refused @mention leaves the typed text in the channel field (was emptied)', channelKept === SAY_OFF, `field="${channelKept}"`);
+    await channelField.fill('');
+
+    // T10 — @ finds an agent by its name and shows its face.
+    await channelField.click();
+    await channelField.type('@deep');
+    await page.waitForTimeout(500);
+    const byName = await page.locator('.agents-composer .chat-cmp-mention-row').count();
+    check('[T10] @deep finds "Deep researcher" by its name (was 0 rows: only the slug matched)', byName === 1, `rows=${byName}`);
+    await channelField.fill('');
+    await channelField.type('@');
+    await page.waitForTimeout(500);
+    const faces = await page.evaluate(() => ({
+      rows: document.querySelectorAll('.agents-composer .chat-cmp-mention-row').length,
+      glyphs: document.querySelectorAll('.agents-composer .chat-cmp-mention-glyph').length,
+      initials: document.querySelectorAll('.agents-composer .chat-cmp-mention-row .agent-av').length,
+    }));
+    check('[T10] every agent in the @ menu wears its face: photo or initials, never the ◈ project glyph (was ◈)',
+      faces.rows > 0 && faces.glyphs === 0 && faces.initials > 0, JSON.stringify(faces));
+    await page.keyboard.press('Escape');
+    await channelField.fill('');
+
+    // T20 — the delivery notes, in words a person uses.
+    console.log('\n═══ 14. Delivery notes ═══');
+    const lastAsk = page.locator('.agent-msg--you').filter({ hasText: 'and the trial step?' }).first();
+    await openThreadOf(lastAsk);
+    await thread.locator('.chat-cmp-input').fill('one more thing: the paid step');
+    await thread.locator('.chat-cmp-input').press('Enter');
+    const seen = new Set();
+    const settledNote = await until(async () => {
+      const n = await thread.locator('.agent-thread-note').allInnerTexts().catch(() => []);
+      n.forEach((x) => seen.add(x.trim()));
+      return n.some((x) => /delivered|finished/i.test(x));
+    }, 60000);
+    const notes = [...seen];
+    check('[T20] the reply settles as "Reply delivered", never "Mac" or "turn" (was "Session resumed on this Mac", "Reply turn finished")',
+      settledNote && notes.some((x) => x === 'Reply delivered') && !notes.some((x) => /Mac|turn/.test(x)), JSON.stringify(notes));
+    await closePanel();
+
+    // T8 + R2-4 — the thread composer honours the run slot, for a run the page did not start,
+    // and since round 2 only for the agent that is actually running.
+    console.log('\n═══ 15. A run the page did not start ═══');
+    await slotFree();
+    await fetch(`${base}/api/automations/holder/run`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' }, body: '{}',
+    });
+    await openChannel();
+    // Wait until the FEED knows the run (the importer's row reads "running"), then one more
+    // fast poll, so the fields are read after the page has had every chance to react.
+    await until(async () => (await namedRow('Nightly importer').locator('.agent-msg-status--running').count()) > 0, 20000);
+    await page.waitForTimeout(2500);
+    await openThreadOf(namedRow('Analytics puller'));
+    await page.waitForTimeout(800);
+    const otherDown = await thread.locator('.chat-cmp-input').isDisabled();
+    check('[R2-4] while ANOTHER agent runs, this thread\'s composer stays open (was read-only for every thread)', !otherDown,
+      `disabled=${otherDown} placeholder="${await thread.locator('.chat-cmp-input').getAttribute('placeholder')}"`);
+    await closePanel();
+    await openThreadOf(namedRow('Nightly importer'));
+    const ownDown = await until(async () => thread.locator('.chat-cmp-input').isDisabled(), 8000);
+    check('[guard] while an agent runs, its OWN thread\'s composer is read-only and says so', ownDown
+      && /Nightly importer is still running/.test((await thread.locator('.chat-cmp-input').getAttribute('placeholder')) ?? ''),
+      `disabled=${ownDown} placeholder="${await thread.locator('.chat-cmp-input').getAttribute('placeholder')}"`);
+    await closePanel();
+    await slotFree();
+
+    // R2-2 (owner decision 2a) — below ~900px of channel the thread OVERLAYS the feed like
+    // Chat's SlideOver (scrim, no resize handle, the feed keeps its width); at 900 and wider it
+    // stays the resizable split. With the 220px sidebar, a 1100 window leaves an 880 channel.
+    console.log('\n═══ 15b. The thread at narrow widths ═══');
+    const geometry = () => page.evaluate(() => {
+      const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, width: b.width, height: b.height }; };
+      return {
+        feed: r('.agents-feed'), main: r('.agents-feed-main'), aside: r('aside.agent-thread'),
+        scrim: document.querySelectorAll('.chat-slideover-scrim').length,
+        handle: document.querySelectorAll('.agent-thread-resize').length,
+      };
+    });
+    await openChannel();
+    await openThreadOf(namedRow('Analytics puller'));
+    const wide = await geometry();
+    check('[guard] at 1500 the thread is still the resizable split: no scrim, a handle, feed + panel fill the row',
+      wide.scrim === 0 && wide.handle === 1 && !!wide.main && !!wide.aside
+        && Math.abs(wide.main.width + wide.aside.width - wide.feed.width) <= 1, JSON.stringify(wide));
+    await closePanel();
+    for (const w of [1100, 760]) {
+      await page.setViewportSize({ width: w, height: 950 });
+      await openChannel();
+      const opener = namedRow('Analytics puller').locator('.agent-thread-bar');
+      await opener.evaluate((el) => { el.dataset.probe = 'opener'; });
+      await openThreadOf(namedRow('Analytics puller'));
+      await page.waitForTimeout(500);
+      const g = await geometry();
+      await page.screenshot({ path: join(SHOTS, `15b-thread-${w}.png`) });
+      const want = g.feed ? Math.min(440, 0.92 * g.feed.width) : 0;
+      check(`[R2-2] at ${w} the thread overlays the channel: the feed keeps its full width (was squeezed beside a >=360px panel)`,
+        !!g.main && !!g.feed && Math.abs(g.main.width - g.feed.width) <= 1, JSON.stringify(g));
+      check(`[R2-2] at ${w} the overlay is Chat's SlideOver: min(440, 92%) wide, on the channel's right edge (was the 360px split panel)`,
+        !!g.aside && Math.abs(g.aside.width - want) <= 1 && Math.abs(g.aside.right - g.feed.right) <= 1,
+        `aside=${JSON.stringify(g.aside)} want=${want}`);
+      check(`[R2-2] at ${w} the overlay has no resize handle (was 1)`, g.handle === 0, `handles=${g.handle}`);
+      const probeTa = await thread.locator('.chat-cmp-input').evaluate((el) => {
+        const b = el.getBoundingClientRect();
+        return document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) === el;
+      });
+      check(`[guard] at ${w} the thread's text field is on top where it paints`, probeTa);
+      await page.mouse.click(g.feed.left + 10, g.feed.top + g.feed.height / 2);
+      await page.waitForTimeout(600);
+      const afterScrim = { open: await thread.count(), focus: await page.evaluate(() => document.activeElement?.dataset?.probe ?? document.activeElement?.tagName) };
+      check(`[R2-2] at ${w} a click on the scrim closes the thread and returns focus to its line (was: the click hit the feed, the panel stayed)`,
+        afterScrim.open === 0 && afterScrim.focus === 'opener', JSON.stringify(afterScrim));
+      if (await thread.count()) await closePanel();
+      await openThreadOf(namedRow('Analytics puller'));
+      await page.waitForTimeout(400);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(500);
+      check(`[guard] at ${w} Esc closes the thread`, (await thread.count()) === 0);
+      if (await thread.count()) await closePanel();
+    }
+    await page.setViewportSize({ width: 1500, height: 1000 });
+
+    // T15 — placeholders in dark.
+    console.log('\n═══ 16. Dark ═══');
+    const darkCtx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
+    await setTheme(darkCtx, 'dark');
+    const dp = await darkCtx.newPage();
+    await openChannel(dp);
+    await namedRow('Analytics puller', dp).locator('.agent-thread-bar').click();
+    await dp.locator('.agent-thread .chat-cmp-input').waitFor({ timeout: 10000 });
+    // Measured twice. First straight away: the feed still reports the importer's run slot for
+    // up to one poll, so both fields are usually disabled here and the placeholder is the busy
+    // sentence. Then once the fields come back: the idle placeholder, which is what most reads.
+    const tField = dp.locator('.agent-thread .chat-cmp-input');
+    const cField = dp.locator('.agents-composer .chat-cmp-input');
+    const busyState = { thread: await tField.isDisabled(), channel: await cField.isDisabled() };
+    const phThread = await contrast(tField, '::placeholder');
+    const phChannel = await contrast(cField, '::placeholder');
+    check('[T15] both composers\' placeholders read at >=4.5:1 in dark while the run slot shows busy (disabled fields) (was 3.56 / 2.12)',
+      phThread >= 4.5 && phChannel >= 4.5, `thread=${phThread} channel=${phChannel} disabled=${JSON.stringify(busyState)}`);
+    const idle = await (async () => {
+      const end = Date.now() + 20000;
+      while (Date.now() < end) {
+        if (!(await tField.isDisabled()) && !(await cField.isDisabled())) return true;
+        await dp.waitForTimeout(250);
+      }
+      return false;
+    })();
+    const idleThread = idle ? await contrast(tField, '::placeholder') : null;
+    const idleChannel = idle ? await contrast(cField, '::placeholder') : null;
+    check('[T15] …and once the slot frees, the idle placeholders read at >=4.5:1 in dark too (was 3.56)',
+      idle && idleThread >= 4.5 && idleChannel >= 4.5, `idle=${idle} thread=${idleThread} channel=${idleChannel}`);
+    await dp.screenshot({ path: join(SHOTS, '16-dark-thread.png') });
+    await darkCtx.close();
+
+    // T20 — a turned-off agent's thread offers the way back. LAST: it turns an agent off.
+    console.log('\n═══ 17. A turned-off agent ═══');
+    cli(['automations', 'disable', 'failer']);
+    await openChannel();
+    await openThreadOf(namedRow('Analytics puller'));
+    const turnOn = thread.locator('.agent-thread-blocked-action');
+    const hasTurnOn = (await turnOn.count()) > 0;
+    if (hasTurnOn) await turnOn.first().click();
+    const enabledAgain = hasTurnOn && await until(async () => {
+      const list = await page.evaluate(async () => (await fetch('/api/automations')).json().catch(() => null));
+      return list?.automations?.find((a) => a.slug === 'failer')?.enabled === true;
+    }, 10000);
+    check('[T20] a turned-off agent\'s thread offers "Turn on", and it turns the agent on (absent pre-fix: the missing button is the bug)',
+      enabledAgain && await until(async () => (await thread.locator('.chat-cmp-input').count()) > 0, 8000), `button=${hasTurnOn}`);
+    await closePanel();
+    await page.unroute(/\/api\/peer\/peers/);
 
     check('no uncaught page errors', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } finally {
