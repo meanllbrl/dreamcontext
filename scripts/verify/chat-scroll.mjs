@@ -353,7 +353,7 @@ async function runScenarios(chromium, base, report) {
   }, mark);
 
   const composer = () => vis('.chat-cmp-input').first();
-  const busy = async () => (await vis('.chat-cmp-stop').count()) > 0;
+  const busy = async () => (await vis('.chat-cmp-send.is-stop').count()) > 0;   // the Stop button (.chat-cmp-stop was removed in f3e4090f)
   const send = async (t) => {
     await composer().click();
     await composer().fill(t);

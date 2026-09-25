@@ -499,8 +499,31 @@ async function avatarWidths(page, sel) {
 
 async function runTheme(chromium, base, theme, report) {
   const browser = await chromium.launch();
+  try {
+    await runThemeIn(browser, base, theme, report);
+  } finally {
+    await browser.close();
+  }
+}
+
+async function runThemeIn(browser, base, theme, report) {
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 }, colorScheme: theme });
   page.on('pageerror', (e) => report.note(`[page error] ${String(e).slice(0, 160)}`));
+  // A render crash lands in the app's error boundary, which swallows the exception (no
+  // pageerror). React still logs which component threw; keep that line as evidence.
+  const crashes = [];
+  page.on('console', (m) => {
+    const line = m.type() === 'error' && m.text().split('\n').find((l) => /The above error occurred in the/.test(l));
+    if (line) crashes.push(line.trim().slice(0, 200));
+  });
+  // Playwright dismisses a dialog silently, so an alert (the hand-off's readiness refusal is
+  // one) would otherwise leave no trace but a check that times out later.
+  const dialogs = [];
+  page.on('dialog', (d) => {
+    dialogs.push(d.message());
+    report.note(`[dialog] ${d.message().replace(/\s+/g, ' ').slice(0, 200)}`);
+    d.dismiss().catch(() => {});
+  });
   mkdirSync(SHOTS, { recursive: true });
 
   const vis = (sel) => page.locator(`${sel}:visible`);
@@ -508,7 +531,8 @@ async function runTheme(chromium, base, theme, report) {
   const paneText = async () => (await pane().innerText()).replace(/\s+/g, ' ');
   const rail = () => vis('.chat-live-rail').first();
   const railText = async () => ((await rail().count()) ? (await rail().innerText()).replace(/\s+/g, ' ') : '');
-  const busy = async () => (await vis('.chat-cmp-stop').count()) > 0;
+  // The composer's send button turns into Stop while a turn runs (Composer.tsx, `is-stop`).
+  const busy = async () => (await vis('.chat-cmp-send.is-stop').count()) > 0;
   const until = async (fn, ms = 20000, step = 120) => {
     const end = Date.now() + ms;
     while (Date.now() < end) { if (await fn().catch(() => false)) return true; await page.waitForTimeout(step); }
@@ -519,18 +543,36 @@ async function runTheme(chromium, base, theme, report) {
   const ok = (label, cond, detail) => report.check(theme, label, cond, detail);
   const shot = async (loc, name) => { try { if (await loc.count()) await loc.first().screenshot({ path: join(SHOTS, `${name}-${theme}.png`) }); } catch { /* a moving target */ } };
   const say = async (text) => {
+    if (!(await until(async () => (await vis('.chat-cmp-input').count()) > 0, 30000))) {
+      await page.screenshot({ path: join(SHOTS, `no-composer-${text}-${theme}.png`) });
+    }
     await vis('.chat-cmp-input').first().click();
     await vis('.chat-cmp-input').first().fill(text);
     await page.keyboard.press('Enter');
   };
-  const inks = {
-    success: await resolveColor(page, 'var(--color-success-ink)'),
-    error: await resolveColor(page, 'var(--color-error-ink)'),
-  };
+  // Resolved after navigation (below): on about:blank the tokens are undefined and read as black.
+  const inks = {};
   const colorOf = (loc) => loc.evaluate((el) => getComputedStyle(el).color);
+  /**
+   * A row's line as painted: verb, subject chip, tail and the running "…" (molecules.tsx
+   * ActionHead glues the "…" to whichever piece is last, so with a chip it sits OUTSIDE the
+   * verb span). The avatar, the muted subtitle and the meta are not part of the line.
+   */
+  const lineOf = (row) => row.locator('.chat-m-toolhead').first().evaluate((head) => [...head.children]
+    .filter((c) => !c.matches('.chat-m-toolhead-hit, .chat-step-avatar, .chat-m-toolhead-sub, .chat-m-toolhead-meta'))
+    .map((c) => (c.textContent || '').trim()).filter(Boolean).join(' ').replace(/\s+…$/, '…'));
   const minContrast = {};
   /** Record the worst contrast of every visible match, keyed by what it is. */
   const sampleContrast = async () => {
+    // Contrast is a property of the settled paint: a surface still fading in (the receipt's
+    // rise-in runs opacity 0 → 1) reads low for reasons no user sees. Finite animations only;
+    // a spinner never finishes. Capped so a stuck animation cannot hang the run.
+    await page.evaluate(() => Promise.race([
+      Promise.all(document.getAnimations()
+        .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime ?? Infinity))
+        .map((a) => a.finished.catch(() => {}))),
+      new Promise((r) => { setTimeout(r, 2000); }),
+    ]));
     for (const [what, sel] of Object.entries(TEXT_SELECTORS)) {
       const loc = vis(sel);
       const n = Math.min(await loc.count(), 12);
@@ -562,28 +604,66 @@ async function runTheme(chromium, base, theme, report) {
     ok(`motion: ${label} animates`, moving > 0, `${sel}: ${moving} animating`);
     ok(`motion: …and is still under reduced motion`, still.length === 0, still.join(' | '));
   };
-
-  console.log(`\n═══ ${theme} ═══`);
-  await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(4000);
-  for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
-  if (!(await page.locator('.agent-surface.expanded').count())) {
-    for (const sel of ['.agent-fab', '.agent-overlay-head', '.agent-surface']) {
+  /** Bring the agent surface back up, the way the run opened it. */
+  const expandSurface = async () => {
+    if (await page.locator('.agent-surface.expanded').count()) return;
+    // With no session, the FAB; with one, its chip in the bottom-right dock (AgentDock.tsx).
+    for (const sel of ['.agent-dock-chip', '.agent-fab', '.agent-overlay-head', '.agent-surface']) {
       const el = page.locator(sel).first();
       if (await el.count()) { await el.click({ force: true }).catch(() => {}); await page.waitForTimeout(1500); }
       if (await page.locator('.agent-surface.expanded').count()) break;
     }
-  }
+  };
+  /**
+   * Esc on an overlay closes that overlay and nothing else: the chat under it stays open. If
+   * the surface collapsed, that is recorded and the surface is reopened so the rest still runs.
+   */
+  const escClose = async (overlaySel, label) => {
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    const closed = (await vis(overlaySel).count()) === 0;
+    const surfaceOpen = (await page.locator('.agent-surface.expanded').count()) > 0;
+    ok(`Esc closes ${label} and the chat stays open`, closed && surfaceOpen, `closed=${closed} surfaceOpen=${surfaceOpen}`);
+    if (!surfaceOpen) await expandSurface();
+  };
+
+  console.log(`\n═══ ${theme} ═══`);
+  await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(4000);
+  inks.success = await resolveColor(page, 'var(--color-success-ink)');
+  inks.error = await resolveColor(page, 'var(--color-error-ink)');
+  ok('instrument check: the two inks resolve to real, different colours after navigation',
+    inks.success !== inks.error && ![inks.success, inks.error].includes('rgb(0, 0, 0)'), JSON.stringify(inks));
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
+  await expandSurface();
   if (!(await vis('.chat-cmp-input').count())) await page.getByRole('button', { name: /Start chat/ }).click();
   ok('a chat session opens against the real WS route', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 20000));
   await page.waitForTimeout(800);
 
   // ── Plan mode, picked the way a person picks it ─────────────────────────────────────
   const modeWord = async () => (await vis('.chat-cmp-modeltrigger').first().locator('.chat-cmp-modeltrigger-model').innerText()).trim();
+  // Open the menu and wait for it (a click before it mounts picks nothing), then pick the row
+  // by its name, not its position. A mode change restarts the process, so the composer is
+  // gone for a moment: wait for it to come back before the first message.
   await vis('.chat-cmp-modeltrigger').first().click();
-  await page.waitForTimeout(300);
-  await vis('.chat-cmp-modemenu .chat-cmp-modelrow').nth(1).click();
+  const planRow = vis('.chat-cmp-modemenu .chat-cmp-modelrow').filter({ has: page.locator('.chat-cmp-modelrow-name', { hasText: /^Plan$/ }) });
+  await planRow.first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+  await planRow.first().click({ timeout: 10000 }).catch((e) => report.note(`[mode] ${String(e).split('\n')[0]}`));
+  // PRE-EXISTING SERVER RACE, not this suite's subject: a mode switch disposes the chat and
+  // respawns it with `resume=<id>` on the same tick. On a chat with no transcript yet,
+  // agent-chat.ts's awaitResumeHandoff skips its wait ("an id with no transcript never costs a
+  // wait") while the refusal guard below it still refuses a conversation the old socket holds,
+  // so whenever the new upgrade beats the old close the pane lands on "Session ended". The
+  // refusal names its own recovery ("press Resume in a moment"), which is what a person does.
+  const resumeBtn = vis('button').filter({ hasText: /^Resume session$/ });
+  await until(async () => (await modeWord()) === 'Plan' || (await resumeBtn.count()) > 0, 10000);
+  if (await resumeBtn.count()) {
+    report.note('[pre-existing] the mode switch was refused by the server hand-off race (agent-chat.ts awaitResumeHandoff vs its refusal guard); pressing Resume, as the refusal says');
+    await resumeBtn.first().click();
+  }
   ok('the chat is in Plan mode', await until(async () => (await modeWord()) === 'Plan', 25000), await modeWord().catch(() => '?'));
+  ok('the composer is back after the mode restart', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 30000));
+  if (!(await vis('.chat-cmp-input').count())) await page.screenshot({ path: join(SHOTS, `mode-restart-${theme}.png`) });
   await page.waitForTimeout(800);
 
   // ════ PLAN-ANSWER ═══════════════════════════════════════════════════════════════════
@@ -648,6 +728,11 @@ async function runTheme(chromium, base, theme, report) {
     Number.isFinite(WIN_HOLD_MS) && (await page.locator('.chat-live-rail [data-just-won]').count()) === 0, `WIN_HOLD_MS=${WIN_HOLD_MS}`);
   await waitIdle();
   await shot(vis('.chat-live-rail'), 'plan-sealed');
+  // §5: the seal stamps once. PLAN-ANSWER sent 7 agents (a scout, then 3 lenses twice).
+  const sealStats = async () => ((await vis('.chat-live-rail .quest-victory-stats').first().innerText().catch(() => '')) || '').trim();
+  const sealAtWin = await sealStats();
+  ok('the seal counts the plan\'s own party: "2 review rounds" and "7 agents"',
+    sealAtWin.includes('2 review rounds') && sealAtWin.includes('7 agents'), sealAtWin);
 
   // ── the party cards, landed ─────────────────────────────────────────────────────────
   ok('exactly 2 review cards', (await reviewCards().count()) === 2, `saw ${await reviewCards().count()}`);
@@ -679,6 +764,21 @@ async function runTheme(chromium, base, theme, report) {
   await r1.locator('.chat-subagents-reports-toggle').click().catch(() => {});
   ok('…and all 3 after the toggle', await until(async () => (await r1.locator('.chat-subreport').count()) === 3, 5000),
     `${await r1.locator('.chat-subreport').count()} reports`);
+  // A hovered row names its drill-in ("open →") in the status mark's place, never on the meta.
+  const lastRow = r1.locator('.chat-subagents-row').last();
+  await lastRow.hover();
+  await page.waitForTimeout(400);
+  const hoverBoxes = await lastRow.evaluate((row) => {
+    const box = (sel) => { const r = row.querySelector(sel)?.getBoundingClientRect(); return r ? { l: r.left, r: r.right, t: r.top, b: r.bottom } : null; };
+    return { open: box('.chat-subagents-row-open'), meta: box('.chat-subagents-row-meta'),
+      openOpacity: getComputedStyle(row.querySelector('.chat-subagents-row-open')).opacity };
+  });
+  const overlapX = hoverBoxes.open && hoverBoxes.meta ? Math.max(0, Math.min(hoverBoxes.open.r, hoverBoxes.meta.r) - Math.max(hoverBoxes.open.l, hoverBoxes.meta.l)) : -1;
+  const overlapY = hoverBoxes.open && hoverBoxes.meta ? Math.max(0, Math.min(hoverBoxes.open.b, hoverBoxes.meta.b) - Math.max(hoverBoxes.open.t, hoverBoxes.meta.t)) : -1;
+  ok('a hovered row shows "open →" clear of its meta (no overlap)',
+    hoverBoxes.openOpacity === '1' && overlapX * overlapY === 0 && overlapX >= 0, JSON.stringify({ ...hoverBoxes, overlapX, overlapY }));
+  await shot(lastRow, 'party-row-hover');
+  await page.mouse.move(0, 0);
   const rowInfo = await vis('.chat-subagents-row').evaluateAll((els) => els.map((e) => ({ title: e.getAttribute('title') || '', text: e.innerText })));
   ok('no raw agent type in a row\'s text; it lives in the row\'s title',
     rowInfo.every((r) => !/goal-plan-reviewer|Explore/.test(r.text)) && rowInfo.some((r) => r.title.includes('goal-plan-reviewer')),
@@ -700,24 +800,48 @@ async function runTheme(chromium, base, theme, report) {
   await say('PLAN-GO');
   ok('"Read the full project snapshot" reads as its own sentence',
     await until(async () => (await vis('.chat-m-toolhead-action').allInnerTexts()).some((t) => t.trim() === 'Read the full project snapshot'), 15000));
-  const creating = vis('.chat-dreamcard').filter({ hasText: 'Creating task' });
-  ok('a running dreamcard reads in the present tense: "Creating task…"',
-    await until(async () => /^Creating task…$/.test((await creating.last().locator('.chat-m-toolhead-action').innerText()).trim()), 8000),
-    await creating.last().locator('.chat-m-toolhead-action').innerText().catch(() => '<none>'));
-  const deploy = vis('.chat-toolcard').filter({ hasText: 'Deploy' });
-  ok('"Deploy the preview build" is running',
-    await until(async () => (await deploy.last().getAttribute('data-status')) === 'running', 10000));
+  // §5.3: "A running dreamcard row reads in the present tense and ends in '…'". The line is the
+  // whole row (verb + chip + "…"), since the chip, not the verb, is last on a row that has one.
+  // The two running rows are live on the fixture's clock ("Creating task" ~0.7-3.3s, "Deploy"
+  // ~3.8-7s after PLAN-GO), so they are watched CONCURRENTLY: a failing first check must not
+  // spend the second one's window and report a working product as broken.
+  const creating = vis('.chat-dreamcard[data-status="running"]').filter({ hasText: 'Creating task' });
+  const deploy = vis('.chat-toolcard').filter({ hasText: 'Deploy the preview build' });
   const deployAction = deploy.last().locator('.chat-m-toolhead-action');
+  let creatingLine = '<never running>';
+  const [creatingOk, live] = await Promise.all([
+    until(async () => {
+      if (!(await creating.count())) return false;
+      creatingLine = await lineOf(creating.last());
+      return /^Creating task\b.*…$/.test(creatingLine);
+    }, 8000, 80),
+    (async () => {
+      const running = await until(async () => (await deploy.last().getAttribute('data-status', { timeout: 500 })) === 'running', 12000, 80);
+      if (!running) return { running };
+      const line = await lineOf(deploy.last()).catch(() => '');
+      const color = await colorOf(deployAction).catch(() => '');
+      // PLAN-ANSWER filed the task too; the stretch under test is PLAN-GO's, the last one.
+      const stretch = (await page.evaluate(stretchesInPage)).filter((x) => /Task created|Creating task/.test(x.text)).at(-1);
+      const sel = '.chat-scroll-inner > .chat-dreamcard[data-stretch="lead"] .chat-step-avatar .chat-a-avatar[data-running]';
+      const moving = await animatingCount(page, sel);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.waitForTimeout(150);
+      const still = await movingUnder(page, sel);
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await shot(vis('.chat-scroll'), 'team-log-live');
+      return { running, line, color, stretch, moving, sel, still };
+    })(),
+  ]);
+  // §5.3: "A running dreamcard row reads in the present tense and ends in '…'". The line is the
+  // whole row (verb + chip + "…"), since the chip, not the verb, is last on a row that has one.
+  ok('a running dreamcard reads in the present tense: "Creating task…"', creatingOk, creatingLine);
+  ok('"Deploy the preview build" is running', live.running);
   ok('the running row ends in "…" in success ink',
-    /…$/.test((await deployAction.innerText()).trim()) && (await colorOf(deployAction)) === inks.success,
-    `${await deployAction.innerText()} ${await colorOf(deployAction)} vs ${inks.success}`);
-  const stretches = await page.evaluate(stretchesInPage);
-  const createStretch = stretches.find((s) => /Task created|Creating task/.test(s.text));
+    live.line === 'Deploy the preview build…' && live.color === inks.success, `${live.line} ${live.color} vs ${inks.success}`);
   ok('the stretch led by `tasks create` shows exactly one avatar',
-    !!createStretch && createStretch.steps >= 2 && createStretch.avatars === 1, JSON.stringify(createStretch));
-  await motion('the dreamcard-led stretch lead while "Deploy the preview build" runs',
-    '.chat-scroll-inner > .chat-dreamcard[data-stretch="lead"] .chat-step-avatar .chat-a-avatar[data-running]');
-  await shot(vis('.chat-scroll-inner'), 'team-log-live');
+    !!live.stretch && live.stretch.steps >= 2 && live.stretch.avatars === 1, JSON.stringify(live.stretch));
+  ok('motion: the dreamcard-led stretch lead while "Deploy the preview build" runs animates', live.moving > 0, `${live.sel}: ${live.moving} animating`);
+  ok('motion: …and is still under reduced motion', !!live.still && live.still.length === 0, (live.still || ['<not measured>']).join(' | '));
 
   ok('the team-log turn finishes', await waitText('PLAN-GO-DONE'));
   await waitIdle();
@@ -751,7 +875,13 @@ async function runTheme(chromium, base, theme, report) {
   ok('a chained `goal-live && tasks log` keeps its own dreamcard row',
     (await vis('.chat-scroll-inner > .chat-dreamcard').filter({ hasText: /Log/i }).count()) >= 1);
   const RAW = /^(Bash|Read|Edit|Write|Grep|Glob|LS|Agent|Task|AskUserQuestion|WebFetch|WebSearch|Skill|TodoWrite|mcp__\S+|FrobnicateThing)$/;
-  ok('no visible header shows a bare tool name', actions.every((t) => !RAW.test(t)), JSON.stringify(actions.filter((t) => RAW.test(t))));
+  // §5.3 lists '"Read" plus a file chip' as a line that must render: the chip is the step's
+  // subject, so a header is bare only when its WHOLE line (verb + chip + tail) is a tool name.
+  const lines = [];
+  const headRows = vis('.chat-toolcard, .chat-dreamcard');
+  for (let i = 0, n = await headRows.count(); i < n; i++) lines.push(await lineOf(headRows.nth(i)).catch(() => ''));
+  ok('no visible header shows a bare tool name',
+    lines.length > 0 && lines.every((t) => !RAW.test(t)), JSON.stringify(lines.filter((t) => RAW.test(t))));
 
   // The work beat, collapsed, then opened.
   const beat = vis('.chat-toolrun').filter({ hasText: 'Looked around' }).first();
@@ -798,7 +928,10 @@ async function runTheme(chromium, base, theme, report) {
 
   await sampleContrast();
   await samplePlain('team log');
-  await shot(vis('.chat-scroll-inner'), 'team-log');
+  await shot(vis('.chat-scroll'), 'team-log');
+  const sealAfter = await sealStats();
+  ok('the seal does not move when the same chat keeps working after the win', sealAfter === sealAtWin,
+    `at win: ${sealAtWin} :: after PLAN-GO: ${sealAfter}`);
 
   // Layout, plan chat.
   for (const width of [1500, 720]) {
@@ -811,6 +944,8 @@ async function runTheme(chromium, base, theme, report) {
   }
   await page.setViewportSize({ width: 1500, height: 1000 });
   await page.waitForTimeout(400);
+  ok('the app is still up after the 720px round trip (no error boundary)',
+    (await page.getByText('Something went wrong').count()) === 0, crashes.join(' | ') || 'no component named');
   const heads = await vis('.chat-m-toolhead').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
   ok('tool and dreamcard rows are still 32px', heads.length > 0 && heads.every((h) => Math.abs(h - 32) <= 1), JSON.stringify([...new Set(heads)]));
   const sizes = {
@@ -835,8 +970,13 @@ async function runTheme(chromium, base, theme, report) {
 
   // ════ Develop: the hand-off opens it ════════════════════════════════════════════════
   console.log('── the Develop quest');
+  const ready = await fetch(`${base}/api/tasks/${SLUG}/readiness`, { headers: { 'X-Dreamcontext-Vault': 'proj' } })
+    .then((r) => r.json()).catch((e) => ({ error: String(e) }));
+  ok('the fixture task passes the hand-off readiness gate (GET /api/tasks/:slug/readiness)', ready.ready === true, JSON.stringify(ready));
+  const dialogsBefore = dialogs.length;
   await vis('.chat-action-btn[data-action="develop"]').first().click();
-  ok('a Develop session opens', await until(async () => (await modeWord()) === 'Develop', 25000), await modeWord().catch(() => '?'));
+  ok('a Develop session opens', await until(async () => (await modeWord()) === 'Develop', 25000),
+    `${await modeWord().catch(() => '?')} ${dialogs.slice(dialogsBefore).join(' | ').replace(/\s+/g, ' ').slice(0, 300)}`);
   const devMap = () => vis('.chat-live-rail .quest-map[data-kind="develop"]');
   ok('the Develop quest map is on the rail', await until(async () => (await devMap().count()) === 1, 20000));
   ok('develop stages are build, boss, trial',
@@ -855,7 +995,7 @@ async function runTheme(chromium, base, theme, report) {
   ok('card titles: "Build · wave 1", "Boss gate · round 2", "Final trial · round 1"',
     ['Build · wave 1', 'Boss gate · round 2', 'Final trial · round 1'].every((k) => kickers.map((t) => t.trim()).includes(k)),
     JSON.stringify(kickers));
-  if ((await buildCard.getAttribute('data-open')) == null) await buildCard.locator('.chat-m-cardhead-hit').first().click();
+  if ((await buildCard.count()) && (await buildCard.getAttribute('data-open')) == null) await buildCard.locator('.chat-m-cardhead-hit').first().click();
   await page.waitForTimeout(300);
   const buildRows = await buildCard.locator('.chat-subagents-row').evaluateAll((els) => els.map((e) => ({
     role: e.getAttribute('data-role'), label: e.querySelector('.chat-subagents-row-role')?.textContent ?? '',
@@ -889,8 +1029,7 @@ async function runTheme(chromium, base, theme, report) {
   await sampleContrast();
   await samplePlain('develop receipt');
   await shot(vis('.quest-receipt'), 'develop-receipt');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
+  await escClose('.quest-receipt', 'the Develop receipt');
 
   // ════ goal-live in the Develop chat ═════════════════════════════════════════════════
   console.log('── goal-live on the rail');
@@ -919,8 +1058,7 @@ async function runTheme(chromium, base, theme, report) {
   await sampleContrast();
   await samplePlain('goal popup');
   await shot(vis('.goal-live-popup'), 'goal-popup');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
+  await escClose('.goal-live-popup', 'the goal popup');
 
   await say('GOAL-BUILD');
   const branch = () => vis('.chat-live-rail .quest-branch');
@@ -981,8 +1119,7 @@ async function runTheme(chromium, base, theme, report) {
   await sampleContrast();
   await samplePlain('goal receipt');
   await shot(receipt, 'goal-receipt');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
+  await escClose('.quest-receipt', 'the goal receipt');
 
   await say('GOAL-NOCTX');
   await waitText('GOAL-NOCTX-WRITTEN');
@@ -991,8 +1128,7 @@ async function runTheme(chromium, base, theme, report) {
   await until(async () => (await vis('.quest-receipt').count()) === 1, 5000);
   const noCtx = `${await railText()} ${await vis('.quest-receipt').innerText().catch(() => '')}`;
   ok('GOAL-NOCTX: no "Nk tokens" anywhere', !/\d+(\.\d+)?k tokens/.test(noCtx), noCtx.slice(0, 300));
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
+  await escClose('.quest-receipt', 'the no-context receipt');
 
   await say('GOAL-CLEAR');
   ok('GOAL-CLEAR: the develop quest comes back to the rail',
@@ -1029,7 +1165,6 @@ async function runTheme(chromium, base, theme, report) {
   const surfaces = {
     bg: ['var(--color-bg)'], 'bg-secondary': ['var(--color-bg-secondary)'], 'bg-tertiary': ['var(--color-bg-tertiary)'],
     'error-subtle on bg-secondary': ['var(--color-bg-secondary)', 'var(--color-error-subtle)'],
-    'error-subtle on bg-tertiary': ['var(--color-bg-tertiary)', 'var(--color-error-subtle)'],
   };
   for (const ink of ['success', 'error']) {
     for (const [name, layers] of Object.entries(surfaces)) {
@@ -1039,6 +1174,31 @@ async function runTheme(chromium, base, theme, report) {
       ok(`--color-${ink}-ink on ${name} ≥ 4.5:1`, r >= 4.5, String(r));
     }
   }
+  // T8's ask: error ink on "the pink background of a failed row inside a run". Measured on a
+  // failed row built from the app's own classes, so the cascade decides its backdrop in each
+  // state: cards.css gives it --color-error-subtle over the run's --color-bg-secondary, and its
+  // error rule outranks the open/hover --color-bg-tertiary rules. A plain tertiary layering is
+  // recorded as a note only: nothing in the product paints error-subtle over bg-tertiary.
+  report.note(`${theme} (not painted) --color-error-ink on error-subtle over bg-tertiary: ${await probe('var(--color-error-ink)', ['var(--color-bg-tertiary)', 'var(--color-error-subtle)'])}`);
+  for (const state of ['closed', 'open', 'hovered']) {
+    await page.evaluate((st) => {
+      document.getElementById('dcq-failrow')?.remove();
+      const host = document.createElement('div');
+      host.id = 'dcq-failrow';
+      host.style.cssText = 'position:fixed;left:40px;top:40px;width:600px;z-index:99999;';
+      host.innerHTML = `<div class="chat-toolrun"><div class="chat-toolrun-rows"><div class="chat-toolcard chat-step" data-status="error"${st === 'open' ? ' data-open="true"' : ''}>`
+        + '<div class="chat-m-toolhead"><span class="chat-m-toolhead-action">Couldn\'t edit</span></div></div></div></div>';
+      document.body.appendChild(host);
+    }, state);
+    const row = page.locator('#dcq-failrow .chat-toolcard');
+    if (state === 'hovered') await row.hover();
+    const bg = await row.evaluate((e) => getComputedStyle(e).backgroundColor);
+    const r = await contrast(page.locator('#dcq-failrow .chat-m-toolhead-action'));
+    report.note(`${theme} failed row in a run (${state}): bg ${bg}, ${r}`);
+    ok(`--color-error-ink on a failed row inside a run (${state}) ≥ 4.5:1`, r >= 4.5, `${r} on ${bg}`);
+  }
+  await page.evaluate(() => document.getElementById('dcq-failrow')?.remove());
+  await page.mouse.move(0, 0);
   for (const [what, v] of Object.entries(minContrast)) {
     report.note(`${theme} worst ${what}: ${v.ratio} "${v.text}"`);
     ok(`visible text ≥ 4.5:1: ${what}`, v.ratio >= 4.5, `${v.ratio} "${v.text}"`);
@@ -1050,8 +1210,6 @@ async function runTheme(chromium, base, theme, report) {
     plainLeaks.length === 0, plainLeaks.slice(0, 8).join('\n      '));
   const dashes = dashLines(await chromeText(page, '.chat-live-rail'));
   ok('no em dash on the rail', dashes.length === 0, dashes.join(' | '));
-
-  await browser.close();
 }
 
 /** The writer's session rule, against the real CLI in a vault of its own (an unstamped
@@ -1101,7 +1259,13 @@ try {
   for (const theme of (process.env.VERIFY_THEMES || 'light,dark').split(',')) {
     rmSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), { force: true });
     clearGoalFiles();
-    await runTheme(chromium, `http://127.0.0.1:${port}`, theme, report);
+    // One theme's crash must not cost the other its run: record it and go on.
+    try {
+      await runTheme(chromium, `http://127.0.0.1:${port}`, theme, report);
+    } catch (err) {
+      report.fails.push(`[${theme}] harness: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
+      console.error(err);
+    }
   }
   writerChecks(report);
 } catch (err) {
