@@ -173,7 +173,10 @@ function UserMessage({
  * what once let a whole answer revert to raw markdown, `<a href="…mp4">` and all, on
  * somebody else's re-render.
  */
-function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
+/** Exported for the `#agents` channel, which renders an agent's answer with THIS — the
+ *  chat's own card, markdown, leading and clickable paths — rather than a second, plainer
+ *  paragraph that reads like a different product. */
+export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
   text: string;
   onOpenFile?: (path: string) => void;
   /** The blinking cursor. Only the run that is currently being typed gets one. */

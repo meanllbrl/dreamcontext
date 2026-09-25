@@ -25,6 +25,9 @@
   /* The transcript's measure: full-width organisms (tool cards, assistant answers)
      stretch to it so long lines stay readable on a wide pane. */
   --chat-line-width: min(960px, 100%);
+  /* The tallest a clip may play inline (cards.css `.chat-md-video`). A token so a surface that
+     sizes a clip from its aspect (the agents channel) caps it at the same height. */
+  --chat-media-max-h: 460px;
   /* The transcript's READING size — one notch under the app's 16px body token, which reads
      oversized in a dense conversation column (owner call 07-25, same "calmer over sharper"
      bias as the embedded terminal's 14.5px). Interpolated on the token scale exactly like

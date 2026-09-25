@@ -405,6 +405,8 @@
   outline: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 .chat-cmp-mention-glyph { color: var(--color-accent); }
+/* A caller-drawn face (`renderMentionFace`): sits in the logo's slot, the caller sizes it. */
+.chat-cmp-mention-face { display: inline-flex; flex: 0 0 auto; }
 
 /* The field's positioning context — exists for the mention highlight mirror below, and is
    otherwise a layout no-op: it takes the textarea's old flex slot and the textarea fills it. */
@@ -495,7 +497,15 @@
 }
 
 .chat-cmp-input:focus { outline: none; }
-.chat-cmp-input:disabled { opacity: 0.6; }
+/* Declared, not left to the UA: Chromium's grey is 4.61:1 on white but 3.56:1 on the dark card.
+   The token keeps light exactly as it was and lifts dark (tokens.css). */
+.chat-cmp-input::placeholder { color: var(--color-text-placeholder); }
+/* A disabled field is QUIET, not faded. Its placeholder is the sentence that says why it is down
+   ("Connecting…", "Nightly importer is still running…"), and `opacity: 0.6` dimmed exactly that
+   sentence to 3.2:1 in dark and ~2.6:1 in light, the one moment the reader needs it. So only a
+   kept draft goes secondary; the placeholder keeps its own token, and Send's disabled state
+   plus the cursor carry "you cannot type here". */
+.chat-cmp-input:disabled { color: var(--color-text-secondary); cursor: not-allowed; }
 
 /* Send / Queue / Stop — ONE round disc with three states, at the toolbar's end.
    Empty-handed Send is just an outline (nothing to send yet); with content it fills in, so

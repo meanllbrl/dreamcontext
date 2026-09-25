@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
 import { VoiceMeter } from './VoiceMeter';
@@ -187,7 +187,8 @@ export function Composer({
   quote, onClearQuote, onOpenTaskPicker, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, onMcpPanel, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
-  mentions, modelScope = 'session', idlePlaceholder, unavailable,
+  mentions, renderMentionFace, mentionsLabel = 'Connected projects',
+  modelScope = 'session', idlePlaceholder, unavailable,
   showModel = true,
   activeAccountId = '', onAccountChange,
   contextHandoff, onContextHandoffChange,
@@ -320,6 +321,15 @@ export function Composer({
    * the delivery), so it passes no `onPeerMessage` and nothing is intercepted.
    */
   mentions?: PeerMention[];
+  /**
+   * Draw a mention row's face yourself. Absent (the chat) = the peer's logo, or the `◈` glyph.
+   * The agents channel passes its `AgentAvatar`, so an agent without a photo shows its initials
+   * as it does everywhere else on that page, not a glyph that means "connected project".
+   */
+  renderMentionFace?: (p: PeerMention) => ReactNode;
+  /** The `@` listbox's accessible name. Absent = "Connected projects", which is what the chat
+   *  offers; a caller whose `mentions` are something else names them. */
+  mentionsLabel?: string;
   /**
    * What a model/effort change APPLIES to — which decides whether "Set as default" is offered.
    *
@@ -585,6 +595,15 @@ export function Composer({
   const mentionMatches = mentionQuery === null ? [] : filterPeerMentions(peers, mentionQuery);
   const mentionOpen = mentionQuery !== null && mentionMatches.length > 0;
   const mentionListRef = useRef<HTMLDivElement | null>(null);
+  // The two listboxes' ids, so the textarea can say which one it drives and which row is
+  // highlighted (`aria-controls` / `aria-activedescendant`). Without them a screen reader hears
+  // the field and nothing of the menu the arrow keys are moving through.
+  const menuId = useId();
+  const mentionListId = `${menuId}-mention`;
+  const slashListId = `${menuId}-slash`;
+  const activeOptionId = mentionOpen
+    ? `${mentionListId}-${mentionIndex}`
+    : slashOpen ? `${slashListId}-${slashIndex}` : undefined;
 
   useEffect(() => {
     if (!mentionOpen) return;
@@ -1351,10 +1370,11 @@ export function Composer({
           touched in a month is a recall problem: the name alone does not tell you which one
           it is, and the one-liner underneath does. */}
       {mentionOpen && (
-        <div className="chat-cmp-slash chat-cmp-mention" role="listbox" aria-label="Connected projects" ref={mentionListRef}>
+        <div className="chat-cmp-slash chat-cmp-mention" role="listbox" id={mentionListId} aria-label={mentionsLabel} ref={mentionListRef}>
           {mentionMatches.map((p, i) => (
             <button
               key={p.vault}
+              id={`${mentionListId}-${i}`}
               type="button"
               role="option"
               aria-selected={i === mentionIndex}
@@ -1367,9 +1387,11 @@ export function Composer({
                 {/* The peer's own face, when its vault ships one — picking a project you
                     have not touched in a month is a recall problem, and a logo answers it
                     faster than a name. The `◈` is the floor, never an empty gap. */}
-                {p.logo
-                  ? <img className="chat-cmp-mention-logo" src={p.logoUrl ?? peerLogoUrl(vault, p.vault)} alt="" aria-hidden />
-                  : <span className="chat-cmp-mention-glyph" aria-hidden>◈</span>}
+                {renderMentionFace
+                  ? <span className="chat-cmp-mention-face" aria-hidden>{renderMentionFace(p)}</span>
+                  : p.logo
+                    ? <img className="chat-cmp-mention-logo" src={p.logoUrl ?? peerLogoUrl(vault, p.vault)} alt="" aria-hidden />
+                    : <span className="chat-cmp-mention-glyph" aria-hidden>◈</span>}
                 @{p.vault}
               </span>
               {p.whatItIs && <span className="chat-cmp-mention-what">{p.whatItIs}</span>}
@@ -1379,10 +1401,11 @@ export function Composer({
       )}
 
       {slashOpen && (
-        <div className="chat-cmp-slash" role="listbox" aria-label="Slash commands" ref={slashListRef}>
+        <div className="chat-cmp-slash" role="listbox" id={slashListId} aria-label="Slash commands" ref={slashListRef}>
           {slashMatches.map((cmd, i) => (
             <button
               key={cmd}
+              id={`${slashListId}-${i}`}
               type="button"
               role="option"
               aria-selected={i === slashIndex}
@@ -1532,6 +1555,11 @@ export function Composer({
           <textarea
             ref={taRef}
             className="chat-cmp-input"
+            // Still a textbox (a textarea permits no other role); these say which listbox it
+            // drives and which option the arrows have highlighted, while one is open.
+            aria-autocomplete="list"
+            aria-controls={mentionOpen ? mentionListId : slashOpen ? slashListId : undefined}
+            aria-activedescendant={activeOptionId}
             // The idle arm names the slash path, which is where skills now live: the Skills
             // popover is gone and the `/` menu (already here, already listing every command
             // this session reported) is the whole affordance. Only the IDLE arm — the other

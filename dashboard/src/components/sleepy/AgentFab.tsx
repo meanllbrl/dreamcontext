@@ -31,7 +31,7 @@ export function AgentFab({ status, mood, label, sessionCount, attention, onClick
       data-status={status}
       data-count={sessionCount}
       onClick={onClick}
-      aria-label={`Agent — ${label}`}
+      aria-label={label === 'Agent' ? label : `Agent: ${label}`}
       title={label}
     >
       <span className="agent-fab-mascot" aria-hidden="true">
