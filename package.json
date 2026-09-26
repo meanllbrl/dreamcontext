@@ -32,6 +32,7 @@
     "test:e2e": "playwright test",
     "verify:people": "node scripts/verify/people-first.mjs",
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
+    "verify:chat-agent-title": "node scripts/verify/chat-agent-title.mjs",
     "verify:chat-questions": "node scripts/verify/chat-questions.mjs",
     "verify:chat-scroll": "node scripts/verify/chat-scroll.mjs",
     "verify:past-chats": "node scripts/verify/past-chats.mjs",
