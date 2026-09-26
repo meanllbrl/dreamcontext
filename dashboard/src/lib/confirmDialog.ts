@@ -131,6 +131,9 @@ export function showWebviewConfirm(opts: WebviewConfirmOptions): Promise<boolean
         marginTop: '8px',
         fontSize: 'var(--font-size-sm, 14px)',
         lineHeight: '1.5',
+        // Bodies carry line breaks (a list of gaps, a message then its error); the native
+        // sheet honours them, so the in-app one must too.
+        whiteSpace: 'pre-line',
         color: 'var(--color-text-secondary, #646464)',
       } satisfies Partial<CSSStyleDeclaration>);
       card.appendChild(text);

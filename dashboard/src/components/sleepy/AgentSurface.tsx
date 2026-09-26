@@ -53,7 +53,7 @@ import { postToSession } from './chat/postToSession';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
-import { pickFiles, pickFolders } from '../../lib/desktop';
+import { pickFiles, pickFolders, confirmAction } from '../../lib/desktop';
 import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 
@@ -1207,7 +1207,12 @@ export function AgentSurface() {
       // at the HTTP-upgrade level, indistinguishable from a crash. Refuse, and say why, rather
       // than silently doing nothing (the same "a refusal must not look like a crash" principle,
       // one click later).
-      alert(`${meta.title}\n\nThis automation's session was recorded on a different machine and was never bound here, so it can't be resumed on this one.`);
+      void confirmAction({
+        title: meta.title,
+        body: "This automation's session was recorded on a different machine and was never bound here, so it can't be resumed on this one.",
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+      });
       return;
     }
     // Agent/chat → resume the EXACT prior Claude conversation (`--resume <claudeId>`) in the
@@ -1518,9 +1523,21 @@ export function AgentSurface() {
           `/tasks/${encodeURIComponent(taskSlug)}/readiness`,
         );
         if (!r.ready) {
-          alert(`"${taskSlug}" is not ready to hand to a development session — the new session would start without:\n\n`
-            + r.gaps.map((g) => `• ${g.field}: ${g.problem}`).join('\n')
-            + '\n\nAsk the planning agent to fill these into the task, then click the button again.');
+          // Never `alert()`: wry's WKWebView implements none of WebKit's JavaScript panel
+          // methods, so in the desktop app an alert shows nothing and this button read as
+          // dead (owner report 09-26). `confirmAction` works in every shell — and the refusal
+          // gets a next step instead of a dead end: one click asks the planner to fill the gaps.
+          const gaps = r.gaps.map((g) => `• ${g.field}: ${g.problem}`).join('\n');
+          const askPlanner = await confirmAction({
+            title: 'This plan is not ready for development yet',
+            body: `The new session would start without:\n\n${gaps}\n\nAsk the planning agent to fill these into the task, then click the button again.`,
+            confirmLabel: 'Ask the planner',
+            cancelLabel: 'Close',
+          });
+          if (askPlanner) {
+            postToSession(cs, `The "Go to development" hand-off for \`${taskSlug}\` was refused — the task is missing:\n\n${gaps}\n\n`
+              + `Fill each into the task with \`dreamcontext tasks insert ${taskSlug} <section> "…"\`, confirm \`dreamcontext tasks ready ${taskSlug}\` passes, then offer the develop button again.`);
+          }
           return;
         }
       } catch (err) {
@@ -1533,7 +1550,12 @@ export function AgentSurface() {
         // `mintPromptToken` rejects rather than degrading to an unseeded session (see its
         // doc). Say so instead of opening a Develop tab that has no idea what it is for.
         console.error('[agent-surface] Plan→Develop hand-off could not prepare its prompt:', err);
-        alert(`Could not open the development session for "${taskSlug}".\n\n${err instanceof Error ? err.message : String(err)}`);
+        void confirmAction({
+          title: 'Could not open the development session',
+          body: `${taskSlug}\n\n${err instanceof Error ? err.message : String(err)}`,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+        });
         return;
       }
       const s = spawn(false, undefined, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
@@ -2860,7 +2882,14 @@ export function AgentSurface() {
 
   const openExternal = async () => {
     try { await scopedApi.post('/agent/open-terminal', { bypass }); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Could not open Terminal.'); }
+    catch (e) {
+      void confirmAction({
+        title: 'Could not open Terminal',
+        body: e instanceof Error ? e.message : undefined,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+      });
+    }
   };
 
   // ── File drag-drop → live Claude session ─────────────────────────────────────
