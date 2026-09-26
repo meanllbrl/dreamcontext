@@ -107,6 +107,12 @@ export interface PendingQuestion {
   requestId: string;
   toolName: string;
   questions: QuestionSpec[];
+  /** The one-line context the card leads with ("what we were doing"). */
+  title?: string;
+  /** `metadata.source` — `"swipe"` draws the card as a swipe deck. */
+  source?: string;
+  /** The request verbatim, echoed back on answer (see `buildQuestionAnswer`). */
+  input?: unknown;
 }
 /** ExitPlanMode's approval gate — the plan Claude wants to act on, awaiting an allow (leave
  *  plan mode and build it) or a deny (keep planning). `input` is the original request payload,
@@ -442,7 +448,7 @@ export interface ChatSession {
   answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => void;
   /** Answer a pending AskUserQuestion card — builds the load-bearing `{questions, answers}`
    *  updatedInput shape via `buildQuestionAnswer` and allows it. */
-  answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>) => void;
+  answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>) => void;
   /** Ask the server to interrupt the in-flight turn (Stop button while busy). */
   interrupt: () => void;
   /** Silence spoken audio and bank the autoplay activation. Called by the composer's mic
@@ -548,7 +554,10 @@ export interface ChatSession {
  */
 function askSummary(entry: PendingQuestion | PendingPlan): string {
   if (entry.kind === 'plan') return 'A plan is waiting for your approval.';
-  return entry.questions[0]?.question ?? '';
+  const question = entry.questions[0]?.question ?? '';
+  // The title is the context a banner otherwise lacks — with several sessions running, the
+  // question alone ("Which one?") does not say which piece of work it belongs to.
+  return entry.title ? `${entry.title} — ${question}` : question;
 }
 
 // ─── Session factory ────────────────────────────────────────────────────────────────
@@ -1329,7 +1338,10 @@ export function createChatSession(
         // is common even in Auto mode and would make the chime noisy; a direct question is
         // the "the strongest 'needs you' there is" signal (AC5).
         const pending = conv.pending.filter((p) => p.requestId !== ev.requestId);
-        const entry: PendingQuestion = { kind: 'question', requestId: ev.requestId, toolName: ev.toolName, questions: ev.questions };
+        const entry: PendingQuestion = {
+          kind: 'question', requestId: ev.requestId, toolName: ev.toolName, questions: ev.questions,
+          title: ev.title, source: ev.source, input: ev.input,
+        };
         pushAsk(pending, entry);
         return;
       }
@@ -1664,8 +1676,9 @@ export function createChatSession(
     maybeFlushQueue();
   }
 
-  function answerQuestion(requestId: string, questions: QuestionSpec[], picked: Record<string, string>): void {
-    answer(requestId, { behavior: 'allow', updatedInput: buildQuestionAnswer(questions, picked) });
+  function answerQuestion(requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>): void {
+    const item = conv.pending.find((p): p is PendingQuestion => p.kind === 'question' && p.requestId === requestId);
+    answer(requestId, { behavior: 'allow', updatedInput: buildQuestionAnswer(questions, picked, { input: item?.input, notes }) });
   }
 
   function interrupt(): void {

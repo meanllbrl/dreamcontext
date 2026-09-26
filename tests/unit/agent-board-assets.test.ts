@@ -336,9 +336,20 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * That left 156 in and 47 out against 71 characters of headroom, so this is a RAISE and is
    * paid for in the form this docstring requires. Actual 11,237; 11,400 leaves ~160 so the
    * next small addition is not a crisis, and is close enough that it still binds.
+   *
+   * 11400 -> 12600 on 2026-09-26, a RAISE for a new section, "Asking — a card read cold"
+   * (1,191 characters). The owner runs several sessions at once and reaches an
+   * AskUserQuestion card from a notification: questions written for someone who just read
+   * the turn arrived unreadable ("soruyu tam olarak anlayamıyor"). The card can now lead
+   * with a `title` and a `description`, draw options with a `preview` as an A/B/C board, and
+   * run two-way questions as a swipe deck — and, as with `secret`/`run`, this file is the
+   * ONLY way an agent learns any of it (the CLI's own tool text says nothing about the
+   * board, the swipe deck, native media or the deny that "Unclear" sends). Compressed to
+   * one rule per bullet before the number moved; nothing elsewhere was found to cut that is
+   * not itself a rule bought with a regression. Actual 12,428; 12,600 keeps ~170 of headroom.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11400);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12600);
   });
 
   /**
@@ -349,7 +360,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11237)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12428)).toBeLessThanOrEqual(20);
   });
 
   /**

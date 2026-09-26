@@ -27,7 +27,9 @@
 .chat-btn:disabled { opacity: 0.5; cursor: default; }
 .chat-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .chat-btn.primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
-.chat-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+/* The fill is restated: `.chat-btn:hover` above paints the tertiary surface, and a primary
+   that only added a filter came out white ink on light grey (1.01:1) under the pointer. */
+.chat-btn.primary:hover:not(:disabled) { background: var(--color-accent-strong); border-color: var(--color-accent-strong); filter: brightness(1.08); }
 /* Decision-weight variant: a card's Allow/Deny and a banner's Retry are the moment the
    user acts, so they get the larger pill rather than the compact utility button. */
 .chat-btn.pill {
@@ -594,6 +596,10 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt:hover { border-color: var(--color-border-hover); }
 .chat-surveycard-opt:active { transform: scale(0.99); }
 .chat-surveycard-opt.on { background: var(--color-accent-soft); border-color: var(--color-accent); }
+/* "Other" is quieter than a real option until it is picked — it is the way out, not a choice
+   the agent offered. The board draws it under its tiles, so it takes the page's spacing. */
+.chat-surveycard-opt.other:not(.on) { border-style: dashed; }
+.chat-surveycard-opt.other:not(.on) .chat-surveycard-opt-title { font-weight: 500; color: var(--color-text-secondary); }
 .chat-surveycard-opt-mark {
   flex: 0 0 auto;
   width: 18px;
@@ -609,30 +615,9 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt-mark.box { border-radius: var(--radius-sm); }
 .chat-surveycard-opt-mark.radio { border-radius: 50%; }
 .chat-surveycard-opt.on .chat-surveycard-opt-mark { background: var(--color-accent); border-color: var(--color-accent); }
-.chat-surveycard-opt-body { display: flex; flex-direction: column; gap: 2px; }
+.chat-surveycard-opt-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .chat-surveycard-opt-title { font-size: 13px; font-weight: 600; }
 .chat-surveycard-opt-desc { font-size: 11.5px; color: var(--color-text-secondary); }
-/* Free-text row body — indented to the option TEXT column (12px pad + 18px mark + 10px gap)
-   so the box reads as belonging to the "Other" row above it, not as a new question. */
-.chat-surveycard-other { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 2px 40px; }
-.chat-surveycard-otherinput {
-  width: 100%;
-  min-height: 58px;
-  resize: vertical;
-  padding: 9px 11px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-accent);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.45;
-}
-.chat-surveycard-otherinput::placeholder { color: var(--color-text-tertiary); }
-.chat-surveycard-otherinput:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
-/* Body font, not mono: the mono stack has no ↵ glyph on every platform and falls back to
-   tofu for the one character the hint is about. */
-.chat-surveycard-otherhint { color: var(--color-text-tertiary); font-size: 11px; }
 .chat-surveycard-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
 .chat-surveycard-count { color: var(--color-text-tertiary); font-size: 11.5px; }
 .chat-surveycard-receipt {
@@ -643,6 +628,260 @@ video.chat-msg-user-media-el { cursor: default; }
   font-size: 12.5px;
 }
 .chat-surveycard-receipt-check { color: var(--color-success); font-weight: 700; }
+
+/* The context strip — the call's `title`, the "what we were doing" line that lets a card be
+   answered cold. Quiet on purpose: it frames the question, it is not the question. */
+.chat-surveycard-context {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.chat-surveycard-context-label {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.chat-surveycard-desc { margin: -2px 0 2px; color: var(--color-text-secondary); font-size: 12.5px; line-height: 1.5; }
+/* The option's number — the key that picks it. Tertiary so it reads as a hint, not a label. */
+.chat-surveycard-opt-key {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+/* The always-on free-text field: a note on the pick, or the answer when nothing is picked.
+   Same height whatever is clicked — only typing past a line grows it (see SurveyCard.tsx). */
+.chat-surveycard-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--color-border-hover);
+  background: var(--color-bg);
+  transition: border-color var(--transition-fast);
+}
+.chat-surveycard-field:focus-within { border-style: solid; border-color: var(--color-accent); }
+.chat-surveycard-field-tag {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chat-surveycard-field.note .chat-surveycard-field-tag { background: var(--color-accent-soft); color: var(--color-accent); }
+.chat-surveycard-fieldinput {
+  flex: 1 1 200px;
+  min-width: 0;
+  min-height: 22px;
+  max-height: 160px;
+  padding: 1px 0;
+  border: 0;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.chat-surveycard-fieldinput:focus { outline: none; }
+.chat-surveycard-fieldinput::placeholder { color: var(--color-text-tertiary); }
+/* Body font, not mono: the mono stack has no ↵ glyph on every platform. */
+.chat-surveycard-fieldhint { flex: 1 0 100%; color: var(--color-text-tertiary); font-size: 11px; }
+
+.chat-surveycard-unclear {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.chat-surveycard-unclear:hover { color: var(--color-text); text-decoration: underline; }
+.chat-surveycard-unclear:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ── The A/B/C board — options you compare by looking ─────────────────────────────── */
+.chat-surveycard-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.chat-surveycard-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--radius-lg);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-bg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+.chat-surveycard-tile:hover { border-color: var(--color-border-hover); }
+.chat-surveycard-tile:active { transform: scale(0.99); }
+.chat-surveycard-tile:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-surveycard-tile.on { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-soft); }
+/* A fixed window onto the preview, so every tile in a row is the same height whatever the
+   fragments measure — the full thing is one click away through the frame's own ⛶ door. */
+.chat-surveycard-tile-preview {
+  position: relative;
+  height: 180px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+.chat-surveycard-tile-preview .chat-htmlview,
+.chat-swipe-preview .chat-htmlview {
+  max-width: none;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* The tile is the click target: the frame inside must not swallow the press (an iframe's
+   clicks never bubble to the page). The fullscreen door stays live above it. */
+.chat-surveycard-tile-preview .chat-htmlview-frame,
+.chat-swipe-preview .chat-htmlview-frame { pointer-events: none; }
+.chat-surveycard-tile-preview .chat-htmlview-full-btn,
+.chat-swipe-preview .chat-htmlview-full-btn { opacity: 1; z-index: 1; }
+.chat-surveycard-media { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--color-bg-tertiary); }
+/* A lone picture or clip, with its fullscreen door pinned top-right like an HTML preview's. */
+.chat-surveycard-mediabox { position: relative; height: 100%; }
+.chat-swipe-preview .chat-surveycard-mediabox { height: 280px; }
+.chat-surveycard-mediabox .chat-htmlview-full-btn { opacity: 1; z-index: 1; }
+/* The clip at full window: scaled up to the window, letterboxed, never cropped. */
+.chat-surveycard-videofull { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; background: #000; }
+.chat-surveycard-videofull-media { width: 100%; height: 100%; object-fit: contain; }
+.chat-surveycard-tile-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+}
+.chat-surveycard-tile-foot { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; }
+.chat-surveycard-tile-letter {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border-hover);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+.chat-surveycard-tile.on .chat-surveycard-tile-letter { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
+
+/* ── Number questions ─────────────────────────────────────────────────────────────── */
+.chat-surveycard-number { display: flex; align-items: center; gap: 14px; padding: 4px 2px; }
+.chat-surveycard-range { flex: 1 1 auto; accent-color: var(--color-accent); }
+.chat-surveycard-numvalue {
+  flex: 0 0 auto;
+  min-width: 56px;
+  text-align: right;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg, 18px);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+.chat-surveycard-unit { color: var(--color-text-tertiary); font-size: 12px; }
+
+/* ── The swipe deck ───────────────────────────────────────────────────────────────── */
+.chat-swipe { display: flex; flex-direction: column; gap: 10px; }
+/* The viewport clips horizontally (it is a pager), so the throw leaves through its edge —
+   which reads as the card going away, not as a glitch. */
+.chat-swipe-face {
+  position: relative;
+  min-height: 120px;
+  border-radius: var(--radius-xl);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  transition: transform 220ms ease, border-color var(--transition-fast);
+}
+.chat-swipe-face.dragging { cursor: grabbing; transition: none; }
+.chat-swipe-face.yes { border-color: var(--color-success); }
+.chat-swipe-face.no { border-color: var(--color-error); }
+.chat-swipe-preview { max-height: 280px; overflow: hidden; }
+.chat-swipe-outcomes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 16px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.chat-swipe-outcomes b { color: var(--color-text); }
+.chat-swipe-stamp {
+  position: absolute;
+  top: 12px;
+  z-index: 2;
+  max-width: 45%;
+  padding: 3px 10px;
+  border-radius: var(--radius-md);
+  border: 2px solid currentColor;
+  background: var(--color-bg);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.chat-swipe-stamp.yes { left: 12px; color: var(--color-success); transform: rotate(-8deg); }
+.chat-swipe-stamp.no { right: 12px; color: var(--color-error); transform: rotate(8deg); }
+.chat-swipe-buttons { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chat-swipe-hint { color: var(--color-text-tertiary); font-size: 11px; }
+.chat-swipe-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 42%;
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.chat-swipe-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-swipe-btn.yes:hover, .chat-swipe-btn.yes.on { border-color: var(--color-success); }
+.chat-swipe-btn.no:hover, .chat-swipe-btn.no.on { border-color: var(--color-error); }
+.chat-swipe-btn.on { background: var(--color-bg-tertiary); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-swipe-face { transition: none; }
+}
 
 /* ── Permission card (state 6) — header rule, then a padded decision body ─────────── */
 

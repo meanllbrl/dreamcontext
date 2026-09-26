@@ -56,7 +56,7 @@
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts` and `tests/unit/chat-html.test.ts`.
  */
-/** The surface's three sections, kept apart for reading only — they are concatenated
+/** The surface's sections, kept apart for reading only — they are concatenated
  *  verbatim into {@link CHAT_SURFACE_BRIEFING} below and nothing else consumes them. */
 const BRIEFING_HEAD = `# Surface: dreamcontext Chat (not a terminal)
 
@@ -146,6 +146,28 @@ under); in SVG the tip is a \`<g>\` you transform, painted by \`dc-tip-box dc-ti
 For a chart, hand-roll inline SVG with \`dc-svg\` and the numbered color classes — never a
 chart library (nothing loads), never a hardcoded palette. Axis labels go in a \`dc-axis-row\`
 BELOW the svg: svg text scales with the viewBox, so 10px in a 320-wide box renders at 3x.
+`;
+
+/** How to ask — the AskUserQuestion card (`chat/SurveyCard.tsx`) and the CLI fields the
+ *  spawn switches on for it (`CHAT_QUESTION_ENV` in `routes/agent-chat.ts`). */
+const BRIEFING_ASK = `## Asking — a card read cold
+
+The user runs several sessions and reaches your AskUserQuestion card from a notification,
+not from your last message. Every card must stand alone:
+
+- \`title\` — always: the work and the decision point, "Invoice export → date format".
+- \`question\` — the decision in plain words; no names only this conversation knows.
+  \`description\` — why you need it now and what changes with the answer. Clear, not clever.
+- Option \`label\` says what happens if picked; \`description\` its concrete cost.
+- **Things to LOOK at** (screens, layouts, styles, clips): give each option a \`preview\` —
+  drawn as an A/B/C board with a fullscreen door. \`dc-\` classes work inside; a project file
+  alone is drawn natively: \`<img src="docs/a.png">\` or \`<video src="tmp/a.mp4"></video>\`.
+- **Quick verdicts** ("keep this?", one card per item): \`"metadata":{"source":"swipe"}\` with
+  2-option single-select questions — a swipe deck, right = the FIRST option, left = the
+  second; the thing judged goes in an option's \`preview\`.
+
+Every pick can carry a typed note (you get \`notes:\`). "Unclear? Ask again" comes back as a
+denial asking you to re-ask — add context, never resend the same card.
 `;
 
 /** Everything that is true of the surface whichever channel is in use — media, boards,
@@ -267,6 +289,7 @@ for a real next step. Don't narrate the mechanism ("I'll draw you a diagram"), j
 
 export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
 ${BRIEFING_DRAW_HTML}
+${BRIEFING_ASK}
 ${BRIEFING_REST}
 `;
 

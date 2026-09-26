@@ -54,6 +54,27 @@ import {
 } from './agent-spawn-shared.js';
 
 /**
+ * The AskUserQuestion capabilities the Chat card renders, switched on in the CLI.
+ *
+ * Both are host opt-ins the CLI keeps OFF unless told (read from 2.1.281; `claude -p` runs
+ * as the `sdk-cli` entrypoint, which is on the CLI's allow-list for the extended schema):
+ *   • `CLAUDE_CODE_QUESTION_EXTENDED` — a one-line `title` over the card, a per-question
+ *     `description`, and `text`/`number` questions. The title and description are what let
+ *     a card be answered cold: with several sessions running, the owner reaches a question
+ *     from a notification without having read the turn that led to it.
+ *   • `CLAUDE_CODE_QUESTION_PREVIEW_FORMAT=html` — tells the model an option may carry an
+ *     HTML `preview`, which the card draws as an A/B/C board (and the CLI validates as a
+ *     self-contained fragment). Without the variable, `-p` sessions get no preview guidance.
+ * Spread AFTER `process.env` on purpose: this is the Chat card's contract, not a
+ * preference — an inherited value (say `markdown`) would have the model write previews the
+ * card cannot draw.
+ */
+export const CHAT_QUESTION_ENV: Readonly<Record<string, string>> = Object.freeze({
+  CLAUDE_CODE_QUESTION_EXTENDED: '1',
+  CLAUDE_CODE_QUESTION_PREVIEW_FORMAT: 'html',
+});
+
+/**
  * Agent Chat (beta) — the headless counterpart to the embedded PTY terminal
  * (`agent-terminal.ts`). Instead of a real TUI, this bridges a WebSocket to a
  * `claude -p --input-format stream-json --output-format stream-json` child process:
@@ -754,7 +775,7 @@ export function startChatSession(
     // claude-aware PATH: `claude` installs into ~/.local/bin, which no default PATH
     // contains — without this the login shell 127s whenever the install's `export
     // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
-    env: { ...process.env, PATH: claudeAwarePath(), ...tabEnv, ...deferredEnv, ...accountEnv } as NodeJS.ProcessEnv,
+    env: { ...process.env, PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...accountEnv } as NodeJS.ProcessEnv,
   });
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale

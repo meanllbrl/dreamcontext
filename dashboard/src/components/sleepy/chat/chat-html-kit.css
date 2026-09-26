@@ -80,6 +80,14 @@ body {
 /* Little content does not want a 960px box. One kv, three chips, a single stat — stretched
    across the full measure they read as a mostly-empty panel with something lost in it. */
 .dc-doc--hug { max-inline-size: max-content; }
+/* A hugging doc takes its width FROM its content, and `container-type: inline-size` is size
+   containment: it makes a card report a max-content width of its own padding and nothing
+   else. So a `dc-card` (or `dc-option`) inside a hug doc collapsed to a ~34px strip with its
+   text spilling out of it — found by the question card's A/B/C board (2026-09-26), true of
+   every hug + card block in the transcript too. Inside a hug doc the card's width is the
+   content's, so there is nothing for its own container queries to answer; switch them off. */
+.dc-doc--hug .dc-card,
+.dc-doc--hug .dc-option { container-type: normal; }
 
 /* ═══ Typography ═══ */
 
