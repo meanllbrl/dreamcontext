@@ -139,7 +139,6 @@ import {
   handleAgentInstall,
   handleAgentInstallStatus,
   handleAgentPromptToken,
-  handleAgentTitle,
   handleAgentModelConfig,
   handleAgentSessionModel,
   handleAgentSessionStats,
@@ -490,8 +489,6 @@ export function buildRouter(): Router {
   // surface can name the file it just made and offer to reveal it. Vault-agnostic: it
   // writes to the user's home, not into any project's brain. Desktop-gated.
   router.post('/api/agent/download', handleAgentDownload);
-  // Auto-title a session from its first user message (Haiku) — vault-scoped, desktop-only.
-  router.post('/api/agent/title', handleAgentTitle);
   // Per-vault session roster (titles + layout) so renamed tabs survive a reload
   // (desktop-gated, vault-scoped — same posture as /drop above).
   router.get('/api/agent/sessions', handleAgentSessionsGet);

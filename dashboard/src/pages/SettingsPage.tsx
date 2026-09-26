@@ -474,7 +474,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                     }
                   />
 
-                  {/* Auto-title: Haiku names the tab from the first message. */}
+                  {/* Auto-title: a chat's own agent names its tab (a `title` dream-view block). */}
                   <SettingRow
                     title={t('settings.agents.auto_title')}
                     hint={t('settings.agents.auto_title_hint')}

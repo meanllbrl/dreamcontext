@@ -11,7 +11,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { createChatSession, type ChatSession, type ChatUserItem } from './chatSession';
+import { createChatSession, type ChatSession } from './chatSession';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -50,6 +50,7 @@ import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { dropScratch } from './chat/composerScratch';
 import { postToSession } from './chat/postToSession';
+import { parseChatActions } from './chat/chatActions';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
@@ -123,6 +124,10 @@ interface SessionMeta {
    *  so a legacy roster needs no migration. Round-tripped through the server roster so a
    *  Develop tab reopens as one after a relaunch. */
   mode?: ChatMode;
+  /** The current title was set by the tab's own agent (a `title` dream-view block), so the
+   *  agent may rename it again when the work moves on. Cleared by a user rename — a name the
+   *  user typed is theirs for good. Round-tripped through the roster so it survives a relaunch. */
+  titleByAgent?: boolean;
 }
 
 /** A fresh Claude conversation UUID for a new tab. `crypto.randomUUID()` works on the
@@ -166,7 +171,8 @@ function withNotAvailableSuffix(title: string): string {
   return title.endsWith(NOT_AVAILABLE_SUFFIX) ? title : `${title}${NOT_AVAILABLE_SUFFIX}`;
 }
 
-/** "Is this tab still carrying the name we gave it?" — the auto-title eligibility gate.
+/** "Is this tab still carrying the name we gave it?" — half of the auto-title eligibility
+ *  gate (the other half is `SessionMeta.titleByAgent`: a name the agent itself set).
  *  Deliberately kind-AGNOSTIC across the two titleable kinds: a tab converted between
  *  terminal and chat (`openAgentInChat` / `resumeChatInTerminal`) keeps the roster title
  *  it had before the swap, so an "Agent 3" that became a chat — or a "Chat 3" that became
@@ -217,6 +223,8 @@ interface SavedMeta {
   pane?: number;
   /** Was this the visible tab of its pane? A pane with none falls back to its first tab. */
   active?: boolean;
+  /** Mirrors `SessionMeta.titleByAgent` — the tab's agent named it and may rename it. */
+  titleByAgent?: boolean;
 }
 
 /** The whole `GET /api/agent/sessions` body: the roster plus the two surface-level facts that
@@ -399,7 +407,7 @@ export function AgentSurface() {
   const [minimizedIds, setMinimizedIds] = useState<string[]>([]);
   // A tab drag is in flight → render the per-pane split/combine drop overlays.
   const [draggingTab, setDraggingTab] = useState(false);
-  const [statusTick, bumpStatus] = useReducer((x: number) => x + 1, 0);
+  const [, bumpStatus] = useReducer((x: number) => x + 1, 0);
   // The session whose title is being edited inline (double-click on its tab), or ''.
   const [renamingId, setRenamingId] = useState('');
   // The header "＋ New ▾" split-button's dropdown (pick Agent vs Terminal) is open.
@@ -534,14 +542,6 @@ export function AgentSurface() {
   // schedules no render, so a gate reading it would stay stale until something unrelated
   // re-rendered the surface. Every write below sets both, always together.
   const [hydrated, setHydrated] = useState(false);
-  // Auto-title bookkeeping. `autoTitledRef` holds session ids that are DONE — either
-  // successfully named or permanently ineligible (user-renamed / dormant) — so we never
-  // ask again. `titleInFlightRef` holds ids with a Haiku call currently outstanding, so a
-  // second busy→idle edge doesn't fire a duplicate concurrent request. Crucially, a call
-  // that comes back empty (transcript/message not flushed yet, e.g. an INTERRUPTED first
-  // turn) does NOT mark the id done — it stays retryable, so the tab you actually worked on
-  // still gets named on its next completed turn instead of silently losing the race.
-  // `busyPrevRef` is the prior busy state per session, so we fire on the busy→idle edge.
   // ── The Claude account changed underneath us ───────────────────────────────────────
   //
   // `claude` reads its credentials once, at startup, so signing into a different account
@@ -724,14 +724,58 @@ export function AgentSurface() {
     });
   }, []);
 
-  const autoTitledRef = useRef<Set<string>>(new Set());
-  const titleInFlightRef = useRef<Set<string>>(new Set());
-  // Attempts per session id — the retry BUDGET. "Empty response stays retryable" must
-  // not mean retry FOREVER: a persistently failing title call (unauthenticated CLI,
-  // offline) would otherwise spawn a fresh headless Haiku `claude` on every completed
-  // turn of every default-named tab. After the budget, the default name is final.
-  const titleAttemptsRef = useRef<Map<string, number>>(new Map());
-  const busyPrevRef = useRef<Map<string, boolean>>(new Map());
+  /**
+   * Auto-title: the chat's OWN agent names its tab (Settings → Agents → auto-name tabs).
+   *
+   * The agent writes a `title` dream-view block (`chatViewSpec.ts`) once it understands what
+   * the work is about, and again when the subject genuinely moves — it is the one reader that
+   * knows, which is why this replaced the Haiku side-call that guessed from the first message.
+   *
+   * Only LIVE items are read, never `conv.history`: a resumed chat replays its old answers
+   * there, and re-applying a title from yesterday's transcript would fight the roster's own
+   * record of it. Each finished text item is read once; the last `title` in it wins.
+   *
+   * The rename lands only on a tab that still carries its default "Agent N"/"Chat N" name or a
+   * name this agent set (`titleByAgent`). A user rename clears that flag, so their choice
+   * wins for good; a tab opened under a purpose-given name (a Develop task, Sleep) keeps it.
+   * The preference is read at APPLY time, so flipping it off stops renames immediately.
+   */
+  const armAgentTitle = useCallback((cs: ChatSession) => {
+    const read = new Set<string>();
+    const off = cs.subscribe(() => {
+      if (sessions.current.get(cs.id) !== cs) { off(); return; }  // closed/replaced
+      const items = cs.getModel().items;
+      let title: string | null = null;
+      // Newest first, stopping at the first item already read: text blocks finish in order,
+      // so everything before it has been read too — a streamed token costs O(1), not O(n).
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (read.has(it.id)) break;
+        if (it.kind !== 'text' || !it.done) continue;
+        read.add(it.id);
+        if (title !== null || !it.text.includes('dream-view')) continue;
+        const views = parseChatActions(it.text).views;
+        for (let v = views.length - 1; v >= 0; v--) {
+          const view = views[v];
+          if (view.type === 'title') { title = view.text; break; }
+        }
+      }
+      if (!title) return;
+      const s = agentSettingsRef.current;
+      if (!s.enabled || !s.autoTitle) return;
+      const next = title;
+      setSessionList((prev) => {
+        let changed = false;
+        const out = prev.map((m) => {
+          if (m.id !== cs.id || m.dormant || m.title === next) return m;
+          if (!m.titleByAgent && !DEFAULT_TAB_TITLE_RE.test(m.title)) return m;
+          changed = true;
+          return { ...m, title: next, titleByAgent: true };
+        });
+        return changed ? out : prev;
+      });
+    });
+  }, []);
 
   const started = sessionList.length > 0;
   // The action-focused pane (falls back to the first pane when the stored id is stale).
@@ -895,7 +939,7 @@ export function AgentSurface() {
               // like any other tab, while the roster keeps `kind: 'automation'` so the glyph
               // survives the restore.
               const s = spawn(m.bypass, m.sessionId, true, claudeKind);
-              return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, automation: m.automation };
+              return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, automation: m.automation, ...(m.titleByAgent ? { titleByAgent: true } : {}) };
             }
             // An agent OR chat tab with a pinned conversation auto-RESUMES its real Claude
             // session on launch (both spawn a real `claude` against the same conversation
@@ -920,9 +964,10 @@ export function AgentSurface() {
               return {
                 id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId,
                 ...(kind === 'chat' ? { mode: savedMode } : {}),
+                ...(m.titleByAgent ? { titleByAgent: true } : {}),
               };
             }
-            return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true };
+            return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true, ...(m.titleByAgent ? { titleByAgent: true } : {}) };
           });
           // APPEND, NEVER REPLACE — and this is the whole bug fix, not a refinement.
           // These two lines used to read `prev.length > 0 ? prev : restored`, which
@@ -1020,6 +1065,7 @@ export function AgentSurface() {
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
             ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
             ...(activeTabs.has(m.id) ? { active: true } : {}),
+            ...(m.titleByAgent ? { titleByAgent: true } : {}),
             // Only carried for automation tabs — the server's `coerceMeta` drops it for
             // every other kind anyway, but there's no reason to send it otherwise.
             ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
@@ -1099,6 +1145,7 @@ export function AgentSurface() {
       // one place to arm means no future spawn path can forget to.
       armAuthRestart(cs);
       armAccountSwitch(cs);
+      armAgentTitle(cs);
       return cs;
     }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
@@ -1106,7 +1153,7 @@ export function AgentSurface() {
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
-  }, [chatPermissionMode, vault, armAuthRestart]);
+  }, [chatPermissionMode, vault, armAuthRestart, armAgentTitle]);
 
   // Spawn a fresh session AND append its roster entry — the two steps every "new session"
   // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
@@ -2375,7 +2422,9 @@ export function AgentSurface() {
   const commitRename = useCallback((id: string, raw: string) => {
     const title = raw.trim();
     setRenamingId('');
-    if (title) setSessionList((prev) => prev.map((m) => (m.id === id ? { ...m, title } : m)));
+    // A name the user typed is theirs: dropping `titleByAgent` is what stops the tab's agent
+    // from renaming it again (see armAgentTitle).
+    if (title) setSessionList((prev) => prev.map((m) => (m.id === id ? { ...m, title, titleByAgent: undefined } : m)));
   }, []);
 
   // Settings → Agents' "auto-name tabs" preference, flipped from a tab's own right-click
@@ -2705,80 +2754,6 @@ export function AgentSurface() {
     document.body.dataset.mobileChat = 'true';
     return () => { delete document.body.dataset.mobileChat; };
   }, [isMobile, expanded]);
-
-  // ── Auto-title: name a tab from its first user message (Settings → Agents) ────────
-  // Fires on BOTH busy edges of a live AGENT or CHAT session — the chat engine is a
-  // different transport (headless stream-json, not a PTY) but the SAME identity: it
-  // spawns under `DREAMCONTEXT_TAB_SESSION` too, so its UserPromptSubmit hook records the
-  // first prompt into the very same session-map entry `/agent/title` reads. Nothing about
-  // the route is terminal-specific, so gating this on `kind === 'agent'` was the only
-  // reason chat tabs sat at "Chat N" forever. The idle→busy edge (turn START) is
-  // the fast path: a chat tab sends its own copy of the first message with the request
-  // (see below), and for terminal tabs the UserPromptSubmit hook has usually already
-  // captured the first prompt into the tab's session-map entry — so the server can title
-  // the tab seconds after the user types, no waiting for the whole first turn to finish.
-  // The busy→idle edge (turn COMPLETE) is the safety net for tabs the hook missed (the
-  // transcript exists by then).
-  // The title is applied ONLY if the tab still carries its default "Agent N"/"Chat N"
-  // name (a tab you renamed is never overwritten). It settles to at most ONE successful
-  // Haiku call per tab, but a call that finds nothing yet (an unwritten hook entry or an
-  // unflushed transcript) leaves the tab RETRYABLE — so the tab you worked on gets named on
-  // its next edge, instead of permanently losing its title to a slower tab's late rename.
-  useEffect(() => {
-    if (!agentSettings.enabled || !agentSettings.autoTitle) return;
-    sessions.current.forEach((s, id) => {
-      const wasBusy = busyPrevRef.current.get(id) ?? false;
-      busyPrevRef.current.set(id, s.busy);
-      if (wasBusy === s.busy) return;             // fire on every busy edge (start + complete)…
-      // …but skip if already named, ineligible, or a request is already outstanding.
-      if (s.kind === 'shell' || autoTitledRef.current.has(id) || titleInFlightRef.current.has(id)) return;
-      const meta = sessionList.find((m) => m.id === id);
-      // Permanently ineligible if the tab was renamed by the user or is a dormant restore.
-      if (!meta || meta.dormant || !DEFAULT_TAB_TITLE_RE.test(meta.title)) {
-        autoTitledRef.current.add(id);
-        return;
-      }
-      // Retry budget spent → keep the default name for good (see titleAttemptsRef).
-      const attempts = titleAttemptsRef.current.get(id) ?? 0;
-      if (attempts >= 8) { autoTitledRef.current.add(id); return; }
-      titleAttemptsRef.current.set(id, attempts + 1);
-      titleInFlightRef.current.add(id);           // one outstanding call at a time
-      // A chat session already HOLDS its first user message (its composer sent it, or the
-      // server echoed a spawn prompt into the model) — pass it along so the idle→busy edge
-      // titles on the FIRST attempt even before the hook entry / flushed transcript exists
-      // on disk. The server still prefers those on-disk sources; this is its last resort.
-      // Terminal tabs have no client-side copy (the PTY stream is raw bytes) and omit it.
-      const firstUserText = s.kind === 'chat'
-        ? (s as ChatSession).getModel().items.find((it): it is ChatUserItem => it.kind === 'user')?.text.trim()
-        : undefined;
-      void scopedApi.post<{ title: string | null; reason?: string }>(
-        '/agent/title',
-        firstUserText ? { claudeId: s.claudeId, message: firstUserText } : { claudeId: s.claudeId },
-      )
-        .then((r) => {
-          const title = r?.title?.trim();
-          // No title yet: leave the id retryable so the NEXT completed turn names this
-          // exact tab. Cost differs by WHY it failed: a miss WITH a reason is a cheap
-          // pre-spawn null (transcript/message not flushed yet — no claude process ran)
-          // and costs 1 of the 8-attempt budget; a miss WITHOUT a reason means a real
-          // Haiku spawn ran and produced nothing (unauthenticated / broken CLI — likely
-          // persistent) and costs 4, so a dead CLI burns at most 2 real spawns per tab
-          // instead of 8.
-          if (!title) {
-            if (!r?.reason) titleAttemptsRef.current.set(id, (titleAttemptsRef.current.get(id) ?? 1) + 3);
-            return;
-          }
-          autoTitledRef.current.add(id);          // got a name — done, never ask again
-          // Re-check the default guard inside the updater: the user may have renamed the
-          // tab while Haiku was thinking — their choice wins.
-          setSessionList((prev) => prev.map((m) => (
-            m.id === id && DEFAULT_TAB_TITLE_RE.test(m.title) ? { ...m, title } : m
-          )));
-        })
-        .catch(() => { /* best-effort: a failed title just leaves the default name */ })
-        .finally(() => { titleInFlightRef.current.delete(id); });
-    });
-  }, [statusTick, agentSettings.enabled, agentSettings.autoTitle, sessionList, scopedApi]);
 
   // ── Drop-overlay leak guard (the "terminal unreachable after a split" fix) ───────
   // While a tab is dragged, each pane mounts a full-bleed `.agent-pane-droplayer`

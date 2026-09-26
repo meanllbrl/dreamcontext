@@ -33,12 +33,12 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread', 'title'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec
-  | PinViewSpec | ProgressViewSpec | CheckoutViewSpec | AgentThreadViewSpec;
+  | PinViewSpec | ProgressViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -244,6 +244,23 @@ export interface AgentThreadViewSpec {
   run?: string;
   /** How many trailing entries to draw, 1–20. Absent ⇒ the card's own default. */
   limit?: number;
+}
+
+/**
+ * `type: "title"` — the name of the tab this conversation lives in, chosen by its own agent.
+ *
+ * This replaced the Haiku side-call that used to read the first user message and guess a
+ * name. The agent in the conversation is the one reader that actually knows what the work is
+ * about — after its first look at the code, not from one sentence of the ask — and it is the
+ * only one that can tell when the subject has genuinely moved, so it re-sends the block then.
+ *
+ * Nothing is drawn. `AgentSurface` applies it (`armAgentTitle`), and only onto a tab that
+ * still carries its default name or a name this agent gave it: a name the USER typed is never
+ * overwritten. `text` is cleaned to one short line by {@link cleanTabTitle}.
+ */
+export interface TitleViewSpec {
+  type: 'title';
+  text: string;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -843,6 +860,36 @@ function validateCheckout(obj: Record<string, unknown>, notices: string[]): { vi
   return { view: { type: 'checkout', path, reset: undefined }, notices };
 }
 
+/** The longest tab name an agent may set — the tab strip clips well before this anyway. */
+export const MAX_TAB_TITLE = 48;
+
+/**
+ * One line, no wrapping quotes or markdown emphasis, no trailing period, at most
+ * {@link MAX_TAB_TITLE} characters cut on a word boundary. `null` when nothing usable is left.
+ */
+export function cleanTabTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  let t = raw.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/^["'`*_#]+/, '').replace(/["'`*_.]+$/, '').trim();
+  if (t.length > MAX_TAB_TITLE) {
+    const cut = t.slice(0, MAX_TAB_TITLE);
+    const space = cut.lastIndexOf(' ');
+    t = (space > MAX_TAB_TITLE / 2 ? cut.slice(0, space) : cut).trim();
+  }
+  return t.length >= 2 ? t : null;
+}
+
+/** `type: "title"` — a name, or a notice: a block with no usable text meant to rename the tab
+ *  and did not, and the agent should hear that rather than believe it worked. */
+function validateTitle(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const text = cleanTabTitle(obj.text);
+  if (!text) {
+    notices.push('A title block was skipped — it needs a short "text".');
+    return { view: null, notices };
+  }
+  return { view: { type: 'title', text }, notices };
+}
+
 // ---------------------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------------------
@@ -884,6 +931,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'progress': return validateProgress(parsed, notices);
       case 'checkout': return validateCheckout(parsed, notices);
       case 'agent-thread': return validateAgentThread(parsed, notices);
+      case 'title': return validateTitle(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

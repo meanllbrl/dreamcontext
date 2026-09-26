@@ -116,6 +116,9 @@ function ChatViewItem({ view, conversationId, session }: {
     // looking at, one line below the sentence that explains it.
     case 'checkout':
       return null;
+    // Applied to the TAB by AgentSurface (`armAgentTitle`); the tab strip is where it shows.
+    case 'title':
+      return null;
   }
 }
 

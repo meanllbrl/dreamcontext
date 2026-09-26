@@ -51,7 +51,9 @@
  *                             names its channel and `chat/AgentThreadCard.tsx` draws the
  *                             thread, so asserted contents are dropped with a notice.
  *                             `pin` and `progress` are hoisted OUT of the transcript onto the
- *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`
+ *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`.
+ *                             `title` renames the agent's own tab — applied by
+ *                             `AgentSurface.tsx` (`armAgentTitle`), drawn nowhere.
  * A capability named here that the view doesn't render is worse than one left unnamed: the
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts` and `tests/unit/chat-html.test.ts`.
@@ -202,7 +204,7 @@ const BRIEFING_REST = `## The rest of the surface
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
 
-## \`dream-view\` — the eight things HTML must NOT be
+## \`dream-view\` — the nine things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -276,6 +278,14 @@ you send is ignored and drawn as a notice.
 
 \`\`\`dream-view
 {"type":"progress","task":"my-task-slug"}
+\`\`\`
+
+**This tab's name.** Nothing drawn; your tab takes it. Send it once you understand the work,
+never before you have looked: 2-5 words, the concrete subject, the user's language. Re-send
+only when the subject truly moves. A name the user typed wins.
+
+\`\`\`dream-view
+{"type":"title","text":"Checkout redesign"}
 \`\`\`
 
 **An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.

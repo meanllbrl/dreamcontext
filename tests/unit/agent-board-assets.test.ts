@@ -347,9 +347,15 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * board, the swipe deck, native media or the deny that "Unclear" sends). Compressed to
    * one rule per bullet before the number moved; nothing elsewhere was found to cut that is
    * not itself a rule bought with a regression. Actual 12,428; 12,600 keeps ~170 of headroom.
+   *
+   * 12600 -> 12900 on 2026-09-26, a RAISE for the ninth `dream-view` type, `title` (311
+   * characters with its example fence). The Haiku side-call that named tabs from the first
+   * message was removed; the chat's own agent names its tab now, and this file is the only
+   * way it learns the block exists. Written as four rules (when, how long, which language,
+   * when to re-send) and nothing else. Actual 12,739; 12,900 keeps ~160 of headroom.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12600);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12900);
   });
 
   /**
@@ -360,7 +366,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12428)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12739)).toBeLessThanOrEqual(20);
   });
 
   /**

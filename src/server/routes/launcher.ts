@@ -808,6 +808,10 @@ interface AgentUiSettings {
    *  screen" flip. A pre-flip blob carries `chatView:false` from the old opt-in default,
    *  so an explicit `false` only counts once this is set. Mirrors the dashboard. */
   screenMigrated: boolean;
+  /** One-time marker that this blob has been through the auto-title default-ON flip: every
+   *  earlier blob carries `autoTitle:false` from the old opt-in default, so an explicit
+   *  `false` only counts once this is set. Mirrors the dashboard. */
+  titleMigrated: boolean;
   /** Remembered default permission mode for Chat (BETA) sessions: 'auto' (the CLI's `auto`
    *  mode) or 'bypass' (bypassPermissions) — same mapping as permissionModeFor in
    *  agent-chat.ts. Mirrors dashboard/src/lib/agentSettings. */
@@ -826,11 +830,12 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
   restoreTabs: true,
   defaultAgent: 'claude',
-  autoTitle: false,
+  autoTitle: true,
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
   chatView: true,
   screenMigrated: true,
+  titleMigrated: true,
   chatPermissionMode: 'auto',
   chatDefaultModel: '',
   chatDefaultEffort: '',
@@ -860,8 +865,10 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     enabled: raw.enabled !== false,
     restoreTabs: raw.restoreTabs !== false,
     defaultAgent: raw.defaultAgent === 'claude' ? 'claude' : AGENT_UI_DEFAULTS.defaultAgent,
-    // Opt-in flag: default FALSE, only an explicit `true` enables tab auto-naming.
-    autoTitle: raw.autoTitle === true,
+    // Tab auto-naming: default TRUE, but — same shape as `chatView` below — an explicit
+    // `false` only counts on a blob past the flip, because the old opt-in default wrote
+    // `autoTitle:false` into every earlier agent-ui.json.
+    autoTitle: raw.titleMigrated === true ? raw.autoTitle !== false : true,
     hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : AGENT_UI_DEFAULTS.hotkey,
     // Only an explicit 'dom' opts back into comfort rendering; anything else → GPU default.
     renderer: raw.renderer === 'dom' ? 'dom' : AGENT_UI_DEFAULTS.renderer,
@@ -871,6 +878,7 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     // blindly would leave every existing user on the legacy terminal.
     chatView: raw.screenMigrated === true ? raw.chatView !== false : true,
     screenMigrated: true,
+    titleMigrated: true,
     // Only an explicit 'bypass' opts into the caution mode; anything else → 'auto' default.
     chatPermissionMode: raw.chatPermissionMode === 'bypass' ? 'bypass' : 'auto',
     // The two chat defaults reuse the SPAWN-PATH gates rather than re-spelling their rules,

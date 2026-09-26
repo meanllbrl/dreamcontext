@@ -430,7 +430,7 @@ export function AgentTabs({
             <span className="agent-tab-menu-label">
               Auto-rename tabs
               <span className="agent-tab-menu-sub">
-                Every tab — named from your first message
+                Every chat — named by its agent
               </span>
             </span>
             <span className="agent-tab-menu-switch" data-on={autoTitle ? 'true' : undefined} aria-hidden />

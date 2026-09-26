@@ -93,7 +93,7 @@ export function userPromptOf(obj: unknown): string {
  * queued-command stubs, …) and malformed lines by skipping them — a transcript is an
  * append-only log written by a different program version than ours, so unknown shapes are
  * the NORM, not an error. Filters what a human never typed: meta/synthetic entries and
- * `<`-wrapped command/reminder stubs (same rule as agent-terminal.ts's firstUserMessage).
+ * `<`-wrapped command/reminder stubs.
  *
  * `opts.sidechain` says WHICH transcript this is, because the same parser reads both and the
  * `isSidechain` marker means opposite things in each: in a PARENT transcript it marks another

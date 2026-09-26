@@ -82,6 +82,34 @@ describe('coerceAgentSettings renderer', () => {
   });
 });
 
+describe('coerceAgentSettings autoTitle (the chat agent names its tab — default ON)', () => {
+  it('defaults to true on a fresh install, on both sides', () => {
+    expect(coerceAgentSettings({}).autoTitle).toBe(true);
+    expect(DEFAULT_AGENT_SETTINGS.autoTitle).toBe(true);
+    expect(coerceServerAgentSettings({}).autoTitle).toBe(true);
+  });
+
+  it('MIGRATES an existing user: a pre-flip blob\'s autoTitle:false was the old opt-in default, not a choice', () => {
+    expect(coerceAgentSettings({ autoTitle: false }).autoTitle).toBe(true);
+    expect(coerceServerAgentSettings({ autoTitle: false }).autoTitle).toBe(true);
+  });
+
+  it('honours a DELIBERATE switch-off once the blob is migrated, and it survives a re-coerce', () => {
+    expect(coerceAgentSettings({ autoTitle: false, titleMigrated: true }).autoTitle).toBe(false);
+    expect(coerceServerAgentSettings({ autoTitle: false, titleMigrated: true }).autoTitle).toBe(false);
+    const once = coerceAgentSettings({ autoTitle: false, titleMigrated: true });
+    expect(coerceAgentSettings(once).autoTitle).toBe(false);
+    expect(coerceServerAgentSettings({ ...once }).autoTitle).toBe(false);
+  });
+
+  it('stamps titleMigrated on every coerced blob, so the migration fires exactly once', () => {
+    expect(coerceAgentSettings({ autoTitle: false }).titleMigrated).toBe(true);
+    expect(coerceServerAgentSettings({ autoTitle: false }).titleMigrated).toBe(true);
+    // A garbage marker is not a migration marker.
+    expect(coerceAgentSettings({ autoTitle: false, titleMigrated: 'yes' as never }).autoTitle).toBe(true);
+  });
+});
+
 describe('coerceAgentSettings chatView (Chat is the default Agent screen, 0.22)', () => {
   it('defaults to true when the key is absent (fresh install)', () => {
     expect(coerceAgentSettings({}).chatView).toBe(true);

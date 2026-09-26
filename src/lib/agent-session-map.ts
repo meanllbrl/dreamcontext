@@ -51,22 +51,11 @@ const MAX_ENTRIES = 40;
 
 const MAP_DIR_REL = join('state', '.agent-session-map');
 
-/** Ceiling on a stored first prompt — plenty for a title, bounded against paste bombs.
- *  Matches the 800-char slice the transcript-based title path already applies. */
-const FIRST_PROMPT_MAX = 800;
-
 export interface AgentSessionEntry {
   /** The tab's CURRENT conversation UUID (what `--resume` should actually target). */
   current: string;
   /** ISO timestamp of the last update — prune order only. */
   updated: string;
-  /** The FIRST title-worthy user prompt of the `current` conversation, captured by the
-   *  UserPromptSubmit hook. Claude Code ≥2.1.x buffers a live session's transcript in
-   *  memory and flushes `<uuid>.jsonl` only on exit/rotation, so while a tab is LIVE
-   *  this field is the only on-disk source of "what did the user first ask" — the
-   *  auto-title route falls back to it when the transcript hasn't landed yet. Reset on
-   *  rotation (a new conversation deserves a title from ITS first prompt). */
-  firstPrompt?: string;
 }
 
 function mapDir(contextRoot: string): string {
@@ -78,14 +67,9 @@ function readEntry(path: string): AgentSessionEntry | null {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const { current, updated, firstPrompt } = raw as { current?: unknown; updated?: unknown; firstPrompt?: unknown };
+    const { current, updated } = raw as { current?: unknown; updated?: unknown };
     if (typeof current !== 'string' || !UUID_RE.test(current)) return null;
     const entry: AgentSessionEntry = { current, updated: typeof updated === 'string' ? updated : '' };
-    // Re-cap on read (defense against a hand-edited file feeding an unbounded string
-    // into the Haiku title prompt).
-    if (typeof firstPrompt === 'string' && firstPrompt.trim()) {
-      entry.firstPrompt = firstPrompt.slice(0, FIRST_PROMPT_MAX);
-    }
     return entry;
   } catch {
     return null;
@@ -153,13 +137,7 @@ export function recordAgentSession(contextRoot: string, tabId: string, sessionId
 
     const path = join(dir, `${tabId}.json`);
     if (existsSync(path) && !lstatSync(path).isFile()) return;
-    // Carry the captured first prompt across the rewrite ONLY while the conversation
-    // is unchanged: a rotation (`/clear`, in-TUI resume) starts a different
-    // conversation whose title must come from ITS first prompt, not the old one's.
-    const prev = readEntry(path);
-    const entry: AgentSessionEntry = { current: sessionId, updated: new Date().toISOString() };
-    if (prev?.current === sessionId && prev.firstPrompt) entry.firstPrompt = prev.firstPrompt;
-    writeEntryAtomic(path, entry);
+    writeEntryAtomic(path, { current: sessionId, updated: new Date().toISOString() });
     resolveCache.delete(`${contextRoot}\0${tabId}`); // same-process read coherence
 
     // ONE directory pass feeds both the uniqueness sweep and the prune — this runs on
@@ -226,54 +204,4 @@ export function resolveAgentSession(contextRoot: string, tabId: string): string 
   if (resolveCache.size >= RESOLVE_CACHE_MAX) resolveCache.clear();
   resolveCache.set(key, { mtimeMs, current });
   return current;
-}
-
-// ─── First-prompt capture (the auto-title fallback) ─────────────────────────────
-
-/**
- * Reduce a raw user prompt to auto-title material, or null when it can't name a tab:
- * control chars folded to spaces, trimmed, capped at {@link FIRST_PROMPT_MAX}. Rejects
- * slash commands (`/clear` says nothing about the task), `!`-prefixed shell
- * passthroughs, and `<`-prefixed wrapper payloads (system reminders / command stubs) —
- * the same hygiene the transcript-based title path applies to first user messages.
- */
-export function titleWorthyPrompt(raw: string): string | null {
-  const t = (raw ?? '').replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, ' ').trim();
-  if (t.length < 2) return null;
-  if (t.startsWith('/') || t.startsWith('!') || t.startsWith('<')) return null;
-  return t.slice(0, FIRST_PROMPT_MAX);
-}
-
-/** Read one tab's full map entry (current conversation + captured first prompt), or
- *  null when unmapped/corrupt. Uncached — callers are rare, human-paced routes. */
-export function readAgentSessionEntry(contextRoot: string, tabId: string): AgentSessionEntry | null {
-  if (!UUID_RE.test(tabId)) return null;
-  return readEntry(join(mapDir(contextRoot), `${tabId}.json`));
-}
-
-/**
- * Record conversation `sessionId`'s first title-worthy prompt for tab `tabId` — called
- * from the UserPromptSubmit hook, the only place a live session's prompt text is
- * observable on this CLI (≥2.1.x buffers the transcript in memory until exit/rotation).
- * Write-once per conversation: an existing prompt for the SAME `current` is never
- * overwritten; a different `current` means the map lagged a rotation, so both fields
- * are re-pointed together. Creates the entry when the SessionStart record was lost
- * (hook timeout). No uniqueness sweep/prune here — the Stop hook re-records moments
- * later through {@link recordAgentSession}, which owns that bookkeeping. Best-effort:
- * any fs error is swallowed; the capture is an optimization, never a gate.
- */
-export function recordAgentFirstPrompt(contextRoot: string, tabId: string, sessionId: string, prompt: string): void {
-  if (!UUID_RE.test(tabId) || !UUID_RE.test(sessionId)) return;
-  const clean = titleWorthyPrompt(prompt);
-  if (!clean) return;
-  try {
-    const dir = ensureMapDir(contextRoot);
-    if (!dir) return;
-    const path = join(dir, `${tabId}.json`);
-    if (existsSync(path) && !lstatSync(path).isFile()) return;
-    const prev = readEntry(path);
-    if (prev?.current === sessionId && prev.firstPrompt) return; // write-once per conversation
-    writeEntryAtomic(path, { current: sessionId, updated: new Date().toISOString(), firstPrompt: clean });
-    resolveCache.delete(`${contextRoot}\0${tabId}`); // same-process read coherence
-  } catch { /* best-effort — auto-title falls back to the transcript when it lands */ }
 }

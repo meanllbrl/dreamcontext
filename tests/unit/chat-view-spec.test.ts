@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseViewBlock, MAX_CHECKLIST_ITEMS, MAX_VIEW_BYTES, VIEW_TYPES,
   MAX_SECRET_FIELDS, MAX_RUN_COMMAND_CHARS,
-  MIN_AGENT_THREAD_LIMIT, MAX_AGENT_THREAD_LIMIT,
+  MIN_AGENT_THREAD_LIMIT, MAX_AGENT_THREAD_LIMIT, MAX_TAB_TITLE, cleanTabTitle,
 } from '../../dashboard/src/lib/chatViewSpec.js';
 import type {
   ChecklistViewSpec, InsightViewSpec, SecretViewSpec, RunViewSpec, AgentThreadViewSpec,
@@ -71,7 +71,7 @@ describe('parseViewBlock — the retired chart/page types', () => {
   it('is gone from VIEW_TYPES, so the briefing lockstep can never re-name it', () => {
     expect(VIEW_TYPES as readonly string[]).not.toContain('chart');
     expect(VIEW_TYPES as readonly string[]).not.toContain('page');
-    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread']);
+    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread', 'title']);
   });
 });
 
@@ -162,6 +162,42 @@ describe('parseViewBlock — type: agent-thread', () => {
     const r = parseViewBlock('{"type":"agent-thread","slug":"d","limit":"lots"}');
     expect(r.view).toEqual({ type: 'agent-thread', slug: 'd' });
     expect(r.notices.some((n) => /limit/i.test(n))).toBe(true);
+  });
+});
+
+describe('parseViewBlock — type: title (the agent names its own tab)', () => {
+  it('accepts a short name and hands back the cleaned text', () => {
+    const r = parseViewBlock(JSON.stringify({ type: 'title', text: 'Checkout button redesign' }));
+    expect(r.view).toEqual({ type: 'title', text: 'Checkout button redesign' });
+    expect(r.notices).toEqual([]);
+  });
+
+  it('keeps the user\'s language — no ASCII folding', () => {
+    expect(parseViewBlock(JSON.stringify({ type: 'title', text: 'Sekme adlandırma ajanı' })).view)
+      .toEqual({ type: 'title', text: 'Sekme adlandırma ajanı' });
+  });
+
+  it('a block with no usable text is a notice, not a silent no-op', () => {
+    for (const text of [undefined, '', '   ', 'x', 42, null, '"."']) {
+      const r = parseViewBlock(JSON.stringify({ type: 'title', text }));
+      expect(r.view, JSON.stringify(text)).toBeNull();
+      expect(r.notices.length).toBe(1);
+    }
+  });
+});
+
+describe('cleanTabTitle', () => {
+  it('folds to one line and strips wrapping quotes, emphasis and a trailing period', () => {
+    expect(cleanTabTitle('"Fix login bug."')).toBe('Fix login bug');
+    expect(cleanTabTitle('**Rate limiter**')).toBe('Rate limiter');
+    expect(cleanTabTitle('Bir başlık\nikinci satır')).toBe('Bir başlık ikinci satır');
+  });
+
+  it('caps the length on a word boundary', () => {
+    const long = cleanTabTitle('word '.repeat(30))!;
+    expect(long.length).toBeLessThanOrEqual(MAX_TAB_TITLE);
+    expect(long.endsWith(' ')).toBe(false);
+    expect(cleanTabTitle('x'.repeat(200))!.length).toBe(MAX_TAB_TITLE);
   });
 });
 

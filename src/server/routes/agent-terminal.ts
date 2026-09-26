@@ -13,14 +13,14 @@ import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
-import { resolveAgentSession, readAgentSessionEntry } from '../../lib/agent-session-map.js';
+import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { claudeAwarePath, findClaudeBin, ensureClaudeOnShellPath, claudePathExportLine } from '../../lib/claude-path.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt, EFFORT_LEVELS,
-  findFirstTranscriptPath, claudeConversationExists, redeemPromptToken,
+  claudeConversationExists, redeemPromptToken,
   sanitizeExecCommand, sanitizeRelativeDir,
 } from './agent-spawn-shared.js';
 
@@ -747,12 +747,6 @@ export function createOutputPump(
  * unless the desktop gate is on, the request is loopback, and node-pty is present.
  */
 export function attachAgentTerminal(server: Server): void {
-  // Pre-resolve the `claude` binary for auto-title: the login-shell PATH probe costs
-  // 1–2s and used to be paid by the FIRST title request. Warming it at attach time
-  // (desktop only — the title route 403s elsewhere) makes even the first title a
-  // direct spawn. A failed probe isn't cached (see resolveTitleCli), so this can't
-  // poison titling on a machine where claude gets installed later.
-  if (isDesktop()) void resolveTitleCli();
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let url: URL;
     try { url = new URL(req.url || '/', `http://${req.headers.host}`); }
@@ -835,241 +829,6 @@ export function attachAgentTerminal(server: Server): void {
       });
     })();
   });
-}
-
-/**
- * Does `claude` actually have a stored transcript for this conversation id? Claude Code
- * persists each conversation at `~/.claude/projects/<cwd-slug>/<session-uuid>.jsonl`, but
- * ONLY after the first turn — a tab that was opened and never used has NO transcript. So
- * `claude --resume <id>` on such an id fails with "No conversation found with session ID".
- * We scan the project dirs for `<id>.jsonl` (the uuid is globally unique, so we needn't
- * reproduce claude's exact cwd-slug encoding) and only `--resume` when it truly exists;
- * otherwise we start fresh PINNED to that id so the tab stays resumable going forward.
- * `id` is a pre-validated UUID (sanitizeUuid), so the filename can't escape the dir.
- */
-function findTranscriptPath(id: string): string | null {
-  return findFirstTranscriptPath([id]);
-}
-
-// ─── Auto-title (Haiku names a tab from the session's first user message) ──────
-//
-// Every agent tab is pinned to a known conversation UUID, and Claude Code writes
-// that conversation's transcript to `~/.claude/projects/<slug>/<uuid>.jsonl` — so
-// we never touch the raw PTY byte-stream to learn what the user asked. We read the
-// FIRST real user message from the transcript and let Haiku turn it into a short
-// tab title. Cheap (one Haiku `-p` call), and isolated: run in the home dir, NOT
-// the vault, so the project's SessionStart hook / brain preload never fires.
-
-/**
- * Pull the first genuine user message out of a Claude Code transcript JSONL. Skips
- * tool results and the `<...>`-wrapped system-reminder / command-stub lines so the
- * title reflects what the human actually typed. Returns null if none is found yet.
- */
-export function firstUserMessage(jsonlPath: string): string | null {
-  let raw: string;
-  try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return null; }
-  for (const line of raw.split('\n')) {
-    const s = line.trim();
-    if (!s) continue;
-    let obj: { type?: unknown; role?: unknown; message?: { role?: unknown; content?: unknown } };
-    try { obj = JSON.parse(s); } catch { continue; }
-    const role = obj?.message?.role ?? obj?.role;
-    if (obj?.type !== 'user' && role !== 'user') continue;
-    const content = obj?.message?.content ?? (obj as { content?: unknown }).content;
-    let text = '';
-    if (typeof content === 'string') text = content;
-    else if (Array.isArray(content)) {
-      text = content
-        .filter((c): c is { text: string } => !!c && typeof (c as { text?: unknown }).text === 'string')
-        .map((c) => c.text)
-        .join(' ');
-    }
-    text = text.trim();
-    if (!text) continue;
-    // Skip tool-result echoes and reminder/command wrappers — not the user's ask.
-    if (text.startsWith('<')) continue;
-    return text.slice(0, 800);
-  }
-  return null;
-}
-
-/** Validate a client-supplied first-message candidate down to the same shape
- *  `firstUserMessage` yields — trimmed, not a `<...>` wrapper, capped at 800 chars —
- *  or null when it can't title a tab. The chat surface holds the text it sent (its own
- *  composer submit / the server's spawn-prompt echo), so it can pass the message with
- *  the title request instead of waiting for the hook entry or the flushed transcript
- *  to land on disk. */
-export function sanitizeClientTitleMessage(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const text = raw.trim();
-  if (!text || text.startsWith('<')) return null;
-  return text.slice(0, 800);
-}
-
-/** Trim Haiku's reply to a clean tab title: one line, no wrapping quotes/markdown,
- *  no trailing punctuation, ≤7 words / 52 chars. The cap is generous so the title
- *  can stay specific and descriptive rather than clipped to a vague label. Returns
- *  null if nothing usable. */
-export function sanitizeTitle(raw: string): string | null {
-  let t = raw.replace(/[\r\n]+/g, ' ').trim();
-  t = t.replace(/^["'`*]+/, '').replace(/["'`*.]+$/, '').trim();
-  t = t.split(/\s+/).slice(0, 7).join(' ');
-  if (t.length > 52) t = t.slice(0, 52).trim();
-  return t.length >= 2 ? t : null;
-}
-
-/** Login-shell resolution of the `claude` binary + PATH, done ONCE per server process.
- *  The interactive login shell (sourcing the user's whole zshrc) is the single most
- *  expensive part of a titling call after the model itself — cache its result so every
- *  title after the first spawns the binary directly, no shell at all. A failed
- *  resolution is NOT cached (claude may get installed/fixed later). */
-let titleCliCache: Promise<{ bin: string; path: string } | null> | null = null;
-function resolveTitleCli(): Promise<{ bin: string; path: string } | null> {
-  if (titleCliCache) return titleCliCache;
-  titleCliCache = new Promise<{ bin: string; path: string } | null>((resolve) => {
-    const shell = process.env.SHELL || '/bin/zsh';
-    let out = '';
-    let settled = false;
-    const child = spawn(shell, ['-ilc', 'command -v claude; printf "%s" "$PATH"'], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, PATH: claudeAwarePath() },
-    });
-    const done = (v: { bin: string; path: string } | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try { child.kill(); } catch { /* gone */ }
-      resolve(v);
-    };
-    const timer = setTimeout(() => done(null), 10_000);
-    child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
-    child.on('error', () => done(null));
-    child.on('close', () => {
-      const nl = out.indexOf('\n');
-      const bin = nl > 0 ? out.slice(0, nl).trim() : '';
-      const path = nl > 0 ? out.slice(nl + 1).trim() : '';
-      done(bin ? { bin, path: path || process.env.PATH || '' } : null);
-    });
-  }).then((v) => {
-    if (!v) titleCliCache = null;
-    return v;
-  });
-  return titleCliCache;
-}
-
-/** One-shot Haiku call that returns a short tab title for `message`, or null. Spawns
- *  the resolved binary directly (no shell — the prompt is a plain argv element, so no
- *  injection surface) with lean flags: `--setting-sources ''` skips the user's
- *  settings/plugins/hooks, `--strict-mcp-config` skips every MCP server boot, and
- *  `--no-session-persistence` avoids writing a throwaway transcript per title. The
- *  title is generated in the SAME language as the user's message — Turkish prompt,
- *  Turkish tab. */
-function generateTitle(message: string, cwd: string): Promise<string | null> {
-  const prompt =
-    'You name terminal tabs so a user can tell many open tabs apart at a glance. ' +
-    'Read the user\'s first request to a coding agent and reply with ONLY a short tab title that is specific and clearly describes the actual task — name the concrete thing being worked on, not a vague category. ' +
-    'Write the title in the SAME language as the request (e.g. a Turkish request gets a Turkish title), capitalized the way a title normally is in that language. ' +
-    '3 to 6 words, no quotes, no punctuation, no trailing period, max 48 characters.\n\nRequest:\n' +
-    message;
-  const args = [
-    '--model', 'haiku',
-    '--setting-sources', '',
-    '--strict-mcp-config',
-    '--no-session-persistence',
-    '-p', prompt,
-  ];
-  return resolveTitleCli().then((cli) => new Promise((resolve) => {
-    let out = '';
-    let settled = false;
-    // Direct spawn with the cached login-shell PATH (so `#!/usr/bin/env node` shebangs
-    // resolve); if resolution failed, fall back to the old one-shot login shell.
-    const child = cli
-      ? spawn(cli.bin, args, {
-          cwd,
-          stdio: ['ignore', 'pipe', 'ignore'],
-          env: { ...process.env, PATH: cli.path },
-        })
-      : spawn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...args], {
-          cwd,
-          stdio: ['ignore', 'pipe', 'ignore'],
-          env: { ...process.env, PATH: claudeAwarePath() },
-        });
-    const done = (v: string | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try { child.kill(); } catch { /* gone */ }
-      resolve(v);
-    };
-    const timer = setTimeout(() => done(null), 30_000);
-    child.stdout?.on('data', (c: Buffer) => { out = (out + c.toString('utf-8')).slice(0, 500); });
-    child.on('error', () => done(null));
-    child.on('close', (code) => done(code === 0 ? sanitizeTitle(out) : null));
-  }));
-}
-
-/**
- * POST /api/agent/title  { claudeId, message? }
- * Returns `{ title }` — a Haiku-generated tab title from the session's first user
- * message — or `{ title: null }` if there's no transcript/message yet or Haiku
- * failed. `message` is the client's own copy of the first user message (chat tabs
- * hold it); it's the LAST resort after the transcript and the hook's session-map
- * entry, so a fresh tab can be titled on the first attempt instead of burning a
- * retry on 'no_message'. Desktop-gated + vault-scoped (same posture as /agent/drop).
- * Idempotent and side-effect-free: the client decides whether to apply the rename.
- */
-export async function handleAgentTitle(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!isDesktop()) {
-    sendError(res, 403, 'desktop_only', 'Auto-title is only available in the desktop app.');
-    return;
-  }
-  let claudeId = '';
-  let clientMessage: string | null = null;
-  try {
-    const chunks: Buffer[] = [];
-    for await (const c of req) chunks.push(c as Buffer);
-    if (chunks.length) {
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { claudeId?: unknown; message?: unknown };
-      claudeId = sanitizeUuid(typeof body.claudeId === 'string' ? body.claudeId : null);
-      clientMessage = sanitizeClientTitleMessage(body.message);
-    }
-  } catch { /* invalid body → 400 below */ }
-  if (!claudeId) {
-    sendError(res, 400, 'bad_id', 'Body must be { claudeId: <uuid> }.');
-    return;
-  }
-  // Resolve through the tab-session map first: after a `/clear` (or in-TUI resume) the
-  // tab's LIVE conversation is a different id, and the title must reflect what's on
-  // screen now — not the first message of a rotated-away conversation. Deliberately
-  // NOT liveTranscriptPath here: its pinned-id fallback is right for model/stats
-  // (stale beats nothing) but for TITLING it would resurrect the stale-title bug —
-  // a `/clear`d tab naming itself from the rotated-away conversation's first message.
-  const liveId = resolveAgentSession(contextRoot, claudeId) || claudeId;
-  const path = findTranscriptPath(liveId);
-  // Claude Code ≥2.1.x buffers a LIVE session's transcript in memory and flushes
-  // `<uuid>.jsonl` only on exit/rotation — so a fresh tab has NO transcript on disk
-  // while the user is talking to it, and title-by-transcript starves. Prefer the
-  // transcript when it exists (it covers tabs the hook never saw), then fall back to
-  // the first prompt the UserPromptSubmit hook captured into the tab's session-map
-  // entry — only when it belongs to the SAME live conversation.
-  const entry = readAgentSessionEntry(contextRoot, claudeId);
-  // Last resort: the message the CLIENT sent along. On a fresh tab neither the transcript
-  // (buffered in memory until exit/rotation) nor the hook entry (races the first turn) may
-  // exist yet — but the chat surface already holds the text it submitted, so the idle→busy
-  // edge can title on the FIRST attempt instead of returning 'no_message'.
-  const message = (path ? firstUserMessage(path) : null)
-    ?? (entry?.current === liveId ? entry.firstPrompt : null)
-    ?? clientMessage;
-  if (!message) { sendJson(res, 200, { title: null, reason: path ? 'no_message' : 'no_transcript' }); return; }
-  // Home dir, not the vault: a titling call must not fire the project's SessionStart
-  // brain preload — keep it lean.
-  const title = await generateTitle(message, homedir());
-  sendJson(res, 200, { title });
 }
 
 // ─── Model + effort config (sourced from the Claude CLI's own state) ───────────

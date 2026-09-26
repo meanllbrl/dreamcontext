@@ -46,8 +46,9 @@ export interface AgentSettings {
   restoreTabs: boolean;
   /** Which agent a new session runs (only Claude Code for now). */
   defaultAgent: DefaultAgent;
-  /** After a session's first turn, let Haiku rename its tab from the first message.
-   *  Off by default — an opt-in that costs a (cheap) Haiku call per session. */
+  /** Let a Chat session's own agent name its tab (a `title` dream-view block) once it
+   *  understands the work, and rename it when the subject moves. On by default — it costs
+   *  one line of the agent's answer, no side call. A name the user typed is never touched. */
   autoTitle: boolean;
   /** In-app accelerator that toggles the Agents overlay, e.g. "Ctrl+A". */
   hotkey: string;
@@ -80,17 +81,24 @@ export interface AgentSettings {
    *  onto Chat; from the first coerce onward the marker rides along, so a DELIBERATE
    *  switch back to Terminal (legacy) in Settings sticks forever after. */
   screenMigrated: boolean;
+  /** One-time marker for the auto-title flip to default-ON (the Haiku namer was opt-in, the
+   *  agent-named tab is not). Same reasoning as {@link AgentSettings.screenMigrated}: every
+   *  earlier blob carries `autoTitle:false` from the old opt-in default, so a raw `false` is
+   *  not evidence anybody turned it off. Until this is present `autoTitle` is forced TRUE;
+   *  from then on a deliberate switch-off sticks. */
+  titleMigrated: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   enabled: true,
   restoreTabs: true,
   defaultAgent: 'claude',
-  autoTitle: false,
+  autoTitle: true,
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
   chatView: true,
   screenMigrated: true,
+  titleMigrated: true,
   chatDefaultModel: '',
   chatDefaultEffort: '',
 };
@@ -109,17 +117,16 @@ const CHAT_DEFAULT_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
  *  and `restoreTabs` default TRUE (only an explicit `false` disables, so a missing key
- *  never silently hides the surface); `autoTitle` defaults FALSE (opt-in — only an
- *  explicit `true` turns tab auto-naming on); `chatView` defaults TRUE but honours an
- *  explicit `false` only on a `screenMigrated` blob (see the field docs above — that
- *  gate is the one-time move of existing users onto the Chat surface). */
+ *  never silently hides the surface); `autoTitle` and `chatView` default TRUE but honour an
+ *  explicit `false` only on a `titleMigrated` / `screenMigrated` blob (see the field docs
+ *  above — each gate is a one-time move of existing users onto the new default). */
 export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefined): AgentSettings {
   const r = raw ?? {};
   return {
     enabled: r.enabled !== false,
     restoreTabs: r.restoreTabs !== false,
     defaultAgent: r.defaultAgent === 'claude' ? 'claude' : DEFAULT_AGENT_SETTINGS.defaultAgent,
-    autoTitle: r.autoTitle === true,
+    autoTitle: r.titleMigrated === true ? r.autoTitle !== false : true,
     hotkey: typeof r.hotkey === 'string' && r.hotkey.trim() ? r.hotkey.trim() : DEFAULT_AGENT_SETTINGS.hotkey,
     // Only an explicit 'dom' opts back into comfort rendering; anything else
     // (absent key, old blob, garbage) lands on the smooth GPU default.
@@ -130,6 +137,7 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     // blob → Chat (that IS the migration); migrated blob → whatever the user picked.
     chatView: r.screenMigrated === true ? r.chatView !== false : true,
     screenMigrated: true,
+    titleMigrated: true,
     // The two chat defaults reject to '' — which is not a failure state but the documented
     // "inherit the CLI's own default". Validated on this side too, not only server-side:
     // `readAgentSettings` parses localStorage, so a hand-edited or stale store reaches this

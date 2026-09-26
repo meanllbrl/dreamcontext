@@ -91,6 +91,9 @@ export interface SavedMeta {
    *  caller — the client writes one — and a pane whose flag is missing falls back to its
    *  first tab, which is what a fresh pane does anyway. */
   active?: boolean;
+  /** The current title was set by the tab's own agent (a chat `title` block), so the agent may
+   *  rename it again when the work moves on; a user rename drops it. Only `true` survives. */
+  titleByAgent?: boolean;
 }
 
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
@@ -175,6 +178,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(mode ? { mode } : {}),
     ...(pane !== undefined ? { pane } : {}),
     ...(o.active === true ? { active: true } : {}),
+    ...(o.titleByAgent === true ? { titleByAgent: true } : {}),
   };
 }
 

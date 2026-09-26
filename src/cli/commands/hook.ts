@@ -66,7 +66,7 @@ import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-sta
 import { shouldStartAutoSleep, currentAutoSleepFingerprint } from '../../lib/auto-sleep.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import {
-  recordAgentSession, recordAgentFirstPrompt, readAgentSessionEntry, titleWorthyPrompt, UUID_RE,
+  recordAgentSession, UUID_RE,
 } from '../../lib/agent-session-map.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -1320,8 +1320,7 @@ function spawnAutoSleep(): void {
   // claude-like command), and the walk counts ONE claude — "not nested". The cycle's
   // own SessionStart/UserPromptSubmit hooks would then act as if they WERE the user's
   // tab: repoint the tab→conversation map at the consolidation (the tab resumes the
-  // wrong conversation, and its chat reads as LOST), overwrite the tab's captured
-  // first prompt with the sleep prompt, and consume the human's pending handoff
+  // wrong conversation, and its chat reads as LOST), and consume the human's pending handoff
   // banner into a run nobody is watching — the last of which
   // `selectHandoffForSessionStart` already documents as forbidden ("a headless
   // automation can neither receive nor consume a human's pending handoff").
@@ -2017,28 +2016,6 @@ export function registerHookCommand(program: Command): void {
 
       const root = resolveContextRoot();
       if (!root) process.exit(0);
-
-      // ── Embedded-tab first-prompt capture (the auto-title source) ────────────
-      // Claude Code ≥2.1.x buffers a live session's transcript in memory and only
-      // flushes `<uuid>.jsonl` on exit/rotation — so the dashboard's auto-title
-      // route can no longer read the first user message from disk while a tab is
-      // LIVE. This hook is the one place that prompt is observable in real time:
-      // record the conversation's first title-worthy prompt into the tab's
-      // session-map entry for /agent/title to fall back to. Runs BEFORE the
-      // consolidation-lock early return below — a mid-sleep tab still deserves a
-      // title. The write-once check runs before the `ps`-ancestry walk, so the
-      // common case (already captured) costs one file read, not a process-table
-      // scan. Wrapped: can NEVER break the reminder/recall path.
-      try {
-        const tabId = process.env.DREAMCONTEXT_TAB_SESSION ?? '';
-        const sid = typeof input.session_id === 'string' ? input.session_id : '';
-        const prompt = titleWorthyPrompt(String((input as Record<string, unknown>).prompt ?? ''));
-        if (prompt && UUID_RE.test(tabId) && UUID_RE.test(sid)) {
-          const entry = readAgentSessionEntry(root, tabId);
-          const captured = entry?.current === sid && !!entry.firstPrompt;
-          if (!captured && !isBackgroundAutoSleep() && !isNestedClaudeHook()) recordAgentFirstPrompt(root, tabId, sid, prompt);
-        }
-      } catch { /* best-effort — auto-title falls back to the transcript when it lands */ }
 
       // Standing sub-agent authorization (see SUBAGENT_DISPATCH_AUTHORIZATION).
       // Emitted BEFORE the consolidation-lock early return below, deliberately: a
