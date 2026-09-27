@@ -74,6 +74,26 @@ const Q = {
       multiSelect: false, kind: 'choice',
     }],
   },
+  // Two form mocks as tall as a real one, so the board has to show most of each without the
+  // fullscreen door.
+  TALL: {
+    title: 'Booking form → how the package is picked',
+    questions: [{
+      question: 'How should the booking form ask for a package?',
+      header: 'Package',
+      options: ['One picker', 'Switch plus chips'].map((label) => ({
+        label,
+        description: 'Same rule, different control',
+        preview: '<div class="dc-doc dc-doc--hug"><div class="dc-card"><div class="dc-card-title">Monday · 17:00</div>'
+          + '<p class="dc-label">Package</p><p class="dc-p">Pick a package</p><p class="dc-label">When opened</p>'
+          + '<p class="dc-p">Piano, 4 lessons</p><p class="dc-p">Theory, 8 lessons</p><p class="dc-p">No package, I set the price</p></div>'
+          + '<p class="dc-label">Cases</p><table class="dc-table"><tr><td>1 package</td><td>preselected</td></tr>'
+          + '<tr><td>2+ packages</td><td>must pick</td></tr><tr><td>No package</td><td>price field opens</td></tr>'
+          + '<tr><td>0 packages</td><td>no picker</td></tr><tr><td>90 min lesson</td><td>counts 1.5</td></tr></table></div>',
+      })),
+      multiSelect: false, kind: 'choice',
+    }],
+  },
   SWIPE: {
     title: 'Teaching me your taste → onboarding illustrations',
     metadata: { source: 'swipe' },
@@ -362,6 +382,30 @@ async function runTheme(chromium, base, theme, report) {
   ok('the typed text IS the answer, with no note riding on it',
     ro?.updatedInput?.answers?.[Q.OTHER.questions[0].question] === 'the team Slack' && !ro?.updatedInput?.annotations,
     JSON.stringify({ a: ro?.updatedInput?.answers, n: ro?.updatedInput?.annotations }));
+  await idle();
+
+  // ── S2a: a tall mock is readable on the card ──
+  console.log('── S2a: a tall mock shows most of itself without going full screen');
+  ok('the tall board opens', await ask('TALL'));
+  await until(async () => (await vis('.chat-surveycard-tile-preview .chat-htmlview-frame').count()) === 2
+    && (await vis('.chat-surveycard-tile-preview .chat-htmlview-frame').evaluateAll((fs) => fs.every((f) => f.getBoundingClientRect().height > 200))));
+  await page.waitForTimeout(400);
+  const windows = await vis('.chat-surveycard-tile-preview').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
+  const cap = await card().evaluate((el) => {
+    const probe = document.createElement('div');
+    probe.style.height = 'var(--survey-preview-max)';
+    el.appendChild(probe);
+    const h = probe.getBoundingClientRect().height;
+    probe.remove();
+    return Math.round(h);
+  });
+  ok('each preview window opens to the cap, not a 180px slit',
+    windows.length === 2 && windows.every((h) => h >= 380 && h <= cap + 1), `windows=${windows} cap=${cap}`);
+  ok('tiles in a row keep one height', windows.length === 2 && Math.abs(windows[0] - windows[1]) <= 1, `windows=${windows}`);
+  await shot('board-tall');
+  await vis('.chat-surveycard-tile').first().click();
+  await vis('.chat-surveycard .chat-btn.primary').first().click();
+  ok('the tall board still answers', (await answerFor('TALL'))?.behavior === 'allow');
   await idle();
 
   // ── S2: the A/B/C board ──

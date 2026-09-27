@@ -720,6 +720,9 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-unclear:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 
 /* ── The A/B/C board — options you compare by looking ─────────────────────────────── */
+/* How much of a preview shows before the ⛶ door is needed: most of a real mock, capped by the
+   window so a tile never outgrows the pane it is read in. */
+.chat-surveycard { --survey-preview-max: min(440px, 62vh); }
 .chat-surveycard-board {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -740,11 +743,14 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-tile:active { transform: scale(0.99); }
 .chat-surveycard-tile:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .chat-surveycard-tile.on { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-soft); }
-/* A fixed window onto the preview, so every tile in a row is the same height whatever the
-   fragments measure — the full thing is one click away through the frame's own ⛶ door. */
+/* A window onto the preview that hugs it up to the cap, so a mock reads without going full
+   screen. The grid stretches every tile in a row to the tallest, and this window takes the
+   slack, so the labels underneath still line up. Past the cap, the ⛶ door has the rest. */
 .chat-surveycard-tile-preview {
   position: relative;
-  height: 180px;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: var(--survey-preview-max);
   overflow: hidden;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
@@ -766,7 +772,9 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-media { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--color-bg-tertiary); }
 /* A lone picture or clip, with its fullscreen door pinned top-right like an HTML preview's. */
 .chat-surveycard-mediabox { position: relative; height: 100%; }
-.chat-swipe-preview .chat-surveycard-mediabox { height: 280px; }
+/* A picture takes its own shape up to the cap instead of a fixed box. */
+.chat-surveycard-tile-preview .chat-surveycard-media,
+.chat-swipe-preview .chat-surveycard-media { height: auto; max-height: var(--survey-preview-max); }
 .chat-surveycard-mediabox .chat-htmlview-full-btn { opacity: 1; z-index: 1; }
 /* The clip at full window: scaled up to the window, letterboxed, never cropped. */
 .chat-surveycard-videofull { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; background: #000; }
@@ -828,7 +836,7 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-swipe-face.dragging { cursor: grabbing; transition: none; }
 .chat-swipe-face.yes { border-color: var(--color-success); }
 .chat-swipe-face.no { border-color: var(--color-error); }
-.chat-swipe-preview { max-height: 280px; overflow: hidden; }
+.chat-swipe-preview { max-height: var(--survey-preview-max); overflow: hidden; }
 .chat-swipe-outcomes {
   display: flex;
   flex-direction: column;
