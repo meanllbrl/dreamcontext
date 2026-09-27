@@ -52,6 +52,7 @@ import { registerChat, type ChatHandle } from '../../lib/assistant/chat-registry
 import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '../../lib/assistant/session-state.js';
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
+import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
@@ -855,6 +856,8 @@ export function startChatSession(
     mode,
   });
   let disposeSurface = () => { /* not a surface */ };
+  // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
+  let detachInbox = () => { /* not the Assistant */ };
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
   // answer/interrupt frame arriving after the child has exited must never throw on a
@@ -1040,6 +1043,7 @@ export function startChatSession(
     unwatchAuth();
     registry?.exited();
     disposeSurface();
+    detachInbox();
     // The session's checkout override dies with the session. Left behind it would be answered
     // to a RESUMED conversation of the same id whose agent is back in the project root — and
     // the same holds for its write counts, which would otherwise warn a fresh pane about
@@ -1298,6 +1302,10 @@ export function startChatSession(
     /** When the account we are LEAVING comes back, when a recorded refusal says so. Carried
      *  so `limit_known` can name the time instead of only the fact. */
     previousResetAt?: number,
+    /** False for a text the client must NOT resubmit (an Assistant wake message): the switch
+     *  is still announced, but without `pendingText`, so the client never enqueues it as a
+     *  turn of its own. The inbox's owner redelivers it to the restarted chat instead. */
+    resubmit = true,
   ): Promise<boolean> => {
     const accounts = listClaudeAccounts();
     // Read every candidate. The active account's reading is passed in rather than re-probed.
@@ -1372,7 +1380,7 @@ export function startChatSession(
       ...(previousResetAt === undefined ? {} : { earliestResetAt: previousResetAt }),
       rejected: choice.rejected,
       // The turn the client must resubmit after the restart, so it is never lost.
-      pendingText: text,
+      ...(resubmit ? { pendingText: text } : {}),
     });
     return true;
   };
@@ -1420,7 +1428,8 @@ export function startChatSession(
   };
 
   /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
-  const maybeSwitchAccount = async (text: string): Promise<boolean> => {
+  const maybeSwitchAccount = async (text: string, opts: { resubmit?: boolean } = {}): Promise<boolean> => {
+    const resubmit = opts.resubmit ?? true;
     // One switch at a time per conversation: a second trigger while a restart is pending sends
     // its message on the CURRENT account rather than starting a second respawn. The message
     // still goes out — it is never swallowed.
@@ -1460,7 +1469,7 @@ export function startChatSession(
     // the same class of untruth as switching the billed account silently.
     if (standingRefusal) {
       return decideAndAnnounce(
-        text, 'limit_known', { id: activeAccountId, problem: 'unknown' }, standingRefusal.until);
+        text, 'limit_known', { id: activeAccountId, problem: 'unknown' }, standingRefusal.until, resubmit);
     }
 
     // ── `sequential` stops here ───────────────────────────────────────────────────────
@@ -1505,8 +1514,37 @@ export function startChatSession(
       activeProbe.status === 'ok'
         ? { id: activeAccountId, limits: activeProbe.limits }
         : { id: activeAccountId, problem: activeProbe.status },
+      undefined,
+      resubmit,
     );
   };
+
+  // A wake message about a delegated session reaches the Assistant's CLI down the SAME chain
+  // as an owner message — serialised behind it, account switch evaluated first. It carries
+  // another session's text, so it taints and NEVER clears the taint (only the owner does).
+  // Its text must never reach the client as `pendingText` — the client resubmits that as the
+  // OWNER's turn, which would launder the taint. So a HELD wake is announced without it
+  // (`resubmit: false`) and resolves false for delegations.ts to redeliver after the restart,
+  // and a sent wake CLEARS `lastSentText`: a refusal of the wake turn then has nothing to
+  // resubmit, rather than replaying the previous owner message in its place.
+  if (isAssistant) {
+    detachInbox = attachAssistantInbox({
+      id: randomUUID(),
+      deliver: (text) => new Promise<boolean>((resolve) => {
+        if (!alive) return resolve(false);
+        switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
+          .catch(() => false)
+          .then((held) => {
+            if (!alive || held) return resolve(false);
+            turnsInFlight += 1;
+            lastSentText = null;
+            markTainted();
+            writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+            resolve(true);
+          }));
+      }),
+    });
+  }
 
   // ── ws → claude stdin (client control frames) ──────────────────────────────────────
   ws.on('message', (raw: Buffer | string) => {

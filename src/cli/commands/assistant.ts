@@ -98,8 +98,8 @@ export function registerAssistantCommand(program: Command): void {
     });
 
   a.command('watch <sessionId>')
-    .description('Wait until a chat is idle / asking / changes; returns at once if it has ended')
-    .option('--until <status>', 'idle | asking | any', 'idle')
+    .description('Wait until a chat settles (idle or asking) / is idle / asking / changes; returns at once if it has ended')
+    .option('--until <status>', 'settled | idle | asking | any', 'settled')
     .option('--timeout <seconds>', 'Give up after this many seconds', '590')
     .action(async (sessionId: string, o: { until: string; timeout: string }) => {
       const p = new URLSearchParams({ session: sessionId, until: o.until, timeout: o.timeout });

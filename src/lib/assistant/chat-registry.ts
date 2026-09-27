@@ -95,7 +95,8 @@ export interface ChatHandle {
 }
 
 type Waiter = { until: WatchUntil; from: ChatStatus; resolve: (r: WatchResult) => void; timer: ReturnType<typeof setTimeout> };
-export type WatchUntil = 'idle' | 'asking' | 'any';
+/** `settled` = the chat stopped for the owner: idle OR asking. */
+export type WatchUntil = 'settled' | 'idle' | 'asking' | 'any';
 export interface WatchResult {
   entry: ChatEntry | null;
   ended?: boolean;
@@ -107,25 +108,44 @@ const entries = new Map<string, ChatEntry>();
 const waiters = new Map<string, Set<Waiter>>();
 const deathTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/** One change to a chat: a new status, or a new question replacing the pending one while
+ *  the status stays `asking` (then `from` is `asking` too). */
+export interface ChatChange { entry: ChatEntry; from: ChatStatus }
+const listeners = new Set<(c: ChatChange) => void>();
+
+/** Be told of every {@link ChatChange}. Returns the unsubscribe. A listener that throws is
+ *  isolated — it never stops the registry or the other listeners. */
+export function onChatChange(fn: (c: ChatChange) => void): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+function emit(e: ChatEntry, from: ChatStatus): void {
+  for (const fn of [...listeners]) {
+    try { fn({ entry: clone(e), from }); } catch { /* a listener's failure is its own */ }
+  }
+}
+
 const cap = (s: string, n = TEXT_CAP) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const clone = (e: ChatEntry): ChatEntry => ({ ...e, lastAssistantText: [...e.lastAssistantText], pendingQuestion: e.pendingQuestion ? { ...e.pendingQuestion, options: [...e.pendingQuestion.options] } : null });
 
 function satisfies(until: WatchUntil, from: ChatStatus, now: ChatStatus): boolean {
   if (until === 'any') return now !== from;
+  if (until === 'settled') return now === 'idle' || now === 'asking';
   return now === until;
 }
 
 function setStatus(e: ChatEntry, status: ChatStatus): void {
-  const changed = e.status !== status;
+  const from = e.status;
   e.status = status;
   e.updatedAt = new Date().toISOString();
-  if (!changed) return;
+  if (from === status) return;
   const set = waiters.get(e.sessionId);
-  if (!set) return;
-  for (const w of [...set]) {
+  for (const w of set ? [...set] : []) {
     if (status === 'gone') settle(e.sessionId, w, { entry: clone(e), ended: true });
     else if (satisfies(w.until, w.from, status)) settle(e.sessionId, w, { entry: clone(e) });
   }
+  emit(e, from);
 }
 
 function settle(sessionId: string, w: Waiter, r: WatchResult): void {
@@ -221,7 +241,15 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         e.conversationId = frame.session_id;
       }
       const q = readPendingQuestion(frame);
-      if (q) { e.pendingQuestion = q; setStatus(e, 'asking'); return; }
+      if (q) {
+        const prevRequestId = e.pendingQuestion?.requestId;
+        const wasAsking = e.status === 'asking';
+        e.pendingQuestion = q;
+        setStatus(e, 'asking');
+        // Still asking, but about something new: the owner has a different question to see.
+        if (wasAsking && prevRequestId !== q.requestId) emit(e, 'asking');
+        return;
+      }
       // The main agent is producing output, so a turn IS running, whoever opened it (a queued
       // second message after the first one's result, or a turn the bridge wrote itself).
       // `null` and absent both mean top level: real CLI frames carry `parent_tool_use_id: null`
@@ -294,8 +322,8 @@ export function getChat(sessionId: string): ChatEntry | null {
 /**
  * Long-poll one chat. Resolves:
  *  • at once with `ended:true` when it is already gone (or goes while waiting);
- *  • at once when it is ALREADY in the requested status (`idle`/`asking`) — "wait until it
- *    is done" on a chat that is done is an answer, not a wait;
+ *  • at once when it is ALREADY in the requested status (`idle`/`asking`, or either for
+ *    `settled`) — "wait until it is done" on a chat that is done is an answer, not a wait;
  *  • on the next change for `any`;
  *  • with `timedOut:true` after `timeoutMs`;
  *  • with `unknown:true` for a session this server has never seen.
@@ -304,7 +332,7 @@ export function watchChat(sessionId: string, until: WatchUntil, timeoutMs: numbe
   const e = entries.get(sessionId);
   if (!e) return Promise.resolve({ entry: null, unknown: true });
   if (e.status === 'gone') return Promise.resolve({ entry: clone(e), ended: true });
-  if (until !== 'any' && e.status === until) return Promise.resolve({ entry: clone(e) });
+  if (until !== 'any' && satisfies(until, e.status, e.status)) return Promise.resolve({ entry: clone(e) });
   return new Promise((resolve) => {
     const w: Waiter = {
       until,
@@ -325,4 +353,5 @@ export function _resetChatRegistry(): void {
   entries.clear();
   waiters.clear();
   deathTimers.clear();
+  listeners.clear();
 }

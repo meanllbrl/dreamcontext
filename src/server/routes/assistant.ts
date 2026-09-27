@@ -21,6 +21,7 @@ import {
   bindCommandToWindow, claimCommand, deliverResult, registerWindow, relayCommand, windowVault,
 } from '../../lib/assistant/relay.js';
 import { listVaults } from '../../lib/vaults.js';
+import { recordDelegation } from '../../lib/assistant/delegations.js';
 
 /**
  * `/api/assistant/*` — the dreamcontext Assistant's server surface.
@@ -127,14 +128,14 @@ export async function handleAssistantSessions(req: IncomingMessage, res: ServerR
   sendJson(res, 200, { sessions: sessions.map((c) => viewChat(c)) });
 }
 
-/** GET /api/assistant/watch?session=<id>&until=idle|asking|any&timeout=<sec> */
+/** GET /api/assistant/watch?session=<id>&until=settled|idle|asking|any&timeout=<sec> */
 export async function handleAssistantWatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!assistantGate(req, res)) return;
   holdOpen(req);
   const p = q(req);
   const sessionId = p.get('session') ?? '';
-  const untilRaw = p.get('until') ?? 'idle';
-  const until: WatchUntil = untilRaw === 'asking' || untilRaw === 'any' ? untilRaw : 'idle';
+  const untilRaw = p.get('until') ?? 'settled';
+  const until: WatchUntil = untilRaw === 'idle' || untilRaw === 'asking' || untilRaw === 'any' ? untilRaw : 'settled';
   const timeoutSec = Math.min(Math.max(Number(p.get('timeout') ?? 590) || 590, 1), 3600);
   const r = await watchChat(sessionId, until, timeoutSec * 1000);
   if (r.unknown) { sendError(res, 404, 'unknown_session', `No live or recent chat "${sessionId}".`); return; }
@@ -290,12 +291,20 @@ export async function handleAssistantUi(req: IncomingMessage, res: ServerRespons
     const text = verb === 'send' ? String(args.text) : String(args.choice ?? args.text);
     const out = await gated(res, verb, `${chat.vault} · ${chat.sessionId}`, text, isPermission, (finalText) =>
       relay({ ...args, vault: chat.vault, ...(verb === 'send' ? { text: finalText } : args.choice ? { choice: finalText } : { text: finalText }) }));
+    // The Assistant is told when this session next asks, finishes a turn, or closes.
+    if (out.body.ok === true) recordDelegation(args.sessionId, chat.vault);
     sendJson(res, out.status, out.body);
     return;
   }
   if (verb === 'chat') {
     const out = await gated(res, 'chat', String(args.vault), String(args.prompt), false, (finalPrompt) =>
       relay({ ...args, prompt: finalPrompt }));
+    // The window answers `{vault, sessionId}` — the new tab's CLI session id, the one the chat
+    // registry keys on (useAssistantDoorbell.ts).
+    if (out.body.ok === true) {
+      const result = out.body.result as { sessionId?: unknown } | null | undefined;
+      recordDelegation(result?.sessionId, args.vault);
+    }
     sendJson(res, out.status, out.body);
     return;
   }

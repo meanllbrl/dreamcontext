@@ -250,6 +250,147 @@ describe('chat registry — status derived at the agent-chat.ts parse point', ()
   });
 });
 
+const ask = (child: FakeChild, requestId: string, question = 'Which DB?') =>
+  line(child, { type: 'control_request', request_id: requestId, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question, options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] } } });
+
+describe('watch --until settled: the chat stopped for the owner (idle OR asking)', () => {
+  beforeEach(() => { spawned.length = 0; registry._resetChatRegistry(); });
+
+  it('resolves when a working chat starts ASKING — where --until idle would keep waiting', async () => {
+    const { ws, child } = start();
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'plan the migration' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    const settled = registry.watchChat(SID, 'settled', 60_000);
+    const idle = registry.watchChat(SID, 'idle', 50);
+    ask(child, 'req-s1');
+    const r = await settled;
+    expect(r.timedOut).toBeUndefined();
+    expect(r.entry).toMatchObject({ status: 'asking', pendingQuestion: { requestId: 'req-s1' } });
+    // `idle` stays strict: asking is not idle.
+    expect((await idle).timedOut).toBe(true);
+  });
+
+  it('resolves when a working chat goes idle', async () => {
+    const { ws, child } = start();
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'plan the migration' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    const p = registry.watchChat(SID, 'settled', 60_000);
+    line(child, { type: 'result', subtype: 'success' });
+    expect((await p).entry?.status).toBe('idle');
+  });
+
+  it('resolves AT ONCE when the chat is already idle or already asking', async () => {
+    const { child } = start();
+    line(child, { type: 'result', subtype: 'success' });
+    const a = await registry.watchChat(SID, 'settled', 60_000);
+    expect(a.entry?.status).toBe('idle');
+    expect(a.timedOut).toBeUndefined();
+    ask(child, 'req-s2');
+    const b = await registry.watchChat(SID, 'settled', 60_000);
+    expect(b.entry?.status).toBe('asking');
+    expect(b.timedOut).toBeUndefined();
+    // …but an already-asking chat does not satisfy a strict `idle` watch.
+    expect((await registry.watchChat(SID, 'idle', 20)).timedOut).toBe(true);
+  });
+
+  it('does not resolve on a starting → working change, and ends with ended:true on close', async () => {
+    const { ws, child } = start();
+    const p = registry.watchChat(SID, 'settled', 60_000);
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'go' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    child.emit('close', 0);
+    const r = await p;
+    expect(r.ended).toBe(true);
+    expect(r.entry?.status).toBe('gone');
+  });
+});
+
+describe('onChatChange: every status change, and a new question while still asking', () => {
+  beforeEach(() => { spawned.length = 0; registry._resetChatRegistry(); });
+
+  it('fires once per status change with the entry and the status it came from', async () => {
+    const seen: Array<[string, string]> = [];
+    registry.onChatChange(({ entry, from }) => seen.push([from, entry.status]));
+    const { ws, child } = start();
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'fix it' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    ask(child, 'req-c1');
+    ws.emit('message', JSON.stringify({ type: 'answer', requestId: 'req-c1', behavior: 'allow', updatedInput: {} }));
+    // A frame that keeps the status where it is is not a change.
+    line(child, { type: 'assistant', message: { content: [{ type: 'text', text: 'working on it' }] } });
+    line(child, { type: 'result', subtype: 'success' });
+    child.emit('close', 0);
+    expect(seen).toEqual([
+      ['starting', 'working'],
+      ['working', 'asking'],
+      ['asking', 'working'],
+      ['working', 'idle'],
+      ['idle', 'gone'],
+    ]);
+  });
+
+  it('carries the pending question on the asking change', () => {
+    const changes: registry.ChatChange[] = [];
+    registry.onChatChange((c) => changes.push(c));
+    const { child } = start();
+    ask(child, 'req-c2', 'Ship it?');
+    expect(changes).toHaveLength(1);
+    expect(changes[0].from).toBe('starting');
+    expect(changes[0].entry).toMatchObject({ sessionId: SID, status: 'asking', pendingQuestion: { requestId: 'req-c2', text: 'Ship it?' } });
+  });
+
+  it('fires when a NEW question replaces the pending one while status stays asking — not on a repeat of the same one', () => {
+    const changes: registry.ChatChange[] = [];
+    registry.onChatChange((c) => changes.push(c));
+    const { child } = start();
+    ask(child, 'req-a', 'First?');
+    ask(child, 'req-a', 'First?');
+    expect(changes).toHaveLength(1);
+    ask(child, 'req-b', 'Second?');
+    expect(changes).toHaveLength(2);
+    expect(changes[1].from).toBe('asking');
+    expect(changes[1].entry).toMatchObject({ status: 'asking', pendingQuestion: { requestId: 'req-b', text: 'Second?' } });
+  });
+
+  it('hands each listener its own copy of the entry', () => {
+    const changes: registry.ChatChange[] = [];
+    registry.onChatChange((c) => { c.entry.lastAssistantText.push('mutated'); changes.push(c); });
+    const { child } = start();
+    line(child, { type: 'result', subtype: 'success' });
+    expect(changes).toHaveLength(1);
+    expect(registry.getChat(SID)?.lastAssistantText).toEqual([]);
+  });
+
+  it('a throwing listener neither breaks the registry nor starves the other listeners', () => {
+    const got: string[] = [];
+    registry.onChatChange(() => { throw new Error('boom'); });
+    registry.onChatChange(({ entry }) => got.push(entry.status));
+    const { child } = start();
+    expect(() => line(child, { type: 'result', subtype: 'success' })).not.toThrow();
+    expect(registry.getChat(SID)?.status).toBe('idle');
+    expect(got).toEqual(['idle']);
+  });
+
+  it('the returned function unsubscribes', () => {
+    const got: string[] = [];
+    const off = registry.onChatChange(({ entry }) => got.push(entry.status));
+    const { child } = start();
+    ask(child, 'req-u');
+    off();
+    line(child, { type: 'result', subtype: 'success' });
+    expect(got).toEqual(['asking']);
+  });
+
+  it('_resetChatRegistry drops every listener', () => {
+    const got: string[] = [];
+    registry.onChatChange(({ entry }) => got.push(entry.status));
+    registry._resetChatRegistry();
+    const { child } = start();
+    line(child, { type: 'result', subtype: 'success' });
+    expect(got).toEqual([]);
+  });
+});
+
 describe('the assistant token reaches ONLY the __assistant__ spawn', () => {
   beforeEach(() => { spawned.length = 0; registry._resetChatRegistry(); });
 
