@@ -404,6 +404,34 @@ export function findDevelopRunToAdopt(contextRoot: string, goal: string, tab: st
 }
 
 /**
+ * A write (`phase`, `actor`, `state`) from a session that has no file of its own yet: the
+ * lead's session id changed under it (a handoff, a reopen) and it did not call `start` again.
+ * Its pane's unfinished Develop run is the run it is still driving, so the write lands there
+ * instead of in a blank orphan that draws as a Draft with no party. Only this pane's own run
+ * (a non-empty `tab` equal on both sides) qualifies; the newest wins. Null = nothing to take.
+ */
+export function findTabRunToContinue(contextRoot: string, tab: string | null): { path: string; state: GoalLiveState } | null {
+  if (!tab) return null;
+  const dir = join(contextRoot, 'tmp');
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return null; }
+  let best: { path: string; state: GoalLiveState; moved: number } | null = null;
+  for (const name of names) {
+    if (!GOAL_LIVE_FILE_RE.test(name)) continue;
+    const path = join(dir, name);
+    try {
+      const st = lstatSync(path);
+      if (!st.isFile()) continue;
+      const state = readGoalLive(path);
+      if (!isOpenDevelopRun(state) || state.tab !== tab) continue;
+      const moved = lastMovedMs(state, st.mtimeMs);
+      if (!best || moved > best.moved) best = { path, state, moved };
+    } catch { /* vanished mid-scan */ }
+  }
+  return best && { path: best.path, state: best.state };
+}
+
+/**
  * The context a fork INHERITS: the source session's last main-chain context, measured off
  * its own transcript (`lastMainChainContext`, the same formula the composer ring and the
  * handoff nudge use). Null when the transcript cannot be found or carries no usage — the

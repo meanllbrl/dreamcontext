@@ -13,6 +13,7 @@ import {
   TEAMMATE_SESSION_RE,
   applyGoalLiveEvent,
   findDevelopRunToAdopt,
+  findTabRunToContinue,
   goalLivePath,
   goalLiveSessionId,
   measureInheritedContext,
@@ -80,10 +81,24 @@ function applyEvents(deps: GoalLiveDeps, events: GoalLiveEvent[], opts: { sweep?
   if (!root) throw new GoalLiveInputError('no _dream_context/ found from here');
   const now = deps.now();
   if (opts.sweep) sweepAbandonedGoalLive(root, now.getTime());
-  const path = goalLivePath(root, goalLiveSessionId(deps.env));
-  let state = events[0]?.type === 'start' ? null : readGoalLive(path);
+  const session = goalLiveSessionId(deps.env);
+  const path = goalLivePath(root, session);
+  const starting = events[0]?.type === 'start';
+  let state = starting ? null : readGoalLive(path);
+  // No file under this session id: the lead's id changed and it kept writing without a new
+  // `start`. Continue its pane's open Develop run, re-stamped, rather than orphan the write.
+  const carried = !starting && !state
+    ? findTabRunToContinue(root, (deps.env.DREAMCONTEXT_TAB_SESSION ?? '').trim() || null)
+    : null;
+  if (carried) {
+    state = { ...carried.state };
+    if (session) state.session = session; else delete state.session;
+  }
   for (const ev of events) state = applyGoalLiveEvent(state, ev, now.toISOString());
   if (state) writeGoalLiveAtomic(path, state);
+  if (carried && carried.path !== path) {
+    try { unlinkSync(carried.path); } catch { /* the other session already moved it */ }
+  }
 }
 
 /** `T1=Role registry,T2=Tokens` → `[{id:'T1', name:'Role registry'}, …]`. Names may not

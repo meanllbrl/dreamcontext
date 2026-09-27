@@ -613,6 +613,27 @@ describe('Develop run survival: start adopts, the sweep keeps', () => {
     expect(existsSync(ancient)).toBe(false);
   });
 
+  it('a write from a new session id continues its pane\'s open run instead of orphaning it', () => {
+    const old = leave(OTHER, { tab: 'tab-a' }, 60_000);
+    const d = deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' });
+    goalLivePhase(d, 'impl', { wave: '3', waves: '3' });
+    goalLiveActor(d, 'w3-A', { kind: 'resume', role: 'implementer', wave: '3', session: 'abcdef01-0000-4000-8000-000000000001' });
+    const s = read(SID);
+    expect(s).toMatchObject({ goal: 'dev', mode: 'develop', session: SID, tab: 'tab-a', phase: 'impl', reviewed: 1, impl: { wave: 3, waves: 3 } });
+    expect(s.lineage!.at(-1)).toMatchObject({ a: 'w3-A', w: 3, sid: 'abcdef01-0000-4000-8000-000000000001' });
+    expect(existsSync(old)).toBe(false);
+  });
+
+  it('a write never takes another pane\'s run, a done run, or anything without a tab', () => {
+    const b = leave(OTHER, { tab: 'tab-b' }, 60 * 60_000);
+    const done = leave('aaaaaaaa-0000-0000-0000-000000000003', { tab: 'tab-a', phase: 'done' }, 60_000);
+    goalLivePhase(deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' }), 'impl', {});
+    expect(read(SID).goal).toBeUndefined();
+    goalLivePhase(deps({ CLAUDE_CODE_SESSION_ID: 'aaaaaaaa-0000-0000-0000-000000000004' }), 'impl', {});
+    expect(read('aaaaaaaa-0000-0000-0000-000000000004').goal).toBeUndefined();
+    expect(existsSync(b) && existsSync(done)).toBe(true);
+  });
+
   it('--mode must be goal or develop', () => {
     expect(() => goalLiveStart(deps({}), 'dev', 'sprint')).toThrow(/--mode/);
   });

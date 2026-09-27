@@ -85,6 +85,10 @@ The env strip is REQUIRED: a nohup'd builder otherwise hijacks this pane's resum
 $HOME/.claude, since any value relocates ~/.claude.json and loses the login.
 Never start a builder with the Bash tool's run_in_background: it reads as finished at once,
 and the nohup'd process is the real run. Builders never call goal-live themselves.
+Register each builder on its own line, with literal values: never through a loop that splits
+a string (zsh never word-splits one, so the id arrives as "wN-L <sid> <pid>" and is refused).
+Never send goal-live's output to /dev/null: a refused call prints why on stderr, and a builder
+it refused never appears in the chat.
 
 ### 2c. Wait, then gate
 
@@ -185,7 +189,7 @@ Resume (always under the recorded cfg; \`cfg -\` = UNSET the variable, never set
   if [ "$cfg" = "-" ]; then set -- -u CLAUDE_CONFIG_DIR; else set -- CLAUDE_CONFIG_DIR="$cfg"; fi
   env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT "$@" nohup claude -p "<exactly the findings, or: continue>" --resume "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json >> "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
   dreamcontext tasks log "$S" "wN-L resumed sid $SID pid $! cfg $cfg"
-  dreamcontext goal-live actor wN-L --kind resume --role implementer --wave N --round <r> || true
+  dreamcontext goal-live actor wN-L --kind resume --role implementer --wave N --round <r> --session "$SID" || true
 
 A usage-limit ending is a pause: resume the SAME sid later. Every account capped: stop and
 tell the owner.
