@@ -5,9 +5,11 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
-import { automationsDir, isSafeAutomationSlug, listAutomations } from './store.js';
+import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
+import { notifyViaBundle, NOTIFY_SOUND_OK } from './notifier.js';
 import {
   AutomationError,
+  NOTIFY_BODY_MAX_CHARS,
   THREAD_DAY_MAX_ENTRIES,
   THREAD_ENTRY_MARKER,
   THREAD_ENTRY_MAX_BYTES,
@@ -695,4 +697,55 @@ export function allThreadUnread(
     if (count > 0) out[slug] = count;
   }
   return out;
+}
+
+/**
+ * One banner for what a RESUMED turn said — an answered question, a thread reply.
+ *
+ * A scheduled run announces itself when it finishes (the runner's completion banner).
+ * A resume has no such moment of its own, and the turn it runs is often the one the
+ * owner is waiting for: "plan approved, the new cover is ready, look at it before I
+ * export". Without this the post lands in the channel in silence, and the owner — who
+ * answered and walked away — never learns it arrived.
+ *
+ * WHAT IT ANNOUNCES is the newest thing the agent said after `sinceId` (the human's own
+ * entry, or the moment the resume started): an `agent` post, or an `asked` entry when
+ * the turn ended by asking again — that one has to read as a question, not a report.
+ * `fallback` (the turn's final message) is used only when the thread holds nothing new.
+ *
+ * READ IS JUDGED ON THE ANSWER, NOT THE QUESTION. Comparing the watermark to the human's
+ * own entry silenced nearly every reply: they type it with the thread open, so the app
+ * has marked it read before the agent has said a word. What must be unread is the
+ * agent's post — if the owner watched it arrive, the banner is noise.
+ *
+ * `manifest.notify === false` silences it, the same gate a run obeys. Best-effort:
+ * returns whether a banner was posted, never throws.
+ */
+export function announceTurn(
+  contextRoot: string,
+  slug: string,
+  sinceId: string,
+  fallback: string | null,
+  home: string = homedir(),
+): boolean {
+  try {
+    const manifest = getAutomation(contextRoot, slug);
+    if (!manifest?.notify) return false;
+    const said = readThread(contextRoot, slug, { sinceId, days: 2 })
+      .filter((e) => e.kind === 'agent' || (e.kind === 'system' && e.event === 'asked'));
+    const last = said[said.length - 1] ?? null;
+    const watermark = threadReadWatermark(contextRoot, slug, home);
+    if (last && watermark !== null && watermark >= last.id) return false;
+    const body = (last?.text ?? fallback ?? '').trim();
+    if (!body) return false;
+    const title = last?.kind === 'system' ? `${manifest.title} — needs your answer` : manifest.title;
+    return notifyViaBundle(
+      title,
+      body.length <= NOTIFY_BODY_MAX_CHARS ? body : `${body.slice(0, NOTIFY_BODY_MAX_CHARS - 1).trimEnd()}…`,
+      home,
+      { sound: NOTIFY_SOUND_OK },
+    );
+  } catch {
+    return false;
+  }
 }

@@ -2,12 +2,11 @@ import { dirname } from 'node:path';
 import { runAutomation, type RunOutcome } from '../lib/automations/runner.js';
 import { enqueueFire } from '../lib/automations/queue.js';
 import {
-  appendThreadEntry, newThreadEntryId, readThread, threadReadWatermark,
+  announceTurn, appendThreadEntry, newThreadEntryId, readThread,
 } from '../lib/automations/threads.js';
 import { getAutomation, listAutomations, readRunSidecar } from '../lib/automations/store.js';
 import { resumeWithAnswer, resumeWithMessage, type TalkOutcome } from '../lib/automations/verdict.js';
 import { pendingQuestion } from '../lib/automations/hitl.js';
-import { notifyViaBundle, NOTIFY_SOUND_OK } from '../lib/automations/notifier.js';
 import { trackChild } from './lifecycle.js';
 
 /**
@@ -403,16 +402,10 @@ function settleReplyThread(
       }
     }
 
-    // One banner for the turn, and only when this machine has not already read past it.
+    // One banner for the turn, judged on the AGENT'S post being unread — see `announceTurn`.
     // Nothing else announces a reply-turn post: the run's own completion banner fired
-    // long ago. `manifest.notify === false` silences it, the same gate a run obeys.
-    if (ok && outcome?.result) {
-      const manifest = getAutomation(contextRoot, job.slug);
-      const watermark = threadReadWatermark(contextRoot, job.slug, home);
-      if (manifest?.notify && (watermark === null || job.entryId > watermark)) {
-        notifyViaBundle(manifest.title, outcome.result, home, { sound: NOTIFY_SOUND_OK });
-      }
-    }
+    // long ago.
+    if (ok) announceTurn(contextRoot, job.slug, job.entryId, outcome?.result ?? null, home);
   } catch {
     // The job's own status still carries the truth, and the poll still reports it.
   }

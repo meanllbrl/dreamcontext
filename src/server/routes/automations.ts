@@ -50,7 +50,7 @@ import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
 import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
 import { buildFeed, readRunAnswer, threadReplies, threadRootId } from '../../lib/automations/feed.js';
 import {
-  appendThreadEntry, listThreadRuns, markThreadRead, readThread, threadUnread,
+  announceTurn, appendThreadEntry, listThreadRuns, markThreadRead, newThreadEntryId, readThread, threadUnread,
 } from '../../lib/automations/threads.js';
 import { latestBoundSession, readAutomationSession } from '../../lib/automations/session-registry.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
@@ -706,7 +706,12 @@ export async function handleAutomationsQuestionAnswer(
       return;
     }
 
+    // Marked BEFORE the resume: whatever the agent posts from here on is this turn's.
+    const since = newThreadEntryId();
     const outcome = await resumeWithAnswer(contextRoot, question, answer, 'dashboard');
+    // The answer card is left the moment it is sent; the turn it starts can run for
+    // minutes and end with the post the owner was waiting for. That post gets a banner.
+    if (outcome.status === 'ok') announceTurn(contextRoot, question.slug, since, outcome.result);
     if (outcome.status === 'refused') {
       // 409, not 500: the question was answered elsewhere, or cannot be
       // answered this way. That is a legitimate state the UI must render.

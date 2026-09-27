@@ -170,11 +170,23 @@ describe('the reply job owns its own completion', () => {
     expect(notifyViaBundle).toHaveBeenCalledTimes(1);
     expect(notifyViaBundle.mock.calls[0][1]).toBe('WAU is down 4%.');
 
+    // The owner watched the answer arrive: the watermark is past the agent's post.
     notifyViaBundle.mockClear();
     const second = seedUserEntry('digest');
-    markThreadRead(contextRoot, 'digest', second, home);
+    markThreadRead(contextRoot, 'digest', newThreadEntryId(Date.now() + 60_000), home);
     await settled(startAutomationReplyJob(contextRoot, 'digest', { runId: RUN, text: 'x', entryId: second, home }).id);
     expect(notifyViaBundle).not.toHaveBeenCalled();
+  });
+
+  it('still notifies when only the HUMAN\'s own entry was read — the answer is what must be unread', async () => {
+    // The reply is typed with the thread open, so the app marks it read before the agent
+    // says a word. That used to silence every reply-turn banner.
+    resumeWithMessage.mockResolvedValue({ status: 'ok', error: null, result: 'Cover v2 is ready, look before I export.' });
+    const entryId = seedUserEntry('digest');
+    markThreadRead(contextRoot, 'digest', entryId, home);
+    await settled(startAutomationReplyJob(contextRoot, 'digest', { runId: RUN, text: 'x', entryId, home }).id);
+    expect(notifyViaBundle).toHaveBeenCalledTimes(1);
+    expect(notifyViaBundle.mock.calls[0][1]).toBe('Cover v2 is ready, look before I export.');
   });
 });
 
