@@ -446,3 +446,16 @@ describe('parseViewBlock — type: run', () => {
     expect(r.notices).toEqual([]);
   });
 });
+
+describe('unslug — a tab name reads, it does not drown in dashes', () => {
+  it('turns a slug into spaced words, first letter capital', async () => {
+    const { cleanTabTitle } = await import('../../dashboard/src/lib/chatViewSpec');
+    expect(cleanTabTitle('her-ders-ve-program-pakete-acik')).toBe('Her ders ve program pakete acik');
+    expect(cleanTabTitle('checkout_redesign')).toBe('Checkout redesign');
+  });
+  it('leaves a real title with its own punctuation alone', async () => {
+    const { cleanTabTitle } = await import('../../dashboard/src/lib/chatViewSpec');
+    expect(cleanTabTitle('Plan - Develop geçişi')).toBe('Plan - Develop geçişi');
+    expect(cleanTabTitle('Sekme adlandırma')).toBe('Sekme adlandırma');
+  });
+});

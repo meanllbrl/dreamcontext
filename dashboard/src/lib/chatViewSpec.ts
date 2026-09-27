@@ -864,13 +864,26 @@ function validateCheckout(obj: Record<string, unknown>, notices: string[]): { vi
 export const MAX_TAB_TITLE = 48;
 
 /**
- * One line, no wrapping quotes or markdown emphasis, no trailing period, at most
+ * A slug read as a name: `her-ders-ve-program` -> `Her ders ve program`. Only a title that is
+ * NOTHING but hyphen- or underscore-joined words, so "Plan → Develop" or "e-posta ayarları"
+ * keep their punctuation. The owner (2026-09-27): a tab name must read, not drown in dashes.
+ */
+export function unslug(t: string): string {
+  if (!/^[\p{L}\p{N}]+(?:[-_][\p{L}\p{N}]+)+$/u.test(t)) return t;
+  const words = t.replace(/[-_]+/g, ' ');
+  return words.charAt(0).toLocaleUpperCase() + words.slice(1);
+}
+
+/**
+ * One line, no wrapping quotes or markdown emphasis, no trailing period, slug dashes turned
+ * into spaces ({@link unslug}), at most
  * {@link MAX_TAB_TITLE} characters cut on a word boundary. `null` when nothing usable is left.
  */
 export function cleanTabTitle(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   let t = raw.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
   t = t.replace(/^["'`*_#]+/, '').replace(/["'`*_.]+$/, '').trim();
+  t = unslug(t);
   if (t.length > MAX_TAB_TITLE) {
     const cut = t.slice(0, MAX_TAB_TITLE);
     const space = cut.lastIndexOf(' ');

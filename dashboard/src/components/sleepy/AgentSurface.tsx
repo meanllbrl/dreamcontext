@@ -51,6 +51,7 @@ import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } fro
 import { dropScratch } from './chat/composerScratch';
 import { postToSession } from './chat/postToSession';
 import { parseChatActions } from './chat/chatActions';
+import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
@@ -1600,7 +1601,10 @@ export function AgentSurface() {
       }
       const s = spawn(false, undefined, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
       const meta: SessionMeta = {
-        id: s.id, title: taskSlug, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'develop',
+        // Opens under the task's name read as words, and `titleByAgent` lets the Develop agent
+        // replace it with a real one — the slug alone (`her-ders-ve-program-…`) is unreadable
+        // and, outside DEFAULT_TAB_TITLE_RE, used to be stuck there for good.
+        id: s.id, title: cleanTabTitle(taskSlug) ?? taskSlug, titleByAgent: true, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'develop',
       };
       // Land at the plan tab's index in the plan tab's pane. Both lookups run BEFORE the close
       // below, while that tab still exists; `-1`/`undefined` degrade to "append to the focused

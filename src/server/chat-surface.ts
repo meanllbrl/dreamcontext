@@ -281,8 +281,8 @@ you send is ignored and drawn as a notice.
 \`\`\`
 
 **This tab's name.** Nothing drawn; your tab takes it. Send it once you understand the work,
-never before you have looked: 2-5 words, the concrete subject, the user's language. Re-send
-only when the subject truly moves. A name the user typed wins.
+never before you have looked: 2-5 plain words in the user's language, spaced like a sentence,
+never a slug or hyphens. Re-send only when the subject truly moves. A name the user typed wins.
 
 \`\`\`dream-view
 {"type":"title","text":"Checkout redesign"}

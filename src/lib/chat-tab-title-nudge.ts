@@ -16,8 +16,9 @@ import { readFileSync } from 'node:fs';
  */
 export const CHAT_TAB_TITLE_NUDGE =
   'This Chat tab still has its default name. In this reply, once you know what the work is, ' +
-  'include the tab-name dream-view from your surface briefing (type "title", 2-5 words, the ' +
-  "concrete subject, the user's language). It is drawn nowhere; the tab takes it.";
+  'include the tab-name dream-view from your surface briefing (type "title", 2-5 plain words ' +
+  "in the user's language, spaced like a sentence, never a slug or hyphens). It is drawn " +
+  'nowhere; the tab takes it.';
 
 /** An assistant line whose text holds a `{"type":"title",...}` view — JSON-escaped in JSONL. */
 const TITLE_VIEW_RE = /\\"type\\"\s*:\s*\\"title\\"/;

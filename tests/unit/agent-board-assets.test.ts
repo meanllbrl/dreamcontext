@@ -353,6 +353,9 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * message was removed; the chat's own agent names its tab now, and this file is the only
    * way it learns the block exists. Written as four rules (when, how long, which language,
    * when to re-send) and nothing else. Actual 12,739; 12,900 keeps ~160 of headroom.
+   *
+   * 12,739 -> 12,774 on 2026-09-27, no raise: the title rule now says "plain words ... spaced
+   * like a sentence, never a slug or hyphens" (owner: tab names drowned in dashes).
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12900);
@@ -366,7 +369,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12739)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12774)).toBeLessThanOrEqual(20);
   });
 
   /**
