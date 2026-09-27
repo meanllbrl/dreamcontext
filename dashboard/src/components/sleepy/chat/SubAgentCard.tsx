@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  summarizeSubAgents, formatClock, runMetaChips, isAgentRun, isHeadlessAgentShell,
+  summarizeSubAgents, formatClock, runMetaChips, isAgentRun, isHeadlessAgentShell, isTeammateRun,
   useGroupCollapse, groupOutcomeNote, reportableRuns,
   type SubAgentRun,
 } from './chatEntities';
@@ -10,7 +10,8 @@ import { peerLogoUrl } from '../../../api/client';
 import { useVault } from '../../../context/VaultContext';
 import { AGENT_ROLES, type AgentRoleId } from '../../../lib/agentRoles';
 import { JARGON_RE, VERDICT_LABELS, freshExplainer, type Verdict } from '../../../lib/quest';
-import { AgentAvatar, QuestBadge, RoleGlyph, VerdictChip } from './atoms';
+import { AgentAvatar, QuestBadge, VerdictChip } from './atoms';
+import { RoleCharacter } from './RoleCharacter';
 import { CardHeader } from './molecules';
 import {
   partyBatches, partyHeadline, partyOutcome, partyTally, partyTitle,
@@ -82,6 +83,19 @@ function tallyText(verdicts: Record<Verdict, number>): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
+/**
+ * A party's own clock: its first spawn to `now` while a member still runs, else to its last
+ * finish, frozen. A member that stopped without an end time ends where it started. Null when
+ * no member has a start time.
+ */
+export function partyClockMs(runs: readonly Pick<SubAgentRun, 'status' | 'startedAt' | 'endedAt'>[], now: number): number | null {
+  const timed = runs.filter((r) => Number.isFinite(r.startedAt) && r.startedAt > 0);
+  if (timed.length === 0) return null;
+  const from = Math.min(...timed.map((r) => r.startedAt));
+  const to = timed.some((r) => r.status === 'running') ? now : Math.max(...timed.map((r) => r.endedAt ?? r.startedAt));
+  return Math.max(0, to - from);
+}
+
 const SEAL_WORDS: Partial<Record<PartyOutcome, string>> = { cleared: 'cleared', 'sent-back': 'sent back' };
 
 /** A finished judged party's stamp. The word carries it; the mark and tint only confirm. */
@@ -136,7 +150,7 @@ export function SubAgentCard({
   // rather than at the call site so no caller can reintroduce that.
   const runs = allRuns.filter(isAgentRun);
   const party = resolveParty(runs, partyProp);
-  const { running, total, earliestStart } = summarizeSubAgents(runs);
+  const { running, total } = summarizeSubAgents(runs);
   // Live while it is live, a header once it lands: a fan-out of N agents held N rows of the
   // transcript forever, and a finished run's row says nothing its group summary doesn't. The
   // rows are one click away — and stay open if the user asks for them (see isGroupOpen).
@@ -154,8 +168,10 @@ export function SubAgentCard({
   if (total === 0 || !party || party.ghost) return null;
 
   const reports = reportableRuns(runs);
-  const lastEnd = Math.max(0, ...runs.map((r) => r.endedAt ?? 0));
-  const elapsed = earliestStart != null ? (running > 0 ? tick : lastEnd || tick) - earliestStart : null;
+  // Which landed runs have a report to show at all; with the rows open each one lives in
+  // its own row (see the rows below), never as a second entry under them.
+  const reportIds = new Set(conversationId ? reports.map((r) => r.taskId) : []);
+  const elapsed = partyClockMs(runs, tick);
   const failures = groupOutcomeNote(runs);
   const outcome = partyOutcome(party);
   const tally = tallyText(partyTally(party).verdicts);
@@ -176,7 +192,7 @@ export function SubAgentCard({
       {/* The kicker needs the transcript to know the round, so only a real party has one. */}
       {partyProp && <div className="chat-subagents-stage">{partyTitle(party)}</div>}
       <CardHeader
-        glyph={<RoleGlyph glyph={AGENT_ROLES[party.lead].glyph} size={16} />}
+        glyph={<RoleCharacter role={party.lead} size={18} />}
         title={partyHeadline(party)}
         open={open}
         onToggle={onToggle}
@@ -187,7 +203,7 @@ export function SubAgentCard({
                 failed or killed run is named here, not only on the row that is now hidden. */}
             {failures && <span className="chat-subagents-outcome">{failures}</span>}
             <PartySeal outcome={outcome} />
-            {elapsed != null && <span className="chat-subagents-elapsed" title="Time so far">{formatClock(elapsed)}</span>}
+            {elapsed != null && <span className="chat-subagents-elapsed" title={running > 0 ? 'Time so far' : 'Time it took'}>{formatClock(elapsed)}</span>}
             {running > 0 && <span className="chat-subagents-spinner" aria-hidden />}
           </>
         )}
@@ -203,11 +219,16 @@ export function SubAgentCard({
             const { role, stage } = runIdentity(run);
             const verdict = run.status === 'running' ? null : runVerdict(run);
             const carries = runCarries(run);
-            const name = NAMED_ROLES.has(role) ? speakableName(run) : null;
+            // A teammate's line is its brief, whatever its role: it is the one place on the card
+            // that says what this Planner was asked to do.
+            const name = NAMED_ROLES.has(role) || isTeammateRun(run) ? speakableName(run) : null;
+            // ONE entry per agent (owner 09-27): the row and, once it landed, its report under
+            // the row's line. A button cannot hold the report's own expander, so the row and the
+            // report are siblings inside the entry rather than one nested in the other.
             return (
+            <div className="chat-subagents-entry" key={run.taskId} data-agent-entry={run.taskId}>
             <button
               type="button"
-              key={run.taskId}
               className="chat-subagents-row"
               data-role={role}
               data-status={run.status}
@@ -254,18 +275,24 @@ export function SubAgentCard({
                     a headless run has none on disk, so its drill-in is the live output panel —
                     which is also where its Stop button lives. */}
                 <span className="chat-subagents-row-open" aria-hidden>
-                  {isHeadlessAgentShell(run) ? 'output →' : 'open →'}
+                  {isHeadlessAgentShell(run) && !run.session ? 'output →' : 'open →'}
                 </span>
               </span>
             </button>
+            {reportIds.has(run.taskId) && conversationId && !foldReports && (
+              <SubAgentReport run={run} conversationId={conversationId} peers={peers} onOpenFull={onDrillIn} inRow />
+            )}
+            </div>
             );
           })}
         </div>
       )}
-      {/* The REPORTS of the runs that have landed — rendered OUTSIDE the `open` gate, because
-          they are the point of the collapsed state, not a detail of the expanded one. A
-          finished fan-out therefore rests as its header plus one named report per agent,
-          which is what the main agent used to re-type into the transcript by hand.
+      {/* The REPORTS of the runs that have landed. With the rows open, each lives INSIDE its
+          own row above; with the rows hidden, they are the card's resting list — header plus
+          one named report per agent, which is what the main agent used to re-type into the
+          transcript by hand. Either way one entry per agent, never a row AND a report that
+          reads as a second agent (owner 09-27). The header's glyph is the one lead character,
+          not a face per run, so a resting report keeps its own face: it is the only one.
           Deliberately not gated on having the report text in hand either: it arrives on the
           card's own lazy fetch (see SubAgentReport), and a backgrounded dispatch — every
           fan-out this project runs — never carries it on the run. A SUPERSEDED round folds
@@ -283,7 +310,7 @@ export function SubAgentCard({
           <span aria-hidden>{showReports ? ' ▴' : ' ▾'}</span>
         </button>
       )}
-      {reports.length > 0 && conversationId && !foldReports && (
+      {!open && reports.length > 0 && conversationId && !foldReports && (
         <div className="chat-subagents-reports">
           {reports.map((run) => (
             <SubAgentReport
@@ -333,7 +360,7 @@ export function SubAgentRail({ runs: allRuns, party: partyProp, onJump, onWheel,
   const { vault } = useVault();
   const runs = allRuns.filter(isAgentRun);
   const party = resolveParty(runs, partyProp);
-  const { running, earliestStart } = summarizeSubAgents(runs);
+  const { running } = summarizeSubAgents(runs);
   const [tick, setTick] = useState(() => Date.now());
   useEffect(() => {
     if (running === 0) return;
@@ -359,6 +386,7 @@ export function SubAgentRail({ runs: allRuns, party: partyProp, onJump, onWheel,
 
   if (running === 0 || !party || party.ghost) return null;
   const headline = partyHeadline(party);
+  const railClock = partyClockMs(runs, tick);
 
   return (
     // The host spans the transcript so the strip can be laid out against its edges, and
@@ -372,13 +400,13 @@ export function SubAgentRail({ runs: allRuns, party: partyProp, onJump, onWheel,
           title="Scroll to the team"
         >
           <span className="chat-subagents-rail-glyph" aria-hidden>
-            <RoleGlyph glyph={AGENT_ROLES[party.lead].glyph} size={14} />
+            <RoleCharacter role={party.lead} size={16} />
           </span>
           {/* The card's own headline — the PARTY is what it names, so a fan-out where one has
               already landed still reads "3 reviewers are reading the plan · 1 back". */}
           <span className="chat-subagents-rail-count">{headline}</span>
-          {earliestStart != null && (
-            <span className="chat-subagents-elapsed">{formatClock(tick - earliestStart)}</span>
+          {railClock != null && (
+            <span className="chat-subagents-elapsed">{formatClock(railClock)}</span>
           )}
           <span className="chat-subagents-spinner" aria-hidden />
         </button>

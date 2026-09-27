@@ -21,10 +21,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 import { createProgram } from '../../src/cli/program.js';
-import { JUDGE_ROLES, applyGoalLiveEvent, type GoalLiveEvent, type GoalLiveState } from '../../src/lib/goal-live.js';
+import { GOAL_LIVE_CAPS as WRITER_CAPS, JUDGE_ROLES, applyGoalLiveEvent, type GoalLiveEvent, type GoalLiveState } from '../../src/lib/goal-live.js';
 import { ACTOR_ID_MAX, parseActorSpec, parseStatePairs } from '../../src/cli/commands/goal-live.js';
 import { AGENT_ROLES, isJudgeRole, type AgentRoleId } from '../../dashboard/src/lib/agentRoles';
-import { GOAL_LIVE_ID_MAX, normalizeGoalLive } from '../../dashboard/src/lib/goalLive';
+import { GOAL_LIVE_CAPS as READER_CAPS, GOAL_LIVE_ID_MAX, normalizeGoalLive } from '../../dashboard/src/lib/goalLive';
 import { goalLineage, goalQuest } from '../../dashboard/src/lib/quest';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
@@ -122,6 +122,24 @@ describe('writer ↔ reader mirror (src/lib/goal-live.ts ↔ dashboard/src/lib/g
     expect(new Set(literalsIn(READER, states))).toEqual(new Set(literalsIn(WRITER, states)));
   });
 
+  it('both sides cap the lists at the same sizes: forks 24, judges 8, history 40, lineage 120', () => {
+    expect(WRITER_CAPS).toEqual({ forks: 24, judges: 8, history: 40, lineage: 120 });
+    expect(READER_CAPS).toEqual(WRITER_CAPS);
+  });
+
+  it('the mode words are the same on both sides', () => {
+    const modes = /type GoalLiveMode\s*=[^;]+/;
+    expect(new Set(literalsIn(READER, modes))).toEqual(new Set(['goal', 'develop']));
+    expect(new Set(literalsIn(WRITER, modes))).toEqual(new Set(['goal', 'develop']));
+  });
+
+  it('the history entry carries the same fields on both sides', () => {
+    const entry = /history\?:\s*\{[^}]*\}/;
+    const fields = (src: string) => [...entry.exec(src)![0].matchAll(/(\w+)\??:/g)].map((m) => m[1]).slice(1);
+    expect(fields(READER)).toEqual(fields(WRITER));
+    expect(fields(WRITER)).toEqual(['p', 'at', 'w']);
+  });
+
   it('JUDGE_ROLES is exactly the roles the dashboard registry calls judges', () => {
     const judges = (Object.keys(AGENT_ROLES) as AgentRoleId[]).filter(isJudgeRole);
     expect(new Set(JUDGE_ROLES)).toEqual(new Set(judges));
@@ -157,6 +175,39 @@ describe('actor ids: the reader keeps every id the writer accepts', () => {
     expect(n.impl!.forks!.map((f) => f.id)).toEqual([id]);
     expect(n.lineage!.map((e) => e.a)).toEqual([lead, id]);
     expect(n.lineage![1].from).toBe(lead);
+  });
+
+  it('a registered run id round-trips; anything but a UUID never reaches the reader', () => {
+    const sid = 'abcdef01-2345-6789-abcd-ef0123456789';
+    const n = writeThenRead([
+      { type: 'start', goal: 'demo', session: null },
+      { type: 'actor', id: 'planner', role: 'planner', kind: 'spawn', session: sid },
+      { type: 'actor', id: 'T1', role: 'implementer', kind: 'fork', session: '../../x' },
+    ])!;
+    expect(n.lineage!.map((e) => e.sid)).toEqual([sid, undefined]);
+    expect(normalizeGoalLive({ phase: 'plan', lineage: [{ a: 'x', role: 'planner', k: 'spawn', sid: 'nope' }] })!.lineage![0].sid).toBeUndefined();
+  });
+
+  it('a Develop run round-trips: mode, tab, reviewed, history w, fork w, lineage w and v', () => {
+    const n = writeThenRead([
+      { type: 'start', goal: 'dev', session: null, mode: 'develop', tab: 'tab-a' },
+      { type: 'phase', phase: 'impl', wave: 1, waves: 2 },
+      { type: 'actor', id: 'w1-T1', role: 'implementer', kind: 'spawn', wave: 1 },
+      { type: 'phase', phase: 'codereview' },
+      { type: 'actor', id: 'w1-reviewer', role: 'reviewer', kind: 'fresh', wave: 1 },
+      { type: 'state', id: 'w1-reviewer', verdict: 'PASS' },
+    ])!;
+    expect(n).toMatchObject({ mode: 'develop', tab: 'tab-a', reviewed: 1 });
+    expect(n.history!.map((h) => h.w)).toEqual([1, 1]);
+    expect(n.impl!.forks![0].w).toBe(1);
+    expect(n.lineage!.at(-1)).toMatchObject({ a: 'w1-reviewer', w: 1, v: 'PASS' });
+  });
+
+  it('the reader keeps the NEWEST entries of an over-long list, as the writer does', () => {
+    const forks = Array.from({ length: 30 }, (_, i) => ({ s: 'run', id: `T${i}` }));
+    const n = normalizeGoalLive({ phase: 'impl', impl: { forks }, judges: forks })!;
+    expect(n.impl!.forks!.map((f) => f.id)).toEqual(forks.slice(-24).map((f) => f.id));
+    expect(n.judges!.at(-1)!.id).toBe('T29');
   });
 
   it('a 13-char role id still finds its seat through quest.ts', () => {

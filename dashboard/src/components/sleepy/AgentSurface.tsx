@@ -34,10 +34,10 @@ import {
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
-import { AutomationAttentionOpener } from './AutomationAttentionOpener';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
+  TRAIN_CHAT_EVENT, trainTabTitle, type TrainChatDetail,
 } from '../../lib/automationRunChat';
 import {
   AUTOMATION_CREATE_CHAT_EVENT, type AutomationCreateChatDetail,
@@ -45,7 +45,7 @@ import {
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
-import { preparePrompt, developKickoffPrompt } from '../../lib/agentPrompt';
+import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt } from '../../lib/agentPrompt';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { dropScratch } from './chat/composerScratch';
@@ -56,6 +56,8 @@ import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentC
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders, confirmAction } from '../../lib/desktop';
 import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
+import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
+import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 
 /**
@@ -249,8 +251,8 @@ interface SavedSurface {
  *
  * No row is disabled today. J.A.R.V.I.S was the one — announced as "Soon" while
  * `sanitizeChatMode` coerced it back to Basic — and this comment used to state that as a
- * standing invariant ("the spawn can never honour it"). The voice work made that false: the
- * coercion is gone and jarvis now spawns like any other mode. The MECHANISM is kept because
+ * standing invariant ("the spawn can never honour it"). The voice work made that false, and
+ * jarvis has since been retired outright (voice moved to the Assistant). The MECHANISM is kept because
  * the shape recurs; what changed is that it currently gates nothing.
  */
 function knownChatMode(v: unknown): ChatMode | undefined {
@@ -536,12 +538,6 @@ export function AgentSurface() {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
-  // The SAME fact as render state, for gates that are evaluated during render rather than
-  // inside an effect — today the D7 automation-attention opener, which must not put a tab
-  // on screen before the saved roster has landed. A ref cannot do that job: flipping it
-  // schedules no render, so a gate reading it would stay stale until something unrelated
-  // re-rendered the surface. Every write below sets both, always together.
-  const [hydrated, setHydrated] = useState(false);
   // ── The Claude account changed underneath us ───────────────────────────────────────
   //
   // `claude` reads its credentials once, at startup, so signing into a different account
@@ -1026,7 +1022,7 @@ export function AgentSurface() {
           if (cleanRestore && focusAt >= 0) setActivePaneId(built[focusAt].id);
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
-      finally { if (!cancelled) { hydratedRef.current = true; setHydrated(true); } }
+      finally { if (!cancelled) { hydratedRef.current = true; } }
     })();
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi]);
@@ -2041,6 +2037,61 @@ export function AgentSurface() {
     if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
   });
 
+  // ── Train an automated agent (the Train button on its detail panel) ───────────────
+  //
+  // A NEW chat in Train Me mode whose first message binds it to the automation, so the
+  // confirmed result lands in that automation's own playbook (`automations learn <slug>
+  // --playbook-file`) rather than the project's knowledge/patterns. Always a chat: the
+  // training rounds are AskUserQuestion cards, which only the chat transport draws.
+  //
+  // The ACK must be synchronous, and `preparePrompt` is async. The kickoff is a few hundred
+  // characters, so it takes `preparePrompt`'s inline branch, and that branch is taken HERE
+  // without awaiting: the spawn happens before the ACK is written. The token path is kept
+  // for a pathological title only; there the ACK means "the guards passed" and a failed
+  // mint is reported by its own dialog, the way the Develop hand-off reports one.
+  const openTrainSession = useCallback((detail: TrainChatDetail): boolean => {
+    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return false;
+    const title = trainTabTitle(detail.automationTitle);
+    const open = (inline: string, token: string) => {
+      const s = spawn(bypass, undefined, false, 'chat', inline, '', true, token, false, '', false, 'train');
+      setSessionList((prev) => [...prev, {
+        id: s.id, title, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'train',
+      }]);
+      if (panes.length === 0) {
+        const pid = nextPaneId();
+        setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+        setActivePaneId(pid);
+      } else {
+        const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+        setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+        setActivePaneId(apid);
+      }
+      setExpanded(true);
+    };
+    const prompt = trainKickoffPrompt(detail.slug, detail.automationTitle);
+    if (promptFitsInline(prompt)) {
+      open(prompt, '');
+      return true;
+    }
+    void preparePrompt(vault, prompt).then(
+      (prepared) => open(prepared.inline, prepared.token),
+      (err) => {
+        console.error('[agent-surface] Train Me could not prepare its prompt:', err);
+        void confirmAction({
+          title: 'Could not open the Train Me session',
+          body: `${detail.slug}\n\n${err instanceof Error ? err.message : String(err)}`,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+        });
+      },
+    );
+    return true;
+  }, [caps, claudeReady, agentSettings.enabled, spawn, bypass, panes, activePaneId, vault]);
+
+  useInstanceEvent<TrainChatDetail>(TRAIN_CHAT_EVENT, (detail) => {
+    if (detail?.slug && openTrainSession(detail)) detail.accepted = true;
+  });
+
   // ── Checklist submit bridge (T8, plan §1.11/§1.12) ────────────────────────────────
   // The pinned checklist window is a SEPARATE OS window with no WebSocket of its own; its
   // Submit reaches this surface via a targeted Tauri event (`checklistBridge.ts`) rather
@@ -2079,6 +2130,45 @@ export function AgentSurface() {
     if (!vault) return;
     return listenForChecklistSubmits(vault, handleChecklistSubmit);
   }, [vault, handleChecklistSubmit]);
+
+  // ── dreamcontext Assistant doorbell ────────────────────────────────────────────────
+  // The notch rings this window when the Assistant acts on THIS project (chat / send /
+  // answer / focus). The verbs live in `useAssistantDoorbell`; this surface only lends it
+  // what it owns: the live sessions, a spawn that lands revealed, and the reveal itself.
+  // Sessions resolve by conversation id through `sessionList`, like the checklist bridge.
+  const windowChrome = useChrome();
+  useAssistantDoorbell({
+    vault,
+    findChat: (claudeId) => {
+      const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
+      const session = entry ? sessions.current.get(entry.id) : undefined;
+      return session && session.kind === 'chat' ? session as ChatSession : null;
+    },
+    openChat: (inline, token, mode) => {
+      const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', false, mode);
+      setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId, mode }]);
+      // Placement mirrors `delegateAgent`'s reveal branch: a tab of the focused pane.
+      if (panes.length === 0) {
+        const pid = nextPaneId();
+        setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+        setActivePaneId(pid);
+      } else {
+        const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+        setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+        setActivePaneId(apid);
+      }
+      setExpanded(true);
+      return s as ChatSession;
+    },
+    reveal: () => {
+      if (vault) windowChrome.activate(vault);
+      setExpanded(true);
+    },
+    openPage: (page, id) => {
+      if (vault) windowChrome.activate(vault);
+      onOpenAppPage(page, id);
+    },
+  });
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN
@@ -3262,26 +3352,6 @@ export function AgentSurface() {
 
   return (
     <>
-      {/* D7 — runs that stopped to ask, or crashed, open as tabs by themselves.
-          Renders nothing; it polls and calls the same `openAutomationRunChat`
-          the Automations panel does, so a run reaching a tab this way and one
-          reached by a click are the SAME tab (its bring-forward guard is what
-          makes that true). `ready` mirrors that callback's own guards so the
-          poll cannot exist on a build where nothing could come of it.
-
-          `hydrated` IS PART OF THAT GATE, and it is not defensive tidiness. This opener
-          reads a localStorage settings seed available on the first render and needs one
-          round-trip; the roster restore waits on the SERVER settings and then its own
-          fetch, so it needs two. Unguarded, this tab lands before the saved roster often
-          — not always, which is worse, because it made the resulting data loss look
-          random. Nothing may put a tab on screen before the roster it has to coexist with
-          has been read. The restore above now merges rather than bails, so this gate is
-          the belt and that is the braces; keep both, and see
-          `scripts/verify/automation-tab-restore.mjs`, which forces the losing order. */}
-      <AutomationAttentionOpener
-        ready={!!(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled && hydrated)}
-        onOpen={openAutomationRunChat}
-      />
       <div
         ref={hostRef}
         className={`agent-surface${expanded ? ' expanded' : closing ? ' closing' : ''}`}

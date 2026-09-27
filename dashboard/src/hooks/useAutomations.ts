@@ -796,68 +796,6 @@ export function useSetAutomationTelegram() {
   });
 }
 
-// ─── Runs needing attention (D7) ───────────────────────────────────────────
-
-/** One run that wants a human — mirrors `AttentionRun` in
- *  `src/lib/automations/attention.ts`. `sessionId` is never null here: a run
- *  with no conversation is filtered out server-side rather than handed on to
- *  fail at the resume. */
-export interface AttentionRun {
-  slug: string;
-  automationTitle: string;
-  /** `question` — it stopped and asked. `failed` — it crashed or timed out and
-   *  the transcript is the only place the cause is legible. */
-  reason: 'question' | 'failed';
-  sessionId: string;
-  firedAt: string;
-  /** When this became worth surfacing. The field the watermark compares. */
-  at: string;
-  status: RunStatus;
-  error: string | null;
-  costUsd: number | null;
-  numTurns: number | null;
-  durationMs: number | null;
-  outputPath: string | null;
-}
-
-/**
- * The runs this machine has not yet opened tabs for, oldest first.
- *
- * `enabled` is a real gate, not an optimisation: this query exists to feed the
- * agent surface, so on a build with Agents switched off (or without the claude
- * CLI) it must not poll at all — a poll whose results can never be acted on
- * would advance nothing and cost a request every interval forever.
- *
- * Polled at a much slower cadence than `useAutomationQuestions`' 5s: this
- * answers "what happened while I was away", which changes on the scale of a
- * scheduled fire, not of a keystroke. `refetchOnWindowFocus` is what actually
- * carries the app-open case.
- */
-export function useAutomationAttention(enabled: boolean) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['automations-attention'],
-    queryFn: () => api.get<{ runs: AttentionRun[]; watermark: string | null }>('/automations/attention'),
-    refetchInterval: 30000,
-    refetchOnWindowFocus: true,
-    enabled,
-    retry: 0,
-  });
-}
-
-/** Mark everything up to `upTo` as shown. Called only once tabs are actually
- *  open — see `handleAutomationsAttentionAck` for why a read must not consume.
- *  The advance is monotonic server-side, so an out-of-order ack from a second
- *  window cannot rewind the mark. */
-export function useAckAttention() {
-  const api = useApi();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (upTo: string) => api.post<{ watermark: string | null }>('/automations/attention/ack', { upTo }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['automations-attention'] }); },
-  });
-}
-
 // ─── The #agents channel ───────────────────────────────────────────────────
 //
 // Mirrors `FeedMessage` / `FeedResult` in `src/lib/automations/feed.ts` and the

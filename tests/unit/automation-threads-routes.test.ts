@@ -8,9 +8,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 /** Doubled for the reply routes: a real resume spawns `claude`. Hoisted so the mock is
  *  in place before `automation-job.ts` binds it. */
 const resumeWithMessage = vi.hoisted(() => vi.fn(async () => ({ status: 'ok', error: null, result: null })));
+/** A reply to an agent waiting on a question is its ANSWER, so the answer path is doubled too. */
+const resumeWithAnswer = vi.hoisted(() => vi.fn(async (_c: string, question: unknown) => ({ question, status: 'ok', error: null, result: null })));
 vi.mock('../../src/lib/automations/verdict.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/lib/automations/verdict.js')>()),
   resumeWithMessage,
+  resumeWithAnswer,
 }));
 /** The machine-local session binding — the authority a reply resolves through. Doubled so
  *  a test can say "this machine has run it" without running it. */
@@ -411,11 +414,29 @@ describe('POST /api/automations/:slug/thread/reply — the refusal ladder, in or
     expect(readThread(contextRoot, 'digest')).toHaveLength(before);
   });
 
-  it('409 question_pending routes the human to the question instead', async () => {
+  it('a reply to an agent waiting on its own flow question IS the answer (202, answered, not refused)', async () => {
     makeRepliable();
-    createQuestion(contextRoot, {
+    resumeWithAnswer.mockClear();
+    resumeWithMessage.mockClear();
+    const q = createQuestion(contextRoot, {
       slug: 'digest', runFiredAt: NEWEST, kind: 'flow-hitl', sessionId: 'sess-abc',
       channel: 'chat', question: 'Ship it?', choices: ['yes', 'no'],
+    });
+    const { status } = await reply({ text: 'yes, but only to the first two', runId: NEWEST });
+    expect(status()).toBe(202);
+    await vi.waitFor(() => expect(resumeWithAnswer).toHaveBeenCalledTimes(1));
+    const [, askedQ, answer, via] = resumeWithAnswer.mock.calls[0] as unknown as [string, { id: string }, string, string];
+    expect(askedQ.id).toBe(q.id);
+    expect(answer).toBe('yes, but only to the first two');
+    expect(via).toBe('dashboard');
+    expect(resumeWithMessage).not.toHaveBeenCalled();
+  });
+
+  it('409 question_pending still refuses while the manifest-diff APPROVAL ask is open', async () => {
+    makeRepliable();
+    createQuestion(contextRoot, {
+      slug: 'digest', runFiredAt: NEWEST, kind: 'approval', sessionId: null,
+      channel: 'chat', question: 'Approve the changes?', choices: ['approve', 'reject'],
     });
     const { status, body } = await reply({ text: 'hi', runId: NEWEST });
     expect(status()).toBe(409);
@@ -423,7 +444,7 @@ describe('POST /api/automations/:slug/thread/reply — the refusal ladder, in or
     expect(body().message).toContain('answer that first');
   });
 
-  it('A9a — 409 busy while a run-now job holds the slot, and appends NOTHING', async () => {
+  it('A9a — a reply while a run-now job holds the slot is QUEUED (202), not refused', async () => {
     makeRepliable();
     const { startAutomationJob } = await import('../../src/server/automation-job.js');
     // A never-settling run keeps `currentAutomationJob` reporting `running`.
@@ -433,11 +454,13 @@ describe('POST /api/automations/:slug/thread/reply — the refusal ladder, in or
 
     const before = readThread(contextRoot, 'digest').length;
     const { status, body } = await reply({ text: 'hi', runId: NEWEST });
-    expect(status()).toBe(409);
-    expect(body().error).toBe('busy');
-    // Names THIS agent, in the per-agent wording (the project-wide "one at a time" is gone).
-    expect(body().message).toBe('Daily digest is still running. Try again when it finishes.');
-    expect(readThread(contextRoot, 'digest')).toHaveLength(before);
+    expect(status()).toBe(202);
+    expect(body().job.status).toBe('running');
+    // The human's words are in the channel at once; the job delivers them when the lock frees.
+    expect(readThread(contextRoot, 'digest').length).toBeGreaterThan(before);
+    await vi.waitFor(() => expect(resumeWithMessage).toHaveBeenCalled());
+    const opts = (resumeWithMessage.mock.calls.at(-1) as unknown as [string, string, string, { lockWaitMs?: number }])[3];
+    expect(opts.lockWaitMs).toBeGreaterThan(0);
     spy.mockRestore();
   });
 

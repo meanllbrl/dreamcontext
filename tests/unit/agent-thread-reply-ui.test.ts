@@ -96,8 +96,8 @@ describe('useAgentThreadHost refuses without clearing', () => {
 
   it('names its own scratch bucket, per slug', () => {
     // `claudeId: ''` means "no conversation", and `composerScratch` keys attachments by that
-    // id — so an unnamed bucket would pool this panel's staged files with the channel's and
-    // the meeting room's, which is the collision the channel had to name its bucket to escape.
+    // id — so an unnamed bucket would pool this panel's staged files with the channel's,
+    // which is the collision the channel had to name its bucket to escape.
     // The id is built in `threadScratchId` (which also registers it for the page's revoke);
     // what this pins is that it is still PER SLUG rather than one shared key.
     expect(host).toMatch(/const id = `agents-thread-\$\{slug\}`/);
@@ -191,8 +191,11 @@ describe('the thread composer is honest about what it can reach', () => {
     expect(panel).toMatch(/mentions=\{\[\]\}/);
   });
 
-  it('goes down while another run holds the slot, as the server refuses a reply then', () => {
-    expect(panel).toMatch(/unavailable=\{busyWith \?/);
+  it('stays OPEN while the agent runs: a reply queues behind the run, so the field says so instead of going down', () => {
+    expect(panel).not.toMatch(/unavailable=\{busyWith/);
+    expect(panel).toMatch(/agents\.thread\.queuePlaceholder/);
+    // …and while the agent waits on a question, the reply IS the answer.
+    expect(panel).toMatch(/agents\.thread\.answerPlaceholder/);
   });
 });
 
@@ -302,7 +305,7 @@ describe('thread scratch buckets are dropped, and dropped in the right place', (
   it('the page revokes them on unmount, beside the channel\'s', () => {
     // WITHOUT THIS a pasted image in a thread reply holds its object URL for the life of the
     // app run, one bucket per agent — `dropScratch` is otherwise only ever called for
-    // 'agents-channel', 'meeting-room' and real conversations.
+    // 'agents-channel' and real conversations.
     expect(page).toMatch(/dropScratch\('agents-channel'\)/);
     expect(page).toMatch(/dropThreadScratch\(\)/);
   });

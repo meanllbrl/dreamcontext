@@ -1872,26 +1872,19 @@ export async function handleAutomationsThreadReply(
       );
       return;
     }
-    if (pendingQuestion(contextRoot, slug)) {
+    // A pending `flow-hitl` question is NOT a refusal any more: the reply is its answer
+    // (`startAutomationReplyJob` routes it through `resumeWithAnswer`). Only the
+    // manifest-diff `approval` ask still refuses, because it takes a decision, not prose.
+    if (pendingQuestion(contextRoot, slug)?.kind === 'approval') {
       sendError(
         res, 409, 'question_pending',
-        `${manifest.title} is waiting for your answer to its own question, so answer that first.`,
+        `${manifest.title} is waiting for you to approve its changes, so answer that first.`,
       );
       return;
     }
-    // The cheap half of the lock story: when a run is visibly in flight we refuse up
-    // front and write NOTHING, so the common case costs the user a retry instead of an
-    // entry in the channel marked undelivered. The lock can still be taken between here
-    // and the resume — that residual race settles inside the job, which appends its own
-    // "not delivered" entry with the lock's own reason.
-    const busy = currentAutomationJob(contextRoot, slug);
-    if (busy?.status === 'running') {
-      sendError(
-        res, 409, 'busy',
-        `${manifest.title} is still running. Try again when it finishes.`,
-      );
-      return;
-    }
+    // No up-front "still running" refusal either: the job WAITS for the run lock and
+    // delivers the reply the moment the turn ahead of it ends. Refusing here only moved
+    // the failure from the channel to a toast; the message never needed to fail.
 
     const entry = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text, via: 'dashboard' });
     const job = startAutomationReplyJob(contextRoot, slug, { runId, text, entryId: entry.id });

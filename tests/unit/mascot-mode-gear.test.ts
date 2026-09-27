@@ -34,16 +34,16 @@ describe('gearForMode', () => {
     expect(gearForMode(undefined)).toBe(null);
   });
 
-  it('gives Plan, Develop AND J.A.R.V.I.S their own gear', () => {
+  it('gives Plan, Develop AND the Assistant their own gear (the mic moved from J.A.R.V.I.S)', () => {
     expect(gearForMode('plan')).toBe('plan');
     expect(gearForMode('develop')).toBe('develop');
-    expect(gearForMode('jarvis')).toBe('jarvis');
+    expect(gearForMode('assistant')).toBe('assistant');
   });
 
   it('is total over every mode the server accepts', () => {
     for (const mode of CHAT_MODES) {
       const gear = gearForMode(mode);
-      expect(gear === null || gear === 'plan' || gear === 'develop' || gear === 'jarvis').toBe(true);
+      expect(gear === null || gear === 'plan' || gear === 'develop' || gear === 'assistant').toBe(true);
     }
   });
 });
@@ -63,7 +63,7 @@ describe('the gear reaches the surfaces that draw a chat', () => {
   it('each mode is an ACTION on a loop, not a costume', () => {
     const src = sleepy('SleepyMascot.tsx');
     const css = sleepy('SleepyMascot.css');
-    const jarvis = src.slice(src.indexOf("kind === 'jarvis' ?"), src.indexOf("kind === 'plan' ?"));
+    const jarvis = src.slice(src.indexOf("kind === 'assistant' ?"), src.indexOf("kind === 'plan' ?"));
     const plan = src.slice(src.indexOf("kind === 'plan' ?"), src.indexOf(') : ('));
     const develop = src.slice(src.indexOf(') : ('));
     // Plan writes: a pencil and the ink it lays down. Develop forges: a hammer and the joint

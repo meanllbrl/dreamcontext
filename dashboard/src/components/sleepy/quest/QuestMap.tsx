@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { AGENT_ROLES, roleOf } from '../../../lib/agentRoles';
+import { AGENT_ROLES, QUEST_STAGE_LABELS, roleOf } from '../../../lib/agentRoles';
 import {
-  VERDICT_LABELS, branchCaption, formatQuestElapsed, formatQuestTokens, questVictoryCopy,
+  VERDICT_LABELS, branchCaption, formatQuestElapsed, formatQuestTokens, questStageMeta, questVictoryCopy,
   type QuestBranch, type QuestLineage as QuestLineageModel, type QuestLineageNode, type QuestMember,
-  type QuestStage, type QuestView,
+  type QuestStage, type QuestTrialEntry, type QuestView, type QuestWaveReceipt,
 } from '../../../lib/quest';
 import { AgentAvatar, QuestBadge, VerdictChip } from '../chat/atoms';
 import './quest.css';
@@ -97,21 +97,10 @@ function Cast({ members }: { members: readonly QuestMember[] }) {
   );
 }
 
-function stageMeta(s: QuestStage): { text: string; title?: string } | null {
-  const parts: string[] = [];
-  if (s.wave) parts.push(s.wave.of != null ? `wave ${s.wave.at} of ${s.wave.of}` : `wave ${s.wave.at}`);
-  if (s.meter) parts.push(`${s.meter.done} of ${s.meter.total}`);
-  if (parts.length === 0) return null;
-  return {
-    text: parts.join(' · '),
-    title: s.meter ? `${s.meter.done} of ${s.meter.total} criteria ticked` : undefined,
-  };
-}
-
 const STATE_WORD: Readonly<Record<QuestStage['state'], string>> = { done: 'done', active: 'now', todo: 'next' };
 
 function QuestNode({ stage, index, cast }: { stage: QuestStage; index: number; cast: readonly QuestMember[] }) {
-  const meta = stageMeta(stage);
+  const meta = questStageMeta(stage);
   const heat = stage.rounds >= 3 ? 3 : stage.rounds;
   return (
     <li
@@ -309,6 +298,59 @@ function LineageItem({ node }: { node: QuestLineageNode }) {
   );
 }
 
+function waveLine(w: QuestWaveReceipt): string {
+  const parts = [`${w.builders.length} ${w.builders.length === 1 ? 'builder' : 'builders'}`];
+  if (w.reReviews > 0) parts.push(`${w.reReviews + 1} reviews`);
+  if (w.durationMs != null) parts.push(formatQuestElapsed(w.durationMs));
+  return parts.join(' · ');
+}
+
+/**
+ * A Develop run, wave by wave: who built it, how its review went, how long it took. Then the
+ * Final trial's cast. Sits above the family tree, which still says who briefed whom.
+ */
+export function QuestWaves({ waves, trial }: { waves: readonly QuestWaveReceipt[]; trial: readonly QuestTrialEntry[] }) {
+  return (
+    <ol className="quest-waves" aria-label="Waves">
+      {waves.map((w) => (
+        <li key={w.wave} className="quest-wave" data-wave={w.wave} data-verdict={w.verdict ?? undefined}>
+          <span className="quest-lineage-row">
+            <span className="quest-lineage-name">Wave {w.wave}</span>
+            {w.verdict && <VerdictChip verdict={w.verdict} />}
+            <span className="quest-lineage-rounds">{waveLine(w)}</span>
+          </span>
+          {w.builders.length > 0 && (
+            <span className="quest-wave-builders">
+              {w.builders.map((b) => (
+                <span key={b.key} className="quest-wave-builder">
+                  <AgentAvatar name={b.label} size={20} role="implementer" />
+                  <span className="quest-lineage-note">{b.label}</span>
+                </span>
+              ))}
+            </span>
+          )}
+        </li>
+      ))}
+      {trial.length > 0 && (
+        <li className="quest-wave" data-stage="trial">
+          <span className="quest-lineage-row">
+            <span className="quest-lineage-name">{QUEST_STAGE_LABELS.trial}</span>
+          </span>
+          <span className="quest-wave-builders">
+            {trial.map((t) => (
+              <span key={t.key} className="quest-wave-builder" data-role={t.role}>
+                <AgentAvatar name={t.label} size={20} role={t.role} />
+                <span className="quest-lineage-note">{t.label}</span>
+                {t.verdict && <VerdictChip verdict={t.verdict} />}
+              </span>
+            ))}
+          </span>
+        </li>
+      )}
+    </ol>
+  );
+}
+
 /** The run's family tree: the lead at the root, copied memories under whoever they came from. */
 export function QuestLineage({ lineage }: { lineage: QuestLineageModel }) {
   return (
@@ -387,6 +429,7 @@ export function QuestReceipt({ lineage, title, onClose }: {
           </button>
         </header>
         <div className="quest-receipt-body">
+          {lineage.waves && lineage.waves.length > 0 && <QuestWaves waves={lineage.waves} trial={lineage.trial ?? []} />}
           <QuestLineage lineage={lineage} />
         </div>
         {stats && <footer className="quest-receipt-stats">{stats}</footer>}

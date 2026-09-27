@@ -5,7 +5,8 @@ import {
   appendThreadEntry, newThreadEntryId, readThread, threadReadWatermark,
 } from '../lib/automations/threads.js';
 import { getAutomation, listAutomations, readRunSidecar } from '../lib/automations/store.js';
-import { resumeWithMessage, type TalkOutcome } from '../lib/automations/verdict.js';
+import { resumeWithAnswer, resumeWithMessage, type TalkOutcome } from '../lib/automations/verdict.js';
+import { pendingQuestion } from '../lib/automations/hitl.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK } from '../lib/automations/notifier.js';
 import { trackChild } from './lifecycle.js';
 
@@ -422,14 +423,14 @@ function settleReplyThread(
  *
  * ALWAYS starts — it never adopts another job, because two agents replying at once is
  * the normal case in a channel. What it does NOT do is take a lock: `resumeWithMessage`
- * owns the per-slug run lock and refuses with its own sentence, which lands in the
- * thread through {@link settleReplyThread}. So a reply to a busy slug settles `refused`
- * and says so, while a reply to a different slug runs beside it.
+ * owns the per-slug run lock. A reply to a busy slug WAITS for it (bounded by the run's
+ * timeout) and is delivered when the turn ahead of it ends; a reply to a different slug
+ * runs beside it. A reply to an agent waiting on a question answers that question.
  */
 export function startAutomationReplyJob(
   contextRoot: string,
   slug: string,
-  opts: { runId: string; text: string; entryId: string; home?: string },
+  opts: { runId: string; text: string; entryId: string; home?: string; lockPollMs?: number },
 ): ReplyJobState {
   pruneSettledReplyJobs();
   const job: ReplyJobState = {
@@ -449,21 +450,66 @@ export function startAutomationReplyJob(
   return job;
 }
 
+/**
+ * A reply in the thread of an agent that is WAITING ON A QUESTION is the answer to it.
+ *
+ * The owner does not distinguish "the answer box" from "the reply box", and should not have
+ * to: both are them talking to the agent about this run. Refusing a reply with "answer its
+ * question first" sent them hunting for a second field that says the same thing. So a
+ * pending `flow-hitl` question takes the reply as its answer, through the one path every
+ * answer uses (`resumeWithAnswer`: claim, resume, note). An `approval` question is the
+ * manifest-diff ask, which takes an explicit decision and never prose, so it keeps the
+ * refusal. Checked again after a queued message got the lock: the turn it waited behind can
+ * have asked the question.
+ */
+async function replyOrAnswer(
+  contextRoot: string,
+  slug: string,
+  text: string,
+  verdictOpts: Parameters<typeof resumeWithMessage>[3] & object,
+): Promise<TalkOutcome> {
+  // Synchronous up to the first resume call, on purpose: the job starts its turn in the
+  // same tick it was created, exactly as it did before this routing existed.
+  const openQuestion = () => {
+    const q = pendingQuestion(contextRoot, slug);
+    return q && q.kind === 'flow-hitl' ? q : null;
+  };
+  const answer = async (q: NonNullable<ReturnType<typeof openQuestion>>): Promise<TalkOutcome> => {
+    const answered = await resumeWithAnswer(contextRoot, q, text, 'dashboard', verdictOpts);
+    return { status: answered.status, error: answered.error, result: answered.result, costUsd: null };
+  };
+  const first = openQuestion();
+  if (first) return answer(first);
+  const talked = await resumeWithMessage(contextRoot, slug, text, verdictOpts);
+  if (talked.status === 'refused') {
+    const late = openQuestion();
+    if (late) return answer(late);
+  }
+  return talked;
+}
+
 async function runReplyJob(
   contextRoot: string,
   job: ReplyJobState,
-  opts: { text: string; home?: string },
+  opts: { text: string; home?: string; lockPollMs?: number },
 ): Promise<void> {
   let outcome: TalkOutcome | null = null;
   try {
-    outcome = await resumeWithMessage(contextRoot, job.slug, opts.text, {
-      surface: 'thread',
+    const manifest = getAutomation(contextRoot, job.slug);
+    const verdictOpts = {
+      surface: 'thread' as const,
       ...(opts.home ? { home: opts.home } : {}),
       // The two run-binding HINTS, so the resumed child's `automations post` lands in
       // THIS run's thread with no ids to pass. `VerdictOptions.env` is typed to exactly
       // these two keys, so nothing else can ride along into a bypassPermissions child.
       env: { DREAMCONTEXT_AUTOMATION_SLUG: job.slug, DREAMCONTEXT_AUTOMATION_RUN: job.runId },
-    });
+      // QUEUED, never refused, behind whatever holds the lock: the run itself, or the
+      // resume an answer started a moment ago. Bounded by the run's own envelope plus a
+      // minute, which is the longest the turn ahead of it can legitimately take.
+      lockWaitMs: ((manifest?.timeoutMinutes ?? 30) + 1) * 60_000,
+      ...(opts.lockPollMs ? { lockPollMs: opts.lockPollMs } : {}),
+    };
+    outcome = await replyOrAnswer(contextRoot, job.slug, opts.text, verdictOpts);
     job.status = outcome.status === 'ok' ? 'ok' : outcome.status === 'refused' ? 'refused' : 'failed';
     job.reason = outcome.error;
   } catch (err) {

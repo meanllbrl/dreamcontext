@@ -383,7 +383,29 @@ Never hand-edit `core/taxonomy.json` — mutate via these commands.
 | `peer reply <id> "<text>"` | Answer a peer that is waiting on the other end. |
 | `peer done <id>` | Close the thread. |
 
-Mail lives in `state/.peer-mail/<id>.json` on both ends and surfaces in the receiving project's SessionStart snapshot under `## Peer mail`. The **Meeting Room** (all vaults at once) has no CLI surface by design — it is the launcher UI only.
+Mail lives in `state/.peer-mail/<id>.json` on both ends and surfaces in the receiving project's SessionStart snapshot under `## Peer mail`. Addressing ALL vaults at once is the dreamcontext Assistant's `broadcast` (below); the Meeting Room that used to do it is retired.
+
+---
+
+## dreamcontext Assistant (see [integrations.md](integrations.md))
+
+Verbs for the Assistant that lives in the desktop app's notch, above every project. **Only its own chat session can run them** — elsewhere they fail with *"only the dreamcontext Assistant can drive the app"* (a per-boot token is injected into that one spawn; loopback + desktop only). `open` … `notify` need the notch to be running (`no_surface` otherwise).
+
+| Command | What it does |
+|---|---|
+| `assistant projects` | Every registered project: what it is, what is active, live chats counted `{working, stale, asking, idle}`. |
+| `assistant sessions [--vault <v>] [--status <s>]` | Live chats across every project, status `starting\|working\|asking\|idle\|gone`; each row also carries `activity` (adds `stale`, and a `starting` chat past 30 s reads `idle`) and `lastFrameAt`. |
+| `assistant watch <sessionId> [--until idle\|asking\|any] [--timeout 590]` | Wait for a chat to reach a state; returns at once if it has ended. |
+| `assistant broadcast "<message>" [--to a,b] [--timeout <s>]` | Each project's OWN agent writes it; one row per vault `replied\|failed\|timeout\|missing`. |
+| `assistant open <vault> [--page tasks\|knowledge\|core/<slug>] [--new-window]` | Open a project window (its own), optionally on a page. |
+| `assistant chat <vault> --prompt "…" [--mode basic\|plan\|develop]` | Start a chat in a project and send the prompt; returns its session id. |
+| `assistant send <sessionId> "<text>"` | Follow up in a live chat. |
+| `assistant answer <sessionId> --question <id> (--choice <label> \| --text "…")` | Answer a pending question, permission or plan prompt. |
+| `assistant focus <vault>` | Bring a project's window to the front. |
+| `assistant tile <vault…> [--layout columns\|rows\|grid]` | Place project windows on the notch's monitor. |
+| `assistant notify "<text>" [--level info\|attention]` | A notice in the notch; `attention` pulses the pill. |
+
+Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `answer` / `broadcast` run or become a proposal the owner approves in the notch; project-derived output comes back wrapped in `<untrusted-project-output>`.
 
 ---
 
@@ -436,7 +458,7 @@ The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-ch
 | `app install\|update\|status` | Manage the macOS desktop app. `--from <path>`, `--dir <dir>`. |
 | `marketing` / `mk` | Meta marketing skill surface. |
 | `transcript distill <session_id>` | Extract high-signal content from a transcript. `--since <ts>`, `--full`. |
-| `goal-live start\|phase\|actor\|state\|clear` | The goal-skill orchestrator's live-run writer (the only writer of `_dream_context/tmp/.goal-skill-live.<CLAUDE_CODE_SESSION_ID>.json`, `.solo.json` when the id is unset). `start --goal <slug>` (stamps the session, sweeps files older than 3h); `phase <plan\|review\|task\|impl\|codereview\|validate\|done> [--wave N] [--waves N]`; `actor <id[=name],…> --kind <spawn\|fork\|resume\|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>]` (the CLI measures the inherited context itself; never pass a number); `state <id=word> …` (`run\|done\|wait\|fail`, or `SOLID\|NEEDS_WORK\|PASS\|FAIL`); `clear` (escalation or abort only). Silent on success, always exits 0. Chain each call with `&&` onto the step it describes; see the goal-skill pack's "Live run state". The app draws the file as the quest map. |
+| `goal-live start\|phase\|actor\|state\|recipe\|clear` | The goal-skill orchestrator's (and a Develop chat's) live-run writer (the only writer of `_dream_context/tmp/.goal-skill-live.<CLAUDE_CODE_SESSION_ID>.json`, `.solo.json` when the id is unset). `start --goal <slug>` (stamps the session, sweeps files older than 3h); `phase <plan\|review\|task\|impl\|codereview\|validate\|done> [--wave N] [--waves N]`; `actor <id[=name],…> --kind <spawn\|fork\|resume\|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>] [--session <uuid>]` (the CLI measures the inherited context itself; never pass a number; `--session` registers the actor's own `claude -p --session-id`, one actor per call, so the app can read that run's transcript and draw it as a live teammate); `state <id=word> …` (`run\|done\|wait\|fail`, or `SOLID\|NEEDS_WORK\|PASS\|FAIL`); `clear` (escalation or abort only). **Develop mode:** `start --goal <slug> --mode develop` writes a `mode: develop` run and ADOPTS this task's unfinished Develop run (this pane's, or any pane's idle 10+ min; a fresh run of another pane is refused with one line) so a reopen or handoff keeps the map; unfinished develop files survive the sweep for 24h. `actor … --wave N` and `state … --wave N` stamp the wave (builders `w<N>-<lane>`, reviewers `w<N>-reviewer`; a reviewer PASS credits its wave to `reviewed`). `recipe develop` PRINTS the Develop run procedure (the one subcommand that prints). Silent on success, always exits 0. Chain each call with `&&` onto the step it describes; see the goal-skill pack's "Live run state". The app draws the file as the quest map. |
 | `reflect` | Surface recurring cross-session terms as candidates. `--min-sessions`, `--max`, `--write`. |
 | `snapshot` | Output the context snapshot (used by SessionStart). `--tokens`, `--vault <name>`. Budget-bounded — see [Snapshot budget](#snapshot-budget--the-harness-limit). |
 | `migrations pending\|apply-diagrams\|record` | Inspect/apply brain-structure migrations. `record --files --summary`. |

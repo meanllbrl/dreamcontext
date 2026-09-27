@@ -1,5 +1,5 @@
 /**
- * The speaking half of J.A.R.V.I.S mode: turn a REPLY THAT IS STILL ARRIVING into continuous
+ * The speaking half of assistant mode: turn a REPLY THAT IS STILL ARRIVING into continuous
  * speech, in order, starting before the reply has finished.
  *
  * Two pieces, deliberately separable:
@@ -446,7 +446,7 @@ export class SpeechQueue {
   private pushItemId: string | undefined;
 
   /**
-   * @param sessionId  Identifies this pane to the server's focus ledger. Two J.A.R.V.I.S panes
+   * @param sessionId  Identifies this pane to the server's focus ledger. Two assistant panes
    *   are two queues and two ids, and the ledger grants the speaker to exactly one of them.
    */
   constructor(
@@ -674,7 +674,7 @@ export class SpeechQueue {
    * Make sure a context exists, is RUNNING, and has its output chain built.
    *
    * Called from the play loop, not only from {@link unlock}, for a reason review caught: the
-   * context used to be opened ONLY by the mic-press handler, and J.A.R.V.I.S reads every
+   * context used to be opened ONLY by the mic-press handler, and the Assistant reads every
    * answer aloud whether the question was spoken or TYPED. A user who never touches the mic
    * therefore had no context at all. Creating it here is safe because a webview that is
    * playing audio has long since had a user gesture, and `resume()` covers the case where it

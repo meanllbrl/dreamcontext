@@ -117,29 +117,29 @@ describe('resolveAgentIdentity: name keywords (L2) for general-purpose agents', 
 });
 
 describe('the role table', () => {
-  const expected: Record<AgentRoleId, [string, string, string]> = {
-    lead: [LEAD_NAME, 'face', 'neutral'],
-    planner: ['Planner', 'pencil', 'maker'],
-    critic: ['Critic', 'lens', 'judge'],
-    pragmatist: ['Pragmatist', 'scissors', 'judge'],
-    'edge-cases': ['Edge hunter', 'split', 'judge'],
-    security: ['Security', 'shield', 'judge'],
-    'plan-reviewer': ['Reviewer', 'lens', 'judge'],
-    implementer: ['Builder', 'hammer', 'maker'],
-    reviewer: ['Reviewer', 'crown', 'judge'],
-    validator: ['Validator', 'scales', 'judge'],
-    explorer: ['Scout', 'compass', 'neutral'],
-    peer: ['Other project', 'diamond', 'neutral'],
-    headless: ['Helper', 'prompt', 'neutral'],
-    agent: ['Teammate', 'face', 'neutral'],
+  const expected: Record<AgentRoleId, [string, string]> = {
+    lead: [LEAD_NAME, 'neutral'],
+    planner: ['Planner', 'maker'],
+    critic: ['Critic', 'judge'],
+    pragmatist: ['Pragmatist', 'judge'],
+    'edge-cases': ['Edge hunter', 'judge'],
+    security: ['Security', 'judge'],
+    'plan-reviewer': ['Reviewer', 'judge'],
+    implementer: ['Builder', 'maker'],
+    reviewer: ['Reviewer', 'judge'],
+    validator: ['Validator', 'judge'],
+    explorer: ['Scout', 'neutral'],
+    peer: ['Other project', 'neutral'],
+    headless: ['Helper', 'neutral'],
+    agent: ['Teammate', 'neutral'],
   };
 
-  it('matches the pinned label / glyph / hue for every role', () => {
+  it('matches the pinned label / hue for every role', () => {
     expect(Object.keys(AGENT_ROLES).sort()).toEqual(Object.keys(expected).sort());
-    for (const [id, [label, glyph, hue]] of Object.entries(expected)) {
+    for (const [id, [label, hue]] of Object.entries(expected)) {
       const role = AGENT_ROLES[id as AgentRoleId];
       expect(role.id).toBe(id);
-      expect([role.label, role.glyph, role.hue]).toEqual([label, glyph, hue]);
+      expect([role.label, role.hue]).toEqual([label, hue]);
     }
   });
 

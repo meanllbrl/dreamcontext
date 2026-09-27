@@ -38,11 +38,10 @@ type: feature
 name: lab-analytics-insights
 description: >-
   Lab (dashboard: "Insights") — curated analytics metrics synced from HTTP or
-  script sources into the brain: manifest + bounded cache, TTL sync, redacting
-  credential layer, roadmap KR binding, snapshot/recall surfacing, and a Lab
-  page whose cards resolve through a chart registry (eleven renders). In review:
-  dataset/v1 rows, app/v1 apps, html/v1 hybrid cards, and My Reports — since
-  0.27.0 a branded, window-honest template with optional AI commentary.
+  script sources into the brain: manifest + bounded cache, TTL sync, a redacting
+  credential layer, roadmap KR binding, snapshot/recall surfacing, and a Lab page
+  whose cards resolve through a chart registry. Also dataset/v1 rows, app/v1
+  apps, html/v1 cards and My Reports.
 pinned: false
 date: '2026-07-05'
 ---

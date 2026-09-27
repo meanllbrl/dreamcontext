@@ -300,20 +300,21 @@ An alternate, settings-gated renderer for the SAME embedded agent: instead of xt
   - **Overflow degrades loudly, never silently:** past the ceiling the oldest row demotes to a `⌃` tag (it demoted, it did not close — clicking promotes it back). **Tags themselves are never hidden.** There is no `+N` fold and no per-line cap: the tag area WRAPS onto as many lines as it needs, and only in the extreme does it cap at ~25% of the pane and scroll inside itself. A fact you have to press a button to see is not a pinned fact — that is the whole point of the surface, and it is why the count-chip fold was cut after live testing (2026-08-23) rather than tuned.
   - **The ceiling binds the AGENT, not the USER.** Clicking a long **pin** opens its detail in place, growing upward past two rows, capped near 40% of the pane and scrolling inside itself past that; one pin is open at a time. In-place expansion is a long pin's behaviour ONLY — a progress row's detail is a popover instead (above). The tag line and the composer do not move a pixel either way. Detail prose renders through the same DOMPurify-sanitized `MarkdownPreview` every other bubble uses.
   - Pins are **persisted per conversation** (`pinStore.ts`, the vault+id hex-keyed envelope `checklistStore` established) so they survive a reload, and the user can dismiss any one without disturbing, reordering or resurrecting another. A progress row closes itself when its task reads all-ticked and the turn ends — the tag line stays put.
-- **Chat modes — Basic / Plan / Develop / J.A.R.V.I.S. Chat view only.** The composer's LEFT trigger reads `<mode> · <permission>` and opens one menu holding both. The mode is a per-session **system-prompt append written at spawn** (`src/server/chat-modes.ts`, concatenated after `CHAT_SURFACE_BRIEFING` into the same `--append-system-prompt-file`), so it says how the agent should WORK — distinct from the surface briefing, which says what the surface can DRAW and rides every chat unconditionally.
+- **Chat modes — Basic / Plan / Develop / Train Me. Chat view only.** The composer's LEFT trigger reads `<mode> · <permission>` and opens one menu holding both. The mode is a per-session **system-prompt append written at spawn** (`src/server/chat-modes.ts`, concatenated after `CHAT_SURFACE_BRIEFING` into the same `--append-system-prompt-file`), so it says how the agent should WORK — distinct from the surface briefing, which says what the surface can DRAW and rides every chat unconditionally.
   - **Basic** — plain Claude Code. The brief is empty; nothing but the surface briefing rides along.
   - **Plan** — goal-skill's planning half, interactive: put the critical questions to the user a few at a time and WAIT, drive the open decisions (name options, recommend one, say why), ground every step in real paths and line anchors, review the plan's own weak points, then **end by creating a real dreamcontext task** with testable acceptance criteria and present it. No code is edited in a Plan session. It closes by offering the handoff as a `dream-actions` button, `{"action":"develop","id":"<slug>"}`.
-  - **Develop** — goal-skill's implementing half: work in waves, validate each wave before the next and **show the evidence** (the command and its real output, not a claim), tick a criterion only when demonstrably true, log with `dreamcontext tasks log`, and STOP and report rather than silently redesign a plan that turns out wrong. **Worktrees are gated on this project, not on the mode:** the brief permits a git worktree only when the dreamcontext brain is ISOLATED from the checkout (`brainRepo.mode: full-repo`, or a linked code repo); when `_dream_context/` lives in the working tree the brief explicitly FORBIDS one, because a second checkout would fork the brain. Stated as a prohibition rather than left unsaid — an unmentioned capability is one the agent reaches for anyway.
-  - **J.A.R.V.I.S** — voice in, voice out. **Desktop app only** (the web dashboard draws no mic button) and gated on an OpenRouter key in **Settings → Dependencies → Voice**; with no key the mode still runs as text and says what is missing. Hold the composer's mic button or **⌥Space**, speak, let go. The briefing is deliberately the SHORTEST of the four — two or three plain sentences, no markdown, no paths, no URLs, because everything it writes is read back aloud — and it tells the agent to SHOW rather than recite: the moment an answer has structure it says one sentence and puts the detail on screen as a `dream-html` block. Mechanics worth knowing:
+  - **Develop** — goal-skill's implementing half, run like goal-skill: the session is the LEAD and writes no product code. It writes a wave map into the task if Plan mode did not (criteria grouped, max 3 lanes a wave, disjoint owned files), then per wave: fresh `claude -p` **builders** (registered with `goal-live actor --session`, so they show as live teammates) → a build+test gate that **shows the evidence** → ONE clean `reviewer` scoped to that wave's files and criteria (the last wave's reads the whole run) → only then that wave's criteria are ticked. After the last wave a clean `goal-validator` runs the task's Validation method. The briefing carries only this contract; the procedure (per-wave whole-tree snapshot, spawn command, builder registry, liveness, reopen) is printed by `dreamcontext goal-live recipe develop`. The lead's own Edit/Write on product code is denied by the PreToolUse hook (`DREAMCONTEXT_DEVELOP_LEAD`, set only on a Develop chat's child); shell writes are caught by the per-wave gate. Reverses 2026-09-02's "review once, after the last wave" (owner, 2026-09-26): a review scoped to one wave answers the half-built-code objection. STOP and report rather than silently redesign a plan that turns out wrong. **Worktrees are gated on this project, not on the mode:** the brief permits a git worktree only when the dreamcontext brain is ISOLATED from the checkout (`brainRepo.mode: full-repo`, or a linked code repo); when `_dream_context/` lives in the working tree the brief explicitly FORBIDS one, because a second checkout would fork the brain. Stated as a prohibition rather than left unsaid — an unmentioned capability is one the agent reaches for anyway.
+  - **Train Me** (`train`, **ALPHA**): the agent learns the owner's taste by showing, not asking. It fills the fourth cell of the composer's 2×2 mode grid (`dashboard/src/lib/chatModes.ts`); the brief is `TRAIN_BRIEFING` in `src/server/chat-modes.ts`. The session opens by asking WHAT it is being trained on (a scenario: "onboarding illustrations", "how I write release notes"), runs `dreamcontext patterns match "<scenario>"` and says which pattern already covers it, or that none does. Then it trains in rounds of 3-4 cards through AskUserQuestion: swipe decks (`"metadata":{"source":"swipe"}`) for keep or drop, A/B/C boards (options carrying a `preview`) for this or that, each card an image, a video or text, and any verdict may carry a note. From round 2 on it tests the rule silently: it predicts each pick in its own reasoning before asking, then shows only the misses ("I expected Keep, you dropped it") and adjusts. The rule is never printed between rounds; it is shown once, when the owner ends the session, with its hit rate, the examples and their verdicts, and the pattern diff. Nothing is written until an explicit yes: a new pattern through `dreamcontext knowledge create "patterns/<name>" -t kind:pattern`, an existing one by editing its file. It can also learn by watching: it asks the owner to record the screen doing the thing once and drop the recording, follows the video-watching skill to a transcript, and turns that into steps plus a pattern under the same confirm gate. **Bound to an automation:** the **Train** button on an automation's detail panel calls `openTrainChat` (`dashboard/src/lib/automationRunChat.ts`), which opens a `train` tab named `Train · <automation title>` whose kickoff names the automation; the confirmed result is that automation's playbook, written through `dreamcontext automations learn <slug> --playbook-file <file>`, never into knowledge/patterns. The card shapes (context strip, note, A/B/C board, swipe deck, media previews) stay available in EVERY mode and to automated agents' questions; Train Me is only the mode dedicated to them.
+  - **Voice lives in the dreamcontext Assistant now** — the old voice mode, J.A.R.V.I.S, is **RETIRED (2026-09-26)**: a saved `jarvis` chat opens as Basic, and voice in / voice out moved to the Assistant's notch (see *dreamcontext Assistant* below), whose composer runs the hidden `assistant` mode. **Desktop app only**, gated on an OpenRouter key in **Settings → Dependencies → Voice**. Hold the Assistant's hotkey (or its mic button), speak, let go. Its briefing keeps the same rule: two or three plain sentences, and the moment an answer has structure it says one sentence and puts the detail on screen as a `dream-html` block. Mechanics worth knowing:
     - **Nothing is uploaded until a take passes a gate.** Under ~300 ms (a tap, not a hold) or never crossing an RMS floor (silence) is refused client-side. The transcription model returns no `no_speech_prob`, so without that gate a silent take can come back as a confident invented sentence — and be submitted to a tool-enabled agent as if you had said it.
-    - **The reply is spoken sentence by sentence**, starting before it has finished, with the next chunk fetched while the current one plays. **Fenced blocks are excluded whole** — a `dream-html` block is never read aloud, and because the briefing asks for one on every structured answer, that is most replies. A failed chunk is skipped; the rest of the answer still plays.
+    - **The reply is spoken only with the read-aloud toggle on** (the speaker beside the mic, default OFF, remembered per machine; off sends no speech request, and switching it off mid-reply stops speech at once). Then it is spoken sentence by sentence, starting before it has finished, with the next chunk fetched while the current one plays. **Fenced blocks are excluded whole** — a `dream-html` block is never read aloud, and because the briefing asks for one on every structured answer, that is most replies. A failed chunk is skipped; the rest of the answer still plays.
     - **Pressing the mic, pressing Stop, or steering mid-turn all silence it instantly.**
     - **Project jargon is repaired after transcription, not during it** (OpenRouter documents the transcription `prompt` as accepted-and-ignored). A small model sees the raw transcript beside a sanitized vocabulary built from this brain's own file names, and the safety rule is BEHAVIOURAL rather than a confidence score: **anything it CHANGES waits in the composer with the change marked, for your keypress.** Only an untouched transcript — or a corrector that timed out, errored or is switched off, which by definition changed nothing — goes on its own. There is no score that separates a legitimate repair from a dangerous one: `Sırıp`→`sleep` and `start`→`stop` are equally close. The pass is a toggle in the same Settings card.
     - **One OpenRouter key covers all three calls** (transcription, correction, speech), stored per-MACHINE at `~/.dreamcontext/voice.json` (0600) so a team sync never carries it. No OpenAI key is read or requested anywhere. Upstream errors are translated server-side and never forwarded, so a key cannot ride an echoed error body into a transcript.
     - **Agent-rendered HTML cannot reach the microphone.** Every iframe that draws authored markup — the `dream-html` block and both Lab surfaces — carries `allow=""`. This matters because the desktop WebView grants media capture without checking which frame asked, so after one legitimate push-to-talk nothing below that attribute distinguishes the composer's mic button from markup an agent wrote.
   - **The `develop` action** is the handoff itself: clicking it opens a **NEW** chat in Develop mode carrying the task slug as its first prompt (minted through `POST /api/agent/prompt`, so a full task spec is not truncated into the WS upgrade URL) and closes the Plan tab. New-session-per-handoff is deliberate — the plan transcript stays auditable instead of being `/clear`ed away. The Develop session is spawned under `auto` **regardless of the project's remembered permission mode**, so an agent-authored button can never escalate privilege.
   - **There is no user-settable mode default** — a fresh chat is Basic, and the mode menu deliberately has no "Set as default" (the model+effort menu keeps one). Switching mode on a live session respawns it with `--resume`, preserving its transcript, model, effort and permission mode.
-  - **Plan and Develop draw a quest map on the live rail** (`ChatQuestBar`, `chat/questModel.ts` `deriveChatQuest`). There is no live file behind it: the stages are read off the stream the chat already has. Plan runs Ask → Draft → Plan review → Task: Draft once the user has answered, Plan review gets one round per review party, Task once `tasks create` succeeded or a `progress` view is shelved, and the map seals ("Plan sealed") when a finished answer offers the `develop` button. Develop runs Build → Boss gate → Final trial: the build meter is the shelved task's ticked criteria, and the run ends when the chat moves its task to `completed` ("Quest cleared", with a "How this was built" receipt) or `in_review` ("Ready for your sign-off", a hollow seal and no stamp). The acting characters sit still on their stage, the round counter turns warning ink from round 3, and a beat line under the map says the latest move in plain words ("Claude called 3 reviewers with fresh eyes"). While a goal-skill live file exists for the conversation, the goal map takes the rail instead.
+  - **Plan and Develop draw a quest map on the live rail** (`ChatQuestBar`, `chat/questModel.ts` `deriveChatQuest`). There is no live file behind it: the stages are read off the stream the chat already has. Plan runs Ask → Draft → Plan review → Task: Draft once the user has answered, Plan review gets one round per review party, Task once `tasks create` succeeded or a `progress` view is shelved, and the map seals ("Plan sealed") when a finished answer offers the `develop` button. Develop runs Build → Boss gate → Final trial: the build meter is the shelved task's ticked criteria, and the run ends when the chat moves its task to `completed` ("Quest cleared", with a "How this was built" receipt) or `in_review` ("Ready for your sign-off", a hollow seal and no stamp). The acting characters sit still on their stage, the round counter turns warning ink from round 3, and a beat line under the map says the latest move in plain words ("Claude called 3 reviewers with fresh eyes"). While a goal-skill live file exists for the conversation, the goal map takes the rail instead. A Develop run writes that file itself (`goal-live start --mode develop`), so its map reads the run, not the stream: Build shows `wave k of M` with the current wave's time, the Boss gate `k of M reviewed` (kept while the next wave builds), then the Final trial; no Draft stage, rounds count per wave (a wave that passed first time shows no badge), and the receipt lists each wave with its builders, its review verdict and its duration.
 - **Signing in from Chat.** An unauthenticated CLI answers a headless turn with an `authentication_failed` frame whose stated remedy (`/login`) is the one command this surface cannot run — the OAuth flow exists only in the interactive TUI. So the frame is parsed as its own `auth-required` event (never as an assistant bubble) and the composer is replaced by a **sign-in banner**, which opens a shell tab that types and submits the sign-in command; "Signed in — retry" then respawns the same conversation with `--resume`. Typing `/login` into the composer lands on the same flow instead of spending a turn. The command is never a literal: the server probes it (`claude auth status --json` → `claudeAuth.loginCommand` on `GET /api/agent/capabilities`, `src/lib/claude-auth.ts`), so a CLI too old for the `auth` subcommand is offered the TUI instead. That same probe backs **Settings → System → Claude Code sign-in**, which reports who is signed in (or that nobody is) BEFORE a surface is attempted — "installed" and "usable" are different facts. It is advisory only and never gates a spawn: a Bedrock/Vertex or `apiKeyHelper` machine probes as *unknown*, which is reported quietly and never as "signed out".
 - **`/mcp` from Chat — the MCP panel.** The headless engine does not refuse `/mcp`, it ANSWERS it: a result frame carrying `local_command: "mcp"` and *"N MCP server(s): … Use `/mcp` in the terminal for details."* (CLI 2.1.276) — a turn spent to be sent to another app, while unauthenticated servers stay dead with nothing in the window able to say so. So the composer intercepts `/mcp` (`isMcpCommand`, leading form only, so "what does /mcp do?" still reaches the model) and opens a **slide-over panel** listing every server THIS CONVERSATION has, with **Sign in** / **Sign out** where an action can actually work.
   - **The source is the SESSION, not a config file** — and that took three cuts to get right (`knowledge/patterns/ask-the-subject-not-its-configuration.md`). `claude mcp list` describes a config DIRECTORY; on the machine this was built for, it and the session disagreed about **26 of 32 servers** (machine-local servers missing entirely; twelve connectors reported "Connected" that the session could not use, because an OAuth credential is stored per config dir). The panel reads the session's own `system/init` frame, which carries `mcp_servers: [{name, status, source}]`. The probe is `claude -p "/mcp"` — a local command, `num_turns: 0`, `total_cost_usd: 0`, so the truthful reading is also the free one, and far faster than the 90-second health-check listing it replaced.
@@ -326,7 +327,7 @@ An alternate, settings-gated renderer for the SAME embedded agent: instead of xt
   - **Output** opens the shell's live stdout/stderr in the slide-over, polled while it runs. The CLI streams a backgrounded command to a file on disk, and the server reads that file directly (`GET /api/agent/bg-output`, below) — so reading a background shell never spends a turn asking the agent to run `TaskOutput`, and works while the conversation is mid-turn.
   - **Stop** kills it through the CLI's own `stop_task` control request. The CLI acks `success` even for a task id that never existed, so the ack is ignored as evidence: the tray only marks a shell stopped when the CLI's `background_tasks_changed` / `task_updated{status:'killed'}` frames say so.
   A finished shell keeps its row for **two minutes** and then leaves the tray — long enough to read what it just did, short enough that a session which backgrounds dozens of commands doesn't grow a pinned wall over the conversation (the tray is docked furniture: every row it holds is height the transcript does not get, and rows past its cap scroll inside the tray rather than growing it). The command's own tool card stays in the transcript as the durable record. A stopped shell reports **stopped**, not "completed" or "failed" — a run the user killed neither finished nor errored. The roster itself comes from the CLI's `system:background_tasks_changed` push, which lists only what is STILL running, so it is used to adopt shells whose start we missed and to reconcile one that vanished without a terminal frame — never as the whole list, which would delete every finished shell.
-- **Agent work reads as a quest party, in every mode.** The transcript is a **team log**: each tool row is one sentence whose tense and ink carry its status ("Reading ChatPane.tsx…" in success ink while it runs, "Read ChatPane.tsx" once done, "Couldn't edit ChatPane.tsx" in error ink), with no status dot and no bare tool name (the raw name is the row's `title`, and the command and output stay one click away). Our own CLI calls read the same way ("Creating task…", then "Task created", or "Couldn't create task"). Consecutive steps by the same actor form a **stretch** that shows one avatar, and that avatar breathes while any step in the stretch runs; a run of 3 or more steps folds into one work beat ("Looked around: 4 steps · 2 files read · 1 command"). `dreamcontext goal-live` bookkeeping never shows as its own row: alone it renders nothing, and inside a work beat it is one quiet "Updated the quest map" line that is not counted. **Party cards** replace the job-monitor card: one card per dispatch batch, headed by a team sentence ("3 reviewers are reading the plan · 1 back") under a stage kicker ("Plan review · round 2"), one row per character (a 32px face with its role emblem on its role's tint, blue for makers and teal for judges, the role name, what it is doing, a verdict chip, and a `fresh eyes` badge on judges or `memory` on a builder that inherited context). The raw agent type lives only in the row's `title`. One explainer per chat says why fresh eyes matter; a finished judging party shows "cleared" or "sent back", and an answered round folds its reports behind a toggle. The lead is always "Claude" in the copy, never the mascot's name, and no quest surface says fork, session, resume or `--`.
+- **Agent work reads as a quest party, in every mode.** The transcript is a **team log**: each tool row is one sentence whose tense and ink carry its status ("Reading ChatPane.tsx…" in success ink while it runs, "Read ChatPane.tsx" once done, "Couldn't edit ChatPane.tsx" in error ink), with no status dot and no bare tool name (the raw name is the row's `title`, and the command and output stay one click away). Our own CLI calls read the same way ("Creating task…", then "Task created", or "Couldn't create task"). Consecutive steps by the same actor form a **stretch** that shows one avatar, and that avatar breathes while any step in the stretch runs; a run of 3 or more steps folds into one work beat ("Looked around: 4 steps · 2 files read · 1 command"). `dreamcontext goal-live` bookkeeping never shows as its own row: alone it renders nothing, and inside a work beat it is one quiet "Updated the quest map" line that is not counted. **Party cards** replace the job-monitor card: one card per dispatch batch, headed by a team sentence ("3 reviewers are reading the plan · 1 back") under a stage kicker ("Plan review · round 2"), one row per character (a 32px face with its role emblem on its role's tint, blue for makers and teal for judges, the role name, what it is doing, a verdict chip, and a `fresh eyes` badge on judges or `memory` on a builder that inherited context). The raw agent type lives only in the row's `title`. One explainer per chat says why fresh eyes matter; a finished judging party shows "cleared" or "sent back", and an answered round folds its reports behind a toggle. The lead is always "Claude" in the copy, never the mascot's name, and no quest surface says fork, session, resume or `--`. **Headless builders are teammates too.** A `claude -p` run started with `--session-id <uuid>` and registered with `dreamcontext goal-live actor <id> --session <uuid>` (or launched by this chat's own call with `--session-id`) joins its party card like any sub-agent: its role face, its brief, its live steps in the team log's words, running or done, and its report when it lands. Status is read off the run's own transcript (an exit record with a clean answer is done, without one it failed; no exit record and no process means it stopped), never off the orchestrator's bookkeeping, so a crashed builder never reads as running. It works for a builder launched in the background, detached with `nohup`, or still going after the orchestrating session ended. Clicking it opens its whole transcript (`GET /api/agent/teammate-history`), followed live while it runs; the list is `GET /api/agent/teammates`. Both are desktop-only and read a transcript ONLY for an id this pane registered or its own conversation launched (strict UUID, projects-dir scan, symlinks refused, realpath contained, tail-capped).
 - **Live rail (goal-skill + council):** a run of either orchestration skill reports live progress above the transcript — goal-skill's **quest map** (sentence-case stage nodes with the acting characters on them, the round counter, a beat line, a branch fan when builders were started from the Planner's memory with the measured token count, and one win beat plus a "How this was built" receipt once the run ends; click for the full map, who is on stage, the family tree and the timeline) and council's chamber strip (round dots, persona stance dots, convergence meter; click for the per-persona chamber table). Both are the SAME components the Terminal view shows above its composer, and both feeds (`GET /api/agent/goal-live`, `GET /api/agent/council-live`) are scoped by conversation id, so a pane only ever shows the run ITS conversation is driving. The rail also holds the linked-task chip, and collapses entirely when nothing is live.
 - **Beta limitations** (by design, not oversights): the chat WS route tracks its own live-conversation set separate from the terminal route's — a chat and a terminal resuming the exact same conversation concurrently is a known (rare) double-writer edge, not guarded against; the live rail's linked-task chip only renders when a task slug is supplied, which no entry point does yet.
 
@@ -484,103 +485,101 @@ meant to be duplicated), never materialises as knowledge, and surfaces in the re
 project's SessionStart snapshot under `## Peer mail` — which is how a project that was asleep
 when it was addressed finds out.
 
-### Meeting Room — one announcement, EVERY agent (hidden launcher surface)
+### dreamcontext Assistant — one assistant above every project (notch + hotkey)
 
-Peer mail addresses ONE vault. The **Meeting Room** addresses ALL of them at once: a hidden,
-Slack-like thread in **its own desktop window** where the user posts an announcement and
-**every registered vault's agent** wakes headless in its own project directory (same
-`runPeerHeadless` spawn as peer mail: `--permission-mode auto`, 10-min timeout, 3 runs in
-parallel) and decides for itself whether the message concerns it. **UI-only, deliberately
-hidden**: the single entrance is clicking the dreamcontext core logo in the launcher's Space
-view (with projects in the sky; an empty sky keeps the add-project wizard). No CLI verbs,
-no menu item.
+One assistant that lives ABOVE all projects on this machine and acts as the owner's replica
+across them: it knows every registered vault, opens and tiles their windows, starts a chat in
+a project and sends the prompt, follows up, answers a waiting question, watches sessions and
+summarises them, and writes a rule into every project at once. It replaced two older surfaces,
+both **RETIRED 2026-09-26**: the composer's J.A.R.V.I.S voice mode and the Meeting Room.
 
-**One model and effort for the whole room.** The room's composer has no session to scope a
-model to — one post wakes N projects — so its model/effort pick writes the **app-global**
-default (`chatDefaultModel` / `chatDefaultEffort` in `~/.dreamcontext/agent-ui.json`, the same
-blob every project window shares) and every headless run the room spawns is started with it.
-Nothing pinned means no `--model` / `--effort` flag at all: the CLI keeps its own default.
+**What it is.** A HIDDEN vault at `~/.dreamcontext/assistant/`, never in `vaults.json`, the
+Launcher list, the ⌘P switcher, peers or federation, driven by ONE long-lived Claude Code chat
+session in the `assistant` chat mode (server-enforced — outside that vault the mode downgrades
+to Basic and it is not in the composer's picker). The session is resumed from
+`config.conversationId` on every summon; "New conversation" rotates it. Created from the
+Launcher's **Create dreamcontext Assistant** card: name, avatar (≤ 2 MB, PNG/JPEG/WebP by magic
+bytes, never SVG), a character written into the vault's soul, a global hotkey, autonomy, the
+voice key, a permissions checklist, and autostart.
 
-**Not peer mail.** The room is a single global place owned by no vault — threads live in
-`~/.dreamcontext/meeting-room/threads/<id>.json`, never in any vault's `state/`. No
-connection or consent gate: participants are ALL registered vaults that exist on disk
-(owning the launcher is the consent). Only ONE thread is active at a time; posting a new
-announcement archives the active one (in-flight runs still land their answers in the
-archived thread — history stays truthful). History is kept and browsable in the room's rail.
+**The notch.** Its own window (`assistant`), a non-activating panel seated top-centre at y=0,
+above the menu bar, on the cursor's monitor. Collapsed it is a pill: avatar and name in the left
+ear, the project tab strip's own bubbles in the right (green ring = working, magenta = asking,
+grey = idle and stale; the words, "1 working, 4 idle, 5 stale", ride in the aria-label).
+Expanded it is one black shape, 460x400, holding the SAME ChatPane + Composer every project
+uses. **Pop out** moves that same webview into a 720x640 resizable floating window and **Dock**
+puts it back: same session, same socket, remembered until the app quits. Esc and click-away
+collapse the notch but never close a popped-out window. **Collapsing and changing seats are
+size and visibility changes, never an unmount** — the pane's socket is the relay's only
+channel, and a closed one would end the assistant's `claude` after the linger.
 
-**You write into the thread you are reading.** A reply carries its `threadId`, and answering
-an ARCHIVED thread REVIVES it — it becomes the active one and whatever was active is archived,
-the same door `createThread` uses, so the one-active invariant holds. Only the explicit
-"+ New announcement" opens a meeting. (Before this the reply always went to whatever happened
-to be active, so scrolling back to an older meeting and typing silently forked a third thread.)
+**Counts are activity, not raw status.** `GET /api/assistant/rollup` returns `{starting,
+working, stale, asking, idle, proposals}`, counted by `activityOf` (`chat-registry.ts`): a chat
+still `starting` 30 s after it opened with no message sent is `idle`; a `working` chat with no
+output for 3 min (11 min while a tool call is open) is `stale`; `asking` never goes stale.
+`assistant sessions` rows carry `activity` and `lastFrameAt` beside the raw `status`, and
+`assistant projects` counts live chats as `{working, stale, asking, idle}`.
 
-**Routing rules** (who a user message wakes):
+**The hotkey and voice.** The chord is owned by Rust (`tauri-plugin-global-shortcut`), so it
+fires while another app is focused and delivers BOTH edges. **Hold:** press summons the notch
+and opens the microphone, release sends the take. **Toggle** (the fallback where a release
+cannot be trusted): press summons + listens, the next press sends, a press with nothing
+recording dismisses. The voice pipeline is the retired J.A.R.V.I.S one (gated takes, Hush, a
+CHANGED transcript waits for a keypress) with one change: **read-aloud is opt-in.** A speaker
+toggle beside the composer's mic, default OFF and remembered per machine (localStorage), gates
+the sentence-by-sentence speech and its music hand-off. Off means no speech request is made at
+all; switching it off mid-reply stops the voice at once. Plus the corrector's vocabulary carries **every registered
+project's name, first**, because those are the nouns the Assistant is spoken to about. A normal
+vault's vocabulary never gets the other projects.
 
-| Message | Targets |
-|---|---|
-| Root announcement, no mentions | ALL participants (N parallel headless runs — the accepted cost) |
-| Root announcement with `@Name` | ONLY the mentioned vault(s) |
-| Thread reply, no mentions | The **engaged set** — agents that already posted in this thread |
-| Thread reply with `@Name` | ONLY the mentioned vault(s) |
+**Its verbs — only its own session can run them.**
 
-Mention parsing is **roster-driven, longest-name-first** (vault names with spaces work);
-never a bare regex, and an email's `@` is not a mention.
+```bash
+dreamcontext assistant projects                       # every project: what it is, what is active, live chats
+dreamcontext assistant sessions [--vault v] [--status working|asking|idle]
+dreamcontext assistant watch <sessionId> [--until idle|asking|any] [--timeout 590]
+dreamcontext assistant broadcast "<rule>" [--to a,b]  # each project's OWN agent writes it
+dreamcontext assistant open <vault> [--page tasks|knowledge|core/<slug>] [--new-window]
+dreamcontext assistant chat <vault> --prompt "…" [--mode basic|plan|develop]
+dreamcontext assistant send <sessionId> "<text>"
+dreamcontext assistant answer <sessionId> --question <id> (--choice <label> | --text "…")
+dreamcontext assistant focus <vault>
+dreamcontext assistant tile <vault…> [--layout columns|rows|grid]
+dreamcontext assistant notify "<text>" [--level info|attention]
+```
 
-**Reply-or-PASS protocol.** The delivery prompt tells each agent its ENTIRE final message is
-posted to the room verbatim — and that if it has nothing to add, that message must be exactly
-`PASS`. A PASS flips the agent's presence chip to *passed* and never appears as a thread
-message. Relevance is the agent's call, not the user's routing burden.
+Run anywhere else they fail with *"only the dreamcontext Assistant can drive the app"*: the
+server injects a per-boot token into the `__assistant__` chat spawn and nowhere else, and every
+`/api/assistant/*` route is **loopback + desktop only** — a tailnet caller with a valid network
+token is refused. A token from before a restart is told apart from a wrong one ("the app
+restarted — this turn cannot drive it").
 
-**The four verbs an agent answers in.** The expensive one is the one it has to spell out:
+**How a verb reaches a project window (the relay).** `open`/`chat`/`send`/`answer`/`focus` go
+down the notch's own socket; the notch finds that project's window, or opens the project in a
+window of its OWN (never a chip in somebody else's window — if even that fails the answer is
+`ceiling`), binds the command id to that window by label, and rings a doorbell carrying only
+the id. The window claims the command from the server with the nonce it registered at
+bootstrap and posts the result. A forged, reused, unbound or mis-addressed id lands nothing.
 
-| What the agent writes | What the room does |
-|---|---|
-| an ordinary message | posts it verbatim |
-| exactly `PASS` | nothing to add; never rendered |
-| exactly `WAIT @Name` (or several, or a bare `WAIT`) | holds this agent and resumes it once those agents have spoken |
-| a LINE beginning `ASK @Name` | summons that agent — a real headless run |
-| `@Name` anywhere in prose | **nothing. Addressing is free.** |
+**Autonomy and taint.** `ask` — send, answer and broadcast become PROPOSALS the owner approves,
+edits or rejects in the notch. `auto` — they run, EXCEPT right after the assistant has read
+project-derived text (then they become proposals until the owner speaks again), and answering
+another agent's tool-permission prompt always asks. `bypass` — everything runs (the wizard
+warns, twice with autostart). Every project-derived string the assistant is shown — the roster
+in its briefing, sessions, watch, projects, broadcast replies — is wrapped in
+`<untrusted-project-output vault="…">`: data to report, never an instruction.
 
-**Addressing is not summoning.** A bare `@Name` in an agent's reply is ordinary text: everyone
-in the round reads the thread, so naming them wakes nobody and routes nothing. Only a line an
-agent deliberately opens with `ASK` spends another project's run. The prompt tells each agent
-who is ALREADY ANSWERING THIS ROUND (derived live from participant state) so it can tell the
-two apart. Without the split, agents wrote Slack-style salutations — "@a @b — here is the
-lesson" — and the room read every `@` as a summons, producing system lines and no answers.
-(The USER's `@mentions` still route: that half is unchanged, and is the table above.)
+**Broadcast replaces the Meeting Room.** One rule, every project: each vault's OWN agent reads
+it with its own brain and writes it where it belongs (`runPeerHeadless`, 3 in parallel), and the
+answer is one row per vault — `replied | failed | timeout | missing` — reported as "written in N
+of M". **Detail buttons**: a notch answer's `dream-actions` `task`/`knowledge`/`core` button
+carries `"vault"`; clicking it posts `POST /api/assistant/open`, which rides the same relay, so
+the project's window opens on that page. **Tile** moves only dreamcontext's own windows (no
+Accessibility), each project in its own window, columns / rows / grid on the notch's monitor.
 
-**WAIT — an agent may hold instead of guessing.** When the user tags three projects meaning
-"A briefs B and C", all three wake at once and B and C would answer before the briefing
-exists. `WAIT @A` posts nothing, flips the chip to *waiting*, and re-wakes that agent once A
-has replied/passed/errored, with A's answer in its transcript. One wait per agent per round;
-waiting on someone already finished or never woken resumes immediately; a mutual wait is
-released when the round drains, so it cannot deadlock.
-
-**Agent-to-agent summons, bounded.** If agent A's reply `ASK`s participant B, B gets ONE
-directed run (fencing A's reply), and when B answers with substance, A gets ONE follow-up run
-carrying that answer. Chain depth is 1: an `ASK` inside B's answer (or inside the follow-up)
-renders as text and delivers nothing.
-
-**One answer per agent per user message.** An `ASK` wakes an agent this round has not woken;
-for one it already has, it COALESCES into the run in flight instead of starting a second. If
-that target is still QUEUED nothing is lost — every prompt is built at dequeue time from the
-thread as it stands, so the ask is already in its transcript when it wakes, and the room says
-nothing. If the target is past that point (running or finished) the ask is banked and paid as
-ONE catch-up run carrying everything it missed, announced as a system line. The follow-up and
-the catch-up SHARE one budget (one per agent per round), so the worst case per agent per user
-message is two runs — a constant, rather than something that grows with the size of the room.
-Without this, N agents each naming the same project woke it N times and it posted the same
-answer twice; without the catch-up, the room claimed "folded into that run" when the payload
-had in fact been dropped.
-
-Hard caps, enforced at enqueue: **max 8 mention-triggered runs per thread, max 3 total runs
-per agent per thread** — a delivery dropped by a cap, or one whose payload could not reach its
-target, is recorded in the thread as a visible system line, never silently. A coalesce that
-genuinely loses nothing is deliberately silent: the room narrates losses, not bookkeeping.
-
-Same permission posture as peer mail: headless runs execute under `auto` with nobody to
-answer a prompt, so an agent that hits a permission wall reports itself blocked in its reply
-rather than working around it.
+**Retired, with the records kept.** The Meeting Room's code is gone; its threads stay on disk
+at `~/.dreamcontext/meeting-room/threads/`, unread. The voice key stays in
+`~/.dreamcontext/voice.json`. A saved chat that still says `jarvis` opens as Basic.
 
 ---
 

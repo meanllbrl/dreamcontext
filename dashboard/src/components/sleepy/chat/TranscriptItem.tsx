@@ -184,7 +184,7 @@ export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
   onOpenFile?: (path: string) => void;
   /** The blinking cursor. Only the run that is currently being typed gets one. */
   caret?: boolean;
-  /** J.A.R.V.I.S mode's spoken-sentence marker needs both: the session to subscribe to, and
+  /** Assistant mode's spoken-sentence marker needs both: the session to subscribe to, and
    *  the item to compare the spoken chunk against. Absent everywhere else — a read-only
    *  drill-in has no session, and no session ever speaks. */
   session?: ChatSession;
@@ -227,8 +227,8 @@ function AssistantMessage({
    * This conversation's id — what a `dream-view` needs and nothing else does: a checklist's
    * Submit has to land somewhere, and an insight has to resolve against a project.
    *
-   * Absent on the two hosts that have no conversation: the read-only drill-in (SlideOver's
-   * sub-agent transcript) and the Meeting Room. Both still render the agent's `dream-html`,
+   * Absent on a host that has no conversation, such as the read-only drill-in (SlideOver's
+   * sub-agent transcript). It still renders the agent's `dream-html`,
    * which asks the host for nothing — see `viewsAllowed` below for why that stopped being one
    * gate with `onAction`.
    */
@@ -253,10 +253,9 @@ function AssistantMessage({
   //   `dream-view` asks for two real things — a conversation for a checklist's Submit to land
   //   in, and a project for an insight to resolve against.
   //
-  // The old `blocksAllowed = !!onAction && !!conversationId` charged HTML for both. The
-  // MEETING ROOM has neither (its store is machine-wide, its window holds no project), so an
-  // agent that answered the room with a drawn block had that block DROPPED — and dropped in
-  // silence, because the notices below rode the same gate. That is the one failure this
+  // The old `blocksAllowed = !!onAction && !!conversationId` charged HTML for both. A host
+  // with neither (a machine-wide store, a window that holds no project) had an agent's drawn
+  // block DROPPED — and dropped in silence, because the notices below rode the same gate. That is the one failure this
   // surface documents that it must never have.
   const viewsAllowed = !!conversationId;
 

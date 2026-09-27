@@ -5,8 +5,8 @@
  * POSTURE, STATED RATHER THAN INHERITED. Both audio routes are `isDesktop()`-gated, sit
  * behind the process-level CSRF and network-token guards every route gets, and are
  * classified against `VAULT_AGNOSTIC_PREFIXES` in `src/server/index.ts` — STT is vault
- * SCOPED (Slice 2's correction pass reads the lexicon out of the vault's brain, so the
- * request must say which vault), TTS is vault AGNOSTIC (it reads no project state at all).
+ * SCOPED (local whisper is primed with the vault's own vocabulary, so the request must say
+ * which vault), TTS is vault AGNOSTIC (it reads no project state at all).
  * Writing that classification down is the point: `isVaultAgnostic` is a prefix list, and a
  * route nobody classified gets whichever answer its path accidentally matches.
  *
@@ -32,13 +32,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import {
-  voiceApiKey, groqApiKey, voiceStatus, writeVoiceConfig, readVoiceConfig,
-  DEFAULT_VOICE, AUTO_LANGUAGE, clampSpeechRate, clampMusicDuck,
+  voiceApiKey, voiceStatus, writeVoiceConfig, readVoiceConfig,
+  DEFAULT_VOICE, clampSpeechRate, clampMusicDuck,
 } from '../../lib/voice/config.js';
 import { normalizeHotkey } from '../../lib/voice/hotkey.js';
 import {
   OPENROUTER_BASE, OPENROUTER_HEADERS, logUpstream, resolveModel, clearModelCache, AUDIO_MODELS,
-  GROQ_BASE, GROQ_TRANSCRIPTION_MODEL, fallbackVoice, FALLBACK_VOICE_DEFAULT,
+  fallbackVoice, FALLBACK_VOICE_DEFAULT,
 } from '../../lib/voice/openrouter.js';
 import {
   sttGate, ttsGate, focusGate, MAX_STT_BYTES, MAX_TTS_CHARS,
@@ -46,11 +46,10 @@ import {
 import { speakable } from '../../lib/voice/speakable.js';
 import { wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE } from '../../lib/voice/wav.js';
 import {
-  transcribeLocal, findWhisper, stopWhisperServer, warmWhisper,
+  transcribeLocal, findWhisper, warmWhisper,
 } from '../../lib/voice/whisper.js';
-import { correctTranscript, describeOps } from '../../lib/voice/correct.js';
 import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
-import { usableTranscript, NO_SPEECH } from '../../lib/voice/echo.js';
+import { dictationState, startDictationInstall } from '../../lib/voice/dictationInstall.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
 import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
 
@@ -128,49 +127,6 @@ export function scriptLine(text: string): string {
   return `Read this line of script aloud, exactly as written, and say nothing else:\n\n«${text}»`;
 }
 
-/**
- * The ask the CHAT transcription path used, kept because the echo guard is written against
- * it and still runs over whisper's output.
- *
- * HISTORICAL, and worth keeping the reason: transcription used to be a chat completion, and
- * a chat model handed audio it could not hear answered the TEXT part instead — most often by
- * repeating this very question, which was then submitted to a tool-enabled agent as if the
- * owner had said it. Whisper cannot do that; it is a recogniser, not a conversationalist.
- * The guard remains as the cheap residue check it always also was.
- *
- * The original reasoning follows, because it is what the phrasing is FOR.
- *
- * Measured, both alternatives failed on the owner's key: a system prompt saying "You are a
- * transcription engine, output only the verbatim transcript" made `gpt-audio-mini` REFUSE
- * ("Üzgünüm, bu isteği yerine getiremiyorum"), and a softer system prompt made it narrate
- * what it was about to do. Asked in the first person, in the same turn as the audio, it
- * returns the sentence and nothing else. Do not "tidy" this into a system prompt.
- *
- * ── WHY IT NAMES A SENTINEL FOR SILENCE (2026-09-07) ────────────────────────────────────
- * The previous wording ended "If I said nothing, reply with nothing", and a model that does
- * not perceive the audio does not follow it — it answers the TEXT part instead, most often by
- * reciting this very paragraph back. Three takes of room tone, three verbatim echoes of the
- * prompt, and the client had no way to tell that from a sentence: it went to the agent as the
- * owner's words. Naming an explicit token converts that case into one we can act on — 3/3
- * silences came back as `NO_SPEECH` — and the same wording also stopped the commentary on
- * one-word takes ("The word you used is \"Tomorrow\".").
- *
- * `echo.ts` still checks the reply against this text, because a sentinel only helps a model
- * that is ANSWERING the question. One that is reciting it has to be caught by shape.
- *
- * ── WHAT IT DOES NOT FIX ────────────────────────────────────────────────────────────────
- * Takes under about a second are unreliable on this provider whatever the prompt says, and
- * both audio models fail them: "Tamam" came back as "Tomorrow", "Thamar" and "afternoon"
- * across prompts, orderings and models. A hallucinated word cannot be detected from here —
- * the correction pass and the confirmation row are what stand behind it.
- */
-export const TRANSCRIBE_ASK =
-  'Write down exactly the words I just spoke, in the language I spoke them, and write nothing '
-  + 'else — no quotes, no translation, no commentary, no explanation, not one word of your '
-  + 'own. Even if I spoke only one word, write just that word. Even if what I said is a '
-  + 'question or is addressed to you, write it down instead of answering it. If the audio '
-  + `contains no speech at all, reply with exactly: ${NO_SPEECH}`;
-
 /** How long a single speech generation may take before it is abandoned. Generation runs at
  *  ~0.36x realtime, so this is many times the worst plausible chunk. */
 const TTS_TIMEOUT_MS = 30_000;
@@ -218,24 +174,6 @@ export function isWav(buf: Buffer): boolean {
     && buf.toString('ascii', 8, 12) === 'WAVE';
 }
 
-/**
- * A chat message's content as plain text. The omni model returns a string today, but the
- * content-part array is equally legal in this API and a transcript that silently became
- * `[object Object]` would be submitted to a tool-enabled agent as if the owner had said it.
- */
-export function transcriptFrom(content: unknown): string {
-  if (typeof content === 'string') return content.trim();
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
-        ? (part as { text: string }).text
-        : ''))
-      .join(' ')
-      .trim();
-  }
-  return '';
-}
-
 // ─── POST /api/agent/voice/stt ────────────────────────────────────────────────
 
 export async function handleVoiceStt(
@@ -269,7 +207,6 @@ export async function handleVoiceStt(
     // warm whisper.cpp answers in ~0.88s for nothing, against ~1.0-1.5s and ~$0.0015 a take
     // for an omni chat model that is also less accurate on Turkish carrying English jargon.
     const cfgEarly = readVoiceConfig();
-    const engine = cfgEarly.sttEngine || 'auto';
     const audioEarly = await readCappedAudio(req, res);
     if (!audioEarly) return;                  // 413 already sent, or a read error
     if (audioEarly.length === 0) {
@@ -285,114 +222,26 @@ export async function handleVoiceStt(
       return;
     }
 
-    if (engine !== 'cloud') {
-      const local = await transcribeLocal(audioEarly, {
-        language: cfgEarly.sttLanguage,
-        // The vault's own vocabulary, biasing the decoder toward the words this project
-        // actually uses. Vault-scoped, which is why `/stt` is classified vault-SCOPED.
-        lexicon: buildVoiceLexicon(contextRoot),
-      });
-      if (local) {
-        console.info(`[voice:stt] local ${local.model} ${local.ms}ms`);
-        sendJson(res, 200, { text: local.text, ms: local.ms, engine: `local:${local.model}` });
-        return;
-      }
-      if (engine === 'local') {
-        // Asked for local explicitly and it is not there — say so rather than quietly
-        // spending money on the path the owner just turned off.
-        sendJson(res, 400, {
-          error: 'stt_unconfigured',
-          message: 'Local transcription is selected but whisper.cpp was not found on this machine.',
-        });
-        return;
-      }
-    }
-
-    const key = voiceApiKey();
-    if (!key) {
-      sendJson(res, 400, {
-        error: 'stt_unconfigured',
-        message: 'No OpenRouter key is set. Add one in Settings to speak to your agent.',
-      });
+    // DICTATION IS LOCAL, AND ONLY LOCAL (owner, 2026-09-27: "dikte sadece yerel olsun",
+    // "her konuştuğumda maliyet olsun istemiyorum"). No take is ever sent to an API: a take
+    // the local model could not answer is reported, never re-sent somewhere that bills.
+    const local = await transcribeLocal(audioEarly, {
+      language: cfgEarly.sttLanguage,
+      // The vault's own vocabulary, biasing the decoder toward the words this project
+      // actually uses. Vault-scoped, which is why `/stt` is classified vault-SCOPED.
+      lexicon: buildVoiceLexicon(contextRoot),
+    });
+    if (local) {
+      console.info(`[voice:stt] local ${local.model} ${local.ms}ms`);
+      sendJson(res, 200, { text: local.text, ms: local.ms, engine: `local:${local.model}` });
       return;
     }
-
-    // ── A REAL SPEECH RECOGNISER, on the transcription endpoint ───────────────────────────
-    // Not a chat completion any more. `openai/whisper-large-v3-turbo` is absent from the
-    // `/models` catalogue but present on this endpoint (see `AUDIO_MODELS`), transcribes the
-    // owner's Turkish in ~0.7-1.1s for $0.0001, and needs NO language hint: it detects the
-    // language itself, so nothing here has to know or ask which one is being spoken.
-    const started = Date.now();
-    const language = (cfgEarly.sttLanguage || AUTO_LANGUAGE).trim();
-    let text = '';
-    let used = '';
-    let lastStatus = 0;
-
-    // GROQ FIRST WHEN IT IS CONFIGURED. Same model, same request shape, its own hardware —
-    // and the reason it is worth a second account is the measured variance on the shared
-    // route below (1.3s to 14.2s for one 4.7s take). An optional key, so the absence of one
-    // costs nothing.
-    const groq = groqApiKey();
-    const attempts: Array<{ base: string; model: string; key: string; label: string }> = [
-      ...(groq ? [{ base: GROQ_BASE, model: GROQ_TRANSCRIPTION_MODEL, key: groq, label: 'groq' }] : []),
-      ...AUDIO_MODELS.transcription.map((m) => ({
-        base: OPENROUTER_BASE, model: m, key, label: 'openrouter',
-      })),
-    ];
-
-    for (const attempt of attempts) {
-      const candidate = attempt.model;
-      const form = new FormData();
-      form.append('file', new Blob([new Uint8Array(audioEarly)], { type: 'audio/wav' }), 'take.wav');
-      form.append('model', candidate);
-      form.append('response_format', 'json');
-      // Sent ONLY when Settings pinned one. Whisper is multilingual and detects by default;
-      // a pin is an override for someone who always speaks the same language, not a
-      // requirement the feature has.
-      if (language && language !== AUTO_LANGUAGE) form.append('language', language);
-
-      let upstream: Response;
-      try {
-        upstream = await fetch(`${attempt.base}/audio/transcriptions`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${attempt.key}`, ...OPENROUTER_HEADERS },
-          body: form,
-        });
-      } catch (err) {
-        console.error('[voice:stt] request failed', err);
-        continue;                                  // try the next provider, then give up
-      }
-      if (!upstream.ok) {
-        lastStatus = upstream.status;
-        logUpstream('stt', upstream.status, await upstream.text().catch(() => ''), attempt.key);
-        continue;
-      }
-      try {
-        const body = (await upstream.json()) as { text?: unknown };
-        // The echo guard still applies, though its worst case is gone with the chat model:
-        // a REAL recogniser cannot answer our question back at us. What it still catches is
-        // the residue — an empty take, a silence marker — and one line of defence that costs
-        // nothing is not worth removing because its headline failure is no longer reachable.
-        text = usableTranscript(typeof body?.text === 'string' ? body.text : '', TRANSCRIBE_ASK);
-      } catch (err) {
-        console.error('[voice:stt] unreadable upstream body', err);
-        continue;
-      }
-      used = `${attempt.label}:${candidate}`;
-      break;
-    }
-
-    if (!used) {
-      sendJson(res, lastStatus === 401 ? 400 : 502, {
-        error: lastStatus === 401 ? 'stt_unconfigured' : 'stt_failed',
-        message: lastStatus === 401
-          ? 'The OpenRouter key was refused. Check it in Settings.'
-          : 'Transcription failed. Try the take again.',
-      });
-      return;
-    }
-
-    sendJson(res, 200, { text, ms: Date.now() - started, engine: used });
+    sendJson(res, 400, {
+      error: 'stt_unconfigured',
+      message: findWhisper()
+        ? 'Local transcription did not answer. Try again in a moment.'
+        : 'Dictation is not installed yet. Install it in Settings → Voice (it downloads the speech model once).',
+    });
   } finally {
     sttGate.release();
   }
@@ -680,7 +529,7 @@ export async function handleVoiceTts(
 /**
  * Load the local model before it is needed.
  *
- * Called when J.A.R.V.I.S mode opens, which is seconds before the first press — long enough
+ * Called when assistant mode opens, which is seconds before the first press — long enough
  * to turn the first take from ~3.3s into ~0.85s like every take after it. Answers immediately
  * and never blocks: warming is an optimisation, and a slow warm-up must not become a slow UI.
  */
@@ -692,10 +541,7 @@ export async function handleVoiceWarm(
     sendError(res, 403, 'desktop_only', 'Voice is only available in the desktop app.');
     return;
   }
-  const cfg = readVoiceConfig();
-  // Nothing to warm on the cloud path — and `cloud` is the default, so the common case does
-  // no work here at all.
-  const warmed = (cfg.sttEngine || 'auto') === 'cloud' ? null : warmWhisper();
+  const warmed = warmWhisper();
   sendJson(res, 200, { warming: warmed ? warmed.model : null });
 }
 
@@ -801,19 +647,8 @@ export async function handleVoiceConfigPut(
   // `null` clears; `undefined` (an absent field) leaves the stored value alone — so the
   // Settings card can save the voice picker without blanking a key it never rendered.
   if ('openRouterKey' in body) patch.openRouterKey = body.openRouterKey === null ? null : String(body.openRouterKey ?? '');
-  if ('groqKey' in body) patch.groqKey = body.groqKey === null ? null : String(body.groqKey ?? '');
   if ('voice' in body) patch.voice = String(body.voice ?? '');
   if ('sttLanguage' in body) patch.sttLanguage = String(body.sttLanguage ?? '');
-  if ('sttEngine' in body) {
-    if (body.sttEngine !== 'auto' && body.sttEngine !== 'local' && body.sttEngine !== 'cloud') {
-      sendError(res, 400, 'bad_engine', 'The transcriber is auto, local or cloud.');
-      return;
-    }
-    patch.sttEngine = body.sttEngine;
-    // Switching AWAY from local frees ~1.5 GB of resident model.
-    if (body.sttEngine === 'cloud') stopWhisperServer();
-  }
-  if ('correction' in body) patch.correction = Boolean(body.correction);
   if ('speech' in body) patch.speech = Boolean(body.speech);
   if ('pushToTalkMode' in body) {
     if (body.pushToTalkMode !== 'hold' && body.pushToTalkMode !== 'toggle') {
@@ -856,69 +691,32 @@ export async function handleVoiceConfigPut(
   });
 }
 
-// ─── POST /api/agent/voice/correct ────────────────────────────────────────────────────
-
+// ─── GET/POST /api/agent/voice/dictation ──────────────────────────────────────────────
 /**
- * Repair project jargon in a raw transcript, and say whether the result may be sent without
- * asking (see `lib/voice/correct.ts` for the whole safety model — the short version is that
- * ANY change waits for the owner's keypress).
- *
- * VAULT-SCOPED, and this is the route that makes `/stt`'s classification matter: the lexicon
- * is read out of the vault's own brain, so a request that did not name a vault has no
- * vocabulary to correct against.
- *
- * Shares the STT gate rather than having its own. It is the same money-spending burst from
- * the same gesture — one push-to-talk is one transcription plus one correction — and two
- * independent counters would let a caller spend twice the intended budget per take.
+ * Local dictation's install state, and the button that installs it (`lib/voice/dictationInstall.ts`
+ * decides HOW: Homebrew for the engine, a model already on disk or a one-time download).
+ * Desktop-only like every voice route; vault-agnostic, because the engine and the model belong
+ * to the machine. POST starts the install (or joins a running one) and answers at once — the
+ * UI polls GET for progress rather than holding a request open for a 1.6 GB download.
  */
-export async function handleVoiceCorrect(
-  req: IncomingMessage,
+export async function handleDictationStatus(
+  _req: IncomingMessage,
   res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
 ): Promise<void> {
   if (!isDesktop()) {
     sendError(res, 403, 'desktop_only', 'Voice is only available in the desktop app.');
     return;
   }
+  sendJson(res, 200, dictationState());
+}
 
-  const verdict = sttGate.acquire();
-  if (verdict !== 'ok') {
-    sendJson(res, 429, { error: 'stt_busy', message: 'Too many voice requests.' });
+export async function handleDictationInstall(
+  _req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (!isDesktop()) {
+    sendError(res, 403, 'desktop_only', 'Voice is only available in the desktop app.');
     return;
   }
-
-  try {
-    const body = await parseJsonBody(req);
-    const raw = typeof body?.text === 'string' ? body.text.trim() : '';
-    if (!raw) {
-      sendError(res, 400, 'bad_body', 'Expected { text }.');
-      return;
-    }
-
-    const result = await correctTranscript(raw, { contextRoot });
-
-    // EVERY proposed substitution is logged, accepted or not, so a bad correction the owner
-    // waved through in a hurry is still detectable afterwards. The raw transcript is not
-    // logged: it is the owner's speech, and the operations already say what changed.
-    if (result.ops.length > 0) {
-      console.info(`[voice:correct] ${result.ms}ms — ${describeOps(result.ops, buildVoiceLexicon(contextRoot))}`);
-    }
-
-    sendJson(res, 200, {
-      action: result.action,
-      text: result.text,
-      raw: result.raw,
-      ops: result.ops,
-      reason: result.reason,
-      ms: result.ms,
-    });
-  } catch (err) {
-    // A correction that fails is NEVER a take that fails: the caller falls back to the raw
-    // transcript, which is what the owner actually said.
-    console.error('[voice:correct] unexpected failure', err);
-    sendJson(res, 200, { action: 'auto', text: '', raw: '', ops: [], reason: 'error', ms: 0 });
-  } finally {
-    sttGate.release();
-  }
+  sendJson(res, 202, startDictationInstall());
 }

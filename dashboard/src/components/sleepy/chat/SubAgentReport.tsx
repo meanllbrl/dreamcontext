@@ -1,3 +1,4 @@
+import { runHistoryPath } from './teammates';
 import { useCallback, useState } from 'react';
 import { useApi, useVault } from '../../../context/VaultContext';
 import { peerLogoUrl } from '../../../api/client';
@@ -65,7 +66,7 @@ function statusNote(run: SubAgentRun): string {
   return 'finished';
 }
 
-export function SubAgentReport({ run, conversationId, peers = [], onOpenFull }: {
+export function SubAgentReport({ run, conversationId, peers = [], onOpenFull, inRow = false }: {
   run: SubAgentRun;
   /** The PARENT conversation's claude id — the sidechain route derives the sub-agent's
    *  transcript path from it server-side (the client never supplies a path). */
@@ -73,6 +74,10 @@ export function SubAgentReport({ run, conversationId, peers = [], onOpenFull }: 
   peers?: PeerMention[];
   /** Open the run's full drill-in — the whole sidechain, not just its closing report. */
   onOpenFull: (run: SubAgentRun) => void;
+  /** Rendered INSIDE the run's own row of the party card (owner 09-27: a report under the rows
+   *  read as one more agent). The row already wears the face, the role, the verdict and how it
+   *  ended, so the report drops its own head and keeps only the standfirst and the expander. */
+  inRow?: boolean;
 }) {
   const api = useApi();
   const { vault } = useVault();
@@ -99,39 +104,49 @@ export function SubAgentReport({ run, conversationId, peers = [], onOpenFull }: 
     // the surface that re-fetches on lifecycle change — this card is a record, not a live view).
     if (!next || inline || phase.kind !== 'idle') return;
     setPhase({ kind: 'loading' });
-    api.get<{ items: ReportProbe[] }>(
-      `/agent/chat-history?claudeId=${encodeURIComponent(conversationId)}&subagent=${encodeURIComponent(run.taskId)}`,
-    )
+    api.get<{ items: ReportProbe[] }>(runHistoryPath(run, conversationId))
       .then((r) => {
         const text = reportFromHistory(Array.isArray(r?.items) ? r.items : []);
         setPhase(text ? { kind: 'ready', text } : { kind: 'empty' });
       })
       .catch(() => setPhase({ kind: 'empty' }));
-  }, [api, conversationId, inline, open, phase.kind, run.taskId]);
+  }, [api, conversationId, inline, open, phase.kind, run]);
 
   return (
-    <div className="chat-subreport" data-open={open || undefined} data-status={run.status}>
+    <div
+      className="chat-subreport"
+      data-open={open || undefined}
+      data-status={run.status}
+      data-in-row={inRow ? '1' : undefined}
+      // Resting on its own (the collapsed card), the report IS this agent's one entry.
+      data-agent-entry={inRow ? undefined : run.taskId}
+    >
       <button
         type="button"
         className="chat-subreport-head"
         aria-expanded={open}
+        aria-label={inRow ? `${open ? 'Hide' : 'Read'} the report of ${run.name}` : undefined}
         title={kind ? `${run.name} · ${kind}` : run.name}
         onClick={toggle}
       >
-        <AgentAvatar
-          name={run.subagentType ?? run.name}
-          role={role}
-          src={peer?.logo ? peerLogoUrl(vault, peer.vault) : undefined}
-          size={28}
-        />
+        {!inRow && (
+          <AgentAvatar
+            name={run.subagentType ?? run.name}
+            role={role}
+            src={peer?.logo ? peerLogoUrl(vault, peer.vault) : undefined}
+            size={28}
+          />
+        )}
         <span className="chat-subreport-head-text">
-          <span className="chat-subreport-title">
-            <span className="chat-subreport-name">{run.name}</span>
-            {peer && <span className="chat-subagents-row-vault">{peer.vault}</span>}
-            {verdict && <VerdictChip verdict={verdict} />}
-            {carries && <QuestBadge carries={carries} title={freshExplainer(stage) ?? undefined} />}
-            <span className="chat-subreport-status" data-status={run.status}>{statusNote(run)}</span>
-          </span>
+          {!inRow && (
+            <span className="chat-subreport-title">
+              <span className="chat-subreport-name">{run.name}</span>
+              {peer && <span className="chat-subagents-row-vault">{peer.vault}</span>}
+              {verdict && <VerdictChip verdict={verdict} />}
+              {carries && <QuestBadge carries={carries} title={freshExplainer(stage) ?? undefined} />}
+              <span className="chat-subreport-status" data-status={run.status}>{statusNote(run)}</span>
+            </span>
+          )}
           {/* The standfirst is the run's OWN words (its `task_notification.summary`, or its
               report's opening line) — never a description of the report written here. A run
               that reported nothing shows no standfirst rather than a manufactured one. */}

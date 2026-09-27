@@ -3,32 +3,19 @@ import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
 import { VoiceMeter } from './VoiceMeter';
 import {
-  repairMarks, applyRepairSegments, heardWords, droppedWords,
-} from '../../../lib/voice/repairMarks';
-import {
   parseHotkey, matchesHotkey, releasesHotkey, hotkeyLabel, isLatchKey, effectiveMode,
 } from '../../../lib/voice/hotkey';
 import { voicePrefs, refreshVoicePrefs, onVoicePrefs } from '../../../lib/voice/voicePrefs';
 import { onSpeechMuted } from '../../../lib/voice/audioFocus';
+import { readAloudEnabled, setReadAloud, onReadAloud } from '../../../lib/voice/readAloud';
 
 /** The exact text of the unspoken-answer notice, named so it can be RETRACTED without
  *  clobbering an unrelated message sharing the same row. */
-const SPEECH_MUTED_NOTICE = 'Another Jarvis window was speaking — this answer was not read aloud.';
+const SPEECH_MUTED_NOTICE = 'Another window was speaking — this answer was not read aloud.';
 import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTalkScope';
+import { onExternalPushToTalk, pushToTalkAction } from '../../../lib/voice/externalPushToTalk';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
-/** One aligned change the corrector proposed. Mirrors `src/lib/voice/align.ts`'s `AlignOp`
- *  structurally rather than importing it: the dashboard is a separate build and does not
- *  reach into the CLI's source tree. The route is the contract between them. */
-interface VoiceOp {
-  kind: 'equal' | 'substitute' | 'insert' | 'delete';
-  from: string;
-  to: string;
-  similarity?: number;
-  /** Token index of `to` in the corrected text, so the repair can be drawn ON the word.
-   *  See `src/lib/voice/align.ts`'s `at` and `lib/voice/repairMarks.ts`. */
-  at?: number;
-}
 import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits } from '../../../hooks/useAgentCapabilities';
@@ -64,14 +51,14 @@ import './composer.css';
  * `ChatComposer` and is mounted by the `ChatPane` orchestrator against the pinned
  * contract C8.
  *
- * ── THREE SURFACES, ONE COMPOSER ────────────────────────────────────────────────────
- * `ChatPane` (a live session), `PeerSessionCard` (a live session in another project) and
- * `MeetingWindow` (no session at all — a post is an HTTP write and the answers come from N
- * headless runs). They differ in what they HAVE, not in what a composer is, so the difference
- * is carried by props rather than by a second implementation: `session` is the structural
- * {@link ComposerHost} (a `ChatSession` satisfies it unchanged), and three `show*` flags
- * below draw a control only where something sits behind it. The room's own textarea-plus-Post
- * box is what this replaced; see composerHost.ts for why that was worth doing.
+ * ── SEVERAL SURFACES, ONE COMPOSER ──────────────────────────────────────────────────
+ * `ChatPane` (a live session), `PeerSessionCard` (a live session in another project) and the
+ * agents channel and thread panel (no session at all — a post is an HTTP write and the answers
+ * come from headless runs). They differ in what they HAVE, not in what a composer is, so the
+ * difference is carried by props rather than by a second implementation: `session` is the
+ * structural {@link ComposerHost} (a `ChatSession` satisfies it unchanged), and the `show*`
+ * flags below draw a control only where something sits behind it; see composerHost.ts for why
+ * that was worth doing.
  *
  * ── Draft discipline (preserved EXACTLY from the current `ChatComposer`) ────────────
  * The textarea's text is LOCAL React state, not derived from `session.getModel().draft`
@@ -172,6 +159,17 @@ function HushIcon() {
   );
 }
 
+/** A plain speaker with its waves — "replies are read aloud". The pair to {@link HushIcon},
+ *  which is the same speaker struck through. */
+function SpeakerIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M7.2 2.2 4.2 4.8H2v4.4h2.2l3 2.6z" />
+      <path d="M9.6 5.2a2.6 2.6 0 0 1 0 3.6M11.4 3.6a5 5 0 0 1 0 6.8" />
+    </svg>
+  );
+}
+
 function MicIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -188,7 +186,7 @@ export function Composer({
   onPermissionModeChange, onSignIn, onMcpPanel, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
-  modelScope = 'session', idlePlaceholder, unavailable,
+  idlePlaceholder, unavailable,
   showModel = true,
   activeAccountId = '', onAccountChange,
   contextHandoff, onContextHandoffChange,
@@ -214,7 +212,7 @@ export function Composer({
    * change.
    *
    * OPTIONAL only because a surface with no mode trigger has no session whose permission it
-   * could report (the meeting room's agents are headless runs under a fixed `auto`, set by the
+   * could report (the agents channel's runs are headless, under a permission mode set by the
    * delivery path and not by this control). A surface that DOES draw the trigger must pass it —
    * the fallback below exists to keep the type honest, not as a value worth rendering.
    */
@@ -259,7 +257,7 @@ export function Composer({
    * Open the MCP panel — what `/mcp` does here instead of being sent.
    *
    * OPTIONAL, and the optionality is the rule: a host with nowhere to put the panel (the
-   * meeting room, a peer session card) leaves the command alone and lets it travel, which is
+   * agents channel, a peer session card) leaves the command alone and lets it travel, which is
    * today's behaviour. Swallowing `/mcp` into a handler that does not exist would be worse
    * than the dead end it replaces.
    */
@@ -307,18 +305,18 @@ export function Composer({
    * WHO the `@` menu offers, supplied by the caller instead of fetched.
    *
    * Absent (the chat) = this vault's CONNECTED PROJECTS, fetched by `usePeerMentions`. Supplied
-   * (the meeting room) = the room's roster, every registered vault, which no per-vault endpoint
-   * can answer for and which the room already has in the state it polls.
+   * (the agents channel) = the caller's own roster, which no per-vault peer endpoint answers
+   * for; `[]` (a thread panel) = nobody to address.
    *
-   * One picker, two sources — the alternative was the room keeping its own `@` menu, and it
-   * did: a second mention parser, a second keyboard handler, a second caret-restore trick, all
-   * of which had to be right twice. `PeerMention` is the shape both speak, so a roster entry
-   * arrives as one (`vault` = the registered name) and everything downstream — the filter, the
-   * token rewrite, the highlight mirror — is the code the chat already ships.
+   * One picker, two sources — the alternative was a caller keeping its own `@` menu: a second
+   * mention parser, a second keyboard handler, a second caret-restore trick, all of which had
+   * to be right twice. `PeerMention` is the shape both speak, so a roster entry arrives as one
+   * and everything downstream — the filter, the token rewrite, the highlight mirror — is the
+   * code the chat already ships.
    *
    * NOTE the deliberate asymmetry with `onPeerMessage`: supplying `mentions` says "these names
-   * are addressable", not "route to them". The room sends `@Name` as TEXT (its server routes
-   * the delivery), so it passes no `onPeerMessage` and nothing is intercepted.
+   * are addressable", not "route to them". The agents channel sends `@name` as TEXT (its host
+   * resolves the delivery), so it passes no `onPeerMessage` and nothing is intercepted.
    */
   mentions?: PeerMention[];
   /**
@@ -331,23 +329,12 @@ export function Composer({
    *  offers; a caller whose `mentions` are something else names them. */
   mentionsLabel?: string;
   /**
-   * What a model/effort change APPLIES to — which decides whether "Set as default" is offered.
-   *
-   * `'session'` (the chat, the default): the pick affects this conversation from its next turn,
-   * and the menu's footer offers the separate app-global write.
-   * `'global'` (the meeting room): there is no session to scope to. The pick IS the app-global
-   * default (`chatDefaultModel`/`chatDefaultEffort`), written by the caller's own
-   * `onModelChange`/`onEffortChange`, and every project the room wakes runs on it — so a
-   * "Set as default" button would offer to do the thing that just happened.
-   */
-  modelScope?: 'session' | 'global';
-  /**
    * Replaces the IDLE placeholder only — the busy and connecting arms are saying something
    * more urgent than where to find a feature and are never overridden.
    *
-   * The default names the `/` menu, which is the right pointer for a surface that HAS one. The
-   * room has no slash commands (no CLI reported any), so pointing at them there would be
-   * advertising a menu that never opens.
+   * The default names the `/` menu, which is the right pointer for a surface that HAS one. A
+   * host with no slash commands (no CLI reported any) pointing at them would be advertising a
+   * menu that never opens.
    */
   idlePlaceholder?: string;
   /**
@@ -397,13 +384,13 @@ export function Composer({
   // Applied in the SAME commit the new value lands, not a frame later. An `rAF` loses the
   // race against fast typing and splices the following keystrokes into the middle of what was
   // just inserted — measured, not theorised: picking `@alpha` from the menu and immediately
-  // typing "just you: ping" produced `@alpha  pingjust you:` (meeting-room verify §5, which
-  // is where this surfaced because a scripted keyboard types faster than a hand).
+  // typing "just you: ping" produced `@alpha  pingjust you:` (a scripted keyboard types faster
+  // than a hand, which is where this surfaced).
   //
-  // This is the fix the MEETING ROOM's own composer carried, in this exact shape, before it
-  // was retired in favour of this one. Porting it here rather than leaving it behind is the
-  // whole dividend of there being a single composer: the better of two implementations wins
-  // once, for every surface. It covers all three replacement paths — the `@` menu, the `/`
+  // This fix came from a second composer that was retired in favour of this one. Porting it
+  // here rather than leaving it behind is the whole dividend of there being a single composer:
+  // the better of two implementations wins once, for every surface. It covers all three
+  // replacement paths — the `@` menu, the `/`
   // menu, and a prompt recalled with ↑ (whose caret goes to the end, so it also asks the field
   // to scroll there).
   const pendingCaret = useRef<{ pos: number; scrollToEnd?: boolean } | null>(null);
@@ -481,7 +468,7 @@ export function Composer({
   // The SCRATCH key — the attachment chips and the reply quote. Normally the conversation id,
   // for the reasons composerScratch.ts gives; a host with no conversation supplies its own,
   // because `''` is not a key, it is the ABSENCE of one, and two such hosts sharing it would
-  // share a bucket (a file staged in the meeting room reappearing in the agents channel).
+  // share a bucket (a file staged in one reappearing in the other).
   const convId = session.scratchId || session.claudeId;
   const [attachments, setAttachments] = useState<Attachment[]>(() => readScratch(convId).attachments);
   useEffect(() => {
@@ -584,10 +571,10 @@ export function Composer({
   // usePeerMentions): it changes only on connect/disconnect, and a picker that has to load is
   // a picker the user has already typed past.
   //
-  // A caller may supply the list instead (`mentions` — the meeting room's roster). The fetch
+  // A caller may supply the list instead (`mentions` — the agents channel's roster). The fetch
   // is then disabled rather than raced: the hook keeps being CALLED (a hook cannot be
-  // conditional) but does no request, which also keeps a room window — where there is no vault
-  // to ask about — from firing a per-vault peer lookup at all.
+  // conditional) but does no request, so a surface with its own roster never fires a
+  // per-vault peer lookup at all.
   const fetchedPeers = usePeerMentions(mentions === undefined);
   const peers = mentions ?? fetchedPeers;
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -834,12 +821,12 @@ export function Composer({
    *  `queue` — the ⇡ button: hold for the NEXT turn whatever is happening now. */
   type SubmitMode = 'auto' | 'queue';
 
-  // ── J.A.R.V.I.S mode: push-to-talk ────────────────────────────────────────────────
+  // ── Assistant mode: push-to-talk ──────────────────────────────────────────────────
   //
   // The mic is drawn ONLY in this mode and ONLY in the desktop app (AC15). The web dashboard
   // has no microphone path at all — there is no Info.plist to carry a usage string and no
   // WKWebView to grant against — so a button there would be a control that cannot work.
-  const voiceEnabled = mode === 'jarvis' && isDesktop();
+  const voiceEnabled = mode === 'assistant' && isDesktop();
   /** The draft as it stood when the take began, so a transcript can tell "the owner typed
    *  while I was transcribing" from "nothing changed". */
   const draftAtTakeRef = useRef('');
@@ -847,23 +834,8 @@ export function Composer({
    *  `liveRef.current`, which is only refreshed by a render, so submitting in the same tick
    *  as `setDraft` would send the PREVIOUS draft — a message the owner never spoke. */
   const [voiceSubmitTick, setVoiceSubmitTick] = useState(0);
-  /** The correction pass is a VISIBLE state, not a silent dead gap after the button is
-   *  released — a second of nothing looks exactly like a take that failed. */
-  const [voiceCorrecting, setVoiceCorrecting] = useState(false);
   const submitRef = useRef<(m?: SubmitMode) => void>(() => {});
   const [voiceNotice, setVoiceNotice] = useState('');
-  /**
-   * A corrected transcript sitting in the box, waiting for the owner's own keypress.
-   *
-   * `awaiting-confirmation` is a REAL state, not the gap between two others. Confirm-on-change
-   * created a TERMINAL pending state that an earlier guard did not model: scoped to "still in
-   * STT or correction", the guard released the moment the corrected text landed, and a second
-   * mic press right then was unprotected.
-   *
-   * `text` is what is pending, so a hand-edit can be detected by comparison; `ops` is what
-   * changed, so the row can say it.
-   */
-  const [pending, setPending] = useState<{ text: string; ops: VoiceOp[] } | null>(null);
 
 
   /** The configured push-to-talk chord, read from the shared prefs cache and kept live: a
@@ -887,12 +859,28 @@ export function Composer({
   }, [voiceEnabled, session]);
 
   /**
+   * READ ALOUD, opt-in. Off by default and shared by every composer in every window
+   * (`lib/voice/readAloud.ts`), so the notch, a popped-out window and a pane never disagree.
+   * Turning it off from ANY of them silences this pane now, through the same stop path Hush
+   * uses; the queue itself declines to fetch audio for new replies while it is off.
+   */
+  const [readAloud, setReadAloudState] = useState(readAloudEnabled);
+  useEffect(() => {
+    if (!voiceEnabled) return;
+    setReadAloudState(readAloudEnabled());
+    return onReadAloud((on) => {
+      setReadAloudState(on);
+      if (!on) session.bargeInSpeech?.();
+    });
+  }, [voiceEnabled, session]);
+
+  /**
    * ANOTHER PANE HAD THE SPEAKER, so this answer was not read out.
    *
    * Said in the composer's voice row — the same place a refused take is reported, and for the
    * same reason given there: an answer that was never spoken looks exactly like a mode that
    * stopped working, and only this row can tell the owner which it was. Filtered by session
-   * because the event is window-wide and there can be several J.A.R.V.I.S panes; without the
+   * because the event is window-wide and there can be several assistant panes; without the
    * filter the pane that DID speak would also claim it had been muted.
    */
   useEffect(() => {
@@ -921,32 +909,11 @@ export function Composer({
   }, [voiceEnabled]);
 
   /**
-   * Run the correction pass over a raw transcript.
-   *
-   * Every failure is an AUTO path returning the RAW text, and that is not a fallback — it is
-   * the correct answer, because nothing was changed. A timeout, an error and a switched-off
-   * pass are indistinguishable to the owner for exactly that reason.
+   * A transcript lands in the box as the local model heard it — no second model rewrites it
+   * (owner, 2026-09-27: the correction pass is gone; whisper is primed with the project's own
+   * vocabulary instead, which is how Handy gets the same words right with the same model).
    */
-  const runCorrection = useCallback(async (raw: string): Promise<{ text: string; ops: VoiceOp[]; auto: boolean }> => {
-    try {
-      const res = await fetch('/api/agent/voice/correct', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
-        },
-        body: JSON.stringify({ text: raw }),
-      });
-      if (!res.ok) return { text: raw, ops: [], auto: true };
-      const body = await res.json() as { action?: string; text?: string; ops?: VoiceOp[] };
-      if (body.action !== 'confirm' || !body.text) return { text: raw, ops: [], auto: true };
-      return { text: body.text, ops: body.ops ?? [], auto: false };
-    } catch {
-      return { text: raw, ops: [], auto: true };
-    }
-  }, [vault]);
-
-  const onTranscript = useCallback((raw: string) => {
+  const onTranscript = useCallback((text: string) => {
     const typed = liveRef.current.draft;
     // AC3f: an async transcript NEVER overwrites what the owner typed while it was in flight.
     // The busy guard stops a second TAKE, but it cannot stop a keyboard, so the arriving text
@@ -954,32 +921,15 @@ export function Composer({
     // the owner to send: their sentence is theirs to finish, and clobbering it — or sending a
     // half-typed thought glued to a spoken one — is the failure this guards.
     const untouched = typed === draftAtTakeRef.current;
-    setVoiceCorrecting(true);
-    void runCorrection(raw).then(({ text, ops, auto }) => {
-      setVoiceCorrecting(false);
-      const next = untouched ? text : `${typed.trimEnd()} ${text}`.trim();
-      setDraft(next);
-      session.syncDraft(next);
-      if (!untouched) {
-        setVoiceNotice('Added to what you typed — press send when it reads right.');
-        return;
-      }
-      if (auto) {
-        // Two ways to get here, and they mean the same thing: the corrector returned
-        // byte-identical text, or it never returned at all. Either way NOTHING was changed,
-        // so there is no basis for withholding it.
-        setVoiceSubmitTick((n) => n + 1);
-        return;
-      }
-      // AC3d, the criterion that must not regress. A machine-altered sentence is never
-      // spoken on the owner's behalf without the owner seeing what changed. This is a
-      // BEHAVIOURAL rule and not a numeric one: an adversarial search broke the phonetic
-      // veto that used to sit here in 11 of 21 dangerous pairs, and no threshold separates
-      // the legitimate substitutions from the hostile ones.
-      setPending({ text: next, ops });
-      setVoiceNotice('');
-    });
-  }, [session, runCorrection]);
+    const next = untouched ? text : `${typed.trimEnd()} ${text}`.trim();
+    setDraft(next);
+    session.syncDraft(next);
+    if (!untouched) {
+      setVoiceNotice('Added to what you typed — press send when it reads right.');
+      return;
+    }
+    setVoiceSubmitTick((n) => n + 1);
+  }, [session]);
 
   /**
    * The live input level, fanned out to whoever is drawing it.
@@ -1003,40 +953,24 @@ export function Composer({
   /**
    * WHICH STATE THE CARD IS IN, as one word — the value the left rail is coloured by and the
    * only thing that has to change for the whole card to change state.
-   *
-   * `pending` is deliberately ranked above `idle` but below anything live: a changed
-   * transcript waiting for a keypress is a state the owner has to act on, and it survives
-   * until they do.
    */
-  const voiceState: 'idle' | 'recording' | 'thinking' | 'speaking' | 'pending' | 'trouble' =
+  const voiceState: 'idle' | 'recording' | 'thinking' | 'speaking' | 'trouble' =
     !voiceEnabled ? 'idle'
       : voice.state === 'recording' ? 'recording'
-        : (voice.state === 'transcribing' || voiceCorrecting) ? 'thinking'
-          // Above `pending` because the two cannot honestly coexist — a transcript waiting to
-          // be sent has not been answered yet — and below the two capture states because if
-          // the owner has started talking over the answer, THEIR take is the live thing.
+        : voice.state === 'transcribing' ? 'thinking'
+          // Below the two capture states: if the owner has started talking over the answer,
+          // THEIR take is the live thing.
           : speaking ? 'speaking'
-            : pending ? 'pending'
-              : (voice.state === 'error' || voice.state === 'unconfigured') ? 'trouble'
-                : 'idle';
+            : (voice.state === 'error' || voice.state === 'unconfigured') ? 'trouble'
+              : 'idle';
 
-  /**
-   * THE MIRROR. One overlay, two reasons to mark a word: the owner typed an @mention, or the
-   * corrector rewrote it. Layered rather than merged — see `applyRepairSegments`.
-   *
-   * The marks are recomputed from the DRAFT every render rather than stored, so an edit that
-   * moves the sentence cannot leave a mark pointing at the wrong word: `repairMarks` returns
-   * nothing once the corrected text is no longer in the box.
-   */
-  const hlMarks = pending ? repairMarks(draft, pending.text, pending.ops) : [];
-  const hlSegments = applyRepairSegments(mentionSegments(draft, peers), hlMarks);
-  const hlActive = hlSegments.some((s) => s.mention || s.repair);
+  /** THE MIRROR: an overlay that marks the owner's @mentions, recomputed from the draft. */
+  const hlSegments = mentionSegments(draft, peers);
+  const hlActive = hlSegments.some((s) => s.mention);
 
   useEffect(() => {
-    // A mirror that just appeared — a completed mention, or a transcript that just landed
-    // with repairs in it — starts at scrollTop 0 even when the field is scrolled. Align it
-    // before it is ever seen. It lives HERE, below `hlActive`, because that value now also
-    // depends on `pending`, which is declared further down the component.
+    // A mirror that just appeared — a completed mention — starts at scrollTop 0 even when the
+    // field is scrolled. Align it before it is ever seen.
     const ta = taRef.current;
     if (hlActive && ta && hlRef.current) hlRef.current.scrollTop = ta.scrollTop;
   }, [hlActive, draft]);
@@ -1055,39 +989,16 @@ export function Composer({
     if (voiceSubmitTick > 0) submitRef.current('auto');
   }, [voiceSubmitTick]);
 
-  // A pending transcript stops pending the moment the box no longer holds it — sent, cleared,
-  // or edited past recognition. Without this the row would keep offering to confirm text that
-  // is no longer there.
-  useEffect(() => {
-    if (pending && draft === '') setPending(null);
-  }, [pending, draft]);
-
   /** Press. Synchronous on purpose: {@link ComposerHost.bargeInSpeech} both silences whatever
    *  is playing (barge-in) and banks WebKit's autoplay activation, and the second only counts
    *  inside a real gesture handler. */
   const startTake = useCallback(() => {
-    if (!voiceEnabled || voice.busy || voiceCorrecting) return;
-    // AC3k — a second mic press OVER pending text, spelled out rather than left to chance.
-    if (pending) {
-      if (liveRef.current.draft !== pending.text) {
-        // Hand-edited: it is the owner's text now, and AC3f's promise extends to
-        // machine-produced pending text too.
-        setVoiceNotice('You edited this one — send or clear it before recording again.');
-        return;
-      }
-      // Untouched: tapping the mic while looking at a bad correction IS the owner choosing
-      // to redo it, and refusing there would be obstruction. The discarded transcript is
-      // logged so a correction nobody liked is still visible after the fact.
-      console.info('[voice] discarding an unconfirmed transcript to re-record');
-      setPending(null);
-      setDraft('');
-      session.syncDraft('');
-    }
+    if (!voiceEnabled || voice.busy) return;
     setVoiceNotice('');
-    draftAtTakeRef.current = pending ? '' : liveRef.current.draft;
+    draftAtTakeRef.current = liveRef.current.draft;
     session.bargeInSpeech?.();
     voice.start();
-  }, [voiceEnabled, voice, voiceCorrecting, pending, session]);
+  }, [voiceEnabled, voice, session]);
 
   const endTake = useCallback(() => {
     if (!voiceEnabled) return;
@@ -1116,7 +1027,7 @@ export function Composer({
   //
   // A chat pane never unmounts while its session lives — AgentSurface portals EVERY live
   // session's pane, garaging the ones that are not on screen — so "window-level" used to mean
-  // one press opening a microphone in every J.A.R.V.I.S session at once, including minimized
+  // one press opening a microphone in every assistant session at once, including minimized
   // ones, ones behind a collapsed overlay, and ones in another project's window. The registry
   // picks a single owner at the moment of the press; see `pushToTalkScope.ts` for the order.
   useEffect(() => {
@@ -1178,6 +1089,19 @@ export function Composer({
       window.removeEventListener('keyup', up);
     };
   }, [voiceEnabled, pushToTalk, pushToTalkMode, startTake, endTake]);
+
+  // ── The global half: the dreamcontext Assistant's hotkey ─────────────────────────────
+  // Rust owns that chord so it fires while another app is focused; the notch forwards its
+  // edges here (`externalPushToTalk.ts`). Same takes, same ownership rule as the keyboard.
+  useEffect(() => {
+    if (!voiceEnabled) return;
+    return onExternalPushToTalk((signal) => {
+      const act = pushToTalkAction(signal, ownsPushToTalk(rootRef.current, { global: true }), voiceStateRef.current === 'recording');
+      if (act === 'start') startTake();
+      else if (act === 'stop') endTake();
+      return act !== null;
+    });
+  }, [voiceEnabled, startTake, endTake]);
 
   const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
@@ -1315,21 +1239,18 @@ export function Composer({
 
   // ── Which controls this surface HAS ──────────────────────────────────────────────
   //
-  // One rule, applied three times: a control is drawn when there is something behind it.
+  // One rule: a control is drawn when there is something behind it.
   //
-  // MODE + PERMISSION — a live process to brief and a permission gate to set. The meeting
-  // room has neither: its agents are headless runs under a fixed `auto`, briefed by the room's
-  // own prompt. `onModeChange` is the tell, and the peer panel passes an inert one deliberately
+  // MODE + PERMISSION — a live process to brief and a permission gate to set. The agents
+  // channel has neither: its agents are headless runs, briefed by the delivery path's own
+  // prompt. `onModeChange` is the tell, and the peer panel passes an inert one deliberately
   // (see PeerSessionCard) rather than losing the trigger it has always shown.
   const showMode = !!onModeChange;
   // ATTACH — a project to put bytes in. Every attachment reaches the agent as a PATH, and a
   // pasted image's bytes go to `uploadAgentFile(vault, …)` first; with no vault there is
   // nowhere to write them and nothing to name. So this follows the vault, not a flag: every
-  // project window has one, the room has none.
+  // project window has one.
   const showAttach = !!vault;
-  // "SET AS DEFAULT" — a scope to promote FROM. Under `modelScope: 'global'` the pick already
-  // went to the app-global default, so the footer would offer to repeat what just happened.
-  const showModelDefault = modelScope === 'session';
 
   // The gauge, as a ring. `ctx.pct` drives an arc over a 6.5px-radius circle; the full
   // reading stays reachable as the button's title (a hover) and as `aria-valuetext` (a
@@ -1444,7 +1365,7 @@ export function Composer({
             effort={effortValue}
             onModelChange={(id) => { onModelChange(id); setSavedDefault(false); }}
             onEffortChange={(lvl) => { onEffortChange(lvl); setSavedDefault(false); }}
-            onSetDefault={showModelDefault ? saveModelDefault : undefined}
+            onSetDefault={saveModelDefault}
             savedDefault={savedDefault}
             close={menu.close}
           />
@@ -1531,10 +1452,7 @@ export function Composer({
           {hlActive && (
             <div className="chat-cmp-hl" ref={hlRef} aria-hidden>
               {hlSegments.map((s, i) => {
-                const cls = [
-                  s.mention ? 'chat-cmp-hl-mention' : '',
-                  s.repair ? `chat-cmp-hl-repair${s.far ? ' is-far' : ''}` : '',
-                ].filter(Boolean).join(' ');
+                const cls = s.mention ? 'chat-cmp-hl-mention' : '';
                 // eslint-disable-next-line react/no-array-index-key -- positional split of one string
                 return cls ? <mark className={cls} key={i}>{s.text}</mark> : <span key={i}>{s.text}</span>;
               })}
@@ -1859,7 +1777,7 @@ export function Composer({
             Both text buttons appear only once there is something to send, so an idle-handed
             Stop stays the single obvious control. */}
         {/* Push-to-talk. Hold it, speak, let go — see `useVoiceCapture` for why the take is
-            gated on duration and RMS before a single byte is uploaded. Only in J.A.R.V.I.S
+            gated on duration and RMS before a single byte is uploaded. Only in assistant
             mode and only on the desktop (AC15). */}
         {voiceEnabled && (
           <button
@@ -1876,15 +1794,13 @@ export function Composer({
             // A real gesture is required for autoplay, and a context menu on a long press
             // would swallow the pointerup that ends the take.
             onContextMenu={(e) => e.preventDefault()}
-            disabled={!canCompose || voice.state === 'transcribing' || voiceCorrecting}
+            disabled={!canCompose || voice.state === 'transcribing'}
             title={
               voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
                 : voice.state === 'transcribing' ? 'Transcribing…'
-                  : voiceCorrecting ? 'Checking it against the project vocabulary…'
-                    : pending ? 'Hold to record again — this one is waiting for you to send it.'
                       : voice.state === 'too-short' ? 'That was a tap — hold the button while you speak.'
                         : voice.state === 'silent' ? 'Nothing was heard in that take.'
-                          : voice.state === 'unconfigured' ? (voice.error || 'Voice needs an OpenRouter key in Settings.')
+                          : voice.state === 'unconfigured' ? (voice.error || 'Dictation is not installed — install it in Settings → Voice.')
                             : voice.state === 'error' ? (voice.error || 'That take did not go through.')
                               : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
                                 ? `Press ${hotkeyLabel(pushToTalk)} to start, again to send`
@@ -1893,46 +1809,31 @@ export function Composer({
             aria-label="Hold to speak"
             aria-pressed={voice.state === 'recording'}
           >
-            {voice.state === 'transcribing' || voiceCorrecting ? <span aria-hidden>…</span> : <MicIcon />}
+            {voice.state === 'transcribing' ? <span aria-hidden>…</span> : <MicIcon />}
           </button>
         )}
-        {/* AC3d's visible half. A machine-altered sentence is never sent on the owner's
-            behalf without them seeing WHAT changed — so the row names the substitutions
-            rather than just saying "please confirm", which would train itself away. */}
-        {/* WHAT IS LEFT OF THE CONFIRMATION ROW, and why it shrank rather than vanished.
-            The row used to carry the mapping — `Changed Dremontext → dreamcontext +2 more` —
-            and that mapping now lives on the words themselves, where it costs the reader
-            nothing. What a mark CANNOT say is what was heard before, and it cannot say
-            anything at all about a word that was REMOVED: there is nothing on screen to
-            underline, and inventing a mark for a deletion would tell the owner that a word
-            they can see was touched. So the row keeps exactly those two jobs and drops the
-            rest. The RULE is unchanged: a changed transcript still never sends itself. */}
-        {voiceEnabled && pending && pending.ops.length > 0 && (
-          <span className="chat-cmp-voice-note is-confirm" role="status">
-            {heardWords(pending.ops).length > 0 && (
-              <>
-                {'heard '}
-                <span className="chat-cmp-voice-heard">{heardWords(pending.ops).join(', ')}</span>
-              </>
-            )}
-            {droppedWords(pending.ops).length > 0 && (
-              <>
-                {heardWords(pending.ops).length > 0 ? ' · ' : ''}
-                {'dropped '}
-                <span className="chat-cmp-voice-heard">{droppedWords(pending.ops).join(', ')}</span>
-              </>
-            )}
-            {' — send if that reads right.'}
-          </span>
+        {/* Read aloud, beside the mic it pairs with. A switch, not an action: `aria-pressed`
+            carries the state and the icon draws it (speaker vs speaker struck through). */}
+        {voiceEnabled && (
+          <button
+            type="button"
+            className="chat-cmp-iconbtn chat-cmp-readaloud"
+            onClick={() => setReadAloud(!readAloud)}
+            title={readAloud ? 'Read replies aloud' : 'Replies are not read aloud'}
+            aria-label="Read replies aloud"
+            aria-pressed={readAloud}
+          >
+            {readAloud ? <SpeakerIcon /> : <HushIcon />}
+          </button>
         )}
         {/* THE RESTING INSTRUCTION. Without it the mode is a microphone button and a secret:
             the binding is configurable, so nothing on screen tells the owner whether to HOLD
             it or PRESS it — and the two are opposites. It says the current binding in the
             current mode, and gets out of the way the moment anything else has something to
             report. */}
-        {voiceEnabled && !pending && !voiceNotice && !voiceCorrecting && voice.state !== 'error'
+        {voiceEnabled && !voiceNotice && voice.state !== 'error'
           && voice.state !== 'unconfigured' && (
-          <span className="chat-cmp-voice-note is-idle">
+          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined}>
             {voice.state === 'recording'
               ? (effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
                 ? `Listening — ${hotkeyLabel(pushToTalk)} again to send`
@@ -1945,19 +1846,15 @@ export function Composer({
                       : `Hold ${hotkeyLabel(pushToTalk)} or the mic to speak`}
           </span>
         )}
-        {voiceEnabled && !pending && (voiceNotice || voiceCorrecting || voice.state === 'error' || voice.state === 'unconfigured') && (
+        {voiceEnabled && (voiceNotice || voice.state === 'error' || voice.state === 'unconfigured') && (
           // Said in the row rather than only in a tooltip: a take that was refused looks
           // exactly like one that was never recorded, and the owner needs to know which.
           <span className="chat-cmp-voice-note">
             {voiceNotice
-              || (voiceCorrecting ? 'Checking the vocabulary…'
-                : voice.state === 'too-short' ? 'Hold it while you speak.'
-                  : voice.state === 'silent' ? 'Nothing heard.'
-                    : voice.error)}
+              || (voice.state === 'too-short' ? 'Hold it while you speak.'
+                : voice.state === 'silent' ? 'Nothing heard.'
+                  : voice.error)}
           </span>
-        )}
-        {voiceEnabled && pending && voiceNotice && (
-          <span className="chat-cmp-voice-note">{voiceNotice}</span>
         )}
         {busy && (
           <button type="button" className="chat-cmp-send is-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => { session.bargeInSpeech?.(); session.interrupt(); }}>

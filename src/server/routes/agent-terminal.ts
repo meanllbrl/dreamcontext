@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { isAssistantVault } from '../../lib/assistant/home.js';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
@@ -757,6 +758,10 @@ export function attachAgentTerminal(server: Server): void {
     if (!isDesktop() || !isLoopback(req)) { rejectUpgrade(socket, 403); return; }
 
     const vault = url.searchParams.get('vault');
+    // No terminal on the dreamcontext Assistant's hidden vault — ever. Its one surface is the
+    // notch chat; a PTY there would be an unbriefed, ungated second way in. Refused by name
+    // (403) rather than left to fall out of the resolver as an "unknown vault" 400.
+    if (isAssistantVault(vault)) { rejectUpgrade(socket, 403); return; }
     const projectRoot = resolveVaultProjectRoot(vault);
     if (!projectRoot) { rejectUpgrade(socket, 400); return; }
     const bypass = url.searchParams.get('bypass') === '1';
@@ -1423,8 +1428,14 @@ export async function handleAgentGoalLive(
 ): Promise<void> {
   if (!contextRoot) { sendJson(res, 200, GOAL_LIVE_INACTIVE); return; }
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
+  const state = goalLiveRunFor(contextRoot, sanitizeUuid(url.searchParams.get('claudeId')));
+  sendJson(res, 200, state ? { active: true, state } : GOAL_LIVE_INACTIVE);
+}
 
+/** The goal-skill run a pane sees, or null — the scoping rules documented on
+ *  {@link handleAgentGoalLive}. Exported because the teammate route authorizes a transcript
+ *  read against exactly this run: a pane may read the runs ITS quest registered, nothing else. */
+export function goalLiveRunFor(contextRoot: string, claudeId: string): Record<string, unknown> | null {
   const runs: Array<{ state: Record<string, unknown>; stamp: string; upd: number }> = [];
   try {
     const dir = join(contextRoot, 'tmp');
@@ -1440,23 +1451,21 @@ export async function handleAgentGoalLive(
       } catch { /* malformed file — skip it, not the whole scan */ }
     }
   } catch { /* no tmp dir → no active run */ }
-  if (runs.length === 0) { sendJson(res, 200, GOAL_LIVE_INACTIVE); return; }
+  if (runs.length === 0) return null;
   runs.sort((a, b) => b.upd - a.upd);
 
   if (claudeId) {
     const direct = runs.find((r) => r.stamp === claudeId);
-    if (direct) { sendJson(res, 200, { active: true, state: direct.state }); return; }
+    if (direct) return direct.state;
     const current = resolveAgentSession(contextRoot, claudeId);
     const mapped = current ? runs.find((r) => r.stamp === current) : undefined;
-    if (mapped) { sendJson(res, 200, { active: true, state: mapped.state }); return; }
+    if (mapped) return mapped.state;
     // A finished run keeps its file for the win beat; unstamped, it names no pane, so it
     // would read "Quest cleared" in every one. Only a live unstamped run falls back.
-    const unstamped = runs.find((r) => !r.stamp && r.state.phase !== 'done');
-    sendJson(res, 200, unstamped ? { active: true, state: unstamped.state } : GOAL_LIVE_INACTIVE);
-    return;
+    return runs.find((r) => !r.stamp && r.state.phase !== 'done')?.state ?? null;
   }
   // No pane id → freshest run (legacy callers).
-  sendJson(res, 200, { active: true, state: runs[0].state });
+  return runs[0].state;
 }
 
 // ─── Council live state (in-app chamber panel) ────────────────────────────────

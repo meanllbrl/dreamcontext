@@ -12,9 +12,9 @@ import { checklistWindowLabel } from '../../dashboard/src/lib/checklistStore.js'
  * error, no console line and no crash — the window simply opens, and then every
  * `core:*` call it makes is denied.
  *
- * That is not hypothetical. The Meeting Room shipped in 0.26.1 with the label
- * `meeting-room`, while `default` scoped to the launcher, vault and sleepy
- * windows and `checklist` to the checklist ones. It matched neither. The symptom
+ * That is not hypothetical. A window (the since-retired Meeting Room) shipped in
+ * 0.26.1 with a label that `default` (launcher, vault and sleepy windows) and
+ * `checklist` (the checklist ones) did not cover. It matched neither. The symptom
  * anyone could see was that its title bar refused to drag — `startDragging()` was
  * ACL-denied and the rejection was swallowed by a bare catch. A human found it by
  * trying to move a window; 8,000 passing tests had nothing to say about it.
@@ -34,7 +34,6 @@ const LABELS: Record<string, string> = {
   // A vault name that needs sanitising still has to land inside `vault-*`.
   'vault (sanitised)': vaultWindowLabel('weird name.with/chars'),
   checklist: checklistWindowLabel('acme-storefront', 'asc-key'),
-  meetingRoom: 'meeting-room',
   // NOTE: `sleepy` and `sleepy-perch` were removed in 0.27.0 along with the Lab notch
   // capture feature. Their grants came out of the default capability in the same
   // commit — a window label left here after its window is gone asserts nothing, and a
@@ -101,22 +100,25 @@ describe('tauri window capabilities', () => {
       created,
       'desktop.ts creates a different number of window kinds than this test knows about — ' +
         'add the new label to LABELS above and give it a capability in desktop/src-tauri/capabilities/',
-    ).toBe(4); // vault, checklist, meeting-room, main(re-open)
+    ).toBe(3); // vault, checklist, main(re-open)
   });
 
-  it('grants the Meeting Room the drag permission its title bar needs', () => {
-    // The specific regression: the room's own title bar is the only way to move a
-    // window created with `dragDropEnabled: false`, and that needs start-dragging.
-    const forRoom = caps.filter(({ cap }) =>
-      (Array.isArray(cap.windows) ? (cap.windows as string[]) : []).some((g) =>
-        globMatches(g, 'meeting-room'),
-      ),
-    );
-    const perms = forRoom.flatMap(({ cap }) =>
-      (Array.isArray(cap.permissions) ? cap.permissions : []).filter(
-        (p): p is string => typeof p === 'string',
-      ),
-    );
-    expect(perms).toContain('core:window:allow-start-dragging');
-  });
+  it.each(Object.entries(LABELS))(
+    'grants the %s window (%s) the drag permission its title bar needs',
+    (_kind, label) => {
+      // The specific regression: a window's own title bar is the only way to move a
+      // window created with `dragDropEnabled: false`, and that needs start-dragging.
+      const forWindow = caps.filter(({ cap }) =>
+        (Array.isArray(cap.windows) ? (cap.windows as string[]) : []).some((g) =>
+          globMatches(g, label),
+        ),
+      );
+      const perms = forWindow.flatMap(({ cap }) =>
+        (Array.isArray(cap.permissions) ? cap.permissions : []).filter(
+          (p): p is string => typeof p === 'string',
+        ),
+      );
+      expect(perms).toContain('core:window:allow-start-dragging');
+    },
+  );
 });

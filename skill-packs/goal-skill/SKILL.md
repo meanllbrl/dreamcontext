@@ -59,13 +59,23 @@ A judge that only ever meets the work through the artifact stays independent.
 
 Builders are spawned and driven via the `claude` CLI, not the Agent tool:
 
+0. **Name every builder's session up front, and register it.** Mint the id before the
+   spawn (`uuidgen | tr A-Z a-z`), pass it as `--session-id <uuid>`, and record it on the
+   actor with `dreamcontext goal-live actor <id> --session <uuid>` (see *Live run state*).
+   That registration is what lets the app draw the builder as a live teammate in Chat:
+   its brief, each step it takes, running or done, and its whole transcript one click
+   away. It works however the builder runs: in the background, detached with `nohup`,
+   or still going after your own session has ended. Keep `claude -p` the command's own
+   executable (`nohup claude -p … &` is fine); never wrap it in a script file, which
+   hides the command from the app's own recognition of a headless run.
+
 1. **Spawn the planner** (once, at Phase 1):
    ```
-   claude -p "<goal + context>" --output-format json --model <tier-model> < /dev/null
+   claude -p "<goal + context>" --session-id <plannerId> --output-format json --model <tier-model> < /dev/null
    ```
    `< /dev/null` matters: a headless `-p` invocation with no stdin redirect can hang
-   waiting for input. Always redirect stdin explicitly. Parse the JSON response for
-   `session_id` and record it in the **Session registry** (below).
+   waiting for input. Always redirect stdin explicitly. The id you minted IS the
+   planner's `session_id`; record it in the **Session registry** (below).
 
 2. **Resume the same builder** for a revision round (only the delta is new tokens):
    ```
@@ -74,13 +84,14 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
 
 3. **Fork an implementer from the planner session** (Phase 4, once per task in a wave):
    ```
-   claude -p --resume <plannerId> --fork-session "<task Tn from the dep map>" \
+   claude -p --resume <plannerId> --fork-session --session-id <implId> "<task Tn from the dep map>" \
      --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
      --output-format json --model sonnet < /dev/null
    ```
-   `--fork-session` mints a **new** session id that inherits the planner's full context;
-   the planner's original session is untouched and stays resumable. Capture the new id
-   into the registry under `impl-<taskId>`.
+   `--fork-session` starts a **new** session that inherits the planner's full context, and
+   `--session-id <implId>` (a fresh uuid you minted) names it, so you know the id before it
+   runs. The planner's original session is untouched and stays resumable. Record the id in
+   the registry under `impl-<taskId>`.
 
    **The permission flags are not optional.** A headless `-p` session has no interactive
    permission prompt: an implementer forked without them stalls at its first Write with a
@@ -379,12 +390,12 @@ standalone goal-live step is bookkeeping the user has to read past in the team l
 
 ```bash
 # Run start (right after the goal is confirmed): the file, the plan phase, the planner, in one step
-dreamcontext goal-live start --goal <slug> && dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind spawn && claude -p "<goal + context>" --output-format json --model <tier-model> < /dev/null
+dreamcontext goal-live start --goal <slug> && dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind spawn --session <plannerId> && claude -p "<goal + context>" --session-id <plannerId> --output-format json --model <tier-model> < /dev/null
 ```
 
 ```bash
 # Planner revision round N: the planner picks up where it left off
-dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind resume --round N && claude -p --resume <plannerId> "<the delta>" --output-format json < /dev/null
+dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind resume --round N --session <plannerId> && claude -p --resume <plannerId> "<the delta>" --output-format json < /dev/null
 ```
 
 ```bash
@@ -398,8 +409,8 @@ dreamcontext goal-live state critic=NEEDS_WORK pragmatist=SOLID edge-cases=SOLID
 ```
 
 ```bash
-# Implementer forks: the planner's context is measured once and recorded on every fork
-dreamcontext goal-live phase impl --wave 1 --waves 3 && dreamcontext goal-live actor "T1=Role registry,T2=Tokens" --role implementer --kind fork --from planner --context-of <plannerId> && (claude -p --resume <plannerId> --fork-session "<task T1>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & claude -p --resume <plannerId> --fork-session "<task T2>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & wait)
+# Implementer forks: one actor call per lane (a --session names ONE run), each lane its own minted id
+dreamcontext goal-live phase impl --wave 1 --waves 3 && dreamcontext goal-live actor "T1=Role registry" --role implementer --kind fork --from planner --context-of <plannerId> --session <T1Id> && dreamcontext goal-live actor "T2=Tokens" --role implementer --kind fork --from planner --context-of <plannerId> --session <T2Id> && (claude -p --resume <plannerId> --fork-session --session-id <T1Id> "<task T1>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & claude -p --resume <plannerId> --fork-session --session-id <T2Id> "<task T2>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & wait)
 ```
 
 ```bash
@@ -425,6 +436,13 @@ dreamcontext tasks log <slug> "escalated: <the finding that survived a fix>" && 
 The done file ages out on its own after 3h, or the next `start` in your session
 overwrites it. Another session's file is never yours to touch.
 
+**Register every `claude -p` builder with `--session <uuid>`** (the same id it was started
+with via `--session-id`). The app then reads that run's own transcript and draws it in
+Chat as a teammate: its brief, its live steps, running or done, and its report when it
+lands. Status is read from the run itself, so a builder that crashed never shows as
+running, and one you forgot to mark `done` still shows as finished. Judges dispatched
+through the Agent tool need no `--session`: the app already sees them.
+
 **Never write a `ctx` number yourself.** `--context-of <sessionId>` names the session
 whose context the forks INHERIT (the planner's `session_id` from the Session registry);
 the CLI measures it from that session's own transcript and records it on fork events
@@ -433,10 +451,11 @@ only. If it cannot measure, the number is simply absent, and the app shows none.
 ### Command reference
 
 ```
-dreamcontext goal-live start --goal <slug>
+dreamcontext goal-live start --goal <slug> [--mode goal|develop]
 dreamcontext goal-live phase <plan|review|task|impl|codereview|validate|done> [--wave N] [--waves N]
-dreamcontext goal-live actor <id[=name],…> --kind <spawn|fork|resume|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>]
-dreamcontext goal-live state <id=word> [<id=word> …]
+dreamcontext goal-live actor <id[=name],…> --kind <spawn|fork|resume|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>] [--session <uuid>] [--wave N]
+dreamcontext goal-live state <id=word> [<id=word> …] [--wave N]
+dreamcontext goal-live recipe develop
 dreamcontext goal-live clear
 ```
 
@@ -448,7 +467,15 @@ dreamcontext goal-live clear
   judge that sees only the artifact).
 - `state` words: `run | done | wait | fail`, or a verdict `SOLID | NEEDS_WORK | PASS |
   FAIL` (which also marks the actor done).
+- `--session <uuid>`: the actor's own `claude -p --session-id` (a UUID). One id per call,
+  since a run belongs to one actor. For a `resume` it is the resumed run's existing id.
 - `clear` is for escalation and abort only, never for the success path.
+- `--mode develop`, `--wave` and `recipe develop` belong to **Develop mode chats**, not to
+  this orchestrator. A Develop run writes the same file with `mode: develop`: builders per
+  wave (`w<N>-<lane>`, `--wave N`), a clean reviewer after EVERY wave (`w<N>-reviewer`,
+  its verdict credited to that wave), a validator at the end, and `start` adopts the run on a
+  reopen or handoff instead of wiping it. `recipe develop` prints that procedure. This pack's
+  own flow is unchanged: its Phase 5 still reviews once, after the last wave.
 
 ### What the file holds (schema reference)
 
@@ -463,10 +490,10 @@ still renders.
  "impl":{"wave":1,"waves":3,"forks":[{"s":"done","id":"T1","name":"Role registry","role":"implementer"},{"s":"run","id":"T2","name":"Tokens","role":"implementer"}]},
  "judges":[{"s":"done","id":"critic","role":"critic","v":"SOLID"}],
  "history":[{"p":"plan","at":"2026-09-25T10:00:00Z"},{"p":"review","at":"2026-09-25T10:12:00Z"},{"p":"impl","at":"2026-09-25T10:30:00Z"}],
- "lineage":[{"a":"planner","role":"planner","k":"spawn","r":1,"at":"2026-09-25T10:00:00Z"},
+ "lineage":[{"a":"planner","role":"planner","k":"spawn","r":1,"at":"2026-09-25T10:00:00Z","sid":"4e413671-2b2d-41df-a8f9-ce84afce4f7c"},
             {"a":"critic","role":"critic","k":"fresh","r":1,"at":"2026-09-25T10:12:00Z"},
             {"a":"planner","role":"planner","k":"resume","r":2,"at":"2026-09-25T10:20:00Z"},
-            {"a":"T1","role":"implementer","k":"fork","from":"planner","name":"Role registry","at":"2026-09-25T10:30:00Z","ctx":182000}]}
+            {"a":"T1","role":"implementer","k":"fork","from":"planner","name":"Role registry","at":"2026-09-25T10:30:00Z","ctx":182000,"sid":"9e3811bf-e4d8-45a1-bcb5-ede8e7dff5d6"}]}
 ```
 
 - `phase`: `plan | review | task | impl | codereview | validate | done`.
@@ -476,8 +503,12 @@ still renders.
   `id` / `name` / `role`); `judges[]`: the judges seated for the current phase, with
   their verdict in `v`.
 - `history[]`: every phase change, oldest first (last 40 kept).
-- `lineage[]`: who briefed, copied or brought back whom (last 60 kept). It is what the
-  app's "How this was built" receipt is drawn from.
+- `lineage[]`: who briefed, copied or brought back whom (last 120 kept; `impl.forks` keeps
+  the last 24). It is what the app's "How this was built" receipt is drawn from.
+- Develop runs only (`mode: develop`): `tab` (the owning chat pane), `reviewed` (the highest
+  wave whose reviewer passed), `w` on history entries, forks and lineage (the wave), and `v`
+  on lineage (a verdict that outlives the seat it was given in). A goal-skill file carries
+  none of them.
 
 Standalone viewer and demo:
 

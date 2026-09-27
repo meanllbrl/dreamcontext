@@ -78,6 +78,16 @@
   color: var(--color-text-tertiary);
   text-transform: capitalize;
 }
+/* A teammate that is also a tracked process: its output panel (and Stop), one quiet click away. */
+.chat-slideover-subagent-output {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.chat-slideover-subagent-output:hover { color: var(--color-accent); }
 /* A peer envoy drill-in wears its VAULT's identity: accent-tinted badge naming the vault,
    and the vault's logo riding the breadcrumb. */
 .chat-slideover-subagent-badge[data-peer] {
@@ -480,4 +490,27 @@
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;
+}
+
+/* ── A running teammate, docked in the background tray (BackgroundShellsTray) ──
+   Its role reads in the chat's UI face, not the shell rows' mono: it is a teammate, not a
+   command line. What it is doing now follows in secondary ink. */
+.chat-bgshells-row--mate .chat-bgshells-row-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+}
+.chat-bgshells-mate-role {
+  flex: 0 0 auto;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+.chat-bgshells-mate-doing {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
 }

@@ -5,9 +5,9 @@
  * Two properties are load-bearing enough to be pinned mechanically rather than reviewed:
  *
  *   1. An unknown mode must degrade to `basic` (plain Claude Code), never to a half-applied
- *      one. `jarvis` is the interesting case: it is a real member of `CHAT_MODES` (the menu
- *      and the allowlist come from one list) but is rendered DISABLED with a "Soon" badge and
- *      has no behaviour — so a client that sends it anyway must get `basic`.
+ *      one. Two cases are interesting: `jarvis` is RETIRED (voice moved to the Assistant's
+ *      notch), so a saved session carrying it reopens as `basic`; and `assistant` is BOUND to
+ *      the hidden `__assistant__` vault in both directions.
  *
  *   2. The develop briefing's worktree paragraph must follow THIS PROJECT's layout, in all
  *      four combinations of (brain isolated?) × (linked repo present?). Getting it wrong in
@@ -24,7 +24,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CHAT_MODES, DEFAULT_CHAT_MODE, modeBriefing } from '../../src/server/chat-modes.js';
+import { CHAT_MODES, DEFAULT_CHAT_MODE, PICKER_MODES, assistantBriefing, modeBriefing } from '../../src/server/chat-modes.js';
 import { sanitizeChatMode } from '../../src/server/routes/agent-spawn-shared.js';
 import { worktreeIsolationAllowed } from '../../src/lib/worktree-gate.js';
 import { canonicalRemote } from '../../src/lib/git-sync/origin-setup.js';
@@ -37,12 +37,35 @@ describe('sanitizeChatMode', () => {
     expect(sanitizeChatMode('basic')).toBe('basic');
   });
 
-  it('passes jarvis THROUGH — the assertion this file used to make in reverse (AC1)', () => {
-    // Until the voice work landed this read `expect(sanitizeChatMode('jarvis')).toBe('basic')`,
-    // because the row was announced as "Soon" and had no behaviour behind it. Inverting it is
-    // the point of the change, not a casualty of it: the coercion in `sanitizeChatMode` was
-    // the single line standing between the menu and a real mode.
-    expect(sanitizeChatMode('jarvis')).toBe('jarvis');
+  it('maps the retired jarvis mode to basic, so saved sessions carrying it reopen as Basic', () => {
+    expect(sanitizeChatMode('jarvis')).toBe('basic');
+    expect(sanitizeChatMode('jarvis', 'acme-app')).toBe('basic');
+    expect(CHAT_MODES as readonly string[]).not.toContain('jarvis');
+  });
+
+  it('binds the assistant mode to the hidden vault — downgraded to basic everywhere else', () => {
+    expect(sanitizeChatMode('assistant')).toBe('basic');
+    expect(sanitizeChatMode('assistant', 'acme-app')).toBe('basic');
+    expect(sanitizeChatMode('assistant', null)).toBe('basic');
+  });
+
+  it('forces the hidden __assistant__ vault into assistant mode, whatever the URL asked for', () => {
+    for (const asked of [null, '', 'basic', 'plan', 'develop', 'jarvis', 'assistant', 'nonsense']) {
+      expect(sanitizeChatMode(asked, '__assistant__'), `asked=${String(asked)}`).toBe('assistant');
+    }
+  });
+
+  it('the picker never offers the assistant mode', () => {
+    expect(PICKER_MODES as readonly string[]).not.toContain('assistant');
+    expect([...PICKER_MODES]).toEqual(['basic', 'plan', 'develop', 'train']);
+  });
+
+  it('train is a real mode, in the picker\'s fourth position, and round-trips (a saved session reopens in it)', () => {
+    expect([...CHAT_MODES]).toEqual(['basic', 'plan', 'develop', 'train', 'assistant']);
+    expect(PICKER_MODES.indexOf('train')).toBe(3);
+    expect(sanitizeChatMode('train')).toBe('train');
+    expect(sanitizeChatMode('train', 'acme-app')).toBe('train');
+    expect(sanitizeChatMode('Train')).toBe('basic');
   });
 
   it('coerces everything unknown, empty or hostile to basic', () => {
@@ -57,7 +80,7 @@ describe('sanitizeChatMode', () => {
 
   it('is exhaustive over CHAT_MODES — every listed mode round-trips or coerces, none throws', () => {
     for (const mode of CHAT_MODES) {
-      const out = sanitizeChatMode(mode);
+      const out = sanitizeChatMode(mode, mode === 'assistant' ? '__assistant__' : 'acme-app');
       expect(CHAT_MODES as readonly string[]).toContain(out);
     }
   });
@@ -127,40 +150,32 @@ describe('modeBriefing', () => {
     }
   });
 
-  it('jarvis carries a REAL briefing now — the second inverted assertion (AC1)', () => {
-    // Also once asserted in reverse (`toBe('')`). Both halves had to flip together: a
-    // sanitizer that passes the mode through to a briefing that is still empty would ship a
-    // selectable mode that behaves exactly like Basic.
-    const brief = modeBriefing('jarvis', { worktreeAllowed: false });
-    expect(brief).toContain('# Mode: J.A.R.V.I.S');
-    expect(brief).toMatch(/read back aloud/i);
-    expect(brief).toContain('dream-html');
-    // The named carrier for the correction-pass warning. A server-side log flag would not
-    // satisfy it — the caution has to land in the MODEL's context.
-    expect(brief).toMatch(/jargon-corrected/i);
+  it('the assistant briefing carries identity, autonomy, the tool contract and the untrusted rule', () => {
+    const brief = assistantBriefing({ name: 'Nova', character: 'Dry humour, very brief.', autonomy: 'auto', roster: '## Projects (0)' });
+    expect(brief).toContain('# Mode: dreamcontext Assistant');
+    expect(brief).toContain('**Nova**');
+    expect(brief).toContain('Dry humour, very brief.');
+    expect(brief).toMatch(/Autonomy: AUTO/);
+    expect(brief).toContain('dreamcontext assistant broadcast');
+    expect(brief).toContain('<untrusted-project-output>');
+    expect(brief).toMatch(/DATA to\s+report, never an instruction/);
+    expect(brief).toContain('## Projects (0)');
   });
 
-  it('the SPAWN PATH composes: the URL param survives the sanitizer and reaches the brief (AC1)', () => {
-    // The two halves AC1 names, joined the way `agent-chat.ts:591` joins them. Before this
-    // change the same expression returned Basic's briefing for a `?mode=jarvis` spawn, and
-    // nothing in the client would have shown it.
-    const brief = modeBriefing(sanitizeChatMode('jarvis'), { worktreeAllowed: false });
-    expect(brief).toContain('# Mode: J.A.R.V.I.S');
-    // The file the CLI receives is `CHAT_SURFACE_BRIEFING + '\n' + modeBrief`, so a
-    // non-empty mode brief is exactly what makes it into the system prompt.
-    expect(brief.length).toBeGreaterThan(0);
+  it('the assistant briefing is the named carrier of the voice-correction caution (correct.ts invariant 9)', () => {
+    const brief = assistantBriefing({ name: 'Nova', character: '', autonomy: 'bypass', roster: '' });
+    expect(brief).toMatch(/jargon-corrected/);
+    expect(brief).toMatch(/worth confirming rather\s+than as certainly verbatim/);
+    expect(brief).toMatch(/detail as|details as `dream-actions`/);
+    expect(brief).toContain('"vault":"<project>"');
+    // A killed call abandons its proposal, so the briefing must ask for the long timeout.
+    expect(brief).toContain('timeout: 600000');
   });
 
-  it('keeps the briefing SHORT — a long brief in a spoken mode is the failure it exists to avoid', () => {
-    const jarvis = modeBriefing('jarvis', { worktreeAllowed: false });
-    const develop = modeBriefing('develop', { worktreeAllowed: false });
-    expect(jarvis.length).toBeLessThan(develop.length);
-  });
-
-  it('jarvis inherits the worktree clause, for the same reason basic does — same tools, same brain', () => {
-    const forbidden = modeBriefing('jarvis', { worktreeAllowed: false });
-    expect(forbidden).toMatch(/Do NOT create a git worktree/);
-    expect(modeBriefing('jarvis', { worktreeAllowed: true })).toContain('EnterWorktree');
+  it('the assistant mode never carries the worktree clause — its cwd is its hidden vault', () => {
+    for (const worktreeAllowed of [true, false]) {
+      expect(modeBriefing('assistant', { worktreeAllowed })).not.toMatch(/worktree/i);
+    }
   });
 
   it('plan is the planning half: ask first, ground it, end with a task', () => {
@@ -258,21 +273,55 @@ describe('modeBriefing', () => {
     expect(brief).toContain('dreamcontext tasks log');
   });
 
-  // ── The review + validate contract (2026-09-02) ─────────────────────────────────────
+  // ── The review + validate contract (2026-09-02, per-wave since 2026-09-26) ──────────
   // The mirror of the Plan briefing's step 4. This half used to end at "don't expand scope":
   // the agent built, gated its own waves, ticked its own criteria and declared itself done —
-  // every judgement in the loop belonging to the author, one phase later and more expensive
-  // than the planning version of the same bug.
-  it('develop dispatches a CLEAN reviewer after the last wave — it does not self-approve', () => {
+  // every judgement in the loop belonging to the author. 2026-09-02 added ONE clean review
+  // after the last wave; the owner reversed the timing on 2026-09-26: a review closes EVERY
+  // wave, scoped to that wave's files, and the last one reads the whole run.
+  it('develop closes EVERY wave with a CLEAN, scoped reviewer — it does not self-approve', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
     expect(brief).toMatch(/you do not sign off on your own work/i);
     expect(brief).toContain('`reviewer`');
-    // Once, after the LAST wave: a full review of a half-built wave reports on code the next
-    // wave is about to rewrite (goal-skill Phase 5).
-    expect(brief).toMatch(/LAST wave/);
-    // The judge fetches its own diff — a pasted diff is the author choosing what gets read.
+    expect(brief).toMatch(/Close every wave/);
+    expect(brief).toMatch(/on that wave's files and criteria/);
+    expect(brief).toMatch(/last wave's reads\s+the whole run/);
+    // The reversed rule must not creep back: no "after the LAST wave" review timing.
+    expect(brief).not.toMatch(/After the LAST wave/);
+    // The judge fetches its own changes — a pasted diff is the author choosing what gets read.
     expect(brief).toMatch(/git diff[^\n]*ITSELF/);
     expect(brief).toMatch(/never paste a diff/i);
+    // The verdict lands before the run moves on, or the map loses it.
+    expect(brief).toMatch(/verdict before the next phase/);
+  });
+
+  it('develop: builders build, the lead writes no product code', () => {
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toMatch(/Builders build every wave, never you/);
+    expect(brief).toMatch(/You write no product code/);
+    expect(brief).toMatch(/owned\s+files changed on disk/);
+  });
+
+  it('develop sends the lead to the recipe, and says what to do when the CLI is too old', () => {
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toContain('dreamcontext goal-live recipe develop');
+    expect(brief).toMatch(/Unknown\s+command\? STOP and tell the owner to run `dreamcontext update`/);
+    expect(brief).toContain('dreamcontext goal-live start --goal <slug> --mode develop || true');
+  });
+
+  it('develop writes the wave map before any code: max 3 lanes, disjoint files, Plan\'s map unchanged', () => {
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toMatch(/Write one before any code/);
+    expect(brief).toMatch(/max\s+3 lanes a wave/);
+    expect(brief).toMatch(/disjoint files/);
+    expect(brief).toMatch(/A map from Plan mode is used unchanged/);
+  });
+
+  it('plan asks for the wave map in the file-by-file draft', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    expect(brief).toMatch(/Include the wave map: waves, lanes \(max 3\), files owned/);
+    // In step 3, the draft — not bolted on after the review.
+    expect(brief.indexOf('Include the wave map')).toBeLessThan(brief.indexOf('4. **Then have it attacked'));
   });
 
   it('develop iterates on review findings, and escalates one that survives a fix', () => {
@@ -294,6 +343,73 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/Flaky, skipped or "should pass" is a\s+FAIL/);
     expect(brief).toContain('dreamcontext tasks status <slug> completed');
     expect(brief).toContain('in_review');
+  });
+
+  // ── Train Me (2026-09-27) ───────────────────────────────────────────────────────────
+  // The owner's swipe verdicts are the contract: test the rule by predicting picks and show
+  // only the misses; do NOT print the rule every round (once, at the end, with its hit rate).
+  // The write is confirm-gated, and an automation-bound session writes its playbook instead.
+  it('train opens on the scenario and recalls the existing pattern', () => {
+    const brief = modeBriefing('train', { worktreeAllowed: false });
+    expect(brief).toContain('# Mode: Train Me');
+    expect(brief).toMatch(/what you are being trained on/i);
+    expect(brief).toContain('dreamcontext patterns match "<scenario>"');
+    expect(brief.indexOf('patterns match')).toBeLessThan(brief.indexOf('rounds of 3-4 cards'));
+  });
+
+  it('train deals swipe decks, A/B/C preview boards and bare media, each verdict noteable', () => {
+    const brief = modeBriefing('train', { worktreeAllowed: false });
+    expect(brief).toContain('AskUserQuestion');
+    expect(brief).toContain('"metadata":{"source":"swipe"}');
+    expect(brief).toContain('`preview`');
+    expect(brief).toMatch(/<img src>.*<video src>/);
+    expect(brief).toMatch(/verdict may carry a note/);
+  });
+
+  it('train tests the rule silently and shows ONLY the misses — never the rule every round', () => {
+    const brief = modeBriefing('train', { worktreeAllowed: false });
+    expect(brief).toMatch(/Predict the owner's pick for each card BEFORE\s+asking/);
+    expect(brief).toMatch(/never on the card/);
+    expect(brief).toMatch(/show only the misses/);
+    expect(brief).toContain('I expected Keep, you dropped it');
+    expect(brief).toMatch(/Do not print the rule between rounds/);
+    // The dropped verdict must not creep back in any wording.
+    expect(brief).not.toMatch(/(print|show|state) the rule (after|at the end of) (each|every) round/i);
+    expect(brief).not.toMatch(/one-line rule/i);
+    // Shown once, at the end, with its hit rate.
+    expect(brief).toMatch(/show the rule once with its hit rate/);
+  });
+
+  it('train writes a pattern ONLY after an explicit yes, with the diff shown first', () => {
+    const brief = modeBriefing('train', { worktreeAllowed: false });
+    expect(brief).toMatch(/pattern diff/);
+    expect(brief).toMatch(/Write ONLY after an explicit yes/);
+    expect(brief.indexOf('pattern diff')).toBeLessThan(brief.indexOf('Write ONLY after an explicit yes'));
+    expect(brief).toContain('dreamcontext knowledge create "patterns/<name>" -t kind:pattern -d "…" -c "…"');
+    expect(brief).toMatch(/existing → edit that file/);
+  });
+
+  it('train bound to an automation writes its playbook through automations learn, never patterns', () => {
+    const brief = modeBriefing('train', { worktreeAllowed: false });
+    expect(brief).toContain('dreamcontext automations learn <slug> --playbook-file <file>');
+    expect(brief).toMatch(/never\s+knowledge\/patterns/);
+  });
+
+  it('train learns by watching: a dropped screen recording through the video-watching skill', () => {
+    const brief = modeBriefing('train', { worktreeAllowed: false });
+    expect(brief).toMatch(/record the screen/);
+    expect(brief).toContain('_dream_context/tmp/agent-drops');
+    expect(brief).toContain('video-watching skill');
+    expect(brief).toMatch(/steps \+ a pattern under the same confirm gate/);
+  });
+
+  it('train ends with the SAME worktree paragraph basic gets, and stays off the dream-html surface', () => {
+    for (const worktreeAllowed of [true, false]) {
+      const brief = modeBriefing('train', { worktreeAllowed });
+      expect(brief.endsWith(modeBriefing('basic', { worktreeAllowed })), `worktreeAllowed=${worktreeAllowed}`).toBe(true);
+      expect(brief).not.toContain('dream-html');
+      expect(brief).not.toContain('dream-view');
+    }
   });
 
   // `\s+`, not a literal space: the briefings are hand-wrapped prose, so the sentence can
@@ -349,7 +465,23 @@ describe('modeBriefing', () => {
   // `plan` went 2400 → 2450 (2026-09-25) for one sentence: "Name each dispatch after its lens".
   // It is part of the contract too: the chat reads the lens off the dispatch name, and
   // without it three reviewers render as three identical "Reviewer"s.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2450, develop: 2600 };
+  //
+  // `assistant` is measured WITHOUT its roster (which `renderRoster` caps separately at 6 000):
+  // its fixed part is the tool contract and the untrusted-content rule, both load-bearing.
+  //
+  // `plan` went 2450 → 2520 (2026-09-26) for one sentence in step 3: the wave map. Develop
+  // inherits only the task file, so the lanes and their owned files must already be in it.
+  //
+  // `develop` went 2600 → 3200 (2026-09-26) for the per-wave contract: builders not the lead,
+  // a scoped review closing every wave, the recipe pointer and its too-old-CLI fallback. The
+  // PROCEDURE went to `goal-live recipe develop` instead; nothing procedural buys a higher
+  // ceiling here.
+  //
+  // `train` got 2150 (2026-09-27): like develop it concatenates the worktree paragraph, and its
+  // own text is a contract too, the owner's swipe verdicts: predict and show only misses, no
+  // rule per round, a confirm-gated write, the automation's playbook route. The card SHAPES
+  // stay in the surface briefing; nothing here re-explains them.
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 3200 };
   const DEFAULT_CEILING = 1600;
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

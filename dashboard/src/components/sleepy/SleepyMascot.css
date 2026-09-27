@@ -243,10 +243,10 @@
 .smascot-wears-plan .smascot-eye { height: 22px; }
 .smascot-wears-develop .smascot-eyes { transform: translateY(4px); }
 .smascot-wears-develop .smascot-eye { height: 19px; border-radius: 6px; }
-/* J.A.R.V.I.S looks straight AT you — it is the only mode that is a conversation, so the
+/* The Assistant looks straight AT you — it is the only mode that is a conversation, so the
    eyes stay open and level rather than dropping to a pair of hands. */
-.smascot-wears-jarvis .smascot-eyes { transform: translateY(2px); }
-.smascot-wears-jarvis .smascot-eye { height: 24px; }
+.smascot-wears-assistant .smascot-eyes { transform: translateY(2px); }
+.smascot-wears-assistant .smascot-eye { height: 24px; }
 
 /* ── PLAN · writing ─────────────────────────────────────────────────────
    The pencil travels the squiggle and the ink appears under its tip — one shared 3.8s
@@ -296,7 +296,7 @@
 .smascot-spark--h2 { animation: smascot-hitspark2 3.4s ease-out infinite; }
 .smascot-spark--h3 { animation: smascot-hitspark3 3.4s ease-out infinite; }
 
-/* ── J.A.R.V.I.S · listen, then answer ──────────────────────────────────
+/* ── Assistant · listen, then answer ────────────────────────────────────
    One 3.2s clock, two beats. 0–46% LISTENING: the bars stay low and ripple right-to-left
    into the mic, arcs hidden. 46–52% the turn. 52–96% ANSWERING: the bars swell and the
    ripple runs the other way, out of the capsule, with two arcs blooming off it. Every
@@ -545,7 +545,7 @@
 }
 
 
-/* ── J.A.R.V.I.S keyframes ──────────────────────────────────────────────── */
+/* ── Assistant keyframes ────────────────────────────────────────────────── */
 
 /* The bar meter. Low and busy while listening, tall and deliberate while answering — the
    AMPLITUDE difference is what carries the two beats once the shape is gone at 26px. */

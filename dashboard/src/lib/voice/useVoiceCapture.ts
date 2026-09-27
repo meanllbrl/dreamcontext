@@ -28,7 +28,7 @@
  * suppression and automatic gain control are all on by default, all tuned for narrowband
  * telephony, and all lossy in exactly the band a speech recogniser reads. Noise suppression
  * eats the breathy consonants Turkish leans on; AGC pumps the level between words; and echo
- * cancellation is the worst of the three here, because J.A.R.V.I.S mode is a mode where the
+ * cancellation is the worst of the three here, because assistant mode is a mode where the
  * machine's own voice was playing seconds ago — the canceller adapts to it and carves a
  * matching notch out of the owner. The whisper.cpp the owner runs by hand gets none of that
  * done to it, which is most of why it sounded better with the same model.

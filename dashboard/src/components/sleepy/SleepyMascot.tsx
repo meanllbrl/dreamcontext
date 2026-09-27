@@ -21,18 +21,19 @@ export type SleepyMood = 'idle' | 'sleepy' | 'sleeps' | 'thinking' | 'working' |
  * The mouth is hidden while a mode is worn: the work happens where the smile was, and mood
  * still speaks through the eyes (plus, in the dock, the chip's own colour and "?" bubble).
  */
-export type SleepyGear = 'plan' | 'develop' | 'jarvis';
+export type SleepyGear = 'plan' | 'develop' | 'assistant';
 
 /** Which gear a mode wears, if any. Total over `ChatMode` so a new mode is a silent bare face
  *  rather than a crash.
  *
- *  J.A.R.V.I.S joined the set when the voice work landed. It mapped to `null` before that,
+ *  The mic gear was J.A.R.V.I.S's; it now belongs to the dreamcontext Assistant, the mode you
+ *  talk to in the notch. J.A.R.V.I.S joined the set when the voice work landed. It mapped to `null` before that,
  *  alongside Basic, because the mode was announced and unpickable — and because the test
  *  pinning this passed either way, the choice would otherwise have shipped silently
  *  undecided. It is the owner's call that it gets one: Plan and Develop each have one, and a
  *  mode you TALK to is at least as distinct as a mode that plans. */
 export function gearForMode(mode: ChatMode | undefined): SleepyGear | null {
-  return mode === 'plan' || mode === 'develop' || mode === 'jarvis' ? mode : null;
+  return mode === 'plan' || mode === 'develop' || mode === 'assistant' ? mode : null;
 }
 
 /** Base design size the mascot is drawn at; `size` scales the whole thing. */
@@ -47,7 +48,7 @@ interface SleepyMascotProps {
    *  the menu-bar-height tab — just the face. */
   compact?: boolean;
   /** The chat mode this face belongs to. Basic (the default, and anything absent) draws the
-   *  bare face; Plan writes on paper, Develop works the forge, J.A.R.V.I.S listens and
+   *  bare face; Plan writes on paper, Develop works the forge, the Assistant listens and
    *  answers. See {@link gearForMode}. */
   mode?: ChatMode;
 }
@@ -111,8 +112,8 @@ function Gear({ kind }: { kind: SleepyGear }) {
   return (
     <svg className="smascot-gear" width="92" height="112" viewBox="0 0 92 112" fill="none" aria-hidden>
       <g transform="translate(15,32)" className="smascot-gear-line" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-        {kind === 'jarvis' ? (
-          /* J.A.R.V.I.S — listen, then answer. A microphone on the left and a row of level
+        {kind === 'assistant' ? (
+          /* The Assistant — listen, then answer. A microphone on the left and a row of level
              bars across the mouth. The bars ripple RIGHT-TO-LEFT and stay low while it is
              listening, then swell and sweep LEFT-TO-RIGHT out of the mic while it answers;
              two arcs bloom off the capsule on the reply. That reversal is the whole loop, and

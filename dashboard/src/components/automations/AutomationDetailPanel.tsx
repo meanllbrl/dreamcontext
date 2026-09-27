@@ -6,7 +6,7 @@ import {
   useAutomationFlow,
   useAutomationSession,
 } from '../../hooks/useAutomations';
-import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
+import { openAutomationRunChat, openTrainChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import { useVault } from '../../context/VaultContext';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import { useOverlayId } from '../../lib/useOverlayId';
@@ -315,6 +315,7 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
   const detail = useAutomation(summary.slug);
   const flowResp = useAutomationFlow(summary.slug);
   const approve = useApproveAutomation();
+  const { bus } = useVault();
   const overlayId = useOverlayId('automation-detail-panel');
   /** Which run's session is open, 1-based newest-first. Null = the history list. */
   const [openSession, setOpenSession] = useState<number | null>(null);
@@ -387,6 +388,29 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
     onClose();
   }, [onClose]);
 
+  // Train refuses when learning is off, in the same words `automations learn` refuses with:
+  // the chat would end by writing a playbook that no run ever reads. `automation` is null
+  // until the detail loads, and `learning` is known only from it.
+  const trainRefusal = !automation
+    ? 'Loading this agent’s settings…'
+    : !automation.learning
+      ? `Learning is off for this agent, so nothing would ever read this pattern. Set \`learning: true\` in automations/${summary.slug}.md, then re-approve.`
+      : null;
+
+  const handleTrain = () => {
+    if (trainRefusal) { onToast(trainRefusal); return; }
+    const accepted = openTrainChat(bus, {
+      slug: summary.slug,
+      automationTitle: automation?.title || summary.title,
+    });
+    if (!accepted) {
+      onToast('The Agents surface could not take this — it needs the desktop app with the claude CLI, and Agents enabled in Settings.');
+      return;
+    }
+    // The Train Me chat is now the screen; same dismissal as a run's chat opening.
+    handleRunOpened();
+  };
+
   const handleApprove = () => {
     approve.mutate(summary.slug, {
       onSuccess: () => onToast(`"${summary.slug}" approved — it will run on this machine.`),
@@ -439,6 +463,19 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                 "Run now" USED to sit in this slot and is deliberately gone:
                 an agent is called by mentioning it in its thread, not by a
                 button on a details screen (owner, 2026-09-20). */}
+            {/* Train: a Train Me chat bound to this agent, whose confirmed result is the
+                agent's own playbook. aria-disabled rather than `disabled`, so a click
+                still explains itself: a disabled button fires nothing and shows its
+                tooltip only in some shells. */}
+            <button
+              type="button"
+              className="adp-edit"
+              aria-disabled={trainRefusal !== null}
+              title={trainRefusal ?? 'Teach this agent your taste through swipe and A/B cards; the result becomes its playbook.'}
+              onClick={handleTrain}
+            >
+              Train
+            </button>
             {onEdit && (
               <button type="button" className="adp-edit" onClick={() => onEdit(summary.slug)}>Edit</button>
             )}

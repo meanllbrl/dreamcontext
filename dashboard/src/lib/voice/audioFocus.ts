@@ -102,7 +102,7 @@ const MUTED_EVENT = 'dreamcontext:voice-speech-muted';
 
 export interface SpeechMuted {
   /** The session the announcement is about. Carried so the right composer acts on it: the
-   *  event is window-wide and there can be several J.A.R.V.I.S panes. */
+   *  event is window-wide and there can be several assistant panes. */
   session: string;
   /**
    * `true` — this turn was not read aloud. `false` — a later turn IS being read, so take the

@@ -625,6 +625,15 @@ describe('looksLikeHeadlessClaude', () => {
     expect(looksLikeHeadlessClaude('/usr/local/bin/claude --print "go"')).toBe(true);
   });
 
+  it('skips the argument of `env -u NAME` / `--unset NAME` (a Develop builder is spawned so)', () => {
+    expect(looksLikeHeadlessClaude('env -u A -u B nohup claude -p x')).toBe(true);
+    expect(looksLikeHeadlessClaude('env --unset A --unset=B -uC claude -p x')).toBe(true);
+    expect(looksLikeHeadlessClaude('env -u DREAMCONTEXT_TAB_SESSION -u CLAUDE_CODE_SESSION_ID nohup claude -p "brief" --session-id 11111111-2222-3333-4444-555555555555 > log 2>&1 &')).toBe(true);
+    expect(looksLikeHeadlessClaude('env -u A grep claude')).toBe(false);
+    // `-u` means nothing special outside env.
+    expect(looksLikeHeadlessClaude('nohup -u claude -p x')).toBe(true);
+  });
+
   it('finds it after a pipe — the prompt is often fed in on stdin', () => {
     expect(looksLikeHeadlessClaude('cat brief.md | claude -p --output-format json')).toBe(true);
     expect(looksLikeHeadlessClaude('cd /tmp && claude -p "go"')).toBe(true);

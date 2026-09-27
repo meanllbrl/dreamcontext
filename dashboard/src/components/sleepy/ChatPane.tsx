@@ -3,7 +3,8 @@ import { GoalLivePanel } from './GoalLivePanel';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
-import { useAgentGoalLive } from '../../hooks/useAgentCapabilities';
+import { useAgentGoalLive, useHeadlessTeammates } from '../../hooks/useAgentCapabilities';
+import { anchorsBySession, launchedSessionIds, withTeammates } from './chat/teammates';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { ChatMode } from '../../lib/chatModes';
 import { isJudgeRole } from '../../lib/agentRoles';
@@ -14,7 +15,7 @@ import {
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
-  isHeadlessAgentShell,
+  isHeadlessAgentShell, isTeammateRun,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
 import { isDreamcontextCommand } from './chat/dreamCommand';
@@ -566,7 +567,7 @@ export function ChatPane({
    *  link, which needs a Shell-level listener outside this task's file ownership. Omitted
    *  entirely degrades to "Open in app" simply not being offered (SlideOver already gates
    *  the button on `reference.appNav` existing at all). */
-  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core', id: string, vault?: string) => void;
   /** Open a terminal pane that runs the sign-in command — the only surface the flow exists on
    *  (this engine is headless; it answers `/login` with "isn't available in this environment").
    *  Fires from the SignInBanner and from typing `/login` into the composer. */
@@ -814,7 +815,24 @@ export function ChatPane({
   // Keyed on `questKey`, not the items array: see `questItemsKey`.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const questEntries = useMemo(() => [...conv.history, ...conv.items], [conv.history, questKey]);
-  const parties = useMemo(() => partyBatches(questEntries, conv.subAgents), [questEntries, conv.subAgents]);
+  // Headless teammates: `claude -p` runs this conversation registered or launched with an id,
+  // read off their own transcripts. Folded into the runs here, once, so every party, rail and
+  // drill-in below sees one list — a builder launched detached, or still going after this
+  // session ended, is a party member like any other.
+  const launchedIds = useMemo(() => launchedSessionIds(questEntries), [questEntries]);
+  const teammateAnchors = useMemo(() => anchorsBySession(questEntries), [questEntries]);
+  const mentionedIds = useMemo(() => [...teammateAnchors.keys()], [teammateAnchors]);
+  const teammates = useHeadlessTeammates(session.claudeId, launchedIds, mentionedIds).data?.teammates;
+  const agentRuns = useMemo(
+    () => withTeammates(conv.subAgents, teammates ?? [], teammateAnchors, Date.now()),
+    [conv.subAgents, teammates, teammateAnchors],
+  );
+  const parties = useMemo(() => partyBatches(questEntries, agentRuns), [questEntries, agentRuns]);
+  /** Running teammates, docked in the tray over the composer (see BackgroundShellsTray). */
+  const runningTeammates = useMemo(
+    () => agentRuns.filter((r) => isTeammateRun(r) && r.status === 'running'),
+    [agentRuns],
+  );
   const questMode = mode === 'plan' || mode === 'develop' ? mode : null;
   const shelfProgress = shelf.progress;
   const quest = useMemo(
@@ -828,13 +846,17 @@ export function ChatPane({
   );
   /** Live runs only: a party can hold transcript calls rebuilt as "ghost" runs (a resumed
    *  chat), which feed the quest but are not agents anyone can drill into. */
-  const liveRunIds = useMemo(() => new Set(conv.subAgents.map((r) => r.taskId)), [conv.subAgents]);
+  const liveRunIds = useMemo(() => new Set(agentRuns.map((r) => r.taskId)), [agentRuns]);
   const liveRunsOf = (p: Party): SubAgentRun[] => p.runs.filter((r) => liveRunIds.has(r.taskId));
   const drawnParties = parties.filter((p) => !p.ghost && liveRunsOf(p).length > 0);
   /** The "fresh eyes" explainer is said once per chat: on the first judging party's card. */
   const firstJudgePartyId = drawnParties.find((p) => isJudgeRole(p.lead))?.id ?? null;
-  const partyByAnchor = new Map<string, Party>();
-  for (const p of drawnParties) if (p.anchorEntryId) partyByAnchor.set(p.anchorEntryId, p);
+  /** Every party drawn after an entry, in party order: two waves placed by time can land after
+   *  the same message, and neither may push the other out to the tail. */
+  const partyByAnchor = new Map<string, Party[]>();
+  for (const p of drawnParties) {
+    if (p.anchorEntryId) partyByAnchor.set(p.anchorEntryId, [...(partyByAnchor.get(p.anchorEntryId) ?? []), p]);
+  }
   /** The party the pinned rail summarizes: the newest one still at work, else the newest. The
    *  rail only ever shows while a run is going, so the fallback just keeps the ref measured. */
   const railParty = [...drawnParties].reverse().find((p) => liveRunsOf(p).some((r) => r.status === 'running'))
@@ -842,7 +864,7 @@ export function ChatPane({
   /** The Bash calls that started a headless teammate. Each keeps its own row (the party card
    *  follows the first), so none may fold into a run of plain steps. */
   const headlessToolUseIds = new Set(
-    conv.subAgents.filter(isHeadlessAgentShell).map((r) => r.toolUseId).filter((id): id is string => !!id),
+    agentRuns.filter((r) => isHeadlessAgentShell(r) || isTeammateRun(r)).map((r) => r.toolUseId).filter((id): id is string => !!id),
   );
   /** Quest-map bookkeeping on its own (`dreamcontext goal-live …`): nothing alone, a quiet line
    *  inside a work beat. A goal-live call chained onto real work is not this. */
@@ -914,9 +936,13 @@ export function ChatPane({
   // a run — mirroring it would buy nothing and would duplicate `renderedParties`' render-order
   // bookkeeping in a predicate that runs before rendering.
   const rendersNothing = (item: ChatItem): boolean => {
+    // A party placed by time after this entry draws its card here, whatever the entry is.
+    if (partyByAnchor.has(item.id)) return false;
     if (item.kind === 'thinking') return !item.text;          // ThinkingBlock's own null branch
     if (item.kind === 'text') return !item.text && item.done;  // AssistantMessage's null branch
-    return isQuestOnlyItem(item);                              // itemNode's quest single
+    // A teammate registered on a bookkeeping call (`goal-live actor --session`, the one call
+    // that names a detached builder's id) gets its party card THERE: the check above.
+    return isQuestOnlyItem(item); // itemNode's quest single
   };
 
   // ── Transcript window: how much of the conversation is actually mounted ─────────────
@@ -1380,16 +1406,18 @@ export function ChatPane({
   // `subagent` mode would open a panel about a file that is never going to exist. Their
   // drill-in is the SAME live-output panel the shells tray opens — which is also the only
   // surface offering them a Stop. Keyed off the task type rather than the headless test on
-  // purpose: any `local_bash` run that reaches here belongs in shell mode.
+  // purpose: any `local_bash` run that reaches here belongs in shell mode. UNLESS it is a
+  // teammate (a `session` this pane may read): then its own transcript IS the drill-in, and
+  // the output panel stays one click away from its header.
   const handleDrillIn = useCallback((run: SubAgentRun) => (
-    setSlideOver({ mode: run.taskType === 'local_bash' ? 'shell' : 'subagent', run })
+    setSlideOver({ mode: run.session || run.taskType !== 'local_bash' ? 'subagent' : 'shell', run })
   ), []);
   const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
   const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
   const handleQuote = useCallback((text: string) => setQuote(convId, text), [convId]);
-  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core', id: string) => {
+  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core', id: string, vault?: string) => {
     setSlideOver(null);
-    onOpenAppPage?.(page, id);
+    onOpenAppPage?.(page, id, vault);
   }, [onOpenAppPage]);
 
   // ── The buttons an answer asked for (`dream-actions`). Every one of them lands on a
@@ -1400,7 +1428,7 @@ export function ChatPane({
   const handleAction = useCallback((action: ChatAction) => {
     switch (action.action) {
       case 'task': case 'knowledge': case 'core':
-        handleNavApp(action.action === 'task' ? 'tasks' : action.action, action.id!);
+        handleNavApp(action.action === 'task' ? 'tasks' : action.action, action.id!, action.vault);
         break;
       case 'file': case 'board':
         handleOpenFile(action.path!);
@@ -1441,28 +1469,29 @@ export function ChatPane({
    *  pass below, so "which rows open a stretch" can never disagree with what was drawn. */
   type ItemShape =
     | { draw: 'nothing' }
-    | { draw: 'card'; party: Party }
-    | { draw: 'board'; path: string }
-    /** A row, then (maybe) its party's card or the bypass receipt right after it. */
-    | { draw: 'row'; party: Party | null; guarded: { command: string; toolName: string } | null };
+    | { draw: 'card'; parties: Party[] }
+    | { draw: 'board'; path: string; parties: Party[] }
+    /** A row, then (maybe) its parties' cards or the bypass receipt right after it. */
+    | { draw: 'row'; parties: Party[]; guarded: { command: string; toolName: string } | null };
 
   const shapeOf = (item: ChatItem): ItemShape => {
     if (rendersNothing(item)) return { draw: 'nothing' };
-    if (item.kind !== 'tool') return { draw: 'row', party: null, guarded: null };
-    const party = partyByAnchor.get(item.id) ?? null;
+    // A party placed by time follows whatever entry came just before it, not only a tool row.
+    const parties = partyByAnchor.get(item.id) ?? [];
+    if (item.kind !== 'tool') return { draw: 'row', parties, guarded: null };
     // The rest of a batch is already drawn by the card at its first call.
-    if (suppressedToolUseIds.has(item.toolUseId)) return party ? { draw: 'card', party } : { draw: 'nothing' };
+    if (suppressedToolUseIds.has(item.toolUseId)) return parties.length ? { draw: 'card', parties } : { draw: 'nothing' };
     // A tool that touched a board shows the BOARD, not a card about it — the same live
     // canvas an answer's own `![](x.excalidraw.md)` renders, so "I drew this" and "I
     // edited this" look alike. Only once the call has finished: a board mid-write is
     // half a scene.
     const path = primaryToolPath(item.input);
-    if (path && classifyReference(path).kind === 'board' && item.status !== 'running') return { draw: 'board', path };
+    if (path && classifyReference(path).kind === 'board' && item.status !== 'running') return { draw: 'board', path, parties };
     // Under bypass the CLI never asks — so the guarded commands it ran anyway get the
     // receipt a permission card would have been. Only the guarded ones: a notice on every
     // Bash call is noise, and noise is how a real one gets missed.
     const command = inBypass ? bashCommand(item) : null;
-    return { draw: 'row', party, guarded: command && isGuardedCommand(command) ? { command, toolName: item.name } : null };
+    return { draw: 'row', parties, guarded: command && isGuardedCommand(command) ? { command, toolName: item.name } : null };
   };
 
   /** Parties drawn by this pass, so the ones it never reached can trail (see below). */
@@ -1492,8 +1521,14 @@ export function ChatPane({
     const shape = shapeOf(item);
     switch (shape.draw) {
       case 'nothing': return null;
-      case 'card': return partyCard(shape.party);
-      case 'board': return <BoardEmbed key={item.id} path={shape.path} onOpenBoard={handleOpenBoard} />;
+      case 'card':
+        return shape.parties.length === 1
+          ? partyCard(shape.parties[0])
+          : <Fragment key={item.id}>{shape.parties.map(partyCard)}</Fragment>;
+      case 'board': {
+        const board = <BoardEmbed key={item.id} path={shape.path} onOpenBoard={handleOpenBoard} />;
+        return shape.parties.length ? <Fragment key={item.id}>{board}{shape.parties.map(partyCard)}</Fragment> : board;
+      }
       case 'row': break;
     }
     const view = (
@@ -1511,14 +1546,14 @@ export function ChatPane({
         stretchRunning={stretch?.running}
       />
     );
-    if (!shape.party && !shape.guarded) return view;
+    if (!shape.parties.length && !shape.guarded) return view;
     // The row stays a direct child of the transcript (a Fragment adds no box), and whatever
     // follows it sits right under it.
     return (
       <Fragment key={item.id}>
         {view}
         {shape.guarded && <BypassNoticeCard command={shape.guarded.command} toolName={shape.guarded.toolName} />}
-        {shape.party && partyCard(shape.party)}
+        {shape.parties.map(partyCard)}
       </Fragment>
     );
   };
@@ -1539,7 +1574,7 @@ export function ChatPane({
     const step = item.kind === 'tool' || item.kind === 'thinking';
     const running = (item.kind === 'tool' && item.status === 'running') || (item.kind === 'thinking' && !item.done);
     const probes: StretchProbe[] = [{ key: item.id, step, invisible: false, actor: 'lead', running }];
-    if (shape.party || shape.guarded) probes.push({ key: `${item.id}:after`, step: false, invisible: false, actor: 'lead', running: false });
+    if (shape.parties.length || shape.guarded) probes.push({ key: `${item.id}:after`, step: false, invisible: false, actor: 'lead', running: false });
     return probes;
   };
 
@@ -1603,16 +1638,14 @@ export function ChatPane({
   ]);
   const historyNodes = historySegments.map((seg) => renderSegment(seg, false, stretches));
   const liveNodes = liveSegments.map((seg, i) => renderSegment(seg, accruingAt(i), stretches));
-  // A party whose first call never appeared as its own ChatToolItem (an edge case in raw frame
-  // ordering), or whose first call folded into something that is not a row, still needs its
-  // card SOMEWHERE — it trails the live transcript rather than silently dropping. So does a
-  // party still at work whose first call is older than the window: a running team must never
-  // vanish with the call that sent it. A finished one out there waits for the reveal, which
-  // puts it back where it happened instead of at the bottom, out of order.
-  const mountedIds = new Set([...historySlice, ...liveSlice].map((it) => it.id));
+  // Only a party still AT WORK trails the transcript: one whose first call is older than the
+  // window, or that no call here placed. A running team must never vanish with the call that
+  // sent it. A FINISHED party never trails (owner 09-27: a cleared build card docked under the
+  // newest message, below the live review it came before): it renders where it happened, or
+  // waits for the reveal that mounts its anchor.
   const trailingParties = drawnParties
     .filter((p) => !renderedParties.has(p.id))
-    .filter((p) => !p.anchorEntryId || mountedIds.has(p.anchorEntryId) || liveRunsOf(p).some((r) => r.status === 'running'))
+    .filter((p) => liveRunsOf(p).some((r) => r.status === 'running'))
     .map(partyCard);
 
   // A real process exit (`meta-exit`) OR the WS having dropped — either way the composer
@@ -1900,6 +1933,8 @@ export function ChatPane({
         runs={conv.subAgents}
         onOpen={handleOpenShell}
         onStop={handleStopShell}
+        teammates={runningTeammates}
+        onOpenTeammate={handleDrillIn}
       />
       {/* Live peer sessions, docked with the rows above for the same reason: a session in
           another project can be sitting blocked on a permission prompt, and a blocking row
@@ -2030,9 +2065,10 @@ export function ChatPane({
           // Re-read from the LIVE model (same rule as shell mode below) so the drill-in's
           // status chip, its refetch-on-finish and its follow-the-stream behavior track the
           // run instead of freezing at the click-time snapshot.
-          run={conv.subAgents.find((r) => r.taskId === slideOver.run.taskId) ?? slideOver.run}
+          run={agentRuns.find((r) => r.taskId === slideOver.run.taskId) ?? slideOver.run}
           conversationId={session.claudeId}
           peers={peers}
+          onShowOutput={handleOpenShell}
           onClose={() => setSlideOver(null)}
           onNavApp={handleNavApp}
         />

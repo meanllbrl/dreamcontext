@@ -10,14 +10,14 @@ import {
 import { AgentAvatar } from './AgentAvatar';
 import { AgentFiles, AgentMessage, AgentProse } from './AgentMessage';
 import { trimFailureEcho } from './agentRunState';
-import { ProseSegment } from '../sleepy/chat/TranscriptItem';
 // The answer is drawn with the chat's own card (`.chat-msg-assistant-body`), whose rules
 // live here — imported by the panel that uses them rather than borrowed from whichever
-// surface happened to load first, as the meeting room does.
+// surface happened to load first.
 import '../sleepy/chat/cards.css';
 // The close button is the chat's own SlideOver close atom (`.chat-slideover-close`), from here.
 import '../sleepy/chat/overlays.css';
 import { AgentQuestionBlock } from './AgentQuestionBlock';
+import { FoldedReport } from './FoldedReport';
 import { AgentSummaryBlock } from './AgentSummaryBlock';
 import { useAgentThreadHost } from './agentsChannelHost';
 import { Composer } from '../sleepy/chat/Composer';
@@ -149,7 +149,9 @@ function AnswerRow({
           </button>
         </div>
         {answer.text
-          ? <ProseSegment text={answer.text} onOpenFile={onOpenFile} />
+          // FOLDED: the answer's lead, then one closed row per section. The whole report
+          // in the thread buried the reader; the post alone left them nothing to open.
+          ? <FoldedReport text={answer.text} onOpenFile={onOpenFile} />
           // A document that is only frontmatter is still the run's document: the pill above
           // opens it, and this says why there is nothing to read here.
           : <p className="agent-thread-note">{t('agents.thread.answerEmpty')}</p>}
@@ -426,7 +428,7 @@ export function AgentThreadPanel({
        WHY THE INLINE OVERRIDE: `.chat-pane` is `position: absolute; inset: 0` — written for a
        pane that fills its window. `AgentsFeed.css` already overrides that for the feed column
        (`.agents-feed-main.chat-pane { position: relative; inset: auto }`) with a note that the
-       rule does not transfer, and the meeting room does the same. Putting the class on the
+       rule does not transfer. Putting the class on the
        FOOTER without the override is what shipped a composer stretched over the entire panel:
        it covered the close button, so the panel could not be dismissed and then intercepted
        every click aimed at the channel behind it. */
@@ -572,10 +574,16 @@ export function AgentThreadPanel({
                 // There is no turn to steer into: the reply is a JOB, polled.
                 busy={false}
                 connected
-                // The run slot, exactly as the channel reports it: the server refuses a
-                // reply (`busy`) while another agent holds it, so the field says so first.
-                unavailable={busyWith ? { reason: t('agents.busy').replace('{name}', busyWith) } : undefined}
-                idlePlaceholder={`Reply to ${message.title}…`}
+                // NEVER held down by a run: a reply sent while this agent works QUEUES behind
+                // it and is delivered when the turn ends, and a reply while it waits on a
+                // question IS the answer. The placeholder says which of the two this is.
+                idlePlaceholder={
+                  message.question
+                    ? t('agents.thread.answerPlaceholder').replace('{name}', message.title)
+                    : busyWith
+                      ? t('agents.thread.queuePlaceholder').replace('{name}', message.title)
+                      : `Reply to ${message.title}…`
+                }
                 quote={null}
                 onClearQuote={() => {}}
                 // No `@` here: a thread has one recipient. Without this empty list the

@@ -248,7 +248,7 @@ video.chat-msg-user-media-el { cursor: default; }
   box-shadow: var(--shadow-sm);
   color: var(--color-text);
 }
-/* ── The sentence J.A.R.V.I.S is SAYING ────────────────────────────────────────────────
+/* ── The sentence the Assistant is SAYING ────────────────────────────────────────────────
    Painted with the CSS Custom Highlight API (`useSpokenHighlight.ts`), so nothing is
    inserted into a DOM React owns and re-renders on every streamed token.
 
@@ -1168,6 +1168,11 @@ video.chat-msg-user-media-el { cursor: default; }
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 .chat-subagents-row:last-child { border-bottom: none; }
+/* ONE entry per agent: the row plus, once it landed, its report under the row's line. The
+   divider moves from the row to the entry so a row and its report read as one block. */
+.chat-subagents-entry { border-bottom: 1px solid var(--color-border); }
+.chat-subagents-entry:last-child { border-bottom: none; }
+.chat-subagents-entry > .chat-subagents-row { width: 100%; border-bottom: none; }
 
 /* A peer envoy run is ANOTHER PROJECT working, and its row says so the way the docked
    peer-session row does: the accent, on the chip that names the vault. The avatar slot
@@ -1373,6 +1378,18 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subreport-head:hover .chat-subreport-cue { color: var(--color-accent); }
 
 .chat-subreport-body { padding: 0 var(--space-4) var(--space-4) var(--space-4); }
+
+/* The report INSIDE its run's row (SubAgentReport inRow): no face, no name, no status —
+   the row above says all of that. Its text starts on the row's text column (row padding +
+   the 32px avatar + the row gap), so it reads as the row's next line, not a new entry. */
+.chat-subreport[data-in-row] .chat-subreport-head {
+  align-items: baseline;
+  padding: 0 var(--space-4) var(--space-3) calc(var(--space-4) + 32px + var(--space-3));
+  margin-top: calc(-1 * var(--space-2));
+}
+.chat-subreport[data-in-row] .chat-subreport-body {
+  padding-left: calc(var(--space-4) + 32px + var(--space-3));
+}
 /* The report is the agent's WRITING, so it is set on the reading surface the transcript's own
    prose uses — a code block, a table and a heading all land the way they do in an answer. */
 .chat-subreport-prose {

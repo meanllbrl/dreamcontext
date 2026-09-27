@@ -55,7 +55,8 @@ export interface ChatSurfaceActions {
   /** Plan → Develop: open a NEW chat in Develop mode carrying `taskSlug`, then close the plan
    *  tab. Fired by a `develop` action button the plan agent wrote into its own message. */
   handoffToDevelop: (cs: ChatSession, taskSlug: string) => void;
-  openAppPage: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  /** `vault` is set only by the dreamcontext Assistant's detail buttons (see `ChatAction`). */
+  openAppPage: (page: 'tasks' | 'knowledge' | 'core', id: string, vault?: string) => void;
   signIn: () => void;
 }
 
@@ -94,7 +95,7 @@ function ChatPaneHostInner({
     (taskSlug: string) => actions.handoffToDevelop(session, taskSlug), [actions, session],
   );
   const onOpenAppPage = useCallback(
-    (page: 'tasks' | 'knowledge' | 'core', id: string) => actions.openAppPage(page, id), [actions],
+    (page: 'tasks' | 'knowledge' | 'core', id: string, vault?: string) => actions.openAppPage(page, id, vault), [actions],
   );
   const onSignIn = useCallback(() => actions.signIn(), [actions]);
 

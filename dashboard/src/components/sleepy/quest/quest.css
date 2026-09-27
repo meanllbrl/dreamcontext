@@ -537,6 +537,27 @@
   font-size: var(--font-size-xs);
 }
 
+/* A Develop run's waves, above the family tree: one row per wave, its builders under it. */
+.quest-waves {
+  margin: 0 0 var(--space-3);
+  padding: 0 0 var(--space-3);
+  list-style: none;
+  border-bottom: 1px solid var(--color-border);
+}
+.quest-wave { padding: var(--space-1) 0; }
+.quest-wave-builders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-1);
+}
+.quest-wave-builder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.quest-wave-builder .quest-lineage-note { display: inline; padding-left: 0; }
+
 /* ── One-shot motion ─────────────────────────────────────────────────────────── */
 
 /* The win: the path lights up stage by stage. */

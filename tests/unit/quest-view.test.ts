@@ -71,17 +71,17 @@ describe('normalizeGoalLive', () => {
     const many = (k: number, f: (i: number) => unknown) => Array.from({ length: k }, (_, i) => f(i));
     const n = normalizeGoalLive({
       phase: 'impl',
-      impl: { forks: many(20, () => ({ s: 'run' })) },
+      impl: { forks: many(30, () => ({ s: 'run' })) },
       judges: many(20, () => ({ s: 'run' })),
       history: many(50, (i) => ({ p: 'impl', at: at(i) })),
-      lineage: many(80, (i) => ({ a: `T${i}`, role: 'implementer', k: 'fork', at: at(i) })),
+      lineage: many(140, (i) => ({ a: `T${i}`, role: 'implementer', k: 'fork', at: at(i) })),
     })!;
     expect(n.impl!.forks).toHaveLength(GOAL_LIVE_CAPS.forks);
     expect(n.judges).toHaveLength(GOAL_LIVE_CAPS.judges);
     expect(n.history).toHaveLength(GOAL_LIVE_CAPS.history);
     expect(n.history![0].at).toBe(at(10)); // the LAST 40 survive
     expect(n.lineage).toHaveLength(GOAL_LIVE_CAPS.lineage);
-    expect(n.lineage![0].a).toBe('T20');
+    expect(n.lineage![0].a).toBe('T20'); // the LAST 120 survive
   });
 
   it('drops unknown lineage kinds and keeps ctx on measured forks only', () => {

@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import {
   GOAL_LIVE_CAPS,
   applyGoalLiveEvent,
+  findDevelopRunToAdopt,
   goalLivePath,
   goalLiveSessionId,
   readGoalLive,
@@ -15,9 +16,11 @@ import {
   type GoalLiveState,
 } from '../../src/lib/goal-live.js';
 import {
+  DEVELOP_RUN_TAKEN,
   goalLiveActor,
   goalLiveClear,
   goalLivePhase,
+  goalLiveRecipe,
   goalLiveStart,
   goalLiveState,
   parseActorSpec,
@@ -136,13 +139,13 @@ describe('applyGoalLiveEvent', () => {
     const events: GoalLiveEvent[] = [];
     for (let i = 0; i < 30; i += 1) events.push({ type: 'actor', id: `T${i}`, role: 'implementer', kind: 'fork' });
     for (let i = 0; i < 20; i += 1) events.push({ type: 'actor', id: `j${i}`, role: 'critic', kind: 'fresh' });
-    for (let i = 0; i < 20; i += 1) events.push({ type: 'actor', id: `p${i}`, role: 'planner', kind: 'resume' });
+    for (let i = 0; i < 80; i += 1) events.push({ type: 'actor', id: `p${i}`, role: 'planner', kind: 'resume' });
     const s = fold([{ type: 'phase', phase: 'impl' }, ...events]);
     expect(s.impl!.forks).toHaveLength(GOAL_LIVE_CAPS.forks);
     expect(s.impl!.forks!.at(-1)!.id).toBe('T29');
     expect(s.judges).toHaveLength(GOAL_LIVE_CAPS.judges);
     expect(s.lineage).toHaveLength(GOAL_LIVE_CAPS.lineage);
-    expect(s.lineage!.at(-1)!.a).toBe('p19');
+    expect(s.lineage!.at(-1)!.a).toBe('p79');
     const phases: GoalLiveEvent[] = [];
     for (let i = 0; i < 50; i += 1) phases.push({ type: 'phase', phase: i % 2 ? 'plan' : 'review' });
     const h = fold(phases);
@@ -306,6 +309,23 @@ describe('commands', () => {
     expect(() => goalLivePhase(d, 'lunch', {})).toThrow(/phase must be/);
   });
 
+  it('--session registers the actor\'s own run id (lower-cased) on its lineage entry', () => {
+    const d = deps({ CLAUDE_CODE_SESSION_ID: SID });
+    const builder = 'ABCDEF01-2345-6789-ABCD-EF0123456789';
+    goalLiveStart(d, 'quest');
+    goalLiveActor(d, 'planner', { kind: 'spawn', session: builder });
+    goalLiveActor(d, 'T1=Tokens', { kind: 'fork', role: 'implementer', from: 'planner' });
+    const s = read(SID);
+    expect(s.lineage![0]).toMatchObject({ a: 'planner', k: 'spawn', sid: builder.toLowerCase() });
+    expect('sid' in s.lineage![1]).toBe(false);
+  });
+
+  it('--session must be a UUID and names exactly one actor', () => {
+    const d = deps({});
+    expect(() => goalLiveActor(d, 'planner', { kind: 'spawn', session: '../../etc' })).toThrow(/not a UUID/);
+    expect(() => goalLiveActor(d, 'T1,T2', { kind: 'fork', role: 'implementer', session: SID })).toThrow(/exactly one/);
+  });
+
   it('clear removes only this session\'s file', () => {
     goalLiveStart(deps({ CLAUDE_CODE_SESSION_ID: SID }), 'a');
     goalLiveStart(deps({}), 'b');
@@ -367,5 +387,262 @@ describe('the command line: silent on success, exit 0 always', () => {
     await p.parseAsync(['goal-live', 'clear'], { from: 'user' });
     expect(String(errSpy.mock.calls[0][0])).toContain('no _dream_context/');
     expect(process.exitCode).toBe(exitBefore);
+  });
+});
+
+// ─── Develop runs: waves, a review per wave, survival across reopen ──────────────
+
+describe('a Develop run (mode develop)', () => {
+  const START: GoalLiveEvent = { type: 'start', goal: 'dev', session: SID, mode: 'develop', tab: 'tab-a' };
+
+  /** One wave: builders, the gate, a reviewer (with `fails` FAIL-then-resume rounds), PASS. */
+  function wave(n: number, lanes: string[], fails = 0): GoalLiveEvent[] {
+    const out: GoalLiveEvent[] = [{ type: 'phase', phase: 'impl', wave: n, ...(n === 1 ? { waves: 5 } : {}) }];
+    for (const lane of lanes) out.push({ type: 'actor', id: `w${n}-${lane}`, role: 'implementer', kind: 'spawn', wave: n });
+    for (const lane of lanes) out.push({ type: 'state', id: `w${n}-${lane}`, state: 'done' });
+    out.push({ type: 'phase', phase: 'codereview' });
+    out.push({ type: 'actor', id: `w${n}-reviewer`, role: 'reviewer', kind: 'fresh', wave: n });
+    for (let i = 0; i < fails; i += 1) {
+      out.push({ type: 'state', id: `w${n}-reviewer`, verdict: 'FAIL', wave: n });
+      out.push({ type: 'phase', phase: 'impl', wave: n });
+      out.push({ type: 'actor', id: `w${n}-${lanes[0]}`, role: 'implementer', kind: 'resume', wave: n, round: i + 2 });
+      out.push({ type: 'phase', phase: 'codereview' });
+      out.push({ type: 'actor', id: `w${n}-reviewer`, role: 'reviewer', kind: 'fresh', wave: n, round: i + 2 });
+    }
+    out.push({ type: 'state', id: `w${n}-reviewer`, verdict: 'PASS', wave: n });
+    return out;
+  }
+
+  it('start stamps mode and tab; a goal start stays exactly as before', () => {
+    const s = applyGoalLiveEvent(null, START, T0);
+    expect(s).toEqual({ goal: 'dev', mode: 'develop', session: SID, tab: 'tab-a', started: T0, updated: T0, phase: 'plan' });
+    expect(applyGoalLiveEvent(null, { type: 'start', goal: 'g', session: SID, tab: 'tab-a' }, T0))
+      .toEqual({ goal: 'g', session: SID, started: T0, updated: T0, phase: 'plan' });
+  });
+
+  it('a 5-wave run with 2 review retries on one wave keeps every wave\'s builders, verdict and duration', () => {
+    const s = fold([
+      START,
+      ...wave(1, ['A', 'B']),
+      ...wave(2, ['A'], 2),
+      ...wave(3, ['A', 'B', 'C']),
+      ...wave(4, ['A']),
+      ...wave(5, ['A', 'B']),
+    ]);
+    expect(s.reviewed).toBe(5);
+    expect(s.impl).toMatchObject({ wave: 5, waves: 5 });
+    // Every builder of every wave keeps its seat and its wave (ids are wave-qualified).
+    expect(s.impl!.forks!.map((f) => `${f.id}@${f.w}`)).toEqual([
+      'w1-A@1', 'w1-B@1', 'w2-A@2', 'w3-A@3', 'w3-B@3', 'w3-C@3', 'w4-A@4', 'w5-A@5', 'w5-B@5',
+    ]);
+    // Every wave's verdict survives on its reviewer's newest lineage event.
+    const verdicts = (s.lineage ?? []).filter((e) => e.v).map((e) => `${e.a}:${e.v}@${e.w}`);
+    expect(verdicts).toEqual(expect.arrayContaining([
+      'w1-reviewer:PASS@1', 'w2-reviewer:FAIL@2', 'w2-reviewer:PASS@2', 'w3-reviewer:PASS@3',
+      'w4-reviewer:PASS@4', 'w5-reviewer:PASS@5',
+    ]));
+    // Every impl / codereview entry carries its wave, so each wave has its own clock.
+    const impl = s.history!.filter((h) => h.p === 'impl').map((h) => h.w);
+    expect(impl).toEqual([1, 2, 2, 2, 3, 4, 5]);
+    expect(s.history!.filter((h) => h.p === 'codereview').every((h) => h.w != null)).toBe(true);
+    expect(s.history!.every((h) => h.at)).toBe(true);
+  });
+
+  it('a new wave of the same phase is an entry; a restatement is not', () => {
+    const s = fold([
+      START,
+      { type: 'phase', phase: 'impl' },
+      { type: 'phase', phase: 'impl', wave: 1, waves: 2 }, // names the wave: labels the entry
+      { type: 'phase', phase: 'impl', wave: 1 },           // restated: nothing new
+      { type: 'phase', phase: 'impl', wave: 2 },           // a new wave: its own entry
+    ]);
+    expect(s.history!.map((h) => `${h.p}${h.w ?? ''}`)).toEqual(['impl1', 'impl2']);
+  });
+
+  it('`reviewed` moves only on a reviewer PASS, credits the actor\'s own wave, and survives an unseated verdict', () => {
+    const base = fold([
+      START,
+      { type: 'phase', phase: 'impl', wave: 1, waves: 3 },
+      { type: 'phase', phase: 'codereview' },
+      { type: 'actor', id: 'w1-reviewer', role: 'reviewer', kind: 'fresh', wave: 1 },
+      { type: 'state', id: 'w1-reviewer', verdict: 'FAIL' },
+    ]);
+    expect(base.reviewed).toBeUndefined();
+    // The next wave began before the verdict was written: the seat is gone, the wave is 2.
+    const late = fold([
+      { type: 'phase', phase: 'impl', wave: 2 },
+      { type: 'state', id: 'w1-reviewer', verdict: 'PASS' },
+    ], base);
+    expect(late.judges).toBeUndefined();
+    expect(late.reviewed).toBe(1);
+    expect(late.lineage!.at(-1)).toMatchObject({ a: 'w1-reviewer', v: 'PASS', w: 1 });
+    // A validator's PASS never counts as a review; neither does a PASS on a builder.
+    const v = fold([
+      { type: 'phase', phase: 'validate' },
+      { type: 'actor', id: 'validator', role: 'validator', kind: 'fresh' },
+      { type: 'state', id: 'validator', verdict: 'PASS', wave: 3 },
+    ], late);
+    expect(v.reviewed).toBe(1);
+  });
+
+  it('a validator FAIL, a resumed builder and a final-fix-reviewer PASS keep reviewed at M and add no wave history', () => {
+    const passed = fold([START, ...wave(1, ['A']), ...wave(2, ['A']), ...wave(3, ['A', 'B'])]);
+    const before = passed.history!.length;
+    const s = fold([
+      { type: 'phase', phase: 'validate' },
+      { type: 'actor', id: 'validator', role: 'validator', kind: 'fresh' },
+      { type: 'state', id: 'validator', verdict: 'FAIL' },
+      { type: 'actor', id: 'w3-B', role: 'implementer', kind: 'resume', round: 2 },
+      { type: 'state', id: 'w3-B', state: 'done' },
+      { type: 'actor', id: 'final-fix-reviewer', role: 'reviewer', kind: 'fresh' },
+      { type: 'state', id: 'final-fix-reviewer', verdict: 'PASS' },
+      { type: 'actor', id: 'validator', role: 'validator', kind: 'fresh', round: 2 },
+      { type: 'state', id: 'validator', verdict: 'PASS' },
+      { type: 'phase', phase: 'done' },
+    ], passed);
+    expect(s.reviewed).toBe(3);
+    expect(s.history!.slice(before).map((h) => h.p)).toEqual(['validate', 'done']);
+    expect(s.history!.slice(before).every((h) => h.w == null)).toBe(true);
+    // The trial judge stays wave-less: its lineage w only ever comes from an explicit --wave.
+    expect(s.lineage!.filter((e) => e.a === 'final-fix-reviewer').every((e) => e.w == null)).toBe(true);
+    // The resumed builder keeps the wave it built.
+    expect(s.impl!.forks!.find((f) => f.id === 'w3-B')!.w).toBe(3);
+  });
+
+  it('a goal-mode sequence reduces exactly as before: no w, no v, no reviewed', () => {
+    const s = fold([
+      { type: 'start', goal: 'g', session: null },
+      { type: 'phase', phase: 'impl', wave: 1, waves: 2 },
+      { type: 'actor', id: 'T1', role: 'implementer', kind: 'fork', from: 'planner' },
+      { type: 'phase', phase: 'codereview' },
+      { type: 'actor', id: 'reviewer', role: 'reviewer', kind: 'fresh' },
+      { type: 'state', id: 'reviewer', verdict: 'PASS' },
+    ]);
+    const json = JSON.stringify(s);
+    expect(json).not.toMatch(/"w":|"reviewed"|"mode"|"tab"/);
+    expect(s.lineage!.some((e) => 'v' in e)).toBe(false);
+  });
+
+  it('a legacy file (no mode, w or reviewed) folds new events exactly as before', () => {
+    const legacy: GoalLiveState = { phase: 'impl', goal: 'g', iters: { impl: 1 }, impl: { wave: 1, waves: 2, forks: [{ s: 'run', id: 'T1' }] }, history: [{ p: 'impl', at: T0 }] };
+    const s = fold([{ type: 'phase', phase: 'codereview' }, { type: 'actor', id: 'reviewer', role: 'reviewer', kind: 'fresh' }, { type: 'state', id: 'reviewer', verdict: 'PASS' }], legacy);
+    expect(s.history).toEqual([{ p: 'impl', at: T0 }, { p: 'codereview', at: expect.any(String) }]);
+    expect(s.reviewed).toBeUndefined();
+    expect(s.judges).toEqual([{ s: 'done', id: 'reviewer', role: 'reviewer', v: 'PASS' }]);
+  });
+});
+
+describe('Develop run survival: start adopts, the sweep keeps', () => {
+  let root: string;
+  const NOW = Date.parse(T0);
+  const OTHER = '99999999-8888-7777-6666-555555555555';
+  const deps = (env: NodeJS.ProcessEnv, now = NOW): GoalLiveDeps => ({ resolveRoot: () => root, env, now: () => new Date(now) });
+  const read = (id: string | null) => JSON.parse(readFileSync(goalLivePath(root, id), 'utf-8')) as GoalLiveState;
+  const agoIso = (ms: number) => new Date(NOW - ms).toISOString();
+
+  /** A Develop run of `goal` left behind by session `sid`, last moved `ageMs` ago. */
+  function leave(sid: string, fields: Partial<GoalLiveState>, ageMs: number): string {
+    const path = goalLivePath(root, sid);
+    writeGoalLiveAtomic(path, { goal: 'dev', mode: 'develop', session: sid, phase: 'impl', reviewed: 1, impl: { wave: 2, waves: 3 }, updated: agoIso(ageMs), ...fields });
+    const t = (NOW - ageMs) / 1000;
+    utimesSync(path, t, t);
+    return path;
+  }
+
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'goal-live-adopt-')); mkdirSync(join(root, 'tmp')); });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('adopts this pane\'s not-done develop file: state kept, re-stamped, old file gone', () => {
+    const old = leave(OTHER, { tab: 'tab-a' }, 60_000);
+    goalLiveStart(deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' }), 'dev', 'develop');
+    const s = read(SID);
+    expect(s).toMatchObject({ mode: 'develop', session: SID, tab: 'tab-a', phase: 'impl', reviewed: 1, impl: { wave: 2, waves: 3 } });
+    expect(s.updated).toBe(T0);
+    expect(existsSync(old)).toBe(false);
+  });
+
+  it('adopts another pane\'s run only when idle past 10 min, and refuses a fresh one', () => {
+    leave(OTHER, { tab: 'tab-b' }, 5 * 60_000);
+    expect(() => goalLiveStart(deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' }), 'dev', 'develop'))
+      .toThrow(DEVELOP_RUN_TAKEN);
+    expect(existsSync(goalLivePath(root, SID))).toBe(false);
+    // Twenty minutes idle: any pane may take it over.
+    leave(OTHER, { tab: 'tab-b' }, 20 * 60_000);
+    goalLiveStart(deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' }), 'dev', 'develop');
+    expect(read(SID)).toMatchObject({ tab: 'tab-a', reviewed: 1 });
+  });
+
+  it('a tab-less start never adopts a fresh tab-less file', () => {
+    leave(OTHER, {}, 60_000);
+    expect(findDevelopRunToAdopt(root, 'dev', null, NOW)).toEqual({ kind: 'refuse' });
+  });
+
+  it('ignores a goal-mode file, a done run and other goals', () => {
+    leave(OTHER, { mode: undefined, tab: 'tab-a' }, 60_000);
+    leave('aaaaaaaa-0000-0000-0000-000000000001', { phase: 'done', tab: 'tab-a' }, 60_000);
+    leave('aaaaaaaa-0000-0000-0000-000000000002', { goal: 'other', tab: 'tab-a' }, 60_000);
+    expect(findDevelopRunToAdopt(root, 'dev', 'tab-a', NOW)).toEqual({ kind: 'fresh' });
+    goalLiveStart(deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' }), 'dev', 'develop');
+    expect(read(SID)).toMatchObject({ mode: 'develop', phase: 'plan' });
+    expect(read(SID).reviewed).toBeUndefined();
+  });
+
+  it('a 5h-old not-done develop file survives ANOTHER session\'s start, and is then adopted', () => {
+    const old = leave(OTHER, { tab: 'tab-b' }, 5 * 3600_000);
+    goalLiveStart(deps({ CLAUDE_CODE_SESSION_ID: 'bbbbbbbb-0000-0000-0000-000000000000' }), 'unrelated');
+    expect(existsSync(old)).toBe(true);
+    goalLiveStart(deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' }), 'dev', 'develop');
+    expect(read(SID).reviewed).toBe(1);
+  });
+
+  it('sweeps a 25h-old develop file and a 5h-old goal-mode file', () => {
+    const dev = leave(OTHER, {}, 25 * 3600_000);
+    const goal = leave('cccccccc-0000-0000-0000-000000000000', { mode: undefined }, 5 * 3600_000);
+    const done = leave('dddddddd-0000-0000-0000-000000000000', { phase: 'done' }, 5 * 3600_000);
+    expect(sweepAbandonedGoalLive(root, NOW)).toBe(3);
+    for (const p of [dev, goal, done]) expect(existsSync(p)).toBe(false);
+  });
+
+  it('a missing or unparseable `updated` falls back to the file mtime, in the sweep and in adoption', () => {
+    const recent = leave(OTHER, { updated: 'not a date', tab: 'tab-b' }, 2 * 3600_000);
+    expect(sweepAbandonedGoalLive(root, NOW)).toBe(0);
+    // mtime says 2h idle: adoptable by another pane.
+    expect(findDevelopRunToAdopt(root, 'dev', 'tab-a', NOW)).toMatchObject({ kind: 'adopt', path: recent });
+    const ancient = leave('eeeeeeee-0000-0000-0000-000000000000', { updated: undefined, goal: 'x' }, 30 * 3600_000);
+    expect(sweepAbandonedGoalLive(root, NOW)).toBe(1);
+    expect(existsSync(ancient)).toBe(false);
+  });
+
+  it('--mode must be goal or develop', () => {
+    expect(() => goalLiveStart(deps({}), 'dev', 'sprint')).toThrow(/--mode/);
+  });
+});
+
+describe('goal-live actor/state --wave and recipe', () => {
+  let root: string;
+  const deps: () => GoalLiveDeps = () => ({ resolveRoot: () => root, env: { CLAUDE_CODE_SESSION_ID: SID }, now: () => new Date(T0) });
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'goal-live-wave-')); });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('--wave lands on the lineage event and credits the verdict', () => {
+    const d = deps();
+    goalLiveStart(d, 'dev', 'develop');
+    goalLivePhase(d, 'impl', { wave: '1', waves: '2' });
+    goalLiveActor(d, 'w1-T1=Tokens', { kind: 'spawn', role: 'implementer', wave: '1' });
+    goalLivePhase(d, 'codereview', {});
+    goalLiveActor(d, 'w1-reviewer', { kind: 'fresh', role: 'reviewer', wave: '1' });
+    goalLivePhase(d, 'impl', { wave: '2' });
+    goalLiveState(d, ['w1-reviewer=PASS'], { wave: '1' });
+    const s = readGoalLive(goalLivePath(root, SID))!;
+    expect(s.reviewed).toBe(1);
+    expect(s.lineage!.map((e) => e.w)).toEqual([1, 1]);
+    expect(() => goalLiveState(d, ['w1-reviewer=PASS'], { wave: 'x' })).toThrow(/--wave/);
+  });
+
+  it('recipe develop prints the recipe; an unknown recipe says which exist', () => {
+    let out = '';
+    goalLiveRecipe('develop', (t) => { out += t; });
+    expect(out.length).toBeGreaterThan(0);
+    expect(() => goalLiveRecipe('plan', () => {})).toThrow(/known: develop/);
   });
 });

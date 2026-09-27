@@ -123,6 +123,18 @@ if (isResume) {
 
 const askMatch = prompt.match(/--- THE OWNER JUST ASKED YOU THIS, IN THE #agents CHANNEL ---\\n([\\s\\S]*?)\\n--- END OF WHAT THEY SAID ---/);
 const ask = askMatch ? askMatch[1].trim() : '';
+const REPORT = 'Two people are waiting on you.\\n\\n# Outreach\\n\\n**Yes, two are waiting.**\\n\\n## 1. Waiting on you\\n\\n**1) Ada** · 11 h\\n\\n## 2. CRM\\n\\n| Who | Status |\\n|---|---|\\n| Alan | won |\\n\\n## 3. Signals\\n\\n- Lesson reminders: third time.\\n';
+if (ask && slug === 'gated') {
+  run(['automations', 'post', slug, 'Yes, two people are waiting. Ada is the most urgent.', '--kv', 'waiting=2']);
+  out({ session_id: 'standin-ask-gated', is_error: false, result: REPORT,
+    total_cost_usd: 0.04, num_turns: 2, duration_ms: 9000, permission_denials: [] });
+  process.exit(0);
+}
+if (slug === 'signoff') {
+  out({ session_id: 'standin-signoff', is_error: false, result: REPORT,
+    total_cost_usd: 0.04, num_turns: 2, duration_ms: 9000, permission_denials: [] });
+  process.exit(0);
+}
 if (ask) {
   run(['automations', 'post', slug, 'You asked for: ' + ask]);
   out({ session_id: 'standin-ask-' + slug, is_error: false, result: 'Answered.\\n\\n## Detail\\n\\nRows.\\n',
@@ -253,6 +265,10 @@ function seed() {
   cli(['automations', 'create', 'orphan2', '--title', 'Interrupted again', '--days', 'daily', '--at', '14:00']);
   cli(['automations', 'create', 'failer', '--title', 'Analytics puller', '--days', 'daily', '--at', '15:00']);
   cli(['automations', 'create', 'holder', '--title', 'Nightly importer', '--days', 'daily', '--at', '16:00']);
+  // The owner's Front Desk shape: an on-call agent with a blanket document sign-off.
+  cli(['automations', 'create', 'gated', '--title', 'Front desk', '--mode', 'call', '--review', 'output']);
+  // The same sign-off on an UNATTENDED fire, which still asks.
+  cli(['automations', 'create', 'signoff', '--title', 'Weekly report', '--days', 'daily', '--at', '17:00', '--review', 'output']);
 
   // This project's skills and commands, as the chat caches them at connect (T7): Turkish
   // names whose case does not fold with toLowerCase().
@@ -263,7 +279,7 @@ function seed() {
   writeFileSync(digestPath,
     readFileSync(digestPath, 'utf-8').replace(/^photo: null$/m, 'photo: automations/photos/digest.png'));
 
-  for (const slug of ['digest', 'asker', 'oncall', 'slowpoke', 'offline', 'orphan', 'orphan2', 'failer', 'holder']) {
+  for (const slug of ['digest', 'asker', 'oncall', 'slowpoke', 'offline', 'orphan', 'orphan2', 'failer', 'holder', 'gated', 'signoff']) {
     cli(['automations', 'approve', slug, '--yes']);
   }
   // Turned OFF after approval, so the reply route's FIRST rung has a subject.
@@ -489,7 +505,8 @@ async function main() {
     // ── 4: the question with the agent's own options ─────────────────────
     console.log('\n═══ 4. A question with buttons ═══');
     const askerMsg = page.locator('.agent-msg', { hasText: 'Pricing watch' }).first();
-    const choices = askerMsg.locator('.agent-msg-question-choice');
+    // The question is Chat's own AskUserQuestion card (SurveyCard), mounted over the run's question.
+    const choices = askerMsg.locator('.agent-msg-ask .chat-surveycard-opt');
     check('the asking run shows a question block', await until(async () => (await choices.count()) > 0, 10000));
     const choiceText = await choices.allInnerTexts();
     check('…carrying the agent\'s OWN two options', await choices.count() === 2
@@ -504,21 +521,16 @@ async function main() {
       `status="${await askerMsg.locator('.agent-msg-status').innerText()}"`);
     await page.screenshot({ path: join(SHOTS, '2-question.png') });
 
-    // A reply while that question is open is refused by its own rung.
-    const askerRun = threadEntries('asker')[0]?.runId;
-    const qPending = await page.evaluate(async ([runId]) => {
-      const r = await fetch('/api/automations/asker/thread/reply', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: 'anything', runId }),
-      });
-      return { status: r.status, body: await r.text() };
-    }, [askerRun]);
-    check('a reply while a question is open is refused 409 question_pending',
-      qPending.status === 409 && /question_pending/.test(qPending.body), JSON.stringify(qPending));
+    // Asked the way Chat asks: context strip (the agent), the question, the chat's own
+    // always-visible free-text field under the options.
+    check('…asked with Chat\'s own question card: context names the agent, one free-text field (was a separate button row)',
+      /Pricing watch/.test(await askerMsg.locator('.chat-surveycard-context').innerText().catch(() => ''))
+        && await askerMsg.locator('.chat-surveycard-fieldinput').count() === 1);
 
     await choices.first().click();
-    check('pressing a choice records the answer',
-      await until(async () => (await askerMsg.locator('.agent-msg-question-receipt').count()) > 0, 20000));
+    await askerMsg.locator('.chat-surveycard .chat-btn.primary').click();
+    check('picking a choice and Submit records the answer',
+      await until(async () => (await askerMsg.locator('.chat-surveycard-receipt').count()) > 0, 20000));
     // The answer resumes the asking session, which settles ASYNCHRONOUSLY — the
     // receipt above is the click landing, not the turn finishing.
     check('…and `resumeWithAnswer` closes it with a system:replied',
@@ -619,9 +631,12 @@ async function main() {
     const own = await replyTo('slowpoke', { text: 'while you run', runId: slowRun });
     check('[R2-4] a reply to a DIFFERENT agent while one runs is accepted, 202 (was 409 busy naming the other agent)',
       other.status === 202, JSON.stringify(other).slice(0, 240));
-    check('[R2-4] a reply to the agent that is running is refused 409 busy, "Slow crawler is still running. Try again when it finishes." (was "… One run at a time for now …")',
-      own.status === 409 && /"busy"/.test(own.body) && /Slow crawler is still running\. Try again when it finishes\./.test(own.body)
-        && !/One run at a time/.test(own.body), JSON.stringify(own).slice(0, 240));
+    check('a reply to the agent that is RUNNING is queued, 202 (was 409 busy, "Slow crawler is still running. Try again when it finishes.")',
+      own.status === 202, JSON.stringify(own).slice(0, 240));
+    check('…and is DELIVERED once the run ends, with no "not delivered" in the thread (was "Reply not delivered · 0s: a run … is still in progress")',
+      await until(() => threadEntries('slowpoke').some((e) => e.runId === slowRun && e.event === 'replied'), 60000)
+        && !threadEntries('slowpoke').some((e) => e.runId === slowRun && /not delivered/i.test(e.text ?? '')),
+      JSON.stringify(threadEntries('slowpoke').filter((e) => e.runId === slowRun).map((e) => `${e.event ?? e.kind}:${(e.text ?? '').slice(0, 60)}`)));
     // The accepted reply resumes the digest's own session; let it settle before the next
     // section talks to the same agent (the per-agent run lock would refuse an overlap).
     if (other.status === 202) {
@@ -1147,9 +1162,10 @@ async function main() {
       `disabled=${otherDown} placeholder="${await thread.locator('.chat-cmp-input').getAttribute('placeholder')}"`);
     await closePanel();
     await openThreadOf(namedRow('Nightly importer'));
-    const ownDown = await until(async () => thread.locator('.chat-cmp-input').isDisabled(), 8000);
-    check('[guard] while an agent runs, its OWN thread\'s composer is read-only and says so', ownDown
-      && /Nightly importer is still running/.test((await thread.locator('.chat-cmp-input').getAttribute('placeholder')) ?? ''),
+    const ownQueued = await until(async () => /it reads it when it finishes/.test((await thread.locator('.chat-cmp-input').getAttribute('placeholder')) ?? ''), 8000);
+    const ownDown = await thread.locator('.chat-cmp-input').isDisabled();
+    check('while an agent runs, its OWN thread\'s composer stays OPEN and says the reply waits its turn (was read-only, "still running")',
+      ownQueued && !ownDown,
       `disabled=${ownDown} placeholder="${await thread.locator('.chat-cmp-input').getAttribute('placeholder')}"`);
     await closePanel();
     await slotFree();
@@ -1258,6 +1274,111 @@ async function main() {
       enabledAgain && await until(async () => (await thread.locator('.chat-cmp-input').count()) > 0, 8000), `button=${hasTurnOn}`);
     await closePanel();
     await page.unroute(/\/api\/peer\/peers/);
+
+    // ── 18: a conversation is not a document for sign-off ─────────────────
+    // The owner's Front Desk: asked "is anyone waiting on a reply?", it answered well and then
+    // asked "Approve the document?" with a free-text box, held its report unpublished, and
+    // the thread showed four lines of summary with the report nowhere.
+    console.log('\n═══ 18. An @mention to a sign-off agent, and the folded report ═══');
+    await slotFree();
+    const gatedSay = await page.evaluate(async () => {
+      const r = await fetch('/api/automations/threads/say', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' },
+        body: JSON.stringify({ slug: 'gated', text: 'is anyone waiting on a reply?' }),
+      });
+      return { status: r.status, body: await r.json().catch(() => null) };
+    });
+    const gatedRun = gatedSay.body?.runId;
+    check('an @mention to a review:output agent runs', gatedSay.status === 200 && !!gatedRun, JSON.stringify(gatedSay));
+    const gatedDone = await until(() => threadEntries('gated').some((e) => e.runId === gatedRun && e.event === 'ok'), 60000);
+    check('…and finishes OK, publishing its answer (was: awaiting-review behind "Approve the document?")', gatedDone,
+      JSON.stringify(threadEntries('gated').map((e) => e.event ?? e.kind)));
+    check('…with NO "Asked:" entry in its thread',
+      !threadEntries('gated').some((e) => e.event === 'asked'),
+      JSON.stringify(threadEntries('gated').filter((e) => e.event === 'asked').map((e) => e.text)));
+    const gatedQs = await page.evaluate(async () => (await fetch('/api/automations/questions', { headers: { 'x-dreamcontext-vault': 'proj' } })).json().catch(() => null));
+    check('…and no question left open for it',
+      !(gatedQs?.questions ?? []).some((q) => q.slug === 'gated'), JSON.stringify(gatedQs).slice(0, 200));
+
+    await openChannel();
+    const gatedAsk = page.locator('.agent-msg--you').filter({ hasText: 'is anyone waiting on a reply?' }).first();
+    await openThreadOf(gatedAsk);
+    const sections = thread.locator('.agent-report-section');
+    await until(async () => (await sections.count()) > 0, 10000);
+    check('the thread shows the report FOLDED: one row per section', await sections.count() === 3, `sections=${await sections.count()}`);
+    check('…every section closed at first', await thread.locator('.agent-report-section[open]').count() === 0);
+    const titles = await thread.locator('.agent-report-title').allInnerTexts();
+    check('…each row names its section, number included', JSON.stringify(titles) === JSON.stringify(['1. Waiting on you', '2. CRM', '3. Signals']), JSON.stringify(titles));
+    check('…and previews its first line', /1\) Ada · 11 h/.test(await thread.locator('.agent-report-preview').first().innerText()));
+    check('…under the answer, as prose, without the report\'s # title',
+      /two are waiting/.test(await thread.locator('.agent-report-lead').innerText())
+        && await thread.locator('.agent-report-lead h1').count() === 0);
+    await page.screenshot({ path: join(SHOTS, '18-folded-closed.png') });
+    await thread.locator('.agent-report-summary').first().click();
+    check('a click opens that one section, and only that one',
+      await until(async () => (await thread.locator('.agent-report-section[open]').count()) === 1, 3000)
+        && /Ada/.test(await thread.locator('.agent-report-section[open] .agent-report-body').innerText()));
+    await page.screenshot({ path: join(SHOTS, '18-folded-open.png') });
+    await closePanel();
+
+    // The SAME gate on an unattended fire still asks, and now asks properly.
+    await slotFree();
+    await page.evaluate(async () => {
+      await fetch('/api/automations/signoff/run', { method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' }, body: '{}' });
+    });
+    check('an unattended review:output run still stops to ask',
+      await until(() => threadEntries('signoff').some((e) => e.event === 'asked'), 60000),
+      JSON.stringify(threadEntries('signoff').map((e) => e.event ?? e.kind)));
+    const askedLine = threadEntries('signoff').find((e) => e.event === 'asked')?.text ?? '';
+    check('…its "Asked:" line is the question alone, not 200 characters of the report',
+      askedLine === 'Asked: Weekly report wrote this report. Publish it?', askedLine);
+    await openChannel();
+    const signRow = namedRow('Weekly report');
+    const signQ = signRow.locator('.agent-msg-ask');
+    await until(async () => (await signQ.locator('.chat-surveycard').count()) > 0, 15000);
+    const choiceFaces = await signQ.locator('.chat-surveycard-opt-title').allInnerTexts();
+    check('the sign-off is Chat\'s own question card with Approve and Reject as options (was a free-text "Answer" box)',
+      JSON.stringify(choiceFaces) === JSON.stringify(['Approve', 'Reject']), JSON.stringify(choiceFaces));
+    check('…each option says what it does',
+      (await signQ.locator('.chat-surveycard-opt-desc').count()) === 2);
+    check('…asks in one sentence', (await signQ.locator('.chat-surveycard-title').innerText()).trim() === 'Weekly report wrote this report. Publish it?');
+    check('…under a context strip naming the agent', /Weekly report/.test(await signQ.locator('.chat-surveycard-context').innerText()));
+    check('…with the report folded above it', await signQ.locator('.agent-report-section').count() === 3);
+    check('…and the chat\'s one free-text field', await signQ.locator('.chat-surveycard-fieldinput').count() === 1);
+    await page.screenshot({ path: join(SHOTS, '18-signoff-question.png') });
+
+    // A reply in the thread IS the answer.
+    const signRun = threadEntries('signoff').find((e) => e.event === 'asked')?.runId;
+    const signReply = await page.evaluate(async ([runId]) => {
+      const r = await fetch('/api/automations/signoff/thread/reply', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' },
+        body: JSON.stringify({ text: 'publish it, but drop the CRM table', runId }),
+      });
+      return { status: r.status, body: await r.text() };
+    }, [signRun]);
+    check('a thread reply while it waits on the sign-off is accepted, 202 (was 409 question_pending, "answer that first")',
+      signReply.status === 202, JSON.stringify(signReply).slice(0, 200));
+    check('…and answers the question: nothing is waiting on the reader afterwards',
+      await until(async () => {
+        const qs = await page.evaluate(async () => (await fetch('/api/automations/questions', { headers: { 'x-dreamcontext-vault': 'proj' } })).json().catch(() => null));
+        return !(qs?.questions ?? []).some((q) => q.slug === 'signoff');
+      }, 60000));
+    // …and the conversation is still there afterwards: answering must not retire the only
+    // session the thread talks to (the owner got "has no session to talk to yet" here).
+    await until(() => threadEntries('signoff').some((e) => e.runId === signRun && e.event === 'replied'), 60000);
+    const repliedBefore = threadEntries('signoff').filter((e) => e.runId === signRun && e.event === 'replied').length;
+    const after = await page.evaluate(async ([runId]) => {
+      const r = await fetch('/api/automations/signoff/thread/reply', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' },
+        body: JSON.stringify({ text: 'who are the other two?', runId }),
+      });
+      return { status: r.status, body: await r.text() };
+    }, [signRun]);
+    check('a follow-up AFTER the answer is accepted, 202 (was 409 not_bound: "has no session to talk to yet")',
+      after.status === 202, JSON.stringify(after).slice(0, 200));
+    check('…and delivered into the same conversation',
+      await until(() => threadEntries('signoff').filter((e) => e.runId === signRun && e.event === 'replied').length > repliedBefore, 60000)
+        && threadEntries('signoff').some((e) => e.kind === 'agent' && /who are the other two/.test(e.text ?? '')));
 
     check('no uncaught page errors', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } finally {

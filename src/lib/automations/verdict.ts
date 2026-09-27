@@ -246,6 +246,26 @@ function releaseRunLock(contextRoot: string, slug: string, lockPath: string): vo
   if (current && current.runnerPid === process.pid) clearRunSidecar(contextRoot, slug);
 }
 
+/** {@link acquireRunLock}, waiting up to `opts.lockWaitMs` for it. Zero (the default)
+ *  is a single attempt, exactly the old behaviour. */
+async function acquireRunLockWaiting(
+  contextRoot: string,
+  m: AutomationManifest,
+  nowFn: () => Date,
+  opts: VerdictOptions,
+): Promise<string | null> {
+  const waitMs = Math.max(0, opts.lockWaitMs ?? 0);
+  const pollMs = Math.max(1, opts.lockPollMs ?? 2_000);
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let waited = 0;
+  for (;;) {
+    const lockPath = acquireRunLock(contextRoot, m, nowFn().getTime());
+    if (lockPath || waited >= waitMs) return lockPath;
+    await sleep(pollMs);
+    waited += pollMs;
+  }
+}
+
 const LOCK_BUSY_REASON =
   'a run for this automation is still in progress — nothing was changed, try again in a moment';
 
@@ -296,6 +316,21 @@ export interface VerdictOptions {
    * and the filter is the guard.
    */
   env?: { DREAMCONTEXT_AUTOMATION_SLUG?: string; DREAMCONTEXT_AUTOMATION_RUN?: string };
+  /**
+   * How long a message may WAIT for the run lock before it gives up, in ms. Default 0:
+   * refuse at once, which is what Telegram wants (it says so and the human re-sends).
+   *
+   * A thread reply waits instead. The owner answers a question and types a follow-up
+   * seconds later; the answer's resume holds the lock, and refusing the follow-up in 0s
+   * ("still in progress, try again") put a failure into the channel for a message that
+   * only needed to take its turn. Queued behind the lock, it runs the moment the turn
+   * ahead of it ends.
+   */
+  lockWaitMs?: number;
+  /** Poll interval while waiting for the lock. Injectable for tests. */
+  lockPollMs?: number;
+  /** The wait itself. Injectable so a test does not sleep in real time. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** What answering a question produced. */
@@ -397,6 +432,13 @@ function retireIfDone(contextRoot: string, q: AutomationQuestion, sessionId: str
   if (pendingQuestion(contextRoot, q.slug)) return;
   // (b) never opened as a chat tab.
   if (sessionIsInTabRoster(contextRoot, sessionId)) return;
+  // (c) NOT the agent's latest session. The thread's reply box and Telegram both talk to
+  // `latestBoundSession`, so retiring it leaves the conversation the owner is standing in
+  // with nothing to reach ("no session to talk to yet" right after he answered). The
+  // auto-opened chat tab used to keep it alive by accident, through (b); with that gone,
+  // this is the rule said out loud. Older sessions still retire, so the grant stays one
+  // live conversation per agent, not one per run.
+  if (latestBoundSession(q.slug, home) === sessionId) return;
   retireAutomationSession(q.slug, sessionId, home);
 }
 
@@ -469,7 +511,7 @@ export async function resumeWithAnswer(
     };
   }
 
-  const lockPath = acquireRunLock(contextRoot, manifest, nowFn().getTime());
+  const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
   if (!lockPath) {
     return { question, status: 'refused', error: LOCK_BUSY_REASON, result: null };
   }
@@ -730,15 +772,28 @@ export async function resumeWithMessage(
     };
   }
 
-  const lockPath = acquireRunLock(contextRoot, manifest, nowFn().getTime());
+  const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
   if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null, costUsd: null };
 
   try {
+    // RE-CHECKED UNDER THE LOCK when the message waited for it: the turn it queued
+    // behind can have asked a question (the question outranks the chat, as above) or
+    // bound a newer session (the conversation moved on to that one, and the reply
+    // belongs there).
+    if ((opts.lockWaitMs ?? 0) > 0 && pendingQuestion(contextRoot, slug)) {
+      return {
+        status: 'refused',
+        error: 'This agent is waiting for your answer to its own question, so answer that first.',
+        result: null,
+        costUsd: null,
+      };
+    }
+    const liveSessionId = (opts.lockWaitMs ?? 0) > 0 ? latestBoundSession(slug, home) ?? sessionId : sessionId;
     const execution = await spawnSessionResume(
       contextRoot,
       manifest,
       nowFn().toISOString(),
-      sessionId,
+      liveSessionId,
       (opts.surface ?? 'telegram') === 'thread'
         ? buildThreadMessagePreamble(text)
         : buildMessagePreamble(text),

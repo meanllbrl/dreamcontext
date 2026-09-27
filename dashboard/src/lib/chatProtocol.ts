@@ -289,6 +289,10 @@ export type ChatEvent =
   | { kind: 'prompt-echo'; text: string }
   | { kind: 'meta-exit'; code: number | null }
   | { kind: 'meta-error'; message: string }
+  /** The dreamcontext Assistant's relay: a UI verb the server sent DOWN the assistant's own chat
+   *  socket for the notch to execute (src/lib/assistant/relay.ts). Only the `__assistant__`
+   *  session ever receives one; the notch answers with an `assistant_command_result` frame. */
+  | { kind: 'assistant-command'; id: string; verb: string; args: Record<string, unknown> }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -370,7 +374,12 @@ export type ClientControl =
   /** Rewind the conversation to just BEFORE the user message with this transcript uuid —
    *  translated into a `rewind_conversation` control_request (`interrupt_if_running: true`).
    *  Conversation-only: the CLI does NOT restore files through this channel. */
-  | { type: 'rewind'; requestId: string; targetUuid: string };
+  | { type: 'rewind'; requestId: string; targetUuid: string }
+  /** The notch declares this socket the Assistant's SURFACE — the channel the relay sends UI
+   *  verbs down. Ignored by the server on every session but `__assistant__`. */
+  | { type: 'assistant_surface' }
+  /** The notch's answer to one relayed `assistant-command`. */
+  | { type: 'assistant_command_result'; id: string; ok: boolean; result?: unknown; error?: string };
 
 // ─── Small object-shape helpers (kept local — this module takes no dependencies) ───
 
@@ -769,7 +778,7 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
     // branches have been dropping sub-agent frames since the leak was found; the TEXT branch
     // could not, because the event had nowhere to carry the answer. So a sub-agent's text
     // block arriving as a top-level `assistant` frame rendered in the main transcript as if
-    // this conversation had said it — and in J.A.R.V.I.S mode it would then be SPOKEN as the
+    // this conversation had said it — and in assistant mode it would then be SPOKEN as the
     // main conversation's own words, out of order with the real turn. Fixed before the speech
     // queue was wired to this event, deliberately: wiring first would have made a rendering
     // bug audible before it was fixed.
@@ -1027,6 +1036,12 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       restart: obj.restart === true,
       loggedIn: typeof obj.loggedIn === 'boolean' ? obj.loggedIn : null,
     };
+  }
+  if (subtype === 'assistant_command') {
+    const id = str(obj.id);
+    const verb = str(obj.verb);
+    if (!id || !verb) return ignored('_meta:assistant_command');
+    return { kind: 'assistant-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
   }
   return ignored('_meta:' + (subtype ?? 'unknown'));
 }

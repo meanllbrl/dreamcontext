@@ -33,7 +33,9 @@ a single bucket, so a file staged in one appeared in the other.
 sessions only. A pasted image staged in either surface and then abandoned held its object URL
 for the life of the app run, once per visit.
 
-Naming the buckets fixed the first (`scratchId: 'agents-channel'`, `'meeting-room'`). The
+Naming the buckets fixed the first (`scratchId: 'agents-channel'`, `'meeting-room'` — the
+Meeting Room was itself retired 2026-09-26, so don't go looking for that surface; the bug and
+the rule it produced are unaffected). The
 second needed an owner — and the obvious place was wrong.
 
 ## The Second Half: Whose Lifetime Is It?

@@ -20,6 +20,8 @@ export interface GoalLiveFork {
   role?: string;
   /** v3: the judge's first-line verdict word (SOLID | NEEDS_WORK | PASS | FAIL). */
   v?: string;
+  /** v5 (Develop runs): the wave this builder was seated for. Absent = legacy, shown as before. */
+  w?: number;
 }
 
 export interface GoalLiveImpl {
@@ -43,12 +45,26 @@ export interface GoalLiveLineage {
   at?: string;
   /** Tokens of context inherited without rebuilding. Fork events only, and only ever measured. */
   ctx?: number;
+  /** v4: the actor's own headless run id (`claude -p --session-id`), a strict UUID. Present
+   *  only when the orchestrator registered it; the app then draws that run as a teammate. */
+  sid?: string;
+  /** v5 (Develop runs): the wave this event belongs to. */
+  w?: number;
+  /** v5 (Develop runs): the verdict this actor returned; it outlives the seat it was given in. */
+  v?: string;
 }
+
+/** Absent = a goal-skill run. */
+export type GoalLiveMode = 'goal' | 'develop';
 
 export interface GoalLiveState {
   goal?: string;
+  /** v5: `develop` = a Develop chat's run (waves, a review per wave). Absent = goal-skill. */
+  mode?: GoalLiveMode;
   /** Orchestrator's Claude conversation id — scopes the panel to its pane. */
   session?: string;
+  /** v5 (Develop runs): the chat pane that owns the run. */
+  tab?: string;
   started?: string;
   updated?: string;
   phase: string; // plan | review | task | impl | codereview | validate | done
@@ -56,8 +72,10 @@ export interface GoalLiveState {
   impl?: GoalLiveImpl;
   /** v3: the judges seated for the current review / codereview / validate phase. */
   judges?: GoalLiveFork[];
-  /** v3: every phase transition, oldest first. */
-  history?: { p: string; at: string }[];
+  /** v5 (Develop runs): the highest wave whose reviewer returned PASS. */
+  reviewed?: number;
+  /** v3: every phase transition, oldest first. `w` (v5, Develop runs): the entry's wave. */
+  history?: { p: string; at: string; w?: number }[];
   /** v3: who briefed, copied or brought back whom, oldest first. */
   lineage?: GoalLiveLineage[];
 }
@@ -94,11 +112,14 @@ export function goalElapsedMinutes(state: GoalLiveState): number | null {
 
 // ─── Normalizing the file (it is written by an agent, so it is untrusted) ─────────
 
-export const GOAL_LIVE_CAPS = { forks: 12, judges: 8, history: 40, lineage: 60 } as const;
+export const GOAL_LIVE_CAPS = { forks: 24, judges: 8, history: 40, lineage: 120 } as const;
 
 /** Mirrors the writer's `ACTOR_ID_MAX` (src/cli/commands/goal-live.ts). Every id is capped at
  *  exactly this, never shorter: seats join lineage by id, so a cut id stops matching. */
 export const GOAL_LIVE_ID_MAX = 40;
+
+/** Mirrors the writer's `TEAMMATE_SESSION_RE` (src/lib/goal-live.ts). */
+export const TEAMMATE_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const FORK_STATES: ReadonlySet<string> = new Set(['run', 'done', 'wait', 'fail']);
 const LINEAGE_KINDS: ReadonlySet<string> = new Set(['spawn', 'fork', 'resume', 'fresh']);
@@ -125,12 +146,20 @@ function normFork(v: unknown): GoalLiveFork | null {
   const name = str(v.name, 60); if (name) fork.name = name;
   const role = str(v.role, GOAL_LIVE_ID_MAX); if (role) fork.role = role;
   const verdict = str(v.v, 16); if (verdict) fork.v = verdict;
+  const w = posInt(v.w); if (w != null) fork.w = w;
   return fork;
 }
 
+/** A wave number: 1 or more. A 0 or a fraction is no wave at all. */
+function posInt(v: unknown): number | undefined {
+  const n = nonNegInt(v);
+  return n != null && n > 0 ? n : undefined;
+}
+
+/** Every capped list here is oldest-first, so the cap keeps the NEWEST entries, as the writer does. */
 function normForks(v: unknown, cap: number): GoalLiveFork[] | undefined {
   if (!Array.isArray(v)) return undefined;
-  return v.map(normFork).filter((f): f is GoalLiveFork => f !== null).slice(0, cap);
+  return v.map(normFork).filter((f): f is GoalLiveFork => f !== null).slice(-cap);
 }
 
 function normLineage(v: unknown): GoalLiveLineage | null {
@@ -144,6 +173,9 @@ function normLineage(v: unknown): GoalLiveLineage | null {
   const at = str(v.at, 40); if (at) ev.at = at;
   // A reuse number is only ever a measurement, and only a copied memory has one.
   if (ev.k === 'fork' && typeof v.ctx === 'number' && Number.isInteger(v.ctx) && v.ctx > 0) ev.ctx = v.ctx;
+  if (typeof v.sid === 'string' && TEAMMATE_SESSION_RE.test(v.sid)) ev.sid = v.sid;
+  const w = posInt(v.w); if (w != null) ev.w = w;
+  const verdict = str(v.v, 16); if (verdict) ev.v = verdict;
   return ev;
 }
 
@@ -156,10 +188,12 @@ function normLineage(v: unknown): GoalLiveLineage | null {
 export function normalizeGoalLive(raw: unknown): GoalLiveState | null {
   if (!isRecord(raw) || typeof raw.phase !== 'string') return null;
   const out: GoalLiveState = { phase: raw.phase.trim() };
-  for (const key of ['goal', 'session', 'started', 'updated'] as const) {
+  for (const key of ['goal', 'session', 'tab', 'started', 'updated'] as const) {
     const v = str(raw[key], 200);
     if (v) out[key] = v;
   }
+  if (raw.mode === 'develop' || raw.mode === 'goal') out.mode = raw.mode;
+  const reviewed = nonNegInt(raw.reviewed); if (reviewed != null) out.reviewed = reviewed;
   if (isRecord(raw.iters)) {
     const iters: Record<string, number> = {};
     for (const [k, v] of Object.entries(raw.iters)) {
@@ -179,8 +213,11 @@ export function normalizeGoalLive(raw: unknown): GoalLiveState | null {
   if (judges) out.judges = judges;
   if (Array.isArray(raw.history)) {
     out.history = raw.history
-      .filter((h): h is { p: string; at: string } => isRecord(h) && typeof h.p === 'string' && typeof h.at === 'string')
-      .map((h) => ({ p: h.p, at: h.at }))
+      .filter((h): h is { p: string; at: string; w?: unknown } => isRecord(h) && typeof h.p === 'string' && typeof h.at === 'string')
+      .map((h) => {
+        const w = posInt(h.w);
+        return w != null ? { p: h.p, at: h.at, w } : { p: h.p, at: h.at };
+      })
       .slice(-GOAL_LIVE_CAPS.history);
   }
   if (Array.isArray(raw.lineage)) {

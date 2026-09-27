@@ -3,12 +3,12 @@
  *
  * Two problems that look unrelated and are in fact one, which is why they share a ledger:
  *
- *  1. THE MACHINE'S OTHER AUDIO. J.A.R.V.I.S answers out loud, and the machine is usually
+ *  1. THE MACHINE'S OTHER AUDIO. The Assistant answers out loud, and the machine is usually
  *     already playing something. Before this module the answer simply landed on top of the
  *     music, so the owner either missed it or reached for Spotify by hand every single turn —
  *     in a mode whose entire proposition is not touching the keyboard.
  *
- *  2. TWO PANES SPEAKING AT ONCE. Chat panes never unmount and every `jarvis` session builds
+ *  2. TWO PANES SPEAKING AT ONCE. Chat panes never unmount and every `assistant` session builds
  *     its own `SpeechQueue`, so two answers could be read simultaneously into the same pair of
  *     speakers. That was already true before any of this — nothing gated the speaker the way
  *     `pushToTalkScope.ts` gates the microphone — and two voices at once is not a degraded

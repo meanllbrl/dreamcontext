@@ -32,7 +32,8 @@
   font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
   transition: background 150ms, border-color 150ms;
 }
-.adp-edit:hover { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.adp-edit:hover:not([aria-disabled="true"]) { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.adp-edit[aria-disabled="true"] { cursor: default; opacity: 0.5; }
 .adp-edit:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent); }
 .adp-spacer { flex: 1; }
 

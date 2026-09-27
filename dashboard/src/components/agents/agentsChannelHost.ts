@@ -17,7 +17,7 @@ import { mentionedIn, withoutMention, type ComposerAgent } from '../../lib/agent
  * bizim composer componentlerini ve stilini kullansana" — and the project already said so
  * (`pattern-component-reuse-over`, and `composerHost.ts`'s own header: a hand-rolled box means
  * every one of the composer's behaviours rebuilt worse and drifting the moment the real one
- * moves). The meeting room answered this exact question first and this follows it.
+ * moves).
  *
  * ── What this surface HAS, and what it deliberately does not ────────────────────────
  * Attach, Send and the field are the owner's explicit list and are all live. The model/effort
@@ -98,8 +98,7 @@ function sameNote(a: ChannelNote | null, b: ChannelNote | null): boolean {
  * A {@link ComposerHost} over `#agents`.
  *
  * STABLE FOR THE PAGE'S LIFE (`useMemo` with no deps) and reading everything live through a
- * ref — not an optimisation but a requirement in two directions, exactly as in
- * `meetingHost.ts`: the composer registers its focus target in `useEffect(…, [session])`, so a
+ * ref — not an optimisation but a requirement in two directions: the composer registers its focus target in `useEffect(…, [session])`, so a
  * host rebuilt per render would tear that registration down and back up every 15s poll tick;
  * and `getModel()` runs on EVERY composer render, so it cannot close over a snapshot.
  */
@@ -145,7 +144,7 @@ export function useAgentsChannelHost(
     // exactly what a channel about to spend a headless run wants in front of it.
     claudeId: '',
     // …and therefore not a scratch key either. Named, so the attachment chips staged here
-    // cannot be shown to the meeting room, the other host that reports no conversation.
+    // cannot be shown to another host that reports no conversation (the thread panel).
     scratchId: 'agents-channel',
     getModel: (): ComposerHostModel => ({
       draft: draft.current,
@@ -260,7 +259,7 @@ export function useAgentsChannelHost(
  *
  * ITS OWN SCRATCH BUCKET, per slug. `claudeId: ''` means "no conversation to measure", and
  * `composerScratch` keys attachments by that id — so an unnamed bucket here would pool this
- * panel's staged files with the channel's and the meeting room's, which is the collision the
+ * panel's staged files with the channel's, which is the collision the
  * channel already had to name its own bucket to escape. Per SLUG rather than per run: a thread
  * panel is re-opened on the newest run constantly, and a file staged a second before that
  * happens belongs to the agent you are talking to, not to the run id that was on screen.

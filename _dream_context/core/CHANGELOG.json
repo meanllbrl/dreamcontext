@@ -1,5 +1,156 @@
 [
   {
+    "date": "2026-09-27",
+    "type": "decision",
+    "scope": "validation",
+    "description": "Measured across 458 transcripts: goal-validator drives the browser entirely through prewritten Playwright scripts (npm run verify:*), with zero browser-MCP tool calls and no model-driven step loop for Jev to accelerate. Even the full model-time share of a browser validation is only ~9.5% of wall-clock, so the maximum saving is under 10%, bought by adding a new probabilistic component to a path whose entire value is never PASSing without evidence. Decision: stop, do not build a Jev plugin. The real speed levers (reusing a warm dashboard server + scratch vault across one run's verify scripts, cheaper unit-test gates) are worth their own task.",
+    "breaking": false,
+    "summary": "Jev spike decision: no Jev plugin for validators — the browser step loop it would speed up doesn't exist here",
+    "references": [
+      "task:validator-larin-tarayici-adim-dongusu-jev-ile-hizlaniyor-mu-olc-bir-validasyonu-jev-ile-tekrar-kos-karar-ver"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-27",
+    "type": "feat",
+    "scope": "chat",
+    "description": "A 4th mode in the composer's mode grid (ALPHA), Train Me runs a swipe-and-A/B-card round to elicit taste signals, then writes the learned rule into a pattern via dreamcontext automations learn --playbook-file (or patterns match for standalone use). Ships in both a composer mode and, per-automation, a Train button wired to that automation's learning ledger. verify:train-me covers 94 checks end to end in both themes.",
+    "breaking": false,
+    "summary": "Train Me: a new chat mode where the agent learns your taste through swipe/A-B cards and writes it into a pattern",
+    "references": [
+      "task:train-me-mode-the-agent-learns-your-taste-through-swipe-and-a-b-cards-and-writes-what-it-learned-into-patterns",
+      "file:scripts/verify/train-me.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-27",
+    "type": "feat",
+    "scope": "chat",
+    "description": "RoleCharacter.tsx gives each quest-party role a distinct drawn body, a --role-c-* hue and a prop, replacing the earlier flat maker/judge tint. Sleepy remains the lead character. Style guide's 'game grammar, not theatre' rule updated to describe characters, not just chrome tints.",
+    "breaking": false,
+    "summary": "Every agent role is now a real character: its own body, hue and prop instead of an emoticon",
+    "references": [
+      "task:every-agent-role-is-a-real-dreamcontext-character-its-own-body-colour-and-prop-told-apart-at-a-glance-not-an-emoticon",
+      "file:dashboard/src/components/sleepy/chat/RoleCharacter.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-27",
+    "type": "feat",
+    "scope": "develop-mode",
+    "description": "Chat's Develop mode now drives a real goal-skill run instead of a single agent: develop-recipe.ts and develop-lead-guard.ts orchestrate wave-by-wave headless-teammate.ts builders through the agent-teammates route, each wave closed by a review round and the whole run closed by a validator, surfaced live on the quest map. Landed across 4 waves this cycle, in_review; a follow-up task fixes the develop run header ordering and the per-wave clock so a card always names its real wave.",
+    "breaking": false,
+    "summary": "Develop mode runs as goal-skill waves in Chat: builders build each wave, a review closes it, a validator closes the run",
+    "references": [
+      "task:develop-mode-runs-like-goal-skill-waves-on-the-map-builders-build-each-wave-a-review-closes-every-wave-a-validator-closes-the-run",
+      "file:dashboard/src/lib/develop-recipe.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-27",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "A new cross-project Assistant ships: src/lib/assistant/, a dreamcontext assistant CLI, a desktop assistant.rs surface and a server assistant route. It sits in the macOS notch, wakes on a global hotkey, and can act as the owner across any registered project rather than being pinned to one vault — the direct successor to both Meeting Room and the retired J.A.R.V.I.S mode.",
+    "breaking": false,
+    "summary": "The dreamcontext Assistant lives in the notch, wakes on a hotkey, and drives any project as the owner's replica",
+    "references": [
+      "task:a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica",
+      "feature:dreamcontext-assistant",
+      "file:src/lib/assistant"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-27",
+    "type": "feat",
+    "scope": "automations",
+    "description": "An automation answering an @mention or thread reply now skips the document-approval review gate entirely, since it never produces a document to approve — an approval question that does render still shows as Approve/Reject buttons instead of a free-text box. AutomationAttentionOpener, which used to snap any run needing attention open as a Chat tab by itself, is deleted; the channel's 'waiting on you' banner is the only prompt now.",
+    "breaking": false,
+    "summary": "An @ question answers in its thread with no approval gate, and a run never auto-opens a chat tab",
+    "references": [
+      "task:an-agent-answering-an-question-never-asks-to-approve-a-document-and-a-run-never-opens-a-chat-tab-by-itself",
+      "file:dashboard/src/components/sleepy/AutomationAttentionOpener.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-27",
+    "type": "chore",
+    "scope": "meeting-room",
+    "description": "Meeting Room (the hidden cross-vault announcement thread behind the launcher logo) is fully deleted now that dreamcontext Assistant replaces it: src/lib/meeting-room.ts, meeting-delivery.ts, routes/meeting.ts, the dashboard meeting components and hook, the desktop meeting capability, and every meeting-room test and verify script are gone. The knowledge/features/meeting-room.md PRD stays as status: deprecated, pointing forward to the Assistant.",
+    "breaking": false,
+    "summary": "Meeting Room subsystem removed: retired feature, dead code and tests deleted",
+    "references": [
+      "file:src/lib/meeting-room.ts",
+      "file:dashboard/src/components/meeting/MeetingRoom.tsx",
+      "feature:meeting-room",
+      "feature:dreamcontext-assistant"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-26",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Chat tab titles are now generated by the agent running in that chat itself instead of a separate Haiku call, and auto-title is on by default. Covered end to end by the chat-agent-title verify script; agent-tab-menu now follows the default-on switch.",
+    "breaking": false,
+    "summary": "The chat's own agent names its tab; the Haiku namer is gone and auto-title is on by default",
+    "references": [
+      "commit:6a4f29d1",
+      "commit:1f2a74f0",
+      "commit:0882e4b0"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-26",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Chat's question cards were reworked to carry their own context line and free-form notes, support an Other option, render A/B/C comparison boards and swipe decks, and open previews fullscreen, so a question reads as a complete surface rather than a bare prompt.",
+    "breaking": false,
+    "summary": "Question cards stand on their own: context line, notes, Other, A/B/C boards, swipe decks, fullscreen previews",
+    "references": [
+      "commit:d16308d1"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-26",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Develop mode's send button now surfaces the actual blocking reason (e.g. task not ready, missing details) inline instead of just disabling silently, matching the new tasks-ready gate between Plan and Develop.",
+    "breaking": false,
+    "summary": "The develop button explains why it refuses instead of looking dead",
+    "references": [
+      "commit:f22dae76"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-25",
     "type": "fix",
     "scope": "handoff",
@@ -19,7 +170,7 @@
     "scope": "automations",
     "description": "Add the Elevated UX bundle for Agentic Automations from a parallel session, lanes A-D plus V and W: reworked AutomationsDispatcherBar, AutomationsEmptyState and AutomationsShowcase, and matching polish across the agents feed, member cards, thread panel and question block. Working tree is uncommitted.",
     "breaking": false,
-    "summary": "UNCOMMITTED: Agentic Automations 'Elevated' UX bundle (lanes A-D, V, W) across the dispatcher bar, empty state, showcase and agents feed",
+    "summary": "Agentic Automations 'Elevated' UX bundle (lanes A-D, V, W) across the dispatcher bar, empty state, showcase and agents feed",
     "references": [
       "file:dashboard/src/components/automations/AutomationsDispatcherBar.tsx",
       "file:dashboard/src/components/agents/AgentsFeed.tsx",
@@ -35,7 +186,7 @@
     "scope": "chat",
     "description": "Add the quest-party Chat UX from the goal-skill run (waves 1-3 landed, wave 4 building): new agentRoles, quest and goalLive libs; a new dreamcontext goal-live CLI (start/phase/actor/state/clear) that writes _dream_context/tmp/.goal-skill-live.<session>.json; team-log action lines replacing bare tool rows; party cards and a quest map; role hue tokens (maker chart-2, judge chart-8); and a 'game grammar, not theatre' style-guide rule. Working tree is uncommitted.",
     "breaking": false,
-    "summary": "UNCOMMITTED: agent work in Chat reads as a quest party: party cards, quest map, team-log action lines, maker/judge role hues, and a goal-live CLI",
+    "summary": "agent work in Chat reads as a quest party: party cards, quest map, team-log action lines, maker/judge role hues, and a goal-live CLI",
     "references": [
       "knowledge:quest-party-chat-ux-plan",
       "file:dashboard/src/components/sleepy/GoalLivePanel.tsx",
@@ -51,7 +202,7 @@
     "scope": "chat",
     "description": "A new MediaEmbed atom (dashboard/src/components/sleepy/chat/MediaEmbed.tsx) replaces three separate hand-written video/audio renderers in the Chat transcript (TranscriptItem), the SlideOver (MediaPreview) and the Agents feed (AgentMessage's audio card + AgentClip) — the aspect box, preload, range URL and dark controls had been fixed three times independently. Fixes a side effect for free: a Chat user attachment that is audio was previously drawn in a <video> element. Owner rule behind it (2026-09-25): 'bir yeri fixlediğimde o da fixlensin' (a fix in one place must land everywhere). Guarded by tests/unit/media-embed.test.ts. Working tree is uncommitted; suggested commit message: refactor(chat): one MediaEmbed atom for every inline clip and audio.",
     "breaking": false,
-    "summary": "UNCOMMITTED: one MediaEmbed atom now draws every inline clip and audio in Chat, the SlideOver and the Agents feed",
+    "summary": "one MediaEmbed atom now draws every inline clip and audio in Chat, the SlideOver and the Agents feed",
     "references": [
       "file:dashboard/src/components/sleepy/chat/MediaEmbed.tsx",
       "file:tests/unit/media-embed.test.ts",
@@ -89,7 +240,7 @@
     "scope": "agents",
     "description": "Round-1 build plus audit-polish (2026-09-24/25) of the agents channel, still uncommitted in the working tree. An ask now renders as one row with an inset answer preview and a Slack-style thread line (server-computed reply count shared by feed and thread); opening the thread shows the run's whole published document as a chat-grade ProseSegment reply, and agent text everywhere reads at chat typography instead of raw markdown. The scheduler's healthy states collapse to a header pill; '/' opens this project's real skill list in both composers with Turkish-aware matching; the page is renamed 'Agentic Automations'. Runs started from the app can now call dreamcontext itself (a login-shell CLI shim is written and prepended only when nothing already resolves, never guessing an install dir), so a posted board, image, video/audio clip or PDF actually renders — media is served through the vault-scoped raw route rather than the desktop-gated agent-file route, keeping '.svg' out of every allowlist. Audit polish reworded refusal strings at the source (CLI and Telegram inherit the fix), made the thread panel resizable and Esc-closeable, fixed dark-mode contrast and control sizing across the page, and landed the owner's round-2 calls: a per-agent (not project-wide) run slot, the thread panel overlaying below ~900px, .svg opening only as a Lightbox <img> on desktop, an app-wide accent-strong token, and wrapping sidebar labels.",
     "breaking": false,
-    "summary": "UNCOMMITTED (working tree): the agents channel answers under your ask like Slack, the run's full report lives in the thread, and diagrams/PDFs/clips an agent posts actually render",
+    "summary": "the agents channel answers under your ask like Slack, the run's full report lives in the thread, and diagrams/PDFs/clips an agent posts actually render",
     "references": [
       "task:agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render",
       "file:src/lib/automations/cli-path.ts",
@@ -108,7 +259,7 @@
     "scope": "agents",
     "description": "Finish the agents epic on the channel branch. A run's post can now carry a question with up to 4 buttoned options (`automations propose --choice`), a `--kv` structured summary, typed files and a board; replying in a thread or @-mentioning an agent resumes its bound session (or runs a `call` agent once) through a reply-job registry, with @mention semantics differing by agent mode and the answer coming back as a post. Chat reaches the same thread through an `agent-thread` dream-view card. A run that hits the account usage limit is gated: marked failed, publishing nothing, rather than filing the limit banner as its document. The side menu drops three disagreeing badge implementations for one `MaturityTag` on an `alpha|beta|off` ladder (retiring the `Lab` chip word), adds static per-section `--nav-hue` tints that always lose to active/unread, redraws 4 icons, and moves Agents to the top marked Beta. 12 implementer lanes, 4 plan rounds, 2 review rounds, validation PASS.",
     "breaking": false,
-    "summary": "UNMERGED (branch feat/agents-channel-composer): agents steps 3+4 land end to end — a run's message can ask, attach and be replied to, and the side menu gets one maturity model, section hues and honest icons",
+    "summary": "agents steps 3+4 land end to end — a run's message can ask, attach and be replied to, and the side menu gets one maturity model, section hues and honest icons",
     "references": [
       "file:dashboard/src/components/common/MaturityTag.tsx",
       "file:src/lib/automations/hitl.ts",
@@ -125,7 +276,7 @@
     "scope": "agents",
     "description": "The #agents channel stops carrying a hand-rolled text field and mounts the real chat Composer through an adapter host modelled on meetingHost.ts, deleting AgentChannelComposer.tsx and roughly 4k chars of bespoke CSS. Three additions land at the shared seam rather than locally: showModel, unavailable={{reason}} (expressing the run slot as connected:false was the first shape and was wrong — connected also gates useUsageLimits and useClaudeAccounts, so it froze the account's usage caps for every run's duration and drew no usage button at all on a page opened mid-run), and PeerMention.logoUrl, since this channel's premise is that agents have faces. composerScratch keyed by convId meant this channel and the meeting room shared one draft bucket; fixed at the seam with ComposerHost.scratchId rather than by reusing claudeId, which is also the session-stats key and a truthy value there starts a 5s poll for a conversation that does not exist. Two bugs only a screenshot caught: commit cleared the field after a host had restored a refused draft, and the 'name an agent with @' note was latched at send time so it sat red under a draft that by then named one — it is derived from the live draft now. verify:agents-feed 73/73 against a real server, real runner and Chromium. NOT merged, never pushed, no PR.",
     "breaking": false,
-    "summary": "UNMERGED (branch feat/agents-channel-composer): a finished run is a message in #agents, and the channel's field is the chat's own Composer",
+    "summary": "a finished run is a message in #agents, and the channel's field is the chat's own Composer",
     "references": [
       "commit:4daa1126",
       "file:dashboard/src/components/agents/agentsChannelHost.ts",
@@ -398,7 +549,7 @@
     "scope": "chat",
     "description": "Owner report 2026-09-13 with a screenshot of a 10-node decision ladder: \"bu görünüm interaktif değil yaklaştırılamıyor merkezde değil dediğim gibi tıklanamıyor iç içe yazılar var\". Both defects reproduced in real Chromium before touching anything: the drawing sat at x=0 with 778px of dead space beside it in a 1050px pane, and the label \"+100k sonra\" covered two nodes.\n\nROOT CAUSE of the overlap (measured, not guessed): a routed edge reserved width on waypoint floor(len/2) of its path, but drew the label at pts[floor(len/2)] AFTER reversing the point list for back edges. For an even-length path those are different waypoints, so the reservation opened a gap the label never used. The existing verify ladder's back edge has an odd-length path, which is why the harness never caught it.\n\nWHAT CHANGED (chat-html-graph.js + chat-html-kit.css, mirrored into chatHtmlKit.ts):\n· The laid drawing moved onto a .dc-graph-stage inside the block, and the block became a viewport: the stage is CENTRED at every pane width, drags to pan (clamped so it can never be thrown out of its own block), zooms on ctrl/cmd-wheel — which is how a trackpad pinch arrives — or a corner control that rests invisible so PNG/print exports stay clean, and answers + / - / 0 / arrows / Esc from the keyboard. A PLAIN wheel is deliberately untouched: the block lives in a transcript.\n· Hovering a node lights it, its edges and their far ends; clicking HOLDS that trace and dims everything else. Every node is tabbable and answers Enter/Space. The pointer is captured only after a 4px move, so a pan never eats a node's click.\n· Labels are PLACED, not pinned: both middle waypoints are reserved, then candidate boxes slide along the finished path (getPointAtLength) and step off it, scored against every node box and every label already placed.\n· Caught while verifying: .dc-graph--tight used a CHILD selector, so the shrink stopped reaching nodes the moment they moved onto the stage — the engine measured them small, CSS painted them full size, and every arrow at 380px floated off its node. Descendant now, pinned by a unit test.\n\nPROOF: scripts/verify/chat-html.mjs runGraph now carries the owner's own diagram as a fixture (the even-length back edge) and drives the view with a real pointer — 57/57 checks, including centring at four widths, zero labels on nodes, hover/click/Esc traces, drag-pan, ctrl-wheel zoom, and that a plain wheel moves nothing. 151/151 in tests/unit/chat-html.test.ts.",
     "breaking": false,
-    "summary": "UNCOMMITTED: a dream-html diagram is now a VIEW — centred, pan/zoom, click a node to trace it, and labels that no longer land on nodes",
+    "summary": "a dream-html diagram is now a VIEW — centred, pan/zoom, click a node to trace it, and labels that no longer land on nodes",
     "references": [
       "file:dashboard/src/components/sleepy/chat/chat-html-graph.js",
       "file:dashboard/src/components/sleepy/chat/chat-html-kit.css",

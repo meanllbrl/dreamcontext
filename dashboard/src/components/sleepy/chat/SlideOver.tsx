@@ -18,6 +18,7 @@ import { stepStretches } from './toolAction';
 import { runCarries, runIdentity, runVerdict } from './questModel';
 import { AGENT_ROLES } from '../../../lib/agentRoles';
 import { freshExplainer } from '../../../lib/quest';
+import { runHistoryPath } from './teammates';
 import type { ChatItem } from '../chatSession';
 
 /**
@@ -49,6 +50,9 @@ export interface SlideOverSubAgentProps {
   /** Connected peers — a `peer-<vault>` envoy drill-in wears that vault's logo and name in
    *  its header instead of the raw generated agent slug. */
   peers?: PeerMention[];
+  /** A teammate that is ALSO a tracked background process keeps its output panel (and its
+   *  Stop) one click away from this header. */
+  onShowOutput?: (run: SubAgentRun) => void;
   onClose: () => void;
   onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
 }
@@ -343,27 +347,35 @@ function isStepItem(item: ChatItem): boolean {
   return item.kind === 'tool' || (item.kind === 'thinking' && !!item.text.trim());
 }
 
-function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOverSubAgentProps) {
+/** How often an open teammate's transcript is re-read while it works. A teammate reports no
+ *  frames to this pane: its transcript on disk is the only live channel it has. */
+const TEAMMATE_POLL_MS = 4000;
+
+function SubAgentSlideOver({ run, conversationId, peers = [], onShowOutput, onClose }: SlideOverSubAgentProps) {
   const api = useApi();
   const { vault } = useVault();
   const [state, setState] = useState<{ loading: boolean; items: ChatItem[] }>({ loading: true, items: [] });
+  const path = runHistoryPath(run, conversationId);
+  const following = !!run.session && run.status === 'running';
 
   useEffect(() => {
     let cancelled = false;
     setState({ loading: true, items: [] });
-    api.get<{ items: DrillInHistoryEntry[] }>(
-      `/agent/chat-history?claudeId=${encodeURIComponent(conversationId)}&subagent=${encodeURIComponent(run.taskId)}`,
-    )
+    const load = () => api.get<{ items: DrillInHistoryEntry[] }>(path)
       .then((r) => {
         if (cancelled) return;
         const items = (Array.isArray(r?.items) ? r.items : []).map(toChatItem).filter((x): x is ChatItem => !!x);
         setState({ loading: false, items });
       })
-      .catch(() => { if (!cancelled) setState({ loading: false, items: [] }); });
-    return () => { cancelled = true; };
+      .catch(() => { if (!cancelled) setState((prev) => ({ loading: false, items: prev.items })); });
+    void load();
+    // A working teammate is followed: its transcript grows on disk, and a re-read keeps what
+    // is already shown (no "Loading" flash) until the new list lands.
+    const timer = following ? window.setInterval(() => { void load(); }, TEAMMATE_POLL_MS) : null;
+    return () => { cancelled = true; if (timer != null) window.clearInterval(timer); };
     // Refetch when the run's lifecycle advances (e.g. task-updated/task-notification
     // landed after the drill-in was already open) or a different run is opened.
-  }, [api, conversationId, run.taskId, run.status, run.endedAt]);
+  }, [api, path, following, run.status, run.endedAt]);
 
   const usage = usageLine(run.usage);
   const report = runReportText(run);
@@ -413,6 +425,11 @@ function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOv
             {carries && <QuestBadge carries={carries} title={freshExplainer(stage) ?? undefined} />}
             {verdict && run.status !== 'running' && <VerdictChip verdict={verdict} />}
             <span className="chat-slideover-subagent-status" data-status={run.status}>{run.status}</span>
+            {onShowOutput && run.taskType === 'local_bash' && (
+              <button type="button" className="chat-slideover-subagent-output" onClick={() => onShowOutput(run)}>
+                Output →
+              </button>
+            )}
           </span>
         </div>
         <button type="button" className="chat-slideover-close" onClick={onClose} aria-label="Close">✕</button>
@@ -440,7 +457,9 @@ function SubAgentSlideOver({ run, conversationId, peers = [], onClose }: SlideOv
         {!state.loading && state.items.length === 0 && (
           <div className="chat-slideover-fallback">
             <p className="chat-slideover-status">
-              This teammate's transcript hasn't reached the disk yet. Showing what's known so far.
+              {run.session
+                ? "This teammate hasn't written anything yet. Showing what's known so far."
+                : "This teammate's transcript hasn't reached the disk yet. Showing what's known so far."}
             </p>
             {run.prompt && (
               <div className="chat-toolcard-section">

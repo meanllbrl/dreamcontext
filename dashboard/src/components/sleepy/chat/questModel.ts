@@ -1,11 +1,11 @@
 import {
-  isDispatchedAgent, isHeadlessAgentShell, runReportText, toolResultText, type SubAgentRun,
+  isDispatchedAgent, isHeadlessAgentShell, isTeammateRun, runReportText, toolResultText, type SubAgentRun,
 } from './chatEntities';
 import { parseChatActions } from './chatActions';
 import { dreamOutcome, parseDreamActions } from './dreamCommand';
 import { actionText, isQuestOnlyCommand, toolAction } from './toolAction';
 import {
-  AGENT_ROLES, LEAD_NAME, QUEST_STAGE_LABELS, STAGE_ACTS, isJudgeRole, resolveAgentIdentity,
+  AGENT_ROLES, LEAD_NAME, QUEST_STAGE_LABELS, STAGE_ACTS, identityForRole, isJudgeRole, resolveAgentIdentity,
   type AgentIdentity, type AgentRoleId, type PartyStageId, type QuestStageId,
 } from '../../../lib/agentRoles';
 import {
@@ -41,11 +41,16 @@ export interface Party {
   runs: SubAgentRun[];
   stage: PartyStageId;
   lead: AgentRoleId;
-  /** 1-based among parties of the same stage (the wave, for a build). 0 for scouting and teamwork. */
+  /** 1-based among parties of the same stage (the wave, for an unregistered build). 0 for
+   *  scouting and teamwork. An ordinal: it moves when an earlier party appears, so a party
+   *  with a registered `wave` is never named by it. */
   round: number;
+  /** The Develop wave every member was registered with (`goal-live actor --wave N`). */
+  wave?: number;
   anchorEntryId: string | null;
   /** `replace`: the card takes the first Agent call's place. `after`: it follows the headless
-   *  Bash row that started it. `trailing`: no call of this chat started it; it trails. */
+   *  Bash row that started it, or the call nearest before it began when no call names it.
+   *  `trailing`: the chat has no tool call to sit after; it trails. */
   anchorKind: 'replace' | 'after' | 'trailing';
   /** A later party of the same judging stage exists: this round was answered. */
   superseded: boolean;
@@ -80,6 +85,9 @@ function isGhost(run: SubAgentRun): boolean {
 }
 
 export function runIdentity(run: SubAgentRun): AgentIdentity {
+  // A teammate the orchestrator registered says who it is; nothing is guessed over that.
+  const registered = identityForRole(run.role);
+  if (registered) return registered;
   return resolveAgentIdentity({
     subagentType: run.subagentType,
     name: run.name,
@@ -104,6 +112,7 @@ export function runVerdict(run: SubAgentRun): Verdict | null {
 export function runCarries(run: SubAgentRun): Carries | null {
   const { role } = runIdentity(run);
   if (isJudgeRole(role)) return 'fresh';
+  if (run.joined === 'fork' || run.joined === 'resume') return 'memory';
   if (isHeadlessAgentShell(run)) {
     const command = run.command ?? run.name;
     if (/(?:^|\s)(?:--fork-session|--resume|-r)(?:[\s=]|$)/.test(command)) return 'memory';
@@ -128,7 +137,7 @@ export function runDoing(run: SubAgentRun): string {
 
 /** A transcript Agent call with no live run (a resumed chat), rebuilt from its own input. */
 function ghostRun(e: QuestEntry): SubAgentRun {
-  const started = e.startedAt ?? e.ts ?? 0;
+  const started = entryTime(e) ?? 0;
   return {
     taskId: `${GHOST_PREFIX}${e.toolUseId ?? e.id}`,
     toolUseId: e.toolUseId,
@@ -165,23 +174,46 @@ function majority<V>(values: readonly V[]): V {
   return best;
 }
 
-interface Batch { runs: SubAgentRun[]; anchor: QuestEntry | null; kind: Party['anchorKind'] }
+interface Batch {
+  runs: SubAgentRun[]; anchor: QuestEntry | null; kind: Party['anchorKind'];
+  /** Set when the id cannot come from the anchor: a registered wave, or a run placed by time. */
+  id?: string;
+}
+
+/** A run's start, when it has one worth placing by. A rebuilt run with no clock reads 0. */
+function startOf(run: SubAgentRun): number | null {
+  return Number.isFinite(run.startedAt) && run.startedAt > 0 ? run.startedAt : null;
+}
+
+function earliestStart(runs: readonly SubAgentRun[]): number | null {
+  const starts = runs.map(startOf).filter((t): t is number => t != null);
+  return starts.length ? Math.min(...starts) : null;
+}
 
 /**
- * The chat's parties, in transcript order. A party is a maximal stretch of dispatch calls:
- * Agent calls and headless `claude` Bash calls, with only thinking, empty text and quest-map
- * bookkeeping between them. Anything the reader can see closes it, so one message's parallel
- * dispatches are ONE party and a round sent after "Revising" is the next.
+ * The chat's parties, in the order things happened. A party is a maximal stretch of dispatch
+ * calls: Agent calls and headless `claude` Bash calls, with only thinking, empty text and
+ * quest-map bookkeeping between them. Anything the reader can see closes it, so one message's
+ * parallel dispatches are ONE party and a round sent after "Revising" is the next.
  *
- * Runs that no call in `entries` started trail the transcript as one last party.
+ * A teammate registered with a wave (`goal-live actor --wave N`) is not batched by the call
+ * that names it: the lead launches with `--session-id "$SID"`, so no call may name it at
+ * launch, and one registration call can name a whole wave. Registered runs are grouped by
+ * (stage, wave), plus the round for a judging stage, and the group sits at its earliest place.
+ *
+ * A party no call placed sits after the tool call nearest before it began; one that nothing
+ * dates sits after the last tool call. Only a chat with no tool call at all trails a party.
  */
 export function partyBatches(entries: readonly QuestEntry[], runs: readonly SubAgentRun[]): Party[] {
-  const agentRuns = runs.filter((r) => isDispatchedAgent(r) || isHeadlessAgentShell(r));
-  const byToolUse = new Map<string, SubAgentRun>();
-  for (const r of agentRuns) if (r.toolUseId && !byToolUse.has(r.toolUseId)) byToolUse.set(r.toolUseId, r);
+  const agentRuns = runs.filter((r) => isDispatchedAgent(r) || isHeadlessAgentShell(r) || isTeammateRun(r));
+  // Every run a call started: one registration call can name several teammates.
+  const byToolUse = new Map<string, SubAgentRun[]>();
+  for (const r of agentRuns) if (r.toolUseId) byToolUse.set(r.toolUseId, [...(byToolUse.get(r.toolUseId) ?? []), r]);
 
   const batches: Batch[] = [];
   const placed = new Set<string>();
+  /** A registered run's place in the transcript: the entry index of the call that named it. */
+  const namedAt = new Map<string, number>();
   // A run adopted off the roster carries no tool id; its Agent call is matched by the
   // description instead, so a resumed chat does not draw the same agent as a ghost AND a straggler.
   const adopted = (e: QuestEntry): SubAgentRun | undefined => {
@@ -189,35 +221,105 @@ export function partyBatches(entries: readonly QuestEntry[], runs: readonly SubA
     return description ? agentRuns.find((r) => !r.toolUseId && !placed.has(r.taskId) && r.name === description) : undefined;
   };
   let open: Batch | null = null;
-  for (const e of entries) {
+  entries.forEach((e, index) => {
     const live = e.kind === 'tool' && e.toolUseId ? byToolUse.get(e.toolUseId) : undefined;
-    const run = live ?? (isAgentCall(e) ? adopted(e) ?? ghostRun(e) : undefined);
-    if (run) {
+    const found = live ?? (isAgentCall(e) ? [adopted(e) ?? ghostRun(e)] : []);
+    const batched = found.filter((r) => r.wave == null);
+    for (const r of found) if (r.wave != null && !namedAt.has(r.taskId)) namedAt.set(r.taskId, index);
+    if (batched.length) {
       if (!open) {
-        open = { runs: [], anchor: e, kind: isHeadlessAgentShell(run) ? 'after' : 'replace' };
+        open = { runs: [], anchor: e, kind: isHeadlessAgentShell(batched[0]) || isTeammateRun(batched[0]) ? 'after' : 'replace' };
         batches.push(open);
       }
-      open.runs.push(run);
-      placed.add(run.taskId);
-      continue;
+      open.runs.push(...batched);
+      for (const r of batched) placed.add(r.taskId);
+      return;
     }
     if (!isTransparent(e)) open = null;
+  });
+
+  // Where a party no call placed goes: after the tool call nearest before it began. Only a
+  // tool call can carry a card. One that began before every dated call sits just before the
+  // first of them (after an undated one, from a transcript that kept no times), else after it.
+  const tools = entries.flatMap((e, index) => (e.kind === 'tool' ? [index] : []));
+  const timedTools = tools.flatMap((index) => {
+    const at = entryTime(entries[index]);
+    return at != null ? [{ index, at }] : [];
+  });
+  const placeByTime = (runsOf: readonly SubAgentRun[]): number | null => {
+    const t = earliestStart(runsOf);
+    if (t == null || timedTools.length === 0) return null;
+    const first = timedTools[0].index;
+    return [...timedTools].reverse().find((c) => c.at <= t)?.index
+      ?? [...tools].reverse().find((index) => index < first) ?? first;
+  };
+  // A party nothing dates and no call names still has to be drawn somewhere: after the last
+  // tool call, where the transcript is now, inside it (never docked under newer messages). It
+  // trails only a chat with no tool call at all.
+  const lastTool = tools.length ? tools[tools.length - 1] : null;
+
+  // Registered waves. One party per wave, never two waves in one card. A build's round is
+  // deliberately NOT part of its key: a builder brought back for round 2 is the same run
+  // (one session), so keying on the round would move it out of the card it already sits in
+  // and leave its wave's card short. It stays in its wave's card, which keeps its wave's
+  // name. A judge of each round is a fresh run, so a judging stage's round is its own party.
+  const waves = new Map<string, SubAgentRun[]>();
+  for (const r of agentRuns) {
+    if (r.wave == null) continue;
+    const stage = runIdentity(r).stage;
+    const key = JUDGED_STAGES.has(stage) ? `${stage}-w${r.wave}-r${r.round ?? 1}` : `${stage}-w${r.wave}`;
+    waves.set(key, [...(waves.get(key) ?? []), r]);
+    placed.add(r.taskId);
   }
-  const orphans = agentRuns.filter((r) => !placed.has(r.taskId));
-  if (orphans.length) batches.push({ runs: orphans, anchor: null, kind: 'trailing' });
+  const unplaced: Batch[] = [];
+  for (const [key, members] of waves) {
+    const named = members.map((r) => namedAt.get(r.taskId)).filter((i): i is number => i != null);
+    const timed = placeByTime(members);
+    const at = [...named, ...(timed != null ? [timed] : [])];
+    const place = at.length ? Math.min(...at) : lastTool;
+    const anchor = place != null ? entries[place] : null;
+    (anchor ? batches : unplaced).push({ runs: members, anchor, kind: anchor ? 'after' : 'trailing', id: `party-${key}` });
+  }
+
+  // Runs no call started, grouped by the call they follow: what began between the same two
+  // calls was sent together. Named after the earliest, so a later arrival keeps the id.
+  const orphans = agentRuns.filter((r) => !placed.has(r.taskId))
+    .sort((a, b) => (startOf(a) ?? Infinity) - (startOf(b) ?? Infinity));
+  const byPlace = new Map<number, SubAgentRun[]>();
+  for (const r of orphans) {
+    const place = placeByTime([r]) ?? lastTool;
+    if (place == null) continue;
+    byPlace.set(place, [...(byPlace.get(place) ?? []), r]);
+    placed.add(r.taskId);
+  }
+  for (const [place, members] of byPlace) {
+    batches.push({ runs: members, anchor: entries[place], kind: 'after', id: `party-at-${members[0].taskId}` });
+  }
+  const untimed = orphans.filter((r) => !placed.has(r.taskId));
+  if (untimed.length) unplaced.push({ runs: untimed, anchor: null, kind: 'trailing' });
+
+  // The order things happened: by place in the transcript, then by who began first.
+  const entryIndex = new Map(entries.map((e, index) => [e.id, index] as const));
+  const ordered = batches
+    .map((b, i) => ({ b, i, at: entryIndex.get(b.anchor!.id) ?? 0, t: earliestStart(b.runs) ?? Infinity }))
+    .sort((x, y) => x.at - y.at || x.t - y.t || x.i - y.i)
+    .map((x) => x.b)
+    .concat(unplaced);
 
   const seen = new Map<PartyStageId, number>();
-  const parties = batches.map((b): Party => {
+  const parties = ordered.map((b): Party => {
     const identities = b.runs.map(runIdentity);
     const stage = majority(identities.map((i) => i.stage));
     const round = stage === 'scout' || stage === 'none' ? 0 : (seen.get(stage) ?? 0) + 1;
     seen.set(stage, round);
+    const wave = b.runs[0].wave;
     return {
-      id: b.anchor ? `party-${b.anchor.id}` : `party-trailing-${b.runs[0].taskId}`,
+      id: b.id ?? (b.anchor ? `party-${b.anchor.id}` : `party-trailing-${b.runs[0].taskId}`),
       runs: b.runs,
       stage,
       lead: majority(identities.map((i) => i.role)),
       round,
+      ...(wave != null && b.runs.every((r) => r.wave === wave) ? { wave } : {}),
       anchorEntryId: b.anchor?.id ?? null,
       anchorKind: b.kind,
       superseded: false,
@@ -231,13 +333,14 @@ export function partyBatches(entries: readonly QuestEntry[], runs: readonly SubA
   return parties;
 }
 
-/** The card's kicker: "Plan review · round 2", "Build · wave 1", "Scouting". */
+/** The card's kicker: "Plan review · round 2", "Build · wave 1", "Scouting". A build names
+ *  the wave its builders were registered with; only an unregistered one counts its place. */
 export function partyTitle(p: Party): string {
   switch (p.stage) {
     case 'review': case 'boss': case 'trial':
       return `${QUEST_STAGE_LABELS[p.stage]} · round ${p.round}`;
     case 'build':
-      return `${QUEST_STAGE_LABELS.build} · wave ${p.round}`;
+      return `${QUEST_STAGE_LABELS.build} · wave ${p.wave ?? p.round}`;
     case 'scout': return 'Scouting';
     case 'none': return 'Teamwork';
     default: return QUEST_STAGE_LABELS[p.stage];
@@ -304,8 +407,11 @@ export function partyTally(p: Party): PartyTally {
 /** The composer shelf's task progress, as far as the quest reads it (`TaskProgress` fits). */
 export interface QuestProgressProbe { slug: string; state: string; done: number; total: number }
 
+/** When an entry happened, or null. 0 is no time, never the epoch: a row replayed from a
+ *  transcript without a timestamp carries 0 (chatSession.ts `toChatItem`). */
 function entryTime(e: QuestEntry): number | null {
-  return e.startedAt ?? e.ts ?? null;
+  for (const t of [e.startedAt, e.ts]) if (t != null && Number.isFinite(t) && t > 0) return t;
+  return null;
 }
 
 /** A Bash call that finished and whose CLI did not report a failure. */
@@ -379,7 +485,7 @@ export function deriveChatQuest(i: {
     const stage = questStageOf(p.stage, mode);
     if (!stage) continue;
     const count = parties.filter((q) => questStageOf(q.stage, mode) === stage).length;
-    mark(stage, p.runs[0]?.startedAt ?? null, stage === 'draft' ? 1 : count);
+    mark(stage, p.runs[0] ? startOf(p.runs[0]) : null, stage === 'draft' ? 1 : count);
   }
 
   // `index` is the winning entry's place in the transcript: what the outcome counts stops there.
@@ -408,12 +514,13 @@ export function deriveChatQuest(i: {
   // is how a skipped Ask still reads as passed once the draft exists.
   const furthest = template.reduce((acc, id, idx) => (reach.has(id) ? idx : acc), 0);
   const activeIndex = won ? template.length : furthest;
-  const buildParties = parties.filter((p) => p.stage === 'build').length;
+  const builds = parties.filter((p) => p.stage === 'build');
   const stages = template.map((id, idx): QuestStage => {
     const state = idx < activeIndex ? 'done' : idx === activeIndex ? 'active' : 'todo';
     const stage: QuestStage = { id, label: QUEST_STAGE_LABELS[id], state, rounds: state === 'todo' ? 0 : Math.max(1, reach.get(id)?.rounds ?? 0) };
     if (id === 'build') {
-      if (buildParties > 0) stage.wave = { at: buildParties, of: null };
+      // The newest build's registered wave, as its card names it; else how many builds went out.
+      if (builds.length > 0) stage.wave = { at: builds[builds.length - 1].wave ?? builds.length, of: null };
       if (progress && (progress.state === 'ok' || progress.state === 'all-done') && progress.total > 0) {
         stage.meter = { done: progress.done, total: progress.total };
       }
@@ -431,7 +538,7 @@ export function deriveChatQuest(i: {
       state: memberState(run), verdict: runVerdict(run), carries: runCarries(run),
     };
   });
-  const beatAt = latest?.runs[0]?.startedAt ?? null;
+  const beatAt = latest?.runs[0] ? startOf(latest.runs[0]) : null;
 
   // The seal stamps once: a won quest's tally is the parties sent up to the win, so a scout the
   // chat sends afterwards (the same Plan chat keeps talking) cannot move "7 agents" to "8".
@@ -442,7 +549,7 @@ export function deriveChatQuest(i: {
     if (!won) return true;
     const at = p.anchorEntryId != null ? entryIndex.get(p.anchorEntryId) : undefined;
     if (at != null) return at <= won.index;
-    const t = p.runs[0]?.startedAt;
+    const t = p.runs[0] ? startOf(p.runs[0]) : null;
     return t == null || won.at == null || t <= won.at;
   };
   const tallied = parties.filter(sentByWin);
@@ -480,6 +587,7 @@ export function deriveChatQuest(i: {
 // ─── Develop: how this was built ───────────────────────────────────────────────────
 
 function lineageKind(run: SubAgentRun, role: AgentRoleId): QuestLineageNode['kind'] {
+  if (run.joined === 'fork' || run.joined === 'resume' || run.joined === 'fresh') return run.joined;
   if (isHeadlessAgentShell(run)) {
     const command = run.command ?? run.name;
     if (/(?:^|\s)--fork-session(?:[\s=]|$)/.test(command)) return 'fork';

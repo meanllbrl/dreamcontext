@@ -40,16 +40,6 @@ import { voiceApiKey } from './config.js';
 
 export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
-/**
- * Groq's OpenAI-compatible base. The transcription request is byte-identical to
- * OpenRouter's — same multipart, same field names — so supporting it is a base URL and a
- * key, not an integration.
- */
-export const GROQ_BASE = 'https://api.groq.com/openai/v1';
-
-/** Groq's id for the same model. Providers namespace differently; this one has no prefix. */
-export const GROQ_TRANSCRIPTION_MODEL = 'whisper-large-v3-turbo';
-
 /** Sent on every call so usage is attributable in the owner's OpenRouter dashboard. */
 export const OPENROUTER_HEADERS = {
   'HTTP-Referer': 'https://dreamcontext.dev',
@@ -96,21 +86,6 @@ export function logUpstream(scope: string, status: number, body: string, key?: s
  * itself, which is the only thing that actually knows.
  */
 export const AUDIO_MODELS = {
-  /**
-   * Transcription, measured on the owner's key against the same Turkish take:
-   *
-   *   whisper-large-v3-turbo   704-1087ms   $0.000111   "Dremontext Taskını güncelle ve…"
-   *   gpt-4o-transcribe        1111ms       $0.000172   "Durayan jontext taskını…"
-   *   gpt-4o-mini-transcribe   1009ms       $0.000172   "Gramjon text taskını…"
-   *
-   * Whisper is both the cheapest and the most accurate here, and it is a REAL speech
-   * recogniser rather than an omni chat model doing its best — it needs no language hint, no
-   * anti-echo sentinel and no "please only transcribe" prompt.
-   */
-  transcription: [
-    'openai/whisper-large-v3-turbo',
-    'openai/gpt-4o-transcribe',
-  ],
   /**
    * Speech, also measured head to head, with the output fed BACK through whisper to score
    * how faithfully each read the line:
@@ -166,25 +141,8 @@ export function fallbackVoice(voice: string | undefined): string {
 }
 
 /** The catalogues we resolve against, in preference order. First live match wins. */
-/** The three catalogues we resolve against, in preference order. First live match wins. */
 export const MODEL_PREFERENCES = {
-  /** Kept only so a caller asking for a chat-catalogue model still resolves; the AUDIO ids
-   *  live in {@link AUDIO_MODELS} and are deliberately not resolved. */
-  transcription: ['openai/gpt-audio-mini'],
   speech: ['openai/gpt-audio-mini'],
-  /**
-   * The correction pass, ordered by MEASUREMENT on the owner's key rather than by reputation.
-   * `gemini-2.5-flash-lite` answered in 615ms against `gpt-4o-mini`'s 1891ms — and it was
-   * also the more CONSERVATIVE of the two, fixing the one mangled product name and leaving
-   * the rest of the sentence alone, where gpt-4o-mini rewrote "insight" into "şifreler"
-   * (passwords). Both properties point the same way, which is unusual and worth writing down:
-   * the fast model is the safe one here, because this pass must repair jargon, not rephrase.
-   */
-  correction: [
-    'google/gemini-2.5-flash-lite',
-    'anthropic/claude-haiku-4.5',
-    'openai/gpt-4o-mini',
-  ],
 } as const;
 
 export type ModelKind = keyof typeof MODEL_PREFERENCES;

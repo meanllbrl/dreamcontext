@@ -31,6 +31,116 @@
       ]
     },
     {
+      "path": "assistant",
+      "desc": "The dreamcontext Assistant's verbs — only its own chat session can run these",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "assistant answer",
+      "desc": "Answer a chat's pending question or permission prompt",
+      "args": [
+        "<sessionId>"
+      ],
+      "valueFlags": [
+        "--question",
+        "--choice",
+        "--text"
+      ]
+    },
+    {
+      "path": "assistant broadcast",
+      "desc": "Send the owner's message to every project; each project's own agent writes it",
+      "args": [
+        "<message>"
+      ],
+      "valueFlags": [
+        "--to",
+        "--timeout"
+      ]
+    },
+    {
+      "path": "assistant chat",
+      "desc": "Start a chat in a project and send the prompt",
+      "args": [
+        "<vault>"
+      ],
+      "valueFlags": [
+        "--prompt",
+        "--mode"
+      ]
+    },
+    {
+      "path": "assistant focus",
+      "desc": "Bring a project's window to the front",
+      "args": [
+        "<vault>"
+      ]
+    },
+    {
+      "path": "assistant notify",
+      "desc": "Show a notice in the notch",
+      "args": [
+        "<text>"
+      ],
+      "valueFlags": [
+        "--level"
+      ]
+    },
+    {
+      "path": "assistant open",
+      "desc": "Open a project window (or bring its window forward)",
+      "args": [
+        "<vault>"
+      ],
+      "valueFlags": [
+        "--page"
+      ]
+    },
+    {
+      "path": "assistant projects",
+      "desc": "Every registered project: what it is, what is active, live chats",
+      "args": []
+    },
+    {
+      "path": "assistant send",
+      "desc": "Send a follow-up into a live chat",
+      "args": [
+        "<sessionId>",
+        "<text>"
+      ]
+    },
+    {
+      "path": "assistant sessions",
+      "desc": "Live chats across every project, with status starting|working|asking|idle|gone",
+      "args": [],
+      "valueFlags": [
+        "--vault",
+        "--status"
+      ]
+    },
+    {
+      "path": "assistant tile",
+      "desc": "Place project windows side by side on the current monitor",
+      "args": [
+        "<vaults...>"
+      ],
+      "valueFlags": [
+        "--layout"
+      ]
+    },
+    {
+      "path": "assistant watch",
+      "desc": "Wait until a chat is idle / asking / changes; returns at once if it has ended",
+      "args": [
+        "<sessionId>"
+      ],
+      "valueFlags": [
+        "--until",
+        "--timeout"
+      ]
+    },
+    {
       "path": "automations",
       "desc": "Scheduled headless claude runs — user-authored, ships fully disabled until installed and approved",
       "args": [],
@@ -994,7 +1104,9 @@
         "--role",
         "--from",
         "--round",
-        "--context-of"
+        "--context-of",
+        "--session",
+        "--wave"
       ]
     },
     {
@@ -1014,11 +1126,19 @@
       ]
     },
     {
+      "path": "goal-live recipe",
+      "desc": "Print the step-by-step procedure a chat mode follows (develop)",
+      "args": [
+        "<name>"
+      ]
+    },
+    {
       "path": "goal-live start",
-      "desc": "Begin a run: a fresh live file for this session (sweeps files abandoned for 3h)",
+      "desc": "Begin a run: a fresh live file for this session (sweeps files abandoned for 3h). --mode develop adopts this goal's unfinished Develop run instead of wiping it",
       "args": [],
       "valueFlags": [
-        "--goal"
+        "--goal",
+        "--mode"
       ]
     },
     {
@@ -1026,6 +1146,9 @@
       "desc": "Update agents' states or verdicts",
       "args": [
         "<pairs...>"
+      ],
+      "valueFlags": [
+        "--wave"
       ]
     },
     {

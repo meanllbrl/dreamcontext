@@ -5,10 +5,12 @@
  * the drill-in, the goal-skill quest map), so a reviewer is the same character everywhere and
  * nothing re-derives identity from a name hash.
  *
- * Identity is STATIC chrome, never a status (the ★★★ rule: colour = mood, movement = mode). A
- * role's hue family is spent as a tint on its disc; status keeps its own colour and running keeps
- * its own motion. The family encodes the one idea the UI exists to show: `maker` roles carry
- * memory (the planner and the builders it seeds), `judge` roles always arrive with fresh eyes.
+ * Identity is STATIC chrome, never a status (the ★★★ rule: colour = mood, movement = mode);
+ * status keeps its own colour and running keeps its own motion. The avatar draws each role as
+ * its own character (chat/RoleCharacter.tsx: own body, own `--role-c-*` hue, own prop). The hue
+ * FAMILY below tints the quest chips and encodes the one idea the UI exists to show: `maker`
+ * roles carry memory (the planner and the builders it seeds), `judge` roles always arrive with
+ * fresh eyes.
  *
  * Total by construction: an unknown agent type resolves to `agent` (the plain teammate face),
  * so a new sub-agent renders as a teammate rather than as a crash or a mislabelled character.
@@ -20,10 +22,6 @@ export const LEAD_NAME = 'Claude';
 export type AgentRoleId =
   | 'lead' | 'planner' | 'critic' | 'pragmatist' | 'edge-cases' | 'security' | 'plan-reviewer'
   | 'implementer' | 'reviewer' | 'validator' | 'explorer' | 'peer' | 'headless' | 'agent';
-
-export type RoleGlyphId =
-  | 'face' | 'pencil' | 'lens' | 'scissors' | 'split' | 'shield' | 'hammer' | 'crown'
-  | 'scales' | 'compass' | 'diamond' | 'prompt';
 
 export type RoleHue = 'maker' | 'judge' | 'neutral';
 
@@ -40,26 +38,25 @@ export interface AgentRole {
   blurb: string;
   /** How a headline counts them: "Critic" alone, "3 reviewers" together. */
   noun: { one: string; many: string };
-  glyph: RoleGlyphId;
   hue: RoleHue;
 }
 
 /** The single source for every role's look. `hue: 'judge'` is also what defines a judge. */
 export const AGENT_ROLES: Readonly<Record<AgentRoleId, AgentRole>> = {
-  lead: { id: 'lead', label: LEAD_NAME, blurb: 'Leads the team and briefs everyone else', noun: { one: LEAD_NAME, many: LEAD_NAME }, glyph: 'face', hue: 'neutral' },
-  planner: { id: 'planner', label: 'Planner', blurb: 'Drafts the plan against the real code', noun: { one: 'Planner', many: 'planners' }, glyph: 'pencil', hue: 'maker' },
-  critic: { id: 'critic', label: 'Critic', blurb: 'Attacks the premise and the assumptions', noun: { one: 'Critic', many: 'reviewers' }, glyph: 'lens', hue: 'judge' },
-  pragmatist: { id: 'pragmatist', label: 'Pragmatist', blurb: 'Cuts scope nobody needs', noun: { one: 'Pragmatist', many: 'reviewers' }, glyph: 'scissors', hue: 'judge' },
-  'edge-cases': { id: 'edge-cases', label: 'Edge hunter', blurb: 'Hunts empty inputs, races and partial failures', noun: { one: 'Edge hunter', many: 'reviewers' }, glyph: 'split', hue: 'judge' },
-  security: { id: 'security', label: 'Security', blurb: 'Looks for ways the work could be abused', noun: { one: 'Security', many: 'reviewers' }, glyph: 'shield', hue: 'judge' },
-  'plan-reviewer': { id: 'plan-reviewer', label: 'Reviewer', blurb: 'Reads the plan and says whether it holds', noun: { one: 'Reviewer', many: 'reviewers' }, glyph: 'lens', hue: 'judge' },
-  implementer: { id: 'implementer', label: 'Builder', blurb: 'Builds its part of the plan', noun: { one: 'Builder', many: 'builders' }, glyph: 'hammer', hue: 'maker' },
-  reviewer: { id: 'reviewer', label: 'Reviewer', blurb: 'Reviews the changes before they count', noun: { one: 'Reviewer', many: 'reviewers' }, glyph: 'crown', hue: 'judge' },
-  validator: { id: 'validator', label: 'Validator', blurb: 'Runs the final checks and reports what it saw', noun: { one: 'Validator', many: 'validators' }, glyph: 'scales', hue: 'judge' },
-  explorer: { id: 'explorer', label: 'Scout', blurb: 'Maps the code before anyone builds', noun: { one: 'Scout', many: 'scouts' }, glyph: 'compass', hue: 'neutral' },
-  peer: { id: 'peer', label: 'Other project', blurb: 'A teammate from a connected project', noun: { one: 'Other project', many: 'other projects' }, glyph: 'diamond', hue: 'neutral' },
-  headless: { id: 'headless', label: 'Helper', blurb: 'A helper started from the command line', noun: { one: 'Helper', many: 'helpers' }, glyph: 'prompt', hue: 'neutral' },
-  agent: { id: 'agent', label: 'Teammate', blurb: 'A teammate working on part of the task', noun: { one: 'Teammate', many: 'teammates' }, glyph: 'face', hue: 'neutral' },
+  lead: { id: 'lead', label: LEAD_NAME, blurb: 'Leads the team and briefs everyone else', noun: { one: LEAD_NAME, many: LEAD_NAME }, hue: 'neutral' },
+  planner: { id: 'planner', label: 'Planner', blurb: 'Drafts the plan against the real code', noun: { one: 'Planner', many: 'planners' }, hue: 'maker' },
+  critic: { id: 'critic', label: 'Critic', blurb: 'Attacks the premise and the assumptions', noun: { one: 'Critic', many: 'reviewers' }, hue: 'judge' },
+  pragmatist: { id: 'pragmatist', label: 'Pragmatist', blurb: 'Cuts scope nobody needs', noun: { one: 'Pragmatist', many: 'reviewers' }, hue: 'judge' },
+  'edge-cases': { id: 'edge-cases', label: 'Edge hunter', blurb: 'Hunts empty inputs, races and partial failures', noun: { one: 'Edge hunter', many: 'reviewers' }, hue: 'judge' },
+  security: { id: 'security', label: 'Security', blurb: 'Looks for ways the work could be abused', noun: { one: 'Security', many: 'reviewers' }, hue: 'judge' },
+  'plan-reviewer': { id: 'plan-reviewer', label: 'Reviewer', blurb: 'Reads the plan and says whether it holds', noun: { one: 'Reviewer', many: 'reviewers' }, hue: 'judge' },
+  implementer: { id: 'implementer', label: 'Builder', blurb: 'Builds its part of the plan', noun: { one: 'Builder', many: 'builders' }, hue: 'maker' },
+  reviewer: { id: 'reviewer', label: 'Reviewer', blurb: 'Reviews the changes before they count', noun: { one: 'Reviewer', many: 'reviewers' }, hue: 'judge' },
+  validator: { id: 'validator', label: 'Validator', blurb: 'Runs the final checks and reports what it saw', noun: { one: 'Validator', many: 'validators' }, hue: 'judge' },
+  explorer: { id: 'explorer', label: 'Scout', blurb: 'Maps the code before anyone builds', noun: { one: 'Scout', many: 'scouts' }, hue: 'neutral' },
+  peer: { id: 'peer', label: 'Other project', blurb: 'A teammate from a connected project', noun: { one: 'Other project', many: 'other projects' }, hue: 'neutral' },
+  headless: { id: 'headless', label: 'Helper', blurb: 'A helper started from the command line', noun: { one: 'Helper', many: 'helpers' }, hue: 'neutral' },
+  agent: { id: 'agent', label: 'Teammate', blurb: 'A teammate working on part of the task', noun: { one: 'Teammate', many: 'teammates' }, hue: 'neutral' },
 };
 
 /** Judges always arrive fresh: they see only the work, never the reasoning behind it. */
@@ -155,6 +152,21 @@ const FORK_FLAG_RE = /(?:^|\s)--fork-session(?:\s|$)/;
 function lensOf(text: string): AgentRoleId | null {
   for (const [re, role] of LENS_PATTERNS) if (re.test(text)) return role;
   return null;
+}
+
+/** The stage each role's party advances when the role is all that is known — a teammate the
+ *  orchestrator registered by role. A security or edge-case lens registered on its own is read
+ *  as a plan lens, which is where goal-skill seats them. */
+const ROLE_STAGES: Readonly<Record<AgentRoleId, PartyStageId>> = {
+  lead: 'none', planner: 'draft', critic: 'review', pragmatist: 'review', 'edge-cases': 'review',
+  security: 'review', 'plan-reviewer': 'review', implementer: 'build', reviewer: 'boss',
+  validator: 'trial', explorer: 'scout', peer: 'none', headless: 'none', agent: 'none',
+};
+
+/** A registered role id as an identity, or null for a word the registry does not know. */
+export function identityForRole(role: string | undefined): AgentIdentity | null {
+  if (!role || !Object.prototype.hasOwnProperty.call(AGENT_ROLES, role)) return null;
+  return { role: role as AgentRoleId, stage: ROLE_STAGES[role as AgentRoleId] };
 }
 
 /**

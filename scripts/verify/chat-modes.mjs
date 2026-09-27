@@ -309,7 +309,7 @@ try {
   }
 
   // ── 5 — unknown / disabled modes coerce to basic ──────────────────────────────────
-  for (const [label, mode] of [['jarvis (disabled in the UI)', 'jarvis'], ['a hostile value', ';rm -rf /'], ['an unknown value', 'turbo']]) {
+  for (const [label, mode] of [['jarvis (retired — voice moved to the Assistant)', 'jarvis'], ['assistant outside its hidden vault', 'assistant'], ['a hostile value', ';rm -rf /'], ['an unknown value', 'turbo']]) {
     const s = await observeSpawn(WebSocket, port, { mode });
     ok(`${label} → the basic briefing, no mode brief`,
       basicShaped(s.briefing),

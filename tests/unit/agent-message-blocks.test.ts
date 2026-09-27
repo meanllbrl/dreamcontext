@@ -183,26 +183,34 @@ describe('AgentQuestionBlock — answers through the existing HITL route', () =>
     expect(source).not.toMatch(/kind:\s*'approval'/);
   });
 
-  /** Both producers are real: buttons for an option set, a field for none. */
-  it('renders buttons for choices and a free-text field without them', () => {
+  /** Asked the way Chat asks (owner, 2026-09-26): Chat's own card, not a second question UI. */
+  it('mounts Chat\'s own SurveyCard over the question, options for choices and a text question without them', () => {
+    expect(source).toContain("from '../sleepy/chat/SurveyCard'");
+    expect(source).toContain('<SurveyCard');
     expect(source).toContain('question.choices.length > 0');
-    expect(source).toContain('agent-msg-question-choice');
-    expect(source).toContain('agent-msg-question-input');
+    expect(source).toMatch(/kind: 'text'/);
+  });
+
+  /** A face never reaches the run: "Approve" answers `approve`. */
+  it('maps a sign-off face back to its value before answering', () => {
+    expect(source).toContain('valueOf.get(v) ?? v');
   });
 
   /**
    * The receipt must not outlive a failed send — the run would still be waiting
-   * while the channel claimed it had been answered. `AskBlock`'s machine.
+   * while the channel claimed it had been answered. A failure remounts the card.
    */
-  it('clears the receipt when the answer could not be recorded', () => {
-    expect(source).toContain('setDecided(null)');
+  it('reopens the card when the answer could not be recorded', () => {
+    expect(source).toContain('setAttempt((a) => a + 1)');
+    expect(source).toContain('key={`${question.id}:${attempt}`}');
     expect(source).toContain('onToast(');
   });
 
   /** Turkish survives: no user-facing prose baked into the component. */
   it('takes its copy from I18nContext', () => {
-    expect(source).toContain("t('agents.question.sent')");
     expect(source).toContain("t('agents.question.answer')");
+    expect(source).toContain("'agents.question.approve'");
+    expect(source).toContain("'agents.question.rejectLine'");
   });
 });
 

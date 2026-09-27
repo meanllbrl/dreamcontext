@@ -173,6 +173,78 @@ function standinMain(cfg) {
     fs.writeFileSync(liveFile(), JSON.stringify(goalState(step)));
   }
 
+  // ── a Develop run's live file (mode develop): the shape `goal-live start --mode develop`,
+  // `actor/state --wave N` write (unit-tested in goal-live-writer.test.ts), hand-timed so a
+  // wave has whole minutes on its clock. 3 waves; wave 1 fails its review once, then passes.
+  const BUILDER_SIDS = { 'w2-A': 'b2a00000-0000-4000-8000-000000000001', 'w2-B': 'b2b00000-0000-4000-8000-000000000002' };
+  function developState(step) {
+    // W2: wave 2 has been building for 4 minutes. DONE: the whole run, 28 minutes long.
+    const t0 = Date.now() - (step === 'w2' ? 16 : 30) * 60000;
+    const at = (min) => new Date(t0 + min * 60000).toISOString();
+    const spawn = (a, w, min, name) => Object.assign({ a, role: 'implementer', k: 'spawn', at: at(min), w, name }, BUILDER_SIDS[a] ? { sid: BUILDER_SIDS[a] } : {});
+    const history = [
+      { p: 'plan', at: at(0) },
+      { p: 'impl', at: at(1), w: 1 }, { p: 'codereview', at: at(6), w: 1 },
+      { p: 'impl', at: at(8), w: 1 }, { p: 'codereview', at: at(10), w: 1 },
+      { p: 'impl', at: at(12), w: 2 },
+    ];
+    const lineage = [
+      spawn('w1-A', 1, 1, 'Live file'), spawn('w1-B', 1, 1, 'Reader'),
+      { a: 'w1-reviewer', role: 'reviewer', k: 'fresh', at: at(6), w: 1, v: 'FAIL' },
+      { a: 'w1-A', role: 'implementer', k: 'resume', r: 2, at: at(8), w: 1 },
+      { a: 'w1-reviewer', role: 'reviewer', k: 'fresh', r: 2, at: at(10), w: 1, v: 'PASS' },
+      spawn('w2-A', 2, 12, 'Quest map'), spawn('w2-B', 2, 12, 'Receipt'),
+    ];
+    const forks = [
+      { s: 'done', id: 'w1-A', name: 'Live file', role: 'implementer', w: 1 },
+      { s: 'done', id: 'w1-B', name: 'Reader', role: 'implementer', w: 1 },
+      { s: 'run', id: 'w2-A', name: 'Quest map', role: 'implementer', w: 2 },
+      { s: 'run', id: 'w2-B', name: 'Receipt', role: 'implementer', w: 2 },
+    ];
+    const s = {
+      goal: 'quest-demo', mode: 'develop', session: SID, tab: 'verify-tab', started: at(0), updated: new Date().toISOString(),
+      phase: 'impl', iters: { plan: 1, impl: 3, codereview: 2 }, reviewed: 1,
+      impl: { wave: 2, waves: 3, forks }, history, lineage,
+    };
+    if (step === 'w2') return s;
+    forks.forEach((f) => { f.s = 'done'; });
+    forks.push({ s: 'done', id: 'w3-A', name: 'Briefing', role: 'implementer', w: 3 });
+    s.history = history.concat([
+      { p: 'codereview', at: at(16), w: 2 }, { p: 'impl', at: at(18), w: 3 }, { p: 'codereview', at: at(24), w: 3 },
+      { p: 'validate', at: at(26) }, { p: 'done', at: at(28) },
+    ]);
+    s.lineage = lineage.concat([
+      { a: 'w2-reviewer', role: 'reviewer', k: 'fresh', at: at(16), w: 2, v: 'PASS' },
+      spawn('w3-A', 3, 18, 'Briefing'),
+      { a: 'w3-reviewer', role: 'reviewer', k: 'fresh', at: at(24), w: 3, v: 'PASS' },
+      { a: 'validator', role: 'validator', k: 'fresh', at: at(26), v: 'PASS' },
+    ]);
+    Object.assign(s, {
+      phase: 'done', reviewed: 3, updated: at(28),
+      iters: { plan: 1, impl: 4, codereview: 4, validate: 1 },
+      impl: { wave: 3, waves: 3, forks },
+      judges: [{ s: 'done', id: 'validator', role: 'validator', v: 'PASS' }],
+    });
+    return s;
+  }
+  /** The wave-2 builders' own transcripts, where the app reads a registered teammate from. */
+  function writeBuilderTranscripts() {
+    const dir = path.join(process.env.HOME, '.claude', 'projects', '-verify-builders');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [lane, sid] of Object.entries(BUILDER_SIDS)) {
+      const now = new Date().toISOString();
+      fs.writeFileSync(path.join(dir, sid + '.jsonl'), [
+        { type: 'user', sessionId: sid, timestamp: now, message: { role: 'user', content: 'You are builder ' + lane + ' on task quest-demo.' } },
+        { type: 'assistant', sessionId: sid, timestamp: now, message: { role: 'assistant', content: [{ type: 'text', text: 'Building my lane.' }] } },
+      ].map((o) => JSON.stringify(o)).join('\n') + '\n');
+    }
+  }
+  function writeDevelop(step) {
+    fs.mkdirSync(path.dirname(liveFile()), { recursive: true });
+    if (step === 'w2') writeBuilderTranscripts();
+    fs.writeFileSync(liveFile(), JSON.stringify(developState(step)));
+  }
+
   // ── PLAN-ANSWER: scout, the draft, two review rounds, the task and the hand-off ──
   async function planAnswer() {
     const scout = dispatch('scout-1', { description: 'Map the chat code', subagent_type: 'Explore', prompt: 'Map the chat components.' });
@@ -293,7 +365,12 @@ function standinMain(cfg) {
     out({ type: 'system', subtype: 'init', session_id: SID, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: ['compact'] });
     await sleep(150);
     const step = /GOAL-(LIVE|BUILD|DONE|NOCTX|CLEAR)/.exec(prompt);
-    if (step) {
+    const dev = /DEVRUN-(W2|DONE|CLEAR)/.exec(prompt);
+    if (dev) {
+      if (dev[1] === 'CLEAR') { try { fs.unlinkSync(liveFile()); } catch (e) { /* already gone */ } }
+      else writeDevelop(dev[1].toLowerCase());
+      say(`DEVRUN-${dev[1]}-WRITTEN`);
+    } else if (step) {
       if (step[1] === 'CLEAR') { try { fs.unlinkSync(liveFile()); } catch (e) { /* already gone */ } }
       else writeGoal(step[1].toLowerCase());
       say(`GOAL-${step[1]}-WRITTEN`);
@@ -486,6 +563,66 @@ async function overflowOf(page, sel) {
   return page.evaluate((s) => [...document.querySelectorAll(s)]
     .filter((el) => el.getClientRects().length)
     .map((el) => el.scrollWidth - el.clientWidth), sel);
+}
+
+/**
+ * The quest party's characters as the user sees them: every role avatar draws a RoleCharacter
+ * of its own role, its silhouette stands off the surface behind it (the better of fill and
+ * outline, WCAG non-text 3:1), and inside one party card every distinct role has a distinct
+ * body colour. Colours are resolved by painting them on a canvas, so a `color-mix()` or an
+ * oklab value compares the same as a hex one.
+ */
+async function characterStats(page) {
+  return page.evaluate(() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 1;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    const rgb = (value) => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = '#000';
+      ctx.fillStyle = value;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+      return { r, g, b, a };
+    };
+    const lin = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    const lum = ({ r, g, b }) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    const ratio = (x, y) => { const [hi, lo] = [lum(x), lum(y)].sort((m, n) => n - m); return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100; };
+    const surface = (el) => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const c = rgb(getComputedStyle(n).backgroundColor);
+        if (c.a > 200) return c;
+      }
+      return rgb(getComputedStyle(document.body).backgroundColor);
+    };
+    const shown = (el) => el.getClientRects().length > 0;
+    const avatars = [...document.querySelectorAll('.chat-a-avatar[data-role]:not([data-logo])')].filter(shown);
+    const mismatched = avatars
+      .filter((a) => a.querySelector(':scope > svg.rc')?.getAttribute('data-role') !== a.getAttribute('data-role'))
+      .map((a) => a.getAttribute('data-role'));
+    const badges = document.querySelectorAll('.chat-a-avatar-badge').length;
+    const seen = new Map();
+    for (const a of avatars) {
+      const body = a.querySelector('.rc-body');
+      if (!body) continue;
+      const cs = getComputedStyle(body);
+      const bg = surface(a);
+      const key = `${a.getAttribute('data-role')}@${bg.r},${bg.g},${bg.b}`;
+      if (seen.has(key)) continue;
+      const fill = ratio(rgb(cs.fill), bg);
+      const edge = ratio(rgb(cs.stroke), bg);
+      seen.set(key, { role: a.getAttribute('data-role'), fill, edge, best: Math.max(fill, edge) });
+    }
+    const parties = [...document.querySelectorAll('.chat-subagents')].filter(shown).map((card) => {
+      const byRole = new Map();
+      for (const a of card.querySelectorAll('.chat-a-avatar[data-role]:not([data-logo])')) {
+        const body = a.querySelector('.rc-body');
+        if (body) byRole.set(a.getAttribute('data-role'), getComputedStyle(body).fill);
+      }
+      return { id: card.getAttribute('data-party-id'), roles: byRole.size, fills: new Set(byRole.values()).size };
+    }).filter((pt) => pt.roles > 0);
+    return { avatars: avatars.length, mismatched, badges, silhouettes: [...seen.values()], parties };
+  });
 }
 
 /** Rendered widths of the outer avatars under `sel` (the emblem badge's own glyph excluded). */
@@ -958,15 +1095,16 @@ async function runThemeIn(browser, base, theme, report) {
     sizes.step.every((w) => w === 16) && sizes.party.every((w) => w === 32) && sizes.report.every((w) => w === 28)
     && sizes.cast.every((w) => w === 20) && sizes.step.length > 0 && sizes.party.length > 0,
     JSON.stringify(sizes));
-  const badges = await page.evaluate(() => [...document.querySelectorAll('.chat-a-avatar-badge')]
-    .filter((b) => b.getClientRects().length)
-    .map((b) => Math.round(b.closest('.chat-a-avatar').getBoundingClientRect().width)));
-  ok('the emblem badge appears only at ≥ 30px', badges.every((w) => w >= 30), JSON.stringify([...new Set(badges)]));
-  const discs = vis('.chat-a-avatar[data-role] > svg');
-  const discN = Math.min(await discs.count(), 16);
-  let worstDisc = Infinity;
-  for (let i = 0; i < discN; i++) worstDisc = Math.min(worstDisc, await contrast(discs.nth(i)).catch(() => Infinity));
-  ok('faces and emblems reach 3:1 against their disc', discN > 0 && worstDisc >= 3, `worst ${worstDisc} over ${discN}`);
+  const cast = await characterStats(page);
+  ok('every role avatar draws its own character (no disc, no emblem)',
+    cast.avatars > 0 && cast.mismatched.length === 0 && cast.badges === 0,
+    JSON.stringify({ avatars: cast.avatars, mismatched: cast.mismatched, badges: cast.badges }));
+  ok('every character silhouette reaches 3:1 against the surface it sits on (fill or outline)',
+    cast.silhouettes.length > 0 && cast.silhouettes.every((c) => c.best >= 3),
+    JSON.stringify(cast.silhouettes.filter((c) => c.best < 3).slice(0, 6)) || 'none');
+  ok('no two roles in one party share a body colour',
+    cast.parties.length > 0 && cast.parties.every((pt) => pt.roles === pt.fills),
+    JSON.stringify(cast.parties));
 
   // ════ Develop: the hand-off opens it ════════════════════════════════════════════════
   console.log('── the Develop quest');
@@ -1136,6 +1274,62 @@ async function runThemeIn(browser, base, theme, report) {
     await until(async () => (await vis('.chat-live-rail .goal-live-bar').count()) === 0
       && (await vis('.chat-live-rail .chat-quest-bar[data-kind="develop"]').count()) === 1, 15000),
     await railText());
+
+  // ════ a Develop run on the rail: waves, a review per wave, the receipt ═══════════════
+  // The Develop chat's own live file (mode develop), as `goal-live start --mode develop`
+  // writes it: the map must read the RUN (wave k of M, k of M reviewed), not the stream.
+  console.log('── a Develop run (mode develop) on the rail');
+  const devRun = () => vis('.chat-live-rail .goal-live-bar .quest-map[data-kind="develop"]');
+  await say('DEVRUN-W2');
+  ok('DEVRUN: the rail shows a develop-kind map from the live file', await until(async () => (await devRun().count()) === 1, 15000), await railText());
+  const stagesOf = async (loc) => loc.locator('.quest-node').evaluateAll((els) => els.map((e) => e.getAttribute('data-stage')));
+  ok('…with exactly Build, Boss gate and Final trial (no Draft, Plan review or Task)',
+    JSON.stringify(await stagesOf(devRun())) === JSON.stringify(['build', 'boss', 'trial']), JSON.stringify(await stagesOf(devRun())));
+  const metaOf = async (stage) => ((await devRun().locator(`.quest-node[data-stage="${stage}"] .quest-node-meta`).textContent().catch(() => '')) || '').trim();
+  const buildMeta = await metaOf('build');
+  ok('Build reads "wave 2 of 3" with a minute count', buildMeta.includes('wave 2 of 3') && /\b\d+m\b/.test(buildMeta), buildMeta);
+  const bossMeta = await metaOf('boss');
+  ok('the Boss gate reads "1 of 3 reviewed" while wave 2 builds', bossMeta === '1 of 3 reviewed', bossMeta);
+  ok('the Boss gate is not drawn as passed while a later wave builds',
+    (await devRun().locator('.quest-node[data-stage="boss"]').getAttribute('data-state')) !== 'done');
+  ok('no round badge: wave 2 is clean (wave 1\'s retry does not leak into it)',
+    (await devRun().locator('.quest-node-round').count()) === 0, await devRun().innerText().catch(() => ''));
+  ok('only wave 2\'s builders stand on Build',
+    (await devRun().locator('.quest-node[data-stage="build"] .quest-node-cast .chat-a-avatar').count()) === 2);
+  await sampleContrast();
+  await samplePlain('develop run rail');
+  await shot(vis('.chat-live-rail'), 'develop-run-rail');
+  await vis('.chat-live-rail button.goal-live-bar').first().click().catch(() => {});
+  ok('the popup opens on the develop run', await until(async () => (await vis('.goal-live-popup').count()) === 1, 5000));
+  const ticks = await vis('.goal-live-popup .goal-live-tick-label').evaluateAll((els) => els.map((e) => (e.textContent || '').trim()));
+  ok('…and its timeline has no Draft beat', ticks.length >= 4 && !ticks.includes('Draft'), JSON.stringify(ticks));
+  await shot(vis('.goal-live-popup'), 'develop-run-popup');
+  await escClose('.goal-live-popup', 'the develop run popup');
+
+  await say('DEVRUN-DONE');
+  ok('DEVRUN-DONE: "Quest cleared" on the rail', await until(async () => (await vis('.chat-live-rail div.goal-live-bar[data-won]').count()) === 1, 15000), await railText());
+  await vis('.chat-live-rail .goal-live-bar .quest-receipt-toggle').first().click().catch(() => {});
+  ok('the develop receipt opens', await until(async () => (await vis('.quest-receipt').count()) === 1, 5000));
+  const waves = await vis('.quest-receipt .quest-wave[data-wave]').evaluateAll((els) => els.map((e) => ({
+    wave: e.getAttribute('data-wave'), verdict: e.getAttribute('data-verdict'),
+    text: (e.textContent || '').replace(/\s+/g, ' ').trim(),
+    // The wave's own line ("2 builders · 2 reviews · 11m"), read on its own: textContent glues
+    // the builder names that follow it onto the minute count.
+    line: (e.querySelector(':scope > .quest-lineage-row .quest-lineage-rounds')?.textContent || '').trim(),
+    builders: e.querySelectorAll('.quest-wave-builder').length,
+  })));
+  ok('the receipt lists 3 waves, each with a Pass verdict, its builders and a duration',
+    waves.length === 3 && waves.every((w) => w.verdict === 'pass' && w.builders > 0 && /(?:^|· )\d+m$/.test(w.line)), JSON.stringify(waves));
+  ok('…wave 1 says it took 2 reviews; waves 2 and 3 do not',
+    waves[0]?.text.includes('2 reviews') && !waves[1]?.text.includes('reviews') && !waves[2]?.text.includes('reviews'), JSON.stringify(waves.map((w) => w.text)));
+  ok('…and the Final trial row names the validator',
+    (await vis('.quest-receipt .quest-wave[data-stage="trial"] .quest-wave-builder[data-role="validator"]').count()) === 1);
+  await sampleContrast();
+  await samplePlain('develop run receipt');
+  await shot(vis('.quest-receipt'), 'develop-run-receipt');
+  await escClose('.quest-receipt', 'the develop run receipt');
+  await say('DEVRUN-CLEAR');
+  await waitText('DEVRUN-CLEAR-WRITTEN');
 
   // ── contrast: the inks on every surface they sit on, after an instrument check ─────
   console.log('── contrast');

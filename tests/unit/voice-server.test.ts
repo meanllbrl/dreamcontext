@@ -30,7 +30,7 @@ import {
 } from '../../src/lib/voice/wav.js';
 import {
   handleVoiceStt, handleVoiceTts, handleVoiceStatus, handleVoiceConfigPut, isWav,
-  transcriptFrom, JARVIS_INSTRUCTIONS, JARVIS_FEWSHOT, TRANSCRIBE_ASK,
+  JARVIS_INSTRUCTIONS, JARVIS_FEWSHOT,
 } from '../../src/server/routes/agent-voice.js';
 
 // ── harness ──────────────────────────────────────────────────────────────────────────────
@@ -292,7 +292,7 @@ function catalogue(ids: string[]) {
 
 describe('model resolution', () => {
   it('resolves an id from the live catalogue, never a hardcoded one', async () => {
-    const r = await resolveModel('transcription', {
+    const r = await resolveModel('speech', {
       key: 'k', fetchImpl: catalogue(['openai/gpt-audio-mini', 'x/y']),
     });
     expect(r).toEqual({ ok: true, id: 'openai/gpt-audio-mini' });
@@ -305,26 +305,15 @@ describe('model resolution', () => {
     expect(r).toEqual({ ok: true, id: 'openai/gpt-audio-mini-2026-11-01' });
   });
 
-  it('walks the preference order and falls through to the next live model', async () => {
-    // The CORRECTION pass is what still resolves against the catalogue. The audio ids do not
-    // and must not: `/models` lists chat models only, so resolving `whisper-large-v3-turbo`
-    // there reports "no model matched" for a model that transcribes perfectly well. That
-    // mistake is why this file no longer resolves anything audio.
-    const r = await resolveModel('correction', {
-      key: 'k', fetchImpl: catalogue(['anthropic/claude-haiku-4.5']),
-    });
-    expect(r).toEqual({ ok: true, id: 'anthropic/claude-haiku-4.5' });
-  });
-
   it('A RENAME IS A CLEAR CONFIGURATION ERROR, not a silent 404 on first press (AC3b)', async () => {
-    const r = await resolveModel('transcription', {
+    const r = await resolveModel('speech', {
       key: 'k', fetchImpl: catalogue(['some/entirely-different-model']),
     });
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('unreachable');
     expect(r.reason).toBe('no_match');
     // It must NAME what it looked for, or the owner has nothing to act on.
-    for (const pref of MODEL_PREFERENCES.transcription) expect(r.detail).toContain(pref);
+    for (const pref of MODEL_PREFERENCES.speech) expect(r.detail).toContain(pref);
   });
 
   it('says "no key" without touching the network', async () => {
@@ -336,8 +325,8 @@ describe('model resolution', () => {
 
   it('memoises, so a resolution is not a network round trip per push-to-talk', async () => {
     const fetchImpl = catalogue(['openai/gpt-audio-mini']);
-    await resolveModel('transcription', { key: 'k', fetchImpl });
-    await resolveModel('transcription', { key: 'k', fetchImpl });
+    await resolveModel('speech', { key: 'k', fetchImpl });
+    await resolveModel('speech', { key: 'k', fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -450,28 +439,13 @@ const audioFrame = (bytes: number[]) => ({
   choices: [{ delta: { audio: { data: Buffer.from(bytes).toString('base64') } } }],
 });
 
-describe('POST /api/agent/voice/stt', () => {
-  // Every test in this block is about the CLOUD path, so local transcription is switched off
-  // explicitly. Leaving it on `auto` would make these tests pass or fail depending on whether
-  // the machine running them happens to have whisper.cpp installed — the exact class of test
-  // that goes green on CI and red on a laptop.
-  beforeEach(() => { writeVoiceConfig({ sttEngine: 'cloud' }, home); });
-
+describe('POST /api/agent/voice/stt — dictation is LOCAL and never calls an API', () => {
   it('403s outside the desktop app (AC15\'s server half)', async () => {
     process.env.DREAMCONTEXT_DESKTOP = '0';
     const r = makeRes();
     await handleVoiceStt(makeReq('x'), r.res, {}, home);
     expect(r.status()).toBe(403);
     expect(r.body().error).toBe('desktop_only');
-  });
-
-  it('with NO key answers stt_unconfigured and says what is missing (AC14)', async () => {
-    // A real WAV, because the container guard now runs before the key check: the body has to
-    // be read either way, and a take in the wrong format is not a key problem.
-    const r = makeRes();
-    await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
-    expect(r.body().error).toBe('stt_unconfigured');
-    expect(r.body().message).toMatch(/OpenRouter key/i);
   });
 
   it('refuses a DIRECT POST once the cap is taken — 429 stt_busy (AC12)', async () => {
@@ -499,100 +473,8 @@ describe('POST /api/agent/voice/stt', () => {
     expect(isWav(Buffer.from('RIFFxxxxAVI '))).toBe(false);
   });
 
-  it('NEVER forwards the upstream error body, and stays RETRYABLE (AC13, AC14)', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    writeVoiceConfig({ openRouterKey: 'sk-or-secret-value' }, home);
-    vi.stubGlobal('fetch', (vi.fn(async () => ({
-      ok: false, status: 500, json: async () => ({}),
-      text: async () => 'upstream exploded, key sk-or-secret-value, trace 0xdeadbeef',
-    }))) as unknown as typeof globalThis.fetch);
-
-    const r = makeRes();
-    await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
-    const raw = r.raw()!.toString('utf-8');
-    expect(r.body().error).toBe('stt_failed');
-    expect(raw).not.toContain('sk-or-secret-value');
-    expect(raw).not.toContain('0xdeadbeef');
-    expect(raw).not.toContain('upstream exploded');
-    expect(sttGate.state.inFlight).toBe(0);
-  });
-
-  it('uses the TRANSCRIPTION endpoint and a real speech recogniser', async () => {
-    // Not a chat completion any more: `openai/whisper-large-v3-turbo` is absent from the
-    // `/models` catalogue but present on this endpoint, and on the same Turkish take it was
-    // both the cheapest ($0.0001) and the most accurate of the ids that answer there.
-    writeVoiceConfig({ openRouterKey: 'sk-or-x', sttEngine: 'cloud' }, home);
-    let url = '';
-    let form: FormData | undefined;
-    vi.stubGlobal('fetch', (vi.fn(async (u: string, init?: { body?: unknown }) => {
-      url = String(u);
-      form = init?.body as FormData;
-      return { ok: true, status: 200, text: async () => '', json: async () => ({ text: ' sleep başlat ' }) };
-    })) as unknown as typeof globalThis.fetch);
-
-    const r = makeRes();
-    await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
-    expect(r.status()).toBe(200);
-    expect(r.body().text).toBe('sleep başlat');
-    expect(url).toContain('/audio/transcriptions');
-    expect(form!.get('model')).toBe('openai/whisper-large-v3-turbo');
-    // NO language is sent by default: whisper detects it, so nothing in this feature has to
-    // know or ask which language is being spoken.
-    expect(form!.get('language')).toBeNull();
-  });
-
-  it('pins the language only when Settings asked for one', async () => {
-    writeVoiceConfig({ openRouterKey: 'sk-or-x', sttEngine: 'cloud', sttLanguage: 'tr' }, home);
-    let form: FormData | undefined;
-    vi.stubGlobal('fetch', (vi.fn(async (_u: string, init?: { body?: unknown }) => {
-      form = init?.body as FormData;
-      return { ok: true, status: 200, text: async () => '', json: async () => ({ text: 'ok' }) };
-    })) as unknown as typeof globalThis.fetch);
-    const r = makeRes();
-    await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
-    expect(form!.get('language')).toBe('tr');
-  });
-
-  it('prefers GROQ when a key is set — same model, its own hardware', async () => {
-    writeVoiceConfig({ openRouterKey: 'sk-or-x', groqKey: 'gsk_test', sttEngine: 'cloud' }, home);
-    const seen: string[] = [];
-    vi.stubGlobal('fetch', (vi.fn(async (u: string) => {
-      seen.push(String(u));
-      return { ok: true, status: 200, text: async () => '', json: async () => ({ text: 'ok' }) };
-    })) as unknown as typeof globalThis.fetch);
-    const r = makeRes();
-    await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
-    expect(seen[0]).toContain('api.groq.com');
-    expect(r.body().engine).toBe('groq:whisper-large-v3-turbo');
-  });
-
-  it('falls through to OpenRouter when Groq refuses, rather than failing the take', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    writeVoiceConfig({ openRouterKey: 'sk-or-x', groqKey: 'gsk_bad', sttEngine: 'cloud' }, home);
-    vi.stubGlobal('fetch', (vi.fn(async (u: string) => (
-      String(u).includes('groq')
-        ? { ok: false, status: 401, text: async () => 'bad key', json: async () => ({}) }
-        : { ok: true, status: 200, text: async () => '', json: async () => ({ text: 'ok' }) }
-    ))) as unknown as typeof globalThis.fetch);
-    const r = makeRes();
-    await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
-    expect(r.status()).toBe(200);
-    expect(r.body().engine).toBe('openrouter:openai/whisper-large-v3-turbo');
-  });
-
-  it('reads the transcript whether the content is a string or content PARTS', () => {
-    expect(transcriptFrom('  sleep başlat ')).toBe('sleep başlat');
-    expect(transcriptFrom([{ type: 'text', text: 'sleep' }, { type: 'text', text: 'başlat' }])).toBe('sleep başlat');
-    // The failure this guards: a transcript that quietly became "[object Object]" would be
-    // submitted to a TOOL-ENABLED agent as if the owner had said it.
-    expect(transcriptFrom({ weird: true })).toBe('');
-    expect(transcriptFrom(undefined)).toBe('');
-  });
-});
-
-describe('local transcription is tried FIRST, and falls back rather than failing', () => {
-  it('answers from the local engine without ever reaching OpenRouter', async () => {
-    writeVoiceConfig({ openRouterKey: 'sk-or-x', sttEngine: 'auto' }, home);
+  it('answers from the local engine without ever reaching an API — even with a key set', async () => {
+    writeVoiceConfig({ openRouterKey: 'sk-or-x' }, home);
     const upstream = vi.fn(async () => MODELS_OK);
     vi.stubGlobal('fetch', (vi.fn(async (u: string) => {
       const url = String(u);
@@ -616,15 +498,19 @@ describe('local transcription is tried FIRST, and falls back rather than failing
     expect(upstream).not.toHaveBeenCalled();
   });
 
-  it('says so plainly when local is REQUIRED and missing, instead of quietly spending money', async () => {
-    writeVoiceConfig({ openRouterKey: 'sk-or-x', sttEngine: 'local' }, home);
+  it('a voice.json that still says `cloud` (and a Groq key) is ignored — nothing leaves the machine', async () => {
+    // Owner, 2026-09-27: "dikte sadece yerel olsun". The old fields may sit on disk; they mean nothing.
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(voiceConfigPath(home), JSON.stringify({ openRouterKey: 'sk-or-x', groqKey: 'gsk_x', sttEngine: 'cloud' }));
     process.env.DREAMCONTEXT_WHISPER_BIN = '/nonexistent/whisper-server';
-    process.env.PATH = '/nonexistent';
+    const upstream = vi.fn(async () => MODELS_OK);
+    vi.stubGlobal('fetch', upstream as unknown as typeof globalThis.fetch);
     const r = makeRes();
     await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
     expect(r.status()).toBe(400);
     expect(r.body().error).toBe('stt_unconfigured');
-    expect(r.body().message).toMatch(/whisper/i);
+    expect(r.body().message).toMatch(/install/i);
+    expect(upstream).not.toHaveBeenCalled();
   });
 });
 

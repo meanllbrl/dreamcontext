@@ -8,7 +8,8 @@ import { join } from 'node:path';
  *
  * - Theme tokens only: no hex anywhere in the atom sheet or the quest sheet, so both themes
  *   follow for free.
- * - Every role emblem the registry can name has a drawing, so no character renders blank.
+ * - Every role the registry can name has a character (RoleCharacter.tsx) and a body colour in
+ *   both themes, so no teammate renders blank or inherits the other theme's paint.
  * - Running is motion (`chat-a-work`), and every use of it stands down under reduced motion.
  * - A verdict never spends `--color-warning` (reserved for genuinely hot things), and a
  *   character's face is drawn in `--color-text`, never `--color-ink`: `--color-ink` is the
@@ -21,6 +22,9 @@ const ATOMS_TSX = join(CHAT, 'atoms.tsx');
 const ATOMS_CSS = join(CHAT, 'atoms.css');
 const QUEST_CSS = join(ROOT, 'dashboard/src/components/sleepy/quest/quest.css');
 const ROLES_TS = join(ROOT, 'dashboard/src/lib/agentRoles.ts');
+const CHARACTER_TSX = join(CHAT, 'RoleCharacter.tsx');
+const CHARACTER_CSS = join(CHAT, 'RoleCharacter.css');
+const TOKENS_CSS = join(ROOT, 'dashboard/src/styles/tokens.css');
 
 const read = (p: string): string => readFileSync(p, 'utf-8');
 const stripComments = (css: string): string => css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -63,19 +67,33 @@ describe('quest party style rules', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('every RoleGlyphId has a drawing', () => {
-    const union = /export type RoleGlyphId\s*=([^;]+);/.exec(read(ROLES_TS))?.[1] ?? '';
+  it('every AgentRoleId has a character, a body colour and a colour in both themes', () => {
+    const union = /export type AgentRoleId\s*=([^;]+);/.exec(read(ROLES_TS))?.[1] ?? '';
     const ids = [...union.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
-    expect(ids.length).toBeGreaterThanOrEqual(12);
+    expect(ids.length).toBeGreaterThanOrEqual(14);
 
-    const tsx = read(ATOMS_TSX);
-    const at = tsx.indexOf('const ROLE_GLYPH_PATHS');
-    expect(at, 'ROLE_GLYPH_PATHS not found in atoms.tsx').toBeGreaterThan(-1);
-    const table = tsx.slice(at, tsx.indexOf('\n};', at));
+    const tsx = read(CHARACTER_TSX);
+    const at = tsx.indexOf('const CAST');
+    expect(at, 'CAST not found in RoleCharacter.tsx').toBeGreaterThan(-1);
+    const cast = tsx.slice(at, tsx.indexOf('\n};', at));
     for (const id of ids) {
-      const entry = new RegExp(`(?:^|\\s)'?${id}'?:\\s*\\[\\s*'M`, 'm');
-      expect(table, `no path for glyph "${id}"`).toMatch(entry);
+      expect(cast, `no character for role "${id}"`).toMatch(new RegExp(`(?:^|\\s)'?${id}'?:\\s*\\(\\)\\s*=>`, 'm'));
     }
+
+    // Every body hue the sheet names is declared in BOTH theme blocks of tokens.css.
+    const css = read(CHARACTER_CSS);
+    const tokens = [...new Set([...css.matchAll(/var\((--role-c-[a-z-]+)\)/g)].map((m) => m[1]))];
+    expect(tokens.length).toBeGreaterThanOrEqual(14);
+    const tokenCss = read(TOKENS_CSS);
+    for (const t of tokens) {
+      const n = tokenCss.split('\n').filter((l) => l.trim().startsWith(`${t}:`)).length;
+      expect(n, `${t} must be declared in the light AND the dark block`).toBe(2);
+    }
+  });
+
+  it('RoleCharacter.css carries no hex colour', () => {
+    const offenders = stripComments(read(CHARACTER_CSS)).split('\n').filter((l) => HEX.test(l));
+    expect(offenders).toEqual([]);
   });
 
   it('reduced motion stills every chat-a-work animation', () => {

@@ -42,7 +42,7 @@ html, body {
  *
  * It lands on <html> rather than body so every size below can be a REM — one root, no
  * compounding, so a chip inside a stat inside a card is the size it says it is. The px
- * fallbacks keep a host that has no chat tokens (a Meeting Room embed) looking as it did.
+ * fallbacks keep a host that has no chat tokens (an embed outside a chat pane) looking as it did.
  */
 html {
   font-size: var(--chat-text, 14px);

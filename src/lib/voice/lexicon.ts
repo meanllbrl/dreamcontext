@@ -1,5 +1,11 @@
 /**
- * The project's own vocabulary, as a list of identifier-like tokens, for the correction pass.
+ * The project's own vocabulary, as a list of identifier-like tokens, that primes the LOCAL
+ * whisper's decoder (`whisper.ts` `primerFrom`).
+ *
+ * 2026-09-27: the correction pass this list was first written for (`correct.ts`, a chat model
+ * rewriting each transcript) is retired on the owner's word — no second model, no per-take
+ * cost. The sections below keep the reasoning that shaped the list; where they speak of the
+ * corrector, read "the whisper primer", which reads the same tokens.
  *
  * ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────────────────
  * Measured on this machine: the phrase "Sleep başlat" transcribed as "Sırıp başlat" with no
@@ -30,7 +36,9 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { assistantContextRoot } from '../assistant/home.js';
+import { listVaults } from '../vaults.js';
 
 /** How much of the lexicon reaches the prompt. Roughly 600 short tokens — the size of this
  *  brain's real vocabulary — and a hard stop so a large project cannot inflate every call. */
@@ -121,6 +129,17 @@ function peopleNames(contextRoot: string): string[] {
   } catch { return []; }
 }
 
+/**
+ * Every registered project's name — but ONLY for the dreamcontext Assistant's hidden vault.
+ * The Assistant is spoken to about projects ("what happened in tilki this week"), and a project
+ * name is exactly the kind of coined noun a transcriber has never heard. A normal vault never
+ * gets the list: its owner talks about that project, not the others.
+ */
+function registeredProjectNames(contextRoot: string): string[] {
+  if (resolve(contextRoot) !== resolve(assistantContextRoot())) return [];
+  try { return listVaults().map((v) => v.name); } catch { return []; }
+}
+
 /** Canonical tag vocabulary, best-effort. */
 function taxonomyTerms(contextRoot: string): string[] {
   const path = join(contextRoot, 'taxonomy.json');
@@ -160,6 +179,8 @@ export function buildVoiceLexicon(contextRoot: string, now: number = Date.now())
   if (hit && hit.stamp === stamp && now - hit.at < CACHE_TTL_MS) return hit.value;
 
   const sources: string[] = [
+    // First, so the budget can never drop them: the names the Assistant is addressed about.
+    ...registeredProjectNames(contextRoot),
     projectName(contextRoot),
     ...recentBasenames(join(contextRoot, 'state'), 200),
     ...recentBasenames(join(contextRoot, 'knowledge'), 200),

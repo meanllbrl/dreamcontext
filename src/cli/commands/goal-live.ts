@@ -2,13 +2,17 @@ import { Command } from 'commander';
 import { existsSync, unlinkSync } from 'node:fs';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { error } from '../../lib/format.js';
+import { GOAL_LIVE_RECIPES } from '../../lib/develop-recipe.js';
 import {
   AGENT_ROLE_IDS,
   GOAL_FORK_STATES,
   GOAL_LINEAGE_KINDS,
+  GOAL_LIVE_MODES,
   GOAL_LIVE_PHASES,
   GOAL_VERDICTS,
+  TEAMMATE_SESSION_RE,
   applyGoalLiveEvent,
+  findDevelopRunToAdopt,
   goalLivePath,
   goalLiveSessionId,
   measureInheritedContext,
@@ -34,6 +38,8 @@ import {
  *   • ALWAYS EXITS 0. Live state is telemetry, not a gate. A write that fails must never
  *     break the `&&` chain it sits in and stop the builder it was describing. Failures are
  *     still printed (`✗ goal-live: …` on stderr), never swallowed.
+ *
+ * `recipe` is the one subcommand that prints: reading its text is the whole point of it.
  */
 
 /** What an action needs from the outside world. Injectable so tests never touch a real vault. */
@@ -99,23 +105,57 @@ export function parseActorSpec(spec: string): Array<{ id: string; name?: string 
 /** `critic=NEEDS_WORK T1=done` → state events. Lower-case words are states, upper-case words
  *  are verdicts — case-sensitive on purpose, since `fail` (a builder that failed) and `FAIL`
  *  (a judge's verdict) mean different things. */
-export function parseStatePairs(pairs: string[]): Array<Extract<GoalLiveEvent, { type: 'state' }>> {
+export function parseStatePairs(pairs: string[], wave?: number): Array<Extract<GoalLiveEvent, { type: 'state' }>> {
   if (pairs.length === 0) throw new GoalLiveInputError('no id=word pair given');
+  const w = wave != null ? { wave } : {};
   return pairs.map((pair) => {
     const eq = pair.indexOf('=');
     const id = eq === -1 ? '' : pair.slice(0, eq).trim();
     const word = eq === -1 ? '' : pair.slice(eq + 1).trim();
     if (!ACTOR_ID_RE.test(id)) throw new GoalLiveInputError(`"${pair}" is not id=word`);
-    if ((GOAL_VERDICTS as readonly string[]).includes(word)) return { type: 'state', id, verdict: word as GoalVerdict };
-    if ((GOAL_FORK_STATES as readonly string[]).includes(word)) return { type: 'state', id, state: word as GoalForkState };
+    if ((GOAL_VERDICTS as readonly string[]).includes(word)) return { type: 'state', id, verdict: word as GoalVerdict, ...w };
+    if ((GOAL_FORK_STATES as readonly string[]).includes(word)) return { type: 'state', id, state: word as GoalForkState, ...w };
     throw new GoalLiveInputError(`"${word}" is not one of ${[...GOAL_FORK_STATES, ...GOAL_VERDICTS].join(', ')}`);
   });
 }
 
-export function goalLiveStart(deps: GoalLiveDeps, goal: string | undefined): void {
+/** Printed when another pane's fresh Develop run holds the goal. */
+export const DEVELOP_RUN_TAKEN =
+  'another chat is running this goal; after 10 min idle any pane may take the run over';
+
+export function goalLiveStart(deps: GoalLiveDeps, goal: string | undefined, modeRaw?: string): void {
   const slug = (goal ?? '').trim();
   if (!slug) throw new GoalLiveInputError('start needs --goal <slug>');
-  applyEvents(deps, [{ type: 'start', goal: slug, session: goalLiveSessionId(deps.env) }], { sweep: true });
+  const mode = (modeRaw ?? 'goal').trim();
+  if (!(GOAL_LIVE_MODES as readonly string[]).includes(mode)) {
+    throw new GoalLiveInputError(`--mode must be one of ${GOAL_LIVE_MODES.join(', ')}, got "${modeRaw}"`);
+  }
+  const session = goalLiveSessionId(deps.env);
+  const tab = (deps.env.DREAMCONTEXT_TAB_SESSION ?? '').trim() || null;
+  if (mode !== 'develop') {
+    applyEvents(deps, [{ type: 'start', goal: slug, session }], { sweep: true });
+    return;
+  }
+  const root = deps.resolveRoot();
+  if (!root) throw new GoalLiveInputError('no _dream_context/ found from here');
+  const now = deps.now();
+  sweepAbandonedGoalLive(root, now.getTime());
+  // A Develop run survives a handoff (new session id) and a reopen: take the run over instead
+  // of wiping it, so the map, the reviewed count and the receipt stay intact.
+  const found = findDevelopRunToAdopt(root, slug, tab, now.getTime());
+  if (found.kind === 'refuse') throw new GoalLiveInputError(DEVELOP_RUN_TAKEN);
+  const path = goalLivePath(root, session);
+  if (found.kind === 'adopt') {
+    const state = { ...found.state, updated: now.toISOString() };
+    if (session) state.session = session; else delete state.session;
+    if (tab) state.tab = tab; else delete state.tab;
+    writeGoalLiveAtomic(path, state);
+    if (found.path !== path) {
+      try { unlinkSync(found.path); } catch { /* the other session already moved it */ }
+    }
+    return;
+  }
+  writeGoalLiveAtomic(path, applyGoalLiveEvent(null, { type: 'start', goal: slug, session, mode: 'develop', tab }, now.toISOString()));
 }
 
 export function goalLivePhase(deps: GoalLiveDeps, phase: string, opts: { wave?: string; waves?: string }): void {
@@ -130,7 +170,7 @@ export function goalLivePhase(deps: GoalLiveDeps, phase: string, opts: { wave?: 
   }]);
 }
 
-export interface ActorOptions { kind?: string; role?: string; from?: string; round?: string; contextOf?: string }
+export interface ActorOptions { kind?: string; role?: string; from?: string; round?: string; contextOf?: string; session?: string; wave?: string }
 
 export function goalLiveActor(deps: GoalLiveDeps, spec: string, opts: ActorOptions): void {
   const kind = opts.kind ?? '';
@@ -139,7 +179,15 @@ export function goalLiveActor(deps: GoalLiveDeps, spec: string, opts: ActorOptio
   }
   const actors = parseActorSpec(spec);
   const round = wholeNumber(opts.round, '--round');
+  const wave = wholeNumber(opts.wave, '--wave');
   if (opts.from && !ACTOR_ID_RE.test(opts.from)) throw new GoalLiveInputError(`--from "${opts.from}" is not an actor id`);
+  // One conversation belongs to one actor: a session named for a whole list would draw the
+  // same transcript as every one of them.
+  const session = opts.session?.trim().toLowerCase();
+  if (session != null && session !== '') {
+    if (!TEAMMATE_SESSION_RE.test(session)) throw new GoalLiveInputError(`--session "${opts.session}" is not a UUID`);
+    if (actors.length !== 1) throw new GoalLiveInputError('--session names one actor\'s own run, so give exactly one id');
+  }
   // Measured ONCE for the whole call: every fork in one spawn inherits the same source.
   // A non-fork ignores it — a resume or a fresh judge inherits nothing to count.
   const ctx = kind === 'fork' && opts.contextOf ? measureInheritedContext(opts.contextOf, deps.home) : null;
@@ -152,13 +200,22 @@ export function goalLiveActor(deps: GoalLiveDeps, spec: string, opts: ActorOptio
       ...(round != null ? { round } : {}),
       ...(name ? { name } : {}),
       ...(ctx != null ? { ctx } : {}),
+      ...(session ? { session } : {}),
+      ...(wave != null ? { wave } : {}),
     };
   });
   applyEvents(deps, events);
 }
 
-export function goalLiveState(deps: GoalLiveDeps, pairs: string[]): void {
-  applyEvents(deps, parseStatePairs(pairs));
+export function goalLiveState(deps: GoalLiveDeps, pairs: string[], opts: { wave?: string } = {}): void {
+  applyEvents(deps, parseStatePairs(pairs, wholeNumber(opts.wave, '--wave')));
+}
+
+/** The procedure a Develop chat follows, printed from the CLI so it matches this install. */
+export function goalLiveRecipe(name: string, print: (text: string) => void = (t) => process.stdout.write(t)): void {
+  const text = GOAL_LIVE_RECIPES[name];
+  if (!text) throw new GoalLiveInputError(`no recipe "${name}"; known: ${Object.keys(GOAL_LIVE_RECIPES).join(', ')}`);
+  print(text);
 }
 
 /** Escalation / abort only — a finished run keeps its file so the win and receipt stay up. */
@@ -185,9 +242,10 @@ export function registerGoalLiveCommand(program: Command, deps: GoalLiveDeps = D
 
   cmd
     .command('start')
-    .description('Begin a run: a fresh live file for this session (sweeps files abandoned for 3h)')
+    .description('Begin a run: a fresh live file for this session (sweeps files abandoned for 3h). --mode develop adopts this goal\'s unfinished Develop run instead of wiping it')
     .option('--goal <slug>', 'The goal or task slug')
-    .action((opts: { goal?: string }) => runQuietly(() => goalLiveStart(deps, opts.goal)));
+    .option('--mode <mode>', GOAL_LIVE_MODES.join('|'))
+    .action((opts: { goal?: string; mode?: string }) => runQuietly(() => goalLiveStart(deps, opts.goal, opts.mode)));
 
   cmd
     .command('phase')
@@ -205,14 +263,23 @@ export function registerGoalLiveCommand(program: Command, deps: GoalLiveDeps = D
     .option('--from <id>', 'The actor this one came from (a fork\'s source)')
     .option('--round <n>', 'Round number')
     .option('--context-of <sessionId>', 'Measure the context a fork inherits from this session')
+    .option('--session <uuid>', 'The actor\'s own run id (the --session-id its claude -p was started with), so the app can show it live')
+    .option('--wave <n>', 'The wave this actor works on (Develop runs)')
     .description('Record agents joining the run: briefed, copied, brought back or called fresh')
     .action((ids: string, opts: ActorOptions) => runQuietly(() => goalLiveActor(deps, ids, opts)));
 
   cmd
     .command('state')
     .argument('<pairs...>', 'id=word, word one of run|done|wait|fail|SOLID|NEEDS_WORK|PASS|FAIL')
+    .option('--wave <n>', 'The wave a verdict belongs to (Develop runs)')
     .description('Update agents\' states or verdicts')
-    .action((pairs: string[]) => runQuietly(() => goalLiveState(deps, pairs)));
+    .action((pairs: string[], opts: { wave?: string }) => runQuietly(() => goalLiveState(deps, pairs, opts)));
+
+  cmd
+    .command('recipe')
+    .argument('<name>', Object.keys(GOAL_LIVE_RECIPES).join('|'))
+    .description('Print the step-by-step procedure a chat mode follows (develop)')
+    .action((name: string) => runQuietly(() => goalLiveRecipe(name)));
 
   cmd
     .command('clear')

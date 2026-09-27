@@ -108,6 +108,17 @@ describe('pushToTalkOwner — exactly one composer answers a press', () => {
     expect(ownsPushToTalk(only)).toBe(false);
   });
 
+  it('answers the GLOBAL hotkey in an unfocused window — the notch never takes focus when summoned', () => {
+    const only = el(true);
+    const other = el(false);
+    registerPushToTalk(() => only);
+    registerPushToTalk(() => other);
+    vi.stubGlobal('document', { get activeElement() { return null; }, hasFocus: () => false });
+    expect(ownsPushToTalk(only, { global: true })).toBe(true);
+    // The ownership rule still holds: a pane that is not on screen does not answer.
+    expect(ownsPushToTalk(other, { global: true })).toBe(false);
+  });
+
   it('treats a disconnected element as gone, so a torn-down pane never wins', () => {
     const dead = el(true);
     (dead as unknown as { isConnected: boolean }).isConnected = false;

@@ -176,7 +176,9 @@ export async function lineTops(locator) {
       for (const q of range.getClientRects()) {
         if (q.width <= 0 || q.height <= 0) continue;
         if (q.bottom <= box.top + 1 || q.top >= box.bottom - 1) continue;
-        tops.push(Math.round(q.top));
+        // Rounded RELATIVE to the block: rounding absolute tops turns a true 20px pitch at a
+        // fractional page offset into 21/20, which measured the scroll position, not the text.
+        tops.push(Math.round(q.top - box.top));
       }
     }
     tops.sort((a, b) => a - b);

@@ -1,5 +1,6 @@
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk } from '../../lib/voice/speechQueue';
+import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { raiseAskAttention } from '../../lib/attention';
@@ -136,6 +137,10 @@ export type PendingItem = PendingPermission | PendingQuestion | PendingPlan;
  *  the other intent, "not this turn, the next one". Re-exported from chatQueue.ts (which owns
  *  the rules, testably) so consumers have one import for the model. */
 export type QueuedMessage = queue.QueuedMessage;
+
+/** Runs one relayed Assistant UI verb. `null` = delegated to a vault window. */
+export type AssistantCommandHandler = (cmd: { id: string; verb: string; args: Record<string, unknown> }) =>
+  Promise<{ ok: true; result?: unknown } | { ok: false; error: string } | null>;
 
 export interface ChatResultInfo {
   success: boolean;
@@ -444,6 +449,12 @@ export interface ChatSession {
    *  "Send now". A no-op while a turn is still running (the pause is lifted, and the normal
    *  turn-settled drain takes it from there). */
   flushQueue: () => void;
+  /** The dreamcontext Assistant's notch makes THIS session its relay surface: the handler runs
+   *  every UI verb the server sends down the socket and its answer goes back up it. `null`
+   *  withdraws it. A handler that resolves `null` has DELEGATED the command (a vault window
+   *  will post the result to the server itself), so nothing is sent back from here. Only
+   *  meaningful on the `__assistant__` session; the server ignores the frames elsewhere. */
+  setCommandHandler: (fn: AssistantCommandHandler | null) => void;
   /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt). */
   answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => void;
   /** Answer a pending AskUserQuestion card — builds the load-bearing `{questions, answers}`
@@ -453,7 +464,7 @@ export interface ChatSession {
   interrupt: () => void;
   /** Silence spoken audio and bank the autoplay activation. Called by the composer's mic
    *  button, synchronously inside the press handler (see the implementation for why both
-   *  jobs have to happen there). A no-op outside J.A.R.V.I.S mode. */
+   *  jobs have to happen there). A no-op outside assistant mode. */
   bargeInSpeech: () => void;
   /**
    * Subscribe to "is this turn speaking", for the composer's speaking controls. Returns the
@@ -461,7 +472,7 @@ export interface ChatSession {
    *
    * A SUBSCRIPTION rather than a field on the conversation model: speech starts and stops on
    * the audio queue's own clock, not on a server frame, so routing it through the model would
-   * mean inventing a reducer action for something no frame produces. Outside J.A.R.V.I.S mode
+   * mean inventing a reducer action for something no frame produces. Outside assistant mode
    * there is no queue, and this reports a permanent `false`.
    */
   onSpeaking: (fn: (speaking: boolean) => void) => () => void;
@@ -560,6 +571,45 @@ function askSummary(entry: PendingQuestion | PendingPlan): string {
   return entry.title ? `${entry.title} — ${question}` : question;
 }
 
+/** One transcript item the resume replay reads (`/agent/chat-history`'s wire,
+ *  `src/lib/transcript-history.ts`). */
+export interface HistoryEntry {
+  kind: 'user' | 'text' | 'thinking' | 'tool';
+  uuid?: string;
+  text?: string;
+  toolUseId?: string;
+  name?: string;
+  input?: unknown;
+  status?: 'done' | 'error';
+  result?: unknown;
+  /** The transcript row's time, epoch ms (`transcript-history.ts`); absent on an older server. */
+  at?: number;
+  endAt?: number;
+}
+
+/** A replayed transcript item as a chat item. Pure, so the replay's times are testable. */
+export function historyChatItem(h: HistoryEntry, idStr: string): ChatItem | null {
+  // 0 is "no time": the quest model reads it that way, never as the epoch.
+  const at = typeof h.at === 'number' && h.at > 0 ? h.at : 0;
+  const endAt = typeof h.endAt === 'number' && h.endAt > 0 ? h.endAt : at;
+  if (h.kind === 'user' && typeof h.text === 'string') {
+    return { kind: 'user', id: idStr, text: h.text, ts: at, uuid: h.uuid };
+  }
+  if (h.kind === 'text' && typeof h.text === 'string') {
+    return { kind: 'text', id: idStr, index: -1, text: h.text, done: true, ts: at };
+  }
+  if (h.kind === 'thinking' && typeof h.text === 'string') {
+    return { kind: 'thinking', id: idStr, index: -1, text: h.text, done: true, ts: at };
+  }
+  if (h.kind === 'tool' && typeof h.toolUseId === 'string') {
+    return {
+      kind: 'tool', id: idStr, toolUseId: h.toolUseId, name: h.name ?? '', input: h.input,
+      status: h.status === 'error' ? 'error' : 'done', startedAt: at, endedAt: endAt, result: h.result,
+    };
+  }
+  return null;
+}
+
 // ─── Session factory ────────────────────────────────────────────────────────────────
 
 let chatSessionSeq = 0;
@@ -641,7 +691,7 @@ export function createChatSession(
   // frame created it first.
   const toolCardPos = new Map<string, number>();
 
-  // ── J.A.R.V.I.S mode: speech ──────────────────────────────────────────────────────────
+  // ── Assistant mode: speech ────────────────────────────────────────────────────────────
   //
   // Gated on the mode, so every other session allocates nothing and the branches below are
   // dead code for them. `mode` is `readonly` on a session and changing it respawns a NEW
@@ -649,9 +699,9 @@ export function createChatSession(
   // defend against — the queue simply dies with the session that owned it. The guard is kept
   // anyway because it is one comparison and it states the invariant where it is relied on.
   // `claudeId` identifies this pane to the server's audio-focus ledger: one conversation is
-  // one pane is one speaker claimant. Two J.A.R.V.I.S panes are two ids, and exactly one of
+  // one pane is one speaker claimant. Two assistant panes are two ids, and exactly one of
   // them is granted the speaker for any given turn (`lib/voice/audioFocus.ts`).
-  const speech = mode === 'jarvis' ? new SpeechQueue(claudeId) : null;
+  const speech = mode === 'assistant' ? new SpeechQueue(claudeId) : null;
 
   /**
    * How many characters of each TEXT ITEM have already been handed to the speech queue,
@@ -674,6 +724,10 @@ export function createChatSession(
     if (!speech) return;
     const already = spokenChars.get(itemId) ?? 0;
     if (full.length <= already) return;
+    // Read aloud is opt-in (the composer's switch). Off means nothing reaches the queue, so
+    // no `/tts` fetch and no music hold. The text still counts as consumed, so switching it
+    // on mid-reply speaks from here on instead of replaying what was skipped.
+    if (!readAloudEnabled()) { spokenChars.set(itemId, full.length); return; }
     // Tagged with the ITEM, so the transcript can mark the sentence that is being spoken.
     speech.push(full.slice(already), itemId);
     spokenChars.set(itemId, full.length);
@@ -754,6 +808,7 @@ export function createChatSession(
     flushQueue,
     answer,
     answerQuestion,
+    setCommandHandler,
     interrupt,
     bargeInSpeech,
     onSpeaking,
@@ -1025,7 +1080,7 @@ export function createChatSession(
         // above already are. Until `parentToolUseId` was attached to this event
         // (chatProtocol.ts's `fromAssistant`, text branch) this arm had no way to ask the
         // question, so a sub-agent's prose arriving as a top-level `assistant` frame landed
-        // in the main transcript unattributed. J.A.R.V.I.S mode raises the stakes rather than
+        // in the main transcript unattributed. Assistant mode raises the stakes rather than
         // creating them: the speech queue reads text items, so an unguarded one would be read
         // ALOUD as this conversation's own words, interleaved with the real turn.
         //
@@ -1428,6 +1483,7 @@ export function createChatSession(
     // for the same reason the `onmessage` drain is: a drain SENDS a frame and appends an item,
     // which is a second mutation with its own notify.
     maybeFlushQueue();
+    if (commandHandler) declareSurface();
   };
   ws.onmessage = (e) => {
     const raw = typeof e.data === 'string' ? e.data : '';
@@ -1436,6 +1492,8 @@ export function createChatSession(
     // Noise (hook chatter, status pings, rate-limit events) and unparseable lines touch
     // neither notification channel — nothing changed, so nothing re-renders.
     if (!ev || ev.kind === 'ignored') return;
+    // A relayed Assistant verb is not conversation state: it never reaches the reducer.
+    if (ev.kind === 'assistant-command') { void runCommand(ev); return; }
     // The ONE place coalescing is allowed: a socket frame nobody is waiting to act on can
     // ride the next paint instead of forcing a React commit per streamed token.
     applyAndNotify(() => applyEvent(ev), !isUrgentChatEvent(ev));
@@ -1532,7 +1590,7 @@ export function createChatSession(
     silenceSpeech();
   }
 
-  /** See the field's doc. With no queue (any mode but J.A.R.V.I.S) the answer is a settled
+  /** See the field's doc. With no queue (any mode but assistant) the answer is a settled
    *  `false` — the subscriber still gets its one call, so it never waits for an event that
    *  cannot arrive. */
   function onSpeaking(fn: (speaking: boolean) => void): () => void {
@@ -1540,7 +1598,7 @@ export function createChatSession(
     return speech.onSpeaking(fn);
   }
 
-  /** See the field's doc. Outside J.A.R.V.I.S mode nothing is ever spoken, so the answer is a
+  /** See the field's doc. Outside assistant mode nothing is ever spoken, so the answer is a
    *  settled `null` — the subscriber still gets its one call. */
   function onSpokenChunk(fn: (chunk: SpokenChunk | null) => void): () => void {
     if (!speech) { fn(null); return () => {}; }
@@ -1694,6 +1752,31 @@ export function createChatSession(
   }
 
   // ── Live model / effort switches ────────────────────────────────────────────────────
+  // ── The Assistant relay surface (notch only) ────────────────────────────────────
+  let commandHandler: AssistantCommandHandler | null = null;
+  function declareSurface(): void {
+    sendControl({ type: 'assistant_surface' });
+  }
+  function setCommandHandler(fn: AssistantCommandHandler | null): void {
+    const was = commandHandler;
+    commandHandler = fn;
+    // Declared once per socket open; `onopen` re-declares for a handler set before the wire.
+    if (fn && !was && ws.readyState === WebSocket.OPEN) declareSurface();
+  }
+  async function runCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
+    const handler = commandHandler;
+    let out: Awaited<ReturnType<AssistantCommandHandler>>;
+    try {
+      out = handler ? await handler(cmd) : { ok: false, error: 'no_surface' };
+    } catch (err) {
+      out = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    if (out === null) return; // delegated — a vault window answers the server directly
+    sendControl(out.ok
+      ? { type: 'assistant_command_result', id: cmd.id, ok: true, result: out.result ?? null }
+      : { type: 'assistant_command_result', id: cmd.id, ok: false, error: out.error });
+  }
+
   function sendControl(frame: ClientControl): boolean {
     if (ws.readyState !== WebSocket.OPEN) return false;
     try { ws.send(JSON.stringify(frame)); return true; } catch { return false; }
@@ -1873,17 +1956,6 @@ export function createChatSession(
 
   // ── Transcript history (resume replay + rewind-anchor uuids) ───────────────────────
 
-  interface HistoryEntry {
-    kind: 'user' | 'text' | 'thinking' | 'tool';
-    uuid?: string;
-    text?: string;
-    toolUseId?: string;
-    name?: string;
-    input?: unknown;
-    status?: 'done' | 'error';
-    result?: unknown;
-  }
-
   async function fetchTranscriptHistory(): Promise<HistoryEntry[]> {
     try {
       const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`);
@@ -1892,23 +1964,7 @@ export function createChatSession(
   }
 
   function toChatItem(h: HistoryEntry): ChatItem | null {
-    const idStr = `hist-${++itemSeq}`;
-    if (h.kind === 'user' && typeof h.text === 'string') {
-      return { kind: 'user', id: idStr, text: h.text, ts: 0, uuid: h.uuid };
-    }
-    if (h.kind === 'text' && typeof h.text === 'string') {
-      return { kind: 'text', id: idStr, index: -1, text: h.text, done: true, ts: 0 };
-    }
-    if (h.kind === 'thinking' && typeof h.text === 'string') {
-      return { kind: 'thinking', id: idStr, index: -1, text: h.text, done: true, ts: 0 };
-    }
-    if (h.kind === 'tool' && typeof h.toolUseId === 'string') {
-      return {
-        kind: 'tool', id: idStr, toolUseId: h.toolUseId, name: h.name ?? '', input: h.input,
-        status: h.status === 'error' ? 'error' : 'done', startedAt: 0, endedAt: 0, result: h.result,
-      };
-    }
-    return null;
+    return historyChatItem(h, `hist-${++itemSeq}`);
   }
 
   /** Resume replay: `--resume` never re-emits past frames, so a resumed chat would open

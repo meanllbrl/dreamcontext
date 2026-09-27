@@ -199,7 +199,7 @@
 
   /* ─── Agent ROLE identity (the quest party) ───
      Same contract as the nav hues above: static chrome, never a status. A role's family is
-     spent as a TINTED DISC behind the agent's face (chat/atoms.css `.chat-a-avatar[data-role]`);
+     spent as a TINTED SURFACE on the quest chips (chat/atoms.css); the avatar itself wears `--role-c-*`;
      running keeps its own motion and status keeps its own ink. `maker` roles carry memory (the
      planner and the builders it seeds), `judge` roles arrive with fresh eyes. Not --chart-1
      (the accent), not --chart-7 (the asking magenta), not --chart-3/-5 (warning's neighbours).
@@ -207,6 +207,24 @@
   --role-hue-maker:   var(--chart-2);
   --role-hue-judge:   var(--chart-8);
   --role-hue-neutral: var(--chart-6);
+  /* Each role's OWN body colour (chat/RoleCharacter.css): one slot each around the brand wheel,
+     so the reviewers sitting side by side never share a hue. Same contract as above: static
+     chrome, never a status. The lead is the brand violet, darkened so Sleepy's lavender eyes
+     glow on it; every other body carries a dark ink face, so none of these ever holds text. */
+  --role-c-lead:          hsl(250 62% 50%);
+  --role-c-planner:       var(--chart-2);
+  --role-c-critic:        var(--chart-5);
+  --role-c-pragmatist:    hsl(84 62% 42%);
+  --role-c-edge:          #db04b4;
+  --role-c-security:      #2535e2;
+  --role-c-plan-reviewer: var(--chart-7);
+  --role-c-builder:       var(--chart-3);
+  --role-c-reviewer:      #8200a6;
+  --role-c-validator:     var(--chart-4);
+  --role-c-scout:         var(--chart-8);
+  --role-c-peer:          var(--color-vivid-purple);
+  --role-c-headless:      hsl(226 12% 36%);
+  --role-c-agent:         var(--chart-6);
   /* A step's status as INK on paper: "Reading ChatPane.tsx…" running, "Couldn't edit …" failed.
      The base swatches are dot/fill colours and fail as 12px text on the tertiary chip surface.
      Measured (WCAG, 2026-09-25) on bg / bg-secondary / bg-tertiary:
@@ -396,6 +414,20 @@
   --role-hue-maker:   var(--chart-2);
   --role-hue-judge:   var(--chart-8);
   --role-hue-neutral: var(--chart-6);
+  --role-c-lead:          hsl(250 76% 68%);
+  --role-c-planner:       var(--chart-2);
+  --role-c-critic:        var(--chart-5);
+  --role-c-pragmatist:    hsl(84 62% 52%);
+  --role-c-edge:          hsl(312 88% 62%);
+  --role-c-security:      hsl(234 88% 68%);
+  --role-c-plan-reviewer: var(--chart-7);
+  --role-c-builder:       var(--chart-3);
+  --role-c-reviewer:      hsl(286 72% 64%);
+  --role-c-validator:     var(--chart-4);
+  --role-c-scout:         var(--chart-8);
+  --role-c-peer:          var(--chart-1);
+  --role-c-headless:      hsl(226 14% 58%);
+  --role-c-agent:         var(--chart-6);
   --color-success-ink: hsl(142 71% 55%);
   --color-error-ink:   hsl(0 100% 72%);
 

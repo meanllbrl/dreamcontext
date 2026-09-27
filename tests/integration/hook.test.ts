@@ -1210,6 +1210,23 @@ describe('hook pre-tool-use (integration)', () => {
     expect(reason).toContain('saving thousands of tokens');
   });
 
+  it('a Develop lead is denied product-code writes, whatever its session id; any other session is not', () => {
+    // DREAMCONTEXT_SERVER_PID = this test process: the nested-claude walk stops here, so the
+    // verdict never depends on whether the suite itself runs under a claude.
+    const env = (lead: string) => ({ ...process.env, DREAMCONTEXT_DEVELOP_LEAD: lead, DREAMCONTEXT_SERVER_PID: String(process.pid) });
+    const write = (file: string, sessionId: string) => JSON.stringify({
+      session_id: sessionId, tool_name: 'Write', tool_input: { file_path: file, content: 'x' },
+    });
+    const product = join(tmpDir, 'src', 'new', 'x.ts');
+    for (const sid of ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222']) {
+      const parsed = JSON.parse(runWithStdin('hook pre-tool-use', write(product, sid), tmpDir, env('1')));
+      expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('builder that owns this file');
+    }
+    expect(runWithStdin('hook pre-tool-use', write(join(ctx, 'state', 't.md'), 'a'), tmpDir, env('1')).trim()).toBe('');
+    expect(runWithStdin('hook pre-tool-use', write(product, 'a'), tmpDir, env('')).trim()).toBe('');
+  });
+
   it('blocks Edit on _dream_context/marketing/.env', () => {
     mkdirSync(join(ctx, 'marketing'), { recursive: true });
     const input = JSON.stringify({

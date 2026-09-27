@@ -48,7 +48,7 @@ import { EventEmitter } from 'node:events';
 import { proposeFromRun, resumeWithAnswer, resumeWithMessage } from '../../src/lib/automations/verdict.js';
 import { createAutomation, lockPathFor, readRunSidecar, writeRunSidecar } from '../../src/lib/automations/store.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
-import { readAutomationSession, recordAutomationSession } from '../../src/lib/automations/session-registry.js';
+import { latestBoundSession, readAutomationSession, recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { createQuestion, listQuestions, pendingQuestion } from '../../src/lib/automations/hitl.js';
 import type { SpawnImpl } from '../../src/lib/automations/runner.js';
 import type { AutomationManifest, AutomationQuestion } from '../../src/lib/automations/types.js';
@@ -384,15 +384,29 @@ describe('resumeWithAnswer — ordering and double-answer', () => {
 });
 
 describe('resumeWithAnswer — capability lifetime', () => {
-  it('retires the binding once the question is settled and no tab was opened', async () => {
+  it('retires an OLDER binding once its question is settled and no tab was opened', async () => {
     // A resolvable session is a capability. The store is plural so Telegram and
     // tab-restore work, which means retirement has to be explicit or an
     // automation firing daily accumulates ~90 live grants.
     makeAutomation();
     const q = makeQuestion();
+    // A later run bound its own session, so this one is no longer the conversation.
+    recordAutomationSession('digest', 'sess-newer00', home, NOW.getTime() + 60_000);
     const { impl } = fakeSpawn(claudeJson('done'));
     await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(readAutomationSession('digest', SESSION, home)).toBeNull();
+    expect(readAutomationSession('digest', 'sess-newer00', home)).toBe('sess-newer00');
+  });
+
+  it('KEEPS the agent\'s LATEST binding, so the thread can still be replied to after the answer', async () => {
+    // The owner answered Front Desk's question, then asked "who are the other 7?" and got
+    // "has no session to talk to yet": the answer had retired the only session there was.
+    makeAutomation();
+    const q = makeQuestion();
+    const { impl } = fakeSpawn(claudeJson('done'));
+    await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
+    expect(readAutomationSession('digest', SESSION, home)).toBe(SESSION);
+    expect(latestBoundSession('digest', home)).toBe(SESSION);
   });
 
   it('KEEPS the binding when the user opened it as a chat tab', async () => {
@@ -477,5 +491,58 @@ describe('resumeWithMessage — talking to the latest run', () => {
     releaseFileLock(lockPath);
     expect(outcome.status).toBe('refused');
     expect(impl).not.toHaveBeenCalled();
+  });
+  it('WAITS for the lock when told to, and delivers the moment the turn ahead of it ends', async () => {
+    // The owner's follow-up, typed seconds after answering a question: the answer's resume
+    // holds the lock, and the follow-up used to fail in 0s with "still in progress".
+    makeAutomation();
+    recordAutomationSession('digest', SESSION, home, NOW.getTime());
+    const lockPath = lockPathFor(contextRoot, 'digest');
+    expect(acquireFileLock(lockPath, NOW.getTime(), 999_999)).toBe(true);
+    let polls = 0;
+    const sleep = async () => { polls += 1; if (polls === 3) releaseFileLock(lockPath); };
+    const { impl, calls } = fakeSpawn(claudeJson('Checked: five answered.'));
+    const outcome = await resumeWithMessage(contextRoot, 'digest', 'did you check?', {
+      home, spawnImpl: impl, now: () => NOW, lockWaitMs: 60_000, lockPollMs: 1_000, sleep,
+    });
+    expect(polls).toBe(3);
+    expect(outcome.status).toBe('ok');
+    expect(outcome.result).toBe('Checked: five answered.');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('gives up with the lock reason once the wait is spent, and never spawns', async () => {
+    makeAutomation();
+    recordAutomationSession('digest', SESSION, home, NOW.getTime());
+    const lockPath = lockPathFor(contextRoot, 'digest');
+    expect(acquireFileLock(lockPath, NOW.getTime(), 999_999)).toBe(true);
+    let polls = 0;
+    const { impl } = fakeSpawn(claudeJson('x'));
+    const outcome = await resumeWithMessage(contextRoot, 'digest', 'hello', {
+      home, spawnImpl: impl, now: () => NOW, lockWaitMs: 3_000, lockPollMs: 1_000, sleep: async () => { polls += 1; },
+    });
+    releaseFileLock(lockPath);
+    expect(polls).toBe(3);
+    expect(outcome.status).toBe('refused');
+    expect(outcome.error).toContain('still in progress');
+    expect(impl).not.toHaveBeenCalled();
+  });
+
+  it('a queued message resumes the session bound WHILE it waited, not the one it saw first', async () => {
+    makeAutomation();
+    recordAutomationSession('digest', 'sess-older00', home, NOW.getTime() - 60_000);
+    const lockPath = lockPathFor(contextRoot, 'digest');
+    expect(acquireFileLock(lockPath, NOW.getTime(), 999_999)).toBe(true);
+    const sleep = async () => {
+      // The run ahead finishes: it binds its own session and lets go of the lock.
+      recordAutomationSession('digest', SESSION, home, NOW.getTime());
+      releaseFileLock(lockPath);
+    };
+    const { impl, calls } = fakeSpawn(claudeJson('ok'));
+    await resumeWithMessage(contextRoot, 'digest', 'and now?', {
+      home, spawnImpl: impl, now: () => NOW, lockWaitMs: 10_000, lockPollMs: 1_000, sleep,
+    });
+    const args = calls[0];
+    expect(args[args.indexOf('--resume') + 1]).toBe(SESSION);
   });
 });

@@ -8,7 +8,7 @@ import {
   type QuestLineage as QuestLineageModel, type QuestMember, type QuestView,
 } from '../../lib/quest';
 import { AgentAvatar, QuestBadge, VerdictChip } from './chat/atoms';
-import { QuestLineage, QuestMap, QuestReceipt, QuestVictory, useJustWon } from './quest/QuestMap';
+import { QuestLineage, QuestMap, QuestReceipt, QuestVictory, QuestWaves, useJustWon } from './quest/QuestMap';
 import './GoalLivePanel.css';
 
 /**
@@ -38,7 +38,8 @@ export function GoalLivePanel({ claudeId, enabled, variant = 'strip' }: {
   const won = st?.phase === 'done';
   const now = useTicker(!!st && !won);
   const quest = useMemo(() => (st ? goalQuest(st, now) : null), [st, now]);
-  const lineage = useMemo(() => (st ? goalLineage(st) : null), [st]);
+  // `now` too: an open Develop wave's time on the receipt runs until the wave ends.
+  const lineage = useMemo(() => (st ? goalLineage(st, now) : null), [st, now]);
 
   // The stamp is news only to someone who watched the run finish. A pane that opens onto a
   // run that was already done (the file lingers on purpose) shows the win at rest.
@@ -174,6 +175,7 @@ function GoalLiveOverlay({ quest, lineage, onClose }: {
           {lineage && (
             <section className="goal-live-section" aria-label="How this was built">
               <h4>How this was built</h4>
+              {lineage.waves && lineage.waves.length > 0 && <QuestWaves waves={lineage.waves} trial={lineage.trial ?? []} />}
               <QuestLineage lineage={lineage} />
             </section>
           )}
@@ -259,15 +261,19 @@ export function GoalDockBadge({ claudeId, enabled }: { claudeId?: string; enable
   const { data } = useAgentGoalLive(claudeId, enabled);
   const st = data?.active ? normalizeGoalLive(data.state) : null;
   if (!st) return null;
-  const stage = GOAL_PHASE_TO_STAGE[st.phase];
+  const develop = st.mode === 'develop';
+  const mapped = GOAL_PHASE_TO_STAGE[st.phase];
+  // A Develop run has no Draft: before its first wave it is Build, still being mapped.
+  const stage = develop && (!mapped || mapped === 'draft' || mapped === 'review' || mapped === 'task') ? 'build' : mapped;
   const label = st.phase === 'done' ? 'Quest cleared' : stage ? QUEST_STAGE_LABELS[stage] : QUEST_STAGE_LABELS.draft;
   const wave = st.impl?.waves && stage === 'build' ? ` · wave ${st.impl.wave ?? 1} of ${st.impl.waves}` : '';
+  const forks = (st.impl?.forks ?? []).filter((f) => f.w == null || f.w === st.impl?.wave);
   return (
     <span className="goal-live-dock-badge" title={`Quest map: ${label}${wave}`}>
       {label}
       {wave}
       <span className="goal-live-dock-forks" aria-hidden>
-        {(st.impl?.forks ?? []).slice(0, 6).map((f, k) => (
+        {forks.slice(0, 6).map((f, k) => (
           <b key={k} data-s={f.s} />
         ))}
       </span>

@@ -243,3 +243,12 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
 }
+
+/* Space view: a positioning context so the assistant's card can float over the sky. */
+.launcher-space-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}

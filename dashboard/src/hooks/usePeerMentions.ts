@@ -15,7 +15,7 @@ import type { PeerMention } from '../lib/agentComposer';
  * which is the correct rendering for a project with no connections anyway.
  *
  * `enabled: false` skips the request entirely and stays at `[]` — for a caller that supplies
- * its own mention list (the meeting room's roster) or has no vault to ask about. Hooks cannot
+ * its own mention list (the agents channel's roster) or has no vault to ask about. Hooks cannot
  * be conditional, so the gate lives here rather than at the call site.
  */
 export function usePeerMentions(enabled = true): PeerMention[] {

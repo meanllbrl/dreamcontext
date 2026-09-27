@@ -4,6 +4,9 @@ import {
   runIdentity, runVerdict, runCarries, runDoing, type Party, type QuestEntry,
 } from '../../dashboard/src/components/sleepy/chat/questModel';
 import type { SubAgentRun } from '../../dashboard/src/components/sleepy/chat/chatEntities';
+import { anchorsBySession, withTeammates, type TeammateWire } from '../../dashboard/src/components/sleepy/chat/teammates';
+import { historyChatItem } from '../../dashboard/src/components/sleepy/chatSession';
+import { parseTranscriptHistory } from '../../src/lib/transcript-history';
 import { JARGON_RE, questVictoryCopy, type QuestLineageNode } from '../../dashboard/src/lib/quest';
 import { LEAD_NAME } from '../../dashboard/src/lib/agentRoles';
 
@@ -136,12 +139,34 @@ describe('partyBatches', () => {
     expect(parties[0].ghost).toBe(false);
   });
 
-  it('runs no call started trail as one last party', () => {
+  it('a run no call started sits after the call nearest before it began; an undated one after the last call', () => {
     const a = agent('a', 'Explore', 'Map the code');
-    const stray: SubAgentRun = { taskId: 'stray', toolUseId: 'tu-elsewhere', name: 'reviewer', subagentType: 'reviewer', status: 'running', startedAt: 1 };
-    const parties = partyBatches([a], [runFor(a), stray]);
-    expect(parties.map((p) => p.anchorKind)).toEqual(['replace', 'trailing']);
-    expect(parties[1]).toMatchObject({ anchorEntryId: null, stage: 'boss' });
+    const b = bash('b', 'ls');
+    const c = bash('c', 'ls -la');
+    const stray: SubAgentRun = {
+      taskId: 'stray', toolUseId: 'tu-elsewhere', name: 'reviewer', subagentType: 'reviewer', status: 'running', startedAt: (b.startedAt ?? 0) + 10,
+    };
+    // A finished run nothing dates is still drawn (ChatPane trails only running parties).
+    const timeless: SubAgentRun = { ...stray, taskId: 'timeless', status: 'completed', startedAt: 0 };
+    const parties = partyBatches([a, b, c], [runFor(a), stray, timeless]);
+    expect(parties.map((p) => [p.anchorKind, p.anchorEntryId])).toEqual([['replace', 'a'], ['after', 'b'], ['after', 'c']]);
+    expect(parties[1]).toMatchObject({ id: 'party-at-stray', stage: 'boss' });
+    expect(parties[2]).toMatchObject({ id: 'party-at-timeless' });
+    // Only a chat with no tool call at all has nowhere to put it.
+    expect(partyBatches([user('u')], [timeless]).map((p) => p.anchorKind)).toEqual(['trailing']);
+  });
+
+  it('every run one call names is placed in that call\'s party, not only the first', () => {
+    // Three unregistered teammates named by one call (their ids in one command line).
+    const reg = bash('reg', 'dreamcontext goal-live actor lane-a --session a && dreamcontext goal-live actor lane-b --session b');
+    const mates = ['a', 'b', 'c'].map((s, i): SubAgentRun => ({
+      taskId: `teammate:${s}`, toolUseId: reg.toolUseId, name: `lane ${s}`, taskType: 'headless_session', session: s,
+      role: 'implementer', status: 'completed', startedAt: (reg.startedAt ?? 0) + 5000 * (i + 1),
+    }));
+    const parties = partyBatches([user('u'), reg, bash('later', 'ls')], mates);
+    expect(parties).toHaveLength(1);
+    expect(parties[0]).toMatchObject({ anchorEntryId: 'reg', anchorKind: 'after' });
+    expect(parties[0].runs.map((r) => r.taskId)).toEqual(['teammate:a', 'teammate:b', 'teammate:c']);
   });
 
   it('an earlier round of the same judging stage is superseded', () => {
@@ -151,6 +176,185 @@ describe('partyBatches', () => {
     expect(parties.map((p) => [p.round, p.superseded])).toEqual([[1, true], [2, false]]);
     expect(parties.map(partyTitle)).toEqual(['Plan review · round 1', 'Plan review · round 2']);
     expect(parties.map(partyOutcome)).toEqual(['sent-back', 'cleared']);
+  });
+});
+
+/**
+ * A Develop run as the lead actually streams it (fictional project: a "Lanternfish" field
+ * guide). Builders are launched with `--session-id "$SID"`, so no launch names an id; wave 7's
+ * three builders are registered in ONE call that names all three; wave 6's builder is brought
+ * back with `--round 2` during wave 7, the first call naming its id literally. A reviewer
+ * follows each wave. Runs go through the real teammate fold, as ChatPane feeds the model.
+ */
+function lanternfishRun(o: { fourth?: boolean } = {}) {
+  const ID = {
+    w6a: '6a6a6a6a-0000-4000-8000-000000000006',
+    w7a: '7a7a7a7a-0000-4000-8000-000000000007',
+    w7b: '7b7b7b7b-0000-4000-8000-000000000007',
+    w7c: '7c7c7c7c-0000-4000-8000-000000000007',
+    w7d: '7d7d7d7d-0000-4000-8000-000000000007',
+  };
+  const spawn6 = bash('spawn6', 'SID=$(uuidgen); nohup claude -p --session-id "$SID" "Lanternfish: lane A, glossary" >/dev/null 2>&1 &');
+  const reg6 = bash('reg6', 'dreamcontext goal-live actor w6-A --role implementer --kind spawn --wave 6 --session "$SID"');
+  const rv6 = agent('rv6', 'reviewer', 'Review wave 6');
+  const spawn7 = bash('spawn7', 'for L in A B C; do SID=$(uuidgen); nohup claude -p --session-id "$SID" "Lanternfish lane $L" & done');
+  const reg7 = bash('reg7', [ID.w7a, ID.w7b, ID.w7c].map((id, i) => `dreamcontext goal-live actor w7-${'ABC'[i]} --role implementer --wave 7 --session ${id}`).join(' && '));
+  const resume6 = bash('resume6', `claude -p --resume ${ID.w6a} "fix the glossary lint" && dreamcontext goal-live actor w6-A --kind resume --wave 6 --round 2 --session ${ID.w6a}`);
+  const spawn7d = bash('spawn7d', 'SID=$(uuidgen); nohup claude -p --session-id "$SID" "Lanternfish lane D, docs" &');
+  const rv7 = agent('rv7', 'reviewer', 'Review wave 7', 'running');
+  const entries: QuestEntry[] = [
+    user('u'), text('t6', 'Wave 6: one builder.'), spawn6, reg6, text('wait6', 'Waiting on wave 6.'),
+    rv6, text('t7', 'Wave 6 passed. Wave 7: three builders.'), spawn7, reg7, resume6,
+    ...(o.fourth ? [spawn7d] : []), text('built7', 'Wave 7 built.'), rv7,
+  ];
+  const after = (e: QuestEntry, ms: number) => (e.startedAt ?? 0) + ms;
+  const mate = (session: string, name: string, wave: number, startedAt: number, extra: Partial<TeammateWire> = {}): TeammateWire => ({
+    session, status: 'done', steps: [], toolUses: 4, role: 'implementer', kind: 'spawn', name, wave, startedAt, endedAt: startedAt + 300, ...extra,
+  });
+  const wire: TeammateWire[] = [
+    mate(ID.w6a, 'lane A, glossary', 6, after(spawn6, 200), { kind: 'resume', round: 2, endedAt: after(resume6, 400) }),
+    mate(ID.w7a, 'lane A', 7, after(spawn7, 200)),
+    mate(ID.w7b, 'lane B', 7, after(spawn7, 250)),
+    mate(ID.w7c, 'lane C', 7, after(spawn7, 300)),
+    ...(o.fourth ? [mate(ID.w7d, 'lane D, docs', 7, after(spawn7d, 200))] : []),
+  ];
+  const tracked = [runFor(rv6, { summary: 'PASS' }), runFor(rv7, { status: 'running' })];
+  const runs = withTeammates(tracked, wire, anchorsBySession(entries), clock);
+  return { entries, runs, ID };
+}
+
+describe('partyBatches: a Develop run with registered waves', () => {
+  const sessions = (p: Party) => p.runs.map((r) => r.session ?? r.taskId);
+
+  it('groups builders by their registered wave: all of wave 7 in its card, wave 6 never in it', () => {
+    const { entries, runs, ID } = lanternfishRun();
+    const builds = partyBatches(entries, runs).filter((p) => p.stage === 'build');
+    expect(builds.map(sessions)).toEqual([[ID.w6a], [ID.w7a, ID.w7b, ID.w7c]]);
+    expect(builds.map((p) => p.wave)).toEqual([6, 7]);
+  });
+
+  it('names each build card by its registered wave, not by how many builds came before', () => {
+    const { entries, runs } = lanternfishRun();
+    const parties = partyBatches(entries, runs);
+    expect(parties.map(partyTitle)).toEqual(['Build · wave 6', 'Boss gate · round 1', 'Build · wave 7', 'Boss gate · round 2']);
+  });
+
+  it('sits each build where it began, before the review that followed it, and trails nothing that has a time', () => {
+    const { entries, runs } = lanternfishRun();
+    const parties = partyBatches(entries, runs);
+    // Wave 6 sits at its launch, not at the resume that first named its id during wave 7.
+    expect(parties.map((p) => [p.stage, p.anchorEntryId, p.anchorKind])).toEqual([
+      ['build', 'spawn6', 'after'], ['boss', 'rv6', 'replace'], ['build', 'spawn7', 'after'], ['boss', 'rv7', 'replace'],
+    ]);
+    expect(parties.filter((p) => partyOutcome(p) !== 'running').every((p) => p.anchorKind !== 'trailing')).toBe(true);
+  });
+
+  it('the resumed wave-6 builder, started at its spawn, sits before wave 6\'s first review', () => {
+    const { entries, runs, ID } = lanternfishRun();
+    const parties = partyBatches(entries, runs);
+    const w6 = parties.findIndex((p) => p.wave === 6);
+    const spawn6 = entries.find((e) => e.id === 'spawn6')!;
+    // The server reports a resumed run's start as its FIRST enqueue (headless-teammate.ts).
+    expect(parties[w6].runs[0]).toMatchObject({ session: ID.w6a, round: 2, joined: 'resume' });
+    expect(parties[w6].runs[0].startedAt).toBeLessThan(entries.find((e) => e.id === 'rv6')!.startedAt!);
+    expect(parties[w6].runs[0].startedAt).toBeGreaterThan(spawn6.startedAt!);
+    expect(w6).toBeLessThan(parties.findIndex((p) => p.anchorEntryId === 'rv6'));
+  });
+
+  it('parties that share one anchor call keep distinct ids', () => {
+    const rv = agent('rv', 'reviewer', 'Review wave 3');
+    const late = bash('late', 'ls');
+    const mate: SubAgentRun = {
+      taskId: 'teammate:w3', name: 'lane A', taskType: 'headless_session', session: 'w3', role: 'implementer',
+      wave: 3, status: 'completed', startedAt: (rv.startedAt ?? 0) + 100,
+    };
+    const stray: SubAgentRun = { taskId: 'stray', toolUseId: 'tu-gone', name: 'Map it', subagentType: 'Explore', status: 'completed', startedAt: (rv.startedAt ?? 0) + 200 };
+    const parties = partyBatches([user('u'), rv, late], [runFor(rv), mate, stray]);
+    expect(parties.map((p) => p.anchorEntryId)).toEqual(['rv', 'rv', 'rv']);
+    expect(parties.map((p) => p.id)).toEqual(['party-rv', 'party-build-w3', 'party-at-stray']);
+    expect(new Set(parties.map((p) => p.id)).size).toBe(parties.length);
+  });
+
+  it('a fourth builder joining wave 7 moves no card: ids and kickers hold', () => {
+    const before = (() => { const { entries, runs } = lanternfishRun(); return partyBatches(entries, runs); })();
+    const { entries, runs, ID } = lanternfishRun({ fourth: true });
+    const after = partyBatches(entries, runs);
+    expect(after.map((p) => [p.id, partyTitle(p)])).toEqual(before.map((p) => [p.id, partyTitle(p)]));
+    expect(after.map((p) => p.id)).toEqual(['party-build-w6', 'party-rv6', 'party-build-w7', 'party-rv7']);
+    // The docs lane was launched with a variable and never named: it joins its wave by registration.
+    expect(sessions(after[2])).toEqual([ID.w7a, ID.w7b, ID.w7c, ID.w7d]);
+  });
+});
+
+/**
+ * The same Lanternfish run, REOPENED: the lead's past turns come back from its transcript
+ * (`parseTranscriptHistory` -> `historyChatItem`, as a resumed chat replays them), then one
+ * live turn. The reviewers' Agent calls have no live run any more (ghosts); the builders come
+ * from the teammate fold, their start being their spawn.
+ */
+function reopenedLanternfish(o: { dated: boolean }) {
+  const ID = { w6a: '6a6a6a6a-0000-4000-8000-000000000006', w7a: '7a7a7a7a-0000-4000-8000-000000000007', w7b: '7b7b7b7b-0000-4000-8000-000000000007' };
+  const T0 = Date.UTC(2026, 8, 27, 9, 0, 0);
+  const at = (min: number) => T0 + min * 60_000;
+  const stamp = (min: number) => (o.dated ? { timestamp: new Date(at(min)).toISOString() } : {});
+  let n = 0;
+  const call = (min: number, name: string, input: unknown) => {
+    const id = `toolu_${++n}`;
+    return [
+      { type: 'assistant', ...stamp(min), message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } },
+      { type: 'user', ...stamp(min + 1), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } },
+    ];
+  };
+  const raw = [
+    { type: 'user', ...stamp(0), message: { role: 'user', content: 'Develop the Lanternfish field guide' } },
+    ...call(1, 'Bash', { command: 'SID=$(uuidgen); nohup claude -p --session-id "$SID" "Lanternfish lane A" &' }),
+    ...call(10, 'Agent', { subagent_type: 'reviewer', description: 'Review wave 6', prompt: 'Review wave 6' }),
+    ...call(20, 'Bash', { command: 'for L in A B; do SID=$(uuidgen); nohup claude -p --session-id "$SID" "Lanternfish lane $L" & done' }),
+    ...call(21, 'Bash', { command: `dreamcontext goal-live actor w7-A --wave 7 --session ${ID.w7a} && dreamcontext goal-live actor w7-B --wave 7 --session ${ID.w7b}` }),
+    ...call(30, 'Bash', { command: `claude -p --resume ${ID.w6a} "fix the glossary lint"` }),
+    ...call(40, 'Agent', { subagent_type: 'reviewer', description: 'Review wave 7', prompt: 'Review wave 7' }),
+  ].map((r) => JSON.stringify(r)).join('\n');
+  const history = parseTranscriptHistory(raw)
+    .map((h, i) => historyChatItem(h, `hist-${i}`))
+    .filter((x): x is NonNullable<typeof x> => x != null) as QuestEntry[];
+  const live: QuestEntry[] = [
+    { kind: 'user', id: 'live-u', text: 'how is it going?', ts: at(50) },
+    { kind: 'tool', id: 'live-ls', toolUseId: 'tu-live-ls', name: 'Bash', status: 'done', startedAt: at(51), input: { command: 'git status' } },
+  ];
+  const entries = [...history, ...live];
+  const mate = (session: string, wave: number, startMin: number, extra: Partial<TeammateWire> = {}): TeammateWire => ({
+    session, status: 'done', steps: [], toolUses: 3, role: 'implementer', kind: 'spawn', name: session.slice(0, 4), wave,
+    startedAt: at(startMin), endedAt: at(startMin + 5), ...extra,
+  });
+  const wire = [mate(ID.w6a, 6, 2, { kind: 'resume', round: 2, endedAt: at(32) }), mate(ID.w7a, 7, 20.5), mate(ID.w7b, 7, 20.6)];
+  const runs = withTeammates([], wire, anchorsBySession(entries), at(60));
+  const idOf = (i: number) => history[i].id;
+  return { entries, runs, history, idOf, at };
+}
+
+describe('partyBatches: a reopened Develop chat', () => {
+  it('replayed rows carry their transcript time, so each build sits before its wave\'s review', () => {
+    const { entries, runs, history } = reopenedLanternfish({ dated: true });
+    expect(history.every((e) => (e.startedAt ?? e.ts ?? 0) > 0)).toBe(true);
+    const parties = partyBatches(entries, runs);
+    const toolIds = history.filter((e) => e.kind === 'tool').map((e) => e.id);
+    expect(parties.map((p) => [partyTitle(p), p.anchorEntryId])).toEqual([
+      ['Build · wave 6', toolIds[0]],
+      ['Boss gate · round 1', toolIds[1]],
+      ['Build · wave 7', toolIds[2]],
+      ['Boss gate · round 2', toolIds[5]],
+    ]);
+  });
+
+  it('a transcript with no times replays rows at 0, which the quest reads as no time, not the epoch', () => {
+    const { entries, runs, history } = reopenedLanternfish({ dated: false });
+    expect(history.every((e) => (e.startedAt ?? e.ts) === 0)).toBe(true);
+    const q = deriveChatQuest({ mode: 'develop', entries, parties: partyBatches(entries, runs), progress: null, now: Date.UTC(2026, 8, 27, 10) })!;
+    expect(q.startedAt).toBeNull();
+    expect(q.timeline.every((x) => x.at > 0)).toBe(true);
+    // A ghost reviewer rebuilt from an undated row has no start either.
+    const ghosts = partyBatches(entries, runs).flatMap((p) => p.runs).filter((r) => r.taskId.startsWith('ghost:'));
+    expect(ghosts.map((r) => r.startedAt)).toEqual([0, 0]);
   });
 });
 

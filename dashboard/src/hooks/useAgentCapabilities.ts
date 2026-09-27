@@ -6,6 +6,7 @@ import {
   type UsageLimitWire,
 } from '../lib/agentComposer';
 import type { GoalLiveResponse } from '../lib/goalLive';
+import type { TeammatesResponse } from '../components/sleepy/chat/teammates';
 import type { CouncilLiveResponse } from '../lib/councilLive';
 
 /**
@@ -332,6 +333,38 @@ export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean)
     staleTime: 1_500,
     retry: false,
     placeholderData: GOAL_LIVE_INACTIVE,
+  });
+}
+
+const NO_TEAMMATES: TeammatesResponse = { teammates: [] };
+
+/**
+ * This pane's headless teammates (`GET /api/agent/teammates`): the `claude -p` runs its quest
+ * registered, plus the ones its own calls launched with `--session-id` (the server confirms
+ * those against the pane's own transcript). Polled whether or not the pane's own session is
+ * still open: a builder outlives the conversation that started it, and that is exactly when
+ * the reader most needs to see it.
+ *
+ * `mentioned` is every id the conversation's own calls name (a launch, a registration). It is
+ * part of the key, so the call that starts or registers a builder is read at once instead of
+ * at the next slow tick: a short builder could otherwise finish before it was ever seen.
+ */
+export function useHeadlessTeammates(claudeId: string | undefined, launched: readonly string[], mentioned: readonly string[]) {
+  const api = useApi();
+  const key = launched.join(',');
+  return useQuery({
+    queryKey: ['agent-teammates', claudeId, key, mentioned.join(',')],
+    queryFn: () => api.get<TeammatesResponse>(
+      `/agent/teammates?claudeId=${encodeURIComponent(claudeId!)}${key ? `&launched=${encodeURIComponent(key)}` : ''}`,
+    ),
+    enabled: !!claudeId,
+    refetchInterval: (q) => {
+      if (q.state.data?.teammates?.some((t) => t.status === 'running')) return 3_000;
+      return mentioned.length ? 6_000 : 15_000;
+    },
+    staleTime: 2_000,
+    retry: false,
+    placeholderData: (prev) => prev ?? NO_TEAMMATES,
   });
 }
 

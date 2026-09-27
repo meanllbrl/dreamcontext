@@ -30,6 +30,7 @@ import { registerChangelogCommand } from './commands/changelog.js';
 import { registerEmbedCommand } from './commands/embed.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerAppCommand } from './commands/app.js';
+import { registerAssistantCommand } from './commands/assistant.js';
 import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConnectionsCommand } from './commands/connections.js';
@@ -141,6 +142,7 @@ export function createProgram(): Command {
   registerUpdateCommand(program);
   registerUpgradeCommand(program);
   registerAppCommand(program);
+  registerAssistantCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);
   registerRecallCommand(program);

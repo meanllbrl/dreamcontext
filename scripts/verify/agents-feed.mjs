@@ -796,7 +796,11 @@ async function main() {
     // said. Every check MEASURES what painted; labels name the finding and the pre-fix value.
     console.log('\n═══ 11. The audit channel ═══');
     const EXCLUDE = ['.agent-msg-md', '.agent-reply-preview-text', '.chat-msg-assistant-body', '.agent-thread-post-text',
-      '.agent-msg-question-text', '.agent-msg-kv'];
+      '.agent-msg-question-text', '.agent-msg-kv',
+      // A run's question is CHAT'S OWN question card (owner, 2026-09-26: "ask the way questions
+      // are normally asked"). Its words and type belong to Chat and are measured by
+      // verify:chat-questions, the same way the composer (.chat-cmp) is excluded here.
+      '.chat-surveycard'];
     const say = (slug, text) => page.evaluate(async ([s, x]) => {
       const r = await fetch('/api/automations/threads/say', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: s, text: x }),
@@ -1022,7 +1026,7 @@ async function main() {
     await until(async () => (await page.locator('.agent-thread-answer .chat-msg-assistant-body').count()) > 0, 10000);
     await page.waitForTimeout(1200);
     await page.mouse.move(1, 1);
-    const LADDER_EXCLUDE = ['.chat-msg-assistant-body', '.chat-cmp', '.chat-slideover-close', '.chat-board',
+    const LADDER_EXCLUDE = ['.chat-msg-assistant-body', '.chat-cmp', '.chat-surveycard', '.chat-slideover-close', '.chat-board',
       '[aria-hidden="true"]', '.sr-only', '.agent-msg-md .markdown-body'];
     const ladder = await textLadder(page, '.agents-page', LADDER_EXCLUDE);
     check('[C2] every painted text in the channel is 12 or 14px, weight 400 or 600 (was 11/13/15/16/18px, 500/700)',
@@ -1285,17 +1289,19 @@ async function main() {
       // contrast requirement is kept there. Every control left here still paints text on a fill.
       await page.mouse.move(1, 1);
       const fillsQ = await strongFills(page, '.agents-page');
-      check(`[C3] ${theme}: with a question pending, at most two strong-accent fills: New agent and the first choice (was 4)`,
+      check(`[C3] ${theme}: with a question pending, at most two strong-accent fills: New agent and the question card's Submit (was 4)`,
         fillsQ.length <= 2, `fills=${fillsQ.length} ${JSON.stringify(fillsQ)}`);
       const chipOn = page.locator('.agents-chip--on').first();
       const chipOnFill = await chipOn.evaluate((el) => getComputedStyle(el).backgroundColor).catch(() => null);
       const chipOnInk = await contrast(chipOn).catch(() => 0);
       check(`[C3] ${theme}: the selected chip is a neutral surface, its label >=4.5:1 (was the strong accent fill)`,
         !!chipOnFill && chipOnFill !== STRONG_RGB && chipOnInk >= 4.5, `fill=${chipOnFill} contrast=${chipOnInk}`);
-      const alt = page.locator('.agent-msg-question-choice').nth(1);
-      const altState = (await alt.count()) ? await alt.evaluate((el) => ({ fill: getComputedStyle(el).backgroundColor })) : null;
+      // The question is Chat's own card now: options are ROWS on the card's surface, never fills.
+      const alt = page.locator('.agent-msg-ask .chat-surveycard-opt-title').nth(1);
+      const altRow = page.locator('.agent-msg-ask .chat-surveycard-opt').nth(1);
+      const altState = (await altRow.count()) ? await altRow.evaluate((el) => ({ fill: getComputedStyle(el).backgroundColor })) : null;
       const altInk = (await alt.count()) ? await contrast(alt) : 0;
-      check(`[C3] ${theme}: the second choice is tinted, not filled, and reads >=4.5:1 (was a second strong fill)`,
+      check(`[C3] ${theme}: the second option is a row, not a strong fill, and reads >=4.5:1`,
         !!altState && altState.fill !== STRONG_RGB && altInk >= 4.5, `${JSON.stringify(altState)} contrast=${altInk}`);
       if (theme === 'dark') {
         const headBg = await page.locator('.agents-head').evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -1303,8 +1309,12 @@ async function main() {
         check('[C8] dark: the header is the page\'s own canvas, not a raised slab (was rgb(28, 31, 42) on rgb(20, 23, 31))',
           headBg === pageBg, `head=${headBg} page=${pageBg}`);
       }
-      const choice = page.locator('.agent-msg-question-choice').first();
+      // The one filled accent a pending question spends is the card's Submit.
+      const choice = page.locator('.agent-msg-ask .chat-surveycard .chat-btn.primary').first();
       if (await choice.count()) {
+        // Submit is disabled (and faded, as in Chat) until something is picked; the contrast
+        // that matters is the control a reader can press. Picking an option does not submit.
+        await page.locator('.agent-msg-ask .chat-surveycard-opt').first().click();
         await choice.scrollIntoViewIfNeeded();
         inks.choice = await fillContrast(choice);
         await choice.hover();
@@ -1314,11 +1324,8 @@ async function main() {
       } else {
         inks.choice = inks.choiceHover = null;
       }
-      await probe('.agents-feed-scroll', 'button', 'agent-msg-question-send', 'Send');
-      inks.send = await fillContrast(page.locator('[data-verify-probe]'));
-      await page.evaluate(() => document.querySelectorAll('[data-verify-probe]').forEach((e) => e.remove()));
       inks.newAgent = await minGradientContrast(page.locator('.agents-new-btn').first());
-      check(`[R2-5] ${theme}: a question's first choice (at rest and hovered), its Send and "New agent" all read at >=4.5:1 on their fill (was ${was})`,
+      check(`[R2-5] ${theme}: a question's Submit (at rest and hovered) and "New agent" all read at >=4.5:1 on their fill (was ${was})`,
         Object.values(inks).every((v) => v !== null && v >= 4.5), JSON.stringify(inks));
       if (theme === 'dark') {
         // The unread badge was dark ink on the light violet in dark (6.51) — already fine, so

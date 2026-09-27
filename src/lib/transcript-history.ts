@@ -26,6 +26,16 @@ export interface ChatHistoryItem {
   input?: unknown;
   status?: 'done' | 'error';
   result?: unknown;
+  /** When the transcript wrote this row, epoch ms. Absent when the row carries no timestamp. */
+  at?: number;
+  /** A tool's result row time, epoch ms: when the call finished. */
+  endAt?: number;
+}
+
+/** A transcript row's own `timestamp`, as epoch ms, or undefined. Never 0: that is no time. */
+function rowTime(v: unknown): number | undefined {
+  const n = typeof v === 'string' ? Date.parse(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /** Ceiling on replayed items — a months-old conversation can hold thousands of entries;
@@ -108,7 +118,7 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
     if (!s) continue;
     let obj: {
       type?: unknown; uuid?: unknown; isMeta?: unknown; isSynthetic?: unknown;
-      isSidechain?: unknown;
+      isSidechain?: unknown; timestamp?: unknown;
       message?: { role?: unknown; content?: unknown };
     };
     try { obj = JSON.parse(s); } catch { continue; }
@@ -124,6 +134,9 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
     // (agent-terminal.ts's `isSidechain !== true`). Skipped when READING a sidechain file:
     // there the marker is on every entry and is not a foreign-turn signal at all.
     if (!opts.sidechain && obj.isSidechain === true) continue;
+    // Where the row sits in time: how a reopened chat places a card no call names.
+    const at = rowTime(obj.timestamp);
+    const when = at != null ? { at } : {};
 
     if (obj.type === 'user') {
       if (obj.isMeta === true || obj.isSynthetic === true) continue;
@@ -143,12 +156,13 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
               ...items[pos],
               status: b.is_error === true ? 'error' : 'done',
               result: truncateValue(b.content),
+              ...(at != null ? { endAt: at } : {}),
             };
           }
         }
       }
       const text = userPromptOf(obj);
-      if (text) items.push({ kind: 'user', uuid, text });
+      if (text) items.push({ kind: 'user', uuid, text, ...when });
       continue;
     }
 
@@ -159,12 +173,12 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
         if (!block || typeof block !== 'object') continue;
         const b = block as { type?: unknown; text?: unknown; thinking?: unknown; id?: unknown; name?: unknown; input?: unknown };
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          items.push({ kind: 'text', text: b.text });
+          items.push({ kind: 'text', text: b.text, ...when });
         } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
-          items.push({ kind: 'thinking', text: b.thinking });
+          items.push({ kind: 'thinking', text: b.thinking, ...when });
         } else if (b.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string') {
           toolPos.set(b.id, items.length);
-          items.push({ kind: 'tool', toolUseId: b.id, name: b.name, input: truncateValue(b.input), status: 'done' });
+          items.push({ kind: 'tool', toolUseId: b.id, name: b.name, input: truncateValue(b.input), status: 'done', ...when });
         }
       }
       continue;

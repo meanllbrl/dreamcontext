@@ -37,8 +37,8 @@
 
 /* The column wears `.chat-pane` so the composer's auto-grow ceiling resolves against THIS
    pane (`closest('.chat-pane')`) and so the chat's reading tokens are in scope for the
-   composer's own rules. One rule does not transfer and is overridden here, exactly as the
-   meeting room overrides it: the class is written for a pane that fills its window, and
+   composer's own rules. One rule does not transfer and is overridden here: the class is
+   written for a pane that fills its window, and
    `position: absolute; inset: 0` would lift this column out of the row it shares with the
    thread panel and lay it over it. Everything else the class carries is what is wanted,
    which is why the class is worn rather than the tokens copied. */
@@ -1234,6 +1234,110 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 
 .agent-thread-answer-file:hover { color: var(--color-text); border-color: var(--color-text-tertiary); }
 
+/* ─── a report, answer first and detail folded (FoldedReport.tsx) ───
+   ONE card for the whole report, like the chat's answer card; the prose inside it
+   drops its own card so the sections read as rows of one document, not a stack of
+   boxes. Each section is a native <details>: a closed row names itself and previews
+   its first line, so the reader scans the report instead of scrolling it. */
+.agent-report {
+  width: 100%;
+  margin-top: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.agent-report .chat-msg-assistant-body,
+.agent-thread-answer .agent-report .chat-msg-assistant-body {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.agent-report-lead {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.agent-report-section + .agent-report-section {
+  border-top: 1px solid var(--color-border);
+}
+
+.agent-report-summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: var(--space-10);
+  padding: var(--space-2) var(--space-5);
+  list-style: none;
+  cursor: pointer;
+}
+
+.agent-report-summary::-webkit-details-marker { display: none; }
+
+.agent-report-summary:hover { background: var(--color-bg-tertiary); }
+
+.agent-report-summary:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+/* A drawn chevron, not a glyph: it rotates with the row's state. */
+.agent-report-chevron {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-1);
+  border-right: 1.5px solid var(--color-text-tertiary);
+  border-bottom: 1.5px solid var(--color-text-tertiary);
+  transform: translateY(-2px) rotate(-45deg);
+  transition: transform var(--transition-fast);
+}
+
+.agent-report-section[open] > .agent-report-summary .agent-report-chevron {
+  transform: translateY(-3px) rotate(45deg);
+}
+
+.agent-report-title {
+  flex: 0 0 auto;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.agent-report-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-report-section[open] > .agent-report-summary .agent-report-preview { visibility: hidden; }
+
+.agent-report-body {
+  padding: 0 var(--space-5) var(--space-4) calc(var(--space-5) + 6px + var(--space-3));
+}
+
+/* A run's question: the report it is about (folded), then Chat's own question card
+   (AgentQuestionBlock mounts SurveyCard), one column. */
+.agent-msg-ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.agent-msg-ask .agent-report { margin-top: 0; }
+
 /* ─── motion that keeps your place ───────────────────────────────────────
    A row that arrives after the first paint fades in and rises 4px, on the
    page's one deceleration curve. Scrolled up, it is COUNTED on a pill instead
@@ -1301,4 +1405,10 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   .agent-reply-preview,
   .agent-thread-bar,
   .agent-thread-bar-go { transition: none; }
+}
+
+/* Inside the folded card the rows set the rhythm: a prose block's trailing margin would
+   leave a blank band under the lead and under every opened section. */
+.agent-report .chat-msg-assistant-body :is(p, ul, ol, table, blockquote, pre):last-child {
+  margin-bottom: 0;
 }

@@ -9,6 +9,7 @@ import { listVaults } from '../../lib/vaults.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { CHAT_MODES, DEFAULT_CHAT_MODE, type ChatMode } from '../chat-modes.js';
+import { assistantExists, assistantProjectRoot, isAssistantVault } from '../../lib/assistant/home.js';
 
 /**
  * Shared trust-boundary primitives for the two loopback `claude`-spawning surfaces —
@@ -56,8 +57,17 @@ export function projectRootOf(contextRoot: string): string {
  * Mirrors `resolveRequestVault` in index.ts: rejects path-shaped / unknown values, never
  * calls resolve() on raw input (confused-deputy guard). Returns the project ROOT.
  */
-export function resolveVaultProjectRoot(name: string | null): string | null {
+export function resolveVaultProjectRoot(
+  name: string | null,
+  opts: { allowAssistant?: boolean } = {},
+): string | null {
   if (!name) return null;
+  // The Assistant's HIDDEN vault is reachable only when the caller has already proven the
+  // request is loopback + desktop (the chat upgrade does, BEFORE its tailnet OR). Every other
+  // caller — the terminal among them — gets null for it, exactly like an unknown name.
+  if (isAssistantVault(name)) {
+    return opts.allowAssistant && assistantExists() ? assistantProjectRoot() : null;
+  }
   if (/[/\\:.\x00]/.test(name)) return null;
   const v = listVaults().find((x) => x.name === name);
   if (!v || !existsSync(v.path)) return null;
@@ -104,17 +114,20 @@ export function sanitizeEffort(v: string | null): string {
  * element), so this is an allowlist for CORRECTNESS rather than for injection: an unknown
  * mode must degrade to plain Claude Code, never to a half-applied one.
  *
- * `jarvis` used to be coerced away here alongside the unknown values, because the row was
- * rendered disabled and had no behaviour behind it. It has one now, so the special case is
- * gone and all four members of {@link CHAT_MODES} pass through.
+ * IDENTITY IS BOUND BOTH WAYS for the dreamcontext Assistant. Its mode carries a briefing
+ * that describes the `/api/assistant/*` tool contract, so a chat in any OTHER vault asking for
+ * `assistant` is downgraded to `basic` — and the hidden `__assistant__` vault always runs in
+ * `assistant`, whatever the URL asked for. `jarvis` is retired and falls to `basic` like any
+ * unknown value, so saved sessions carrying it reopen as Basic.
  *
  * It lives HERE, beside `sanitizeUuid`/`sanitizeModel`/`sanitizeEffort`, because this file is
  * the single trust boundary every `claude`-spawning upgrade reads its URL params through —
  * one place to audit. The BRIEFING PROSE stays in `src/server/chat-modes.ts`: a route module
  * has no business carrying a system prompt.
  */
-export function sanitizeChatMode(v: string | null): ChatMode {
-  if (!v) return DEFAULT_CHAT_MODE;
+export function sanitizeChatMode(v: string | null, vault?: string | null): ChatMode {
+  if (isAssistantVault(vault)) return 'assistant';
+  if (!v || v === 'assistant') return DEFAULT_CHAT_MODE;
   return (CHAT_MODES as readonly string[]).includes(v) ? (v as ChatMode) : DEFAULT_CHAT_MODE;
 }
 

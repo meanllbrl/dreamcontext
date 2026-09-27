@@ -200,13 +200,10 @@ describe('the Voice card is a folded ALPHA group at the bottom of the AGENT sect
     expect(card).toMatch(/import \{ MaturityTag \} from/);
     expect(card).toMatch(/<MaturityTag level="alpha"\s*\/>/);
     expect(card).not.toMatch(/level="beta"/);
-    // The other half of the old comment, now actually asserted rather than just asserted-in-
-    // prose: the composer's mode card is the second surface announcing this mode, and the two
-    // must not disagree about how finished it is. Case-insensitive on purpose — `chatModes.ts`
-    // owns that literal and still spells it `ALPHA`, so this keeps holding if it is ever
-    // sentence-cased to match the chip.
+    // The composer's J.A.R.V.I.S row that once had to agree with this chip is retired (voice
+    // lives in the Assistant's notch now), so the only surface left is this card.
     const modes = readFileSync(join(ROOT, 'dashboard/src/lib/chatModes.ts'), 'utf-8');
-    expect(modes).toMatch(/id: 'jarvis'[^}]*maturity: 'alpha'/i);
+    expect(modes).not.toMatch(/id: 'jarvis'/);
   });
 
   it('uses the same hotkey grammar as the agent hotkey field a few rows above', () => {

@@ -34,6 +34,7 @@ import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
+import { DEVELOP_LEAD_DENY_REASON, developLeadWriteDenied } from '../../lib/develop-lead-guard.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -1329,6 +1330,8 @@ function spawnAutoSleep(): void {
   const env = { ...process.env };
   delete env.DREAMCONTEXT_TAB_SESSION;
   delete env.CLAUDE_CODE_SESSION_ID;
+  // A Develop lead's Stop hook must not hand the cycle the lead's write backstop.
+  delete env.DREAMCONTEXT_DEVELOP_LEAD;
   const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
     detached: true,
     stdio: 'ignore',
@@ -1928,6 +1931,27 @@ export function registerHookCommand(program: Command): void {
             },
           }));
           return;
+        }
+        // Gate 1b: a Develop chat's LEAD writes no product code (builders do). The env check
+        // runs first, so every other session never pays for the ancestry walk.
+        const developLead = process.env.DREAMCONTEXT_DEVELOP_LEAD;
+        if (developLead === '1') {
+          const contextRoot = resolveContextRoot();
+          if (developLeadWriteDenied({
+            filePath,
+            root: contextRoot ? dirname(contextRoot) : null,
+            envValue: developLead,
+            nested: isNestedClaudeHook(),
+          })) {
+            console.log(JSON.stringify({
+              hookSpecificOutput: {
+                hookEventName: 'PreToolUse',
+                permissionDecision: 'deny',
+                permissionDecisionReason: DEVELOP_LEAD_DENY_REASON,
+              },
+            }));
+            return;
+          }
         }
       }
 

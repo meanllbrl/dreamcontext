@@ -30,8 +30,15 @@ export interface QuestStage {
   rounds: number;
   /** Build only. Omitted when there is no wave to report. */
   wave?: { at: number; of: number | null };
+  /** Build only, Develop runs: the current wave's build time, from its first build entry to
+   *  its hand-off to review (frozen while the Boss gate is live). */
+  elapsedMs?: number;
   /** Build only: acceptance criteria ticked on disk. */
   meter?: { done: number; total: number };
+  /** Boss gate only, Develop runs: waves whose review passed, of all waves. */
+  reviewed?: { done: number; of: number };
+  /** A word on what the stage is waiting on ("mapping waves"), when nothing else says it. */
+  note?: string;
 }
 
 export interface QuestMember {
@@ -92,6 +99,26 @@ export interface QuestLineageNode {
   children: QuestLineageNode[];
 }
 
+/** One wave of a Develop run, as the receipt tells it. */
+export interface QuestWaveReceipt {
+  wave: number;
+  builders: { key: string; label: string }[];
+  /** The wave's review verdict: its reviewer's newest. Null while it has none. */
+  verdict: Verdict | null;
+  /** Reviews after the first. 0 = passed first time. */
+  reReviews: number;
+  /** From the wave's first build entry to the first entry of anything else; open waves run to now. */
+  durationMs: number | null;
+}
+
+/** Someone who worked after validation began: the validator, a fix and its fresh reviewer. */
+export interface QuestTrialEntry {
+  key: string;
+  role: AgentRoleId;
+  label: string;
+  verdict: Verdict | null;
+}
+
 export interface QuestLineage {
   root: QuestLineageNode;
   copies: number;
@@ -99,6 +126,10 @@ export interface QuestLineage {
   fresh: number;
   /** Sum of measured context over copied memories; null unless EVERY copy was measured. */
   reusedTokens: number | null;
+  /** Develop runs: each wave with its builders, its review verdict and its duration. */
+  waves?: QuestWaveReceipt[];
+  /** Develop runs: the Final trial's cast, in order. */
+  trial?: QuestTrialEntry[];
 }
 
 export const QUEST_TEMPLATES: Readonly<Record<QuestKind, readonly QuestStageId[]>> = {
@@ -178,6 +209,28 @@ export function formatQuestElapsed(ms: number): string {
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The small line under a stage: "wave 2 of 3 · 4m" on a Develop Build, "1 of 3 reviewed" on
+ * its Boss gate, "mapping waves" before the first wave. `title` is the longer hover text.
+ */
+export function questStageMeta(s: QuestStage): { text: string; title?: string } | null {
+  const parts: string[] = [];
+  const titles: string[] = [];
+  if (s.note) parts.push(s.note);
+  if (s.wave) parts.push(s.wave.of != null ? `wave ${s.wave.at} of ${s.wave.of}` : `wave ${s.wave.at}`);
+  if (s.elapsedMs != null) {
+    parts.push(formatQuestElapsed(s.elapsedMs));
+    titles.push(`${formatQuestElapsed(s.elapsedMs)} on this wave`);
+  }
+  if (s.meter) {
+    parts.push(`${s.meter.done} of ${s.meter.total}`);
+    titles.push(`${s.meter.done} of ${s.meter.total} criteria ticked`);
+  }
+  if (s.reviewed) parts.push(`${s.reviewed.done} of ${s.reviewed.of} reviewed`);
+  if (parts.length === 0) return null;
+  return { text: parts.join(' · '), title: titles.length ? titles.join(', ') : undefined };
 }
 
 // ─── Copy ─────────────────────────────────────────────────────────────────────────
@@ -269,7 +322,10 @@ function seatName(f: GoalLiveFork, label: string, i: number): string {
 
 function castOf(s: GoalLiveState, stage: QuestStageId | null, lineage: readonly GoalLiveLineage[]): QuestMember[] {
   if (!stage) return [];
-  const seats = stage === 'build' ? s.impl?.forks ?? [] : DEFAULT_JUDGE_ROLE[stage] ? s.judges ?? [] : [];
+  // A Develop builder stands on Build only for the wave it was seated for; a seat without a
+  // wave is a goal-skill or legacy one and stands as it always did.
+  const forks = (s.impl?.forks ?? []).filter((f) => f.w == null || f.w === s.impl?.wave);
+  const seats = stage === 'build' ? forks : DEFAULT_JUDGE_ROLE[stage] ? s.judges ?? [] : [];
   if (seats.length === 0 && stage === 'draft') {
     const planner = [...lineage].reverse().find((e) => roleOf(e.role).id === 'planner');
     if (!planner) return [];
@@ -351,25 +407,99 @@ function beatOf(lineage: readonly GoalLiveLineage[], now: number): QuestView['be
   return { text, stale: at == null || now - at > BEAT_FRESH_MS };
 }
 
-/** A goal-skill live file (already through `normalizeGoalLive`) as a quest. */
+/** A Develop run's history entries of one phase for one wave. */
+function waveEntries(s: GoalLiveState, phase: string, w: number): { p: string; at: string; w?: number }[] {
+  return (s.history ?? []).filter((h) => h.p === phase && h.w === w);
+}
+
+/**
+ * One wave's wall time: from its FIRST build entry (a retry does not reset the clock) to the
+ * first later entry that is not of that wave; a wave still open runs to `now`, or to the
+ * run's last write once it is done. Null when the wave never started.
+ */
+function waveSpanMs(s: GoalLiveState, w: number, now: number): number | null {
+  const history = s.history ?? [];
+  const first = history.findIndex((h) => h.p === 'impl' && h.w === w);
+  if (first === -1) return null;
+  const from = parseTime(history[first].at);
+  if (from == null) return null;
+  const after = history.slice(first + 1).find((h) => h.w !== w);
+  const to = after ? parseTime(after.at) : s.phase === 'done' ? parseTime(s.updated) : now;
+  return to != null ? Math.max(0, to - from) : null;
+}
+
+/**
+ * One wave's BUILD time, for the Build stage: from its first build entry (a retry does not
+ * reset the clock) to the entry that handed its LAST build to someone else. It ticks only
+ * while the wave is being built; once its review is the live phase it holds still.
+ */
+export function waveBuildMs(s: GoalLiveState, w: number, now: number): number | null {
+  const history = s.history ?? [];
+  const first = history.findIndex((h) => h.p === 'impl' && h.w === w);
+  if (first === -1) return null;
+  const from = parseTime(history[first].at);
+  if (from == null) return null;
+  let last = first;
+  for (let i = first + 1; i < history.length; i += 1) if (history[i].p === 'impl' && history[i].w === w) last = i;
+  const handoff = history[last + 1];
+  const to = handoff ? parseTime(handoff.at) : s.phase === 'done' ? parseTime(s.updated) : now;
+  return to != null ? Math.max(0, to - from) : null;
+}
+
+/** Re-reviews in a Develop run: every review of a wave after its first, plus each fresh look
+ *  at a fix the validator sent back. A clean run has none. */
+function developReReviews(s: GoalLiveState): number {
+  const perWave = new Map<number, number>();
+  for (const h of s.history ?? []) if (h.p === 'codereview' && h.w != null) perWave.set(h.w, (perWave.get(h.w) ?? 0) + 1);
+  let n = 0;
+  for (const c of perWave.values()) n += Math.max(0, c - 1);
+  return n + (s.lineage ?? []).filter((e) => e.a === FINAL_FIX_REVIEWER).length;
+}
+
+/** The fresh reviewer of a fix the validator sent back: a trial judge, never a wave's. */
+const FINAL_FIX_REVIEWER = 'final-fix-reviewer';
+
+/** A goal-skill live file (already through `normalizeGoalLive`) as a quest. A Develop run's
+ *  file (`mode: develop`) draws the Develop path: Build, Boss gate, Final trial. */
 export function goalQuest(s: GoalLiveState, now: number = Date.now()): QuestView {
-  const template = QUEST_TEMPLATES.goal;
+  const develop = s.mode === 'develop';
+  const template = develop ? QUEST_TEMPLATES.develop : QUEST_TEMPLATES.goal;
   const done = s.phase === 'done';
   const current = GOAL_PHASE_TO_STAGE[s.phase];
+  // A Develop run's plan phase is the lead mapping waves: nothing has been built yet.
+  const mapping = develop && !done && (!current || !template.includes(current));
   const activeIndex = done ? template.length : Math.max(0, current ? template.indexOf(current) : 0);
   const lineage = s.lineage ?? [];
+  const wave = s.impl?.wave ?? (s.impl?.waves ? 1 : 0);
+  const waves = s.impl?.waves ?? null;
+  // A Develop run is not built until its LAST wave is: an earlier wave under review is not a
+  // finished Build, and a Boss gate waiting on the next wave is not a passed one.
+  const moreWaves = develop && waves != null && wave < waves;
 
   const stages: QuestStage[] = template.map((id, i) => {
     const reached = done || i <= activeIndex;
+    let state: QuestStage['state'] = done || i < activeIndex ? 'done' : i === activeIndex ? 'active' : 'todo';
+    if (mapping && id === 'build') state = 'todo';
+    if (moreWaves && state === 'done' && (id === 'build' || id === 'boss')) state = 'todo';
+    const rounds = develop && (id === 'build' || id === 'boss')
+      ? waveEntries(s, STAGE_TO_PHASE[id], wave).length
+      : s.iters?.[STAGE_TO_PHASE[id]] ?? 0;
     const stage: QuestStage = {
       id,
       label: QUEST_STAGE_LABELS[id],
-      state: done || i < activeIndex ? 'done' : i === activeIndex ? 'active' : 'todo',
-      rounds: Math.max(reached ? 1 : 0, s.iters?.[STAGE_TO_PHASE[id]] ?? 0),
+      state,
+      rounds: mapping ? 0 : Math.max(reached && state !== 'todo' ? 1 : 0, rounds),
     };
-    if (id === 'build' && s.impl) {
-      const at = s.impl.wave ?? (s.impl.waves ? 1 : 0);
-      if (at > 0) stage.wave = { at, of: s.impl.waves ?? null };
+    if (id === 'build' && s.impl && !mapping) {
+      if (wave > 0) stage.wave = { at: wave, of: waves };
+      if (develop && wave > 0) {
+        const span = waveBuildMs(s, wave, now);
+        if (span != null) stage.elapsedMs = span;
+      }
+    }
+    if (id === 'build' && mapping) stage.note = 'mapping waves';
+    if (id === 'boss' && develop && waves != null && waves > 0) {
+      stage.reviewed = { done: Math.min(s.reviewed ?? 0, waves), of: waves };
     }
     return stage;
   });
@@ -381,18 +511,20 @@ export function goalQuest(s: GoalLiveState, now: number = Date.now()): QuestView
     ? {
       kind: 'cleared',
       taskSlug: s.goal ?? null,
-      rounds: ['review', 'codereview', 'validate'].reduce((n, p) => n + (s.iters?.[p] ?? 0), 0),
+      rounds: develop
+        ? developReReviews(s)
+        : ['review', 'codereview', 'validate'].reduce((n, p) => n + (s.iters?.[p] ?? 0), 0),
       agents: actors.size || (s.impl?.forks?.length ?? 0) + (s.judges?.length ?? 0),
       elapsedMs: started != null && updated != null ? Math.max(0, updated - started) : null,
     }
     : null;
 
   return {
-    kind: 'goal',
+    kind: develop ? 'develop' : 'goal',
     title: s.goal ?? null,
     stages,
     activeIndex,
-    cast: done ? [] : castOf(s, template[activeIndex] ?? null, lineage),
+    cast: done || mapping ? [] : castOf(s, template[activeIndex] ?? null, lineage),
     branch: branchOf(lineage),
     beat: beatOf(lineage, now),
     outcome,
@@ -400,6 +532,8 @@ export function goalQuest(s: GoalLiveState, now: number = Date.now()): QuestView
     timeline: (s.history ?? []).flatMap((h) => {
       const at = parseTime(h.at);
       const stage = h.p === 'done' ? 'done' : GOAL_PHASE_TO_STAGE[h.p];
+      // A stage the template does not draw never gets a beat (a Develop run has no Draft).
+      if (stage && stage !== 'done' && !template.includes(stage)) return [];
       return at != null && stage ? [{ stage, at }] : [];
     }),
   };
@@ -430,7 +564,7 @@ function createsCycle(child: string, parent: string, parentOf: ReadonlyMap<strin
  * "picked up where it left off". A copied memory hangs under the actor it came from; everyone
  * else hangs under the lead. Null when the file carries no lineage (an older skill wrote it).
  */
-export function goalLineage(s: GoalLiveState): QuestLineage | null {
+export function goalLineage(s: GoalLiveState, now: number = Date.now()): QuestLineage | null {
   const lineage = s.lineage ?? [];
   if (lineage.length === 0) return null;
 
@@ -490,11 +624,68 @@ export function goalLineage(s: GoalLiveState): QuestLineage | null {
 
   const forks = lineage.filter((e) => e.k === 'fork');
   const measured = forks.length > 0 && forks.every((e) => e.ctx != null);
-  return {
+  const out: QuestLineage = {
     root,
     copies: forks.length,
     returns: lineage.filter((e) => e.k === 'resume').length,
     fresh: lineage.filter((e) => e.k === 'fresh').length,
     reusedTokens: measured ? forks.reduce((n, e) => n + (e.ctx ?? 0), 0) : null,
   };
+  if (s.mode === 'develop') {
+    out.waves = developWaves(s, now);
+    out.trial = developTrial(s);
+  }
+  return out;
+}
+
+/** Every wave a Develop run started, in order, with who built it, its verdict and its time. */
+function developWaves(s: GoalLiveState, now: number): QuestWaveReceipt[] {
+  const lineage = s.lineage ?? [];
+  const seen = new Set<number>();
+  for (const h of s.history ?? []) if (h.w != null) seen.add(h.w);
+  for (const e of lineage) if (e.w != null) seen.add(e.w);
+  for (const f of s.impl?.forks ?? []) if (f.w != null) seen.add(f.w);
+  return [...seen].sort((a, b) => a - b).map((w) => {
+    const builders: { key: string; label: string }[] = [];
+    const add = (key: string, name: string | undefined) => {
+      if (builders.some((b) => b.key === key)) return;
+      builders.push({ key, label: name ? `${key} · ${name}` : key });
+    };
+    for (const f of s.impl?.forks ?? []) if (f.w === w && f.id) add(f.id, f.name);
+    for (const e of lineage) if (e.w === w && roleOf(e.role).id === 'implementer') add(e.a, e.name);
+    let verdict: Verdict | null = null;
+    for (const e of lineage) {
+      if (e.v && e.w === w && roleOf(e.role).id === 'reviewer' && e.a !== FINAL_FIX_REVIEWER) verdict = verdictOf(e.v) ?? verdict;
+    }
+    return {
+      wave: w,
+      builders,
+      verdict,
+      reReviews: Math.max(0, waveEntries(s, 'codereview', w).length - 1),
+      durationMs: waveSpanMs(s, w, now),
+    };
+  });
+}
+
+/** Everyone who joined after validation began, once each, with their newest verdict. */
+function developTrial(s: GoalLiveState): QuestTrialEntry[] {
+  const entry = (s.history ?? []).find((h) => h.p === 'validate');
+  const from = entry ? parseTime(entry.at) : null;
+  if (from == null) return [];
+  const out: QuestTrialEntry[] = [];
+  for (const e of s.lineage ?? []) {
+    const at = parseTime(e.at);
+    if (at == null || at < from) continue;
+    const role = roleOf(e.role).id;
+    const verdict = e.v ? verdictOf(e.v) : null;
+    const seen = out.find((t) => t.key === e.a);
+    if (seen) { if (verdict) seen.verdict = verdict; continue; }
+    out.push({ key: e.a, role, label: nodeLabel(role, e.a, e.name), verdict });
+  }
+  // A judge's verdict may only be on its seat (written before the file carried lineage verdicts).
+  for (const j of s.judges ?? []) {
+    const t = out.find((x) => x.key === j.id);
+    if (t && !t.verdict) t.verdict = verdictOf(j.v);
+  }
+  return out;
 }

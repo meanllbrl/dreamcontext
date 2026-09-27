@@ -9,13 +9,14 @@ import {
 } from '../hooks/useLauncher';
 import { useTeamUpdates, useTeamFetch } from '../hooks/useBrainStatus';
 import {
-  confirmAction, openMeetingWindow, openVaultWindow, startTitleBarDrag, toggleMaximizeWindow,
+  confirmAction, openVaultWindow, startTitleBarDrag, toggleMaximizeWindow,
 } from '../lib/desktop';
 import { VaultDot } from '../components/layout/VaultDot';
 import { VaultLogo, useVaultLogoPicker, useVaultLogoMenu } from '../components/layout/VaultLogo';
 import { VaultSyncChip } from '../components/brain/VaultSyncChip';
 import { OnboardingWizard } from './OnboardingWizard';
 import { SpaceLauncher } from './space/SpaceLauncher';
+import { AssistantEntryCard } from '../components/assistant/AssistantEntryCard';
 import {
   initLauncherViewFromServer,
   readLauncherViewLocal,
@@ -250,16 +251,22 @@ export function LauncherPage() {
       )}
 
       {!isLoading && !isError && view === 'space' && (
-        <SpaceLauncher
-          query={search}
-          onAddProject={() => setWizardOpen(true)}
-          onOpenMeetingRoom={() => void openMeetingWindow()}
-          onError={setActionError}
-        />
+        // The assistant's card floats over the sky, OUTSIDE the SpaceLauncher: it is not a
+        // project and never becomes a body in orbit.
+        <div className="launcher-space-wrap">
+          <SpaceLauncher
+            query={search}
+            onAddProject={() => setWizardOpen(true)}
+            onError={setActionError}
+          />
+          <AssistantEntryCard variant="space" />
+        </div>
       )}
 
       {!isLoading && !isError && view === 'list' && (
         <>
+          {/* A band of its own above the grid: the assistant is not a project. */}
+          <AssistantEntryCard variant="list" />
           {filtered.length === 0 && (
             <div className="launcher-empty">
               {vaults.length === 0

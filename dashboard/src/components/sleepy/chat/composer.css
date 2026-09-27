@@ -51,10 +51,10 @@
   /* Safe: every menu in here (Files/Skills/model/effort) is PORTALED out — see the file
      header — so clipping the card cannot hide a popover. */
   overflow: hidden;
-  /* THE J.A.R.V.I.S STATE RAIL. An INSET SHADOW rather than a real element, and that is the
+  /* THE ASSISTANT STATE RAIL. An INSET SHADOW rather than a real element, and that is the
      point of the whole direction: the card's state changes without adding a node, without a
      height change and without anything below the composer re-flowing. Transparent — and so
-     invisible — in every mode but J.A.R.V.I.S. */
+     invisible — in every mode but the assistant. */
   --cmp-rail: transparent;
   box-shadow: inset 3px 0 0 var(--cmp-rail);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -66,13 +66,12 @@
   box-shadow: inset 3px 0 0 var(--cmp-rail), 0 0 0 3px var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 14%, transparent));
 }
 
-/* ── J.A.R.V.I.S state, as one attribute ──────────────────────────────────────────────
-   Listening is the accent (the app's "live" colour), thinking and a waiting transcript are
-   the warning colour (something is unresolved), trouble is the error one. `idle` sets no
+/* ── Assistant state, as one attribute ────────────────────────────────────────────────
+   Listening is the accent (the app's "live" colour), thinking is the warning colour
+   (something is unresolved), trouble is the error one. `idle` sets no
    rail at all: the mode is not a badge, and a rail that was always lit would say nothing. */
 .chat-cmp-card[data-voice='recording'] { --cmp-rail: var(--color-accent); }
-.chat-cmp-card[data-voice='thinking'],
-.chat-cmp-card[data-voice='pending'] { --cmp-rail: var(--color-warning, var(--color-accent)); }
+.chat-cmp-card[data-voice='thinking'] { --cmp-rail: var(--color-warning, var(--color-accent)); }
 .chat-cmp-card[data-voice='trouble'] { --cmp-rail: var(--color-error); }
 /* Speaking gets its OWN colour rather than reusing the accent: listening and being read to
    are opposite directions, and a rail that looked the same for both would be decoration.
@@ -463,38 +462,6 @@
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
-/* A word the CORRECTOR wrote, marked where it sits instead of listed beside the sentence.
-   An UNDERLINE rather than a filled band: the mention highlight already owns the band, the
-   two can land on the same word (a corrected @peer is perfectly possible), and a sentence
-   with three filled words in it reads as a redaction. Drawn with a bottom border on the
-   mirror, which is why the overlay's text stays transparent — the real glyphs are the
-   textarea's, sitting exactly on top. */
-.chat-cmp-hl-repair {
-  color: transparent;
-  background: transparent;
-  border-bottom: 2px solid var(--color-warning, var(--color-accent));
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
-}
-/* HOW LOUDLY, never WHETHER — the same rule the retired chip row carried, and the same
-   threshold (see `FAR_SIMILARITY`). A replacement far from what was spoken is worth a second
-   look; a near one still stops for the same keypress. */
-.chat-cmp-hl-repair.is-far {
-  border-bottom-width: 3px;
-  background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 14%, transparent);
-  border-radius: 3px 3px 0 0;
-}
-/* A corrected mention keeps the mention's band AND gains the underline: both facts are true
-   and neither is allowed to hide the other. */
-.chat-cmp-hl-mention.chat-cmp-hl-repair {
-  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
-}
-/* What was heard, in the shrunken confirmation row. Mono, because it is a quotation of the
-   recogniser's output rather than prose. */
-.chat-cmp-voice-heard {
-  font-family: var(--font-mono);
-  color: var(--color-text);
-}
 
 .chat-cmp-input:focus { outline: none; }
 /* Declared, not left to the UA: Chromium's grey is 4.61:1 on white but 3.56:1 on the dark card.
@@ -563,7 +530,7 @@
 }
 .chat-cmp-send.is-stop:hover { filter: brightness(1.08); }
 
-/* Push-to-talk (J.A.R.V.I.S mode, desktop only). An OUTLINED disc at rest, like Queue —
+/* Push-to-talk (assistant mode, desktop only). An OUTLINED disc at rest, like Queue —
    the filled solid belongs to "this goes now", and holding the mic is not sending yet.
    While recording it fills red and breathes, which is the same visual grammar as Stop
    because it is the same kind of state: something is running and you can end it. */
@@ -602,9 +569,6 @@
   font-size: 11.5px;
   color: var(--color-text-tertiary);
 }
-/* A transcript the corrector CHANGED, waiting for the owner's own keypress. Body-contrast
-   rather than tertiary, because this one is asking for a decision instead of reporting. */
-.chat-cmp-voice-note.is-confirm { color: var(--color-text-secondary); }
 
 /* The resting instruction: how to talk, in the binding the owner actually configured. It sits
    under everything else on purpose — it must be readable and must never compete with the
@@ -645,18 +609,26 @@
   flex-wrap: nowrap;
   min-width: 0;
 }
-/* The gauge, the model/effort trigger and Send as one unit, and the one cluster that never
-   shrinks: losing the Send button to a squeeze would be the single worst outcome of a narrow
-   pane. */
+/* The gauge, the model/effort trigger and Send as one unit. Its BUTTONS never shrink (each is
+   `flex: 0 0 auto`): losing the Send button to a squeeze would be the single worst outcome of
+   a narrow pane. The cluster itself may shrink, so that when the row runs out of room the
+   give lands on the voice note and the model name (both ellipsise) instead of the cluster
+   spilling left over Attach, which is what a non-shrinking cluster did in the 460px notch. */
 .chat-cmp-right {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   margin-left: auto;
 }
-.chat-cmp-perm-wrap,
-.chat-cmp-model-wrap { display: inline-flex; flex: 0 0 auto; min-width: 0; }
+.chat-cmp-perm-wrap { display: inline-flex; flex: 0 0 auto; min-width: 0; }
+.chat-cmp-model-wrap { display: inline-flex; flex: 0 1 auto; min-width: 0; }
+
+/* Read aloud: an icon switch beside the mic. Off is the resting look (tertiary, like Attach);
+   on takes the speaking colour, so it reads as the same system as Hush and the speaking rail. */
+.chat-cmp-readaloud[aria-pressed='true'] { color: var(--color-speaking); }
+.chat-cmp-readaloud[aria-pressed='true']:hover { color: var(--color-speaking); }
 
 /* Toolbar controls are BORDERLESS — the card is already a bordered surface, and a row of
    outlined pills inside it reads as boxes-in-a-box. Hover/open is the only chrome.
@@ -1654,6 +1626,15 @@
       choosing between, and the permission has its own segment one click away. */
 @container chatcmp (max-width: 560px) {
   .chat-cmp-perm-wrap .chat-cmp-modeltrigger-effort { display: none; }
+}
+
+/* 1b. The resting voice instruction ("Hold Shift+V or the mic to speak") is the longest
+      thing in the row and the only one that repeats what a control's `title` already says,
+      so a narrow pane drops it first. The transient notes (listening, a refused take) stay
+      and ellipsise, because only the row can report those. The model name may truncate. */
+@container chatcmp (max-width: 560px) {
+  .chat-cmp-voice-note[data-rest] { display: none; }
+  .chat-cmp-model-wrap .chat-cmp-modeltrigger-model { min-width: 0; }
 }
 
 /* 2. Where the toolbar used to wrap. Tighten the row's own padding and let `/compact` go to

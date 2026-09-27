@@ -29,6 +29,10 @@ export class VaultError extends Error {
   }
 }
 
+/** Mirrors `ASSISTANT_VAULT` (src/lib/assistant/home.ts) — kept literal here so this
+ *  low-level module imports nothing from the assistant. The resolver-contract test pins both. */
+export const RESERVED_ASSISTANT_NAME = '__assistant__';
+
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 /**
@@ -92,6 +96,12 @@ function writeRegistry(filePath: string, registry: VaultRegistry): void {
  */
 export function addVault(name: string, dirPath: string, home?: string): Vault {
   const resolved = resolve(dirPath);
+
+  // The Assistant's hidden vault is reached by this one reserved name and must never be
+  // registered — registering it would put it in the Launcher, ⌘P, peers and federation.
+  if (name === RESERVED_ASSISTANT_NAME) {
+    throw new VaultError(`"${name}" is reserved for the dreamcontext Assistant.`);
+  }
 
   // Validate existence
   if (!existsSync(resolved)) {
@@ -170,6 +180,12 @@ export function touchVault(name: string, home?: string, now: Date = new Date()):
  * real `~/.dreamcontext/vaults.json`.
  */
 export function resolveVaultContextRoot(arg: string, home: string = homedir()): string {
+  // Explicit early refusal: without it the raw-path fallback below would `resolve()` the
+  // reserved name against the cwd. The hidden vault is not a peer, not a federation target
+  // and not a `--vault` argument.
+  if (arg === RESERVED_ASSISTANT_NAME) {
+    throw new VaultError(`"${arg}" is the dreamcontext Assistant, not a project vault.`);
+  }
   const vaults = listVaults(home);
 
   // Try registered-name match first

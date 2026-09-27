@@ -242,34 +242,19 @@
   background: var(--color-bg-secondary);
 }
 
-/* A quest-party CHARACTER (atoms.tsx `AgentAvatar` with a `role`). The disc is a TINTED
-   SURFACE of the role's hue family, never a filled swatch: the face and emblem stay in
-   `--color-text`, so they read on the tint in both themes without an on-colour pair. The hue
-   is static chrome (tokens.css `--role-hue-*`); status never touches it. */
+/* A quest-party CHARACTER (atoms.tsx `AgentAvatar` with a `role`, drawn by RoleCharacter.tsx).
+   No disc: the character's own silhouette is the avatar, its body carries its own hue
+   (tokens.css `--role-c-*`), so the box stays transparent. A peer's logo keeps a quiet ring on
+   the card surface. Static chrome; status never touches it. */
 .chat-a-avatar[data-role] {
   position: relative;
-  --role-hue: var(--role-hue-neutral);
-  background: color-mix(in srgb, var(--role-hue, var(--role-hue-neutral)) 22%, var(--color-bg-secondary));
-  border: 1px solid color-mix(in srgb, var(--role-hue, var(--role-hue-neutral)) 55%, var(--color-bg-secondary));
+  background: none;
+  border-radius: 0;
   color: var(--color-text);
 }
-.chat-a-avatar[data-hue='maker'] { --role-hue: var(--role-hue-maker); }
-.chat-a-avatar[data-hue='judge'] { --role-hue: var(--role-hue-judge); }
-.chat-a-avatar[data-role] > .chat-a-roleglyph { flex: 0 0 auto; }
-
-/* The emblem on a face, at 30px and up. Its own small disc on the card surface, ringed in the
-   role hue, so it reads as a badge worn by the face rather than a second face. */
-.chat-a-avatar-badge {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.chat-a-avatar[data-role][data-logo] {
   border-radius: var(--radius-full);
-  background: var(--color-bg-secondary);
-  border: 1px solid color-mix(in srgb, var(--role-hue, var(--role-hue-neutral)) 55%, var(--color-bg-secondary));
-  color: var(--color-text);
+  background: var(--color-bg-tertiary);
 }
 
 /* RUNNING is motion, never colour (★★★: colour = mood, movement = mode). The disc breathes on
@@ -282,8 +267,19 @@
   0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
   50% { transform: scale(1.08); box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-hue, var(--color-text-tertiary)) 35%, transparent); }
 }
+/* A character has no disc to ring, so it works the way Sleepy does: a small hop on the same
+   loop period. Still motion only; the body keeps its colour at every frame. */
+.chat-a-avatar[data-role][data-running]:not([data-logo]) {
+  animation: chat-a-hop var(--motion-breath, 1600ms) ease-in-out infinite;
+}
+@keyframes chat-a-hop {
+  0%, 100% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-12%) scale(1.06, 0.96); }
+  60% { transform: translateY(0) scale(1.04, 0.96); }
+}
 @media (prefers-reduced-motion: reduce) {
   .chat-a-avatar[data-running] { animation: none; }
+  .chat-a-avatar[data-role][data-running]:not([data-logo]) { animation: none; }
 }
 
 /* A judge's verdict: mark + word on a tint of its outcome. Text is body ink; the mark takes

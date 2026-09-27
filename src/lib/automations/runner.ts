@@ -330,7 +330,7 @@ export function composePrompt(
   // human approved at some point in the past; this is that same human typing
   // right now. When the two disagree, the live instruction wins — which is
   // only true because of where it sits.
-  const askBlock = ask ? buildAskBlock(ask) : '';
+  const askBlock = ask ? buildAskBlock(ask, m) : '';
   if (askBlock) parts.push('', askBlock);
   return sanitizeAutomationPrompt(parts.join('\n'));
 }
@@ -364,9 +364,12 @@ export function attachmentDirHint(outputPath: string): string {
  * The text is quoted data on the way in and stays inside the fence; every
  * prompt built here still goes through `sanitizeAutomationPrompt`.
  */
-export function buildAskBlock(ask: string): string {
+export function buildAskBlock(ask: string, m?: Pick<AutomationManifest, 'slug' | 'review'>): string {
   const text = ask.trim();
   if (!text) return '';
+  // Whether this agent CAN stop and ask with buttons: `propose` refuses under
+  // `review: off`, and a brief that names a verb the CLI will refuse spends a turn on it.
+  const canPropose = m ? m.review !== 'off' : false;
   return [
     '--- THE OWNER JUST ASKED YOU THIS, IN THE #agents CHANNEL ---',
     text,
@@ -374,8 +377,24 @@ export function buildAskBlock(ask: string): string {
     '',
     'That is a live instruction from the human who owns this project, typed a moment ago. Do what',
     'they asked, within the job described above. If it narrows the job, narrow it; if it asks for',
-    'something the job does not cover, do that instead and say so. Still nobody to ask follow-ups',
-    'of, and the output contract is unchanged: your final message is the document.',
+    'something the job does not cover, do that instead and say so.',
+    // THE ANSWER FIRST. The thread shows the post in full and the document folded under
+    // it, so the post is what the owner reads: it has to BE the answer, not a pointer.
+    'ANSWER IN THE THREAD: post the direct answer to their question (a few sentences, the names',
+    'and numbers that matter, --kv for the figures). Your final message is still the document and',
+    'it is shown under your post, folded by section, so open it with the same answer and keep the',
+    'detail in sections below.',
+    // No blanket sign-off on a conversation (the runner skips the gates for an ask), so
+    // the agent must not write as if a human approval step follows it.
+    'This is a conversation, not an unattended run: no approval step runs after you, and the',
+    'owner can reply in the thread. Do not end with "approve to continue" or wait for a sign-off.',
+    ...(canPropose && m
+      ? [
+        'If something needs their go-ahead before it happens (sending, publishing, spending), do NOT',
+        `do it: ask with \`dreamcontext automations propose ${m.slug} --title … --body … --choice "…" --choice "…"\``,
+        'and stop. That is drawn as buttons; a question written as plain text has nothing to press.',
+      ]
+      : ['If something needs their go-ahead before it happens, do not do it: say so in your post and stop.']),
     // The channel's `/` menu offers this project's skills and commands, so a `/name`
     // in the ask is a PICK from that menu, not punctuation. Inside a `-p` brief the
     // CLI will not expand it on its own; without this line the run reads "/whatsapp"
@@ -1657,6 +1676,22 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // for one itself (`review: agent` → `automations propose`), or the
         // manifest asks for one on every document (`review: output`).
         const proposedQuestion = pendingQuestion(contextRoot, slug);
+        // A CONVERSATION IS NOT A DOCUMENT FOR SIGN-OFF. A run a human started by calling
+        // the agent by name, with a question, answers that question in the thread. The two
+        // BLANKET gates below (a graph `hitl` node, `review: output`) exist for the
+        // unattended fire whose document nobody asked for yet; on an ask they put an
+        // "Approve the document?" under a plain answer, which is a question about nothing
+        // the owner asked, and held the answer's full report unpublished behind it. So an
+        // ask skips both. The agent's OWN question still stops the run: `propose` (the
+        // `proposedThisRun` arm) is how a conversational run asks for a real decision, and
+        // the ask block tells it so. The usage-limit gate is untouched: it runs first.
+        const conversational = Boolean(opts.ask?.trim());
+        // ONE sign-off, however it was spelled. `review: output` and a graph `hitl` node in
+        // `output` mode (which the editor draws FOR that setting) are the same gate; the
+        // graph arm used to win and asked a bare "Approve the document?" with a free-text
+        // box and no document. Both now take the document arm: the report itself, and
+        // approve or reject.
+        const documentSignOff = manifest.review === 'output' || (flow.needsHitl && flow.hitlMode === 'output');
         const proposedThisRun = proposedQuestion?.runFiredAt === fireAt.toISOString() ? proposedQuestion : null;
 
         // THE FLOW'S OWN GATE. A `hitl` node in the graph means this run does not
@@ -1686,7 +1721,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           // `finalOutputPath` stays null, so nothing publishes, nothing reaches Telegram,
           // and the feed offers no file card for a document that was never written.
           logFn(`automation "${slug}": ${error}`);
-        } else if (status === 'ok' && flow.needsHitl && !proposedThisRun) {
+        } else if (status === 'ok' && flow.needsHitl && !documentSignOff && !proposedThisRun && !conversational) {
           const document = claudeResult.result ?? '';
           try {
             const q = createQuestion(contextRoot, {
@@ -1709,7 +1744,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               slug,
               fireAt.toISOString(),
               'asked',
-              `Asked: ${q.question.slice(0, 200)}`,
+              `Asked: ${q.question.split(/\n\s*\n/)[0].slice(0, 200)}`,
               logFn,
             );
             recordAutomationSession(slug, claudeResult.sessionId, home);
@@ -1727,7 +1762,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
             error = 'could not record the flow question — see the dispatcher log for details';
             logFn(`automation "${slug}": flow question failed: ${(err as Error).message}`);
           }
-        } else if (status === 'ok' && manifest.review === 'output' && !proposedThisRun) {
+        } else if (status === 'ok' && documentSignOff && !proposedThisRun && !conversational) {
           // Blanket review, built the SAME way the flow's own HITL gate just
           // above is: the document lives in the session, unpublished, until a
           // human answers — there is no more staged file to move on approve
@@ -1742,9 +1777,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               kind: 'flow-hitl',
               sessionId: claudeResult.sessionId,
               channel: 'chat',
-              question:
-                `"${manifest.title}" produced a document and is waiting for your verdict before it ` +
-                `publishes.\n\n${document}`,
+              // The FIRST paragraph is the question the block shows; the rest is the
+              // document, which the block folds by section under it.
+              question: `${manifest.title} wrote this report. Publish it?\n\n${document}`,
               choices: ['approve', 'reject'],
               nowISO: nowFn().toISOString(),
             });
@@ -1758,7 +1793,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               slug,
               fireAt.toISOString(),
               'asked',
-              `Asked: ${q.question.slice(0, 200)}`,
+              `Asked: ${q.question.split(/\n\s*\n/)[0].slice(0, 200)}`,
               logFn,
             );
             recordAutomationSession(slug, claudeResult.sessionId, home);

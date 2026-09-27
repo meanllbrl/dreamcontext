@@ -891,32 +891,6 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
   };
 }
 
-/**
- * The app-global model/effort pick, read off disk — the ONE place a spawn that has no
- * live chat session behind it can learn what the user chose.
- *
- * `chatDefaultModel` / `chatDefaultEffort` were already app-global (one blob, every project
- * window), which is what makes them the right source for the MEETING ROOM: the room's
- * composer has no session to scope a model to, so its pick IS this file, and every headless
- * run the room fans out — in every project — is spawned with it. One selection, all
- * projects, no second store.
- *
- * Both values come back already through `sanitizeModel` / `sanitizeEffort` (see
- * {@link coerceAgentSettings}), so they are safe to interpolate into a `claude` command
- * string. `''` is the documented resting value: omit the flag, inherit the CLI's own default.
- * Never throws — an unreadable or corrupt blob reads as "nothing pinned".
- */
-export function readAgentUiChatDefaults(): { model: string; effort: string } {
-  try {
-    const p = agentSettingsPath();
-    if (!existsSync(p)) return { model: '', effort: '' };
-    const s = coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
-    return { model: s.chatDefaultModel, effort: s.chatDefaultEffort };
-  } catch {
-    return { model: '', effort: '' };
-  }
-}
-
 /** GET /api/launcher/agent-settings — persisted Agents-surface prefs (defaults if absent). */
 export async function handleAgentSettingsGet(
   _req: IncomingMessage,

@@ -137,7 +137,7 @@ Found by an owner screenshot — three panes, three worktrees, three chips all r
 
 
 ### 2026-08-27 - dream-html rendering advances: height bridge handshake, pen-stroke markers, hover tips
-Three commits landed on the chat's dream-html rendering, all tied to the Meeting Room exposing what the shelf relies on:
+Three commits landed on the chat's dream-html rendering, all tied to the Meeting Room exposing what the shelf relies on. *(The Meeting Room was retired 2026-09-26 — `features/meeting-room.md`, `features/dreamcontext-assistant.md` W5. It was the surface that SURFACED these three bugs; every fix below is in the shared chat rendering and still ships.)*
 
 **The height bridge is now a handshake** (dd8008e): the bridge spoke ONCE and deduped against its last value, so a single missed report froze the block at its 40px floor. The host's listener attached in a passive effect (flushed after paint, behind the frame's parser task), and a settled body never resizes again. Fixed: host listens in `useLayoutEffect` (synchronously inside the commit, before the parser task), can ASK (`__dreamHtmlMeasure`) on load + every 250ms until answered (forced past the child's dedupe, capped at 16 retries), measurement is stored with the body it measured `{html, height}` so no reset clobbers a delivered height, and the bridge moved into `<head>` (an escaped `</script>` in the body left it unparsed). verify:chat-html § 8 goes deaf for 2.5s and requires the block to recover.
 

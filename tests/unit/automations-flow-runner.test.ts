@@ -63,6 +63,12 @@ describe('the graph drives the run', () => {
     expect(executeFlow(two).hitlPrompt).toBe('First gate?');
   });
 
+  it('reports the first hitl node\'s MODE, so the runner can tell a document sign-off from a question', () => {
+    const signOff = graph([{ id: 'a', kind: 'hitl', label: 'Approve the document?', config: { mode: 'output' } }]);
+    expect(executeFlow(signOff).hitlMode).toBe('output');
+    expect(executeFlow(LINEAR).hitlMode).toBeNull();
+  });
+
   it('falls back to a plain question when a hitl node has no label', () => {
     const r = executeFlow(graph([{ id: 'a', kind: 'hitl' }]));
     expect(r.needsHitl).toBe(true);

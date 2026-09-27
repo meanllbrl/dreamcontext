@@ -84,7 +84,7 @@ export function ModeMenu({
             onClick={() => { onModeChange(row.id); close(); }}
           >
             {/* The mode SHOWS itself: the same face the dock chip will wear, doing the same
-                thing. Basic (and J.A.R.V.I.S) draw the bare face, which is the point — you can
+                thing. Basic draws the bare face, which is the point — you can
                 see what you are turning on and what you are turning off. */}
             <span className="chat-cmp-moderow-face" aria-hidden>
               <SleepyMascot size={54} mood="idle" compact mode={row.id} />
