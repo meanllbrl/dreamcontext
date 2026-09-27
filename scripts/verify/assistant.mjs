@@ -458,7 +458,7 @@ try {
       };
     };
     // The open notch's own size (Notch.tsx PANEL_W x PANEL_H): the checks below measure THAT.
-    const page = await browser.newPage({ viewport: { width: 460, height: 400 } });
+    const page = await browser.newPage({ viewport: { width: 580, height: 560 } });
     await page.addInitScript(notchTauri);
     // Speech is the W3 leg's business; here it must never reach the real /focus (it would
     // pause THIS machine's music) or a paid TTS call.
@@ -526,7 +526,7 @@ try {
     });
     ok('FIT: the footer\'s controls are all there (context ring, model picker, mic, read-aloud, send)',
       !fit.error && Object.values(fit.present ?? {}).every(Boolean), JSON.stringify(fit));
-    ok(`FIT: at ${460}x${400} every visible footer control is inside the composer box and none overlap`,
+    ok(`FIT: at ${580}x${560} every visible footer control is inside the composer box and none overlap`,
       !fit.error && fit.count > 0 && fit.outside.length === 0 && fit.overlaps.length === 0, JSON.stringify(fit));
     if (process.env.VERIFY_SHOT_DIR) {
       mkdirSync(process.env.VERIFY_SHOT_DIR, { recursive: true });
@@ -534,6 +534,13 @@ try {
     }
     const firstPid = await page.evaluate(() => /"cwd":"([^"]+)"/.exec(document.body.innerText)?.[1] ?? '');
     ok('the notch chat runs in the hidden vault', firstPid.endsWith('/.dreamcontext/assistant'), firstPid);
+    // A turn pops the notch out to the side by itself (owner, 2026-09-27) and it goes home once
+    // the turn is over; wait for that, then open it by hand for the Escape check.
+    await page.waitForFunction(() => !document.querySelector('.dc-notch--window'), null, { timeout: 15_000 }).catch(() => {});
+    if (await page.locator('.dc-notch__panel').isHidden()) {
+      await page.click('.dc-notch__pill');
+      await page.waitForSelector('.dc-notch__panel:not([hidden]) textarea', { timeout: 10_000 });
+    }
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
     ok('Escape collapses it', await page.locator('.dc-notch__panel').isHidden());
@@ -542,10 +549,42 @@ try {
     const n = await cli(['assistant', 'notify', 'still here'], env);
     ok(`past the ${LINGER_MS} ms linger, the collapsed notch still answers the relay`, n.code === 0 && n.json?.ok === true, n.stdout + n.stderr);
     await page.click('.dc-notch__pill');
+    await page.evaluate(() => { window.__calls.length = 0; });
     await page.fill('.dc-notch__chat textarea', 'second turn');
     await page.keyboard.press('Enter');
+    // ── WHILE IT WORKS, IT STEPS OUT (owner, 2026-09-27) ──
+    console.log('\n── a turn pops the notch out to the side, glowing, and it goes home afterwards');
+    const glowing = await page.waitForSelector('.dc-notch--window .dc-notch__glow', { timeout: 5000 }).then(() => true, () => false);
+    ok('a turn starting pops it out to the side seat, wearing the working glow', glowing);
+    if (process.env.VERIFY_SHOT_DIR && glowing) {
+      mkdirSync(process.env.VERIFY_SHOT_DIR, { recursive: true });
+      await page.setViewportSize({ width: 480, height: 620 });
+      // The stand-in agent answers in milliseconds, so the real glow is gone by now; the shot
+      // puts the same element back to show what it looks like.
+      await page.evaluate(() => {
+        const root = document.querySelector('.dc-notch');
+        if (root && !root.querySelector('.dc-notch__glow')) root.insertAdjacentHTML('afterbegin', '<span class="dc-notch__glow" aria-hidden="true"></span>');
+      });
+      await page.waitForTimeout(900);
+      await page.screenshot({ path: join(process.env.VERIFY_SHOT_DIR, 'notch-working-glow.png') });
+      await page.setViewportSize({ width: 580, height: 560 });
+    }
     const same = await page.waitForFunction(() => document.body.innerText.includes('"said":"second turn"'), null, { timeout: 30_000 }).then(() => true, () => false);
     ok('and the SAME session still answers a new turn', same);
+    const popCalls = await page.evaluate(() => window.__calls.map((c) => {
+      if (c.cmd === 'plugin:event|emit') return `emit ${c.args.event} ${JSON.stringify(c.args.payload)}`;
+      if (c.cmd === 'plugin:window|set_size') { const v = c.args.value; const z = v?.Logical ?? v?.data ?? v; return `set_size ${z?.width}x${z?.height}`; }
+      if (c.cmd === 'plugin:window|set_focus') return 'set_focus';
+      return null;
+    }).filter(Boolean));
+    ok('it asked for the window seat at the side size (480x620)', popCalls.includes('emit assistant://seat {"seat":"window"}') && popCalls.includes('set_size 480x620'), popCalls.join(' | '));
+    ok('stepping out never takes focus from the app the owner is in', !popCalls.slice(0, popCalls.indexOf('set_size 480x620') + 1).includes('set_focus'), popCalls.join(' | '));
+    const home = await page.waitForFunction(() => !document.querySelector('.dc-notch--window') && !!document.querySelector('.dc-notch__panel[hidden]'), null, { timeout: 15_000 }).then(() => true, () => false);
+    ok('once the turn is over (nothing read aloud: after the reading pause) it goes home to the collapsed notch', home);
+    const homeCalls = await page.evaluate(() => window.__calls.filter((c) => c.cmd === 'plugin:event|emit').map((c) => JSON.stringify(c.args.payload)));
+    ok('going home asks the native side for the notch seat', homeCalls.includes('{"seat":"notch"}'), homeCalls.join(' | '));
+    await page.click('.dc-notch__pill');
+    await page.waitForSelector('.dc-notch__panel:not([hidden]) textarea', { timeout: 10_000 });
     const cfg = JSON.parse(readFileSync(join(HOME, '.dreamcontext', 'assistant', 'config.json'), 'utf-8'));
     ok('the notch saved its conversation id for the next summon', /^[0-9a-f-]{36}$/.test(cfg.conversationId ?? ''), JSON.stringify(cfg));
 
@@ -592,11 +631,11 @@ try {
     if (process.env.VERIFY_SHOT_DIR) await page.screenshot({ path: join(process.env.VERIFY_SHOT_DIR, 'notch-popout.png') });
     await page.evaluate(() => { window.__calls.length = 0; });
     if (popped.dock) await page.click('.dc-notch__dock');
-    await page.setViewportSize({ width: 460, height: 400 });
+    await page.setViewportSize({ width: 580, height: 560 });
     await page.waitForTimeout(300);
     const dockCalls = await seatCalls();
-    ok('Dock asks the native side for the notch seat and sizes back to the open notch (460x400)',
-      dockCalls.join(' | ') === 'emit assistant://seat {"seat":"notch"} | set_size 460x400', dockCalls.join(' | '));
+    ok('Dock asks the native side for the notch seat and sizes back to the open notch (580x560)',
+      dockCalls.join(' | ') === 'emit assistant://seat {"seat":"notch"} | set_size 580x560', dockCalls.join(' | '));
     await page.waitForTimeout(300);
     const docked = await page.evaluate(() => ({
       window: !!document.querySelector('.dc-notch--window'),
@@ -611,7 +650,7 @@ try {
     // The counts are routed (lane B owns what the server counts); first a server that does
     // not send `stale` yet, then one that does, so the forward-compatible read is proven too.
     console.log('\n── W7 the pill\'s right ear: the tab strip\'s bubbles, stale never green');
-    const rpage = await browser.newPage({ viewport: { width: 460, height: 400 } });
+    const rpage = await browser.newPage({ viewport: { width: 580, height: 560 } });
     let rollupBody = { starting: 0, working: 1, asking: 0, idle: 4, proposals: 0 };
     await rpage.route('**/api/assistant/rollup', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rollupBody) }));
     await rpage.goto(`${base}/?assistant=1`);

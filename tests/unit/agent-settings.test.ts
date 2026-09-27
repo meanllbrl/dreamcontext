@@ -31,7 +31,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   coerceAgentSettings, DEFAULT_AGENT_SETTINGS,
   readChatPermissionMode, writeChatPermissionMode,
-  writeAgentSettings, AGENT_SETTINGS_EVENT,
+  writeAgentSettings, AGENT_SETTINGS_EVENT, onAgentSettings,
   CHAT_PERMISSION_MODE_KEY, CHAT_PERMISSION_MODE_EVENT,
   type AgentSettings as AgentSettingsShape,
 } from '../../dashboard/src/lib/agentSettings.js';
@@ -285,6 +285,40 @@ describe('chatDefaultModel / chatDefaultEffort (composer "Set as default")', () 
       if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;
       else (globalThis as { window?: unknown }).window = realWindow;
       globalThis.fetch = realFetch;
+    }
+  });
+
+  // "Set as default" made in ONE window (the notch, another project) must reach the chats
+  // every OTHER window opens next. Those windows only hear it as a `storage` event on the
+  // shared origin (owner, 2026-09-27: "her yeni chat Opus Extra High ile başlıyor").
+  it('onAgentSettings hears a write made in ANOTHER window (the storage event)', () => {
+    const realWindow = (globalThis as { window?: unknown }).window;
+    const realStorage = (globalThis as { localStorage?: unknown }).localStorage;
+    const bus = new EventTarget();
+    const store = new Map<string, string>();
+    (globalThis as { window?: unknown }).window = bus;
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+    };
+    try {
+      let heard: AgentSettingsShape | null = null;
+      const off = onAgentSettings((cfg) => { heard = cfg; });
+      // Another window wrote the blob; this one only sees the storage event.
+      store.set('agent:settings:v1', JSON.stringify(coerceAgentSettings({ chatDefaultModel: 'opus', chatDefaultEffort: 'medium' })));
+      const ev = new Event('storage') as Event & { key: string };
+      Object.defineProperty(ev, 'key', { value: 'agent:settings:v1' });
+      bus.dispatchEvent(ev);
+      expect(heard!.chatDefaultEffort).toBe('medium');
+      off();
+      heard = null;
+      bus.dispatchEvent(ev);
+      expect(heard).toBeNull();
+    } finally {
+      if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;
+      else (globalThis as { window?: unknown }).window = realWindow;
+      if (realStorage === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
+      else (globalThis as { localStorage?: unknown }).localStorage = realStorage;
     }
   });
 });

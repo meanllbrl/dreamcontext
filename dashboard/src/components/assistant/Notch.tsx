@@ -9,6 +9,8 @@ import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
 import { ProposalList, type Proposal } from './ProposalList';
 import { EMPTY_ROLLUP, pillBubbles, pillLabel, readRollup, type Rollup } from './notchModel';
 import { emitExternalPushToTalk } from '../../lib/voice/externalPushToTalk';
+import { readAloudEnabled } from '../../lib/voice/readAloud';
+import { initAgentSettingsFromServer, readAgentSettings } from '../../lib/agentSettings';
 // The pill's right ear draws the tab strip's own status bubbles (`project-tab-bubble*`); the
 // rules are global class selectors, so they are shared, not copied.
 import '../layout/ProjectTabs.css';
@@ -42,11 +44,22 @@ const PILL_H = 38;
 /** One "ear" beside the camera housing, logical px. */
 const EAR_W = 130;
 /** The open notch: a small island grown out of the housing, never a window-sized sheet. */
-const PANEL_W = 460;
-const PANEL_H = 400;
+/** Grown 2026-09-27 (owner: "mesajları görmek çok zor") from 460x400. */
+const PANEL_W = 580;
+const PANEL_H = 560;
 /** Popped out: an ordinary window's size, until the owner resizes it. */
 const WINDOW_W = 720;
 const WINDOW_H = 640;
+/** Popped out ON ITS OWN while it works: a narrower panel standing at the screen's edge. */
+const SIDE_W = 480;
+const SIDE_H = 620;
+const SIDE_MARGIN = 16;
+/** After the turn and its speech end, how long it stays before going home to the notch. */
+const HOME_AFTER_SPOKEN_MS = 1500;
+/** The same, when nothing was read aloud: the answer has to be READ, which takes longer. */
+const HOME_AFTER_SILENT_MS = 8000;
+/** The leave / arrive animations (notch.css `dc-notch-leave` / `dc-notch-arrive`). */
+const LEAVE_MS = 280;
 
 /** Where the assistant sits: grown out of the notch, or floating as its own window. */
 type Seat = 'notch' | 'window';
@@ -163,7 +176,7 @@ async function nativeSeat(to: Seat): Promise<void> {
 }
 
 /** Float as a window: where it last was, or an ordinary size near the top third of the screen. */
-async function seatWindow(geo: Geometry | null, last: Frame | null): Promise<void> {
+async function seatWindow(geo: Geometry | null, last: Frame | Pick<Frame, 'width' | 'height'> | null, focus = true): Promise<void> {
   if (!isDesktop()) return;
   seatGen++;
   wanted = null;
@@ -175,9 +188,16 @@ async function seatWindow(geo: Geometry | null, last: Frame | null): Promise<voi
       : null);
     if (!(await win.isVisible())) await win.show();
     await win.setSize(new LogicalSize(f?.width ?? WINDOW_W, f?.height ?? WINDOW_H));
-    if (f) await win.setPosition(new LogicalPosition(f.x, f.y));
-    await win.setFocus();
+    if (f && 'x' in f) { const at = f as Frame; await win.setPosition(new LogicalPosition(at.x, at.y)); }
+    if (focus) await win.setFocus();
   } catch { /* ACL / no runtime */ }
+}
+
+/** The side seat: top-right, under the menu bar — out of the way of what the owner is doing. */
+function sideFrame(geo: Geometry | null): Frame | null {
+  if (!geo) return null;
+  const top = Math.max(geo.notch_height, PILL_H) + SIDE_MARGIN / 2;
+  return { x: geo.x + geo.width - SIDE_W - SIDE_MARGIN, y: geo.y + top, width: SIDE_W, height: SIDE_H };
 }
 
 /** Where the floating window is now, so docking and popping out again lands it back there. */
@@ -233,12 +253,17 @@ export function Notch() {
   const seatRef = useRef<Seat>('notch');
   seatRef.current = seatMode;
   const frameRef = useRef<Frame | null>(null);
+  /** This pop-out was made by the notch itself (a turn started), so it may go home by itself. */
+  const autoRef = useRef(false);
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
 
   const startSession = useCallback((conversationId: string | null) => {
     const id = conversationId ?? crypto.randomUUID();
     if (!conversationId) void saveConversationId(id);
-    const cs = createChatSession(ASSISTANT_VAULT, false, bump, id, !!conversationId, '', '', '', '', false, 'assistant');
+    // The owner's "Set as default" model and effort, like every other new chat — not the CLI's
+    // own default, which is what an empty pair would inherit (Extra High on this machine).
+    const { chatDefaultModel, chatDefaultEffort } = readAgentSettings();
+    const cs = createChatSession(ASSISTANT_VAULT, false, bump, id, !!conversationId, chatDefaultModel, chatDefaultEffort, '', '', false, 'assistant');
     cs.setCommandHandler(executeAssistantCommand);
     sessionRef.current?.setCommandHandler(null);
     sessionRef.current = cs;
@@ -250,6 +275,9 @@ export function Notch() {
     let alive = true;
     void (async () => {
       try {
+        // The remembered chat defaults live server-side; a fresh notch window has an empty
+        // localStorage until this lands, and the session below reads them.
+        await initAgentSettingsFromServer();
         const res = await fetch('/api/assistant/status');
         const st = await res.json() as AssistantStatus;
         if (!alive) return;
@@ -320,6 +348,7 @@ export function Notch() {
 
   // Pop out / dock: the SAME webview changes seats. Never an unmount, never a reload.
   const popOut = useCallback(() => {
+    autoRef.current = false;                // the owner's own pop-out stays until they dock
     // Leaving the notch seat: the guard must stop holding the notch frame NOW, not after the
     // native seat change lands.
     seatGen++;
@@ -330,6 +359,7 @@ export function Notch() {
     void nativeSeat('window').then(() => seatWindow(geo, frameRef.current)).then(() => sessionRef.current?.focus());
   }, [geo]);
   const dock = useCallback(() => {
+    autoRef.current = false;
     seatRef.current = 'notch';
     setSeatMode('notch');
     setExpanded(true);
@@ -339,9 +369,68 @@ export function Notch() {
       .then(() => sessionRef.current?.focus());
   }, [geo]);
 
+  // ── WHILE IT WORKS, IT STEPS OUT (owner, 2026-09-27) ─────────────────────────────────
+  // "İsteyim. Yapsın. Yaparken kenarda böyle dursun. Sonra cevabını söylesin ve kapansın."
+  // A turn starting pops the panel out to the SIDE seat by itself, wearing the working glow;
+  // when the turn is over AND its answer has been spoken, it animates back into the notch.
+  // Only a pop-out it made itself goes home on its own: one the owner made, docked or dragged
+  // stays where they put it. It never takes focus — the owner may be typing somewhere else.
+  const [speaking, setSpeaking] = useState(false);
+  useEffect(() => session?.onSpeaking(setSpeaking), [session]);
+  const active = !!session?.busy || speaking;
+  const [motion, setMotion] = useState<'arrive' | 'leave' | null>(null);
+  // Clicked or typed into while it stood out on its own: the owner is using it, so it is
+  // theirs now and stays (they dismiss it like any pop-out). A voice follow-up through the
+  // hotkey arrives from Rust, not from this DOM, and keeps the automatic round trip.
+  const engage = useCallback(() => {
+    if (autoRef.current && seatRef.current === 'window') autoRef.current = false;
+  }, []);
+
+  const autoPop = useCallback(() => {
+    autoRef.current = true;
+    seatGen++;
+    wanted = null;
+    seatRef.current = 'window';
+    setSeatMode('window');
+    setExpanded(true);
+    setMotion('arrive');
+    // Without the monitor's geometry there is no edge to stand at, but it is still the side size.
+    void nativeSeat('window').then(() => seatWindow(geo, sideFrame(geo) ?? { width: SIDE_W, height: SIDE_H }, false));
+    window.setTimeout(() => setMotion(null), LEAVE_MS + 80);
+  }, [geo]);
+
+  const goHome = useCallback(() => {
+    setMotion('leave');
+    window.setTimeout(() => {
+      autoRef.current = false;
+      seatRef.current = 'notch';
+      setSeatMode('notch');
+      setExpanded(false);
+      setMotion(null);
+      void nativeSeat('notch').then(() => seat(false, geo));
+    }, LEAVE_MS);
+  }, [geo]);
+
+  const wasActive = useRef(false);
+  useEffect(() => {
+    const rose = active && !wasActive.current;
+    wasActive.current = active;
+    if (rose && seatRef.current === 'notch') autoPop();
+  }, [active, autoPop]);
+
+  useEffect(() => {
+    if (active || !autoRef.current || seatRef.current !== 'window') return;
+    const t = window.setTimeout(() => {
+      if (autoRef.current && seatRef.current === 'window') goHome();
+    }, readAloudEnabled() ? HOME_AFTER_SPOKEN_MS : HOME_AFTER_SILENT_MS);
+    return () => window.clearTimeout(t);
+  }, [active, goHome, seatMode]);
+
   // Popped out, the top row is the title bar: drag the window from anywhere on it.
   const onPillMouseDown = useCallback((e: React.MouseEvent) => {
     if (seatRef.current !== 'window' || e.button !== 0 || !isDesktop()) return;
+    // Moved by hand, it is the owner's window now: it no longer goes home by itself.
+    autoRef.current = false;
     void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().startDragging()).catch(() => { /* no runtime */ });
   }, []);
 
@@ -440,7 +529,8 @@ export function Notch() {
       old.setCommandHandler(null);
       old.dispose();
     }
-    const cs = createChatSession(ASSISTANT_VAULT, false, bump, id, false, '', '', '', '', false, 'assistant');
+    const { chatDefaultModel, chatDefaultEffort } = readAgentSettings();
+    const cs = createChatSession(ASSISTANT_VAULT, false, bump, id, false, chatDefaultModel, chatDefaultEffort, '', '', false, 'assistant');
     cs.setCommandHandler(executeAssistantCommand);
     sessionRef.current = cs;
     setSession(cs);
@@ -479,7 +569,14 @@ export function Notch() {
   const hasNotch = !popped && !!geo && geo.notch_width > 0;
 
   return (
-    <div className={`dc-notch surface-night${expanded ? ' dc-notch--open' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}`}>
+    <div
+      className={`dc-notch surface-night${expanded ? ' dc-notch--open' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && popped ? ' dc-notch--working' : ''}${motion ? ` dc-notch--${motion}` : ''}`}
+      onPointerDown={engage}
+      onKeyDown={engage}
+    >
+      {/* The working glow (Apple Intelligence's edge light): drawn only while a turn runs or
+          its answer is being spoken, in the popped-out seat. Pure decoration. */}
+      {active && popped && <span className="dc-notch__glow" aria-hidden />}
       <button
         type="button"
         className="dc-notch__pill"

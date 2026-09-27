@@ -177,6 +177,30 @@ export function writeAgentSettings(cfg: AgentSettings): void {
 }
 
 /**
+ * Follow the settings as ANY window changes them. The custom event only reaches the window
+ * that wrote; every other window of this app (another project, the Assistant's notch) shares
+ * the origin's localStorage and hears the write as a `storage` event. Without it, a default
+ * set in one window ("Set as default" → Opus Medium) never reached the chats another window
+ * opened afterwards — they kept the CLI's own default (owner, 2026-09-27: "her yeni chat Opus
+ * Extra High ile başlıyor").
+ */
+export function onAgentSettings(fn: (cfg: AgentSettings) => void): () => void {
+  const local = (e: Event) => {
+    const detail = (e as CustomEvent<AgentSettings>).detail;
+    if (detail) fn(detail);
+  };
+  const other = (e: StorageEvent) => {
+    if (e.key === CONFIG_KEY) fn(readAgentSettings());
+  };
+  window.addEventListener(AGENT_SETTINGS_EVENT, local);
+  window.addEventListener('storage', other);
+  return () => {
+    window.removeEventListener(AGENT_SETTINGS_EVENT, local);
+    window.removeEventListener('storage', other);
+  };
+}
+
+/**
  * Change SOME settings, leaving the rest exactly as they are on disk right now.
  *
  * Use this, not `writeAgentSettings({ ...snapshot, one: value })`, whenever a control owns a

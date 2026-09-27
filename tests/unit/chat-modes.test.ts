@@ -481,7 +481,7 @@ describe('modeBriefing', () => {
   // own text is a contract too, the owner's swipe verdicts: predict and show only misses, no
   // rule per round, a confirm-gated write, the automation's playbook route. The card SHAPES
   // stay in the surface briefing; nothing here re-explains them.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 3200 };
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 3700 };  // assistant +500 (2026-09-27): the delegate-don't-do rule
   const DEFAULT_CEILING = 1600;
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

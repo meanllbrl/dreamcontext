@@ -24,6 +24,7 @@
  */
 
 import { voicePrefs } from './voicePrefs';
+import { timeStretch } from './timeStretch';
 import {
   createFocusClient, announceSpeechMuted, OPEN_GRANT,
   type FocusClient, type FocusGrant,
@@ -371,6 +372,20 @@ interface Mark extends SpokenChunk {
  * The `<audio>` element survives as a FALLBACK for a webview that will not decode or will not
  * give us a running context — degraded (stop-start, no marker timing), never silent.
  */
+/** `buffer` sped up by `rate` with its pitch kept (every channel), or itself at rate ~1. */
+function stretched(ctx: AudioContext, buffer: AudioBuffer, rate: number): AudioBuffer {
+  if (!Number.isFinite(rate) || Math.abs(rate - 1) < 0.01) return buffer;
+  try {
+    const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) =>
+      timeStretch(buffer.getChannelData(c), buffer.sampleRate, rate));
+    const out = ctx.createBuffer(buffer.numberOfChannels, channels[0].length, buffer.sampleRate);
+    channels.forEach((data, c) => out.copyToChannel(data as Float32Array<ArrayBuffer>, c));
+    return out;
+  } catch {
+    return buffer;
+  }
+}
+
 export class SpeechQueue {
   private jobs: Job[] = [];
   private running = false;
@@ -891,15 +906,18 @@ export class SpeechQueue {
   /** Start `buffer` at the exact sample the previous chunk ends on. `false` means it could
    *  not be scheduled at all and the caller must speak this chunk some other way. */
   private schedule(ctx: AudioContext, buffer: AudioBuffer, job: Job): boolean {
-    const rate = voicePrefs().speechRate;
+    // The rate is read PER CHUNK from the live preference, so a speed changed between two
+    // sentences takes effect on the next one. Client-side rather than a `speed` sent
+    // upstream: a rate we own cannot be a request that fails, and it costs nothing.
+    //
+    // TIME-STRETCHED, NOT PLAYED FAST. `playbackRate` raised the pitch with the tempo — at
+    // 1.35x every voice came out ~5 semitones high (owner, 2026-09-27: "helyum çekmiş gibi").
+    // The chunk is stretched pitch-preserving (`timeStretch.ts`) and played at rate 1.
+    buffer = stretched(ctx, buffer, voicePrefs().speechRate);
     let src: AudioBufferSourceNode;
     try {
       src = ctx.createBufferSource();
       src.buffer = buffer;
-      // The rate is read PER CHUNK from the live preference, so a speed changed between two
-      // sentences takes effect on the next one. Client-side rather than a `speed` sent
-      // upstream: a rate we own cannot be a request that fails, and it costs nothing.
-      src.playbackRate.value = rate;
       src.connect(this.gainNode!);
     } catch {
       this.fallback = true;
@@ -910,7 +928,7 @@ export class SpeechQueue {
     // generation starts a lead-time from now instead, because a start time in the PAST plays
     // immediately and clipped.
     const start = Math.max(now + SCHEDULE_LEAD, this.tail);
-    const duration = buffer.duration / rate;
+    const duration = buffer.duration;
     try {
       src.start(start);
     } catch {
@@ -1024,6 +1042,10 @@ export class SpeechQueue {
       // rate written to `playbackRate` and THEN followed by `el.src = url` was reset to 1 by
       // the very next line.
       const rate = voicePrefs().speechRate;
+      // The element's own time-stretch keeps the pitch; said explicitly (and WebKit's prefixed
+      // name too) so a fast rate can never turn into the helium voice the buffer path had.
+      el.preservesPitch = true;
+      (el as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
       el.defaultPlaybackRate = rate;
       el.src = url;
       el.playbackRate = rate;

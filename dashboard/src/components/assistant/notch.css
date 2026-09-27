@@ -249,3 +249,55 @@ html:has(.dc-notch) #root {
 }
 .dc-proposal__btn--primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
 .dc-proposal__btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ── WHILE IT WORKS: one thin loading line (owner, 2026-09-27) ────────────────────────────
+   "Çok ufak bir çizgi loading ve çalıştığını göstersin": a 2px line across the top edge,
+   dreamcontext's own brand colours sweeping along it while a turn runs or its answer is
+   spoken. The first cut (a glowing ring with a blurred inner spill, Siri's spectrum) was
+   rejected as far too loud and not ours. */
+.dc-notch.surface-night {
+  --notch-glow-1: var(--color-brand-deep);
+  --notch-glow-2: var(--color-accent);
+  --notch-glow-3: var(--color-brand-hot);
+  --notch-glow-4: var(--color-accent);
+}
+.dc-notch--window { position: relative; }
+.dc-notch__glow {
+  position: absolute;
+  top: 0;
+  left: var(--radius-2xl);
+  right: var(--radius-2xl);
+  z-index: 5;
+  height: 2px;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent, var(--notch-glow-1), var(--notch-glow-2), var(--notch-glow-3),
+    var(--notch-glow-4), transparent) 0 0 / 50% 100% no-repeat;
+  animation: dc-notch-loading 1.4s ease-in-out infinite;
+}
+@keyframes dc-notch-loading {
+  from { background-position: -100% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* Stepping out to the side and going home again. The window itself jumps (a native frame
+   change); the panel inside grows out of / shrinks into the top corner it came from. */
+.dc-notch--arrive { animation: dc-notch-arrive 320ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
+.dc-notch--leave { animation: dc-notch-leave 280ms cubic-bezier(0.4, 0, 1, 1) both; }
+@keyframes dc-notch-arrive {
+  from { opacity: 0; transform: translateY(-14px) scale(0.86); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes dc-notch-leave {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-24px) scale(0.7); }
+}
+.dc-notch--arrive,
+.dc-notch--leave { transform-origin: top right; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-notch__glow,
+  .dc-notch--arrive,
+  .dc-notch--leave { animation: none; }
+}

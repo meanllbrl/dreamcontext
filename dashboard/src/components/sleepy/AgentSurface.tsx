@@ -16,7 +16,7 @@ import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
-  AGENT_SETTINGS_EVENT, type AgentSettings,
+  onAgentSettings, type AgentSettings,
   readChatPermissionMode, writeChatPermissionMode,
   CHAT_PERMISSION_MODE_EVENT, type ChatPermissionMode,
 } from '../../lib/agentSettings';
@@ -824,12 +824,9 @@ export function AgentSurface() {
       setAgentSettings(s);
       setSettingsReady(true);
     });
-    const onChange = (e: Event) => {
-      const detail = (e as CustomEvent<AgentSettings>).detail;
-      if (detail) setAgentSettings(detail);
-    };
-    window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
-    return () => { cancelled = true; window.removeEventListener(AGENT_SETTINGS_EVENT, onChange); };
+    // This window's own writes AND every other window's (see `onAgentSettings`).
+    const off = onAgentSettings(setAgentSettings);
+    return () => { cancelled = true; off(); };
   }, []);
 
   // ── Roster persistence (per-vault, server-side) ──────────────────────────────
