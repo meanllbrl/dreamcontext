@@ -840,8 +840,10 @@ export function startChatSession(
     // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
     // DREAMCONTEXT_DEVELOP_LEAD arms the hook's lead-edit backstop (lib/develop-lead-guard.ts)
     // for a Develop chat's lead only. ALWAYS set, to '1' or '', so a value the server itself
-    // inherited can never leak into another mode.
-    env: { ...process.env, PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...accountEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', ...(isAssistant ? opts.assistantEnv ?? {} : {}) } as NodeJS.ProcessEnv,
+    // inherited can never leak into another mode. DREAMCONTEXT_CHAT_TAB (same rule) arms the
+    // UserPromptSubmit reminder to name the tab (lib/chat-tab-title-nudge.ts); the Assistant
+    // has no tab to name.
+    env: { ...process.env, PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...accountEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}) } as NodeJS.ProcessEnv,
   });
 
   // Every chat but the Assistant's own is listed in the Assistant's chat registry, its status

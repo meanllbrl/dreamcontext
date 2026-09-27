@@ -35,6 +35,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { DEVELOP_LEAD_DENY_REASON, developLeadWriteDenied } from '../../lib/develop-lead-guard.js';
+import { chatTabTitleNudge } from '../../lib/chat-tab-title-nudge.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -2037,6 +2038,19 @@ export function registerHookCommand(program: Command): void {
           writeAgentTurnState(process.env.DREAMCONTEXT_AGENT_STATUS_FILE, 'working');
         }
       } catch { /* status is best-effort — the chip falls back to the screen heuristic */ }
+
+      // ── A Chat tab still named "Chat N" → remind its agent to name it ─────
+      // The briefing's title rule alone was skipped by ~4 chats in 5 (see
+      // chat-tab-title-nudge.ts). Silent once an assistant message carries a title;
+      // nested-guarded so a `claude -p` the agent runs via Bash is never told to.
+      try {
+        if (process.env.DREAMCONTEXT_CHAT_TAB === '1' && !isNestedClaudeHook()) {
+          const tp = typeof (input as Record<string, unknown>).transcript_path === 'string'
+            ? (input as Record<string, unknown>).transcript_path as string : undefined;
+          const nudge = chatTabTitleNudge(process.env, tp);
+          if (nudge) console.log(nudge);
+        }
+      } catch { /* advisory — must never break the prompt path */ }
 
       const root = resolveContextRoot();
       if (!root) process.exit(0);
