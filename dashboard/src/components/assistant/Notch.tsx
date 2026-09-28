@@ -10,7 +10,7 @@ import { claimSeat, flying, healSeat, isCurrentSeat, setSeatWindow, wantSeat, wi
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
 import { ProposalList, type Proposal } from './ProposalList';
 import { EMPTY_ROLLUP, pillBubbles, pillLabel, readRollup, type Rollup } from './notchModel';
-import { emitExternalPushToTalk } from '../../lib/voice/externalPushToTalk';
+import { emitExternalPushToTalk, summonTakeDue } from '../../lib/voice/externalPushToTalk';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { initAgentSettingsFromServer, readAgentSettings } from '../../lib/agentSettings';
 // The pill's right ear draws the tab strip's own status bubbles (`project-tab-bubble*`); the
@@ -349,7 +349,7 @@ export function Notch() {
     setExpanded(true);
     setAttention(false);
     const seated = seatRef.current === 'window' ? seatWindow(geo, frameRef.current) : seat(true, geo);
-    void seated.then(() => sessionRef.current?.focus());
+    return seated.then(() => sessionRef.current?.focus());
   }, [geo]);
   // Popped out, "collapse" hides the window (still mounted, still connected) instead of
   // shrinking it to a pill; the next summon brings the window back.
@@ -480,7 +480,10 @@ export function Notch() {
   //
   // The summoning press un-hides the panel SYNCHRONOUSLY (flushSync) before the edge goes to
   // the composer: `ownsPushToTalk` only answers for a VISIBLE composer, and a hidden one would
-  // let the owner's first sentence fall on the floor.
+  // let the owner's first sentence fall on the floor. The edge itself waits for the panel to
+  // land (`summonTakeDue`): opening the mic in the same tick froze the resize for seconds.
+  const heldRef = useRef(false);
+  const pressRef = useRef(0);
   useEffect(() => {
     if (!isDesktop()) return;
     let unlisten: (() => void) | null = null;
@@ -491,12 +494,20 @@ export function Notch() {
         const { listen } = await import('@tauri-apps/api/event');
         const fn = await listen<{ state: 'pressed' | 'released' }>('assistant://hotkey', (e) => {
           const edge = e.payload?.state;
-          if (edge === 'released') { emitExternalPushToTalk({ edge, mode, summon: false }); return; }
+          if (edge === 'released') {
+            heldRef.current = false;
+            emitExternalPushToTalk({ edge, mode, summon: false });
+            return;
+          }
           if (edge !== 'pressed') return;
+          heldRef.current = true;
+          const press = ++pressRef.current;
           if (!expandedRef.current) {
             flushSync(() => setExpanded(true));
-            expand();
-            emitExternalPushToTalk({ edge, mode, summon: true });
+            void expand().then(() => {
+              if (!summonTakeDue(mode, heldRef.current, expandedRef.current, press === pressRef.current)) return;
+              emitExternalPushToTalk({ edge, mode, summon: true });
+            });
             return;
           }
           const acted = emitExternalPushToTalk({ edge, mode, summon: false });
