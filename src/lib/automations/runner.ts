@@ -8,8 +8,11 @@ import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js'
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
 import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
-import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
+import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
+import { recordAccountRejection } from '../claude-limit-rejections.js';
+import type { ProbeOutcome } from '../claude-usage-probe.js';
+import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
@@ -236,8 +239,12 @@ function formatRunDuration(ms: number): string {
  * Local time on purpose: `resetsAt` is a moment the user waits for, and an ISO string in
  * UTC is arithmetic they should not have to do.
  */
+function limitWindowLabel(sig: LimitSignal): string {
+  return sig.window === 'session' ? '5-hour' : sig.window === 'weekly' ? 'weekly' : 'account';
+}
+
 function limitReason(sig: LimitSignal): string {
-  const window = sig.window === 'session' ? '5-hour' : sig.window === 'weekly' ? 'weekly' : 'account';
+  const window = limitWindowLabel(sig);
   if (sig.resetsAtMs === null) {
     return `It stopped at the ${window} usage limit. Nothing was published. Try again once the window resets.`;
   }
@@ -559,6 +566,22 @@ export function parseClaudeJson(stdout: string): ClaudeResult {
   } catch {
     return { raw: stdout, ...UNPARSEABLE };
   }
+}
+
+/** Below this much of its timeout left, a limited run ends rather than starting over elsewhere. */
+const MIN_SWITCH_BUDGET_MS = 60_000;
+
+/** What a run moved to another account mid-job is told. Its original instructions are
+ *  already in the conversation it resumes, so this only has to say what happened. */
+const CONTINUE_AFTER_SWITCH_PROMPT = [
+  'Your previous turn was stopped by an account usage limit before the job was finished.',
+  'The run now continues on another account. Carry on from where you stopped and finish the job',
+  'exactly as the original instructions say, ending with the final document they ask for.',
+].join(' ');
+
+/** Resume the run's own session under the same approved envelope (model, effort). */
+function buildContinueArgs(m: AutomationManifest, sessionId: string): string[] {
+  return ['--resume', sessionId, ...buildClaudeArgs(m, CONTINUE_AFTER_SWITCH_PROMPT)];
 }
 
 function buildClaudeArgs(m: AutomationManifest, prompt: string): string[] {
@@ -910,6 +933,8 @@ interface RunOptionsBase {
    *  the prompt through `buildAskBlock` and nowhere else — it is not stored,
    *  not hashed, and not replayed. */
   ask?: string | null;
+  /** Injectable so no test spawns a real `claude /usage` while the account is picked. */
+  probeUsage?: (configDir: string) => Promise<ProbeOutcome>;
 }
 
 type RunHostOpts =
@@ -974,6 +999,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     ((t: string, b: string, s?: string, target?: string | null) => defaultNotify(t, b, opts.home, s, target));
   const fireAt = opts.fireAt ?? nowFn();
   const home = opts.home;
+  /** Where the account register and the recorded refusals live. */
+  const accountsHome = home ?? homedir();
   // The per-automation Telegram connection (D8), read ONCE per run. It feeds
   // two places: the preamble's channel line (the run must know the connection
   // exists, or a resumed chat asked "why didn't this reach my phone?" denies
@@ -1415,6 +1442,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     mkdirSync(outDir, { recursive: true });
     mkdirSync(outputRootDir(contextRoot), { recursive: true });
 
+    // WHICH ACCOUNT. Picked once, here, so the approval question and the job run on the same
+    // one: the preferred account unless auto-switch says it cannot serve, the same decision a
+    // chat turn makes (`account.ts`). A single-account machine returns at once, with no probe.
+    // `?? await` so the common case spawns in this same tick, exactly as it did before.
+    const accountDeps = { home: accountsHome, probe: opts.probeUsage };
+    let account = automationAccountWithoutProbe(accountDeps) ?? await pickAutomationAccount(accountDeps);
+    ensureSandbox(account.configDir, accountsHome);
+
     // Step 6.5 — the approval question, when the manifest changed under an
     // existing grant. Asks and EXITS: nothing of the job runs here.
     if (needsApprovalQuestion) {
@@ -1424,7 +1459,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         {
           cwd: projectRoot,
           // Same account as the job itself — this child is part of the same automation.
-          env: accountEnvFor(ensureSandbox(resolveConfigDir(null)).configDir),
+          env: accountEnvFor(account.configDir, accountsHome),
           timeoutMs: APPROVAL_QUESTION_TIMEOUT_MS,
           spawnImpl: spawnFn,
           killImpl: killFn,
@@ -1515,25 +1550,23 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // which it calls synchronously before any await for exactly that reason.
     const timeoutMs = manifest.timeoutMinutes * 60_000;
     const claudeArgs = buildClaudeArgs(manifest, prompt);
-    // Automations run on the PREFERRED account, full stop. Per-automation account pinning is
-    // OUT OF SCOPE by owner decision (there is no manifest field, parser or UI for it), and
-    // this one-line resolution is all the feature needs: `resolveConfigDir(null)` is the
-    // preferred account, falling back to account #0 — i.e. today's behaviour on a machine
-    // with one account. `ensureSandbox` short-circuits immediately in that case.
-    const automationConfigDir = resolveConfigDir(null);
-    ensureSandbox(automationConfigDir);
-    const execution = await executeClaudeDetached(claudeArgs, {
+    // Per-automation account PINNING stays out of scope by owner decision (no manifest field,
+    // parser or UI for it): the account is the one `pickAutomationAccount` chose above, and a
+    // limit met mid-run moves the run to the next one below. `firstSpawn` keeps the thread's
+    // root entry to one per fire however many accounts the run passes through.
+    let firstSpawn = true;
+    const runOn = (acct: AutomationAccount, args: string[], budgetMs: number): Promise<ClaudeExecution> => executeClaudeDetached(args, {
       cwd: projectRoot,
       // The two thread vars are HINTS, not capabilities. `automations post`
       // still requires the slug as a positional and validates it, so a leaked
       // or forged env var grants nothing it did not already have — it only
       // spares the run from having to know its own fire time to post.
       env: {
-        ...accountEnvFor(automationConfigDir),
+        ...accountEnvFor(acct.configDir, accountsHome),
         DREAMCONTEXT_AUTOMATION_SLUG: slug,
         DREAMCONTEXT_AUTOMATION_RUN: fireAt.toISOString(),
       },
-      timeoutMs,
+      timeoutMs: budgetMs,
       spawnImpl: spawnFn,
       killImpl: killFn,
       log: logFn,
@@ -1548,7 +1581,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
           fireAt: fireAt.toISOString(),
           startedAt: spawnedAt.toISOString(),
-          timeoutAt: new Date(spawnedAt.getTime() + timeoutMs).toISOString(),
+          timeoutAt: new Date(spawnedAt.getTime() + budgetMs).toISOString(),
         });
 
         // The thread's ROOT entry. It is written here, next to the sidecar,
@@ -1557,10 +1590,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // this point (blocked, deferred, the orphan guard) leaves the channel
         // silent, which is the whole reason a still-due automation does not
         // write an entry every five minutes forever.
-        postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', 'Run started.', logFn);
+        if (firstSpawn) postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', 'Run started.', logFn);
+        firstSpawn = false;
 
-        // Step 10 — host wiring.
+        // Step 10 — host wiring. A retry on another account REPLACES the previous child's
+        // registration: that child has exited, and a kill aimed at its group would miss the
+        // one that is actually running.
         if (opts.host === 'server') {
+          untrackFn();
           const killGroup = (): void => {
             try {
               killFn(-(child.pid as number), 'SIGKILL');
@@ -1570,6 +1607,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           };
           untrackFn = opts.registerChild(killGroup);
         } else {
+          if (sigintHandler) process.off('SIGINT', sigintHandler);
+          if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
           sigintHandler = () => {
             try {
               killFn(-(child.pid as number), 'SIGKILL');
@@ -1594,7 +1633,49 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       },
     });
 
-    const { startedAt, finishedAt } = execution;
+
+    let execution = await runOn(account, claudeArgs, timeoutMs);
+    const startedAt = execution.startedAt;
+
+    // THE ACCOUNT SWITCH. A run the API refused on its limit is moved to the next account with
+    // capacity instead of ending there. The refusal is WRITTEN DOWN first, which is what every
+    // chat pane and the next automation also read, so nobody else walks into the same wall.
+    // `tried` bounds the loop at one attempt per account. When nothing is left, the last
+    // execution still carries its limit and the usage-limit gate below reports it.
+    const tried: string[] = [];
+    while (execution.spawned && !execution.timedOut && execution.result?.limit && account.id !== null) {
+      const limit = execution.result.limit;
+      tried.push(account.id);
+      try {
+        recordAccountRejection(account.id, limit, accountsHome);
+      } catch (err) {
+        logFn(`automation "${slug}": could not record the account refusal: ${(err as Error).message}`);
+      }
+      const next = await pickAutomationAccount({ home: accountsHome, probe: opts.probeUsage, exclude: tried });
+      if (next.id === null || tried.includes(next.id)) break;
+      // Every attempt shares the ONE timeout the manifest approved: the run lock goes stale on
+      // that budget, so a retry allowed its own full timeout could overlap the next fire.
+      const budgetMs = timeoutMs - (nowFn().getTime() - startedAt.getTime());
+      if (budgetMs < MIN_SWITCH_BUDGET_MS) break;
+      ensureSandbox(next.configDir, accountsHome);
+      const from = account;
+      account = next;
+      postSystemEntry(
+        contextRoot, slug, fireAt.toISOString(), 'started',
+        `The ${limitWindowLabel(limit)} usage limit stopped it on ${from.label ?? from.id}. Continuing on ${next.label ?? next.id}.`,
+        logFn,
+      );
+      logFn(`automation "${slug}": limit on ${from.id}, continuing on ${next.id}`);
+      // A run that had already done work continues its own conversation (sessions are shared
+      // by every account, so it resumes anywhere); one refused on its first turn starts over,
+      // since there is nothing to continue and a resume of an empty session can fail.
+      const sessionId = execution.result.sessionId;
+      const args = sessionId && (execution.result.numTurns ?? 0) > 1
+        ? buildContinueArgs(manifest, sessionId)
+        : claudeArgs;
+      execution = await runOn(next, args, budgetMs);
+    }
+    const { finishedAt } = execution;
 
     // Step 8 — spawn-failure gate. `child.pid` is null when the exec itself
     // failed. Given §1.1's whole premise, a stale/broken binary is the LIKELY

@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-09-13'
+updated: '2026-09-28'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -31,6 +31,8 @@ related_tasks:
     auto-switch-brings-the-session-home-when-the-preferred-account-s-window-reopens
   - auto-switch-iki-mod-agirlikli-puan-ve-sirayla-tuketme
   - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim
+  - >-
+    automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands
 ---
 
 ## Why
@@ -99,8 +101,12 @@ and moving before the limit lands did not exist at all.
       before the user confirms. A picker that silently no-ops is not acceptable.
 - [x] The resolved account id joins the session state next to `spawnAuthEpoch`, so the live
       panel can be labelled with the account actually being billed.
-- [x] Automations run on the preferred account — one line in the shared spawn core
-      (`...accountEnv`). Per-automation account pinning is explicitly out of scope (owner call).
+- [x] Automations use every account (2026-09-28, owner report: two runs died at the 5-hour
+      limit with a second account idle). `src/lib/automations/account.ts` makes the chat's
+      `chooseAccount` decision once before the spawn; a run the API refuses records the refusal
+      and continues on the next account (resume if it had worked, fresh if refused on turn 1),
+      one attempt per account inside the one timeout. Verdict/message resumes pick the same way.
+      Per-automation account pinning is still out of scope (owner call).
 
 ### Auto-switch
 

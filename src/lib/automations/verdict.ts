@@ -32,7 +32,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
-import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
+import { accountEnvFor } from '../claude-accounts.js';
+import { ensureSandbox } from '../claude-account-sandbox.js';
+import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
 import { appendThreadEntry } from './threads.js';
 import { latestBoundSession, readAutomationSession, retireAutomationSession } from './session-registry.js';
 import {
@@ -619,31 +621,43 @@ function spawnSessionResume(
       ([k, v]) => /^DREAMCONTEXT_AUTOMATION_[A-Z_]+$/.test(k) && v !== undefined,
     ),
   );
-  return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)), {
-    cwd: dirname(contextRoot),
-    timeoutMs,
-    // `accountEnvFor` FIRST, so a resume runs on the same preferred account the RUN did.
-    // This path previously passed no env at all and silently inherited the server's —
-    // meaning a resume could be billed to, and read the usage of, whichever account the
-    // dashboard process happened to be started under. The hints spread after it cannot
-    // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
-    env: { ...accountEnvFor(resolveConfigDir(null)), ...hints },
-    spawnImpl: opts.spawnImpl,
-    killImpl: opts.killImpl,
-    log: opts.log,
-    now: nowFn,
-    onSpawned: (child, startedAt) => {
-      writeRunSidecar(contextRoot, m.slug, {
-        slug: m.slug,
-        runnerPid: process.pid,
-        childPid: child.pid as number,
-        childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
-        fireAt,
-        startedAt: startedAt.toISOString(),
-        timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
-      });
-    },
-  });
+  // The same account decision the RUN makes (`account.ts`): the preferred account unless
+  // auto-switch says it cannot serve. Sessions are shared by every account, so the resume
+  // does not have to go back to the account the run happened on.
+  // Synchronous when no probe is needed, so the spawn stays in the caller's tick.
+  const quick = automationAccountWithoutProbe({ home: opts.home });
+  return quick
+    ? spawnOn(quick)
+    : pickAutomationAccount({ home: opts.home }).then(spawnOn);
+
+  function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
+    ensureSandbox(account.configDir, opts.home);
+    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)), {
+      cwd: dirname(contextRoot),
+      timeoutMs,
+      // `accountEnvFor` FIRST, so a resume runs on the account picked above.
+      // This path previously passed no env at all and silently inherited the server's —
+      // meaning a resume could be billed to, and read the usage of, whichever account the
+      // dashboard process happened to be started under. The hints spread after it cannot
+      // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
+      env: { ...accountEnvFor(account.configDir, opts.home), ...hints },
+      spawnImpl: opts.spawnImpl,
+      killImpl: opts.killImpl,
+      log: opts.log,
+      now: nowFn,
+      onSpawned: (child, startedAt) => {
+        writeRunSidecar(contextRoot, m.slug, {
+          slug: m.slug,
+          runnerPid: process.pid,
+          childPid: child.pid as number,
+          childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
+          fireAt,
+          startedAt: startedAt.toISOString(),
+          timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
+        });
+      },
+    });
+  }
 }
 
 // ─── Talking to the latest run ──────────────────────────────────────────────
