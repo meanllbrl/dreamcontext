@@ -71,6 +71,9 @@ export interface SessionStatusInput {
   busy?: boolean;
   /** Whether the quiet screen ends in a question waiting on the user's answer. */
   asking?: boolean;
+  /** Whether agents this conversation started (sub-agents, headless teammates) are still
+   *  running after its own turn ended. The work is not done while they are. */
+  agentsWorking?: boolean;
 }
 
 /**
@@ -78,16 +81,20 @@ export interface SessionStatusInput {
  * restored tab is "saved" even if a stale status leaked in); otherwise the live PTY
  * status decides, splitting `open` into asking/working/ready. `asking` wins over `busy`:
  * a question on screen means Claude is blocked on the user no matter what bytes still
- * dribble in (dialog redraws, keystroke echo).
+ * dribble in (dialog redraws, keystroke echo). `agentsWorking` keeps an idle turn `working`
+ * while the agents it started are still running.
  */
-export function deriveSessionStatus({ dormant, status, busy, asking }: SessionStatusInput): SessionStatusInfo {
+export function deriveSessionStatus({ dormant, status, busy, asking, agentsWorking }: SessionStatusInput): SessionStatusInfo {
   if (dormant) return { kind: 'saved', label: 'saved', mood: 'sleeps' };
   switch (status) {
     case 'open':
       if (asking) return { kind: 'asking', label: 'needs you', mood: 'asking' };
-      return busy
-        ? { kind: 'working', label: 'working', mood: 'working' }
-        : { kind: 'ready', label: 'ready', mood: 'waving' };
+      if (busy) return { kind: 'working', label: 'working', mood: 'working' };
+      // The turn ended but its agents have not: still working, only on the user's behalf
+      // elsewhere. Ranked below asking, like busy, and only while the session is open — a
+      // closed session reads ended no matter what a stale run still claims.
+      if (agentsWorking) return { kind: 'working', label: 'agents working', mood: 'working' };
+      return { kind: 'ready', label: 'ready', mood: 'waving' };
     case 'closed':
       return { kind: 'ended', label: 'ended', mood: 'sleeps' };
     case 'connecting':

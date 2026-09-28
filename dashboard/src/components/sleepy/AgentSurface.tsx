@@ -166,6 +166,12 @@ function titleFor(s: Session | ChatSession): string {
   return `Agent ${num}`;
 }
 
+/** A chat's still-running agents keep its tab `working` after the turn ends. Only a chat
+ *  pane can see them, so a terminal session never reports any. */
+function agentsWorkingOf(s: Session | ChatSession | undefined): boolean {
+  return !!s && 'agentsWorking' in s && s.agentsWorking;
+}
+
 /** X2's placeholder title suffix, appended IDEMPOTENTLY: the tab this labels gets
  *  persisted back to the roster with the suffix already on it (see the hydrate effect), so
  *  a second launch that finds the SAME session still unbound must not pile up a second copy
@@ -3096,7 +3102,7 @@ export function AgentSurface() {
       return {
         id,
         title: meta?.title ?? id,
-        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
+        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s) }),
         sessionKind: meta?.kind ?? 'agent',
         // WHICH AGENT this tab's run belongs to, so the strip can draw its FACE
         // instead of the generic automation glyph. Read straight off the roster
@@ -3124,7 +3130,7 @@ export function AgentSurface() {
       id: meta.id,
       title: meta.title,
       kind: meta.kind,
-      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
+      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s) }),
       attention: !meta.dormant && !!s?.attention,
       claudeId: s?.claudeId,
       // The ROSTER's mode, not the live session's: a mode switch respawns the process and

@@ -337,6 +337,10 @@ export interface ChatSession {
   busy: boolean;
   asking: boolean;
   attention: boolean;
+  /** Agents this conversation started (sub-agents, headless teammates) are still running.
+   *  Only the pane can see them all (teammates come from a poll), so it reports this through
+   *  {@link ChatSession.setAgentsWorking}; the tab and dock read it as `working`. */
+  agentsWorking: boolean;
   minimized: boolean;
   capabilities: string[];
   model: string;
@@ -533,6 +537,9 @@ export interface ChatSession {
    *  kind and never reaches the `permission-request` gate this consults. */
   alwaysAllow: (toolName: string) => void;
   clearAttention: () => void;
+  /** Report whether this conversation's agents are still running; notifies the surface on a
+   *  change only. */
+  setAgentsWorking: (working: boolean) => void;
   /** Register (or clear, with `null`) the composer's focusable element so `focus()` has a
    *  target. Chosen over dispatching a CustomEvent on `container`: `container` isn't
    *  guaranteed to be attached to the document when `focus()` is called (a minimized chat's
@@ -784,7 +791,7 @@ export function createChatSession(
     // running before any frame arrives, so the working indicator, the dock chip and the
     // "don't inject into a busy session" guards must all see it (a spawn with no prompt
     // stays idle — it is genuinely waiting for the user).
-    busy: serverSubmitsPrompt, asking: false, attention: false, minimized: false,
+    busy: serverSubmitsPrompt, asking: false, attention: false, agentsWorking: false, minimized: false,
     capabilities: [],
     model,
     effort,
@@ -828,6 +835,7 @@ export function createChatSession(
     retry,
     alwaysAllow,
     clearAttention,
+    setAgentsWorking,
     setFocusTarget: (el) => { focusTarget = el; },
     setTranscriptRepin: (fn) => { transcriptRepin = fn; },
   };
@@ -2016,6 +2024,14 @@ export function createChatSession(
   function clearAttention(): void {
     if (!session.attention) return;
     applyAndNotify(() => { session.attention = false; });
+  }
+
+  function setAgentsWorking(working: boolean): void {
+    if (session.agentsWorking === working || disposed) return;
+    session.agentsWorking = working;
+    // Nothing in the transcript changed, so no render flush: only the surface's tab and dock
+    // chip turn on this.
+    notify();
   }
 
   function dispose(): void {
