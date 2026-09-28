@@ -1761,10 +1761,11 @@ export function AgentSurface() {
     // Resumed in the CURRENTLY chosen Agent screen, like every other resume path — the
     // transcript is the conversation, not the surface it was originally typed into.
     const s = spawn(bypass, past.id, true, claudeKind);
-    // Titled with the row's own label (the session's first prompt, clipped) rather than
-    // "Chat 7": it is the only thing that tells two resumed tabs apart. The result falls
-    // outside DEFAULT_TAB_TITLE_RE, so auto-titling correctly leaves it alone.
-    const title = past.title.length > 34 ? `${past.title.slice(0, 33).trimEnd()}…` : past.title;
+    // Titled with the row's own label rather than "Chat 7": it is the only thing that tells two
+    // resumed tabs apart. A remembered tab name (`named`) comes back whole — it was a tab title
+    // once, and clipping it would also overwrite the stored name with its stub; a first prompt
+    // is clipped. Either falls outside DEFAULT_TAB_TITLE_RE, so auto-titling leaves it alone.
+    const title = !past.named && past.title.length > 34 ? `${past.title.slice(0, 33).trimEnd()}…` : past.title;
     setSessionList((prev) => [...prev, {
       id: s.id, title: title || titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
     }]);

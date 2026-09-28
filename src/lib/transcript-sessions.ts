@@ -37,8 +37,11 @@ import { userPromptOf } from './transcript-history.js';
 export interface PastSession {
   /** The conversation UUID — what `claude --resume <id>` takes. */
   id: string;
-  /** First thing the user said, one-lined. Never empty (such a file is skipped). */
+  /** The name the conversation carried in its tab when one was remembered, else the first
+   *  thing the user said, one-lined. Never empty (such a file is skipped). */
   title: string;
+  /** `title` is a remembered tab name, not a clipped first prompt — the client may show it whole. */
+  named: boolean;
   /** Most recent thing the user said, one-lined. '' when it would just repeat the title. */
   preview: string;
   /** Last write to the transcript (ms epoch) — "when did I last talk to this session". */
@@ -356,6 +359,7 @@ export function summarizeTranscript(
   return {
     id,
     title,
+    named: false,
     preview,
     updatedAt: stat.mtimeMs,
     startedAt: headScan.firstTimestamp,
@@ -483,7 +487,15 @@ export interface ListPastSessionsResult {
  */
 export function listPastSessions(
   projectRoot: string,
-  opts: { home?: string; query?: string; limit?: number; includeAgentRuns?: boolean } = {},
+  opts: {
+    home?: string;
+    query?: string;
+    limit?: number;
+    includeAgentRuns?: boolean;
+    /** The name each conversation carried in its tab (`session-titles.ts`), keyed by
+     *  conversation UUID. Preferred over the first prompt, and searchable. */
+    titles?: ReadonlyMap<string, string>;
+  } = {},
 ): ListPastSessionsResult {
   const home = opts.home ?? homedir();
   const limit = Math.min(MAX_LIMIT, Math.max(1, opts.limit ?? DEFAULT_LIMIT));
@@ -524,7 +536,21 @@ export function listPastSessions(
       if (summaryCache.size >= MAX_CACHED_SUMMARIES) summaryCache.clear();
       summaryCache.set(c.path, { mtimeMs: c.mtimeMs, size: c.size, summary });
     }
-    if (summary) all.push(summary);
+    if (!summary) continue;
+    // Applied per listing, never baked into the memo: a tab can be renamed without its
+    // transcript changing, so a cached summary must not pin yesterday's name.
+    const named = opts.titles?.get(summary.id);
+    all.push(named && named !== summary.title
+      ? {
+        ...summary,
+        title: named,
+        named: true,
+        // The first prompt stops being the title, so a one-turn session shows it underneath
+        // instead of nothing.
+        preview: summary.preview || summary.title,
+        haystack: `${named.toLowerCase()}\n${summary.haystack}`,
+      }
+      : summary);
   }
 
   const tokens = (opts.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);

@@ -72,6 +72,9 @@ _dream_context/state/.agent-sessions.json
 # dreamcontext: machine-local agent tab → live Claude session map (one file per tab)
 _dream_context/state/.agent-session-map/
 
+# dreamcontext: machine-local Claude conversation titles (Past chats)
+_dream_context/state/.session-titles.json
+
 # Working/scratch context — inbox is DARK BY DESIGN (not indexed, not recalled) and routinely holds
 # raw client data, drafts and exports. This repo is PUBLIC and skill-packs ships to npm, so inbox must
 # never be published. Promote a board into knowledge/ once it is genuinely shareable.

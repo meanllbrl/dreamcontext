@@ -279,6 +279,22 @@ describe('listPastSessions', () => {
     expect(listPastSessions(PROJECT, { home }).sessions[0].preview).toBe('and a follow-up');
   });
 
+  it('prefers a remembered tab name over the first prompt, and searches it', () => {
+    writeSession(S1, transcript(['can you look at why the export breaks']), 1_700_000_100);
+    writeSession(S2, transcript(['another chat', 'with a follow-up']), 1_700_000_200);
+    const titles = new Map([[S1, 'Invoice export'], [S2, 'Ledger cleanup']]);
+    const r = listPastSessions(PROJECT, { home, titles });
+    const byId = new Map(r.sessions.map((s) => [s.id, s]));
+    expect(byId.get(S1)).toMatchObject({ title: 'Invoice export', named: true, preview: 'can you look at why the export breaks' });
+    // A preview that already carried something keeps it.
+    expect(byId.get(S2)).toMatchObject({ title: 'Ledger cleanup', named: true, preview: 'with a follow-up' });
+    expect(listPastSessions(PROJECT, { home, titles, query: 'invoice' }).sessions.map((s) => s.id)).toEqual([S1]);
+    // The first prompt stays searchable, and the memo never keeps a name once it is gone.
+    expect(listPastSessions(PROJECT, { home, titles, query: 'export breaks' }).total).toBe(1);
+    expect(listPastSessions(PROJECT, { home }).sessions.find((s) => s.id === S1))
+      .toMatchObject({ title: 'can you look at why the export breaks', named: false, preview: '' });
+  });
+
   it('ignores non-transcript files and empty ones', () => {
     writeSession(S1, transcript(['real chat']));
     writeFileSync(join(projectsDir, 'notes.txt'), 'not a transcript');

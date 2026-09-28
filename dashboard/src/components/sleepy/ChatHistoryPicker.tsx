@@ -28,6 +28,9 @@ import './ChatHistoryPicker.css';
 export interface PastSession {
   id: string;
   title: string;
+  /** `title` is the name the conversation's tab carried, not its first prompt. Absent on an
+   *  older server, which reads as a first prompt. */
+  named?: boolean;
   preview: string;
   /** ms epoch — last write to the transcript. */
   updatedAt: number;

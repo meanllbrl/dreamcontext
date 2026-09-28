@@ -3,6 +3,7 @@ import { sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { projectRootOf } from './agent-spawn-shared.js';
 import { listPastSessions, DEFAULT_LIMIT, MAX_LIMIT } from '../../lib/transcript-sessions.js';
+import { readSessionTitles } from '../../lib/session-titles.js';
 
 /**
  * `GET /api/agent/chat-sessions` — the project's PAST Claude conversations, newest first,
@@ -47,7 +48,11 @@ export async function handleAgentChatSessions(
   const includeAgentRuns = url.searchParams.get('agentRuns') === '1';
 
   try {
-    sendJson(res, 200, listPastSessions(projectRootOf(contextRoot), { query, limit, includeAgentRuns }));
+    sendJson(res, 200, listPastSessions(projectRootOf(contextRoot), {
+      query, limit, includeAgentRuns,
+      // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
+      titles: readSessionTitles(contextRoot),
+    }));
   } catch {
     // A history list is a convenience surface: an unreadable projects dir degrades to
     // "no past chats", never to a broken popup.

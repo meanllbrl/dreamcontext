@@ -6,7 +6,8 @@ import { homedir } from 'node:os';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
-import { UUID_RE } from '../../lib/agent-session-map.js';
+import { UUID_RE, resolveAgentSession } from '../../lib/agent-session-map.js';
+import { recordSessionTitles } from '../../lib/session-titles.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { isSafeAutomationSlug } from '../../lib/automations/store.js';
 import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
@@ -110,6 +111,31 @@ const MAX_BYTES = 64 * 1024;
 const MAX_RUN_FIRED_AT = 64;
 
 const ROSTER_REL_PATH = join('state', '.agent-sessions.json');
+
+/** The names a tab carries before anyone named it — mirrors the client's
+ *  `DEFAULT_TAB_TITLE_RE` (AgentSurface.tsx) plus the coerced {@link DEFAULT_TITLE}. */
+const DEFAULT_TAB_TITLE_RE = /^(?:Agent|Chat)(?: \d+)?$/;
+
+/**
+ * The tab names worth remembering past the tab's own life, keyed by the conversation each tab
+ * is ACTUALLY on (resolved through the tab→session map: a `/clear`ed tab is on a different
+ * conversation than the one it was pinned to). A default "Chat N" says nothing the first prompt
+ * doesn't, and shells and automation runs are not conversations the history picker offers.
+ * Exported for unit testing.
+ */
+export function rosterTitleUpdates(contextRoot: string, sessions: readonly SavedMeta[]): Array<{ sessionId: string; title: string }> {
+  const out: Array<{ sessionId: string; title: string }> = [];
+  for (const m of sessions) {
+    if (!m.sessionId || m.kind === 'shell' || m.kind === 'automation') continue;
+    if (DEFAULT_TAB_TITLE_RE.test(m.title)) continue;
+    // A tab resumed from Past chats is titled with that row's first prompt, clipped to fit
+    // (AgentSurface's `resumePastSession`). That clip is a worse title than the one the listing
+    // already derives, and storing it would bury the full prompt under its own stub.
+    if (m.title.endsWith('…')) continue;
+    out.push({ sessionId: resolveAgentSession(contextRoot, m.sessionId) || m.sessionId, title: m.title });
+  }
+  return out;
+}
 
 function storePath(contextRoot: string): string {
   return join(contextRoot, ROSTER_REL_PATH);
@@ -367,6 +393,8 @@ export async function handleAgentSessionsPut(
   }
   try {
     writeSurface(contextRoot, surface);
+    // The roster forgets a tab the moment it closes; this is what keeps its name for Past chats.
+    recordSessionTitles(contextRoot, rosterTitleUpdates(contextRoot, sessions));
     sendJson(res, 200, { ok: true });
   } catch (err) {
     console.error('[agent-sessions] roster write failed:', err);
