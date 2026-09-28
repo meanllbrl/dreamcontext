@@ -521,22 +521,29 @@ export function Notch() {
 
   // Esc and click-outside collapse the notch. Never an unmount. A popped-out window is a
   // window: it stays open when the owner clicks elsewhere or presses Esc in it.
+  // Click-outside is NATIVE (`assistant://outside-click`, assistant.rs `watch_outside_clicks`):
+  // summoned over another app the non-activating panel never becomes key, so a focus loss never
+  // comes. The focus loss stays as the second way out (⌘-Tab away from a panel that had focus).
   useEffect(() => {
     if (!expanded || seatMode === 'window') return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) collapse(); };
     window.addEventListener('keydown', onKey);
-    let unlisten: (() => void) | null = null;
+    const unlisteners: Array<() => void> = [];
     let cancelled = false;
     if (isDesktop()) {
       void (async () => {
         try {
           const { getCurrentWindow } = await import('@tauri-apps/api/window');
-          const fn = await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) collapse(); });
-          if (cancelled) fn(); else unlisten = fn;
+          const { listen } = await import('@tauri-apps/api/event');
+          const fns = [
+            await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) collapse(); }),
+            await listen('assistant://outside-click', () => collapse()),
+          ];
+          for (const fn of fns) { if (cancelled) fn(); else unlisteners.push(fn); }
         } catch { /* no runtime */ }
       })();
     }
-    return () => { cancelled = true; window.removeEventListener('keydown', onKey); unlisten?.(); };
+    return () => { cancelled = true; window.removeEventListener('keydown', onKey); unlisteners.forEach((fn) => fn()); };
   }, [expanded, collapse, seatMode]);
 
   // The seat guard (seatGuard.ts): a resize or move the notch did not ask for is undone at once,

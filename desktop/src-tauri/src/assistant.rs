@@ -55,6 +55,11 @@ pub(crate) const WINDOW_MIN_W: f64 = 420.0;
 pub(crate) const WINDOW_MIN_H: f64 = 360.0;
 /// The notch webview asks to change seats with this event: `{ "seat": "notch" | "window" }`.
 pub const SEAT_EVENT: &str = "assistant://seat";
+/// Told to the notch webview when a mouse button goes down anywhere outside the OPEN panel.
+pub const OUTSIDE_CLICK_EVENT: &str = "assistant://outside-click";
+/// Taller than any collapsed pill (the camera housing is ~38 px): below this the panel is closed
+/// and a click elsewhere has nothing to dismiss, so it is not reported.
+const OPEN_MIN_H: f64 = 100.0;
 
 /// Above the menu bar, so the notch seat's y=0 is honoured (a normal window is pushed below it).
 fn notch_level() -> i64 {
@@ -420,8 +425,93 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, port: u16) {
         // AppKit only on the main thread.
         let _ = handle.run_on_main_thread(move || apply_seat(&h, window));
     });
+    let h = app.clone();
+    let _ = app.run_on_main_thread(move || watch_outside_clicks(&h));
     if assistant_enabled() {
         let _ = apply_hotkey(app);
         let _ = ensure_notch(app);
+    }
+}
+
+// ── Click outside ──────────────────────────────────────────────────────────────────
+// The webview used to collapse on `onFocusChanged(false)`. But the notch is a NON-ACTIVATING
+// panel: summoned by the hotkey while another app is in front, it never becomes key, so it never
+// loses focus either, and a click elsewhere left it open. Mouse-down monitors see the click
+// whether or not the panel ever had focus: the global one for clicks in other apps (mouse events
+// need no Accessibility grant, unlike keys), the local one for dreamcontext's own windows. Both
+// only REPORT a click outside the open panel; the webview decides (a popped-out window ignores it).
+
+/// True when a mouse-down at `p` (screen coords) should be reported: the panel is on screen,
+/// open (taller than a pill) and `p` is outside its frame.
+fn is_outside_open_panel(visible: bool, frame: objc2_foundation::NSRect, p: objc2_foundation::NSPoint) -> bool {
+    if !visible || frame.size.height < OPEN_MIN_H {
+        return false;
+    }
+    let inside = p.x >= frame.origin.x
+        && p.x <= frame.origin.x + frame.size.width
+        && p.y >= frame.origin.y
+        && p.y <= frame.origin.y + frame.size.height;
+    !inside
+}
+
+/// Main thread only (the monitors call back on it).
+fn report_if_outside<R: Runtime>(app: &AppHandle<R>) {
+    use objc2_app_kit::{NSEvent, NSWindow};
+    let Some(w) = app.get_webview_window(NOTCH_LABEL) else { return };
+    let Ok(ptr) = w.ns_window() else { return };
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: the notch's live NSWindow (a tauri-nspanel NSPanel), read on the main thread.
+    let win: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+    if is_outside_open_panel(win.isVisible(), win.frame(), NSEvent::mouseLocation()) {
+        let _ = app.emit_to(NOTCH_LABEL, OUTSIDE_CLICK_EVENT, ());
+    }
+}
+
+/// Install both monitors once, for the app's lifetime (the tokens are never removed).
+fn watch_outside_clicks<R: Runtime>(app: &AppHandle<R>) {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSEvent, NSEventMask};
+    use std::ptr::NonNull;
+    let mask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
+
+    let g = app.clone();
+    let global = RcBlock::new(move |_e: NonNull<NSEvent>| report_if_outside(&g));
+    std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &global));
+
+    let l = app.clone();
+    let local = RcBlock::new(move |e: NonNull<NSEvent>| -> *mut NSEvent {
+        report_if_outside(&l);
+        e.as_ptr() // pass the event on untouched
+    });
+    // SAFETY: the handler returns the event it was given, so every click is still delivered.
+    std::mem::forget(unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &local) });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    const OPEN: NSRect = NSRect { origin: NSPoint { x: 610.0, y: 520.0 }, size: NSSize { width: 580.0, height: 560.0 } };
+
+    #[test]
+    fn a_click_outside_the_open_panel_is_reported() {
+        assert!(is_outside_open_panel(true, OPEN, NSPoint::new(250.0, 100.0)));
+        assert!(is_outside_open_panel(true, OPEN, NSPoint::new(1191.0, 700.0)));
+    }
+
+    #[test]
+    fn a_click_inside_the_panel_is_not() {
+        assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(900.0, 800.0)));
+        assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(610.0, 520.0)));
+    }
+
+    #[test]
+    fn a_closed_pill_or_a_hidden_panel_reports_nothing() {
+        let pill = NSRect::new(NSPoint::new(659.0, 1042.0), NSSize::new(481.0, 38.0));
+        assert!(!is_outside_open_panel(true, pill, NSPoint::new(250.0, 100.0)));
+        assert!(!is_outside_open_panel(false, OPEN, NSPoint::new(250.0, 100.0)));
     }
 }
