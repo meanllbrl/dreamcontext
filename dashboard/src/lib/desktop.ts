@@ -420,8 +420,14 @@ export function vaultWindowLabel(name: string): string {
  * it. Either way the caller's current window is left untouched — switching to
  * project A from project B must not close B. In a browser it opens a new tab
  * pinned to that vault via the `?vault=` param.
+ *
+ * `at` (logical px) builds a NEW window straight at that frame — a tiled window must never
+ * load at the default size and then move. An already-open window is not moved by it.
  */
-export async function openVaultWindow(name: string): Promise<void> {
+export async function openVaultWindow(
+  name: string,
+  at?: { x: number; y: number; width: number; height: number },
+): Promise<void> {
   const url = `/?vault=${encodeURIComponent(name)}`;
   if (isDesktop()) {
     // Use the BUILT-IN WebviewWindow API (governed by the granted
@@ -442,8 +448,7 @@ export async function openVaultWindow(name: string): Promise<void> {
     const win = new WebviewWindow(label, {
       url: `${window.location.origin}${url}`,
       title: `dreamcontext — ${name}`,
-      width: 1280,
-      height: 800,
+      ...(at ?? { width: 1280, height: 800 }),
       // macOS: transparent title bar so our own header IS the title bar and the
       // traffic-light buttons float over it (matches the launcher window).
       titleBarStyle: 'overlay',

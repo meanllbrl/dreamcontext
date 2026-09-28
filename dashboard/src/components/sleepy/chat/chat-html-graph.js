@@ -988,13 +988,48 @@
   }
   function layoutAll() { all().forEach(layout); }
 
+  /**
+   * A WIDTH CHANGE WHILE IT IS STILL CHANGING — a window edge being dragged, a frame being
+   * animated — re-laid every diagram synchronously on every frame, and each layout changed
+   * the body's height, which the host answered with a re-render: three diagrams were enough
+   * to stall the drag. So a graph that is already laid out only RE-FITS while the width
+   * moves (the laid shape rescaled into the new width, once per frame for all of them), and
+   * is laid out again once the width has held still for SETTLE ms. The first layout stays
+   * synchronous: there is no drawing yet to rescale.
+   */
+  var SETTLE = 150;
+  var refitting = [];
+  var refitFrame = 0;
+  function refitNow() {
+    refitFrame = 0;
+    var gs = refitting;
+    refitting = [];
+    gs.forEach(function (g) {
+      if (!g.dcBox) return;
+      g.style.height = Math.round(g.dcBox.h * fitScale(g, g.dcBox)) + 'px';
+      fit(g);
+    });
+  }
+  function resized(g) {
+    if (!g.dcBox) { layout(g); return; }
+    if (refitting.indexOf(g) < 0) refitting.push(g);
+    if (!refitFrame) refitFrame = requestAnimationFrame(refitNow);
+    clearTimeout(g.dcSettle);
+    g.dcSettle = setTimeout(function () {
+      g.dcSettle = 0;
+      // The frame, or this graph inside it, may be gone by now.
+      if (!g.isConnected) return;
+      if (String(g.clientWidth) !== g.getAttribute('data-laid-width')) layout(g);
+    }, SETTLE);
+  }
+
   function start() {
     layoutAll();
     if (window.ResizeObserver) {
       var ro = new ResizeObserver(function (entries) {
         entries.forEach(function (en) {
           var g = en.target;
-          if (String(g.clientWidth) !== g.getAttribute('data-laid-width')) layout(g);
+          if (String(g.clientWidth) !== g.getAttribute('data-laid-width')) resized(g);
         });
       });
       all().forEach(function (g) { ro.observe(g); });

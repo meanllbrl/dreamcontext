@@ -40,6 +40,9 @@ tauri-plugin-autostart = "=2.5.1"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "acb3ec1c2d2334916c9b07c74d5a0be9356674e3" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `set_frames` (src/frames.rs) bounds its wait on an AppKit animation with a hard deadline.
+# Already the runtime under tauri::async_runtime; only the timer is used directly.
+tokio = { version = "1", features = ["time"] }
 # Group-signal the dashboard-server child (SIGTERM→SIGKILL) on app exit so the
 # whole process group is reaped, not just the direct node process. Already present
 # transitively via tauri; pinned here so the direct use is explicit.
@@ -60,6 +63,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
     "block2",
     "NSAlert",
+    "NSAnimation",
+    "NSAnimationContext",
     "NSApplication",
     "NSButton",
     "NSCell",

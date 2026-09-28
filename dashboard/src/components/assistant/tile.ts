@@ -6,7 +6,7 @@
  * other projects the owner did not ask to rearrange.
  */
 import { openVaultWindow, vaultWindowLabel } from '../../lib/desktop';
-import { findWindowForVault } from '../../lib/windowRegistry';
+import { frameMotionMs, setFrames, type FrameItem } from '../../lib/windowFrames';
 
 export type TileLayout = 'columns' | 'rows' | 'grid';
 
@@ -45,11 +45,24 @@ export function tileRects(n: number, layout: TileLayout, area: Rect, gap: number
 
 type Out = { ok: true; result?: unknown } | { ok: false; error: string };
 
-export async function tileWindows(vaults: string[], layout: TileLayout): Promise<Out> {
+/** The tile in progress: a second tile waits for it, so no project's window is opened twice. */
+let inFlight: Promise<unknown> = Promise.resolve();
+
+/**
+ * Tile the projects' windows. Windows that do not exist yet are BUILT at their tile; the ones
+ * that do all move in ONE `set_frames` call, so they glide together instead of one by one.
+ */
+export function tileWindows(vaults: string[], layout: TileLayout): Promise<Out> {
+  const run = inFlight.then(() => tileNow(vaults, layout));
+  inFlight = run.catch(() => { /* the next tile runs anyway */ });
+  return run;
+}
+
+async function tileNow(vaults: string[], layout: TileLayout): Promise<Out> {
   if (vaults.length === 0) return { ok: false, error: 'name at least one project' };
   try {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    const { currentMonitor, LogicalPosition, LogicalSize } = await import('@tauri-apps/api/window');
+    const { currentMonitor } = await import('@tauri-apps/api/window');
     const mon = await currentMonitor();
     if (!mon) return { ok: false, error: 'no monitor to tile on' };
     const s = mon.scaleFactor;
@@ -61,20 +74,26 @@ export async function tileWindows(vaults: string[], layout: TileLayout): Promise
     };
     const rects = tileRects(vaults.length, layout, area);
     const placed: Array<{ vault: string } & Rect> = [];
+    const moving: FrameItem[] = [];
+    const existing: Array<{ unminimize(): Promise<void> }> = [];
     for (let i = 0; i < vaults.length; i++) {
       const vault = vaults[i];
-      const own = vaultWindowLabel(vault);
-      // A window already dedicated to this project is reused; anything else gets its own.
-      const live = findWindowForVault(vault);
-      const label = live === own ? own : (await openVaultWindow(vault), own);
-      const win = await WebviewWindow.getByLabel(label);
-      if (!win) return { ok: false, error: `could not find the ${vault} window` };
       const r = rects[i];
-      await win.unminimize().catch(() => { /* not minimized */ });
-      await win.setPosition(new LogicalPosition(r.x, r.y));
-      await win.setSize(new LogicalSize(r.width, r.height));
+      // A window already dedicated to this project is reused and moved; a project without one
+      // (or living as a chip in a shared window) gets its own, built at its tile.
+      const label = vaultWindowLabel(vault);
+      const win = await WebviewWindow.getByLabel(label);
+      if (win) {
+        existing.push(win);
+        moving.push({ label, ...r });
+      } else {
+        await openVaultWindow(vault, r);
+        if (!(await WebviewWindow.getByLabel(label))) return { ok: false, error: `could not find the ${vault} window` };
+      }
       placed.push({ vault, ...r });
     }
+    await Promise.all(existing.map((w) => w.unminimize().catch(() => { /* not minimized */ })));
+    await setFrames(moving, frameMotionMs());
     return { ok: true, result: { layout, placed } };
   } catch (err) {
     return { ok: false, error: `could not tile: ${err instanceof Error ? err.message : String(err)}` };

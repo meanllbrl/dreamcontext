@@ -5,6 +5,8 @@ import { createChatSession, type ChatSession } from '../sleepy/chatSession';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { isDesktop } from '../../lib/desktop';
+import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
+import { claimSeat, flying, healSeat, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
 import { ProposalList, type Proposal } from './ProposalList';
 import { EMPTY_ROLLUP, pillBubbles, pillLabel, readRollup, type Rollup } from './notchModel';
@@ -98,74 +100,69 @@ function notchFrame(expanded: boolean, geo: Geometry | null): { width: number; h
 }
 
 /**
- * THE FRAME THE NOTCH SEAT MUST HAVE, and who is allowed to set it.
- *
- * The owner's recording (2026-09-27): after every Space switch the collapsed notch came back
- * a moment later at the OPEN panel's 460x400 — an empty black box with the pill floating in
- * its middle — and the next switch put it back, with no click and no hotkey. The window's real
- * frame and the notch's state had parted ways. Two rules keep them together:
- * - latest wins: every seat change bumps `seatGen`, and a call that wakes up (every native call
- *   is an await) after a newer one stops, so a collapse can never land under a late expand;
- * - the frame is re-asserted: `wanted` is the notch seat's frame (null when popped out — a
- *   window is the owner's to size), and `healSeat` puts the window back on it whenever it
- *   resized, moved, or simply drifted (see the guard in `Notch`).
+ * The notch window as one `set_frames` item (lib/windowFrames.ts): the whole frame in one
+ * step, never size-then-position. A frame without a position (no monitor geometry) keeps the
+ * window where it is.
  */
-let seatGen = 0;
-let wanted: ReturnType<typeof notchFrame> | null = null;
-
-async function applyFrame(f: ReturnType<typeof notchFrame>): Promise<void> {
-  const { getCurrentWindow, LogicalPosition, LogicalSize } = await import('@tauri-apps/api/window');
+async function frameItem(f: SeatFrame, min?: MinPreset): Promise<FrameItem> {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
   const win = getCurrentWindow();
-  await win.setSize(new LogicalSize(f.width, f.height));
-  if (f.x !== undefined && f.y !== undefined) await win.setPosition(new LogicalPosition(f.x, f.y));
+  let at = f.x !== undefined && f.y !== undefined ? { x: f.x, y: f.y } : null;
+  if (!at) {
+    const pos = (await win.outerPosition()).toLogical(await win.scaleFactor());
+    at = { x: pos.x, y: pos.y };
+  }
+  return { label: win.label, ...at, width: f.width, height: f.height, ...(min ? { min } : {}) };
 }
 
-/** Size + seat the window for a state. */
-async function seat(expanded: boolean, geo: Geometry | null): Promise<void> {
+/** Move the notch window to `f` over `ms`, as a flight the seat guard will not mistake for drift. */
+async function applyFrame(f: SeatFrame, ms: number, min?: MinPreset): Promise<void> {
+  await withFlight(async () => setFrames([await frameItem(f, min)], ms));
+}
+
+// The seat guard (seatGuard.ts) reads and heals THIS window. A heal is a correction: it lands
+// at once and is not a flight, so a frame macOS refuses cannot loop heal -> flight -> heal.
+if (isDesktop()) {
+  setSeatWindow({
+    isVisible: async () => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      return getCurrentWindow().isVisible();
+    },
+    frame: async () => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const win = getCurrentWindow();
+      const scale = await win.scaleFactor();
+      const size = (await win.innerSize()).toLogical(scale);
+      const pos = (await win.outerPosition()).toLogical(scale);
+      return { x: pos.x, y: pos.y, width: size.width, height: size.height };
+    },
+    apply: async (f) => setFrames([await frameItem(f)], 0),
+  });
+}
+
+/**
+ * Size + seat the window for a state. `claimed` is a seat change the caller already claimed
+ * (synchronously, at the click) — it is dropped if a newer one came since. The notch seat never
+ * has a min size, so it always clears one a popped-out window left behind.
+ */
+async function seat(expanded: boolean, geo: Geometry | null, ms: number = frameMotionMs(), claimed?: number): Promise<void> {
   if (!isDesktop()) return;
-  const gen = ++seatGen;
   const f = notchFrame(expanded, geo);
-  wanted = f;
+  const gen = claimed ?? claimSeat(f);
+  if (!wantSeat(gen, f)) return;
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     const win = getCurrentWindow();
     if (!(await win.isVisible())) await win.show();
-    if (gen !== seatGen) return;
-    await applyFrame(f);
-    if (expanded && gen === seatGen) await win.setFocus();
+    if (!isCurrentSeat(gen)) return;
+    await Promise.all([applyFrame(f, ms, 'clear'), expanded ? win.setFocus() : undefined]);
   } catch { /* ACL / no runtime — the browser preview just renders */ }
 }
 
 /**
- * Put the notch back on `wanted` if the window is not there. Returns true when it had to.
- * A seat change in flight owns the frame, so a heal that sees one steps aside.
- */
-async function healSeat(): Promise<boolean> {
-  const f = wanted;
-  if (!f || !isDesktop()) return false;
-  const gen = seatGen;
-  try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
-    const win = getCurrentWindow();
-    if (!(await win.isVisible())) return false;
-    const scale = await win.scaleFactor();
-    const size = (await win.innerSize()).toLogical(scale);
-    const pos = (await win.outerPosition()).toLogical(scale);
-    if (gen !== seatGen || f !== wanted) return false;
-    const off = (a: number, b: number) => Math.abs(a - b) > 2;
-    const drifted = off(size.width, f.width) || off(size.height, f.height)
-      || (f.x !== undefined && f.y !== undefined && (off(pos.x, f.x) || off(pos.y, f.y)));
-    if (!drifted) return false;
-    await applyFrame(f);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Change seats natively (desktop/src-tauri/src/assistant.rs `apply_seat`: level, resizable,
- * min size, shadow). The SAME window and webview move; nothing is rebuilt or reloaded.
+ * shadow; the min size rides the frame, see `seatWindow`). The SAME window and webview move;
+ * nothing is rebuilt or reloaded.
  */
 async function nativeSeat(to: Seat): Promise<void> {
   if (!isDesktop()) return;
@@ -175,21 +172,30 @@ async function nativeSeat(to: Seat): Promise<void> {
   } catch { /* no runtime */ }
 }
 
-/** Float as a window: where it last was, or an ordinary size near the top third of the screen. */
-async function seatWindow(geo: Geometry | null, last: Frame | Pick<Frame, 'width' | 'height'> | null, focus = true): Promise<void> {
+/**
+ * Float as a window: where it last was, or an ordinary size near the top third of the screen.
+ * The window's min size travels with the frame and lands after it — set first, it would grow
+ * the pill-sized window on its own, a visible frame of its own.
+ */
+async function seatWindow(
+  geo: Geometry | null,
+  last: Frame | Pick<Frame, 'width' | 'height'> | null,
+  focus = true,
+  ms: number = frameMotionMs(),
+  claimed?: number,
+): Promise<void> {
   if (!isDesktop()) return;
-  seatGen++;
-  wanted = null;
+  const gen = claimed ?? claimSeat(null);
+  if (!wantSeat(gen, null)) return;
   try {
-    const { getCurrentWindow, LogicalPosition, LogicalSize } = await import('@tauri-apps/api/window');
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
     const win = getCurrentWindow();
-    const f = last ?? (geo
+    const f: SeatFrame = last ?? (geo
       ? { x: geo.x + (geo.width - WINDOW_W) / 2, y: geo.y + Math.max(48, (geo.height - WINDOW_H) / 3), width: WINDOW_W, height: WINDOW_H }
-      : null);
+      : { width: WINDOW_W, height: WINDOW_H });
     if (!(await win.isVisible())) await win.show();
-    await win.setSize(new LogicalSize(f?.width ?? WINDOW_W, f?.height ?? WINDOW_H));
-    if (f && 'x' in f) { const at = f as Frame; await win.setPosition(new LogicalPosition(at.x, at.y)); }
-    if (focus) await win.setFocus();
+    if (!isCurrentSeat(gen)) return;
+    await Promise.all([applyFrame(f, ms, 'window-seat'), focus ? win.setFocus() : undefined]);
   } catch { /* ACL / no runtime */ }
 }
 
@@ -200,9 +206,12 @@ function sideFrame(geo: Geometry | null): Frame | null {
   return { x: geo.x + geo.width - SIDE_W - SIDE_MARGIN, y: geo.y + top, width: SIDE_W, height: SIDE_H };
 }
 
-/** Where the floating window is now, so docking and popping out again lands it back there. */
+/**
+ * Where the floating window is now, so docking and popping out again lands it back there.
+ * Mid-animation there is no "where": the frame is one the owner never chose, so it is not read.
+ */
 async function readFrame(): Promise<Frame | null> {
-  if (!isDesktop()) return null;
+  if (!isDesktop() || flying()) return null;
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     const win = getCurrentWindow();
@@ -218,8 +227,7 @@ async function readFrame(): Promise<Frame | null> {
 /** Hide the floating window (the webview and its socket live on; the hotkey brings it back). */
 async function hideWindow(): Promise<void> {
   if (!isDesktop()) return;
-  seatGen++;
-  wanted = null;
+  claimSeat(null);
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     await getCurrentWindow().hide();
@@ -285,7 +293,8 @@ export function Notch() {
         if (st.exists && st.config) startSession(st.config.conversationId);
       } catch { /* server not up yet — the pill stays empty */ }
       const g = await readGeometry();
-      if (alive) { setGeo(g); void seat(false, g); }
+      // The first placement is not a motion: it lands in one frame.
+      if (alive) { setGeo(g); void seat(false, g, 0); }
     })();
     return () => { alive = false; };
   }, [startSession]);
@@ -350,22 +359,25 @@ export function Notch() {
   const popOut = useCallback(() => {
     autoRef.current = false;                // the owner's own pop-out stays until they dock
     // Leaving the notch seat: the guard must stop holding the notch frame NOW, not after the
-    // native seat change lands.
-    seatGen++;
-    wanted = null;
+    // native seat change lands. Claimed here, at the click, so a dock that follows before this
+    // one lands supersedes it instead of racing it.
+    const gen = claimSeat(null);
     seatRef.current = 'window';
     setSeatMode('window');
     setExpanded(true);
-    void nativeSeat('window').then(() => seatWindow(geo, frameRef.current)).then(() => sessionRef.current?.focus());
+    void nativeSeat('window')
+      .then(() => seatWindow(geo, frameRef.current, true, frameMotionMs(), gen))
+      .then(() => sessionRef.current?.focus());
   }, [geo]);
   const dock = useCallback(() => {
     autoRef.current = false;
+    const gen = claimSeat(null);
     seatRef.current = 'notch';
     setSeatMode('notch');
     setExpanded(true);
     void readFrame()
       .then((f) => { if (f) frameRef.current = f; return nativeSeat('notch'); })
-      .then(() => seat(true, geo))
+      .then(() => seat(true, geo, frameMotionMs(), gen))
       .then(() => sessionRef.current?.focus());
   }, [geo]);
 
@@ -388,14 +400,14 @@ export function Notch() {
 
   const autoPop = useCallback(() => {
     autoRef.current = true;
-    seatGen++;
-    wanted = null;
+    const gen = claimSeat(null);
     seatRef.current = 'window';
     setSeatMode('window');
     setExpanded(true);
     setMotion('arrive');
     // Without the monitor's geometry there is no edge to stand at, but it is still the side size.
-    void nativeSeat('window').then(() => seatWindow(geo, sideFrame(geo) ?? { width: SIDE_W, height: SIDE_H }, false));
+    // The CSS arrive animation is what moves; the frame lands under it in one step (0ms).
+    void nativeSeat('window').then(() => seatWindow(geo, sideFrame(geo) ?? { width: SIDE_W, height: SIDE_H }, false, 0, gen));
     window.setTimeout(() => setMotion(null), LEAVE_MS + 80);
   }, [geo]);
 
@@ -407,7 +419,9 @@ export function Notch() {
       setSeatMode('notch');
       setExpanded(false);
       setMotion(null);
-      void nativeSeat('notch').then(() => seat(false, geo));
+      // Faded out by the CSS leave animation: the frame lands in one step (0ms), not behind it.
+      const gen = claimSeat(null);
+      void nativeSeat('notch').then(() => seat(false, geo, 0, gen));
     }, LEAVE_MS);
   }, [geo]);
 
@@ -489,7 +503,7 @@ export function Notch() {
     return () => { cancelled = true; window.removeEventListener('keydown', onKey); unlisten?.(); };
   }, [expanded, collapse, seatMode]);
 
-  // The seat guard (see `wanted`): a resize or move the notch did not ask for is undone at once,
+  // The seat guard (seatGuard.ts): a resize or move the notch did not ask for is undone at once,
   // and a slow check catches a frame that changed without telling anyone (a Space switch). A
   // frame macOS keeps refusing is given up on after a few tries instead of fought every second.
   useEffect(() => {

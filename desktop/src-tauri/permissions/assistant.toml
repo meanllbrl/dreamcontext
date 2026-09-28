@@ -27,3 +27,8 @@ commands.allow = ["assistant_set_autostart"]
 identifier = "allow-assistant-wake"
 description = "Build/show the Assistant notch and register its hotkey."
 commands.allow = ["assistant_wake"]
+
+[[permission]]
+identifier = "allow-set-frames"
+description = "Move and resize windows by label as one atomic frame or one eased animation (src/frames.rs). Min size only as a preset (window-seat / clear / keep), never caller-chosen dimensions."
+commands.allow = ["set_frames"]

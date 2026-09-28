@@ -26,7 +26,8 @@
 // ── Pop out ─────────────────────────────────────────────────────────────────────
 // The SAME panel can leave the notch seat and float as a normal-sized, resizable window
 // (and dock back): the webview emits `assistant://seat`, `apply_seat` changes the level,
-// the resizable mask, the min size and the shadow. Still one webview, one socket, one
+// the resizable mask and the shadow (the min size travels with the frame in `set_frames`,
+// src/frames.rs). Still one webview, one socket, one
 // `claude`.
 //
 // ── Autostart ──────────────────────────────────────────────────────────────────
@@ -48,9 +49,10 @@ pub const NOTCH_LABEL: &str = "assistant";
 /// Collapsed pill — the webview resizes itself between this and the expanded panel.
 const PILL_W: f64 = 300.0;
 const PILL_H: f64 = 38.0;
-/// Popped out, the window can be resized by its edges down to this (logical px).
-const WINDOW_MIN_W: f64 = 420.0;
-const WINDOW_MIN_H: f64 = 360.0;
+/// Popped out, the window can be resized by its edges down to this (logical px). Applied by
+/// `set_frames` (src/frames.rs) as the `window-seat` min preset, after the frame lands.
+pub(crate) const WINDOW_MIN_W: f64 = 420.0;
+pub(crate) const WINDOW_MIN_H: f64 = 360.0;
 /// The notch webview asks to change seats with this event: `{ "seat": "notch" | "window" }`.
 pub const SEAT_EVENT: &str = "assistant://seat";
 
@@ -351,10 +353,9 @@ fn apply_seat<R: Runtime>(app: &AppHandle<R>, window: bool) {
     let mask = if window { mask | NSWindowStyleMask::Resizable } else { mask & !NSWindowStyleMask::Resizable };
     let _ = panel.set_style_mask(mask);
     panel.set_has_shadow(window);
-    if let Some(w) = app.get_webview_window(NOTCH_LABEL) {
-        let min = window.then(|| tauri::Size::Logical(tauri::LogicalSize::new(WINDOW_MIN_W, WINDOW_MIN_H)));
-        let _ = w.set_min_size(min);
-    }
+    // No min size here: set while the window is still pill-sized, tao grows the frame at once
+    // (a visible jump). The webview sends it with its frame instead — `set_frames` applies the
+    // `window-seat` / `clear` preset after the frame lands (src/frames.rs).
 }
 
 /// Boot: remember the port; if the assistant exists, register its hotkey and seat the notch.

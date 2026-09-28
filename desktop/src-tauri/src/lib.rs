@@ -21,6 +21,7 @@
 // of panicking — a Finder double-click must never silently abort.
 
 mod assistant;
+mod frames;
 
 use std::net::TcpListener;
 use std::path::Path;
@@ -63,7 +64,10 @@ pub fn run() {
             assistant::assistant_apply_hotkey,
             assistant::assistant_set_autostart,
             assistant::assistant_wake,
+            frames::set_frames,
         ])
+        // Per-label generations for `set_frames` (src/frames.rs): the last requested frame wins.
+        .manage(frames::FramesState::default())
         // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
         // and the Login Item. See src/assistant.rs.
         .plugin(tauri_nspanel::init())

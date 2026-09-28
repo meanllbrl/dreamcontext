@@ -352,6 +352,20 @@ describe('the kit diagram engine', () => {
     expect(KIT_GRAPH).toContain('document.fonts.ready');
   });
 
+  it('a width change re-fits once per frame and re-lays out only after it settles', () => {
+    // An edge drag used to re-lay every diagram synchronously on every frame. A laid-out
+    // graph now only re-fits (coalesced into one rAF across observer entries) and is laid
+    // out again SETTLE ms after the last width change — if it is still in the document.
+    expect(KIT_GRAPH).toContain('var SETTLE = 150;');
+    expect(KIT_GRAPH).toContain('refitFrame = requestAnimationFrame(refitNow)');
+    expect(KIT_GRAPH).toMatch(/clearTimeout\(g\.dcSettle\);\s*g\.dcSettle = setTimeout\(/);
+    expect(KIT_GRAPH).toMatch(/if \(!g\.isConnected\) return;\s*if \(String\(g\.clientWidth\) !== g\.getAttribute\('data-laid-width'\)\) layout\(g\);\s*\}, SETTLE\)/);
+    // The first layout stays synchronous: no drawing yet means nothing to rescale.
+    expect(KIT_GRAPH).toContain('if (!g.dcBox) { layout(g); return; }');
+    // The observer routes through the debounce, never straight to layout().
+    expect(KIT_GRAPH).toContain("!== g.getAttribute('data-laid-width')) resized(g);");
+  });
+
   it('breaks cycles instead of looping, and draws the back edge dashed', () => {
     expect(KIT_GRAPH).toContain('e.back = true');
     expect(KIT_GRAPH).toContain("'dc-edge--back'");
@@ -536,6 +550,15 @@ describe('the height bridge', () => {
 
   it('answers its own parent and nobody else', () => {
     expect(HEIGHT_BRIDGE).toContain('event.source !== parent');
+  });
+
+  it('coalesces the observer into one report per frame; a click and a request stay immediate', () => {
+    // A live resize fires the observer every frame and the host re-renders on every report.
+    expect(HEIGHT_BRIDGE).toContain('new ResizeObserver(reportSoon)');
+    expect(HEIGHT_BRIDGE).toMatch(/if \(queued\) return;\s*queued = requestAnimationFrame\(function \(\) \{ queued = 0; report\(false\); \}\);/);
+    expect(HEIGHT_BRIDGE).not.toContain('new ResizeObserver(function () { report(false); })');
+    expect(HEIGHT_BRIDGE).toContain("addEventListener('click', function () { setTimeout(function () { report(false); }, 0); }, true)");
+    expect(HEIGHT_BRIDGE).toContain(`if (event.data.${HEIGHT_REQUEST_KEY} === true) report(true);`);
   });
 
   it('reads a well-formed height', () => {
