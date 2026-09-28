@@ -629,9 +629,20 @@ describe('Develop run survival: start adopts, the sweep keeps', () => {
     const done = leave('aaaaaaaa-0000-0000-0000-000000000003', { tab: 'tab-a', phase: 'done' }, 60_000);
     goalLivePhase(deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-a' }), 'impl', {});
     expect(read(SID).goal).toBeUndefined();
+    // The blank run it starts instead is still THIS session's: stamped, so the app scopes it.
+    expect(read(SID).session).toBe(SID);
     goalLivePhase(deps({ CLAUDE_CODE_SESSION_ID: 'aaaaaaaa-0000-0000-0000-000000000004' }), 'impl', {});
     expect(read('aaaaaaaa-0000-0000-0000-000000000004').goal).toBeUndefined();
     expect(existsSync(b) && existsSync(done)).toBe(true);
+  });
+
+  it('a phase + actor chain with no start and no run to carry stamps the session; no id stamps nothing', () => {
+    const d = deps({ CLAUDE_CODE_SESSION_ID: SID, DREAMCONTEXT_TAB_SESSION: 'tab-gone' });
+    goalLivePhase(d, 'impl', { wave: '4', waves: '4' });
+    goalLiveActor(d, 'w4-A', { kind: 'spawn', role: 'implementer', wave: '4' });
+    expect(read(SID)).toMatchObject({ session: SID, phase: 'impl', impl: { wave: 4 } });
+    goalLivePhase(deps({}), 'impl', {});
+    expect(read(null).session).toBeUndefined();
   });
 
   it('--mode must be goal or develop', () => {

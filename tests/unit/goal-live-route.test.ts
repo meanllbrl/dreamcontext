@@ -197,6 +197,27 @@ describe('GET /api/agent/goal-live', () => {
     expect(body().state.goal).toBe('mine');
   });
 
+  // ── A body without a stamp still names its session in the file name ────────────
+  //    (a `phase`/`actor` chain that ran before any `start` wrote exactly this shape)
+
+  it('an unstamped per-session file reaches only the pane its file name names', async () => {
+    writeLive({ phase: 'impl', started: new Date().toISOString(), updated: new Date().toISOString(), impl: { wave: 4, waves: 4 } }, `.goal-skill-live.${ORCH}.json`);
+    const other = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${OTHER}`), other.res, {}, ctxRoot);
+    expect(other.body()).toEqual({ active: false });
+    const own = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${ORCH}`), own.res, {}, ctxRoot);
+    expect(own.body().active).toBe(true);
+    expect(own.body().state.impl.wave).toBe(4);
+  });
+
+  it('a solo file (no session id) stays the legacy fallback', async () => {
+    writeLive(freshState({ goal: 'solo-run' }), '.goal-skill-live.solo.json');
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${OTHER}`), res, {}, ctxRoot);
+    expect(body().state.goal).toBe('solo-run');
+  });
+
   it('a symlinked live file is skipped (vault reads reject symlinks)', async () => {
     const outside = join(ctxRoot, '..', 'outside.json');
     writeFileSync(outside, JSON.stringify(freshState({ goal: 'smuggled', session: ORCH })), 'utf-8');

@@ -94,7 +94,11 @@ function applyEvents(deps: GoalLiveDeps, events: GoalLiveEvent[], opts: { sweep?
     state = { ...carried.state };
     if (session) state.session = session; else delete state.session;
   }
+  const blank = !starting && !state;
   for (const ev of events) state = applyGoalLiveEvent(state, ev, now.toISOString());
+  // Nothing to continue either: the write starts a blank run. Stamp it with the session it runs
+  // under, so the app scopes it to that pane instead of reading it as a legacy run for all.
+  if (blank && state && session) state.session = session;
   if (state) writeGoalLiveAtomic(path, state);
   if (carried && carried.path !== path) {
     try { unlinkSync(carried.path); } catch { /* the other session already moved it */ }

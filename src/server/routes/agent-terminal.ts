@@ -1408,6 +1408,10 @@ const GOAL_LIVE_MAX_AGE_MS = 3 * 3600 * 1000;
  *  — one file per concurrent orchestrator session, so parallel runs never clobber each other. */
 const GOAL_LIVE_FILE_RE = /^\.goal-skill-live(?:\..+)?\.json$/;
 
+/** A per-session live file's name, capturing its session id. `solo` (no session id) and the
+ *  legacy single file do not match: they name no pane. */
+const GOAL_LIVE_NAMED_RE = /^\.goal-skill-live\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json$/;
+
 /** GET /api/agent/goal-live?claudeId=<uuid> — the vault's goal-skill live run state
  *  (`_dream_context/tmp/.goal-skill-live*.json`) for the in-app panel above the composer.
  *
@@ -1447,7 +1451,11 @@ export function goalLiveRunFor(contextRoot: string, claudeId: string): Record<st
         const state = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
         const upd = Date.parse(String(state?.updated ?? state?.started ?? ''));
         if (!upd || Date.now() - upd > GOAL_LIVE_MAX_AGE_MS) continue; // abandoned run
-        runs.push({ state, stamp: typeof state.session === 'string' ? state.session : '', upd });
+        // A body with no `session` stamp still names its session in the file name: the writer
+        // keys every file by the id it ran under. Without this, a stamp-less file (a `phase`
+        // written before any `start`) passes for a legacy one and draws in every pane.
+        const stamp = typeof state.session === 'string' && state.session ? state.session : (GOAL_LIVE_NAMED_RE.exec(name)?.[1] ?? '');
+        runs.push({ state, stamp, upd });
       } catch { /* malformed file — skip it, not the whole scan */ }
     }
   } catch { /* no tmp dir → no active run */ }
