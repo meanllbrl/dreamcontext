@@ -105,10 +105,46 @@ export async function healSeat(): Promise<boolean> {
   }
 }
 
-/** Tests only: forget every generation, flight and window. */
+/** Consecutive heals after which a frame macOS keeps refusing is left alone. */
+export const MAX_HEAL_STREAK = 4;
+/** How long it is left alone before the guard tries again. */
+export const HEAL_COOLDOWN_MS = 30_000;
+
+let streak = 0;
+let streakGen = 0;
+let gaveUpAt = 0;
+
+/**
+ * The guard's periodic check: `healSeat`, bounded. After {@link MAX_HEAL_STREAK} heals in a row
+ * the frame is one macOS will not keep, so fighting it every second only flickers; the guard
+ * steps back. It used to step back FOR GOOD (the counter could only be reset by a check that
+ * never ran again), so one bad stretch left the notch unguarded until the app quit. Now any new
+ * seat change re-arms it at once, and a cooldown re-arms it on its own.
+ */
+export async function guardHeal(): Promise<boolean> {
+  if (streakGen !== seatGen) {
+    streakGen = seatGen;
+    streak = 0;
+  }
+  if (streak >= MAX_HEAL_STREAK) {
+    if (Date.now() - gaveUpAt < HEAL_COOLDOWN_MS) return false;
+    streak = 0;
+  }
+  const gen = seatGen;
+  const healed = await healSeat();
+  if (gen !== seatGen) return healed; // a newer seat change owns the count now
+  streak = healed ? streak + 1 : 0;
+  if (streak >= MAX_HEAL_STREAK) gaveUpAt = Date.now();
+  return healed;
+}
+
+/** Tests only: forget every generation, flight, window and heal streak. */
 export function resetSeatGuard(): void {
   seatGen = 0;
   wanted = null;
   facade = null;
   flights.clear();
+  streak = 0;
+  streakGen = 0;
+  gaveUpAt = 0;
 }

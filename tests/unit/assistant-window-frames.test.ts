@@ -155,6 +155,38 @@ describe('seat guard', () => {
     expect(await guard.healSeat()).toBe(true);
   });
 
+  it('guardHeal: gives up after 4 heals in a row, and a new seat change re-arms it at once', async () => {
+    const w = facade(); guard.setSeatWindow(w);
+    guard.claimSeat(at);
+    for (let i = 0; i < guard.MAX_HEAL_STREAK; i++) expect(await guard.guardHeal()).toBe(true);
+    expect(await guard.guardHeal()).toBe(false);
+    expect(w.apply).toHaveBeenCalledTimes(guard.MAX_HEAL_STREAK);
+    guard.claimSeat(at);
+    expect(await guard.guardHeal()).toBe(true);
+  });
+
+  it('guardHeal: the give-up is not forever — the cooldown re-arms it with no seat change', async () => {
+    vi.useFakeTimers();
+    const w = facade(); guard.setSeatWindow(w);
+    guard.claimSeat(at);
+    for (let i = 0; i < guard.MAX_HEAL_STREAK; i++) await guard.guardHeal();
+    vi.advanceTimersByTime(guard.HEAL_COOLDOWN_MS - 1);
+    expect(await guard.guardHeal()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(await guard.guardHeal()).toBe(true);
+  });
+
+  it('guardHeal: a check that finds the frame right resets the streak', async () => {
+    const frame = { ...at, width: 580, height: 560 };
+    const w = facade(frame); guard.setSeatWindow(w);
+    guard.claimSeat(at);
+    for (let i = 0; i < guard.MAX_HEAL_STREAK - 1; i++) await guard.guardHeal();
+    Object.assign(frame, at);                       // the frame held this time
+    expect(await guard.guardHeal()).toBe(false);
+    Object.assign(frame, { width: 580, height: 560 });
+    for (let i = 0; i < guard.MAX_HEAL_STREAK; i++) expect(await guard.guardHeal()).toBe(true);
+  });
+
   it('holds nothing when popped out, and a superseded seat change cannot claim the frame', async () => {
     const w = facade(); guard.setSeatWindow(w);
     const old = guard.claimSeat(null);

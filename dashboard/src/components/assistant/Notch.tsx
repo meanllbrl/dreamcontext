@@ -6,7 +6,7 @@ import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { isDesktop } from '../../lib/desktop';
 import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
-import { claimSeat, flying, healSeat, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
+import { claimSeat, flying, guardHeal, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
 import { ProposalList, type Proposal } from './ProposalList';
 import { EMPTY_ROLLUP, pillBubbles, pillLabel, readRollup, type Rollup } from './notchModel';
@@ -548,16 +548,13 @@ export function Notch() {
 
   // The seat guard (seatGuard.ts): a resize or move the notch did not ask for is undone at once,
   // and a slow check catches a frame that changed without telling anyone (a Space switch). A
-  // frame macOS keeps refusing is given up on after a few tries instead of fought every second.
+  // frame macOS keeps refusing is given up on for a while instead of fought every second
+  // (`guardHeal`: the next seat change, or a cooldown, re-arms it).
   useEffect(() => {
     if (!isDesktop()) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let streak = 0;
-    const check = () => {
-      if (streak >= 4) return;
-      void healSeat().then((healed) => { streak = healed ? streak + 1 : 0; });
-    };
+    const check = () => { void guardHeal(); };
     const soon = () => { if (timer) clearTimeout(timer); timer = setTimeout(check, 150); };
     const tick = setInterval(check, 1000);
     const unlisteners: Array<() => void> = [];
