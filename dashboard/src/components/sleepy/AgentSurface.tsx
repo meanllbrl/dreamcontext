@@ -22,6 +22,7 @@ import {
 } from '../../lib/agentSettings';
 import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow } from './agentStatus';
 import { PaneFragment, type PaneActions } from './PaneFragment';
+import { usePaneFocusGlide } from './usePaneFocusGlide';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { MobileSessionDrawer } from './MobileSessionDrawer';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -777,6 +778,9 @@ export function AgentSurface() {
   const started = sessionList.length > 0;
   // The action-focused pane (falls back to the first pane when the stored id is stale).
   const activePane = panes.find((p) => p.id === activePaneId) ?? panes[0];
+  const panesRowRef = useRef<HTMLDivElement>(null);
+  const glideRef = useRef<HTMLDivElement>(null);
+  usePaneFocusGlide(panesRowRef, glideRef, activePane?.id, panes.length);
   const focusedSessionId = activePane?.active ?? '';
 
   // ── Capabilities (fetched on mount; re-fetched after an in-app install so a
@@ -3235,7 +3239,10 @@ export function AgentSurface() {
             session the file — its path is written to the vault temp dir and injected
             (readline for a terminal, composer draft for a chat). The listeners live on
             the surface HOST as native DOM handlers — see the drag-drop effect above. */}
-        <div className={'agent-panes' + (panes.length > 1 ? ' split' : '')}>
+        <div ref={panesRowRef} className={'agent-panes' + (panes.length > 1 ? ' split' : '')}>
+          {/* The focused pane's top bar, ONE element that glides between panes on the
+              compositor while the panes land in a single layout (usePaneFocusGlide.ts). */}
+          <div ref={glideRef} className="agent-pane-glide" aria-hidden />
           {panes.length === 0 && (
             <div className="agent-allmin-hint">
               <p className="agent-allmin-title">All agents minimized</p>

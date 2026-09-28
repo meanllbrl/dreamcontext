@@ -19,10 +19,12 @@
  *
  * WHAT IS PROVEN HERE, in the real app (real server, real bundle, real Chromium, real mouse):
  *   T1  setup — two chat panes, the LEFT one active
- *   T2  a real click in the background pane widens it across MANY animation frames, sampled
- *       per rAF from inside the page. One distinct width = the bug; the fix produces ~29.
- *       The computed `transition` is printed alongside, because cause 2 is invisible in the
- *       source and only the computed value tells the truth.
+ *   T2  a real click in the background pane widens it in ONE step (sampled per rAF from
+ *       inside the page). SUPERSEDED 09-28: the flex-basis slide this script first proved was
+ *       a layout of every pane per frame, and with real transcripts in WebKit it stepped
+ *       ("kare kare"). The row now lands in one layout and the motion moved to a bar:
+ *   T3  the accent bar (`.agent-pane-glide`) glides over MANY frames — transform only
+ *   T4  and lands exactly on the focused pane's rect
  *
  * SCRATCH HOME, ALWAYS — vault registry, agent-ui.json and the fake `claude` all live in an
  * isolated HOME the server is spawned with. Nothing reads the developer's own ~/.claude*.
@@ -132,8 +134,8 @@ try {
   const base = `http://127.0.0.1:${port}`;
 
   browser = await chromium.launch();
-  // `reducedMotion: no-preference` on purpose: the 240ms flex-basis slide IS the bug's
-  // vehicle, and the stylesheet drops it under `prefers-reduced-motion`.
+  // `reducedMotion: no-preference` on purpose: the bar's glide is what T3 measures, and the
+  // hook skips it under `prefers-reduced-motion`.
   const page = await browser.newPage({
     viewport: { width: 1500, height: 1000 }, colorScheme: 'dark', reducedMotion: 'no-preference',
   });
@@ -227,11 +229,15 @@ try {
   });
   const samplePromise = page.evaluate(async (pane) => {
     const el = document.querySelector(`.agent-pane-slot[data-pane="${pane}"]`);
+    const row = document.querySelector('.agent-panes');
+    const bar = document.querySelector('.agent-pane-glide');
     const out = [];
     const t0 = performance.now();
     await new Promise((res) => {
       const tick = () => {
-        out.push([Math.round(performance.now() - t0), Math.round(el.getBoundingClientRect().width)]);
+        const b = bar.getBoundingClientRect();
+        const r = row.getBoundingClientRect();
+        out.push([Math.round(performance.now() - t0), Math.round(el.getBoundingClientRect().width), Math.round(b.left - r.left), Math.round(b.width)]);
         if (performance.now() - t0 < 600) requestAnimationFrame(tick); else res();
       };
       requestAnimationFrame(tick);
@@ -243,19 +249,32 @@ try {
   const widths = [...new Set(samples.map((s) => s[1]))];
   const first = samples[0][1];
   const last = samples[samples.length - 1][1];
+  const barLefts = [...new Set(samples.map((s) => s[2]))];
   const diag = await page.evaluate(() => ({
     evts: window.__evts,
-    before: window.__before,
     after: [...document.querySelectorAll('.agent-pane')].map((el) => {
       const cs = getComputedStyle(el);
-      return { cls: el.className, basis: cs.flexBasis, grow: cs.flexGrow, tr: cs.transitionProperty + ' ' + cs.transitionDuration };
+      return { cls: el.className, basis: cs.flexBasis, tr: cs.transitionProperty + ' ' + cs.transitionDuration };
     }),
+    landed: (() => {
+      const row = document.querySelector('.agent-panes').getBoundingClientRect();
+      const p = document.querySelector('.agent-panes > .agent-pane.active').getBoundingClientRect();
+      const b = document.querySelector('.agent-pane-glide').getBoundingClientRect();
+      return { pane: [Math.round(p.left - row.left), Math.round(p.width)], bar: [Math.round(b.left - row.left), Math.round(b.width)] };
+    })(),
   }));
-
-  check('T2 the focused pane WIDENS over many frames rather than in one',
-    widths.length > 5 && Math.abs(last - first) > 100,
-    `distinct=${widths.length} ${first}px → ${last}px · computed=${diag.after.map((d) => d.tr).join(' | ')} · trace=${JSON.stringify(samples.filter((_, i) => i % 3 === 0).slice(0, 10))}`);
-
+  // Owner call 09-28: the slide was a flex-basis transition, i.e. a layout of every pane per
+  // frame, and with real transcripts in WebKit it painted in steps. The panes now land in ONE
+  // layout and the motion is a single transform-animated bar — so the contract inverted:
+  check('T2 the focused pane widens in ONE step — no per-frame layout of the row',
+    widths.length <= 2 && Math.abs(last - first) > 100,
+    `distinct=${widths.length} ${first}px → ${last}px · computed=${diag.after.map((d) => d.tr).join(' | ')}`);
+  check('T3 the accent bar GLIDES to the focused pane over many frames',
+    barLefts.length > 5,
+    `distinct bar positions=${barLefts.length} · trace=${JSON.stringify(samples.filter((_, i) => i % 3 === 0).slice(0, 10).map((s) => [s[0], s[2], s[3]]))}`);
+  check('T4 the bar lands exactly on the focused pane',
+    Math.abs(diag.landed.pane[0] - diag.landed.bar[0]) <= 1 && Math.abs(diag.landed.pane[1] - diag.landed.bar[1]) <= 1,
+    `pane=${JSON.stringify(diag.landed.pane)} bar=${JSON.stringify(diag.landed.bar)}`);
   if (process.env.SHOT) {
     await page.screenshot({ path: process.env.SHOT });
     console.log(`      shot: ${process.env.SHOT}`);

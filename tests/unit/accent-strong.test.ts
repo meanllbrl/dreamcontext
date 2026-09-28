@@ -66,7 +66,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/AgentTerminal.css::.agent-composer-gauge-fill': 'gauge bar',
   'components/layout/Sidebar.css::.sidebar-item--nudge::after': 'nudge dot',
   'components/layout/Sidebar.css::.sidebar-item--active::before': 'active indicator',
-  'components/sleepy/AgentTerminal.css::.agent-panes.split > .agent-pane.active::before': 'active pane indicator',
+  'components/sleepy/AgentTerminal.css::.agent-pane-glide': 'active pane indicator',
   'components/sleepy/chat/dreamaction.css::.chat-dreamcard::before': 'edge indicator',
   'components/roadmap/DependencyPicker.css::.dep-check--on': 'check mark (non-text, 3:1 rule)',
   'components/roadmap/InsightPicker.css::.inp-check--on': 'check mark (non-text, 3:1 rule)',
