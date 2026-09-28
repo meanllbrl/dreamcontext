@@ -30,6 +30,7 @@ import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from './gitignore.js';
 import { isSafeSessionId } from './transcript-locate.js';
 import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
+import { HANDOFF_FIELDS } from './handoff-readiness.js';
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -342,7 +343,7 @@ function k(tokens: number): string {
  *
  * Unchanged in both, because all three were argued for in the original review: the
  * NUMBERS (so the agent can judge rather than obey), the re-read cost (cache_read is
- * 97.4% of the bill and it is paid again every turn), and the TWO COMMANDS spelled
+ * 97.4% of the bill and it is paid again every turn), and the COMMAND spelled
  * out (an agent that has to guess the syntax will skip it).
  *
  * NOT escalated: the cadence. `remindEvery` is the same in both bands on purpose — a
@@ -357,9 +358,11 @@ export function renderNudge(
 ): string {
   const slug = activeSlug || '<task-slug>';
   const next = Math.max(contextTokens, cfg.nudgeAt) + cfg.remindEvery;
+  // ONE command carrying every part. It refuses while any part is missing (see
+  // lib/handoff-readiness.ts) — the old two-step `log` then `handoff` let a session pin
+  // the task having skipped the log.
   const steps = [
-    `  1. dreamcontext tasks log ${slug} "<what is done / what is next / decisions made / what you learned / how you are working / which files are open>"`,
-    `  2. dreamcontext tasks handoff ${slug}`,
+    `  dreamcontext tasks handoff ${slug} ${HANDOFF_FIELDS.map((f) => `${f.flag} "<${f.hint}>"`).join(' ')}`,
     activeSlug
       ? ''
       : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
@@ -371,7 +374,7 @@ export function renderNudge(
       '',
       'Finish the turn you are in, then hand off before starting anything new:',
       ...steps,
-      'A fresh session picks the task up from that changelog entry, with the handoff pinned.',
+      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
       '',
       'This is still your call, but it is no longer a quiet one: if you are continuing in this session anyway, TELL THE USER in your next message and say why. Do not continue silently.',
       `(Next reminder at ~${k(next)}.)`,
@@ -379,11 +382,11 @@ export function renderNudge(
     : [
       `[context handoff] This session is carrying ~${k(contextTokens)} context tokens, past the ${k(cfg.nudgeAt)} handoff threshold. Every further turn re-reads all of it, so the same remaining work costs roughly 2–3× more from here than it would in a fresh session.`,
       '',
-      'Hand off unless you have a reason not to — write your state into the task, then request it:',
+      'Hand off unless you have a reason not to — write your whole state into the task in one command:',
       ...steps,
-      'A fresh session picks the task up from that changelog entry, with the handoff pinned.',
+      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
       '',
-      `There are two good reasons to keep going: the task is nearly done, or the state genuinely cannot be written down. "I am in the middle of something" is not one of them — that is what step 1 is for. Past ${k(cfg.hardAt)} this gets blunter.`,
+      `There are two good reasons to keep going: the task is nearly done, or the state genuinely cannot be written down. "I am in the middle of something" is not one of them — that is what --done and --next are for. Past ${k(cfg.hardAt)} this gets blunter.`,
       `(Next reminder at ~${k(next)}.)`,
     ];
   return lines.filter((l) => l !== '').join('\n');

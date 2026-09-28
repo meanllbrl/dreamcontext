@@ -46,6 +46,9 @@ export interface ChatAction {
   action: ChatActionKind;
   /** dreamcontext slug — `task` / `knowledge` / `core` / `develop`. */
   id?: string;
+  /** The PROJECT a `task` / `knowledge` / `core` page belongs to. Only the dreamcontext
+   *  Assistant writes it (it speaks about every project); a project's own chat ignores it. */
+  vault?: string;
   /** Project-relative (or granted absolute) path — `file` / `board` / `reveal`. */
   path?: string;
   /** Text to load into the composer — `ask`. */
@@ -198,6 +201,9 @@ function isHttpsUrl(raw: string): boolean {
  */
 const SAFE_SLUG_RE = new RegExp(`^[A-Za-z0-9._-]{1,${MAX_SLUG_CHARS}}$`);
 
+/** A registered project name as the server resolves one: nothing path-shaped (`/ \ : .`). */
+const VAULT_RE = /^[^\/\\:.\x00]{1,200}$/;
+
 /** One entry of a `dream-actions` array, or null if it can't be honoured as written. */
 export function toAction(raw: unknown): ChatAction | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -214,8 +220,15 @@ export function toAction(raw: unknown): ChatAction | null {
   // Each kind has exactly one payload it can act on. A button with nothing behind it is a
   // dead end the user still clicks, so it is dropped rather than rendered inert.
   switch (action as ChatActionKind) {
-    case 'task': case 'knowledge': case 'core':
-      return id ? { label, action: action as ChatActionKind, id } : null;
+    case 'task': case 'knowledge': case 'core': {
+      if (!id) return null;
+      // A vault name that could be a path is dropped, not the button: the page still opens
+      // wherever this chat lives. The server re-checks it is a registered project.
+      const vault = typeof o.vault === 'string' ? o.vault.trim() : '';
+      return VAULT_RE.test(vault)
+        ? { label, action: action as ChatActionKind, id, vault }
+        : { label, action: action as ChatActionKind, id };
+    }
     // The Plan → Develop handoff: `id` is the task slug the planning half just created, and
     // clicking it opens a NEW chat in Develop mode carrying that slug (ChatPane routes it).
     // Stricter than the three above because this slug is the whole payload of a session

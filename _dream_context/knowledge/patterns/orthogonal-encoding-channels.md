@@ -76,6 +76,11 @@ The decision between the four candidates was made against rendered frame strips 
 
 Any surface where one small element must carry two independent states at once: a tab that shows both sync state and content kind, a status dot that must encode both severity and source, a cursor that shows both tool and permission level. Ask first *which channel is already spoken for*, and give the newcomer a different one — never a second hue.
 
+## Occurrences
+
+- `dashboard/src/components/agents/AgentsFeed.css` `.agent-msg-live-dot` (2026-09-25): a running agent's row in the #agents channel. Its colour stays the status ink of "running" (neutral secondary); the in-progress state is carried by motion alone, a dot breathing on `--motion-breath`, beside a live elapsed time, so a hung run and a working one no longer look identical. Under reduced motion the dot is still and the ticking time carries the state.
+- `dashboard/src/components/sleepy/chat/atoms.css` `.chat-a-avatar[data-role][data-running]` (2026-09-25, quest-party Chat): an agent's avatar carries WHO and WHETHER IT IS WORKING. Colour is spoken for by the role (a static maker, judge or neutral tint, never a mood, accent or warning hue) and shape by its emblem, so "working" is motion alone: the `chat-a-work` breath on `[data-running]`, motionless under reduced motion. The team log's step status never touches the avatar at all: it is the sentence's tense and ink ("Reading…" in success ink, "Couldn't edit" in error ink). The quest map's cast and the rail chips never animate, so the only thing that moves is someone actually at work.
+
 ## Sources
 
 - `d1267e0` — "Sleepy ACTS OUT the chat mode — Plan writes, Develop forges" (8 files, +478/−5, 2026-08-28)

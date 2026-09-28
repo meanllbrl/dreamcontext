@@ -14,9 +14,10 @@ import { describe, it, expect } from 'vitest';
 import {
   parseViewBlock, MAX_CHECKLIST_ITEMS, MAX_VIEW_BYTES, VIEW_TYPES,
   MAX_SECRET_FIELDS, MAX_RUN_COMMAND_CHARS,
+  MIN_AGENT_THREAD_LIMIT, MAX_AGENT_THREAD_LIMIT, MAX_TAB_TITLE, cleanTabTitle,
 } from '../../dashboard/src/lib/chatViewSpec.js';
 import type {
-  ChecklistViewSpec, InsightViewSpec, SecretViewSpec, RunViewSpec,
+  ChecklistViewSpec, InsightViewSpec, SecretViewSpec, RunViewSpec, AgentThreadViewSpec,
 } from '../../dashboard/src/lib/chatViewSpec.js';
 
 describe('parseViewBlock — nothing throws', () => {
@@ -70,7 +71,133 @@ describe('parseViewBlock — the retired chart/page types', () => {
   it('is gone from VIEW_TYPES, so the briefing lockstep can never re-name it', () => {
     expect(VIEW_TYPES as readonly string[]).not.toContain('chart');
     expect(VIEW_TYPES as readonly string[]).not.toContain('page');
-    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout']);
+    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread', 'title']);
+  });
+});
+
+/**
+ * `type: "agent-thread"` — a run's channel, DERIVED FROM DISK.
+ *
+ * The risk this type carries is not a crash, it is a FORK: an agent that types the exchange
+ * into the block would put a second, frozen copy of a synced append-only file into the
+ * transcript, and the "unread" it implies would be about nothing. So the hardest assertions
+ * here are the drops — every content key refused, loudly — and the slug gate, because that
+ * string is a path segment on the server.
+ */
+describe('parseViewBlock — type: agent-thread', () => {
+  it('validates the minimal form — naming the agent is the whole payload', () => {
+    const r = parseViewBlock('{"type":"agent-thread","slug":"daily-digest"}');
+    expect(r.notices).toEqual([]);
+    expect(r.view).toEqual({ type: 'agent-thread', slug: 'daily-digest' });
+  });
+
+  it('trims the slug so a padded one still resolves', () => {
+    const r = parseViewBlock('{"type":"agent-thread","slug":"  daily-digest  "}');
+    expect((r.view as AgentThreadViewSpec).slug).toBe('daily-digest');
+  });
+
+  it.each([
+    ['missing', '{"type":"agent-thread"}'],
+    ['empty', '{"type":"agent-thread","slug":"   "}'],
+    ['a path traversal', '{"type":"agent-thread","slug":"../../etc/passwd"}'],
+    ['a slash', '{"type":"agent-thread","slug":"agents/digest"}'],
+    ['uppercase', '{"type":"agent-thread","slug":"Daily-Digest"}'],
+    ['a leading dash', '{"type":"agent-thread","slug":"-nope"}'],
+    ['a trailing dash', '{"type":"agent-thread","slug":"nope-"}'],
+    ['a doubled dash', '{"type":"agent-thread","slug":"no--pe"}'],
+    ['not a string', '{"type":"agent-thread","slug":42}'],
+  ])('drops an agent-thread whose slug is %s, with a notice', (_label, json) => {
+    const r = parseViewBlock(json);
+    expect(r.view).toBeNull();
+    expect(r.notices.some((n) => /slug/i.test(n))).toBe(true);
+  });
+
+  /**
+   * THE LOAD-BEARING ONE. Same contract `validateProgress` enforces for a supplied percent:
+   * the key is dropped AND the agent is told, because an agent that believes the card shows
+   * what it typed will keep typing it.
+   */
+  it.each(['entries', 'text', 'messages'])('drops an asserted "%s" with a notice, and still renders', (key) => {
+    const r = parseViewBlock(`{"type":"agent-thread","slug":"daily-digest","${key}":"whatever"}`);
+    expect(r.view).toEqual({ type: 'agent-thread', slug: 'daily-digest' });
+    expect(r.notices.some((n) => /ignored/i.test(n))).toBe(true);
+    expect(r.view as unknown as Record<string, unknown>).not.toHaveProperty(key);
+  });
+
+  it('keeps an exact-ISO run', () => {
+    const r = parseViewBlock('{"type":"agent-thread","slug":"daily-digest","run":"2026-09-22T18:00:00.000Z"}');
+    expect(r.notices).toEqual([]);
+    expect((r.view as AgentThreadViewSpec).run).toBe('2026-09-22T18:00:00.000Z');
+  });
+
+  it.each([
+    ['not ISO at all', '{"type":"agent-thread","slug":"d","run":"yesterday"}'],
+    ['ISO without millis', '{"type":"agent-thread","slug":"d","run":"2026-09-22T18:00:00Z"}'],
+    ['not a string', '{"type":"agent-thread","slug":"d","run":1758565200000}'],
+  ])('costs a bad run its RUN and not the card (%s)', (_label, json) => {
+    const r = parseViewBlock(json);
+    // The card survives and falls back to the newest run — the precedent a rejected pin url
+    // sets: a dropped field must not take the block with it.
+    expect(r.view).toEqual({ type: 'agent-thread', slug: 'd' });
+    expect(r.notices.some((n) => /run/i.test(n))).toBe(true);
+  });
+
+  it.each([
+    ['above the cap', 999, MAX_AGENT_THREAD_LIMIT],
+    ['below the floor', 0, MIN_AGENT_THREAD_LIMIT],
+    ['negative', -5, MIN_AGENT_THREAD_LIMIT],
+  ])('clamps a limit %s, with a notice', (_label, asked, expected) => {
+    const r = parseViewBlock(`{"type":"agent-thread","slug":"d","limit":${asked}}`);
+    expect((r.view as AgentThreadViewSpec).limit).toBe(expected);
+    expect(r.notices.some((n) => /clamped/i.test(n))).toBe(true);
+  });
+
+  it('keeps an in-range limit silently', () => {
+    const r = parseViewBlock('{"type":"agent-thread","slug":"d","limit":5}');
+    expect(r.notices).toEqual([]);
+    expect((r.view as AgentThreadViewSpec).limit).toBe(5);
+  });
+
+  it('ignores a non-numeric limit rather than guessing one', () => {
+    const r = parseViewBlock('{"type":"agent-thread","slug":"d","limit":"lots"}');
+    expect(r.view).toEqual({ type: 'agent-thread', slug: 'd' });
+    expect(r.notices.some((n) => /limit/i.test(n))).toBe(true);
+  });
+});
+
+describe('parseViewBlock — type: title (the agent names its own tab)', () => {
+  it('accepts a short name and hands back the cleaned text', () => {
+    const r = parseViewBlock(JSON.stringify({ type: 'title', text: 'Checkout button redesign' }));
+    expect(r.view).toEqual({ type: 'title', text: 'Checkout button redesign' });
+    expect(r.notices).toEqual([]);
+  });
+
+  it('keeps the user\'s language — no ASCII folding', () => {
+    expect(parseViewBlock(JSON.stringify({ type: 'title', text: 'Sekme adlandırma ajanı' })).view)
+      .toEqual({ type: 'title', text: 'Sekme adlandırma ajanı' });
+  });
+
+  it('a block with no usable text is a notice, not a silent no-op', () => {
+    for (const text of [undefined, '', '   ', 'x', 42, null, '"."']) {
+      const r = parseViewBlock(JSON.stringify({ type: 'title', text }));
+      expect(r.view, JSON.stringify(text)).toBeNull();
+      expect(r.notices.length).toBe(1);
+    }
+  });
+});
+
+describe('cleanTabTitle', () => {
+  it('folds to one line and strips wrapping quotes, emphasis and a trailing period', () => {
+    expect(cleanTabTitle('"Fix login bug."')).toBe('Fix login bug');
+    expect(cleanTabTitle('**Rate limiter**')).toBe('Rate limiter');
+    expect(cleanTabTitle('Bir başlık\nikinci satır')).toBe('Bir başlık ikinci satır');
+  });
+
+  it('caps the length on a word boundary', () => {
+    const long = cleanTabTitle('word '.repeat(30))!;
+    expect(long.length).toBeLessThanOrEqual(MAX_TAB_TITLE);
+    expect(long.endsWith(' ')).toBe(false);
+    expect(cleanTabTitle('x'.repeat(200))!.length).toBe(MAX_TAB_TITLE);
   });
 });
 
@@ -317,5 +444,18 @@ describe('parseViewBlock — type: run', () => {
     const r = parseViewBlock('{"type":"run","id":"a","command":"rm -rf ./build && npm ci"}');
     expect((r.view as RunViewSpec).command).toBe('rm -rf ./build && npm ci');
     expect(r.notices).toEqual([]);
+  });
+});
+
+describe('unslug — a tab name reads, it does not drown in dashes', () => {
+  it('turns a slug into spaced words, first letter capital', async () => {
+    const { cleanTabTitle } = await import('../../dashboard/src/lib/chatViewSpec');
+    expect(cleanTabTitle('her-ders-ve-program-pakete-acik')).toBe('Her ders ve program pakete acik');
+    expect(cleanTabTitle('checkout_redesign')).toBe('Checkout redesign');
+  });
+  it('leaves a real title with its own punctuation alone', async () => {
+    const { cleanTabTitle } = await import('../../dashboard/src/lib/chatViewSpec');
+    expect(cleanTabTitle('Plan - Develop geçişi')).toBe('Plan - Develop geçişi');
+    expect(cleanTabTitle('Sekme adlandırma')).toBe('Sekme adlandırma');
   });
 });

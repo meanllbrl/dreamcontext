@@ -15,7 +15,11 @@
  * component test.
  */
 
-export type ChatMode = 'basic' | 'plan' | 'develop' | 'jarvis';
+/** `train` is Train Me — the agent learns the owner's taste from swipe decks and A/B picks,
+ *  then writes what it learned into a pattern (or an automation's playbook) behind a confirm.
+ *  `assistant` is the dreamcontext Assistant's own mode — bound server-side to its hidden
+ *  vault and never a row in the picker below. `jarvis` is retired: voice lives in the notch. */
+export type ChatMode = 'basic' | 'plan' | 'develop' | 'train' | 'assistant';
 
 export interface ChatModeRow {
   id: ChatMode;
@@ -58,7 +62,7 @@ export const CHAT_MODE_ROWS: readonly ChatModeRow[] = [
   { id: 'basic', name: 'Basic', insight: 'Plain Claude. No mode enabled.' },
   { id: 'plan', name: 'Plan', insight: 'Asks, drafts, gets reviewed, ends with a task.' },
   { id: 'develop', name: 'Develop', insight: 'Builds in waves, reviewed and validated.' },
-  { id: 'jarvis', name: 'J.A.R.V.I.S', insight: 'Talk with the agent. It talks back.', maturity: 'ALPHA' },
+  { id: 'train', name: 'Train Me', insight: 'Learns your taste from swipes and picks, then writes a pattern.', maturity: 'ALPHA' },
 ];
 
 /** What a chat is in when nothing asked for anything else. There is deliberately no

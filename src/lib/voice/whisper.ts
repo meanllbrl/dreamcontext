@@ -47,6 +47,9 @@ const MODEL_DIRS = [
   join(homedir(), '.cache', 'whisper.cpp', 'models'),
   join(homedir(), '.cache', 'openwhispr', 'whisper-models'),
   join(homedir(), 'Library', 'Application Support', 'whisper.cpp', 'models'),
+  // Handy (a local dictation app) keeps the same ggml files; a model it already downloaded
+  // is 1.6 GB this machine does not have to fetch again.
+  join(homedir(), 'Library', 'Application Support', 'com.pais.handy', 'models'),
   '/opt/homebrew/share/whisper.cpp/models',
   '/usr/local/share/whisper.cpp/models',
 ];
@@ -80,6 +83,35 @@ function which(bin: string, env: NodeJS.ProcessEnv): string | null {
 }
 
 /**
+ * Where a package manager puts `whisper-server` when it is not on PATH.
+ *
+ * The desktop app starts this server from launchd/Finder with the bare system PATH
+ * (`/usr/bin:/bin:/usr/sbin:/sbin`), so `which` never sees Homebrew. Measured 2026-09-27 on
+ * the owner's machine: `brew install whisper-cpp` and a large-v3-turbo model were both there,
+ * and every take still went to the cloud, without the project's vocabulary — the dictation
+ * the owner called unusable next to the same model running locally in Handy.
+ */
+const SERVER_BIN_DIRS = ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin')];
+
+/**
+ * The server binary: the explicit override ALONE when one is set (a test or the owner saying
+ * "this one" is believed, including when it says "none"), else PATH, else the known dirs.
+ */
+export function findServerBin(env: NodeJS.ProcessEnv = process.env): string | null {
+  const binOverride = env.DREAMCONTEXT_WHISPER_BIN;
+  if (binOverride) return existsSync(binOverride) ? binOverride : null;
+  for (const name of SERVER_BINARIES) {
+    const onPath = which(name, env);
+    if (onPath) return onPath;
+    for (const dir of SERVER_BIN_DIRS) {
+      const path = join(dir, name);
+      if (existsSync(path)) return path;
+    }
+  }
+  return null;
+}
+
+/**
  * What is installed on this machine, or null.
  *
  * Deliberately not cached across calls: Settings shows this, and a model the owner downloads
@@ -87,28 +119,30 @@ function which(bin: string, env: NodeJS.ProcessEnv): string | null {
  * calls, once per Settings render and once per take.
  */
 export function findWhisper(env: NodeJS.ProcessEnv = process.env): WhisperInstall | null {
-  const binOverride = env.DREAMCONTEXT_WHISPER_BIN;
-  const bin = binOverride && existsSync(binOverride)
-    ? binOverride
-    : SERVER_BINARIES.map((b) => which(b, env)).find((p): p is string => !!p) ?? null;
+  const bin = findServerBin(env);
   if (!bin) return null;
 
+  const model = findModel(env);
+  return model ? { bin, model, modelName: modelName(model) } : null;
+}
+
+/** The best installed ggml model, or null — the override, then the preference order. */
+export function findModel(env: NodeJS.ProcessEnv = process.env): string | null {
   const modelOverride = env.DREAMCONTEXT_WHISPER_MODEL;
-  if (modelOverride && existsSync(modelOverride)) {
-    return { bin, model: modelOverride, modelName: modelName(modelOverride) };
-  }
+  if (modelOverride) return existsSync(modelOverride) ? modelOverride : null;
   for (const name of MODEL_PREFERENCE) {
     for (const dir of MODEL_DIRS) {
       const path = join(dir, name);
       try {
-        if (existsSync(path) && statSync(path).size > 1_000_000) {
-          return { bin, model: path, modelName: modelName(path) };
-        }
+        if (existsSync(path) && statSync(path).size > 1_000_000) return path;
       } catch { /* unreadable — try the next one */ }
     }
   }
   return null;
 }
+
+/** Where a model this app downloads goes: the first dir, whisper.cpp's own convention. */
+export const MODEL_HOME = MODEL_DIRS[0];
 
 /** `…/ggml-large-v3-turbo.bin` → `large-v3-turbo`. */
 export function modelName(path: string): string {
@@ -214,7 +248,7 @@ function ensureServer(install: WhisperInstall): Running {
  * Start the model loading NOW, without a take waiting on it.
  *
  * The first take of a session paid ~3.3s against ~0.85s for the ones after it, and almost all
- * of that gap is a 1.5 GB model being read off disk. The composer calls this when J.A.R.V.I.S
+ * of that gap is a 1.5 GB model being read off disk. The composer calls this when assistant
  * mode opens, which is typically seconds before the first press.
  */
 export function warmWhisper(): { model: string } | null {

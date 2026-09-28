@@ -59,9 +59,9 @@
 }
 
 .mini-cal-preset--active {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .mini-cal-divider {
@@ -172,13 +172,13 @@
 }
 
 .mini-cal-day--selected {
-  background: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-weight: var(--font-weight-semibold);
 }
 
 .mini-cal-day--selected:hover {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
 }
 
 .mini-cal-day--selected.mini-cal-day--today::after {

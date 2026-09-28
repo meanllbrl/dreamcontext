@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  recordAgentSession, resolveAgentSession, recordAgentFirstPrompt, readAgentSessionEntry, titleWorthyPrompt,
+  recordAgentSession, resolveAgentSession,
 } from '../../src/lib/agent-session-map.js';
 
 const TAB = '11111111-2222-3333-4444-555555555555';
@@ -142,94 +142,5 @@ describe('robustness', () => {
     recordAgentSession(contextRoot, TAB, SES);
     const gi = readFileSync(join(projectRoot, '.gitignore'), 'utf-8');
     expect(gi).toContain('_dream_context/state/.agent-session-map/');
-  });
-});
-
-// The auto-title fallback: Claude Code ≥2.1.x flushes a live session's transcript only
-// on exit/rotation, so the UserPromptSubmit hook records the conversation's first
-// title-worthy prompt here and /agent/title reads it back when no transcript exists.
-describe('first-prompt capture (auto-title fallback)', () => {
-  it('records and reads back the first prompt', () => {
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'Fix the popover resize bug');
-    const entry = readAgentSessionEntry(contextRoot, TAB);
-    expect(entry?.current).toBe(SES);
-    expect(entry?.firstPrompt).toBe('Fix the popover resize bug');
-  });
-
-  it('is write-once per conversation — a second prompt never overwrites the first', () => {
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'first ask');
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'second ask');
-    expect(readAgentSessionEntry(contextRoot, TAB)?.firstPrompt).toBe('first ask');
-  });
-
-  it('survives the Stop-hook re-record of the SAME conversation', () => {
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'the task');
-    recordAgentSession(contextRoot, TAB, SES); // Stop hook re-records every turn
-    expect(readAgentSessionEntry(contextRoot, TAB)?.firstPrompt).toBe('the task');
-    expect(resolveAgentSession(contextRoot, TAB)).toBe(SES);
-  });
-
-  it('resets on rotation — a new conversation titles from ITS first prompt', () => {
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'old conversation ask');
-    recordAgentSession(contextRoot, TAB, SES2); // /clear → SessionStart records the new id
-    expect(readAgentSessionEntry(contextRoot, TAB)?.firstPrompt).toBeUndefined();
-    recordAgentFirstPrompt(contextRoot, TAB, SES2, 'new conversation ask');
-    expect(readAgentSessionEntry(contextRoot, TAB)?.firstPrompt).toBe('new conversation ask');
-  });
-
-  it('re-points a lagging entry when the prompt arrives for a different conversation', () => {
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'old ask');
-    // SessionStart record for the rotation was lost; the prompt hook sees the new id first.
-    recordAgentFirstPrompt(contextRoot, TAB, SES2, 'new ask');
-    const entry = readAgentSessionEntry(contextRoot, TAB);
-    expect(entry?.current).toBe(SES2);
-    expect(entry?.firstPrompt).toBe('new ask');
-  });
-
-  it('creates the entry when SessionStart never recorded (hook timeout)', () => {
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'the ask');
-    expect(resolveAgentSession(contextRoot, TAB)).toBe(SES);
-  });
-
-  it('rejects non-UUID ids on write', () => {
-    recordAgentFirstPrompt(contextRoot, 'not-a-uuid', SES, 'ask');
-    recordAgentFirstPrompt(contextRoot, TAB, '$(rm -rf /)', 'ask');
-    expect(existsSync(dir())).toBe(false);
-  });
-
-  it('rejects a non-UUID tab id on read', () => {
-    recordAgentFirstPrompt(contextRoot, TAB, SES, 'ask');
-    expect(readAgentSessionEntry(contextRoot, '../../etc/passwd')).toBeNull();
-  });
-
-  it('caps a hand-edited oversized prompt on read', () => {
-    mkdirSync(dir(), { recursive: true });
-    writeFileSync(entryFile(TAB), JSON.stringify({
-      current: SES, updated: '2026-01-01T00:00:00.000Z', firstPrompt: 'x'.repeat(5000),
-    }));
-    expect(readAgentSessionEntry(contextRoot, TAB)?.firstPrompt?.length).toBe(800);
-  });
-});
-
-describe('titleWorthyPrompt — what may name a tab', () => {
-  it('passes a normal ask through, trimmed', () => {
-    expect(titleWorthyPrompt('  Fix the resize bug  ')).toBe('Fix the resize bug');
-  });
-
-  it('rejects slash commands, shell passthroughs, and wrapper payloads', () => {
-    expect(titleWorthyPrompt('/clear')).toBeNull();
-    expect(titleWorthyPrompt('!git status')).toBeNull();
-    expect(titleWorthyPrompt('<system-reminder>x</system-reminder>')).toBeNull();
-  });
-
-  it('rejects empty / too-short input', () => {
-    expect(titleWorthyPrompt('')).toBeNull();
-    expect(titleWorthyPrompt('   ')).toBeNull();
-    expect(titleWorthyPrompt('x')).toBeNull();
-  });
-
-  it('folds control chars to spaces and caps at 800 chars', () => {
-    expect(titleWorthyPrompt('fix the\u0000bug')).toBe('fix the bug');
-    expect(titleWorthyPrompt('y'.repeat(2000))?.length).toBe(800);
   });
 });

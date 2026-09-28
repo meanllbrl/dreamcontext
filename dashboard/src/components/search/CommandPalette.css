@@ -108,8 +108,8 @@
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 .cmdk-intel--on {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
   color: var(--color-accent-text);
 }
 .cmdk-intel--on:hover { color: var(--color-accent-text); }
@@ -140,8 +140,8 @@
   border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
 }
 .cmdk-level--on {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
   /* Solid accent fill, so the white-in-both-themes accent-text token applies. */
   color: var(--color-accent-text);
 }
@@ -238,8 +238,8 @@
   margin: var(--space-2) 0;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-accent);
-  background: var(--color-accent);
+  border: 1px solid var(--color-accent-strong);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-family: var(--font-family-display);
   font-weight: 600;

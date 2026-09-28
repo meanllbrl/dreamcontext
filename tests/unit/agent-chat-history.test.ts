@@ -104,6 +104,26 @@ describe('parseTranscriptHistory', () => {
     expect(items[0].text).toBe('message 100');
     expect(items[499].text).toBe('message 599');
   });
+
+  it('carries each row\'s own time (a tool\'s start and its result\'s), and none when the row has none', () => {
+    const at = (s: number) => new Date(Date.UTC(2026, 8, 27, 10, 0, s)).toISOString();
+    const raw = jsonl([
+      { type: 'user', uuid: U1, timestamp: at(0), message: { role: 'user', content: 'develop it' } },
+      { type: 'assistant', uuid: 'a1', timestamp: at(5), message: { role: 'assistant', content: [
+        { type: 'text', text: 'Launching.' }, { type: 'tool_use', id: 'toolu_01', name: 'Bash', input: { command: 'ls' } },
+      ] } },
+      { type: 'user', uuid: U2, timestamp: at(9), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_01', content: 'ok' }] } },
+      { type: 'assistant', uuid: 'a2', timestamp: 'not a time', message: { role: 'assistant', content: [{ type: 'text', text: 'Undated.' }] } },
+    ]);
+    const items = parseTranscriptHistory(raw);
+    expect(items.map((i) => [i.kind, i.at, i.endAt])).toEqual([
+      ['user', Date.parse(at(0)), undefined],
+      ['text', Date.parse(at(5)), undefined],
+      ['tool', Date.parse(at(5)), Date.parse(at(9))],
+      ['text', undefined, undefined],
+    ]);
+    expect('at' in items[3]).toBe(false);
+  });
 });
 
 describe('sanitizeControlId', () => {

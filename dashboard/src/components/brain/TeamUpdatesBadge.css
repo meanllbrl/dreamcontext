@@ -9,7 +9,7 @@
 }
 
 .team-updates-badge .update-badge-trigger:hover {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
 }
 
 .team-updates-badge .update-badge-trigger:hover .update-badge-label {

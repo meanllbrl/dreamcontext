@@ -1,13 +1,15 @@
 import { memo, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import {
-  parseEditDiff, deriveDiffStartLine, GENERIC_RESULT_CHAR_CAP, toolSubject, isDreamcontextSkill,
+  parseEditDiff, deriveDiffStartLine, GENERIC_RESULT_CHAR_CAP, isDreamcontextSkill,
   stringifyToolValue, toolResultText, toolResultLineCount,
 } from './chatEntities';
-import { Duration, DiffStat, MetaText, CopyButton } from './atoms';
+import { Duration, DiffStat, CopyButton } from './atoms';
 import { ToolHeader, TerminalBlock, DiffView } from './molecules';
 import { DreamActionCard } from './DreamActionCard';
 import { parseDreamActions } from './dreamCommand';
+import { toolAction } from './toolAction';
+import type { AgentRoleId } from '../../../lib/agentRoles';
 import type { ChatToolItem } from '../chatSession';
 
 /**
@@ -88,7 +90,19 @@ function GenericBody({ item }: { item: ChatToolItem }) {
   );
 }
 
-function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (path: string) => void }) {
+function ToolCardInner({
+  item, onOpenFile, actor = 'lead', stretch, stretchRunning = false,
+}: {
+  item: ChatToolItem;
+  onOpenFile: (path: string) => void;
+  /** Who took this step. Defaults to the lead. */
+  actor?: AgentRoleId;
+  /** Opens its stretch (the avatar shows) or follows the line above (the face is hidden, the
+   *  column kept). Absent, the row stands alone and shows its avatar. */
+  stretch?: 'lead' | 'follow';
+  /** A step anywhere in this row's stretch is running: its avatar works. */
+  stretchRunning?: boolean;
+}) {
   // Only an EDIT opens on its own: what changed in your files is the one tool body you
   // always want to see. Everything else — Bash above all — stays a one-line receipt you
   // can open (owner call 07-25: an agent turn is mostly shell calls, and their expanded
@@ -106,24 +120,26 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
 
   const plan = item.name === 'ExitPlanMode' ? inputString(item.input, 'plan') : undefined;
   const diff = isBash || plan ? null : parseEditDiff(item.input);
-  const subject = toolSubject(item.name, item.input);
+  // The row's headline is what the step DID, in the tense of its status ("Reading", "Read",
+  // "Couldn't read"); the tool's name is only in the title and the opened body.
+  const action = toolAction(item.name, item.input, item.status);
+  const subject = action.subject;
   const skill = item.name === 'Skill' ? inputString(item.input, 'skill') : undefined;
   const brand = !!skill && isDreamcontextSkill(skill);
   const lineCount = toolResultLineCount(item.result);
   const duration = item.endedAt != null ? item.endedAt - item.startedAt : null;
 
-  // A `prose` subject IS the subtitle (Bash: its description, or failing that its command —
-  // a Bash row is never left as the bare word "Bash"). A FILE row instead says how much it
-  // read. A line count is only meaningful when the subject is a file: `Skill · 1 lines`
-  // (owner report 08-01) measured the length of a skill invocation's ack and called it
-  // information.
-  const subtitle = subject?.kind === 'prose'
-    ? subject.text
-    : (subject?.kind === 'path' && lineCount != null && !diff ? `· ${lineCount} lines` : undefined);
+  // A `prose` subject IS the subtitle (a Bash command with no description: the line says "Ran
+  // a command", the subtitle says which), and `ToolHeader` puts it there itself. A FILE row
+  // instead says how much it read. A line count is only meaningful when the subject is a
+  // file: `Skill · 1 lines` (owner report 08-01) measured the length of a skill invocation's
+  // ack and called it information.
+  const subtitle = subject?.kind === 'path' && lineCount != null && !diff ? `· ${lineCount} lines` : undefined;
 
+  // No "running" word: the line's tense and its trailing "…" already say it.
   const meta = diff
     ? <DiffStat added={diff.addedN} removed={diff.removedN} />
-    : (duration != null ? <Duration ms={duration} /> : (item.status === 'running' ? <MetaText>running</MetaText> : null));
+    : (duration != null ? <Duration ms={duration} /> : null);
 
   const open = override ?? !!diff;
 
@@ -135,12 +151,23 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
         open={open}
         onToggle={() => setOverride(!open)}
         onOpenFile={onOpenFile}
+        actor={actor}
+        stretch={stretch}
+        stretchRunning={stretchRunning}
       />
     );
   }
 
   return (
-    <div className="chat-toolcard" data-status={item.status} data-open={open || undefined}>
+    <div
+      className="chat-toolcard chat-step"
+      data-actor={actor}
+      data-tool={item.name}
+      data-status={item.status}
+      data-quiet={action.quiet || undefined}
+      data-stretch={stretch}
+      data-open={open || undefined}
+    >
       <ToolHeader
         status={item.status}
         name={item.name}
@@ -153,9 +180,16 @@ function ToolCardInner({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (
         open={open}
         onToggle={() => setOverride(!open)}
         onOpenPath={onOpenFile}
+        action={action}
+        actor={actor}
+        toolName={item.name}
+        stretchRunning={stretchRunning}
       />
       {open && (
         <div className="chat-toolcard-body">
+          {/* The name the line no longer leads with, for anyone who needs to know which tool
+              ran. The command and output below are the rest of the raw record. */}
+          <div className="chat-toolcard-raw">{item.name}</div>
           {isBash ? (
             <TerminalBlock
               command={inputString(item.input, 'command')}

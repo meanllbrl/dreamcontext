@@ -1,0 +1,39 @@
+/* ── Chat quest bar (ChatQuestBar.tsx) ─────────────────────────────────────────────
+   A Plan or Develop chat's quest on the live rail. The host (ChatPane.css) gives it the
+   rail's card padding and draws its edge from `--chat-quest-edge`, the same way it draws the
+   goal-skill bar's from `--goal-live-edge`; this file only publishes that edge and the fill.
+   Theme tokens only. */
+
+.chat-quest-bar {
+  --chat-quest-edge: var(--color-border);
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+}
+
+/* The bar owns the padding; the map inside it lays out edge to edge. */
+.chat-quest-bar .quest-map { padding: 0; }
+
+/* Won: the bar becomes the win beat, with the victory's success edge and tint. The victory
+   inside drops its own frame so there is one card, not a card in a card. */
+.chat-quest-bar[data-won] {
+  --chat-quest-edge: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-secondary));
+}
+.chat-quest-bar[data-won='awaiting-signoff'] {
+  --chat-quest-edge: var(--color-border-hover);
+  background: var(--color-bg-secondary);
+}
+.chat-quest-bar .quest-victory {
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}

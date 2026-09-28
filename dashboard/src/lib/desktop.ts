@@ -88,8 +88,8 @@ export async function dragWindowNow(): Promise<void> {
     const { getCurrentWindow } = await windowApi();
     await getCurrentWindow().startDragging();
   } catch (err) {
-    // NEVER silent. This catch used to be bare, and it cost a real bug: the
-    // Meeting Room window's label matched no capability, so `startDragging()`
+    // NEVER silent. This catch used to be bare, and it cost a real bug: a
+    // window's label matched no capability, so `startDragging()`
     // was denied by the ACL and swallowed here — the window simply would not
     // move, with nothing in the console to say why. A permission gap is a
     // developer error, not an expected condition; it belongs on the record even
@@ -420,8 +420,14 @@ export function vaultWindowLabel(name: string): string {
  * it. Either way the caller's current window is left untouched — switching to
  * project A from project B must not close B. In a browser it opens a new tab
  * pinned to that vault via the `?vault=` param.
+ *
+ * `at` (logical px) builds a NEW window straight at that frame — a tiled window must never
+ * load at the default size and then move. An already-open window is not moved by it.
  */
-export async function openVaultWindow(name: string): Promise<void> {
+export async function openVaultWindow(
+  name: string,
+  at?: { x: number; y: number; width: number; height: number },
+): Promise<void> {
   const url = `/?vault=${encodeURIComponent(name)}`;
   if (isDesktop()) {
     // Use the BUILT-IN WebviewWindow API (governed by the granted
@@ -442,8 +448,7 @@ export async function openVaultWindow(name: string): Promise<void> {
     const win = new WebviewWindow(label, {
       url: `${window.location.origin}${url}`,
       title: `dreamcontext — ${name}`,
-      width: 1280,
-      height: 800,
+      ...(at ?? { width: 1280, height: 800 }),
       // macOS: transparent title bar so our own header IS the title bar and the
       // traffic-light buttons float over it (matches the launcher window).
       titleBarStyle: 'overlay',
@@ -523,53 +528,6 @@ export async function openChecklistWindow(id: string, vault: string): Promise<vo
     return;
   }
   window.open(`/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}`, '_blank');
-}
-
-/**
- * The Meeting Room's window label. One room exists on the machine (one global thread store,
- * one orchestrator in the launcher-mode server), so the label is a constant and a second
- * click FOCUSES rather than opening a second view of the same thread.
- */
-export const MEETING_WINDOW_LABEL = 'meeting-room';
-
-/**
- * Open the Meeting Room in its OWN window.
- *
- * It used to be a modal over the launcher, which is where a modal is wrong: the room is a
- * conversation you leave running and come back to, and a modal made it something you dismiss
- * to do anything else — including looking at the very projects it is talking to. A window is
- * also what lets it hold the real chat composer at a real size.
- *
- * Mirrors {@link openVaultWindow} rather than {@link openChecklistWindow}: this is a full
- * conversation surface, not a pinned strip, so it gets a normal resizable window with the
- * app's own header as its title bar — and NOT `alwaysOnTop`, which is the checklist's whole
- * reason for existing and would be an imposition here.
- */
-export async function openMeetingWindow(): Promise<void> {
-  if (isDesktop()) {
-    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    const existing = await WebviewWindow.getByLabel(MEETING_WINDOW_LABEL);
-    if (existing) {
-      await existing.setFocus();
-      return;
-    }
-    const win = new WebviewWindow(MEETING_WINDOW_LABEL, {
-      url: `${window.location.origin}/?meeting=1`,
-      title: 'dreamcontext — Meeting Room',
-      width: 900,
-      height: 720,
-      minWidth: 560,
-      minHeight: 420,
-      titleBarStyle: 'overlay',
-      hiddenTitle: true,
-      // Same reason as every other window here: Tauri's OS-level drop handler swallows the
-      // webview's own dragover/drop events.
-      dragDropEnabled: false,
-    });
-    await awaitWindowCreated(win, 'meeting room');
-    return;
-  }
-  window.open('/?meeting=1', '_blank');
 }
 
 /**

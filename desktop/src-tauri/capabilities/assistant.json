@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "assistant-window",
+  "description": "Capability for the dreamcontext Assistant notch (label `assistant`). It drives OTHER windows — opens project windows, moves and sizes them for tiling, focuses them, rings their doorbell with a targeted event — so it gets window creation, geometry and emit-to. Deliberately NO shell:* (it renders agent-authored markdown and HTML like every chat pane) and no clipboard or dialogs it does not use. The doorbell carries only a single-use command id; the receiving window claims the real command from the server with its own nonce (see src/server/routes/assistant.ts), so emit-to here cannot forge a command. Pop out / dock: it emits `assistant://seat` (a plain emit, heard only by the Rust side in src/assistant.rs), moves itself by start-dragging from its top row, and reads its own size and position (core:window:default) so a docked window pops out where it was.",
+  "windows": ["assistant"],
+  "remote": {
+    "urls": ["http://localhost:*", "http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-unminimize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-available-monitors",
+    "core:window:allow-current-monitor",
+    "core:event:allow-emit",
+    "core:event:allow-emit-to",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
+    "allow-assistant-geometry",
+    "allow-assistant-wake",
+    "allow-set-frames"
+  ]
+}

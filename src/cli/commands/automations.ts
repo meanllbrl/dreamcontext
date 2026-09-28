@@ -9,6 +9,8 @@ import {
   AutomationError,
   WEEKDAYS,
   EFFORT_LEVELS,
+  AUTOMATION_MODES,
+  AUTOMATION_PHOTOS_DIR,
   APPROVAL_DIFF_FIELDS,
   REVIEW_MODES,
   DEFAULT_TIMEOUT_MINUTES,
@@ -19,9 +21,12 @@ import {
   type Weekday,
   type EffortLevel,
   type AutomationManifest,
+  type AutomationMode,
   type AutomationQuestion,
   type ReviewMode,
   type FlowGraph,
+  type ThreadSummaryRow,
+  THREAD_SUMMARY_MAX_ROWS,
 } from '../../lib/automations/types.js';
 import {
   listAutomations,
@@ -35,11 +40,20 @@ import {
   shareStateFor,
   readPattern,
   recordLesson,
+  cadenceLabel,
   deriveFlowFromManifest,
   writeFlowSection,
   type ShareState,
 } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest, toolCallLabel } from '../../lib/automations/session.js';
+import {
+  appendThreadEntry,
+  listThreadRuns,
+  markThreadRead,
+  pruneThreads,
+  readThread,
+  threadUnread,
+} from '../../lib/automations/threads.js';
 import { proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import {
   adoptGlobalTelegramConfig,
@@ -53,6 +67,8 @@ import {
   allPendingQuestions,
   claimQuestion,
   pendingQuestion,
+  QUESTION_CHOICE_MAX_CHARS,
+  QUESTION_CHOICES_MAX,
 } from '../../lib/automations/hitl.js';
 import { nodeEntry, isKnownNodeKind } from '../../lib/automations/flow-registry.js';
 import {
@@ -121,6 +137,38 @@ function handleAutomationsError(err: unknown): void {
 
 /** Load a manifest or print a uniform "no such automation" error. Returns
  *  null on failure — callers must check and return without further action. */
+/** Commander's repeatable-option collector for `post --file`. The cap itself
+ *  lives in the store (`THREAD_FILES_MAX`), not here — one place refuses, and
+ *  it is the one every writer goes through. */
+function collectFile(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+/**
+ * Commander's repeatable-option collector for `post --kv key=value`.
+ *
+ * Splits on the FIRST `=` only, because the VALUE is the half allowed to
+ * contain one — `--kv change=+4% vs=last week` is a figure, and a greedy split
+ * would silently drop everything after the second separator.
+ *
+ * It only PARSES. Every refusal (an empty key, a seventh row) is raised in the
+ * action through the same `error()` + non-zero-exit path every other refusal in
+ * this file uses — a collector that threw would go through commander's own
+ * error machinery, which this CLI does not configure and which exits the
+ * process rather than setting a code.
+ */
+function collectKv(value: string, previous: ThreadSummaryRow[]): ThreadSummaryRow[] {
+  const at = value.indexOf('=');
+  const key = at === -1 ? value.trim() : value.slice(0, at).trim();
+  const val = at === -1 ? '' : value.slice(at + 1).trim();
+  return [...previous, { key, value: val }];
+}
+
+/** Commander's repeatable-option collector for `propose --choice`. */
+function collectChoice(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 function requireAutomation(root: string, slug: string): AutomationManifest | null {
   const manifest = getAutomation(root, slug);
   if (!manifest) {
@@ -169,6 +217,20 @@ function parseDaysFlag(value: string): 'daily' | Weekday[] {
     );
   }
   return tokens as Weekday[];
+}
+
+/** `--mode <sched|call>` → a validated {@link AutomationMode}. Same boundary
+ *  discipline as `parseDaysFlag`/`parseEffortFlag`: reject the actual bad
+ *  token here rather than letting the store's lenient READ path quietly turn a
+ *  typo into `'sched'` — a `--mode cal` that silently scheduled the agent is
+ *  the opposite of what was asked for. */
+function parseModeFlag(value: string | undefined): AutomationMode {
+  if (value === undefined) return 'sched';
+  const trimmed = value.trim().toLowerCase();
+  if (!(AUTOMATION_MODES as readonly string[]).includes(trimmed)) {
+    throw new AutomationError(`--mode: invalid mode "${value}" — use one of ${AUTOMATION_MODES.join(', ')}.`);
+  }
+  return trimmed as AutomationMode;
 }
 
 /** `--effort <level>` → a validated `EffortLevel`, or `null` when omitted.
@@ -551,8 +613,15 @@ export function registerAutomationsCommand(program: Command): void {
     .argument('<slug>', 'Kebab-case automation slug (e.g. eod-digest)')
     .description('Scaffold a new automation manifest, auto-approved on this machine')
     .requiredOption('--title <title>', 'Automation title')
-    .requiredOption('--days <daily|mon,wed>', 'Schedule days: "daily" or a comma list of weekdays')
-    .requiredOption('--at <HH:MM>', 'Schedule time, 24h local (e.g. 18:00)')
+    // Deliberately NOT `requiredOption` any more: an on-call agent has no
+    // schedule, and demanding a placeholder one would write a lie into the
+    // manifest that `list` and the card would then have to print. Required for
+    // `--mode sched` (the default) by an explicit check in the action below,
+    // so the refusal names the mode rather than a missing flag.
+    .option('--days <daily|mon,wed>', 'Schedule days: "daily" or a comma list of weekdays (required unless --mode call)')
+    .option('--at <HH:MM>', 'Schedule time, 24h local (e.g. 18:00) (required unless --mode call)')
+    .option('--mode <sched|call>', 'sched = runs on its schedule (default); call = no schedule, runs only when you call it')
+    .option('--photo <path>', `Agent photo, brain-relative under ${AUTOMATION_PHOTOS_DIR}/ (default: initials)`)
     .option('--model <model>', 'Model override (default: let claude pick)')
     .option('--effort <level>', `Reasoning effort: ${EFFORT_LEVELS.join('|')} (default: let claude pick)`)
     .option('--timeout <minutes>', `Timeout in minutes, 1-${MAX_TIMEOUT_MINUTES} (default ${DEFAULT_TIMEOUT_MINUTES})`)
@@ -567,13 +636,20 @@ export function registerAutomationsCommand(program: Command): void {
       `Stop and ask a human before the work takes effect: ${REVIEW_MODES.join('|')} (default off)`,
     )
     .action((slug: string, opts: {
-      title: string; days: string; at: string; model?: string; effort?: string; timeout?: string;
+      title: string; days?: string; at?: string; mode?: string; photo?: string; model?: string;
+      effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
       learning?: boolean; review?: string;
     }) => {
       const root = ensureContextRoot();
       try {
-        const days = parseDaysFlag(opts.days);
+        const mode = parseModeFlag(opts.mode);
+        if (mode !== 'call' && (!opts.days || !opts.at)) {
+          throw new AutomationError(
+            'A scheduled agent needs --days and --at. Pass --mode call for an agent that runs only when you call it.',
+          );
+        }
+        const days = parseDaysFlag(opts.days ?? 'daily');
         const effort = parseEffortFlag(opts.effort);
         let prompt: string | undefined;
         if (opts.promptFile) {
@@ -585,8 +661,10 @@ export function registerAutomationsCommand(program: Command): void {
         let manifest = createAutomation(root, {
           slug,
           title: opts.title,
+          mode,
+          photo: opts.photo ?? null,
           days,
-          at: opts.at,
+          at: opts.at ?? '09:00',
           model: opts.model ?? null,
           effort,
           timeoutMinutes: opts.timeout ? Number(opts.timeout) : undefined,
@@ -686,7 +764,10 @@ export function registerAutomationsCommand(program: Command): void {
         const approvalBadge = approval.approved ? '' : chalk.red(` ⚠ ${approval.reason}`);
         const statusBit = cache?.status ? ` · last: ${cache.status}` : ' · never run';
         const { badge, warning } = describeShareState(shareStateFor(root, m), m.slug);
-        console.log(`  ${chalk.magentaBright(m.slug)} — ${m.title} · ${formatSchedule(m.schedule)}${enabledBadge}${statusBit}${approvalBadge} · ${badge}`);
+        // `cadenceLabel`, not `formatSchedule`: an on-call agent genuinely has
+        // no schedule, and printing "no schedule" next to it would report a
+        // deliberate choice as a malformed manifest.
+        console.log(`  ${chalk.magentaBright(m.slug)} — ${m.title} · ${cadenceLabel(m)}${enabledBadge}${statusBit}${approvalBadge} · ${badge}`);
         if (warning) warn(`    ${warning}`);
       }
     });
@@ -729,7 +810,7 @@ export function registerAutomationsCommand(program: Command): void {
 
       console.log(header(`Automation: ${slug}`));
       console.log(`  title: ${manifest.title}`);
-      console.log(`  schedule: ${formatSchedule(manifest.schedule)}`);
+      console.log(`  runs: ${cadenceLabel(manifest)}`);
       console.log(`  enabled: ${manifest.enabled}`);
       console.log(`  model: ${manifest.model ?? '(default)'}`);
       console.log(`  effort: ${manifest.effort ?? '(default)'}`);
@@ -949,7 +1030,13 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--summary <text>', 'One line for the notification banner (default: the body\'s first line)')
     .option('--body <text>', 'What the human judges: the proposed document, or what you want to do next')
     .option('--body-file <path>', 'Read the body from a file instead')
-    .action((slug: string, opts: { title?: string; summary?: string; body?: string; bodyFile?: string }) => {
+    .option(
+      '--choice <text>',
+      `An option the human can press (repeatable, max ${QUESTION_CHOICES_MAX}, ${QUESTION_CHOICE_MAX_CHARS} chars each)`,
+      collectChoice,
+      [],
+    )
+    .action((slug: string, opts: { title?: string; summary?: string; body?: string; bodyFile?: string; choice: string[] }) => {
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);
@@ -961,6 +1048,24 @@ export function registerAutomationsCommand(program: Command): void {
         if (manifest.review === 'off') {
           warn(`"${slug}" has review off — a proposal would be created that nothing is watching for.`);
           console.log(chalk.dim(`  Set \`review: agent\` in automations/${slug}.md, then re-approve (it is a hashed field).`));
+          console.log(chalk.dim('  That applies to --choice too: buttons nobody is watching for are still nobody watching.'));
+          process.exitCode = 1;
+          return;
+        }
+        // The caps are enforced in `parseChoices` (hitl.ts) for every producer
+        // and every reader, and that floor TRUNCATES silently — correct for a
+        // file synced from a teammate, wrong for a run typing a command right
+        // now. So the CLI refuses instead: a run that believes it offered five
+        // options and got four should be told, not quietly corrected.
+        const choices = opts.choice.map((c) => c.trim()).filter(Boolean);
+        if (choices.length > QUESTION_CHOICES_MAX) {
+          error(`A question offers at most ${QUESTION_CHOICES_MAX} choices — you gave ${choices.length}.`);
+          process.exitCode = 1;
+          return;
+        }
+        const tooLong = choices.find((c) => c.length > QUESTION_CHOICE_MAX_CHARS);
+        if (tooLong) {
+          error(`A choice is at most ${QUESTION_CHOICE_MAX_CHARS} characters — "${tooLong}" is ${tooLong.length}.`);
           process.exitCode = 1;
           return;
         }
@@ -974,7 +1079,10 @@ export function registerAutomationsCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
-        const result = proposeFromRun(root, slug, { title: opts.title, summary: opts.summary, body });
+        const result = proposeFromRun(root, slug, {
+          title: opts.title, summary: opts.summary, body,
+          ...(choices.length > 0 ? { choices } : {}),
+        });
         if (!result.ok) {
           error(result.reason);
           process.exitCode = 1;
@@ -982,7 +1090,171 @@ export function registerAutomationsCommand(program: Command): void {
         }
         success(`Proposal recorded for "${slug}" — waiting for a human verdict.`);
         console.log(chalk.dim(`  card ${result.card.id}`));
+        if (result.card.choices.length > 0) {
+          console.log(chalk.dim(`  choices: ${result.card.choices.join(' · ')}`));
+        }
         console.log(chalk.dim('  Stop here. Your session stays on disk; the verdict resumes it.'));
+      } catch (err) {
+        handleAutomationsError(err);
+      }
+    });
+
+  // ── The channel ───────────────────────────────────────────────────────────
+  //
+  // `post` is the ONLY way anything reaches an agent's channel on the agent's
+  // own behalf. It is deliberately an explicit verb the run calls, not a
+  // summary derived from its transcript: a derived summary posts on every run
+  // whether or not there was anything to say, and the whole value of the
+  // channel is that an unremarkable run stays silent.
+
+  automations
+    .command('post')
+    .argument('<slug>', 'Automation slug')
+    .argument('<text>', 'One or two sentences: what is IMPORTANT about this run')
+    .description('Post to this automation\'s channel (a run calls this about itself)')
+    .option('--file <path>', 'Brain-relative path to attach (repeatable, max 4)', collectFile, [])
+    .option('--kv <pair>', `A key=value summary row (repeatable, max ${THREAD_SUMMARY_MAX_ROWS})`, collectKv, [])
+    .option('--run <id>', 'The run this belongs to (default: this run, from the environment)')
+    .action((slug: string, text: string, opts: { file: string[]; kv: ThreadSummaryRow[]; run?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const manifest = requireAutomation(root, slug);
+        if (!manifest) return;
+        if (!text.trim()) {
+          error('A post needs something to say.');
+          process.exitCode = 1;
+          return;
+        }
+        // The summary is FIGURES, and both halves have to be there for a row to
+        // mean anything — `--kv wau` names a number it never gives. Refused
+        // here rather than dropped, so a run that believes it reported a figure
+        // is told that it did not.
+        const blank = opts.kv.find((row) => !row.key || !row.value);
+        if (blank) {
+          error(`A --kv row needs both halves: "${blank.key}${blank.value ? `=${blank.value}` : ''}" is missing one.`);
+          process.exitCode = 1;
+          return;
+        }
+        // Refused LOUDLY rather than left to the store's own cap: a run that
+        // thinks it posted seven rows and got six has been lied to about what
+        // the human will read.
+        if (opts.kv.length > THREAD_SUMMARY_MAX_ROWS) {
+          error(`A summary carries at most ${THREAD_SUMMARY_MAX_ROWS} rows — you gave ${opts.kv.length}.`);
+          process.exitCode = 1;
+          return;
+        }
+        // Resolution order: what you were told, then what your environment
+        // knows, then the newest run already in the channel. The env vars are
+        // HINTS — the slug is still a required positional and is still
+        // validated, so a forged or leaked variable buys nothing.
+        const runId =
+          opts.run?.trim() ||
+          process.env.DREAMCONTEXT_AUTOMATION_RUN?.trim() ||
+          listThreadRuns(root, slug, 1)[0]?.runId ||
+          '';
+        if (!runId) {
+          // Inventing a run id here would put the post in a thread no run will
+          // ever close, which reads to the human as an agent talking to itself.
+          error(`No run to post to. "${slug}" has no runs in its channel yet — pass --run <fired-at ISO> if you mean a specific one.`);
+          process.exitCode = 1;
+          return;
+        }
+        const entry = appendThreadEntry(root, slug, {
+          runId,
+          kind: 'agent',
+          text,
+          files: opts.file,
+          ...(opts.kv.length > 0 ? { summary: opts.kv } : {}),
+          via: 'cli',
+        });
+        success(`Posted to "${slug}".`);
+        console.log(chalk.dim(`  run ${runId} · entry ${entry.id}`));
+        if (entry.files?.length) console.log(chalk.dim(`  files: ${entry.files.join(', ')}`));
+        if (entry.summary?.length) {
+          console.log(chalk.dim(`  summary: ${entry.summary.map((r) => `${r.key}=${r.value}`).join(' · ')}`));
+        }
+        // Retention is ANNOUNCED, never silent — the same rule the answered-
+        // question prune follows. A channel that quietly loses its history is
+        // indistinguishable from one that was never written to.
+        const pruned = pruneThreads(root, slug);
+        if (pruned > 0) console.log(chalk.dim(`  pruned ${pruned} day file${pruned === 1 ? '' : 's'} past retention.`));
+      } catch (err) {
+        handleAutomationsError(err);
+      }
+    });
+
+  automations
+    .command('thread')
+    .argument('<slug>', 'Automation slug')
+    .description('Read an automation\'s channel — every run, or one run\'s thread')
+    .option('--run <id>', 'Only this run')
+    .option('--limit <n>', 'Show at most N entries (newest kept)')
+    .option('--json', 'Emit as JSON')
+    .action((slug: string, opts: { run?: string; limit?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      try {
+        const manifest = requireAutomation(root, slug);
+        if (!manifest) return;
+        const limit = opts.limit ? Number.parseInt(opts.limit, 10) : undefined;
+        if (opts.limit !== undefined && (!Number.isFinite(limit) || (limit as number) <= 0)) {
+          error('--limit takes a positive whole number.');
+          process.exitCode = 1;
+          return;
+        }
+        const all = readThread(root, slug, { limit, runId: opts.run });
+        const unread = threadUnread(root, slug);
+
+        if (opts.json) {
+          console.log(JSON.stringify({ slug, entries: all, unread }, null, 2));
+          return;
+        }
+
+        console.log(header(`#${slug}${opts.run ? ` · run ${opts.run}` : ''}`));
+        if (all.length === 0) {
+          console.log(chalk.dim(opts.run ? '  That run has no entries.' : '  No runs yet — the first fire opens this channel.'));
+          return;
+        }
+        let lastRun = '';
+        for (const e of all) {
+          if (e.runId !== lastRun) {
+            console.log(chalk.dim(`  ── run ${e.runId}`));
+            lastRun = e.runId;
+          }
+          const when = e.at.slice(11, 16);
+          const who = e.kind === 'agent' ? chalk.bold(manifest.title) : e.kind === 'user' ? chalk.bold('you') : chalk.dim('·');
+          const body = e.kind === 'system' ? chalk.dim(e.text) : e.text;
+          console.log(`  ${chalk.dim(when)} ${who} ${body}`);
+          if (e.files?.length) console.log(chalk.dim(`         ${e.files.join(', ')}`));
+        }
+        if (unread.count > 0) console.log(chalk.dim(`\n  ${unread.count} unread on this machine — \`dreamcontext automations read ${slug}\` clears it.`));
+      } catch (err) {
+        handleAutomationsError(err);
+      }
+    });
+
+  automations
+    .command('read')
+    .argument('<slug>', 'Automation slug')
+    .description('Mark this automation\'s channel read on this machine')
+    .option('--up-to <id>', 'Mark read only up to this entry id (default: everything)')
+    .action((slug: string, opts: { upTo?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const manifest = requireAutomation(root, slug);
+        if (!manifest) return;
+        const entries = readThread(root, slug);
+        const target = opts.upTo?.trim() || entries[entries.length - 1]?.id;
+        if (!target) {
+          console.log(chalk.dim(`  "${slug}" has nothing to read.`));
+          return;
+        }
+        // Monotonic by construction in the store — an older id is ignored
+        // rather than rewinding the watermark, the same refusal `ackAttention`
+        // makes. The watermark is per MACHINE and never synced.
+        markThreadRead(root, slug, target);
+        const after = threadUnread(root, slug);
+        success(`Marked "${slug}" read on this machine.`);
+        if (after.count > 0) console.log(chalk.dim(`  ${after.count} still unread (newer than ${target}).`));
       } catch (err) {
         handleAutomationsError(err);
       }
@@ -1272,9 +1544,14 @@ export function registerAutomationsCommand(program: Command): void {
       try {
         const now = new Date();
         let fireAt = now;
-        if (!opts.force) {
+        // An ON-CALL agent has no schedule to be due against — `run` IS the
+        // call, so gating it on dueness would make the only way to use one a
+        // `--force`, and train the owner to reach for that flag by habit on
+        // scheduled agents too. `--force` keeps its real meaning: overriding a
+        // schedule that says not yet.
+        if (!opts.force && manifest.mode !== 'call') {
           const cache = readAutomationCache(root, slug);
-          const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours);
+          const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours, manifest.mode);
           if (!due.due) {
             warn(`"${slug}" is not due right now (${due.reason}) — pass --force to run anyway.`);
             process.exitCode = 1;
@@ -1343,7 +1620,7 @@ export function registerAutomationsCommand(program: Command): void {
 
           const now = new Date();
           const cache = readAutomationCache(root, slug);
-          const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours);
+          const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours, manifest.mode);
           if (!due.due) {
             if (opts.json) { console.log(JSON.stringify({ slug, verdict: due.reason }, null, 2)); return; }
             console.log(`  ${chalk.magentaBright(slug)}: ${due.reason}`);

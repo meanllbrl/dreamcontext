@@ -1,0 +1,248 @@
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * The #agents message's RICH CONTENT, pinned by parsing the source as TEXT.
+ *
+ * Text-shape only, and deliberately so (`mirror-with-drift-test`): these are
+ * dashboard-bundle `.tsx` files and root vitest cannot import them — it has no
+ * JSX transform and no React environment. What a text parse CAN prove is the
+ * class of regression this lane is most exposed to: a component quietly
+ * replaced by a hand-rolled copy, a route swapped for the wrong one, or an
+ * extension list drifting from the server's allowlist. None of those are caught
+ * by `tsc`, and all three have shipped in this repo before.
+ *
+ * It cannot prove anything renders. `scripts/verify/agent-threads.mjs` drives
+ * the real surface in Chromium for that.
+ */
+
+const DASHBOARD = join(import.meta.dirname, '..', '..', 'dashboard', 'src');
+const AGENTS = join(DASHBOARD, 'components', 'agents');
+
+function read(path: string): string {
+  return readFileSync(path, 'utf-8');
+}
+
+describe('AgentMessage — the rich blocks are mounted, not re-implemented', () => {
+  const source = read(join(AGENTS, 'AgentMessage.tsx'));
+
+  /**
+   * MUTATION 17 from the plan, and the reason it is the one worth writing: a
+   * board drawn by a local copy would typecheck, render something board-shaped,
+   * and drift from the chat's real canvas from that day on
+   * (`component-reuse-over-reimplementation`). The import IS the assertion.
+   */
+  it('imports the chat BoardEmbed rather than drawing its own board', () => {
+    expect(source).toMatch(/import\s*\{\s*BoardEmbed\s*\}\s*from\s*'\.\.\/sleepy\/chat\/BoardEmbed'/);
+    expect(source).toContain('<BoardEmbed');
+  });
+
+  it('mounts the summary and question blocks it does not own', () => {
+    expect(source).toMatch(/import\s*\{\s*AgentQuestionBlock\s*\}\s*from\s*'\.\/AgentQuestionBlock'/);
+    expect(source).toMatch(/import\s*\{\s*AgentSummaryBlock\s*\}\s*from\s*'\.\/AgentSummaryBlock'/);
+    expect(source).toContain('<AgentSummaryBlock');
+    expect(source).toContain('<AgentQuestionBlock');
+  });
+
+  /**
+   * THE ROUTE CHOICE IS THE SECURITY-RELEVANT ONE. `/api/agent/file` is
+   * desktop-gated; `/api/graph/content` (what `graphContentUrl` builds) is
+   * vault-scoped and is not. An image posted by an agent has to be visible in a
+   * browser tab and on a phone over the tailnet, so it must go through the
+   * latter — and swapping them back is a silent 403 nobody sees until a user is
+   * away from their Mac.
+   */
+  it('serves posted images through the vault route, not the desktop-gated one', () => {
+    expect(source).toMatch(/import\s*\{\s*graphContentUrl\s*\}\s*from\s*'\.\.\/\.\.\/api\/client'/);
+    expect(source).toMatch(/graphContentUrl\(vault, (f\.)?path, \{ raw: true \}\)/);
+    expect(source).not.toContain('agentFileUrl');
+  });
+
+  /**
+   * `.svg` is absent on BOTH sides on purpose: an SVG is a script-bearing
+   * document and `/api/graph/content` is generic (the Knowledge page hands its
+   * URL to an iframe). Adding it here would draw one inline; adding it server-
+   * side would serve it as `image/svg+xml`. This pins the client half.
+   */
+  it('mirrors the server raster allowlist exactly, and never adds .svg', () => {
+    const block = /const RASTER_EXTENSIONS = \[([^\]]*)\]/.exec(source);
+    expect(block, 'RASTER_EXTENSIONS must stay a plain array literal so this can parse it').toBeTruthy();
+    const mirrored = [...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(mirrored).toEqual(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
+    // The source of truth, parsed from the route itself rather than restated.
+    const graph = read(join(import.meta.dirname, '..', '..', 'src', 'server', 'routes', 'graph.ts'));
+    const table = /GRAPH_RAW_CONTENT_TYPE: Record<string, string> = \{([\s\S]*?)\}/.exec(graph);
+    expect(table).toBeTruthy();
+    const served = [...table![1].matchAll(/'(\.[a-z0-9]+)':\s*'([^']+)'/g)];
+    const rasterServed = served.filter(([, , type]) => type.startsWith('image/')).map(([, ext]) => ext);
+    expect(new Set(rasterServed)).toEqual(new Set(mirrored));
+    expect(served.map(([, ext]) => ext)).not.toContain('.svg');
+  });
+
+  /** Video and audio PLAY in a thread only if the vault route streams them, so the
+   *  client's lists must equal the route's `video/*` and `audio/*` rows exactly. */
+  it('mirrors the server media allowlist for video and audio', () => {
+    const graph = read(join(import.meta.dirname, '..', '..', 'src', 'server', 'routes', 'graph.ts'));
+    const table = /GRAPH_RAW_CONTENT_TYPE: Record<string, string> = \{([\s\S]*?)\}/.exec(graph);
+    const served = [...table![1].matchAll(/'(\.[a-z0-9]+)':\s*'([^']+)'/g)];
+    for (const [name, prefix] of [['VIDEO_EXTENSIONS', 'video/'], ['AUDIO_EXTENSIONS', 'audio/']] as const) {
+      const block = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(source);
+      expect(block, `${name} must stay a plain array literal`).toBeTruthy();
+      const mirrored = [...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      const onServer = served.filter(([, , type]) => type.startsWith(prefix)).map(([, ext]) => ext);
+      expect(new Set(mirrored)).toEqual(new Set(onServer));
+    }
+  });
+
+  /** The board pipeline is the chat's and reads PROJECT-relative paths; a post carries
+   *  BRAIN-relative ones. Without the prefix every posted board drew "couldn't be read". */
+  it('hands the board embed a project-relative path', () => {
+    expect(source).toContain('<BoardEmbed path={`_dream_context/${f.path}`}');
+  });
+
+  /**
+   * A10: whether a board DRAWS is the SERVER's call — its desktop gate on `/api/agent/*` —
+   * read through `useAgentCapabilities`, the same probe the chat surface uses. The client's
+   * `isDesktop()` (a Tauri check) disagreed with it: a browser tab on a desktop server showed
+   * a card saying boards open in the desktop app, then drew the board fullscreen on click.
+   */
+  it('decides board drawing by the server\'s capability, and degrades to a card with a reason', () => {
+    expect(source).toMatch(/import\s*\{[^}]*\buseAgentCapabilities\b[^}]*\}\s*from\s*'\.\.\/\.\.\/hooks\/useAgentCapabilities'/);
+    expect(source).toMatch(/useAgentCapabilities\(\)\.data\?\.desktop/);
+    expect(source).not.toContain('isDesktop()');
+    expect(source).toContain("t('agents.boardDesktopOnly')");
+  });
+
+  /** A5/A17: a board is named by its board name everywhere, via the chat's own helper. */
+  it('names boards with the chat\'s boardName, not the raw filename', () => {
+    expect(source).toMatch(/import\s*\{[^}]*\bboardName\b[^}]*\}\s*from\s*'\.\.\/sleepy\/chat\/BoardEmbed'/);
+    expect(source).toMatch(/boardName\(/);
+  });
+
+  /** A17: a PDF and a plain document no longer share one glyph in the "what came back" line. */
+  it('gives documents their own glyph, distinct from a PDF\'s', () => {
+    expect(source).toMatch(/pdf:\s*'◧'/);
+    expect(source).toMatch(/doc:\s*'▤'/);
+  });
+
+  /** F1: the ask preview is prose — the shared markdown-to-text pass, not raw asterisks. */
+  it('previews the answer through markdownToText', () => {
+    expect(source).toMatch(/import\s*\{[^}]*\bmarkdownToText\b[^}]*\}\s*from\s*'\.\.\/\.\.\/lib\/markdownToText'/);
+    expect(source).toMatch(/markdownToText\(message\.text\)/);
+  });
+
+  /** A4 / T19: the feed folds a post's extra visuals; the thread root is its own variant. */
+  it('lays files out per surface and gives the thread root its own variant', () => {
+    expect(source).toMatch(/layout=\{?[^\n]*['"]feed['"]/);
+    expect(source).toContain('agent-msg-file--folded');
+    expect(source).toContain('agent-msg--root');
+  });
+
+  /**
+   * The status word describes the RUN; "Needs you" says the reader still owes
+   * it something. Both can be true at once (a finished run with an open
+   * question), and the guard is what stops it being said twice on one row.
+   */
+  it('shows the Needs-you word only when the status word does not already say it', () => {
+    expect(source).toContain("message.needsYou && message.status !== 'needs-you'");
+    expect(source).toContain("t('agents.needsYou')");
+    // Its own class: a second `.agent-msg-status` makes the feed's verify
+    // locator multi-match, and innerText() on that is a strict-mode violation.
+    expect(source).toContain('agent-msg-needs');
+  });
+
+  /** C1: every string the row prints goes through the catalogue, including the quiet one. */
+  it('says "Nothing to report." through t(), never as a literal', () => {
+    expect(source).toContain("t('agents.nothingToReport')");
+    expect(source).not.toContain("'Nothing to report.'");
+    expect(source).not.toContain('>Nothing to report.<');
+  });
+
+  /** C1: "View thread" is APPENDED after "Last reply", never stacked into its grid cell. */
+  it('appends the thread line\'s hover label instead of swapping it into one cell', () => {
+    expect(source).not.toContain('agent-thread-bar-swap');
+    expect(source).toContain("t('agents.thread.lastReply')");
+    expect(source).toContain('agent-thread-bar-go');
+  });
+});
+
+describe('AgentQuestionBlock — answers through the existing HITL route', () => {
+  const source = read(join(AGENTS, 'AgentQuestionBlock.tsx'));
+
+  /**
+   * `flow-hitl` ALWAYS. The answer route's two kinds are not interchangeable:
+   * `approval` is the manifest-diff ask raised BEFORE a run, whose session is
+   * forced null, and it never reaches a run's thread. Sending it from here
+   * would answer a question this block is not showing.
+   */
+  it('answers as flow-hitl through useAnswerQuestion, never approval', () => {
+    expect(source).toContain('useAnswerQuestion');
+    expect(source).toMatch(/kind:\s*'flow-hitl'/);
+    expect(source).not.toMatch(/kind:\s*'approval'/);
+  });
+
+  /** Asked the way Chat asks (owner, 2026-09-26): Chat's own card, not a second question UI. */
+  it('mounts Chat\'s own SurveyCard over the question, options for choices and a text question without them', () => {
+    expect(source).toContain("from '../sleepy/chat/SurveyCard'");
+    expect(source).toContain('<SurveyCard');
+    expect(source).toContain('question.choices.length > 0');
+    expect(source).toMatch(/kind: 'text'/);
+  });
+
+  /** A face never reaches the run: "Approve" answers `approve`. */
+  it('maps a sign-off face back to its value before answering', () => {
+    expect(source).toContain('valueOf.get(v) ?? v');
+  });
+
+  /**
+   * The receipt must not outlive a failed send — the run would still be waiting
+   * while the channel claimed it had been answered. A failure remounts the card.
+   */
+  it('reopens the card when the answer could not be recorded', () => {
+    expect(source).toContain('setAttempt((a) => a + 1)');
+    expect(source).toContain('key={`${question.id}:${attempt}`}');
+    expect(source).toContain('onToast(');
+  });
+
+  /** Turkish survives: no user-facing prose baked into the component. */
+  it('takes its copy from I18nContext', () => {
+    expect(source).toContain("t('agents.question.answer')");
+    expect(source).toContain("'agents.question.approve'");
+    expect(source).toContain("'agents.question.rejectLine'");
+  });
+});
+
+describe('the reply hook — frozen for T9 and T10', () => {
+  const source = read(join(DASHBOARD, 'hooks', 'useAutomations.ts'));
+
+  it('posts to the reply route and polls the reply job', () => {
+    expect(source).toContain('export function useReplyToAgentThread()');
+    expect(source).toContain('/thread/reply');
+    expect(source).toContain('/automations/reply-job/');
+    expect(source).toContain('REPLY_POLL_MS = 2_000');
+  });
+
+  /**
+   * A 404 means the server restarted mid-reply, so NOTHING on this machine will
+   * ever report the outcome. Polling on would spin against an id nothing can
+   * answer; re-sending would deliver the same instruction twice.
+   */
+  it('treats a 404 as terminal and never re-sends', () => {
+    expect(source).toMatch(/status\s*===\s*404/);
+    expect(source).toContain("settle({ status: 'unknown', reason: null })");
+  });
+
+  it('invalidates the thread and the feed when a turn settles', () => {
+    expect(source).toContain("queryKey: ['automations', slug, 'thread']");
+    expect(source).toContain("queryKey: ['automations-feed']");
+  });
+
+  /** The wire types have to mirror what `buildFeed` actually sends. */
+  it('mirrors T4s feed fields', () => {
+    expect(source).toContain('needsYouTotal: number');
+    expect(source).toContain('summary: ThreadSummaryRow[] | null');
+    expect(source).toContain('needsYou: boolean');
+  });
+});

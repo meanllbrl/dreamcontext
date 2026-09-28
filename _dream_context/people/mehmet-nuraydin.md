@@ -5,6 +5,7 @@ updated: "2026-09-21"
 ---
 
 ## Preferences
+- UI copy names the lead agent **Claude**; "Sleepy" is reserved for the mascot visual (reaffirmed 2026-09-25).
 
 - Decide on clear choices and explain why; never ask permission on an obvious path. **"devam" means keep going autonomously**, no check-ins (2026-09-08, 4th obs).
 - **Orchestrations must be fast** (2026-09-11): minimal ceremony, reviewers in parallel, implementer waves at full width, no extra rounds without a new finding.

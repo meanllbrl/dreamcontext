@@ -1316,6 +1316,51 @@ describe('a hitl node in the graph is a real branch, not prose', () => {
     expect(readAutomationSession('digest', 'sess_abc123', home)).toBe('sess_abc123');
   });
 
+  it('a hitl node in OUTPUT mode is the document sign-off: the report itself, and approve or reject', async () => {
+    // The owner's "Approve the document?" came from this node: a bare label, no document,
+    // and a free-text box. It is the same gate as `review: output` and asks the same way.
+    createApproved('digest');
+    giveFlow('digest', [
+      { id: 'run', kind: 'agent', label: 'Write it' },
+      { id: 'ask', kind: 'hitl', label: 'Approve the document?', config: { channel: 'chat', mode: 'output' } },
+    ], [{ from: 'run', to: 'ask' }]);
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('awaiting-review');
+    const q = pendingQuestion(contextRoot, 'digest')!;
+    expect(q.choices).toEqual(['approve', 'reject']);
+    expect(q.question.split(/\n\s*\n/)[0]).toBe('Test — digest wrote this report. Publish it?');
+    expect(q.question).toContain('All good.');
+  });
+
+  it('an @mention ASK skips the blanket sign-off: the answer publishes and nothing is pending', async () => {
+    createApproved('digest', { review: 'output' });
+    giveFlow('digest', [
+      { id: 'run', kind: 'agent', label: 'Write it' },
+      { id: 'ask', kind: 'hitl', label: 'Approve the document?', config: { channel: 'chat', mode: 'output' } },
+    ], [{ from: 'run', to: 'ask' }]);
+    const { impl, calls } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', {
+      home, spawnImpl: impl, now: () => NOW, fireAt: NOW, ask: 'anyone waiting on a reply?',
+    });
+    expect(outcome.status).toBe('ok');
+    expect(outcome.outputPath).not.toBeNull();
+    expect(existsSync(outcome.outputPath!)).toBe(true);
+    expect(pendingQuestion(contextRoot, 'digest')).toBeNull();
+    // …and the brief says there is no sign-off after it, and how to ask for a real decision.
+    const prompt = calls[0][calls[0].indexOf('-p') + 1];
+    expect(prompt).toContain('no approval step runs after you');
+    expect(prompt).toContain('automations propose digest');
+  });
+
+  it('the same manifest fired UNATTENDED still stops for its sign-off', async () => {
+    createApproved('digest', { review: 'output' });
+    const { impl } = capturingSpawn(CLAUDE_JSON_OK);
+    const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
+    expect(outcome.status).toBe('awaiting-review');
+    expect(pendingQuestion(contextRoot, 'digest')!.choices).toEqual(['approve', 'reject']);
+  });
+
   it('binds the session of a clean run that asked NOTHING — talking to the latest run depends on it', async () => {
     // The regression that surfaced as Telegram's "no session to talk to yet"
     // on a machine full of completed runs: the binding write lived inside the

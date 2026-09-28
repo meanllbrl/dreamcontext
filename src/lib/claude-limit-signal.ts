@@ -229,3 +229,59 @@ export function readLimitSignal(frame: unknown): LimitSignal | null {
   if (str(message.model) !== '<synthetic>') return null;
   return fromText(assistantText(message));
 }
+
+/**
+ * A limit banner is ONE LINE. A document is not.
+ *
+ * The ceiling that lets the envelope reader below run a text check at all: the CLI's
+ * refusal is a single sentence with a reset time, while an automation's output document
+ * is a whole report. Anything past this length is the second thing.
+ */
+export const LIMIT_BANNER_MAX_CHARS = 400;
+
+/**
+ * The `--output-format json` envelope's version of {@link readLimitSignal}.
+ *
+ * ── Why a second entry point rather than one more reader ──────────────────────────────
+ * `readLimitSignal` reads STREAM frames. An automation runs `claude -p --output-format
+ * json` (`runner.ts` `buildClaudeArgs`), which answers with ONE envelope: `{ result,
+ * is_error, session_id, … }`. Readers 1-3 there are shape-based — they look for
+ * `quotaLimits`, a `rate_limit_event` type, or the `error`/`apiErrorStatus` pair — so they
+ * run on that envelope unchanged and are tried first, because they carry the window and
+ * the true reset.
+ *
+ * Reader 4 cannot be reused, and that is the whole reason this function exists. Its
+ * false-positive gate is `message.model === '<synthetic>'`, and a `-p json` envelope has
+ * no `message` at all. So the text arm gets a gate of its own, built on the same principle
+ * the module header sets out — a false positive is the expensive direction — and it is
+ * deliberately three conditions, not one:
+ *
+ *   1. the CLI's own phrase shapes (`LIMIT_PHRASES`), AND
+ *   2. at most {@link LIMIT_BANNER_MAX_CHARS}, AND
+ *   3. no markdown heading anywhere in the text.
+ *
+ * (2) and (3) are what keep an automation whose JOB is to write about usage limits from
+ * suppressing its own report: such a document runs to thousands of characters and opens
+ * with a heading, so it cannot be mistaken for a refusal. Without them the honest cost of
+ * a false positive is not a wasted retry — it is a run that silently publishes nothing.
+ *
+ * `resultText` is passed separately rather than dug out of the envelope because the caller
+ * (`parseClaudeJson`) has already narrowed it to a string and is the only place that knows
+ * which field carried it.
+ */
+export function readEnvelopeLimitSignal(
+  envelope: unknown,
+  resultText: string | null,
+): LimitSignal | null {
+  // The structured readers first — they name the window and the real reset time; the text
+  // arm can only ever guess the window from wording.
+  const structured = readLimitSignal(envelope);
+  if (structured) return structured;
+
+  if (!resultText) return null;
+  if (resultText.length > LIMIT_BANNER_MAX_CHARS) return null;
+  // A heading means a document. `^\s*#{1,6}\s` in multiline — a `#` mid-sentence (a issue
+  // number, a CSS colour) is not a heading and must not disqualify a real banner.
+  if (/^\s*#{1,6}\s/m.test(resultText)) return null;
+  return fromText(resultText);
+}

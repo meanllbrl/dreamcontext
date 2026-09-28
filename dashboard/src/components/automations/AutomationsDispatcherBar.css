@@ -18,8 +18,8 @@
 
 .auto-dispatch-dot {
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
+  width: var(--space-2);
+  height: var(--space-2);
   border-radius: var(--radius-full);
   background: var(--color-text-tertiary);
 }
@@ -45,45 +45,48 @@
 .auto-dispatch-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
 
 .auto-dispatch-text strong {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
 
 .auto-dispatch-text span {
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   color: var(--color-text-secondary);
 }
 
 .auto-dispatch-text code {
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: inherit;
   color: var(--color-text);
 }
 
+/* The accent border and soft fill say "this is the fix"; the WORDS are body ink. Accent ink
+   on accent-soft over the warn tint measured 3.24:1 (light) and 3.40:1 (dark). */
 .auto-dispatch-btn {
   flex-shrink: 0;
   border: 1px solid var(--color-accent);
   background: var(--color-accent-soft);
-  color: var(--color-accent);
+  color: var(--color-text);
   border-radius: var(--radius-sm);
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
+  min-height: var(--space-6);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .auto-dispatch-btn:hover:not(:disabled) {
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .auto-dispatch-btn:disabled {
@@ -111,4 +114,101 @@
   width: 100%;
   max-width: 580px;
   margin: var(--space-2) 0 0;
+}
+
+/* ─── the tight variant ──────────────────────────────────────────────────
+   For the two states that are not a problem to solve: "on" and "off". Both
+   are true every single time the page opens, so the paragraph under them was
+   read once and then occupied a third of the channel's first screen for ever.
+   One line, sentence continuing inline, same dot and same button.
+
+   The two WARN states keep their paragraph on purpose — there the "why" IS
+   the fix, and it is the first time the reader has seen it.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.auto-dispatch--tight {
+  padding: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.auto-dispatch--tight .auto-dispatch-text {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+/* ─── the tray row (variant="alerts") ────────────────────────────────────
+   A WARN state as one flat row of the page header's notice tray: no card, no margin,
+   full bleed (the tray takes back the header's inset and this row restores it), exactly
+   one 32px line. The warning tint stays: the scheduler not firing IS the hot thing. The
+   headline never wraps; cut, it keeps its whole sentence on its tooltip.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.auto-dispatch--row {
+  margin: 0;
+  min-height: var(--space-8);
+  padding: 0 var(--space-5);
+  border: 0;
+  border-radius: 0;
+}
+
+.auto-dispatch--row .auto-dispatch-text {
+  flex-direction: row;
+  align-items: baseline;
+}
+
+.auto-dispatch--row .auto-dispatch-text strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── the header pill (variant="inline") ─────────────────────────────────
+   The healthy states as one small control on the page's header row: a dot and
+   two words, the detail in the tooltip. Quiet by design; the dot carries the
+   state, and only "on" spends the success colour on it.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.auto-dispatch-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.auto-dispatch-pill:hover:not(:disabled) {
+  border-color: var(--color-text-tertiary);
+  color: var(--color-text);
+}
+
+/* Switching: "Turning off…" is the live status the reader is waiting on, so it keeps full
+   ink. Busy is carried by MOTION on the dot (orthogonal to its colour, which is the state). */
+.auto-dispatch-pill:disabled { cursor: progress; opacity: 1; }
+
+.auto-dispatch-pill:disabled .auto-dispatch-dot {
+  animation: agentDotPulse var(--motion-breath) ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auto-dispatch-pill:disabled .auto-dispatch-dot { animation: none; }
+  .auto-dispatch-btn,
+  .auto-dispatch-pill { transition: none; }
+}
+
+.auto-dispatch-pill--on .auto-dispatch-dot {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 22%, transparent);
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { MaturityTag } from '../common/MaturityTag';
 import {
   useTaskOverrideDoc,
   useRemoveCustomFieldDef,
@@ -90,7 +91,7 @@ export function TaskOverrideEditor() {
     <section className="settings-section">
       <h2 className="settings-section-title">
         Task Format & Custom Fields
-        <span className="settings-beta-badge">BETA</span>
+        <MaturityTag level="beta" />
       </h2>
       <p className="settings-field-hint">
         Declare custom fields for this project — they’re written to <code>overrides/task.md</code> (committed

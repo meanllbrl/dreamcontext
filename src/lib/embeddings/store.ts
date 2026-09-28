@@ -4,6 +4,7 @@ import fg from 'fast-glob';
 import { docKey, type CorpusDoc, type CorpusType } from '../recall.js';
 import { chunkDoc, type Chunk } from './chunker.js';
 import { EMBED_MODEL, embedPassages } from './embedder.js';
+import { acquireFileLockWithin, releaseFileLock } from '../file-lock.js';
 
 /**
  * Content-hash-addressed embedding cache — the "embed on change" engine.
@@ -317,6 +318,41 @@ export interface RefreshOptions {
    * index-build endpoint, sleep), which SHOULD prune deleted docs.
    */
   additive?: boolean;
+  /**
+   * How a writer that finds the vault's cache lock held behaves. `true` (default — the
+   * index build, sleep, `embed refresh`, dedup): spin up to {@link lockWaitMs}, then throw
+   * {@link EmbeddingLockBusyError} and write nothing. `false` (the recall hook's additive
+   * refresh, which must never block a prompt): one try; busy → its freshly computed vectors
+   * are not persisted (a later prompt recomputes them) and it searches what it loaded.
+   */
+  waitForLock?: boolean;
+  /** Bounded-spin budget for `waitForLock`. Default {@link EMBED_LOCK_WAIT_MS}; tests shorten it. */
+  lockWaitMs?: number;
+}
+
+/** Bounded spin a waiting writer gives the cache lock before it gives up. */
+export const EMBED_LOCK_WAIT_MS = 30_000;
+/** A lock older than this belongs to a crashed holder. The critical section is a reload,
+ *  a merge and a rename — milliseconds — because embedding happens OUTSIDE the lock, so a
+ *  slow first build can never hold it anywhere near this long. */
+export const EMBED_LOCK_STALE_MS = 60_000;
+
+/** The bounded spin ran out: another writer held the vault's cache lock. Nothing was written. */
+export class EmbeddingLockBusyError extends Error {
+  constructor() {
+    super('Another embedding-index write is in progress for this vault — try again shortly.');
+    this.name = 'EmbeddingLockBusyError';
+  }
+}
+
+/** `<contextRoot>/.embeddings/cache.lock` — one writer per vault, across processes. */
+export function embeddingCacheLockPath(contextRoot: string): string {
+  return join(contextRoot, CACHE_DIR, 'cache.lock');
+}
+
+function sameEntry(a: CacheDocEntry | undefined, b: CacheDocEntry): boolean {
+  return !!a && a.path === b.path && a.mtimeMs === b.mtimeMs && a.sizeBytes === b.sizeBytes
+    && a.hashes.length === b.hashes.length && a.hashes.every((h, i) => h === b.hashes[i]);
 }
 
 /**
@@ -325,8 +361,17 @@ export interface RefreshOptions {
  * new/changed chunk hashes are embedded; vectors and doc entries that no longer
  * correspond to any corpus chunk are evicted.
  *
+ * WRITES ARE SERIALIZED PER VAULT. Several processes refresh one cache (a hook per prompt,
+ * the server's index build, sleep, `embed refresh`), and a plain load → modify → save lets
+ * the later save drop the earlier one's vectors. So: embeddings are COMPUTED outside the
+ * lock against a snapshot; then, under `<cache>/cache.lock`, the cache is RELOADED from
+ * disk, the new vectors merged in (add-only; a prune may also evict, but only what was
+ * already in the snapshot — a vector another writer added mid-refresh is never pruned by a
+ * stale view), saved by tmp + rename, and the lock released.
+ *
  * Returns null when the embedding model is unavailable (caller falls back to
- * BM25-only). `embed` is injectable for tests.
+ * BM25-only). `embed` is injectable for tests. Throws {@link EmbeddingLockBusyError} when a
+ * waiting writer's bounded spin runs out.
  */
 export async function refreshEmbeddings(
   contextRoot: string,
@@ -334,6 +379,7 @@ export async function refreshEmbeddings(
   embed: (texts: string[], onProgress?: (done: number, total: number) => void) => Promise<Float32Array[] | null> = embedPassages,
   opts: RefreshOptions = {},
 ): Promise<{ index: DenseIndex; stats: RefreshStats } | null> {
+  // The snapshot this refresh computes against. Never written back as-is.
   const cache = loadCache(contextRoot);
 
   // 1. Chunk every corpus doc. mtime+size pre-filter: when a doc's file stat is
@@ -394,19 +440,21 @@ export async function refreshEmbeddings(
     }
   }
 
-  // 3. Embed only the missing chunks.
+  // 3. Embed only the missing chunks — OUTSIDE the lock, so a multi-minute first
+  //    build never holds it.
   let embeddedCount = 0;
+  const added: Record<string, string> = {};
   if (missing.length > 0) {
     const texts = missing.map((h) => chunkTextByHash.get(h) ?? '');
     const vectors = await embed(texts, opts.onProgress);
     if (vectors === null) return null; // model unavailable → BM25-only fallback
     for (let i = 0; i < missing.length; i++) {
-      cache.vectors[missing[i]] = encodeVector(vectors[i]);
+      added[missing[i]] = encodeVector(vectors[i]);
     }
     embeddedCount = missing.length;
   }
 
-  // 4. Reconcile the cache.
+  // 4. Reconcile.
   //
   // ADDITIVE mode (recall time): merge the wanted docs in and keep everything
   // else. Recall may be handed a TYPE-SCOPED corpus (the dashboard's Knowledge
@@ -418,33 +466,68 @@ export async function refreshEmbeddings(
   // PRUNE mode (default — explicit `embed refresh`, the index-build endpoint,
   // sleep): the corpus is authoritative and whole, so drop docs/vectors that no
   // longer exist. This is the only place the cache is allowed to shrink.
-  let evicted = 0;
-  let docsChanged = false;
-  if (opts.additive) {
+  //
+  // `apply` is run against a cache and mutates it; it is run first against the
+  // snapshot as a dry run (nothing changed → no lock, no write — the common prompt
+  // case), then for real against the cache RELOADED under the lock.
+  const snapshotDocKeys = new Set(Object.keys(cache.docs));
+  const snapshotVectorKeys = new Set(Object.keys(cache.vectors));
+  const apply = (target: CacheFile): { changed: boolean; evicted: number } => {
+    let changed = false;
+    for (const [h, v] of Object.entries(added)) {
+      if (target.vectors[h] === undefined) { target.vectors[h] = v; changed = true; }
+    }
     for (const [key, { entry }] of wanted) {
-      if (cache.docs[key] !== entry) docsChanged = true; // re-chunked → new object
-      cache.docs[key] = entry;
+      if (!sameEntry(target.docs[key], entry)) { target.docs[key] = entry; changed = true; }
+      // A reused hash another writer's prune dropped meanwhile comes back from the snapshot.
+      for (const h of entry.hashes) {
+        if (target.vectors[h] === undefined && cache.vectors[h] !== undefined) {
+          target.vectors[h] = cache.vectors[h];
+          changed = true;
+        }
+      }
     }
-    // cache.vectors already holds the new embeds (step 3); out-of-scope vectors stay.
-  } else {
-    const referenced = new Set<string>();
-    const newDocs: Record<string, CacheDocEntry> = {};
-    for (const [key, { entry }] of wanted) {
-      newDocs[key] = entry;
-      for (const h of entry.hashes) referenced.add(h);
+    let evictedHere = 0;
+    if (!opts.additive) {
+      // Only what THIS refresh saw before it started may be pruned.
+      for (const key of Object.keys(target.docs)) {
+        if (!wanted.has(key) && snapshotDocKeys.has(key)) { delete target.docs[key]; changed = true; }
+      }
+      const referenced = new Set<string>();
+      for (const d of Object.values(target.docs)) for (const h of d.hashes) referenced.add(h);
+      for (const h of Object.keys(target.vectors)) {
+        if (!referenced.has(h) && snapshotVectorKeys.has(h)) { delete target.vectors[h]; evictedHere++; changed = true; }
+      }
     }
-    const newVectors: Record<string, string> = {};
-    for (const [h, v] of Object.entries(cache.vectors)) {
-      if (referenced.has(h)) newVectors[h] = v;
-      else evicted++;
+    return { changed, evicted: evictedHere };
+  };
+
+  const dry: CacheFile = { ...cache, docs: { ...cache.docs }, vectors: { ...cache.vectors } };
+  let { changed, evicted } = apply(dry);
+  let final = dry;
+  if (changed) {
+    const lockPath = embeddingCacheLockPath(contextRoot);
+    const waitForLock = opts.waitForLock ?? true;
+    const held = await acquireFileLockWithin(lockPath, {
+      waitMs: waitForLock ? (opts.lockWaitMs ?? EMBED_LOCK_WAIT_MS) : 0,
+      staleMs: EMBED_LOCK_STALE_MS,
+    });
+    if (!held) {
+      if (waitForLock) throw new EmbeddingLockBusyError();
+      // Hook path: never waits. Nothing is persisted; the index below is built from the
+      // snapshot plus this refresh's vectors, held in memory for this one search.
+      evicted = 0;
+    } else {
+      try {
+        const fresh = loadCache(contextRoot);
+        ({ changed, evicted } = apply(fresh));
+        if (changed) saveCache(contextRoot, fresh);
+        final = fresh;
+      } finally {
+        releaseFileLock(lockPath);
+      }
     }
-    docsChanged =
-      Object.keys(newDocs).length !== Object.keys(cache.docs).length ||
-      Object.keys(newDocs).some((k) => cache.docs[k] !== newDocs[k]);
-    cache.docs = newDocs;
-    cache.vectors = newVectors;
   }
-  if (embeddedCount > 0 || evicted > 0 || docsChanged) saveCache(contextRoot, cache);
 
   // 5. Materialize the in-memory index (brute-force cosine downstream — exact
   //    and sub-millisecond at this corpus scale; ANN only pays past ~50k chunks).
@@ -453,7 +536,7 @@ export async function refreshEmbeddings(
   for (const [key, { entry }] of wanted) {
     for (let seq = 0; seq < entry.hashes.length; seq++) {
       const hash = entry.hashes[seq];
-      const b64 = cache.vectors[hash];
+      const b64 = final.vectors[hash];
       if (b64 === undefined) continue;
       const vector = decodeVector(b64);
       if (dims === 0) dims = vector.length;

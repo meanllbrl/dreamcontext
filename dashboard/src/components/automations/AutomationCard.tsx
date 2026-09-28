@@ -5,6 +5,25 @@ import { useVault } from '../../context/VaultContext';
 import { openAutomationQuestionChat } from '../../lib/automationRunChat';
 import './AutomationCard.css';
 
+/*
+ * STATUS, 2026-09-19 (agents step 1). The Agents page's member list
+ * (`components/agents/`) replaced this card as the surface a human reads an
+ * agent off. `AutomationCard` itself is therefore no longer mounted anywhere —
+ * it is kept, NOT deleted, for the length of the staged agents rollout
+ * (steps 2-4 reshape this page again) and because two things in this file are
+ * still live dependencies:
+ *
+ *  - `AskBlock`, exported below and rendered by `AgentMemberCard` — the open
+ *    question in the run's own words, with the approval decision inline. It is
+ *    the one capability the member list could not reproduce without copying,
+ *    and the detail panel does not carry it.
+ *  - `AutomationCard.css`, which owns `.auto-badge*` — reused by
+ *    `AutomationDetailPanel.css` (see its own comment at :188).
+ *
+ * Remove the unmounted `AutomationCard` component when step 4 lands and the
+ * page's shape has settled.
+ */
+
 /**
  * Status badges — keyed off `status` fields ONLY, never `error != null`.
  * `RunEvent.error`/`AutomationCacheSummary.error` can be non-null on an
@@ -120,7 +139,7 @@ function statusWord(status: RunStatus | null): string {
  *    anyone to. Answered inline, with an explicit decision and never free
  *    text: a human typing "no, this looks wrong" must not read as consent.
  */
-function AskBlock({
+export function AskBlock({
   summary, question, onToast,
 }: {
   summary: AutomationSummary;

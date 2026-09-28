@@ -59,13 +59,23 @@ A judge that only ever meets the work through the artifact stays independent.
 
 Builders are spawned and driven via the `claude` CLI, not the Agent tool:
 
+0. **Name every builder's session up front, and register it.** Mint the id before the
+   spawn (`uuidgen | tr A-Z a-z`), pass it as `--session-id <uuid>`, and record it on the
+   actor with `dreamcontext goal-live actor <id> --session <uuid>` (see *Live run state*).
+   That registration is what lets the app draw the builder as a live teammate in Chat:
+   its brief, each step it takes, running or done, and its whole transcript one click
+   away. It works however the builder runs: in the background, detached with `nohup`,
+   or still going after your own session has ended. Keep `claude -p` the command's own
+   executable (`nohup claude -p … &` is fine); never wrap it in a script file, which
+   hides the command from the app's own recognition of a headless run.
+
 1. **Spawn the planner** (once, at Phase 1):
    ```
-   claude -p "<goal + context>" --output-format json --model <tier-model> < /dev/null
+   claude -p "<goal + context>" --session-id <plannerId> --output-format json --model <tier-model> < /dev/null
    ```
    `< /dev/null` matters: a headless `-p` invocation with no stdin redirect can hang
-   waiting for input. Always redirect stdin explicitly. Parse the JSON response for
-   `session_id` and record it in the **Session registry** (below).
+   waiting for input. Always redirect stdin explicitly. The id you minted IS the
+   planner's `session_id`; record it in the **Session registry** (below).
 
 2. **Resume the same builder** for a revision round (only the delta is new tokens):
    ```
@@ -74,13 +84,14 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
 
 3. **Fork an implementer from the planner session** (Phase 4, once per task in a wave):
    ```
-   claude -p --resume <plannerId> --fork-session "<task Tn from the dep map>" \
+   claude -p --resume <plannerId> --fork-session --session-id <implId> "<task Tn from the dep map>" \
      --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
      --output-format json --model sonnet < /dev/null
    ```
-   `--fork-session` mints a **new** session id that inherits the planner's full context;
-   the planner's original session is untouched and stays resumable. Capture the new id
-   into the registry under `impl-<taskId>`.
+   `--fork-session` starts a **new** session that inherits the planner's full context, and
+   `--session-id <implId>` (a fresh uuid you minted) names it, so you know the id before it
+   runs. The planner's original session is untouched and stays resumable. Record the id in
+   the registry under `impl-<taskId>`.
 
    **The permission flags are not optional.** A headless `-p` session has no interactive
    permission prompt: an implementer forked without them stalls at its first Write with a
@@ -358,64 +369,159 @@ command + output).
 
 ## Live run state + viewer
 
-The goal-skill pack maintains one live state file **per orchestrator session** —
+The goal-skill pack maintains one live state file **per orchestrator session**:
 concurrent runs in different sessions each get their own file and never clobber each
-other. **The primary surface is the dreamcontext app**: the native live panel (above the
+other. **The primary surface is the dreamcontext app**: the quest map (above the
 composer in Terminal view, on the live rail in Chat view) + the dock chip render your run
-automatically (via the dashboard server) — nothing to start, nothing to announce.
+automatically, via the dashboard server. Nothing to start, nothing to announce. Do NOT
+start the standalone viewer or point the user at localhost unless they explicitly ask
+for a browser view outside the app (then: `node .claude/goal-skill-viewer.cjs` →
+`http://localhost:4747`).
 
-**At run start (right after the goal is confirmed, before Phase 1):** write the initial
-live file (snippet below) with `"phase":"plan"`. That's it — the app picks it up on its
-own. Do NOT start the standalone viewer or point the user at localhost unless they
-explicitly ask for a browser view outside the app (then:
-`node .claude/goal-skill-viewer.cjs` → `http://localhost:4747`).
+**The writer is the `dreamcontext goal-live` CLI, never a hand-written JSON file.** It
+keeps the append-only history and lineage arrays for you, stamps your session, writes
+atomically, sweeps abandoned runs (older than 3h) on `start`, is silent on success and
+always exits 0, so it can never break a chain or block a phase. It is telemetry, not a
+gate.
 
-You (the orchestrator, single writer of YOUR run's file) then maintain
-`_dream_context/tmp/.goal-skill-live.${CLAUDE_CODE_SESSION_ID}.json` at **every**
-phase transition, loop-back, and implementer state change:
+### The one rule: a goal-live call is never its own step
+
+Every `dreamcontext goal-live` call either rides **chained with `&&`** onto the Bash call
+it describes (the `claude -p …`, the `tasks log`, the `tasks status`), or is a parallel
+Bash call placed **FIRST in the same message** as the Agent dispatches it records. A
+standalone goal-live step is bookkeeping the user has to read past in the team log.
 
 ```bash
-mkdir -p _dream_context/tmp \
-  && find _dream_context/tmp -name '.goal-skill-live*.json' -mmin +180 -delete 2>/dev/null \
-  ; cat > "_dream_context/tmp/.goal-skill-live.${CLAUDE_CODE_SESSION_ID:-solo}.json" <<EOF
-{"goal":"<slug>","session":"${CLAUDE_CODE_SESSION_ID:-}",
- "started":"<run-start ISO8601>","updated":"<now ISO8601>",
- "phase":"impl","iters":{"plan":2,"review":2},
- "impl":{"wave":1,"waves":3,"forks":[{"s":"done"},{"s":"run"},{"s":"wait"}]}}
-EOF
+# Run start (right after the goal is confirmed): the file, the plan phase, the planner, in one step
+dreamcontext goal-live start --goal <slug> && dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind spawn --session <plannerId> && claude -p "<goal + context>" --session-id <plannerId> --output-format json --model <tier-model> < /dev/null
 ```
 
-(the `find … -delete` opportunistically sweeps abandoned runs older than 3h; it is
-best-effort — never let it block a write)
+```bash
+# Planner revision round N: the planner picks up where it left off
+dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind resume --round N --session <plannerId> && claude -p --resume <plannerId> "<the delta>" --output-format json < /dev/null
+```
 
-- **Per-session filename**: the file is named by YOUR `$CLAUDE_CODE_SESSION_ID`, so
-  two goal-skill runs in two different Claude Code sessions of the same project each
-  keep their own live state — both renderers scan every `.goal-skill-live*.json` in
-  `_dream_context/tmp/` and pick the run matching the viewing session. (The legacy
-  unsuffixed `.goal-skill-live.json` is still read for back-compat.)
-- `session`: ALWAYS include it exactly as above (the shell expands
-  `$CLAUDE_CODE_SESSION_ID`). It scopes the live surfaces to YOUR session — other
-  Claude Code sessions open on the same project stay clean. Without it the run state
-  leaks into every session of the project.
+```bash
+# first call of the dispatch message: plan review round N, then the goal-plan-reviewer Agent calls
+dreamcontext goal-live phase review && dreamcontext goal-live actor critic,pragmatist,edge-cases --kind fresh --round N
+```
+
+```bash
+# Verdicts ride on the next real step (here: the planner revision it triggers)
+dreamcontext goal-live state critic=NEEDS_WORK pragmatist=SOLID edge-cases=SOLID && claude -p --resume <plannerId> "<the delta>" --output-format json < /dev/null
+```
+
+```bash
+# Implementer forks: one actor call per lane (a --session names ONE run), each lane its own minted id
+dreamcontext goal-live phase impl --wave 1 --waves 3 && dreamcontext goal-live actor "T1=Role registry" --role implementer --kind fork --from planner --context-of <plannerId> --session <T1Id> && dreamcontext goal-live actor "T2=Tokens" --role implementer --kind fork --from planner --context-of <plannerId> --session <T2Id> && (claude -p --resume <plannerId> --fork-session --session-id <T1Id> "<task T1>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & claude -p --resume <plannerId> --fork-session --session-id <T2Id> "<task T2>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & wait)
+```
+
+```bash
+# first call of the dispatch message: code review round N (validator: phase validate, actor validator)
+dreamcontext goal-live phase codereview && dreamcontext goal-live actor reviewer --kind fresh --round N
+```
+
+```bash
+# Success end: the done file STAYS, so the win beat and the "How this was built" receipt remain reachable
+dreamcontext tasks status <slug> completed "all criteria met; validation passed via <method>" && dreamcontext goal-live phase done
+```
+
+```bash
+# Sign-off end (left for a human): the done file stays here too
+dreamcontext tasks status <slug> in_review "<what a human should eyeball>" && dreamcontext goal-live phase done
+```
+
+```bash
+# Escalation or abort ONLY: the one path that removes your file
+dreamcontext tasks log <slug> "escalated: <the finding that survived a fix>" && dreamcontext goal-live clear
+```
+
+The done file ages out on its own after 3h, or the next `start` in your session
+overwrites it. Another session's file is never yours to touch.
+
+**Register every `claude -p` builder with `--session <uuid>`** (the same id it was started
+with via `--session-id`). The app then reads that run's own transcript and draws it in
+Chat as a teammate: its brief, its live steps, running or done, and its report when it
+lands. Status is read from the run itself, so a builder that crashed never shows as
+running, and one you forgot to mark `done` still shows as finished. Judges dispatched
+through the Agent tool need no `--session`: the app already sees them.
+
+**Never write a `ctx` number yourself.** `--context-of <sessionId>` names the session
+whose context the forks INHERIT (the planner's `session_id` from the Session registry);
+the CLI measures it from that session's own transcript and records it on fork events
+only. If it cannot measure, the number is simply absent, and the app shows none.
+
+### Command reference
+
+```
+dreamcontext goal-live start --goal <slug> [--mode goal|develop]
+dreamcontext goal-live phase <plan|review|task|impl|codereview|validate|done> [--wave N] [--waves N]
+dreamcontext goal-live actor <id[=name],…> --kind <spawn|fork|resume|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>] [--session <uuid>] [--wave N]
+dreamcontext goal-live state <id=word> [<id=word> …] [--wave N]
+dreamcontext goal-live recipe develop
+dreamcontext goal-live clear
+```
+
+- `actor` ids are comma-separated `id[=name]`. The role defaults to the id when the id is
+  a role (`planner`, `critic`, `pragmatist`, `edge-cases`, `security`, `reviewer`,
+  `validator`); otherwise pass `--role` (implementer lanes: `--role implementer`).
+- `--kind`: `spawn` (a new builder briefed), `fork` (a builder that starts with another
+  one's full context), `resume` (a builder picked up where it left off), `fresh` (a
+  judge that sees only the artifact).
+- `state` words: `run | done | wait | fail`, or a verdict `SOLID | NEEDS_WORK | PASS |
+  FAIL` (which also marks the actor done).
+- `--session <uuid>`: the actor's own `claude -p --session-id` (a UUID). One id per call,
+  since a run belongs to one actor. For a `resume` it is the resumed run's existing id.
+- `clear` is for escalation and abort only, never for the success path.
+- `--mode develop`, `--wave` and `recipe develop` belong to **Develop mode chats**, not to
+  this orchestrator. A Develop run writes the same file with `mode: develop`: builders per
+  wave (`w<N>-<lane>`, `--wave N`), a clean reviewer after EVERY wave (`w<N>-reviewer`,
+  its verdict credited to that wave), a validator at the end, and `start` adopts the run on a
+  reopen or handoff instead of wiping it. `recipe develop` prints that procedure. This pack's
+  own flow is unchanged: its Phase 5 still reviews once, after the last wave.
+
+### What the file holds (schema reference)
+
+The CLI writes this shape; you never do. Every field past `phase` is optional, and a
+file written by an older skill (no `judges`, `history`, `lineage`, anonymous forks)
+still renders.
+
+```json
+{"goal":"<slug>","session":"<CLAUDE_CODE_SESSION_ID>",
+ "started":"2026-09-25T10:00:00Z","updated":"2026-09-25T10:42:00Z",
+ "phase":"impl","iters":{"plan":2,"review":2,"impl":1},
+ "impl":{"wave":1,"waves":3,"forks":[{"s":"done","id":"T1","name":"Role registry","role":"implementer"},{"s":"run","id":"T2","name":"Tokens","role":"implementer"}]},
+ "judges":[{"s":"done","id":"critic","role":"critic","v":"SOLID"}],
+ "history":[{"p":"plan","at":"2026-09-25T10:00:00Z"},{"p":"review","at":"2026-09-25T10:12:00Z"},{"p":"impl","at":"2026-09-25T10:30:00Z"}],
+ "lineage":[{"a":"planner","role":"planner","k":"spawn","r":1,"at":"2026-09-25T10:00:00Z","sid":"4e413671-2b2d-41df-a8f9-ce84afce4f7c"},
+            {"a":"critic","role":"critic","k":"fresh","r":1,"at":"2026-09-25T10:12:00Z"},
+            {"a":"planner","role":"planner","k":"resume","r":2,"at":"2026-09-25T10:20:00Z"},
+            {"a":"T1","role":"implementer","k":"fork","from":"planner","name":"Role registry","at":"2026-09-25T10:30:00Z","ctx":182000,"sid":"9e3811bf-e4d8-45a1-bcb5-ede8e7dff5d6"}]}
+```
 
 - `phase`: `plan | review | task | impl | codereview | validate | done`.
-- `iters.<phase>`: loop count for that phase — the renderers glow hotter the more it
-  looped (×2 yellow, ×3 bright, ≥4 red).
-- `impl.forks[].s`: `run | done | wait | fail` — one dot per implementer fork;
-  `wave`/`waves` show wave progress.
-- Set `"phase":"done"` on Phase-6 PASS, then **delete YOUR file** after the final
-  report (also delete on escalation):
-  `rm -f "_dream_context/tmp/.goal-skill-live.${CLAUDE_CODE_SESSION_ID:-solo}.json"`
-  — never `rm` the whole glob; another session's run may be live. A file older than
-  3h is treated as abandoned and ignored by the renderers.
-- Never let live-state upkeep block a phase; it is telemetry, not a gate.
+- `iters.<phase>`: how many times that phase ran. The quest map shows it as a round
+  counter.
+- `impl.forks[]`: one per implementer lane (`s` = `run | done | wait | fail`, plus
+  `id` / `name` / `role`); `judges[]`: the judges seated for the current phase, with
+  their verdict in `v`.
+- `history[]`: every phase change, oldest first (last 40 kept).
+- `lineage[]`: who briefed, copied or brought back whom (last 120 kept; `impl.forks` keeps
+  the last 24). It is what the app's "How this was built" receipt is drawn from.
+- Develop runs only (`mode: develop`): `tab` (the owning chat pane), `reviewed` (the highest
+  wave whose reviewer passed), `w` on history entries, forks and lineage (the wave), and `v`
+  on lineage (a verdict that outlives the seat it was given in). A goal-skill file carries
+  none of them.
+
+Standalone viewer and demo:
+
 - **Optional standalone viewer** (on request only): `.claude/goal-skill-viewer.cjs`
-  serves `http://localhost:4747` — phase nodes with arrows, loop-back arcs that glow
-  hotter per iteration, implementer forks as satellite dots around IMPL, wave counter,
-  and a run-switcher chip row when more than one session has a live run. Same JSON, no
-  extra upkeep. Useful when the user works outside the dreamcontext app.
-- `node .claude/goal-skill-demo.cjs` drives a fake run through every phase — useful to
-  demo the live surfaces without spawning agents.
+  serves `http://localhost:4747`: phase nodes with arrows, loop-back arcs that glow
+  hotter per iteration, implementer forks as satellite dots, wave counter, and a
+  run-switcher chip row when more than one session has a live run. Same JSON, no extra
+  upkeep.
+- `node .claude/goal-skill-demo.cjs` drives a fake run through every phase, lineage
+  included, to demo the live surfaces without spawning agents.
 
 ## Convergence rules (how the loops end)
 

@@ -392,3 +392,18 @@
 @media (prefers-reduced-motion: reduce) {
   .setting-group-summary::before { transition: none; }
 }
+
+/* Local dictation's install state (DictationInstall.tsx): a line of status, then the button or
+   the download's progress. Shared by Settings → Voice and the Assistant setup. */
+.dictation-install {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.dictation-install__bar {
+  width: 100%;
+  min-width: 200px;
+  height: var(--space-2);
+  accent-color: var(--color-accent);
+}

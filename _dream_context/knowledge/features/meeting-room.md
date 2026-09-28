@@ -9,7 +9,7 @@ description: >-
   follow-up), one active thread with kept history
 pinned: false
 date: '2026-08-26'
-status: active
+status: deprecated
 created: '2026-08-26'
 updated: '2026-09-07'
 released_version: 0.27.0
@@ -30,6 +30,23 @@ related_tasks:
 ---
 
 ## Why
+
+> # ⛔️ RETIRED — REMOVED FOR 0.28.0 (2026-09-26)
+>
+> **This feature no longer ships. Do not read anything below as a live capability.**
+> The owner folded it into the dreamcontext Assistant (`features/dreamcontext-assistant.md`,
+> task `a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica`, wave W5).
+>
+> **What was REMOVED:** the hidden Meeting Room window behind the launcher's core logo, its
+> `/api/meeting` routes, `src/lib/meeting-room.ts` + `meeting-delivery.ts`, the dashboard
+> components/hook, its Tauri capability, its verify script and its tests.
+>
+> **What REPLACED it:** `dreamcontext assistant broadcast "<rule>"` — each project's OWN agent
+> writes it (`runPeerHeadless`, which stays), one row per vault `replied | failed | timeout |
+> missing`, reported as "written in N of M".
+>
+> **What was KEPT:** the thread records on disk at `~/.dreamcontext/meeting-room/threads/` —
+> nothing reads them any more, and nothing deletes them.
 
 Peer mail addresses one vault; the user had no surface to address ALL agents at once. Announcements, house rules and cross-project questions meant repeating the same message into N windows. The Meeting Room turns N context-switches into one post, and moves the relevance decision to the agents themselves: each wakes with its own brain loaded and replies or answers exactly PASS.
 

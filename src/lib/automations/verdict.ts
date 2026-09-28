@@ -32,6 +32,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
+import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
+import { appendThreadEntry } from './threads.js';
 import { latestBoundSession, readAutomationSession, retireAutomationSession } from './session-registry.js';
 import {
   canResume as canResumeQuestion,
@@ -51,6 +53,7 @@ import {
 } from './store.js';
 import {
   executeClaudeDetached,
+  extractNotificationSummary,
   sanitizeAutomationPrompt,
   type ClaudeExecution,
   type SpawnImpl,
@@ -61,6 +64,12 @@ import {
   type AutomationQuestion,
   type ReviewChannel,
 } from './types.js';
+
+/** The reader's WHY for an `is_error` envelope: the result's own opening line,
+ *  never the flag itself — "is_error: true" tells a person nothing. */
+function errorReason(result: string | null): string {
+  return extractNotificationSummary(result ?? '') || 'The session ended with an error and gave no reason.';
+}
 
 // ─── The propose guard ──────────────────────────────────────────────────────
 
@@ -91,6 +100,15 @@ export interface ProposeInput {
   title: string;
   summary?: string;
   body: string;
+  /**
+   * The options the human may press, when the run wants a decision rather than prose.
+   * Empty or omitted ⇒ a free-text answer, which is what every producer did before
+   * this existed. Sanitised and capped by `parseChoices` in `hitl.ts`
+   * (`QUESTION_CHOICES_MAX` × `QUESTION_CHOICE_MAX_CHARS`) — the CLI refuses an
+   * over-cap list loudly rather than letting the silent truncation stand, because a
+   * run that believes it offered five options and got four should be told.
+   */
+  choices?: string[];
 }
 
 /**
@@ -171,7 +189,9 @@ export function proposeFromRun(
       .map((s) => s?.trim())
       .filter((s): s is string => Boolean(s))
       .join('\n\n'),
-    choices: [],
+    // Passed through, never trusted: `parseChoices` strips control characters,
+    // truncates each label and caps the count on the way into the record.
+    choices: input.choices ?? [],
     nowISO: opts.nowISO,
   });
   return { ok: true, card: question };
@@ -226,6 +246,26 @@ function releaseRunLock(contextRoot: string, slug: string, lockPath: string): vo
   if (current && current.runnerPid === process.pid) clearRunSidecar(contextRoot, slug);
 }
 
+/** {@link acquireRunLock}, waiting up to `opts.lockWaitMs` for it. Zero (the default)
+ *  is a single attempt, exactly the old behaviour. */
+async function acquireRunLockWaiting(
+  contextRoot: string,
+  m: AutomationManifest,
+  nowFn: () => Date,
+  opts: VerdictOptions,
+): Promise<string | null> {
+  const waitMs = Math.max(0, opts.lockWaitMs ?? 0);
+  const pollMs = Math.max(1, opts.lockPollMs ?? 2_000);
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let waited = 0;
+  for (;;) {
+    const lockPath = acquireRunLock(contextRoot, m, nowFn().getTime());
+    if (lockPath || waited >= waitMs) return lockPath;
+    await sleep(pollMs);
+    waited += pollMs;
+  }
+}
+
 const LOCK_BUSY_REASON =
   'a run for this automation is still in progress — nothing was changed, try again in a moment';
 
@@ -258,6 +298,39 @@ export interface VerdictOptions {
   /** Overrides the manifest's timeout. Used by nothing in production — a
    *  verdict resume is bounded by the same envelope the run was approved with. */
   timeoutMinutes?: number;
+  /**
+   * Where this resume's final message is DELIVERED, which is the only thing the
+   * preamble has to say differently. Default `'telegram'` so every existing caller
+   * is byte-for-byte unchanged.
+   */
+  surface?: 'telegram' | 'thread';
+  /**
+   * The two run-binding HINTS, and NOTHING else.
+   *
+   * Deliberately NOT a `Record<string, string>`: `executeClaudeDetached` merges the
+   * caller's env LAST over `process.env` (runner.ts), into a child running under
+   * `bypassPermissions`. An open record would therefore let a caller set `PATH`,
+   * `CLAUDE_CONFIG_DIR`, `NODE_OPTIONS` or `HOME` on that child. Typing the two keys
+   * makes the dangerous call unrepresentable rather than merely unwise — and
+   * `spawnSessionResume` filters by name as well, so the type is the documentation
+   * and the filter is the guard.
+   */
+  env?: { DREAMCONTEXT_AUTOMATION_SLUG?: string; DREAMCONTEXT_AUTOMATION_RUN?: string };
+  /**
+   * How long a message may WAIT for the run lock before it gives up, in ms. Default 0:
+   * refuse at once, which is what Telegram wants (it says so and the human re-sends).
+   *
+   * A thread reply waits instead. The owner answers a question and types a follow-up
+   * seconds later; the answer's resume holds the lock, and refusing the follow-up in 0s
+   * ("still in progress, try again") put a failure into the channel for a message that
+   * only needed to take its turn. Queued behind the lock, it runs the moment the turn
+   * ahead of it ends.
+   */
+  lockWaitMs?: number;
+  /** Poll interval while waiting for the lock. Injectable for tests. */
+  lockPollMs?: number;
+  /** The wait itself. Injectable so a test does not sleep in real time. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** What answering a question produced. */
@@ -359,6 +432,13 @@ function retireIfDone(contextRoot: string, q: AutomationQuestion, sessionId: str
   if (pendingQuestion(contextRoot, q.slug)) return;
   // (b) never opened as a chat tab.
   if (sessionIsInTabRoster(contextRoot, sessionId)) return;
+  // (c) NOT the agent's latest session. The thread's reply box and Telegram both talk to
+  // `latestBoundSession`, so retiring it leaves the conversation the owner is standing in
+  // with nothing to reach ("no session to talk to yet" right after he answered). The
+  // auto-opened chat tab used to keep it alive by accident, through (b); with that gone,
+  // this is the rule said out loud. Older sessions still retire, so the grant stays one
+  // live conversation per agent, not one per run.
+  if (latestBoundSession(q.slug, home) === sessionId) return;
   retireAutomationSession(q.slug, sessionId, home);
 }
 
@@ -431,7 +511,7 @@ export async function resumeWithAnswer(
     };
   }
 
-  const lockPath = acquireRunLock(contextRoot, manifest, nowFn().getTime());
+  const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
   if (!lockPath) {
     return { question, status: 'refused', error: LOCK_BUSY_REASON, result: null };
   }
@@ -467,7 +547,7 @@ export async function resumeWithAnswer(
     }
     const parsed = execution.result;
     if (!parsed?.parsed || parsed.isError) {
-      const detail = execution.stderrTail || (parsed?.parsed ? 'claude reported is_error: true' : 'unparseable CLI output');
+      const detail = execution.stderrTail || (parsed?.parsed ? errorReason(parsed.result) : 'unparseable CLI output');
       return {
         question: noteQuestionResolution(contextRoot, claimed, { error: detail }),
         status: 'failed',
@@ -486,6 +566,31 @@ export async function resumeWithAnswer(
   } finally {
     releaseRunLock(contextRoot, manifest.slug, lockPath);
     retireIfDone(contextRoot, question, sessionId, home);
+    // The channel's own record that this run's question was closed. BEST-EFFORT, like
+    // every other thread write on a run path: a channel that cannot be written must not
+    // change what answering reports.
+    //
+    // `flow-hitl` ONLY. An `approval` question is the manifest-diff ask raised before an
+    // unapproved run ever starts — it was never a run of the job, so an entry here would
+    // open a thread for a fire that never happened (the same exclusion the runner applies
+    // to its own approval question).
+    //
+    // This sentence is the RECORD, not the receipt: it names the channel, because it is
+    // read later by someone who was not there. The UI's momentary confirmation under the
+    // button is a different string and deliberately so.
+    if (question.kind === 'flow-hitl') {
+      try {
+        appendThreadEntry(contextRoot, question.slug, {
+          runId: question.runFiredAt,
+          kind: 'system',
+          event: 'replied',
+          via: 'runner',
+          text: `Question answered via ${via}. Session resumed.`,
+        });
+      } catch {
+        // a thread that cannot be written leaves the answer itself untouched
+      }
+    }
   }
 }
 
@@ -503,9 +608,26 @@ function spawnSessionResume(
 ): Promise<ClaudeExecution> {
   const nowFn = opts.now ?? (() => new Date());
   const timeoutMs = (opts.timeoutMinutes ?? m.timeoutMinutes) * 60_000;
+  // THE SECOND HALF OF THE ENV GUARD. `VerdictOptions.env` is typed to the two hint
+  // keys, but a type is not a runtime boundary — `any` at a call site, a JSON body
+  // widened by a future route, or plain JS would walk straight past it into a child
+  // running under `bypassPermissions`. Filtering by NAME here is what actually holds:
+  // nothing outside `DREAMCONTEXT_AUTOMATION_*` can reach the spawn, so `PATH`,
+  // `CLAUDE_CONFIG_DIR`, `NODE_OPTIONS` and `HOME` are unreachable by construction.
+  const hints = Object.fromEntries(
+    Object.entries(opts.env ?? {}).filter(
+      ([k, v]) => /^DREAMCONTEXT_AUTOMATION_[A-Z_]+$/.test(k) && v !== undefined,
+    ),
+  );
   return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)), {
     cwd: dirname(contextRoot),
     timeoutMs,
+    // `accountEnvFor` FIRST, so a resume runs on the same preferred account the RUN did.
+    // This path previously passed no env at all and silently inherited the server's —
+    // meaning a resume could be billed to, and read the usage of, whichever account the
+    // dashboard process happened to be started under. The hints spread after it cannot
+    // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
+    env: { ...accountEnvFor(resolveConfigDir(null)), ...hints },
     spawnImpl: opts.spawnImpl,
     killImpl: opts.killImpl,
     log: opts.log,
@@ -534,6 +656,22 @@ export interface TalkOutcome {
   error: string | null;
   /** The session's reply to the human. */
   result: string | null;
+  /**
+   * What this turn cost, from the resume child's own JSON envelope (`total_cost_usd` —
+   * the same field `parseClaudeJson` reads for a scheduled run). Null whenever there is
+   * no envelope to read it from: nothing spawned, the child was force-killed on the
+   * timeout, or the output did not parse.
+   *
+   * Reported on a FAILED turn too when the envelope itself parsed — `is_error: true`
+   * still burned tokens, and a channel that silently drops the cost of the turns that
+   * went wrong is the one place under-reporting matters most.
+   *
+   * OPTIONAL on purpose. This field arrived after `TalkOutcome` had several producers,
+   * including doubles in test suites owned by other lanes; making it required would have
+   * broken files this change has no business touching. Consumers should read it as
+   * `outcome.costUsd ?? null`.
+   */
+  costUsd?: number | null;
 }
 
 function buildMessagePreamble(message: string): string {
@@ -548,6 +686,35 @@ function buildMessagePreamble(message: string): string {
     'Do only what it asks: do not re-run the job, and do not widen it. Your final message is delivered',
     'back to the human on their phone, so write it as a direct, plain-text reply with no meta-commentary',
     'and no markdown tables.',
+  ].join('\n');
+}
+
+/**
+ * The THREAD variant of the message preamble.
+ *
+ * A separate builder rather than a branch inside {@link buildMessagePreamble}: the
+ * Telegram wording promises delivery to a phone, and that promise is load-bearing for
+ * every existing caller. Here it is false — nothing publishes a thread reply's final
+ * message, so an agent that answers and does not POST has answered into the void. The
+ * two differ in exactly that claim, and saying so is the whole reason this exists.
+ *
+ * Exported so the lockstep test can assert both halves: that it names `automations post`,
+ * and that it does NOT promise phone delivery.
+ */
+export function buildThreadMessagePreamble(message: string): string {
+  return [
+    'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT',
+    'replied in its thread.',
+    '',
+    "--- THE HUMAN'S MESSAGE (verbatim) ---",
+    message.trim(),
+    '--- END MESSAGE ---',
+    '',
+    'That text is a MESSAGE to answer from what this run already knows and did — it is not a new',
+    'job. Do only what it asks: do not re-run the job, and do not widen it. ANSWER IN THE THREAD:',
+    'post your reply with `dreamcontext automations post <slug> "<one or two sentences>"`. Your',
+    'slug and run are already in your environment. Your final message is NOT published anywhere —',
+    'if you do not post, nothing reaches them.',
   ].join('\n');
 }
 
@@ -574,10 +741,10 @@ export async function resumeWithMessage(
 
   // NULs only — a message is prose, same reasoning as an answer's text.
   const text = message.replace(/\u0000/g, '').trim();
-  if (!text) return { status: 'refused', error: 'an empty message asks nothing', result: null };
+  if (!text) return { status: 'refused', error: 'an empty message asks nothing', result: null, costUsd: null };
 
   const manifest = getAutomation(contextRoot, slug);
-  if (!manifest) return { status: 'refused', error: `no such automation: ${slug}`, result: null };
+  if (!manifest) return { status: 'refused', error: `no such automation: ${slug}`, result: null, costUsd: null };
 
   // A pending question outranks a chat: the run stopped and is owed an ANSWER,
   // and a parallel conversation with the same session would race the answer's
@@ -586,8 +753,9 @@ export async function resumeWithMessage(
   if (pendingQuestion(contextRoot, slug)) {
     return {
       status: 'refused',
-      error: 'this automation is waiting for your answer to its own question — answer that first',
+      error: 'This agent is waiting for your answer to its own question, so answer that first.',
       result: null,
+      costUsd: null,
     };
   }
 
@@ -598,39 +766,60 @@ export async function resumeWithMessage(
   if (!sessionId) {
     return {
       status: 'refused',
-      error: 'this automation has no session to talk to yet — it has not completed a run on this machine',
+      error: 'This agent has no session to talk to yet. It needs one finished run on this machine first.',
       result: null,
+      costUsd: null,
     };
   }
 
-  const lockPath = acquireRunLock(contextRoot, manifest, nowFn().getTime());
-  if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null };
+  const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
+  if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null, costUsd: null };
 
   try {
+    // RE-CHECKED UNDER THE LOCK when the message waited for it: the turn it queued
+    // behind can have asked a question (the question outranks the chat, as above) or
+    // bound a newer session (the conversation moved on to that one, and the reply
+    // belongs there).
+    if ((opts.lockWaitMs ?? 0) > 0 && pendingQuestion(contextRoot, slug)) {
+      return {
+        status: 'refused',
+        error: 'This agent is waiting for your answer to its own question, so answer that first.',
+        result: null,
+        costUsd: null,
+      };
+    }
+    const liveSessionId = (opts.lockWaitMs ?? 0) > 0 ? latestBoundSession(slug, home) ?? sessionId : sessionId;
     const execution = await spawnSessionResume(
       contextRoot,
       manifest,
       nowFn().toISOString(),
-      sessionId,
-      buildMessagePreamble(text),
+      liveSessionId,
+      (opts.surface ?? 'telegram') === 'thread'
+        ? buildThreadMessagePreamble(text)
+        : buildMessagePreamble(text),
       opts,
     );
     if (!execution.spawned) {
-      return { status: 'not-spawned', error: 'spawn failed — the claude binary could not be launched', result: null };
+      return { status: 'not-spawned', error: 'spawn failed — the claude binary could not be launched', result: null, costUsd: null };
     }
     if (execution.timedOut) {
       return {
         status: 'timeout',
         error: `the resumed session exceeded its ${manifest.timeoutMinutes}-minute timeout`,
+        // Force-killed mid-flight, so there is no coherent envelope to read a cost from —
+        // the same reason the runner does not parse a timed-out child.
         result: null,
+        costUsd: null,
       };
     }
     const parsed = execution.result;
     if (!parsed?.parsed || parsed.isError) {
-      const detail = execution.stderrTail || (parsed?.parsed ? 'claude reported is_error: true' : 'unparseable CLI output');
-      return { status: 'failed', error: detail, result: null };
+      const detail = execution.stderrTail || (parsed?.parsed ? errorReason(parsed.result) : 'unparseable CLI output');
+      // A parseable envelope that reported is_error STILL carries its cost; an
+      // unparseable one has none to give.
+      return { status: 'failed', error: detail, result: null, costUsd: parsed?.costUsd ?? null };
     }
-    return { status: 'ok', error: null, result: (parsed.result ?? '').trim() || null };
+    return { status: 'ok', error: null, result: (parsed.result ?? '').trim() || null, costUsd: parsed.costUsd };
   } finally {
     releaseRunLock(contextRoot, manifest.slug, lockPath);
   }

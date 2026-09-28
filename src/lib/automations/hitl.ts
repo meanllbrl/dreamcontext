@@ -130,9 +130,41 @@ function parseSteers(v: unknown): QuestionSteer[] {
   return out.slice(-REVIEW_STEER_LIMIT);
 }
 
+/**
+ * A button LABEL, not a paragraph. 64 keeps a Telegram `inline_keyboard` button and a
+ * dashboard button on one line; longer is truncated rather than dropped, so a clumsy
+ * choice still answers.
+ *
+ * NOT a mirror of the Bot API's 64-BYTE ceiling — that one is on `callback_data`, which
+ * `renderQuestionKeyboard` generates itself (`answer:<id>:<i>`, short and ours). This cap
+ * is about a legible label and a payload that sends at all.
+ */
+export const QUESTION_CHOICE_MAX_CHARS = 64;
+
+/** Four buttons under a message is a question; more is a form. */
+export const QUESTION_CHOICES_MAX = 4;
+
+/**
+ * Sanitise the offered answers — the FLOOR for every producer and every reader.
+ *
+ * It runs on the way IN (`createQuestion`) and on the way OUT (`readQuestion`), which is
+ * the point: a question file written by an older build, hand-edited, or synced from a
+ * teammate's vault is cleaned when it is read, not only when it is written.
+ *
+ * WHY THE CAPS ARE LOAD-BEARING and not tidiness: an agent may now author its own option
+ * set (`automations propose --choice`), and `renderQuestionKeyboard` maps each choice
+ * straight into an `inline_keyboard` button's `text`. One over-long or newline-bearing
+ * choice makes the whole Telegram send fail — so the human never sees the question and the
+ * run waits for an answer that can no longer be given. Control characters are STRIPPED
+ * rather than escaped: a button label has no use for them.
+ */
 function parseChoices(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
-  return v.filter((c): c is string => typeof c === 'string' && c.trim().length > 0).map((c) => c.trim());
+  return v
+    .filter((c): c is string => typeof c === 'string')
+    .map((c) => c.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, QUESTION_CHOICE_MAX_CHARS))
+    .filter((c) => c.length > 0)
+    .slice(0, QUESTION_CHOICES_MAX);
 }
 
 /**

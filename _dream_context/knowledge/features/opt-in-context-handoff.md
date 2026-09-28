@@ -5,11 +5,9 @@ name: "opt-in-context-handoff"
 description: >-
   Past ~300k tokens the agent is handed a note with its own numbers and told it
   may write its state into the task and continue in a fresh session — its own
-  call, never forced. The note ESCALATES: firm from 300k, and from 650k it must
-  hand off or tell the user why it didn't. `tasks handoff` records the request,
-  desktop Chat rotates itself with /clear, and the next session opens on a
-  HANDOFF banner naming the task. Off by default, per pane, remembered per vault
-  per machine.
+  call, never forced. The note ESCALATES: firm from 300k, must-hand-off-or-say-why
+  from 650k. `tasks handoff` records it and the next session opens on a HANDOFF
+  banner. Off by default, per pane, remembered per vault per machine.
 pinned: false
 date: "2026-09-13"
 status: "in_review"

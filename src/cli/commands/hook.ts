@@ -34,6 +34,8 @@ import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
+import { DEVELOP_LEAD_DENY_REASON, developLeadWriteDenied } from '../../lib/develop-lead-guard.js';
+import { chatTabTitleNudge } from '../../lib/chat-tab-title-nudge.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -66,7 +68,7 @@ import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-sta
 import { shouldStartAutoSleep, currentAutoSleepFingerprint } from '../../lib/auto-sleep.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import {
-  recordAgentSession, recordAgentFirstPrompt, readAgentSessionEntry, titleWorthyPrompt, UUID_RE,
+  recordAgentSession, UUID_RE,
 } from '../../lib/agent-session-map.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -1320,8 +1322,7 @@ function spawnAutoSleep(): void {
   // claude-like command), and the walk counts ONE claude — "not nested". The cycle's
   // own SessionStart/UserPromptSubmit hooks would then act as if they WERE the user's
   // tab: repoint the tab→conversation map at the consolidation (the tab resumes the
-  // wrong conversation, and its chat reads as LOST), overwrite the tab's captured
-  // first prompt with the sleep prompt, and consume the human's pending handoff
+  // wrong conversation, and its chat reads as LOST), and consume the human's pending handoff
   // banner into a run nobody is watching — the last of which
   // `selectHandoffForSessionStart` already documents as forbidden ("a headless
   // automation can neither receive nor consume a human's pending handoff").
@@ -1330,6 +1331,8 @@ function spawnAutoSleep(): void {
   const env = { ...process.env };
   delete env.DREAMCONTEXT_TAB_SESSION;
   delete env.CLAUDE_CODE_SESSION_ID;
+  // A Develop lead's Stop hook must not hand the cycle the lead's write backstop.
+  delete env.DREAMCONTEXT_DEVELOP_LEAD;
   const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
     detached: true,
     stdio: 'ignore',
@@ -1930,6 +1933,27 @@ export function registerHookCommand(program: Command): void {
           }));
           return;
         }
+        // Gate 1b: a Develop chat's LEAD writes no product code (builders do). The env check
+        // runs first, so every other session never pays for the ancestry walk.
+        const developLead = process.env.DREAMCONTEXT_DEVELOP_LEAD;
+        if (developLead === '1') {
+          const contextRoot = resolveContextRoot();
+          if (developLeadWriteDenied({
+            filePath,
+            root: contextRoot ? dirname(contextRoot) : null,
+            envValue: developLead,
+            nested: isNestedClaudeHook(),
+          })) {
+            console.log(JSON.stringify({
+              hookSpecificOutput: {
+                hookEventName: 'PreToolUse',
+                permissionDecision: 'deny',
+                permissionDecisionReason: DEVELOP_LEAD_DENY_REASON,
+              },
+            }));
+            return;
+          }
+        }
       }
 
       // Gate 2: redirect default Explore agent to dreamcontext-explore.
@@ -2015,30 +2039,21 @@ export function registerHookCommand(program: Command): void {
         }
       } catch { /* status is best-effort — the chip falls back to the screen heuristic */ }
 
+      // ── A Chat tab still named "Chat N" → remind its agent to name it ─────
+      // The briefing's title rule alone was skipped by ~4 chats in 5 (see
+      // chat-tab-title-nudge.ts). Silent once an assistant message carries a title;
+      // nested-guarded so a `claude -p` the agent runs via Bash is never told to.
+      try {
+        if (process.env.DREAMCONTEXT_CHAT_TAB === '1' && !isNestedClaudeHook()) {
+          const tp = typeof (input as Record<string, unknown>).transcript_path === 'string'
+            ? (input as Record<string, unknown>).transcript_path as string : undefined;
+          const nudge = chatTabTitleNudge(process.env, tp);
+          if (nudge) console.log(nudge);
+        }
+      } catch { /* advisory — must never break the prompt path */ }
+
       const root = resolveContextRoot();
       if (!root) process.exit(0);
-
-      // ── Embedded-tab first-prompt capture (the auto-title source) ────────────
-      // Claude Code ≥2.1.x buffers a live session's transcript in memory and only
-      // flushes `<uuid>.jsonl` on exit/rotation — so the dashboard's auto-title
-      // route can no longer read the first user message from disk while a tab is
-      // LIVE. This hook is the one place that prompt is observable in real time:
-      // record the conversation's first title-worthy prompt into the tab's
-      // session-map entry for /agent/title to fall back to. Runs BEFORE the
-      // consolidation-lock early return below — a mid-sleep tab still deserves a
-      // title. The write-once check runs before the `ps`-ancestry walk, so the
-      // common case (already captured) costs one file read, not a process-table
-      // scan. Wrapped: can NEVER break the reminder/recall path.
-      try {
-        const tabId = process.env.DREAMCONTEXT_TAB_SESSION ?? '';
-        const sid = typeof input.session_id === 'string' ? input.session_id : '';
-        const prompt = titleWorthyPrompt(String((input as Record<string, unknown>).prompt ?? ''));
-        if (prompt && UUID_RE.test(tabId) && UUID_RE.test(sid)) {
-          const entry = readAgentSessionEntry(root, tabId);
-          const captured = entry?.current === sid && !!entry.firstPrompt;
-          if (!captured && !isBackgroundAutoSleep() && !isNestedClaudeHook()) recordAgentFirstPrompt(root, tabId, sid, prompt);
-        }
-      } catch { /* best-effort — auto-title falls back to the transcript when it lands */ }
 
       // Standing sub-agent authorization (see SUBAGENT_DISPATCH_AUTHORIZATION).
       // Emitted BEFORE the consolidation-lock early return below, deliberately: a

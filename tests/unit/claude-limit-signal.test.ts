@@ -10,7 +10,7 @@
  * bills it there. So the cheap reader is gated hard, and the gate is tested from both sides.
  */
 import { describe, it, expect } from 'vitest';
-import { readLimitSignal } from '../../src/lib/claude-limit-signal.js';
+import { readLimitSignal, readEnvelopeLimitSignal, LIMIT_BANNER_MAX_CHARS } from '../../src/lib/claude-limit-signal.js';
 
 /** Verbatim from a real refused turn — see the module header. */
 const REAL_REJECTION = {
@@ -222,5 +222,81 @@ describe('totality — the relay runs this on every line', () => {
     const at = '2026-09-05T04:19:59.000Z';
     const sig = readLimitSignal({ quotaLimits: { status: 'rejected', resetsAt: at, rateLimitType: 'five_hour' } })!;
     expect(sig.resetsAtMs).toBe(Date.parse(at));
+  });
+});
+
+/**
+ * `readEnvelopeLimitSignal` — the `--output-format json` door.
+ *
+ * An automation does not read a stream; it reads ONE envelope, and a capped turn puts the
+ * banner in `result` with `is_error: false`. The structured readers work there unchanged;
+ * the text reader cannot (no `message`, so no `<synthetic>` gate), so it gets a gate of its
+ * own. These tests exist to hold that gate from BOTH sides — a missed banner publishes a
+ * quota message as the day's document, and a false positive silently suppresses a real
+ * report. The second is the one with no visible symptom, so it is tested hardest.
+ */
+describe('readEnvelopeLimitSignal — the -p json envelope', () => {
+  const BANNER = "You've hit your session limit · resets 9:30pm (Europe/Istanbul)";
+
+  it('reads the banner out of `result` when nothing structured is present', () => {
+    const sig = readEnvelopeLimitSignal({ result: BANNER, is_error: false }, BANNER)!;
+    expect(sig).not.toBeNull();
+    expect(sig.window).toBe('session');
+    expect(sig.via).toBe('syntheticText');
+  });
+
+  it('prefers the STRUCTURED reader — it carries the window and the real reset', () => {
+    // Both arms would fire. The structured one must win, because the text arm can only
+    // guess the window from wording and never knows the reset at all.
+    const sig = readEnvelopeLimitSignal(
+      { result: BANNER, is_error: false, quotaLimits: { status: 'rejected', rateLimitType: 'seven_day', resetsAt: 1788546600 } },
+      BANNER,
+    )!;
+    expect(sig.via).toBe('quotaLimits');
+    expect(sig.window).toBe('weekly');
+    expect(sig.resetsAtMs).toBe(1788546600 * 1000);
+  });
+
+  it('reads a rate_limit_event envelope, and does NOT read a healthy one', () => {
+    const rejected = { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' } };
+    expect(readEnvelopeLimitSignal(rejected, null)?.via).toBe('rateLimitEvent');
+    const allowed = { type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', resetsAt: 1788643200 } };
+    expect(readEnvelopeLimitSignal(allowed, null)).toBeNull();
+  });
+
+  it('reads the api-error pair on an envelope', () => {
+    expect(readEnvelopeLimitSignal({ error: 'rate_limit', apiErrorStatus: 429 }, null)?.via).toBe('apiError');
+  });
+
+  // ── THE GATE, from the expensive side ────────────────────────────────────────────────
+  //
+  // Both of these are documents an automation could legitimately produce. If either read
+  // as a refusal, the run would be marked failed and would publish NOTHING — a silent
+  // suppression with no error anywhere for the user to find.
+
+  it('a LONG document that quotes the banner is not a refusal (the 400-char gate)', () => {
+    const doc = `${BANNER}\n\n${'Analysis of what this means for our quota planning. '.repeat(12)}`;
+    expect(doc.length).toBeGreaterThan(LIMIT_BANNER_MAX_CHARS);
+    expect(readEnvelopeLimitSignal({ result: doc, is_error: false }, doc)).toBeNull();
+  });
+
+  it('a SHORT document with a heading is not a refusal (the heading gate)', () => {
+    const doc = `# Usage report\n\n${BANNER}`;
+    expect(doc.length).toBeLessThan(LIMIT_BANNER_MAX_CHARS);
+    expect(readEnvelopeLimitSignal({ result: doc, is_error: false }, doc)).toBeNull();
+  });
+
+  it('a `#` that is not a heading does not disqualify a real banner', () => {
+    // A mid-sentence hash — an issue number, a colour — is not structure. Requiring the
+    // heading to start its line is what keeps the gate from swallowing the signal.
+    const text = `${BANNER} (see #412)`;
+    expect(readEnvelopeLimitSignal({ result: text, is_error: false }, text)?.via).toBe('syntheticText');
+  });
+
+  it('ordinary output, and a null result, read as nothing', () => {
+    const plain = 'WAU is down 4% week-over-week; three insights synced.';
+    expect(readEnvelopeLimitSignal({ result: plain, is_error: false }, plain)).toBeNull();
+    expect(readEnvelopeLimitSignal({ result: null, is_error: true }, null)).toBeNull();
+    expect(readEnvelopeLimitSignal({}, null)).toBeNull();
   });
 });

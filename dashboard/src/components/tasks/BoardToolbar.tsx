@@ -11,6 +11,7 @@ import {
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
   dimGet, levelLabel, prioColor, taskAssignees, taskVersion, urgColor,
 } from './boardModel';
+import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
 
 export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'versions' | 'props' | 'newtask' | null;
 
@@ -169,31 +170,42 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const COLLAPSIBLE = ['viewtype', 'group', 'versions', 'props'] as const;
   type CollKey = (typeof COLLAPSIBLE)[number];
   const barRef = useRef<HTMLDivElement>(null);
-  const [visibleCount, setVisibleCount] = useState<number>(COLLAPSIBLE.length);
+  const [fit, setFit] = useState<BarFit>(() => initialFit(COLLAPSIBLE.length));
+  const visibleCount = fit.visible;
   const [moreOpen, setMoreOpen] = useState(false);
 
   // Shrink one control out of the bar whenever the row overflows. Runs every
   // commit (pre-paint, so no flicker); converges once the row fits or all are out.
   useLayoutEffect(() => {
     const el = barRef.current;
-    if (el && el.scrollWidth > el.clientWidth + 1 && visibleCount > 0) setVisibleCount((c) => c - 1);
+    if (el && el.scrollWidth > el.clientWidth + 1 && visibleCount > 0) setFit((ft) => fitOnLayout(ft, true));
   });
   // Re-test from scratch (show all, then let the loop above re-shrink) when the
-  // available width or the controls' own widths change.
+  // available width or the controls' own widths change. Only a real width change
+  // counts: a height-only callback, or one the collapse itself set off, keeps the
+  // count, so within one width the collapse only ever shrinks.
   useLayoutEffect(() => {
     const el = barRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setVisibleCount(COLLAPSIBLE.length));
+    const ro = new ResizeObserver(() => setFit((ft) => fitOnResize(ft, el.clientWidth, COLLAPSIBLE.length)));
     ro.observe(el);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useLayoutEffect(() => { setVisibleCount(COLLAPSIBLE.length); }, [cloudEnabled, groupSummary, s.sortBy, s.layout]);
+  useLayoutEffect(() => { setFit((ft) => fitRetest(ft, COLLAPSIBLE.length)); }, [cloudEnabled, groupSummary, s.sortBy, s.layout]);
 
   const visible = COLLAPSIBLE.slice(0, visibleCount) as readonly CollKey[];
   const overflow = COLLAPSIBLE.slice(visibleCount) as readonly CollKey[];
-  // Resizing / re-collapsing closes any open menu so a popover never orphans.
-  useEffect(() => { setOpenMenu(null); setMoreOpen(false); }, [visibleCount, setOpenMenu]);
+  // Resizing / re-collapsing closes any open menu so a popover never orphans. Only a
+  // menu that IS open gets a setter call: a no-op parent update on every count change
+  // is what chained a resize into "Maximum update depth exceeded". Reads the menus
+  // from this render, but re-runs on the count alone, so opening a menu never closes it.
+  useEffect(() => {
+    const close = menusToClose(openMenu, moreOpen);
+    if (close.menu) setOpenMenu(null);
+    if (close.more) setMoreOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleCount, setOpenMenu]);
   useEffect(() => { if (!overflow.length && moreOpen) setMoreOpen(false); }, [overflow.length, moreOpen]);
 
   // ── popover bodies (shared by the inline chip popover and the More flyout) ──────
@@ -317,7 +329,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
         <div className="bd-chip" onClick={() => toggle('filter')} style={chipTrigger(activeCount > 0)}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flex: '0 0 auto' }}><path d="M2 3.2h12L9.2 8.6V13L6.8 14V8.6L2 3.2Z" fill="currentColor" /></svg>
           <span>Filter</span>
-          {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent)', color: '#fff' }}>{activeCount}</span>}
+          {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)' }}>{activeCount}</span>}
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'filter' ? '▲' : '▼'}</span>
         </div>
         {openMenu === 'filter' && (
@@ -463,8 +475,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {agentReady ? (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', height: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
-            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600 }}>+ New Task</div>
-            <div onClick={() => toggle('newtask')} title="More ways to create a task" className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
+            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>+ New Task</div>
+            <div onClick={() => toggle('newtask')} title="More ways to create a task" className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
               <span style={{ fontSize: 9, opacity: 0.9, transform: openMenu === 'newtask' ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }}>▼</span>
             </div>
           </div>
@@ -488,7 +500,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
           )}
         </div>
       ) : (
-        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Task</div>
+        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Task</div>
       )}
     </div>
   );

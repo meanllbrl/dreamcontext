@@ -1,0 +1,44 @@
+/* The ONE maturity chip. See MaturityTag.tsx for why three implementations became one.
+ *
+ * NO `text-transform` anywhere in this file, on purpose (K15: no uppercase labels). The
+ * three chips this replaces all shouted — `Lab`/`BETA`/`ALPHA` in caps with tracking — and
+ * `tests/unit/sidebar-nav.test.ts` refuses the property here so it cannot come back.
+ * No baked hex either: every colour is a theme token, so dark follows for free. */
+.dc-maturity {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-body);
+  line-height: 1.5;
+}
+
+/* ALPHA keeps the accent — it is the rarer, more cautionary rung, and the one worth a
+   glance. The ladder still reads with only one of the two coloured: accent = earlier,
+   neutral = later. */
+.dc-maturity[data-level='alpha'] {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+/* BETA IS NEUTRAL, NOT AMBER, and that is a decision rather than a default. The old
+   `.sidebar-beta-tag` spent `--color-warning`, which the style guide reserves for
+   "genuinely hot things" — and Agents now wears Beta, so amber would have put a warning
+   on the row the product most wants you to open. */
+.dc-maturity[data-level='beta'] {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+}
+
+/* `off` is a state, not a warning (the row is fully clickable — clicking it is how the
+   layer gets turned on). `muted` is an ANNOUNCEMENT you cannot act on. Same ink for both:
+   in each case the chip's job is to recede. */
+.dc-maturity[data-level='off'],
+.dc-maturity[data-level='muted'] {
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+}

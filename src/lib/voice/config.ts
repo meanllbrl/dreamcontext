@@ -2,8 +2,8 @@
  * The voice feature's ONE secret and its three non-secret preferences, on disk at
  * `~/.dreamcontext/voice.json`.
  *
- * ONE KEY FOR ALL THREE CALLS — transcription, the correction pass, and speech — and it is
- * an OpenRouter key. This is the owner's explicit instruction and it is not a shape to
+ * ONE KEY, FOR SPEECH ONLY — dictation is local whisper and never calls an API (owner,
+ * 2026-09-27) — and it is an OpenRouter key. This is the owner's explicit instruction and it is not a shape to
  * generalise later: no OpenAI key is read, requested, or fallen back to anywhere in this
  * feature. The reason is measured rather than ideological. Local whisper saves about a
  * dollar a month, and OpenAI-via-anyone at $15 per million characters is already the FLOOR
@@ -28,19 +28,8 @@ import { normalizeHotkey, effectiveMode, type PushToTalkMode } from './hotkey.js
 
 /** What lives in `voice.json`. Every field is optional — an absent file is a valid state. */
 export interface VoiceConfig {
-  /** The OpenRouter API key. The one this feature cannot work without. */
+  /** The OpenRouter API key — for SPEECH (read-aloud) only; dictation is local and keyless. */
   openRouterKey?: string;
-  /**
-   * An OPTIONAL Groq key, used only for transcription.
-   *
-   * Why a second provider at all, when the rule was one key for everything: measured, the
-   * same take through OpenRouter's transcription endpoint took anywhere from 1.3s to 14.2s —
-   * the model is right but the routing is not something a push-to-talk button can depend on.
-   * Groq serves the same `whisper-large-v3-turbo` on its own hardware at 200x realtime and
-   * $0.04 an hour, with a free tier that covers this feature's whole usage. It is optional
-   * precisely because it is a second account: without it everything still works.
-   */
-  groqKey?: string;
   /** TTS voice name passed through to the speech endpoint. */
   voice?: string;
   /**
@@ -51,22 +40,6 @@ export interface VoiceConfig {
    * app, the fix is a pinned default here rather than a code change.
    */
   sttLanguage?: string;
-  /**
-   * Which transcriber to use.
-   *
-   * `cloud` is the DEFAULT, and the reason is measured rather than assumed. OpenRouter does
-   * serve a real speech recogniser after all — `openai/whisper-large-v3-turbo`, absent from
-   * the `/models` catalogue but present on the transcription endpoint — and it answers the
-   * owner's Turkish in ~0.7-1.1s for $0.0001 a take. That is the same speed as the local
-   * whisper it replaces, without 1.5 GB of resident model or a second of the laptop's CPU,
-   * which is the owner's stated preference: put the load on the API.
-   *
-   * `local` keeps whisper.cpp for offline or free-forever use; `auto` prefers local when it
-   * is installed and falls back to the cloud.
-   */
-  sttEngine?: 'auto' | 'local' | 'cloud';
-  /** Whether the Slice-2 correction pass runs at all. Off degrades to the raw transcript. */
-  correction?: boolean;
   /**
    * The push-to-talk chord, canonical form (see `hotkey.ts`). Configurable because the
    * shipped default is not neutral: ⌥Space is Spotlight's alternate on some machines and a
@@ -186,13 +159,8 @@ export function readVoiceConfig(home: string = homedir()): VoiceConfig {
     if (typeof raw.openRouterKey === 'string' && raw.openRouterKey.trim()) {
       out.openRouterKey = raw.openRouterKey.trim();
     }
-    if (typeof raw.groqKey === 'string' && raw.groqKey.trim()) out.groqKey = raw.groqKey.trim();
     if (typeof raw.voice === 'string' && raw.voice.trim()) out.voice = raw.voice.trim();
     if (typeof raw.sttLanguage === 'string') out.sttLanguage = raw.sttLanguage.trim();
-    if (raw.sttEngine === 'auto' || raw.sttEngine === 'local' || raw.sttEngine === 'cloud') {
-      out.sttEngine = raw.sttEngine;
-    }
-    if (typeof raw.correction === 'boolean') out.correction = raw.correction;
     // An unparseable chord is DROPPED, not carried: a hand-edited `voice.json` must degrade
     // to the default binding rather than to a mode whose only input never fires.
     if (typeof raw.pushToTalk === 'string') {
@@ -259,24 +227,13 @@ export function voiceApiKey(home: string = homedir()): string | null {
   return env && env.trim() ? env.trim() : null;
 }
 
-/** The Groq key, or null. Same env fallback as the OpenRouter one, same reason. */
-export function groqApiKey(home: string = homedir()): string | null {
-  const stored = readVoiceConfig(home).groqKey;
-  if (stored) return stored;
-  const env = process.env.GROQ_API_KEY;
-  return env && env.trim() ? env.trim() : null;
-}
 
 /** What Settings and the composer are allowed to know. Note `key` is a BOOLEAN: there is
  *  deliberately no route by which the key itself travels back to a client. */
 export interface VoiceStatus {
   key: boolean;
-  /** Whether a Groq key is set. Like `key`, a BOOLEAN: no route returns a key. */
-  groq: boolean;
   voice: string;
   sttLanguage: string;
-  sttEngine: 'auto' | 'local' | 'cloud';
-  correction: boolean;
   pushToTalk: string;
   /** The mode as STORED. A latch key overrides it — see `pushToTalkMode` below. */
   pushToTalkMode: PushToTalkMode;
@@ -296,19 +253,8 @@ export function voiceStatus(home: string = homedir()): VoiceStatus {
   const cfg = readVoiceConfig(home);
   return {
     key: Boolean(voiceApiKey(home)),
-    groq: Boolean(groqApiKey(home)),
     voice: cfg.voice || DEFAULT_VOICE,
     sttLanguage: cfg.sttLanguage || AUTO_LANGUAGE,
-    // `auto` again, and the reason is a measurement rather than a preference: the cloud
-    // model is right but its ROUTING is not dependable — the same 4.7s take came back in
-    // 1.3s, 9.2s, 14.2s and 1.3s through OpenRouter, where a warm local whisper answered in
-    // 0.85s every time. Auto prefers local when it is installed, cloud when it is not, and a
-    // Groq key (Settings) makes the cloud path fast and steady too.
-    sttEngine: cfg.sttEngine || 'auto',
-    // Default ON, but the whole pass is behind AC6b: if the measured push-to-talk-to-submit
-    // time blows the budget in the real app, this default flips to false and the pass
-    // becomes an explicit opt-in. That is a one-line change here, by design.
-    correction: cfg.correction !== false,
     pushToTalk: cfg.pushToTalk || DEFAULT_PUSH_TO_TALK,
     // REPORTED EFFECTIVE, not as stored: Caps Lock can only toggle, and a Settings card that
     // showed "hold" for it would be describing a binding the composer will never honour.

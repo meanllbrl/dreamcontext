@@ -66,8 +66,8 @@
   letter-spacing: 0.04em;
   padding: 1px var(--space-2);
   border-radius: var(--radius-sm, 4px);
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -136,8 +136,8 @@
 }
 
 .fed-dir-btn--active {
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-weight: var(--font-weight-medium);
 }
 

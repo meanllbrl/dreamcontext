@@ -148,8 +148,8 @@
   height: 16px;
   padding: 0 4px;
   border-radius: var(--radius-full);
-  background: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-size: 9px;
   font-weight: var(--font-weight-bold);
   line-height: 1;
@@ -331,8 +331,8 @@
   padding: 5px 10px;
   border: none;
   border-radius: 6px;
-  background: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   font-family: var(--font-family);
@@ -397,7 +397,7 @@
   padding: 6px 14px;
   border: none;
   border-radius: var(--radius-md);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
@@ -488,8 +488,8 @@
 }
 
 .filter-sync-badge {
-  background: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   border-radius: 999px;
   font-size: 10px;
   line-height: 1;

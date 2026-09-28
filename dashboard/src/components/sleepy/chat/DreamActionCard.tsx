@@ -1,7 +1,9 @@
 import { toolResultText, toolResultLineCount, type ToolSubject } from './chatEntities';
-import { Duration, MetaText } from './atoms';
+import { Duration } from './atoms';
 import { ToolHeader, TerminalBlock } from './molecules';
-import { describeDreamAction, dreamOutcome, type DreamAction } from './dreamCommand';
+import { describeDreamAction, dreamActionPhrase, dreamOutcome, type DreamAction } from './dreamCommand';
+import type { ToolAction } from './toolAction';
+import type { AgentRoleId } from '../../../lib/agentRoles';
 import type { ChatToolItem } from '../chatSession';
 import './dreamaction.css';
 
@@ -15,9 +17,9 @@ import './dreamaction.css';
  * of it. This card is the same tool row with its subject read out of the command instead of
  * out of a hand-written label:
  *
- *   ● ◆ Task created   [Chat tool rows name their object]   ......... 9.5s ▸
- *   ● ◆ Task status    [chat-tool-rows-…]  → in_progress    ......... 1.2s ▸
- *   ● ◆ Memory recall  [context root resolution]  · 24 lines ........ 0.8s ▸
+ *   (◡) ◆ Task created   [Chat tool rows name their object]   ....... 9.5s ▸
+ *       ◆ Setting task status  [chat-tool-rows-…]… → in_progress ....... ▸
+ *       ◆ Memory recall  [context root resolution]  · 24 lines ...... 0.8s ▸
  *
  * It is a `ToolHeader` — deliberately, not a bespoke row. Geometry, hit area, caret, aria
  * state, and the 40px density the transcript was tuned to all come from the shared molecule, so
@@ -27,7 +29,7 @@ import './dreamaction.css';
  * glance even in the middle of a group.
  */
 export function DreamActionCard({
-  item, actions, open, onToggle, onOpenFile,
+  item, actions, open, onToggle, onOpenFile, actor = 'lead', stretch, stretchRunning = false,
 }: {
   item: ChatToolItem;
   /** Every dreamcontext invocation in this one command, in order — an agent routinely chains
@@ -36,6 +38,10 @@ export function DreamActionCard({
   open: boolean;
   onToggle: () => void;
   onOpenFile: (path: string) => void;
+  /** Who took this step (see `ToolCard`). Defaults to the lead. */
+  actor?: AgentRoleId;
+  stretch?: 'lead' | 'follow';
+  stretchRunning?: boolean;
 }) {
   const command = commandOf(item);
   const result = item.result !== undefined ? toolResultText(item.result) : undefined;
@@ -66,24 +72,46 @@ export function DreamActionCard({
 
   const duration = item.endedAt != null ? item.endedAt - item.startedAt : null;
 
+  // The row as a team-log line, in the tense of the OUTCOME-aware status: "Creating task…"
+  // while it runs, "Task created" once it landed, "Couldn't create task" when the CLI said ✗
+  // (or "<label> failed" for a verb `DREAM_VERB_FORMS` has no words for). A failure is stated
+  // in the text, so it never rests on the red edge alone.
+  const phrase = dreamActionPhrase(view, status);
+  const action: ToolAction = {
+    verb: status === 'done' && actions.length > 1 && sameAction(actions) ? `${view.label} ×${actions.length}` : phrase.verb,
+    tail: phrase.tail,
+    subject,
+    kind: view.tone === 'read' ? 'look' : 'change',
+    quiet: false,
+    ellipsis: status === 'running',
+    raw: 'Bash',
+  };
+
   return (
     <div
-      className="chat-toolcard chat-dreamcard"
+      className="chat-toolcard chat-dreamcard chat-step"
+      data-actor={actor}
+      data-tool="Bash"
       data-status={status}
       data-open={open || undefined}
       data-tone={view.tone}
+      data-stretch={stretch}
     >
       <ToolHeader
         status={status}
-        name={actions.length > 1 && sameAction(actions) ? `${view.label} ×${actions.length}` : view.label}
+        name={view.label}
         subject={subject}
         brand
         subtitle={subtitle}
         subtitleTitle={view.desc ?? command}
-        meta={duration != null ? <Duration ms={duration} /> : (item.status === 'running' ? <MetaText>running</MetaText> : null)}
+        meta={duration != null ? <Duration ms={duration} /> : null}
         open={open}
         onToggle={onToggle}
         onOpenPath={onOpenFile}
+        action={action}
+        actor={actor}
+        toolName="Bash"
+        stretchRunning={stretchRunning}
       />
       {open && (
         <div className="chat-toolcard-body">

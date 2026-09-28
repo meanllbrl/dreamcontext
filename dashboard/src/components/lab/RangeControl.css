@@ -153,9 +153,9 @@
 }
 
 .lab-range-pop-apply {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-weight: var(--font-weight-medium);
 }
 
@@ -242,8 +242,8 @@
 }
 
 .lab-range-cal-day--selected {
-  background: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-weight: var(--font-weight-semibold);
   border-radius: var(--radius-sm);
 }

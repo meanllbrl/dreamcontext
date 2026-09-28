@@ -242,6 +242,94 @@
   background: var(--color-bg-secondary);
 }
 
+/* A quest-party CHARACTER (atoms.tsx `AgentAvatar` with a `role`, drawn by RoleCharacter.tsx).
+   No disc: the character's own silhouette is the avatar, its body carries its own hue
+   (tokens.css `--role-c-*`), so the box stays transparent. A peer's logo keeps a quiet ring on
+   the card surface. Static chrome; status never touches it. */
+.chat-a-avatar[data-role] {
+  position: relative;
+  background: none;
+  border-radius: 0;
+  color: var(--color-text);
+}
+.chat-a-avatar[data-role][data-logo] {
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+}
+
+/* RUNNING is motion, never colour (★★★: colour = mood, movement = mode). The disc breathes on
+   the shared loop period, the same rhythm as a running agent's dot elsewhere, and scales rather
+   than fades so the face keeps its contrast at every frame. */
+.chat-a-avatar[data-running] {
+  animation: chat-a-work var(--motion-breath, 1600ms) ease-in-out infinite;
+}
+@keyframes chat-a-work {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+  50% { transform: scale(1.08); box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-hue, var(--color-text-tertiary)) 35%, transparent); }
+}
+/* A character has no disc to ring, so it works the way Sleepy does: a small hop on the same
+   loop period. Still motion only; the body keeps its colour at every frame. */
+.chat-a-avatar[data-role][data-running]:not([data-logo]) {
+  animation: chat-a-hop var(--motion-breath, 1600ms) ease-in-out infinite;
+}
+@keyframes chat-a-hop {
+  0%, 100% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-12%) scale(1.06, 0.96); }
+  60% { transform: translateY(0) scale(1.04, 0.96); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-a-avatar[data-running] { animation: none; }
+  .chat-a-avatar[data-role][data-running]:not([data-logo]) { animation: none; }
+}
+
+/* A judge's verdict: mark + word on a tint of its outcome. Text is body ink; the mark takes
+   the status INK (never --color-warning: a sent-back plan is routine, not hot). */
+.chat-a-verdict {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-error) 12%, var(--color-bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-error) 45%, var(--color-bg-secondary));
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+.chat-a-verdict[data-good] {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-bg-secondary));
+}
+.chat-a-verdict-mark { color: var(--color-error-ink); font-weight: var(--font-weight-semibold); }
+.chat-a-verdict[data-good] .chat-a-verdict-mark { color: var(--color-success-ink); }
+
+/* What an agent carries: `memory` (maker family) or `fresh eyes` (judge family). A quiet
+   outline in its family's hue; the word carries the meaning. */
+.quest-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--role-hue-neutral) 55%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--role-hue-neutral) 10%, var(--color-bg-secondary));
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: help;
+}
+.quest-badge[data-badge='memory'] {
+  border-color: color-mix(in srgb, var(--role-hue-maker) 55%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--role-hue-maker) 10%, var(--color-bg-secondary));
+}
+.quest-badge[data-badge='fresh'] {
+  border-color: color-mix(in srgb, var(--role-hue-judge) 55%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--role-hue-judge) 10%, var(--color-bg-secondary));
+}
+
 .chat-a-progress {
   flex: 0 0 auto;
   display: block;

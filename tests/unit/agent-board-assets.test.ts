@@ -316,9 +316,60 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * bound — the cut was attempted, and every candidate turned out to be a rule that would
    * re-open something. Deleting one of those to save ~400 tokens a turn is the worse trade,
    * and saying so here is the price of moving the number. Actual 10,992.
+   *
+   * 11200 -> 11400 on 2026-09-22, for the EIGHTH `dream-view` type: `agent-thread`, a run's
+   * channel drawn from disk (the agent names its own agent, the app draws the thread — the
+   * same bargain `insight` and `progress` strike, and the reason a retyped exchange cannot
+   * fork the file the Agents page reads). One sentence plus one example, 156 characters.
+   *
+   * The cut was attempted first, as the rule requires, and ONE candidate was found: the
+   * closing "Nothing else about how you do the work changes." (47 chars) — a reassurance,
+   * not a rule, and the only sentence in the file that isn't one. It is gone. Three others
+   * were examined and REJECTED, recorded here so the next person does not re-derive them:
+   *   • the `secret` section (~700) — the 9800->11200 raise above was BOUGHT for the secret
+   *     and run cards; cutting one re-opens exactly what was paid for;
+   *   • the `pin` drop + `checkout` reset example fences (~94) — the prose says WHEN to drop
+   *     ("drop it once there is none left"), never HOW, and the validator drops an unknown
+   *     key with a notice, so an agent guessing `{"remove":true}` gets a silent no-op;
+   *   • the `dc-` class vocabulary — the kit-lockstep test below pins it as the schema an
+   *     agent writes against, so cutting a class removes a capability.
+   * That left 156 in and 47 out against 71 characters of headroom, so this is a RAISE and is
+   * paid for in the form this docstring requires. Actual 11,237; 11,400 leaves ~160 so the
+   * next small addition is not a crisis, and is close enough that it still binds.
+   *
+   * 11400 -> 12600 on 2026-09-26, a RAISE for a new section, "Asking — a card read cold"
+   * (1,191 characters). The owner runs several sessions at once and reaches an
+   * AskUserQuestion card from a notification: questions written for someone who just read
+   * the turn arrived unreadable ("soruyu tam olarak anlayamıyor"). The card can now lead
+   * with a `title` and a `description`, draw options with a `preview` as an A/B/C board, and
+   * run two-way questions as a swipe deck — and, as with `secret`/`run`, this file is the
+   * ONLY way an agent learns any of it (the CLI's own tool text says nothing about the
+   * board, the swipe deck, native media or the deny that "Unclear" sends). Compressed to
+   * one rule per bullet before the number moved; nothing elsewhere was found to cut that is
+   * not itself a rule bought with a regression. Actual 12,428; 12,600 keeps ~170 of headroom.
+   *
+   * 12600 -> 12900 on 2026-09-26, a RAISE for the ninth `dream-view` type, `title` (311
+   * characters with its example fence). The Haiku side-call that named tabs from the first
+   * message was removed; the chat's own agent names its tab now, and this file is the only
+   * way it learns the block exists. Written as four rules (when, how long, which language,
+   * when to re-send) and nothing else. Actual 12,739; 12,900 keeps ~160 of headroom.
+   *
+   * 12,739 -> 12,774 on 2026-09-27, no raise: the title rule now says "plain words ... spaced
+   * like a sentence, never a slug or hyphens" (owner: tab names drowned in dashes).
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11200);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12900);
+  });
+
+  /**
+   * The bound alone would let the briefing drift 160 characters at a time with nobody
+   * noticing until it next binds. This pins the MEASURED length instead, so any edit has to
+   * come back here and say what it changed — which is the whole mechanism the docstring
+   * above depends on. The band is ±20: a wording tweak is not a regression, a new paragraph
+   * is.
+   */
+  it('is the length its docstring claims — within a wording tweak', () => {
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12774)).toBeLessThanOrEqual(20);
   });
 
   /**

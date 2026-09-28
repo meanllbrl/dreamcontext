@@ -711,6 +711,17 @@ describe('gapless playback', () => {
 
   /** The smallest AudioContext that exercises scheduling. `currentTime` is writable so a test
    *  can move the clock the way a real one does. */
+  /** An AudioBuffer with real samples (a tone), so `timeStretch` has something to stretch. */
+  function fakeBuffer(length: number, sampleRate: number, channels = 1) {
+    const data = Array.from({ length: channels }, () =>
+      Float32Array.from({ length }, (_, i) => 0.3 * Math.sin((2 * Math.PI * 200 * i) / sampleRate)));
+    return {
+      duration: length / sampleRate, length, sampleRate, numberOfChannels: channels,
+      getChannelData: (c: number) => data[c],
+      copyToChannel: (src: Float32Array, c: number) => { data[c] = Float32Array.from(src); },
+    } as unknown as AudioBuffer;
+  }
+
   class FakeCtx {
     state: string = 'running';
     currentTime = 0;
@@ -731,7 +742,11 @@ describe('gapless playback', () => {
     async decodeAudioData(_bytes: ArrayBuffer) {
       FakeCtx.decodes += 1;
       if (!FakeCtx.decodable) throw new Error('cannot decode');
-      return { duration: FakeCtx.duration } as unknown as AudioBuffer;
+      return fakeBuffer(Math.round(FakeCtx.duration * 8000), 8000);
+    }
+    /** A rate other than 1 is TIME-STRETCHED into a new buffer (pitch kept), not played fast. */
+    createBuffer(channels: number, length: number, sampleRate: number) {
+      return fakeBuffer(length, sampleRate, channels);
     }
     createBufferSource() {
       const rec = { at: -1, stopped: false };
@@ -799,8 +814,8 @@ describe('gapless playback', () => {
     const q = makeQueue(fetcherThat());
     q.push('one here. two here. ');
     await settle();
-    // A one-second buffer at 2x occupies half a second of the schedule.
-    expect(started[1].at).toBeCloseTo(started[0].at + FakeCtx.duration / 2, 6);
+    // A one-second buffer at 2x is stretched to half a second, and occupies exactly that.
+    expect(started[1].at).toBeCloseTo(started[0].at + FakeCtx.duration / 2, 2);
   });
 
   it('records WHICH chunk occupies which window of audio time', async () => {

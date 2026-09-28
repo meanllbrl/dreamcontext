@@ -1,12 +1,14 @@
 import { useState, type ReactNode } from 'react';
 import {
   StatusDot, StatusWord, ToolGlyph, ToolName, PathChip, SubjectChip, Caret, CopyButton,
-  TokenBadge, PillDivider, type ToolStatus,
+  TokenBadge, AgentAvatar, type ToolStatus,
 } from './atoms';
 import {
-  classifyOutputLine, clampLines, TERMINAL_HEAD_LINES, TERMINAL_TAIL_LINES,
+  classifyOutputLine, clampLines, pathChipLabel, TERMINAL_HEAD_LINES, TERMINAL_TAIL_LINES,
   type EditDiff, type ToolSubject,
 } from './chatEntities';
+import { actionText, thinkingLabel, type ToolAction } from './toolAction';
+import { AGENT_ROLES, type AgentRoleId } from '../../../lib/agentRoles';
 import './molecules.css';
 
 /**
@@ -35,9 +37,14 @@ import './molecules.css';
  * The whole row toggles: a single stretched hit-area button (one control, one
  * `aria-expanded`) sits under the row, and only the path chip re-enables pointer events
  * over it — so the row is clickable without ever nesting a button inside a button.
+ *
+ * Given an `action`, the same row is written as a team-log line instead (see
+ * {@link ActionHeader}); every transcript row passes one, and the tool-row form above stays for
+ * any caller that does not.
  */
 export function ToolHeader({
   status, name, subject, brand = false, badge, subtitle, subtitleTitle, meta, open, onToggle, onOpenPath,
+  action, actor, toolName, stretchRunning = false,
 }: {
   status: ToolStatus;
   name: string;
@@ -59,7 +66,36 @@ export function ToolHeader({
   open: boolean;
   onToggle: () => void;
   onOpenPath?: (path: string) => void;
+  /** The step as a sentence (`toolAction`). Present, the row is a TEAM-LOG line: the speaker's
+   *  avatar, then the sentence, its tense carrying the status. Absent, the row is drawn as the
+   *  tool row it always was (the header below the `action` branch). */
+  action?: ToolAction;
+  /** Who took the step. Defaults to the lead. */
+  actor?: AgentRoleId;
+  /** The raw tool name, for the row's title and details label. Defaults to `action.raw`. */
+  toolName?: string;
+  /** A step in this row's stretch is running: the avatar works. Only the stretch's lead
+   *  shows its avatar, so this only ever moves one face per stretch. */
+  stretchRunning?: boolean;
 }) {
+  if (action) {
+    return (
+      <ActionHeader
+        action={action}
+        actor={actor ?? 'lead'}
+        raw={toolName ?? action.raw}
+        running={stretchRunning}
+        brand={brand}
+        badge={badge}
+        subtitle={subtitle}
+        subtitleTitle={subtitleTitle}
+        meta={meta}
+        open={open}
+        onToggle={onToggle}
+        onOpenPath={onOpenPath}
+      />
+    );
+  }
   // A `Skill` whose subject is `excalidraw` should read "excalidraw", not "Skill excalidraw"
   // — the tool name is a category the subject already implies. Only for the tools whose name
   // is pure category (Skill/Agent/Task); `Grep "useGroupCollapse"` genuinely needs both,
@@ -93,6 +129,85 @@ export function ToolHeader({
       {subtitle && <span className="chat-m-toolhead-sub" title={subtitleTitle}>{subtitle}</span>}
       <span className="chat-m-toolhead-meta">
         <StatusWord status={status} />
+        {meta}
+        <Caret open={open} />
+      </span>
+    </div>
+  );
+}
+
+/** The transcript-step avatar (lib/agentRoles.ts size table): the lead's face, no badge. */
+const STEP_AVATAR_PX = 16;
+
+/** Take a trailing "…" or "..." off, so a description the agent already ended in dots never
+ *  reads "Deploying the preview build……" once the row adds its own. */
+function trimEllipsis(text: string): string {
+  return text.replace(/\s*(?:…|\.\.\.)\s*$/, '');
+}
+
+/**
+ * The team-log line (`ToolHeader` with an `action`):
+ *
+ *   (◡) Reading  [chat/ChatPane.tsx]…  · 142 lines ....................... 0.3s ▸
+ *   (◡) ◆ Creating task  [Quest demo]… ................................... running ▸
+ *       Couldn't edit  [chat/ChatPane.tsx] ............................... 0.2s ▸
+ *
+ * The verb's TENSE is the status, and its ink says it again (the `.chat-step` root's
+ * `data-status` picks it in molecules.css), so the dot and the "failed" word the tool row
+ * needed are gone. The avatar column is always laid out; a row that follows its stretch's
+ * lead hides the face with `visibility`, so every line of a stretch starts at the same x.
+ * Same hit button, same 32px row as `ToolHeader`: only what is written in it changed.
+ */
+function ActionHeader({
+  action, actor, raw, running, brand, badge, subtitle, subtitleTitle, meta, open, onToggle, onOpenPath,
+}: {
+  action: ToolAction;
+  actor: AgentRoleId;
+  raw: string;
+  running: boolean;
+  brand: boolean;
+  badge?: string;
+  subtitle?: ReactNode;
+  subtitleTitle?: string;
+  meta?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  onOpenPath?: (path: string) => void;
+}) {
+  const { subject, tail } = action;
+  // A path or a name is the step's object and reads as a chip; prose (a command, a description)
+  // is context and reads as the muted subtitle, unless the caller has a better one.
+  const chip = subject?.kind === 'path'
+    ? (onOpenPath
+      ? <PathChip path={subject.path} label={subject.label} onOpen={onOpenPath} />
+      : <SubjectChip text={subject.label ?? pathChipLabel(subject.path).name} title={subject.path} />)
+    : subject?.kind === 'text' ? <SubjectChip text={subject.text} /> : null;
+  const sub = subtitle ?? (subject?.kind === 'prose' ? subject.text : undefined);
+  // Only the LAST written piece can carry the agent's own dots, and the running "…" is glued
+  // to whichever piece that is, text or chip.
+  const verb = tail || chip ? action.verb : trimEllipsis(action.verb);
+  const ellipsis = action.ellipsis ? <span className="chat-m-toolhead-ellipsis">…</span> : null;
+  return (
+    <div className="chat-m-toolhead" data-kind={action.kind} title={raw}>
+      <button
+        type="button"
+        className="chat-m-toolhead-hit"
+        aria-expanded={open}
+        aria-label={`${actionText(action)}, ${raw} details`}
+        onClick={onToggle}
+      />
+      <span className="chat-step-avatar">
+        <AgentAvatar name={AGENT_ROLES[actor].label} size={STEP_AVATAR_PX} role={actor} running={running} />
+      </span>
+      {brand && <ToolGlyph name={raw} brand />}
+      <span className="chat-m-toolhead-action">{verb}{!chip && !tail && ellipsis}</span>
+      {chip}
+      {badge && <SubjectChip text={badge} />}
+      {tail
+        ? <span className="chat-m-toolhead-tail">{trimEllipsis(tail)}{ellipsis}</span>
+        : chip && ellipsis}
+      {sub &&<span className="chat-m-toolhead-sub" title={subtitleTitle}>{sub}</span>}
+      <span className="chat-m-toolhead-meta">
         {meta}
         <Caret open={open} />
       </span>
@@ -257,27 +372,47 @@ export function DiffView({ diff, startLine }: { diff: EditDiff; startLine?: numb
 // ─── Thinking pill ─────────────────────────────────────────────────────────────────
 
 /**
- * The extended-thinking disclosure:  ⟨ 💭 Thinking… │ 2.4k tokens ▾ ⟩ — a dashed pill
- * that reads as "in progress, not a message". Shimmers while the block is still
- * streaming, settles to a static label when it completes.
+ * The extended-thinking disclosure, as a step of the team log:
+ *
+ *   (◡) Thinking it through… ........................................ 2.4k tokens ▾
+ *   (◡) Thought it through .......................................... 2.4k tokens ▾
+ *
+ * A line in the same grammar and the same avatar column as a tool step, so a stretch of
+ * thinking and tool calls reads as one speaker's run of lines. The label shimmers while the
+ * block streams and settles when it completes; the token count sits in the meta, where a
+ * step keeps its duration.
  */
 export function ThinkingPill({
-  streaming, tokens, open, onToggle, body,
+  streaming, tokens, open, onToggle, body, actor = 'lead', stretch, stretchRunning = false,
 }: {
   streaming: boolean;
   tokens: number;
   open: boolean;
   onToggle: () => void;
   body: string;
+  /** Who was thinking. Defaults to the lead. */
+  actor?: AgentRoleId;
+  /** Opens its stretch (shows the avatar) or follows it (keeps the column, hides the face). */
+  stretch?: 'lead' | 'follow';
+  /** A step in this line's stretch is running. */
+  stretchRunning?: boolean;
 }) {
   return (
-    <div className="chat-m-thinking" data-streaming={streaming || undefined}>
+    <div
+      className="chat-m-thinking chat-step"
+      data-actor={actor}
+      data-stretch={stretch}
+      data-streaming={streaming || undefined}
+    >
       <button type="button" className="chat-m-thinking-head" onClick={onToggle} aria-expanded={open}>
-        <span className="chat-m-thinking-glyph" aria-hidden>💭</span>
-        <span className="chat-m-thinking-label">Thinking{streaming ? '…' : ''}</span>
-        <PillDivider />
-        <TokenBadge tokens={tokens} />
-        <Caret open={open} />
+        <span className="chat-step-avatar">
+          <AgentAvatar name={AGENT_ROLES[actor].label} size={STEP_AVATAR_PX} role={actor} running={stretchRunning} />
+        </span>
+        <span className="chat-m-thinking-label">{thinkingLabel(streaming)}</span>
+        <span className="chat-m-thinking-meta">
+          <TokenBadge tokens={tokens} />
+          <Caret open={open} />
+        </span>
       </button>
       {open && <div className="chat-m-thinking-body">{body}</div>}
     </div>

@@ -322,68 +322,27 @@ async function runTheme(base, theme) {
   const tabTexts = async () => tabs().allInnerTexts();
   const openAutomationsBoard = async () => {
     for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(200); }
-    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
     await until(async () => (await page.locator('.auto-card').count()) > 0, 15000);
   };
 
   await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(3000);
 
-  // ── checkpoint 5 (D7): a run that stopped to ask opens as a tab BY ITSELF ──────────────
+  // ── checkpoint 5: a run that stopped to ask does NOT open a tab by itself ───────────────
   //
-  // Nobody has clicked anything at this point — the page has only just loaded.
-  // AUTO_B is seeded with an open `flow-hitl` question whose asking run has a
-  // real session, which is exactly the state that used to leave a card saying
-  // "waiting for your verdict" on a board nobody was looking at, with no way to
-  // reach the conversation that could answer it.
-  //
-  // Asserted on the TAB ELEMENT's own `data-session-kind`, not the glyph span's:
-  // the tab itself now carries the automation colour, and this is what proves
-  // the attribute reached the element the CSS targets.
+  // D7 (a run needing a human opened itself as a chat tab) is RETIRED on the owner's word,
+  // 2026-09-26: "agent automations must no longer auto-open chats". AUTO_B is seeded with an
+  // open `flow-hitl` question whose asking run has a real session, which is exactly the state
+  // D7 used to open. Nobody has clicked anything; after a generous wait, no automation tab
+  // may exist. The owner reaches the question through the channel, where it is drawn.
   const autoTabs = () => page.locator('.agent-tab[data-session-kind="automation"]:visible');
-  const d7Opened = await until(async () => {
-    const texts = await autoTabs().allInnerTexts();
-    return texts.some((t) => t.includes(AUTO_B_TITLE));
-  }, 25000);
+  await page.waitForTimeout(8000);
+  const selfOpened = (await autoTabs().allInnerTexts()).filter((t) => t.includes(AUTO_B_TITLE));
   check(
-    '5 (D7): a run holding an open question opens as an automation tab with no user action',
-    d7Opened,
-    d7Opened ? '' : `visible tabs=${JSON.stringify(await tabTexts())}`,
-  );
-  // The watermark must NOT be advanced by a mere read — only the ack does that,
-  // and the ack fires only once a tab is actually open. POLLED, not sampled
-  // once: the ack is a POST that races the tab appearing, and a single fetch
-  // taken the instant the tab renders is a coin flip (it passed in one theme
-  // and failed in the other, which is the tell).
-  //
-  // The vault header is NOT optional here, and leaving it off is what made this
-  // check fail while the product was working: `ApiClient` sends
-  // `X-Dreamcontext-Vault` on every request, so a bare fetch resolves whatever
-  // contextRoot the server defaults to. On macOS that alone is enough — tmpdir
-  // is `/var/folders/…`, a symlink to `/private/var/folders/…`, so the two
-  // resolve to the same project under two different path STRINGS, and the
-  // watermark is keyed by that string. The app wrote one key; this read the
-  // other, and reported a feature that had just worked as broken.
-  const readAttention = async () => page.evaluate(async (b) => {
-    const r = await fetch(`${b}/api/automations/attention`, {
-      headers: { 'X-Dreamcontext-Vault': 'proj' },
-    });
-    return r.json();
-  }, base);
-  const acked = await until(async () => {
-    const a = await readAttention();
-    return typeof a.watermark === 'string' && Array.isArray(a.runs) && a.runs.length === 0;
-  }, 20000);
-  const attention = await readAttention();
-  check(
-    '5 (D7): the machine-local watermark advanced only after the tab opened',
-    acked && typeof attention.watermark === 'string',
-    JSON.stringify(attention).slice(0, 200),
-  );
-  check(
-    '5 (D7): …and the window is now empty, so a refresh does not re-open the same tab',
-    Array.isArray(attention.runs) && attention.runs.length === 0,
-    JSON.stringify(attention.runs ?? []).slice(0, 200),
+    '5: a run holding an open question does NOT open a chat tab by itself',
+    selfOpened.length === 0,
+    selfOpened.length ? `visible tabs=${JSON.stringify(await tabTexts())}` : '',
   );
   await page.screenshot({ path: join(SHOTS, `checkpoint5-${theme}.png`) });
 
@@ -447,9 +406,8 @@ async function runTheme(base, theme) {
   const sessBtns = page.locator('.adp-history-row--openable');
   await sessBtns.first().click();
   check('4: a completed run opens as a chat tab', await until(async () => (await tabs().count()) === tabsAfterCreate + 1, 20000));
-  // NOT a bare `count() === 1`: checkpoint 5 above proves D7 already opened
-  // AUTO_B's tab by itself, so more than one automation tab is now the CORRECT
-  // state. What matters is that THIS run's tab is one of them.
+  // Asserted by title rather than a bare count: what matters is that THIS run's tab
+  // is one of the automation tabs.
   const autoTabTexts1 = await page.locator('.agent-tab[data-session-kind="automation"]:visible').allInnerTexts();
   check(
     '4: the clicked run\'s tab is data-session-kind="automation"',
@@ -526,13 +484,10 @@ async function runTheme(base, theme) {
   await page.locator('.auto-card', { hasText: AUTO_B_TITLE }).first().click();
   await until(async () => (await page.locator('.adp-history-row').count()) === 1, 10000);
   await page.locator('.adp-history-row--openable').first().click();
-  // NOT "a new tab appeared" any more, and that change is the POINT: checkpoint
-  // 5 proved D7 already opened this exact run on load, so clicking its history
-  // row must bring THAT tab forward rather than resume the same conversation
-  // into a second one. Two live CLIs `--resume`d onto one transcript interleave
-  // their appends and neither sees the other's turns — the bring-forward guard
-  // in `openAutomationRunChat` exists precisely to stop this, and reaching the
-  // same run from two different routes is the case that exercises it.
+  // Exactly ONE tab for this run, and it is the active one. Nothing opened it before this
+  // click (checkpoint 5), so the click opens it; the bring-forward guard in
+  // `openAutomationRunChat` still decides that a second click would focus it rather than
+  // `--resume` the same transcript into a second live CLI.
   const hitlTabs = page.locator('.agent-tab[data-session-kind="automation"]:visible', { hasText: AUTO_B_TITLE });
   const openedHitlTab = await until(async () => {
     if ((await hitlTabs.count()) !== 1) return false;

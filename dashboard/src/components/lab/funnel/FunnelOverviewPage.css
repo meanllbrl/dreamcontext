@@ -192,8 +192,8 @@
   padding: 4px 14px;
   border: none;
   border-radius: var(--radius-full);
-  background: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   cursor: pointer;
 }
 

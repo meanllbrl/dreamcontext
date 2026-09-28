@@ -12,8 +12,6 @@
  * `src/cli/commands/peer.ts` and compare against the docs, so a verb or a `--kind` added
  * tomorrow goes red until it is documented. Where a value is exported (the permission
  * mode, the mail directory) the test binds to the real export instead of a copy.
- *
- * Companion: `meeting-room-skill.test.ts` does the same for the Meeting Room.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

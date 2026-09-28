@@ -26,8 +26,10 @@
 .chat-btn:active:not(:disabled) { transform: scale(0.97); }
 .chat-btn:disabled { opacity: 0.5; cursor: default; }
 .chat-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
-.chat-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-text); }
-.chat-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.chat-btn.primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
+/* The fill is restated: `.chat-btn:hover` above paints the tertiary surface, and a primary
+   that only added a filter came out white ink on light grey (1.01:1) under the pointer. */
+.chat-btn.primary:hover:not(:disabled) { background: var(--color-accent-strong); border-color: var(--color-accent-strong); filter: brightness(1.08); }
 /* Decision-weight variant: a card's Allow/Deny and a banner's Retry are the moment the
    user acts, so they get the larger pill rather than the compact utility button. */
 .chat-btn.pill {
@@ -60,7 +62,7 @@
    portrait reel — the shape most of them are — played as a thin strip between two slabs of
    black. Letting the intrinsic aspect drive the box within the two caps gives a tall clip a
    tall player and a wide one the full measure. */
-.chat-md-video { max-height: 460px; width: auto; height: auto; background: #000; }
+.chat-md-video { max-height: var(--chat-media-max-h, 460px); width: auto; height: auto; background: #000; }
 /* An audio player has no natural width — without this it stretches edge to edge and reads
    as a broken element rather than a small control. */
 .chat-md-audio { width: min(420px, 100%); border: none; background: transparent; }
@@ -96,7 +98,7 @@
   cursor: pointer;
   transition: filter var(--transition-fast), background var(--transition-fast);
 }
-.chat-md-blocked-allow { background: var(--color-accent); color: var(--color-accent-text); }
+.chat-md-blocked-allow { background: var(--color-accent-strong); color: var(--color-accent-text); }
 .chat-md-blocked-allow:hover:not(:disabled) { filter: brightness(1.1); }
 .chat-md-blocked-allow:disabled { opacity: 0.6; cursor: default; }
 .chat-md-blocked-open { background: transparent; border-color: var(--color-border-hover); color: var(--color-text-secondary); }
@@ -125,6 +127,8 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   cursor: pointer;
+  /* A 24px target; the bare mono label measured 21px. */
+  min-height: 24px;
   padding: 2px var(--space-2);
   border-radius: var(--radius-sm);
   transition: background var(--transition-fast), color var(--transition-fast);
@@ -244,7 +248,7 @@ video.chat-msg-user-media-el { cursor: default; }
   box-shadow: var(--shadow-sm);
   color: var(--color-text);
 }
-/* ── The sentence J.A.R.V.I.S is SAYING ────────────────────────────────────────────────
+/* ── The sentence the Assistant is SAYING ────────────────────────────────────────────────
    Painted with the CSS Custom Highlight API (`useSpokenHighlight.ts`), so nothing is
    inserted into a DOM React owns and re-renders on every streamed token.
 
@@ -592,6 +596,10 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt:hover { border-color: var(--color-border-hover); }
 .chat-surveycard-opt:active { transform: scale(0.99); }
 .chat-surveycard-opt.on { background: var(--color-accent-soft); border-color: var(--color-accent); }
+/* "Other" is quieter than a real option until it is picked — it is the way out, not a choice
+   the agent offered. The board draws it under its tiles, so it takes the page's spacing. */
+.chat-surveycard-opt.other:not(.on) { border-style: dashed; }
+.chat-surveycard-opt.other:not(.on) .chat-surveycard-opt-title { font-weight: 500; color: var(--color-text-secondary); }
 .chat-surveycard-opt-mark {
   flex: 0 0 auto;
   width: 18px;
@@ -607,30 +615,9 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt-mark.box { border-radius: var(--radius-sm); }
 .chat-surveycard-opt-mark.radio { border-radius: 50%; }
 .chat-surveycard-opt.on .chat-surveycard-opt-mark { background: var(--color-accent); border-color: var(--color-accent); }
-.chat-surveycard-opt-body { display: flex; flex-direction: column; gap: 2px; }
+.chat-surveycard-opt-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .chat-surveycard-opt-title { font-size: 13px; font-weight: 600; }
 .chat-surveycard-opt-desc { font-size: 11.5px; color: var(--color-text-secondary); }
-/* Free-text row body — indented to the option TEXT column (12px pad + 18px mark + 10px gap)
-   so the box reads as belonging to the "Other" row above it, not as a new question. */
-.chat-surveycard-other { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 2px 40px; }
-.chat-surveycard-otherinput {
-  width: 100%;
-  min-height: 58px;
-  resize: vertical;
-  padding: 9px 11px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-accent);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.45;
-}
-.chat-surveycard-otherinput::placeholder { color: var(--color-text-tertiary); }
-.chat-surveycard-otherinput:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
-/* Body font, not mono: the mono stack has no ↵ glyph on every platform and falls back to
-   tofu for the one character the hint is about. */
-.chat-surveycard-otherhint { color: var(--color-text-tertiary); font-size: 11px; }
 .chat-surveycard-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
 .chat-surveycard-count { color: var(--color-text-tertiary); font-size: 11.5px; }
 .chat-surveycard-receipt {
@@ -641,6 +628,268 @@ video.chat-msg-user-media-el { cursor: default; }
   font-size: 12.5px;
 }
 .chat-surveycard-receipt-check { color: var(--color-success); font-weight: 700; }
+
+/* The context strip — the call's `title`, the "what we were doing" line that lets a card be
+   answered cold. Quiet on purpose: it frames the question, it is not the question. */
+.chat-surveycard-context {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.chat-surveycard-context-label {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.chat-surveycard-desc { margin: -2px 0 2px; color: var(--color-text-secondary); font-size: 12.5px; line-height: 1.5; }
+/* The option's number — the key that picks it. Tertiary so it reads as a hint, not a label. */
+.chat-surveycard-opt-key {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+/* The always-on free-text field: a note on the pick, or the answer when nothing is picked.
+   Same height whatever is clicked — only typing past a line grows it (see SurveyCard.tsx). */
+.chat-surveycard-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--color-border-hover);
+  background: var(--color-bg);
+  transition: border-color var(--transition-fast);
+}
+.chat-surveycard-field:focus-within { border-style: solid; border-color: var(--color-accent); }
+.chat-surveycard-field-tag {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chat-surveycard-field.note .chat-surveycard-field-tag { background: var(--color-accent-soft); color: var(--color-accent); }
+.chat-surveycard-fieldinput {
+  flex: 1 1 200px;
+  min-width: 0;
+  min-height: 22px;
+  max-height: 160px;
+  padding: 1px 0;
+  border: 0;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.chat-surveycard-fieldinput:focus { outline: none; }
+.chat-surveycard-fieldinput::placeholder { color: var(--color-text-tertiary); }
+/* Body font, not mono: the mono stack has no ↵ glyph on every platform. */
+.chat-surveycard-fieldhint { flex: 1 0 100%; color: var(--color-text-tertiary); font-size: 11px; }
+
+.chat-surveycard-unclear {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.chat-surveycard-unclear:hover { color: var(--color-text); text-decoration: underline; }
+.chat-surveycard-unclear:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ── The A/B/C board — options you compare by looking ─────────────────────────────── */
+/* How much of a preview shows before the ⛶ door is needed: most of a real mock, capped by the
+   window so a tile never outgrows the pane it is read in. */
+.chat-surveycard { --survey-preview-max: min(440px, 62vh); }
+.chat-surveycard-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.chat-surveycard-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--radius-lg);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-bg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+.chat-surveycard-tile:hover { border-color: var(--color-border-hover); }
+.chat-surveycard-tile:active { transform: scale(0.99); }
+.chat-surveycard-tile:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-surveycard-tile.on { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-soft); }
+/* A window onto the preview that hugs it up to the cap, so a mock reads without going full
+   screen. The grid stretches every tile in a row to the tallest, and this window takes the
+   slack, so the labels underneath still line up. Past the cap, the ⛶ door has the rest. */
+.chat-surveycard-tile-preview {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: var(--survey-preview-max);
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+.chat-surveycard-tile-preview .chat-htmlview,
+.chat-swipe-preview .chat-htmlview {
+  max-width: none;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* The tile is the click target: the frame inside must not swallow the press (an iframe's
+   clicks never bubble to the page). The fullscreen door stays live above it. */
+.chat-surveycard-tile-preview .chat-htmlview-frame,
+.chat-swipe-preview .chat-htmlview-frame { pointer-events: none; }
+.chat-surveycard-tile-preview .chat-htmlview-full-btn,
+.chat-swipe-preview .chat-htmlview-full-btn { opacity: 1; z-index: 1; }
+.chat-surveycard-media { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--color-bg-tertiary); }
+/* A lone picture or clip, with its fullscreen door pinned top-right like an HTML preview's. */
+.chat-surveycard-mediabox { position: relative; height: 100%; }
+/* A picture takes its own shape up to the cap instead of a fixed box. */
+.chat-surveycard-tile-preview .chat-surveycard-media,
+.chat-swipe-preview .chat-surveycard-media { height: auto; max-height: var(--survey-preview-max); }
+.chat-surveycard-mediabox .chat-htmlview-full-btn { opacity: 1; z-index: 1; }
+/* The clip at full window: scaled up to the window, letterboxed, never cropped. */
+.chat-surveycard-videofull { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; background: #000; }
+.chat-surveycard-videofull-media { width: 100%; height: 100%; object-fit: contain; }
+.chat-surveycard-tile-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+}
+.chat-surveycard-tile-foot { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; }
+.chat-surveycard-tile-letter {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border-hover);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+.chat-surveycard-tile.on .chat-surveycard-tile-letter { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
+
+/* ── Number questions ─────────────────────────────────────────────────────────────── */
+.chat-surveycard-number { display: flex; align-items: center; gap: 14px; padding: 4px 2px; }
+.chat-surveycard-range { flex: 1 1 auto; accent-color: var(--color-accent); }
+.chat-surveycard-numvalue {
+  flex: 0 0 auto;
+  min-width: 56px;
+  text-align: right;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg, 18px);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+.chat-surveycard-unit { color: var(--color-text-tertiary); font-size: 12px; }
+
+/* ── The swipe deck ───────────────────────────────────────────────────────────────── */
+.chat-swipe { display: flex; flex-direction: column; gap: 10px; }
+/* The viewport clips horizontally (it is a pager), so the throw leaves through its edge —
+   which reads as the card going away, not as a glitch. */
+.chat-swipe-face {
+  position: relative;
+  min-height: 120px;
+  border-radius: var(--radius-xl);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  transition: transform 220ms ease, border-color var(--transition-fast);
+}
+.chat-swipe-face.dragging { cursor: grabbing; transition: none; }
+.chat-swipe-face.yes { border-color: var(--color-success); }
+.chat-swipe-face.no { border-color: var(--color-error); }
+.chat-swipe-preview { max-height: var(--survey-preview-max); overflow: hidden; }
+.chat-swipe-outcomes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 16px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.chat-swipe-outcomes b { color: var(--color-text); }
+.chat-swipe-stamp {
+  position: absolute;
+  top: 12px;
+  z-index: 2;
+  max-width: 45%;
+  padding: 3px 10px;
+  border-radius: var(--radius-md);
+  border: 2px solid currentColor;
+  background: var(--color-bg);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.chat-swipe-stamp.yes { left: 12px; color: var(--color-success); transform: rotate(-8deg); }
+.chat-swipe-stamp.no { right: 12px; color: var(--color-error); transform: rotate(8deg); }
+.chat-swipe-buttons { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chat-swipe-hint { color: var(--color-text-tertiary); font-size: 11px; }
+.chat-swipe-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 42%;
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.chat-swipe-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-swipe-btn.yes:hover, .chat-swipe-btn.yes.on { border-color: var(--color-success); }
+.chat-swipe-btn.no:hover, .chat-swipe-btn.no.on { border-color: var(--color-error); }
+.chat-swipe-btn.on { background: var(--color-bg-tertiary); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-swipe-face { transition: none; }
+}
 
 /* ── Permission card (state 6) — header rule, then a padded decision body ─────────── */
 
@@ -818,7 +1067,10 @@ video.chat-msg-user-media-el { cursor: default; }
   font-size: var(--font-size-xs);
 }
 
-/* ── Sub-agents group card (state 9) ──────────────────────────────────────────────── */
+/* ── Party card: the sub-agents one dispatch sent, read as a team (state 9) ─────────
+   Status is carried by words, marks and motion (the running face's loop), never by the
+   role tint, which is chrome. Text on every tint stays body ink; the only status colours
+   are the measured `-ink` tokens, so each line holds AA on the card's surface. */
 
 .chat-subagents {
   align-self: flex-start;
@@ -829,12 +1081,61 @@ video.chat-msg-user-media-el { cursor: default; }
   border: 1px solid var(--color-border);
   overflow: hidden;
 }
-.chat-subagents .chat-m-cardhead-glyph { color: var(--color-warning); }
+.chat-subagents .chat-m-cardhead-glyph { display: inline-flex; color: var(--color-text-secondary); }
+/* The stage kicker ("Plan review · round 2"), an eyebrow over the team sentence. It sits
+   OUTSIDE the header so the header's disclosure button keeps the headline as its name. */
+.chat-subagents-stage {
+  padding: var(--space-3) var(--space-4) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-body);
+}
+.chat-subagents-stage + .chat-m-cardhead { padding-top: var(--space-1); }
+/* The one "fresh eyes" explainer a chat gets, said under the first judged party's header. */
+.chat-subagents-why {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+.chat-subagents:not([data-open]) .chat-subagents-why:last-child { border-bottom: none; }
+/* Verdicts back so far ("2 Solid · 1 Needs work"). */
+.chat-subagents-tally {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* A finished judged party's stamp: "cleared" or "sent back" on a tint of its outcome. The
+   word carries it; the drawn seal takes the status ink. */
+.chat-subagents-seal {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-success) 45%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-secondary));
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.chat-subagents-seal svg { color: var(--color-success-ink); }
+.chat-subagents-seal[data-outcome='sent-back'] {
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-error) 12%, var(--color-bg-secondary));
+}
+.chat-subagents-seal[data-outcome='sent-back'] svg { color: var(--color-error-ink); }
 /* Collapsed, the header IS the card, so its divider would be a hairline hanging over
    nothing — the tool cards carry that border on the BODY for the same reason. */
 .chat-subagents:not([data-open]) .chat-m-cardhead { border-bottom: none; }
 .chat-subagents-elapsed {
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
@@ -843,7 +1144,7 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-outcome {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-error);
+  color: var(--color-error-ink);
 }
 .chat-subagents-spinner {
   width: var(--space-3);
@@ -875,16 +1176,29 @@ video.chat-msg-user-media-el { cursor: default; }
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 .chat-subagents-row:last-child { border-bottom: none; }
+/* ONE entry per agent: the row plus, once it landed, its report under the row's line. The
+   divider moves from the row to the entry so a row and its report read as one block. */
+.chat-subagents-entry { border-bottom: 1px solid var(--color-border); }
+.chat-subagents-entry:last-child { border-bottom: none; }
+.chat-subagents-entry > .chat-subagents-row { width: 100%; border-bottom: none; }
 
 /* A peer envoy run is ANOTHER PROJECT working, and its row says so the way the docked
-   peer-session row does: the accent, on the badge that names the vault. The avatar slot
-   already carries the vault's logo (SubAgentCard.tsx). */
-.chat-subagents-row[data-peer] .chat-a-typebadge {
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+   peer-session row does: the accent, on the chip that names the vault. The avatar slot
+   already carries the vault's logo (SubAgentCard.tsx). Accent INK on a tint, never a fill. */
+.chat-subagents-row-vault {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary));
+  color: var(--color-accent-ink);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.chat-subagents-peer-mark { margin-right: 4px; }
-.chat-subagents-rail-chip[data-peer] .chat-subagents-rail-chip-label { color: var(--color-accent); }
+.chat-subagents-rail-chip[data-peer] .chat-subagents-rail-chip-label { color: var(--color-accent-ink); }
 /* The tint marks the row you are POINTING at, not the ones that happen to be running —
    a live run already says so through its sweeping bar and its accent-colored line. */
 .chat-subagents-row:hover,
@@ -896,31 +1210,45 @@ video.chat-msg-user-media-el { cursor: default; }
 
 .chat-subagents-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .chat-subagents-row-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.chat-subagents-row-name {
+.chat-subagents-row-role {
+  flex: 0 0 auto;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
   color: var(--color-text);
+  white-space: nowrap;
+}
+/* The run's own words beside a role that does not say which one it is ("Builder", then
+   "T1 Role registry"). Yields first when the row runs out of room. */
+.chat-subagents-row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Activity text takes the slack and truncates; the meta chips keep their intrinsic width, so
-   a long "Running …" step never pushes the numbers off the row. */
+/* The doing line takes the slack and truncates; the meta chips keep their intrinsic width, so
+   a long "Reading …" step never pushes the numbers off the row. */
 .chat-subagents-row-sub {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
 }
-.chat-subagents-row-line {
+.chat-subagents-row-doing {
   flex: 1 1 auto;
+  min-width: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chat-subagents-row[data-status='running'] .chat-subagents-row-line { color: var(--color-accent); }
+/* A step's tense is its status: the present-tense line of a running teammate reads in the
+   team log's running ink, the same as a running step. A failure says so in words. */
+.chat-subagents-row[data-status='running'] .chat-subagents-row-doing { color: var(--color-success-ink); }
+.chat-subagents-row[data-status='error'] .chat-subagents-row-doing { color: var(--color-error-ink); }
 
 .chat-subagents-row-meta {
   flex: 0 0 auto;
@@ -940,13 +1268,16 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 
 .chat-subagents-row-mark { flex: 0 0 auto; width: var(--space-4); text-align: center; color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
-.chat-subagents-row-mark[data-status='completed'] { color: var(--color-success); }
-.chat-subagents-row-mark[data-status='error'] { color: var(--color-error); }
+.chat-subagents-row-mark[data-status='completed'] { color: var(--color-success-ink); }
+.chat-subagents-row-mark[data-status='error'] { color: var(--color-error-ink); }
 /* "open →" replaces the status mark on the row you are pointing at — the drill-in is the
    only thing a row does, so it names itself exactly when you can act on it. */
+/* One grid cell holds both, so the slot is as wide as "open →" whether or not it shows: the
+   meta ends before it and hovering shifts nothing. */
+.chat-subagents-row-end { flex: 0 0 auto; display: grid; justify-items: end; align-items: center; }
+.chat-subagents-row-end > * { grid-area: 1 / 1; }
 .chat-subagents-row-open {
-  position: absolute;
-  right: var(--space-4);
+  white-space: nowrap;
   color: var(--color-accent);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
@@ -983,6 +1314,23 @@ video.chat-msg-user-media-el { cursor: default; }
   border-top: 1px solid var(--color-border);
 }
 .chat-subagents-reports > * + * { border-top: 1px solid var(--color-border); }
+/* A superseded round's reports, folded behind one line: the next round is the live one. */
+.chat-subagents-reports-toggle {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-subagents-reports-toggle:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-subagents-reports-toggle:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 
 .chat-subreport-head {
   display: flex;
@@ -1013,7 +1361,7 @@ video.chat-msg-user-media-el { cursor: default; }
   white-space: nowrap;
 }
 .chat-subreport-status { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
-.chat-subreport-status[data-status='error'] { color: var(--color-error); font-weight: var(--font-weight-semibold); }
+.chat-subreport-status[data-status='error'] { color: var(--color-error-ink); font-weight: var(--font-weight-semibold); }
 .chat-subreport-status[data-status='stopped'] { color: var(--color-warning); }
 /* The standfirst is the whole point of the collapsed state, so it gets TWO lines and the
    ellipsis — not one truncated line, which is what made the row alone insufficient. */
@@ -1038,6 +1386,18 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subreport-head:hover .chat-subreport-cue { color: var(--color-accent); }
 
 .chat-subreport-body { padding: 0 var(--space-4) var(--space-4) var(--space-4); }
+
+/* The report INSIDE its run's row (SubAgentReport inRow): no face, no name, no status —
+   the row above says all of that. Its text starts on the row's text column (row padding +
+   the 32px avatar + the row gap), so it reads as the row's next line, not a new entry. */
+.chat-subreport[data-in-row] .chat-subreport-head {
+  align-items: baseline;
+  padding: 0 var(--space-4) var(--space-3) calc(var(--space-4) + 32px + var(--space-3));
+  margin-top: calc(-1 * var(--space-2));
+}
+.chat-subreport[data-in-row] .chat-subreport-body {
+  padding-left: calc(var(--space-4) + 32px + var(--space-3));
+}
 /* The report is the agent's WRITING, so it is set on the reading surface the transcript's own
    prose uses — a code block, a table and a heading all land the way they do in an answer. */
 .chat-subreport-prose {
@@ -1119,7 +1479,8 @@ video.chat-msg-user-media-el { cursor: default; }
 /* The group's own summary — the card's header, compressed to a pill you can click to get
    back to it. */
 .chat-subagents-rail-summary {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1129,16 +1490,21 @@ video.chat-msg-user-media-el { cursor: default; }
   font-family: inherit;
   cursor: pointer;
 }
-.chat-subagents-rail-glyph { color: var(--color-warning); font-size: var(--font-size-sm); }
+.chat-subagents-rail-glyph { flex: 0 0 auto; display: inline-flex; color: var(--color-text-secondary); }
+/* The party's headline. It is a sentence, so it may be the thing that yields in a narrow pane. */
 .chat-subagents-rail-count {
+  min-width: 0;
   color: var(--color-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-bold);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .chat-subagents-rail-summary:hover .chat-subagents-rail-count { color: var(--color-accent); }
 .chat-subagents-rail-summary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
-.chat-subagents-rail .chat-subagents-elapsed { font-size: 10.5px; }
+.chat-subagents-rail .chat-subagents-elapsed { flex: 0 0 auto; font-size: 10.5px; }
+.chat-subagents-rail .chat-subagents-spinner { flex: 0 0 auto; }
 
 /* One chip per run. The strip scrolls sideways rather than wrapping: the rail is a fixed
    40px band over the transcript, and a fan-out of ten agents must not grow it into a wall. */
@@ -1178,8 +1544,7 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-rail-chip-label {
   max-width: 130px;
   color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1190,8 +1555,23 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-rail-chip:not([data-status='running']) .chat-a-avatar { opacity: 0.55; }
 .chat-subagents-rail-chip-mark { font-size: 10px; color: var(--color-text-tertiary); }
 .chat-subagents-rail-chip-mark[data-status='running'] { color: var(--color-accent); }
-.chat-subagents-rail-chip-mark[data-status='completed'] { color: var(--color-success); }
-.chat-subagents-rail-chip-mark[data-status='error'] { color: var(--color-error); }
+.chat-subagents-rail-chip-mark[data-status='completed'] { color: var(--color-success-ink); }
+.chat-subagents-rail-chip-mark[data-status='error'] { color: var(--color-error-ink); }
+
+/* ── The drill-in's header, as the same character the party row showed ──────────────
+   (SlideOver's sub-agent mode; the panel's own shell lives in overlays.css.) */
+.chat-slideover-head[data-role] > .chat-a-avatar { flex: 0 0 auto; }
+.chat-slideover-head[data-role] .chat-slideover-subagent-meta { flex-wrap: wrap; row-gap: var(--space-1); }
+.chat-slideover-subagent-role {
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+.chat-slideover-subagent-type {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
 
 /* ── Board preview card (state 4) ─────────────────────────────────────────────────── */
 
@@ -1211,12 +1591,20 @@ video.chat-msg-user-media-el { cursor: default; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 11px;
+  /* 3px + the 24px Full-screen target + 3px keeps the head the ~31px it was when the button
+     was a bare 17px word; the right inset shrinks by the button's own padding. */
+  padding: 3px 6px 3px 11px;
   border-bottom: 1px solid var(--color-border);
 }
 .chat-board-canvas { height: 340px; background: var(--color-bg); }
 /* The canvas fills the card — ExcalidrawPreview sizes to its container. */
 .chat-board-canvas .excalidraw-preview { height: 100%; }
+/* …and ONLY that tall. ExcalidrawPreview.css gives the preview a 420px floor for the Knowledge
+   page, which outranks `height: 100%` inside this 340px box: the canvas was 418px, fitted and
+   centred in THAT, then clipped by the card, so a short board sat low with the gap above and a
+   tall one lost its bottom. The card already draws the frame, so the preview's own border (a
+   second rule 1px inside the first) goes too. */
+.chat-board-canvas .excalidraw-preview { min-height: 0; border: 0; border-radius: 0; }
 .chat-board-loading {
   display: flex;
   align-items: center;
@@ -1281,7 +1669,11 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-md-path:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .chat-board-open {
   flex: 0 0 auto;
+  /* A 24px target (WCAG 2.2 minimum); it measured 69x17 as a bare word. */
+  min-height: 24px;
+  padding: 2px 6px;
   border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-accent);
   font-size: 11.5px;

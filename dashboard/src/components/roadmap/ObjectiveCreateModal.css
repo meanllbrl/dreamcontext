@@ -240,7 +240,7 @@
 .ocm-seg-btn:hover { color: var(--color-text); }
 .ocm-seg-btn:active { transform: scale(0.92); }
 .ocm-seg-btn--on {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   box-shadow: 0 2px 8px -3px var(--color-accent);
 }
@@ -359,9 +359,9 @@
 .ocm-btn--ghost:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 
 .ocm-btn--primary {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
-  border: 1px solid var(--color-accent);
+  border: 1px solid var(--color-accent-strong);
   box-shadow: 0 4px 14px -4px var(--color-accent);
 }
 .ocm-btn--primary:hover:not(:disabled) { box-shadow: 0 8px 22px -6px var(--color-accent); transform: translateY(-1px); }

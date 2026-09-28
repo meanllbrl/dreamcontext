@@ -1,0 +1,149 @@
+/*
+ * The channel's filter row — status chips, a hairline, then one chip per agent.
+ *
+ * It NEVER scrolls and never clips. The agents that do not fit fold into a "+N agents" chip
+ * whose menu lists each of them with its count, so an agent past the fold is always one click
+ * away and its count is never hidden (C7). The row's height is `--agents-toolbar-h`, declared on
+ * `.agents-feed`, which the thread panel's header matches so the two rules line up.
+ *
+ * Accent budget (K8): none. The selected chip is the dialog's own neutral-selected recipe (a
+ * surface, a text-ink border, semibold), the same way the page header's view switch says
+ * "selected"; the page's one filled accent is New agent.
+ */
+
+.agents-chips {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  min-height: var(--agents-toolbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.agents-chips-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Between the status filters and the agents: two kinds of filter, one row. */
+.agents-chips-rule {
+  flex: none;
+  width: 1px;
+  height: var(--space-5);
+  background: var(--color-border);
+}
+
+.agents-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.agents-chip:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.agents-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* Selected = neutral surface + strong border + semibold, as the New agent dialog's chips are.
+   Never the accent: that belongs to New agent. */
+.agents-chip--on {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-text);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: var(--shadow-sm);
+}
+
+/* A filter with nothing behind it keeps its "0" and steps back. */
+.agents-chip--zero {
+  color: var(--color-text-tertiary);
+}
+
+.agents-chip-label {
+  max-width: var(--space-28);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The count is the chip's VALUE — it answers the filter before it is clicked,
+   so it is never hidden and never a separate badge floating off the edge. */
+.agents-chip-count {
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── the "+N agents" menu ───────────────────────────────────────────────
+   Portaled to <body> and placed BELOW its trigger (the row sits near the top of the page, so
+   a menu that opened upward would start above the window). Its rows are Chat's menu list
+   (`.chat-cmp-menu-list`, composer.css); the panel around them is the page's own. */
+.agents-chips-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: var(--space-28);
+  padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+.chat-cmp-menu-list.agents-chips-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.chat-cmp-menu-list.agents-chips-menu button:focus-visible {
+  outline: none;
+  background: var(--color-bg-tertiary);
+}
+
+.chat-cmp-menu-list.agents-chips-menu button[aria-checked='true'] {
+  font-weight: var(--font-weight-semibold);
+}
+
+.agents-chips-menu-label {
+  flex: 1;
+  min-width: 0;
+  max-width: var(--space-28);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-chips-menu .agents-chip-count {
+  color: var(--color-text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-chip {
+    transition: none;
+  }
+}

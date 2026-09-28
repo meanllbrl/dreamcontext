@@ -56,6 +56,68 @@
   padding-left: var(--space-2);
 }
 
+/* ── Team log: a step as a sentence (ToolHeader with an `action`, ThinkingPill) ───────
+   The line's TENSE is its status and its ink says it again: running in success ink with a
+   trailing "…", done in body ink, failed in error ink. Both inks are measured ≥ 4.5:1 on
+   every chat surface in both themes (tokens.css). Motion lives on the avatar alone. */
+
+.chat-step-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+/* A line that follows its stretch's lead keeps the avatar column and hides the face, so a
+   speaker's lines all start at the same x and one stretch shows exactly one face. */
+.chat-step[data-stretch='follow'] .chat-step-avatar { visibility: hidden; }
+
+.chat-m-toolhead-action,
+.chat-m-toolhead-tail {
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+/* The sentence may give way before the meta does; a chip never shrinks, so it wins. */
+.chat-m-toolhead-action {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-m-toolhead-tail { flex: 0 0 auto; }
+/* After a chip the "…" is its own item; pull it back to sit against the chip, not a gap away. */
+.chat-m-toolhead > .chat-m-toolhead-ellipsis { margin-left: calc(var(--space-1) - var(--space-2)); }
+
+.chat-step[data-status='running'] > .chat-m-toolhead :is(.chat-m-toolhead-action, .chat-m-toolhead-tail, .chat-m-toolhead-ellipsis) {
+  color: var(--color-success-ink);
+}
+.chat-step[data-status='error'] > .chat-m-toolhead :is(.chat-m-toolhead-action, .chat-m-toolhead-tail, .chat-m-toolhead-ellipsis) {
+  color: var(--color-error-ink);
+}
+/* Bookkeeping (the quest map updating itself) is there if you look, and asks for nothing. */
+.chat-step[data-quiet] > .chat-m-toolhead .chat-m-toolhead-action {
+  color: var(--color-text-tertiary);
+  font-weight: var(--font-weight-normal);
+}
+
+/* The one place the tool's own name is still written: the opened body's first line. */
+.chat-toolcard-raw {
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* A live work beat's readout (the step in hand) gives way before the header's title does. */
+.chat-toolrun > .chat-m-cardhead .chat-m-cardhead-aside { min-width: 0; }
+.chat-toolrun-now {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Card header ─────────────────────────────────────────────────────────────────── */
 
 .chat-m-cardhead {
@@ -222,26 +284,38 @@
 
 /* ── Thinking pill ───────────────────────────────────────────────────────────────── */
 
-.chat-m-thinking { align-self: flex-start; max-width: 100%; }
+/* A step line of the team log, not a pill: the same 32px row, 16px inset and avatar column as
+   a tool row (the transparent 1px border stands in for the card's frame), so a thinking line
+   and the tool rows around it start at the same x. It has no card of its own; the line IS it. */
+.chat-m-thinking { align-self: stretch; width: 100%; max-width: var(--chat-line-width, 100%); }
 
 .chat-m-thinking-head {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px dashed var(--color-border-hover);
-  border-radius: var(--radius-full);
+  width: 100%;
+  min-height: var(--space-8);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-family-text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  text-align: left;
   cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
+  transition: background var(--transition-fast);
 }
-.chat-m-thinking-head:hover { background: var(--color-bg-tertiary); border-color: var(--color-text-tertiary); }
-.chat-m-thinking-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
-.chat-m-thinking-glyph { font-size: var(--font-size-sm); line-height: 1; }
+.chat-m-thinking-head:hover { background: var(--color-bg-tertiary); }
+.chat-m-thinking-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-m-thinking-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-2);
+}
 
 .chat-m-thinking[data-streaming] .chat-m-thinking-label {
   background: linear-gradient(90deg, var(--color-text-tertiary) 0%, var(--color-text) 50%, var(--color-text-tertiary) 100%);

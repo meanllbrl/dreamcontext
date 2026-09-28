@@ -93,9 +93,9 @@
 }
 
 .launcher-btn-primary {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .launcher-status,
@@ -242,4 +242,13 @@
   color: var(--color-accent);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
+}
+
+/* Space view: a positioning context so the assistant's card can float over the sky. */
+.launcher-space-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }

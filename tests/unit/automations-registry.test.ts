@@ -780,6 +780,7 @@ describe('AUTOMATIONS_GITIGNORE_ENTRIES', () => {
       'automations/*.md',
       'automations/cache/*.json',
       'automations/output/*/*',
+      'automations/threads/*/*',
     ]);
   });
 
@@ -791,6 +792,7 @@ describe('AUTOMATIONS_GITIGNORE_ENTRIES', () => {
       '_dream_context/automations/*.md',
       '_dream_context/automations/cache/*.json',
       '_dream_context/automations/output/*/*',
+      '_dream_context/automations/threads/*/*',
     ]);
   });
 });
@@ -798,20 +800,31 @@ describe('AUTOMATIONS_GITIGNORE_ENTRIES', () => {
 // ─── sharedSlugNegations / sharedSlugNegationsRoot ──────────────────────────
 
 describe('sharedSlugNegations / sharedSlugNegationsRoot', () => {
-  it('produces the three negation lines, brain-relative', () => {
+  it('produces the four negation lines, brain-relative', () => {
     expect(sharedSlugNegations('eod-digest')).toEqual([
       '!automations/eod-digest.md',
       '!automations/cache/eod-digest.json',
       '!automations/output/eod-digest/*',
+      '!automations/threads/eod-digest/*',
     ]);
   });
 
-  it('produces the three negation lines, project-root-relative', () => {
+  it('produces the four negation lines, project-root-relative', () => {
     expect(sharedSlugNegationsRoot('eod-digest')).toEqual([
       '!_dream_context/automations/eod-digest.md',
       '!_dream_context/automations/cache/eod-digest.json',
       '!_dream_context/automations/output/eod-digest/*',
+      '!_dream_context/automations/threads/eod-digest/*',
     ]);
+  });
+
+  // The channel line is the one that makes the wildcard NECESSARY: without
+  // `automations/threads/*` in the base block a private agent's channel
+  // publishes by default, and with it a shared agent's channel goes dark
+  // unless this fourth negation exists. The two are one contract.
+  it('puts the channel negation last, under the wildcard that would otherwise hide it', () => {
+    expect(sharedSlugNegations('eod-digest').at(-1)).toBe('!automations/threads/eod-digest/*');
+    expect(AUTOMATIONS_GITIGNORE_ENTRIES).toContain('automations/threads/*/*');
   });
 });
 

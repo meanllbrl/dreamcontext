@@ -69,6 +69,8 @@ function fakeManifest(overrides: Partial<AutomationManifest> = {}): AutomationMa
     slug: 'x',
     id: 'auto_xxxxxxxx',
     title: 'X',
+    mode: 'sched',
+    photo: null,
     enabled: true,
     schedule: { days: 'daily', at: '18:00' },
     model: null,

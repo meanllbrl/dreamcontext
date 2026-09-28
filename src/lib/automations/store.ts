@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { defaultGitTrackedCheck, type GitTrackedCheck } from '../git-tracked.js';
 import { basename, dirname, join, normalize, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
@@ -10,8 +10,12 @@ import {
   AutomationError,
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
+  AUTOMATIONS_PHOTO_GITIGNORE_ENTRIES,
+  AUTOMATIONS_PHOTO_GITIGNORE_ENTRIES_ROOT,
   AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES,
   AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT,
+  AUTOMATION_MODES,
+  AUTOMATION_PHOTOS_DIR,
   DEFAULT_CATCHUP_HOURS,
   DEFAULT_TIMEOUT_MINUTES,
   EFFORT_LEVELS,
@@ -37,6 +41,7 @@ import {
   sharedSlugNegations,
   type AutomationCache,
   type AutomationManifest,
+  type AutomationMode,
   type AutomationPattern,
   type EffortLevel,
   type FlowGraph,
@@ -400,6 +405,127 @@ export function outputDirFor(
   }
 }
 
+// ─── Agent photo: paths, containment, resolution ────────────────────────────
+
+/** `<contextRoot>/automations/photos` — created lazily on the first upload. */
+export function automationPhotosDir(contextRoot: string): string {
+  return join(contextRoot, AUTOMATION_PHOTOS_DIR);
+}
+
+/**
+ * The contextRoot-relative photo path for a slug, given an extension.
+ *
+ * Both halves are constructed here and NEITHER comes from a client: `slug` is
+ * checked by `isSafeAutomationSlug` (it is a path segment), and `ext` is
+ * derived from the uploaded bytes' magic number by the caller, never from a
+ * filename. A photo is therefore always exactly one file per agent, which is
+ * also why an edit overwrites rather than accumulating orphans.
+ */
+export function photoRelPathFor(slug: string, ext: string): string {
+  if (!isSafeAutomationSlug(slug)) throw new AutomationError(`Invalid automation slug "${slug}".`);
+  if (!/^\.[a-z0-9]{1,5}$/.test(ext)) throw new AutomationError(`Invalid photo extension "${ext}".`);
+  // POSIX separator deliberately: this string is written INTO a synced
+  // manifest, so it must read the same on every platform.
+  return `${AUTOMATION_PHOTOS_DIR}/${slug}${ext}`;
+}
+
+/**
+ * Turn a manifest's stored `photo` string into an absolute path that is safe
+ * to read, or `null`.
+ *
+ * TOTAL — never throws. A manifest is synced markdown a teammate or a hand
+ * edit can put any string into, so this is the single gate every consumer goes
+ * through, and it refuses in three independent ways:
+ *
+ *  - anything that resolves outside `<contextRoot>/automations/photos/` (an
+ *    absolute path, a `../` climb, a symlink-shaped string) — the containment
+ *    rule `resolveOutputDir` uses, tightened from "inside the brain" to
+ *    "inside the photos directory", because a photo is served over HTTP and
+ *    the brain holds secrets, transcripts and `.env` files;
+ *  - anything that is not a regular file that exists right now;
+ *  - `null`/empty, the ordinary "no photo" case.
+ *
+ * Every refusal degrades to initials at the call site. That is the whole
+ * point: a broken or hostile photo string must cost you a picture, never the
+ * agent and never an error page.
+ */
+export function resolveAutomationPhoto(contextRoot: string, raw: string | null): string | null {
+  if (raw === null || raw.trim() === '') return null;
+  try {
+    const dir = resolve(automationPhotosDir(contextRoot));
+    // Resolved against contextRoot, because that is what the stored string is
+    // relative TO — then checked against the photos directory. Resolving it
+    // against the photos dir instead would quietly accept
+    // `automations/photos/automations/photos/x.png` and reject every honest
+    // value, which is the bug the containment test caught.
+    const abs = resolve(resolve(contextRoot), normalize(raw.trim()));
+    // `startsWith(dir + sep)` — a STRICT descendant, so the directory itself
+    // can never be handed to a reader.
+    if (!abs.startsWith(dir + sep)) return null;
+    if (!existsSync(abs)) return null;
+    // The lexical check above is not enough on its own: `resolve` does not
+    // follow symlinks, so a link sitting inside the photos directory and
+    // pointing at `~/.ssh/id_rsa` would pass it and then be READ and served
+    // over HTTP by the photo route. Nothing stages such a link today — the
+    // directory is git-ignored and its only writer writes a regular file at a
+    // name it constructs itself — so this is defence in depth against a
+    // future writer, not a live hole. BOTH sides are realpath'd: on macOS the
+    // brain often lives under `/var/…`, itself a symlink to `/private/var/…`,
+    // so realpath'ing only the file would compare two different spellings of
+    // the same directory and refuse every honest photo.
+    const realDir = realpathSync(dir);
+    const real = realpathSync(abs);
+    if (!real.startsWith(realDir + sep)) return null;
+    // A regular file, never a directory or a device — `readFileSync` on a
+    // fifo would hang the request thread.
+    if (!statSync(real).isFile()) return null;
+    return real;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PURE containment check on a contextRoot-relative photo string — no I/O, so
+ * `validateAutomationForWrite` can call it while keeping its "takes no
+ * contextRoot" contract (the same split `resolveOutputDir` forced on
+ * `outputDir`).
+ *
+ * The rule is stricter than "inside the brain": the string must normalize to
+ * `automations/photos/<something>` with no climb out of it and no leading
+ * separator. Anything else is refused at write, rather than written and then
+ * silently dropped by `resolveAutomationPhoto` on every read.
+ */
+export function isContainedPhotoRel(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  // A leading `/` or a drive letter is absolute — `normalize` would keep it.
+  if (trimmed.startsWith('/') || /^[a-zA-Z]:/.test(trimmed)) return false;
+  const norm = normalize(trimmed).split(sep).join('/');
+  if (norm.startsWith('..')) return false;
+  const prefix = `${AUTOMATION_PHOTOS_DIR}/`;
+  if (!norm.startsWith(prefix)) return false;
+  const rest = norm.slice(prefix.length);
+  return rest.length > 0 && !rest.includes('/') && rest !== '.' && rest !== '..';
+}
+
+/** Lenient read of the `mode` frontmatter key — see {@link AutomationMode} for
+ *  why an unrecognized value reads `'sched'` rather than `'call'`. */
+export function parseAutomationMode(v: unknown): AutomationMode {
+  return (AUTOMATION_MODES as readonly unknown[]).includes(v) ? (v as AutomationMode) : 'sched';
+}
+
+/**
+ * The cadence sentence a human reads on a card or in a profile — the one
+ * place that knows an on-call agent has no schedule to print. Kept here rather
+ * than in each surface so the CLI, the dashboard and the profile popover never
+ * disagree about what an agent's cadence is called.
+ */
+export function cadenceLabel(m: Pick<AutomationManifest, 'mode' | 'schedule'>): string {
+  if (m.mode === 'call') return 'When you call it';
+  return formatScheduleLabel(m.schedule);
+}
+
 // ─── Manifest read ───────────────────────────────────────────────────────────
 
 export function readAutomationFile(filePath: string): AutomationManifest {
@@ -410,6 +536,15 @@ export function readAutomationFile(filePath: string): AutomationManifest {
     slug,
     id: typeof data.id === 'string' && data.id.trim() ? data.id : '',
     title: typeof data.title === 'string' && data.title.trim() ? data.title : slug,
+    // Lenient toward 'sched' — every manifest written before this field
+    // existed is scheduled, and reading a missing value as 'call' would
+    // silently stop all of them. See AutomationMode's doc comment.
+    mode: parseAutomationMode(data.mode),
+    // Stored VERBATIM, deliberately: this is the read path and reads stay
+    // lenient. Nothing trusts the string — `resolveAutomationPhoto` is the
+    // gate every consumer goes through, and it refuses an escaping or missing
+    // path by degrading to initials.
+    photo: strOrNull(data.photo),
     enabled: data.enabled !== false,
     schedule: parseSchedule(data.schedule),
     model: strOrNull(data.model),
@@ -803,7 +938,18 @@ export function clearRunSidecar(contextRoot: string, slug: string): void {
 export interface CreateAutomationInput {
   slug: string;
   title: string;
+  /** Omitted ⇒ `'sched'`, which is what every automation was before this field
+   *  existed. `'call'` makes `days`/`at` irrelevant: the manifest is written
+   *  with `schedule: null` and the dispatcher never evaluates it. */
+  mode?: AutomationMode;
+  /** contextRoot-relative, under {@link AUTOMATION_PHOTOS_DIR}. Validated for
+   *  containment on the write path (`validateAutomationForWrite`) and refused
+   *  outright if it escapes — an agent's photo is served over HTTP, so a
+   *  manifest must never be able to point that reader at the rest of the brain. */
+  photo?: string | null;
+  /** Ignored when `mode` is `'call'`. */
   days: 'daily' | Weekday[];
+  /** Ignored when `mode` is `'call'`. */
   at: string;
   model?: string | null;
   effort?: EffortLevel | null;
@@ -853,9 +999,25 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   if (!i.title || !i.title.trim()) {
     throw new AutomationError('An automation title is required.');
   }
-  if (parseSchedule({ days: i.days, at: i.at }) === null) {
+  const mode = i.mode ?? 'sched';
+  if (!(AUTOMATION_MODES as readonly string[]).includes(mode)) {
+    throw new AutomationError(`Invalid mode "${mode}" — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
+  }
+  // An on-call agent HAS no schedule, so there is nothing to validate — and
+  // demanding a placeholder one would put a lie in the manifest that `list`,
+  // `show` and the card would all then have to print.
+  if (mode !== 'call' && parseSchedule({ days: i.days, at: i.at }) === null) {
     throw new AutomationError(
       'Invalid schedule — days must be "daily" or a list of weekdays (sun..sat), and at must be a 24h "HH:MM" time.',
+    );
+  }
+  // STRICT here even though `resolveAutomationPhoto` degrades on read. The two
+  // are not redundant: the read gate stops an escaping path from being SERVED,
+  // this stops one from being WRITTEN, so a manifest never carries a string
+  // whose only possible outcome is a silently missing photo.
+  if (i.photo !== undefined && i.photo !== null && !isContainedPhotoRel(i.photo)) {
+    throw new AutomationError(
+      `Invalid photo "${i.photo}" — must be a brain-relative path under ${AUTOMATION_PHOTOS_DIR}/.`,
     );
   }
   if (i.model !== undefined && i.model !== null && !/^[a-z0-9.-]+$/.test(i.model)) {
@@ -909,6 +1071,15 @@ function ensureAutomationsGitignore(contextRoot: string, slug: string): void {
     ensureGitignoreEntries(projectRoot, AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT, {
       comment: 'dreamcontext automations — review cards (machine-local, never commit)',
     });
+    // Third separate block, same ordering reason as review: a photo is a local
+    // decoration and must not publish, and the wildcard cannot join the
+    // share-negation set without reporting every existing negation as broken.
+    ensureGitignoreEntries(contextRoot, AUTOMATIONS_PHOTO_GITIGNORE_ENTRIES, {
+      comment: 'dreamcontext automations — agent photos (local decoration, never commit)',
+    });
+    ensureGitignoreEntries(projectRoot, AUTOMATIONS_PHOTO_GITIGNORE_ENTRIES_ROOT, {
+      comment: 'dreamcontext automations — agent photos (local decoration, never commit)',
+    });
   } catch (err) {
     throw new AutomationError(
       `Refusing to create automation "${slug}": a governing .gitignore could not be ensured ` +
@@ -930,8 +1101,13 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
   const path = automationPath(contextRoot, slug);
   if (existsSync(path)) throw new AutomationError(`Automation already exists: ${slug}`);
 
-  const schedule = parseSchedule({ days: i.days, at: i.at });
-  if (schedule === null) {
+  const mode: AutomationMode = i.mode ?? 'sched';
+  // An on-call agent is written with NO schedule at all. That is defence in
+  // depth rather than bookkeeping: `mode` alone already stops the dispatcher,
+  // and a null schedule independently makes `isDue` return `no-schedule`, so
+  // it takes both fields being wrong for an on-call agent to fire.
+  const schedule = mode === 'call' ? null : parseSchedule({ days: i.days, at: i.at });
+  if (mode !== 'call' && schedule === null) {
     // Unreachable — validateAutomationForWrite already confirmed this — kept
     // explicit so this function never silently proceeds with a null schedule.
     throw new AutomationError(`Invalid schedule for "${slug}".`);
@@ -946,6 +1122,12 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
   const frontmatter: Record<string, unknown> = {
     id: generateId('auto'),
     title: i.title.trim(),
+    mode,
+    // Written explicitly (as `null` when absent) rather than omitted, so the
+    // capture protocol and a human reading the manifest both see the field
+    // exists. Neither key is approval-hashed, so writing them cannot change
+    // any hash.
+    photo: i.photo ?? null,
     enabled: i.enabled ?? true,
     schedule,
     model: i.model ?? null,
@@ -973,6 +1155,118 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
   mkdirSync(automationsDir(contextRoot), { recursive: true });
   writeFrontmatter(path, frontmatter, body);
   return readAutomationFile(path);
+}
+
+/**
+ * What an EDIT may change. Every key is optional and `undefined` means "leave
+ * it alone" — this is a patch, not a replacement, so a surface that only knows
+ * about half the manifest (the dialog knows nothing about `catchup_hours`,
+ * `shared`, `review` or the flow) can never blank the other half by omission.
+ *
+ * `days`/`at` are read only when the resulting mode is `'sched'`. Switching an
+ * agent to `'call'` drops its schedule; switching it back requires the caller
+ * to supply one, which is why the validation below demands it rather than
+ * resurrecting a stale schedule the owner has not looked at.
+ */
+export interface UpdateAutomationInput {
+  title?: string;
+  mode?: AutomationMode;
+  days?: 'daily' | Weekday[];
+  at?: string;
+  model?: string | null;
+  effort?: EffortLevel | null;
+  timeoutMinutes?: number;
+  enabled?: boolean;
+  /** `null` clears the photo (back to initials); `undefined` leaves it. */
+  photo?: string | null;
+  /** Replaces the `## Prompt` section VERBATIM. This is the approval-hashed
+   *  field, which is exactly why the caller must re-approve after an edit. */
+  prompt?: string;
+}
+
+/**
+ * Edit an existing manifest in place and return it re-read from disk.
+ *
+ * DELIBERATELY DOES NOT RE-APPROVE. `prompt`, `model`, `effort` and
+ * `timeoutMinutes` are all approval-hashed, so an edit through here changes
+ * the hash and leaves the automation blocked until someone approves it — and
+ * that is the correct default for a library function. The two local write
+ * surfaces (the CLI verb and the dashboard route) re-approve on this machine
+ * immediately afterwards, the same pairing `create` already uses, and their
+ * buttons say so. Keeping the approval out of the store means a future caller
+ * that edits a manifest on behalf of a teammate cannot accidentally grant
+ * trust on their behalf.
+ *
+ * Frontmatter is patched through `updateFrontmatterFields` and the prompt
+ * through `upsertSection`, so every byte outside the touched keys and the
+ * `## Prompt` body survives — including `## Pattern`, `## Flow` and the
+ * automation's own changelog.
+ */
+export function updateAutomation(
+  contextRoot: string,
+  slug: string,
+  patch: UpdateAutomationInput,
+): AutomationManifest {
+  const manifest = getAutomation(contextRoot, slug);
+  if (!manifest) throw new AutomationError(`No such automation: ${slug}`);
+
+  const mode: AutomationMode = patch.mode ?? manifest.mode;
+  if (!(AUTOMATION_MODES as readonly string[]).includes(mode)) {
+    throw new AutomationError(`Invalid mode "${mode}" — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
+  }
+
+  const title = patch.title === undefined ? manifest.title : patch.title.trim();
+  if (!title) throw new AutomationError('An automation title is required.');
+
+  // Reuse the create-path validator so an edit can never write a value
+  // `create` would have refused. `days`/`at` are only meaningful for a
+  // scheduled agent; for an on-call one we hand it a syntactically valid pair
+  // it will skip anyway (the `mode !== 'call'` guard inside), so there is one
+  // validator and no second, drifting copy of these rules.
+  const days = patch.days ?? (manifest.schedule?.days ?? 'daily');
+  const at = patch.at ?? (manifest.schedule?.at ?? '09:00');
+  validateAutomationForWrite({
+    slug,
+    title,
+    mode,
+    days,
+    at,
+    model: patch.model === undefined ? manifest.model : patch.model,
+    effort: patch.effort === undefined ? manifest.effort : patch.effort,
+    timeoutMinutes: patch.timeoutMinutes,
+    photo: patch.photo === undefined ? manifest.photo : patch.photo,
+  });
+
+  // A scheduled agent must END UP with a real schedule. Turning `call` back
+  // into `sched` without supplying one would otherwise write `schedule: null`
+  // and produce an agent the owner believes is scheduled and which `isDue`
+  // silently refuses forever — the exact failure the `no-schedule` verdict
+  // exists to make visible, arrived at through the UI instead of a hand edit.
+  const schedule = mode === 'call' ? null : parseSchedule({ days, at });
+  if (mode !== 'call' && schedule === null) {
+    throw new AutomationError(
+      'Invalid schedule — days must be "daily" or a list of weekdays (sun..sat), and at must be a 24h "HH:MM" time.',
+    );
+  }
+
+  const fields: Record<string, unknown> = { title, mode, schedule };
+  if (patch.model !== undefined) fields.model = patch.model;
+  if (patch.effort !== undefined) fields.effort = patch.effort;
+  if (patch.timeoutMinutes !== undefined) {
+    fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);
+  }
+  if (patch.enabled !== undefined) fields.enabled = patch.enabled;
+  if (patch.photo !== undefined) fields.photo = patch.photo;
+
+  updateFrontmatterFields(manifest.path, fields);
+
+  if (patch.prompt !== undefined) {
+    const prompt = patch.prompt.trim();
+    if (!prompt) throw new AutomationError('The prompt cannot be empty — it is what the run actually does.');
+    writeFileSync(manifest.path, upsertSection(readFileSync(manifest.path, 'utf-8'), 'Prompt', prompt), 'utf-8');
+  }
+
+  return readAutomationFile(manifest.path);
 }
 
 export function setAutomationEnabled(contextRoot: string, slug: string, enabled: boolean): AutomationManifest {
@@ -1017,8 +1311,19 @@ export function removeAutomation(contextRoot: string, slug: string, opts?: { pur
     }
   }
 
+  // Resolved through the same gate every reader uses, so a manifest carrying
+  // an escaping `photo` string deletes NOTHING rather than reaching outside
+  // the photos directory on its way out. `null` (no photo, refused path, file
+  // already gone) simply drops out of the list.
+  const photo = resolveAutomationPhoto(contextRoot, manifest.photo);
+
   unlinkSync(manifest.path);
-  for (const p of [automationCachePath(contextRoot, slug), lockPathFor(contextRoot, slug), sidecarPathFor(contextRoot, slug)]) {
+  for (const p of [
+    automationCachePath(contextRoot, slug),
+    lockPathFor(contextRoot, slug),
+    sidecarPathFor(contextRoot, slug),
+    ...(photo ? [photo] : []),
+  ]) {
     try {
       unlinkSync(p);
     } catch {

@@ -587,6 +587,44 @@ export interface SubAgentRun {
   model?: string;
   /** Ordered distinct models, when the run swapped models mid-flight (length > 1). */
   modelsUsed?: string[];
+  /** A headless `claude -p` run's OWN conversation id, when this pane may read its transcript:
+   *  registered through `goal-live actor --session`, or launched by this conversation with
+   *  `--session-id`. Makes it a TEAMMATE (see {@link isTeammateRun}): its drill-in is that
+   *  transcript, not process output. */
+  session?: string;
+  /** A registered teammate's role id, as the orchestrator named it. Outranks every guess. */
+  role?: string;
+  /** How a registered teammate joined: `spawn` | `fork` | `resume` | `fresh`. */
+  joined?: string;
+  /** The final answer, read off the run's own transcript. A teammate's report. */
+  report?: string;
+  /** The Develop wave a registered teammate belongs to (`goal-live actor --wave N`). */
+  wave?: number;
+  /** The review round a registered teammate was registered with (`goal-live actor --round N`). */
+  round?: number;
+}
+
+/** The task type of a teammate known ONLY from its registration and transcript: no `task_*`
+ *  frame ever named it, because it was launched detached, wrapped, or by an ended session. */
+export const TEAMMATE_TASK_TYPE = 'headless_session';
+
+/** A run whose own transcript this pane may read: its drill-in is that conversation. */
+export function isTeammateRun(run: SubAgentRun): boolean {
+  return !!run.session;
+}
+
+const SESSION_ID_FLAG_RE = /(?:^|\s)--session-id(?:=|\s+)["']?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/;
+
+/** The `--session-id` a headless `claude` command was started with, lower-cased, or null.
+ *  Only a segment that IS a headless claude counts, so `echo --session-id …` is nothing. */
+export function headlessSessionIdOf(command: string | undefined): string | null {
+  if (!command) return null;
+  for (const segment of command.split(/\|\||&&|[|;\n]/)) {
+    if (!looksLikeHeadlessClaude(segment)) continue;
+    const m = SESSION_ID_FLAG_RE.exec(segment);
+    if (m) return m[1].toLowerCase();
+  }
+  return null;
 }
 
 /** Was this run dispatched through the Agent/Task TOOL, as opposed to riding a `local_bash`
@@ -599,7 +637,7 @@ export interface SubAgentRun {
  *  This, NOT {@link isAgentRun}, is the predicate for anything that depends on the Agent-tool
  *  machinery: a sidechain transcript to drill into, and a spawning tool card to suppress. */
 export function isDispatchedAgent(run: SubAgentRun): boolean {
-  return run.taskType !== 'local_bash';
+  return run.taskType !== 'local_bash' && run.taskType !== TEAMMATE_TASK_TYPE;
 }
 
 // ─── Headless `claude` runs: a shell by transport, an agent by nature ──────────────
@@ -649,8 +687,13 @@ export function looksLikeHeadlessClaude(command: string | undefined): boolean {
   for (const segment of command.split(/\|\||&&|[|;\n]/)) {
     const tokens = segment.trim().split(/\s+/).filter(Boolean);
     let i = 0;
+    let afterEnv = false;
     while (i < tokens.length) {
       const t = tokens[i];
+      // `env -u NAME` / `env --unset NAME` takes the NEXT word as its argument: skip both, or
+      // the variable's name would read as the executable (a Develop builder is spawned so).
+      if (afterEnv && (t === '-u' || t === '--unset')) { i += 2; continue; }
+      if (t === 'env') afterEnv = true;
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || t.startsWith('-') || COMMAND_WRAPPERS.has(t)) { i += 1; continue; }
       break;
     }
@@ -745,7 +788,7 @@ export function isHeadlessAgentShell(run: SubAgentRun): boolean {
  *  backgrounded headless `claude` — both are an agent doing work on your behalf, and the
  *  transport that carried them is not what the user is watching for. */
 export function isAgentRun(run: SubAgentRun): boolean {
-  return isDispatchedAgent(run) || isHeadlessAgentShell(run);
+  return isDispatchedAgent(run) || isHeadlessAgentShell(run) || isTeammateRun(run);
 }
 
 /** A plain shell command the CLI is running in the background — the complement of
@@ -970,19 +1013,25 @@ export const MIN_TOOL_RUN = 3;
  * Nothing is dropped or duplicated. Visible order is exact; an invisible item that sat
  * INTERIOR to a run comes back out just after it, which is unobservable by construction —
  * a run renders as ONE card, so there is no interior position for it to hold.
+ *
+ * `weightless` marks a groupable item that must not be what makes a run worth forming: the
+ * quest-map bookkeeping call, which the reader should never see as a step of its own. It
+ * rides inside a run that the real steps formed (as a quiet row), but it never lifts two real
+ * steps over `minRun`. Omitted, every groupable item weighs one, exactly as before.
  */
 export function segmentToolRuns<T>(
   items: readonly T[],
   isGroupable: (item: T) => boolean,
   minRun: number = MIN_TOOL_RUN,
   rendersNothing: (item: T) => boolean = () => false,
+  weightless: (item: T) => boolean = () => false,
 ): RunSegment<T>[] {
   const out: RunSegment<T>[] = [];
   /** The open stretch: groupable items plus any invisible ones caught between them. */
   let pending: { item: T; groupable: boolean }[] = [];
   const flush = () => {
     const run = pending.filter((p) => p.groupable).map((p) => p.item);
-    if (run.length >= minRun) {
+    if (run.filter((item) => !weightless(item)).length >= minRun) {
       out.push({ kind: 'run', items: run });
       for (const p of pending) if (!p.groupable) out.push({ kind: 'single', item: p.item });
     } else {
@@ -1231,6 +1280,8 @@ export function subAgentToolUseIds(runs: SubAgentRun[]): Set<string> {
  * raw stdout, which is output rather than a report, and already has its own live-output panel.
  */
 export function runReportText(run: SubAgentRun): string | null {
+  // A teammate's report is its own last answer, read off its transcript: prose by construction.
+  if (run.report?.trim()) return run.report.trim();
   if (!isDispatchedAgent(run)) return null;
   const raw = run.resultContent;
   const isProse = typeof raw === 'string' || (Array.isArray(raw) && raw.every((b) => (
@@ -1322,7 +1373,7 @@ export function reportStandfirst(run: SubAgentRun, report?: string | null): stri
  * kill, and that is worth reading. `running` does not — its row already reports it live.
  */
 export function reportableRuns(runs: readonly SubAgentRun[]): SubAgentRun[] {
-  return runs.filter((r) => isDispatchedAgent(r) && r.status !== 'running');
+  return runs.filter((r) => (isDispatchedAgent(r) || isTeammateRun(r)) && r.status !== 'running');
 }
 
 // ─── Turn progress (the working indicator's condition) ────────────────────────────

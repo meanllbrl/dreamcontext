@@ -308,9 +308,15 @@ async function runTheme(chromium, base, theme, report) {
     (await vis('.chat-subreport').count()) === 2,
     `saw ${await vis('.chat-subreport').count()}`);
   const cardText = (await vis('.chat-subreport').allInnerTexts()).join(' | ').replace(/\s+/g, ' ');
-  ok('each card names WHOSE report it is — the run name and its subagent type',
-    cardText.includes('Security review') && cardText.includes('review-security')
-    && cardText.includes('Frontend review') && cardText.includes('review-frontend'),
+  // The subagent type is plumbing, so it left the card's TEXT for the head's `title` (the
+  // quest-party rework): the name is read off the card, the type off the attribute.
+  const headTitles = (await vis('.chat-subreport-head').evaluateAll((els) => els.map((e) => e.getAttribute('title') ?? ''))).join(' | ');
+  ok('each card names WHOSE report it is — the run name in its text, its subagent type in the head\'s title',
+    cardText.includes('Security review') && headTitles.includes('review-security')
+    && cardText.includes('Frontend review') && headTitles.includes('review-frontend'),
+    `${cardText.slice(0, 200)} :: titles ${headTitles}`);
+  ok('…and the raw subagent type is not in the card\'s visible text',
+    !cardText.includes('review-security') && !cardText.includes('review-frontend'),
     cardText.slice(0, 300));
   ok('…and leads with the run\'s OWN summary, not a description written by the UI',
     cardText.includes('NEEDS_WORK — three blocking findings')

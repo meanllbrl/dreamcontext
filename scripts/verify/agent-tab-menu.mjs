@@ -13,12 +13,12 @@
  *       the click lands at the tab's right edge
  *   T3  "Rename" opens the inline editor ON THAT TAB, seeded with its current title; typing
  *       + Enter renames the tab in the strip AND lands in the persisted roster on disk
- *   T4  the "Auto-rename tabs" switch reflects the PERSISTED preference (off out of the box)
- *       and flipping it writes `autoTitle: true` into ~/.dreamcontext/agent-ui.json — the
+ *   T4  the "Auto-rename tabs" switch reflects the PERSISTED preference (ON out of the box)
+ *       and flipping it writes `autoTitle: false` into ~/.dreamcontext/agent-ui.json — the
  *       very file Settings → Agents reads and writes, which is the whole claim of the
- *       feature. The menu stays open and the switch shows its on state.
+ *       feature. The menu stays open and the switch shows its off state.
  *   T5  a Settings page mounted UNDER the overlay picks the change up live — its checkbox is
- *       checked without a reload (the AGENT_SETTINGS_EVENT listener; without it the page
+ *       unchecked without a reload (the AGENT_SETTINGS_EVENT listener; without it the page
  *       would also spread its stale snapshot back over the change on its next write)
  *   T6  Escape closes the MENU and leaves the surface expanded; a second Escape then
  *       collapses the surface (the arbitration `.agent-tab-menu` guard added to
@@ -29,7 +29,7 @@
  *   The tabs here are DORMANT restores (roster entries with no pinned conversation), so no
  *   `claude` process and no PTY is ever spawned. That is what makes the run hermetic, and it
  *   means this file says nothing about auto-titling actually NAMING a tab — that needs a live
- *   Haiku call against a real transcript. What is proven is that the switch reads and writes
+ *   chat agent writing a `title` block (the parser half is unit-tested in chat-view-spec). What is proven is that the switch reads and writes
  *   the same persisted preference the Settings checkbox does.
  *
  * FAILURE POLICY — collect, don't fail fast: every check reports, then the process exits
@@ -119,17 +119,30 @@ try {
       await page.keyboard.press('Escape');
       await page.waitForTimeout(400);
     }
+    // Escape needs the modal to hold focus, which a headless first paint does not always
+    // give it — the close button is the reliable way out.
+    if (await scrim.count()) {
+      await page.locator('.announcements-modal-close').first().click({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(400);
+    }
 
     // Land on Settings → Agents FIRST and leave it mounted under the overlay. T5 is only a
     // real check if the page was already on screen when the menu wrote the preference — a
     // page mounted afterwards would read the new value from the server and pass for the
     // wrong reason.
+    // The modal can land AFTER the dismissal above (it waits on the announcements fetch), so
+    // clear it once more right before the click it would otherwise swallow.
+    for (let i = 0; i < 3 && await scrim.count(); i += 1) {
+      await page.locator('.announcements-modal-close').first().click({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(400);
+    }
     await page.locator('.sidebar-item', { hasText: /^Settings$/ }).first().click();
     await page.waitForSelector('.settings-nav', { timeout: 15000 });
     await page.locator('.settings-nav-item', { hasText: /^Agents/ }).first().click();
-    await page.waitForSelector('.settings-checkbox-label', { timeout: 15000 });
-    const autoTitleBox = page.locator('.settings-checkbox-label', { hasText: /Auto-name tabs/ })
-      .locator('input.settings-checkbox');
+    // Settings rows are `SettingRow`s now: the switch is an `input.setting-switch` whose
+    // accessible name is the row's title.
+    const autoTitleBox = page.getByRole('switch', { name: 'Let the agent name its tab' });
+    await autoTitleBox.waitFor({ state: 'visible', timeout: 15000 });
     const boxBefore = await autoTitleBox.isChecked().catch(() => null);
 
     /* Open the overlay the way the corner actually offers it. With saved sessions the
@@ -177,23 +190,25 @@ try {
 
     // ── T4 — the switch mirrors the persisted preference, and flipping it persists ──────
     // Done BEFORE the rename because renaming closes the menu.
-    const switchOffAtRest = opened
+    const switchAtRest = opened
       ? await menu.locator('.agent-tab-menu-switch').evaluate((el) => el.getAttribute('data-on')) : 'unread';
     await menu.locator('[role="menuitemcheckbox"]').click();
     await page.waitForTimeout(900); // the write is fire-and-forget to the server
     const uiAfter = readAgentUi();
     const stillOpen = await menu.count();
-    const switchOn = stillOpen
+    const switchAfter = stillOpen
       ? await menu.locator('.agent-tab-menu-switch').evaluate((el) => el.getAttribute('data-on')) : null;
-    const ariaOn = stillOpen
+    const ariaAfter = stillOpen
       ? await menu.locator('[role="menuitemcheckbox"]').getAttribute('aria-checked') : null;
     if (process.env.SHOT && stillOpen) {
-      await page.screenshot({ path: process.env.SHOT.replace(/\.png$/, '-on.png') });
+      await page.screenshot({ path: process.env.SHOT.replace(/\.png$/, '-off.png') });
     }
-    check('T4 the auto-rename switch reads OFF at rest and persists ON to agent-ui.json',
-      switchOffAtRest === null && uiAfter?.autoTitle === true
-        && stillOpen === 1 && switchOn === 'true' && ariaOn === 'true',
-      `atRest=${switchOffAtRest} file=${JSON.stringify(uiAfter)} menuOpen=${stillOpen} switch=${switchOn} aria=${ariaOn}`);
+    // `titleMigrated` must ride along: without it the next coerce reads the `false` as the old
+    // opt-in default and forces the switch back ON.
+    check('T4 the auto-rename switch reads ON at rest and persists OFF to agent-ui.json',
+      switchAtRest === 'true' && uiAfter?.autoTitle === false && uiAfter?.titleMigrated === true
+        && stillOpen === 1 && switchAfter === null && ariaAfter === 'false',
+      `atRest=${switchAtRest} file=${JSON.stringify(uiAfter)} menuOpen=${stillOpen} switch=${switchAfter} aria=${ariaAfter}`);
 
     // ── T6 — Escape closes the MENU, not the surface ───────────────────────────────────
     await page.keyboard.press('Escape');
@@ -210,7 +225,7 @@ try {
     // ── T5 — the Settings checkbox under the overlay picked the change up LIVE ─────────
     const boxAfter = await autoTitleBox.isChecked().catch(() => null);
     check('T5 the mounted Settings page reflects the menu\'s change without a reload',
-      boxBefore === false && boxAfter === true, `before=${boxBefore} after=${boxAfter}`);
+      boxBefore === true && boxAfter === false, `before=${boxBefore} after=${boxAfter}`);
 
     // ── T3 — Rename, end to end, down to the roster on disk ────────────────────────────
     await openOverlay();

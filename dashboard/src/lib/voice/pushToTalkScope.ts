@@ -5,7 +5,7 @@
  * hands are nowhere near the textarea. What was missed is that a chat pane NEVER UNMOUNTS
  * while its session lives. `AgentSurface` portals every live chat session's `<ChatPane>` into
  * its own detached container "unconditionally (not gated on minimized/expanded)", and parks
- * the container in a `display: none` garage when it is not on screen. So every J.A.R.V.I.S
+ * the container in a `display: none` garage when it is not on screen. So every assistant
  * session in the window — minimized, in a background tab, or behind a collapsed overlay —
  * had its own `window` keydown listener, and one press started a take in ALL of them at once:
  * N microphones open, N transcripts racing, and the take landing in a conversation the owner
@@ -95,12 +95,20 @@ export function pushToTalkOwner(): HTMLElement | null {
   return touched && live.includes(touched) ? touched : null;
 }
 
-/** Should the composer rooted at `el` handle this press? */
-export function ownsPushToTalk(el: HTMLElement | null): boolean {
+/**
+ * Should the composer rooted at `el` handle this press?
+ *
+ * `global` is a press that did not come from this window's keyboard: the Assistant's hotkey,
+ * which Rust catches while ANOTHER app is focused and delivers to the notch alone. Such a
+ * press skips the focus check, because a window that is not focused is exactly where it lands
+ * — the notch is a non-activating panel, so on the summoning press `document.hasFocus()` is
+ * false and the take was refused: the hotkey opened the notch and never listened.
+ */
+export function ownsPushToTalk(el: HTMLElement | null, opts: { global?: boolean } = {}): boolean {
   if (!el) return false;
   // A window that is not the focused one gets no key events anyway; the check costs nothing
   // and closes the synthetic-event case.
-  if (typeof document.hasFocus === 'function' && !document.hasFocus()) return false;
+  if (!opts.global && typeof document.hasFocus === 'function' && !document.hasFocus()) return false;
   return pushToTalkOwner() === el;
 }
 

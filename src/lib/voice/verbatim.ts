@@ -1,7 +1,7 @@
 /**
  * DID THE SPEECH MODEL READ THE LINE, OR ANSWER IT?
  *
- * The speech half of J.A.R.V.I.S mode is a CHAT model asked to behave as a TTS engine, and
+ * The speech half of assistant mode is a CHAT model asked to behave as a TTS engine, and
  * the request it is handed — one sentence of the agent's reply, in the user role — is
  * indistinguishable in shape from something addressed to it. Measured against the live API
  * on 2026-09-07, `openai/gpt-audio-mini` answers rather than reads whenever the line is

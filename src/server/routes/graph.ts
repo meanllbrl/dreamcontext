@@ -1,5 +1,5 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, normalize, resolve, sep } from 'node:path';
 import { buildGraph } from '../../lib/graph.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
@@ -37,8 +37,34 @@ export async function handleGraphGet(
  * about a file it did not write. `nosniff` is set on the response, so the type below is the
  * only thing the engine may treat it as.
  */
+/**
+ * What `?raw=1` will hand back as BYTES rather than as text.
+ *
+ * `.svg` is deliberately ABSENT and must stay absent. This route is generic — the
+ * Knowledge page hands its URL straight to the PDF viewer, which frames it SAME-ORIGIN
+ * with no `sandbox` — and an SVG is a script-bearing document, so serving one here would
+ * put attacker-authored script on the same origin as the local API. The images this arm
+ * exists for are screenshots and plots, which are raster; excluding SVG costs nothing
+ * real and removes the whole class. An `.svg` falls through to the text arm below and is
+ * returned as source, which is inert.
+ */
 const GRAPH_RAW_CONTENT_TYPE: Record<string, string> = {
   '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  // Media an agent attaches to its thread post PLAYS there (`AgentFiles` in the #agents
+  // channel). None of these can carry script, and `serveMedia` answers byte ranges, so a
+  // clip seeks. Streamed from this route rather than the desktop-gated `/agent/file` for
+  // the reason images are: a thread read in a browser tab must not be told "desktop only".
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
 };
 
 /** Ceiling for a raw vault read. Streamed, so this is not a memory bound — it is what stops a
@@ -86,6 +112,22 @@ export async function handleGraphContentGet(
     return;
   }
 
+  // The check above is LEXICAL, so a symlink inside the vault that points out of it
+  // passes it. Vault files are teammate-writable through brain sync, so that is a real
+  // path for a hostile link to arrive by. Re-taken over REAL paths, which also catches a
+  // symlinked directory above the leaf. An unreadable realpath refuses rather than serves.
+  try {
+    const realRoot = realpathSync.native(absRoot);
+    const realTarget = realpathSync.native(absTarget);
+    if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) {
+      sendError(res, 400, 'invalid_path', 'Path escapes context root.');
+      return;
+    }
+  } catch {
+    sendError(res, 400, 'invalid_path', 'Path escapes context root.');
+    return;
+  }
+
   const rawType = GRAPH_RAW_CONTENT_TYPE[extname(absTarget).toLowerCase()];
   if (url.searchParams.get('raw') === '1' && rawType) {
     let st: ReturnType<typeof statSync>;
@@ -96,6 +138,17 @@ export async function handleGraphContentGet(
     // to saving it, which from the user's side reads as "I clicked the link, nothing opened,
     // and now there's a file in Downloads".
     res.setHeader('Content-Disposition', 'inline');
+    // SCOPED TO IMAGES ON PURPOSE, and the scope is the point rather than an oversight.
+    // `sandbox` is a DOCUMENT directive: it forces an opaque origin and turns scripting
+    // off for whatever is framed. This same arm serves the `.pdf` the Knowledge page
+    // iframes through its viewer, and that viewer is script-backed — a blanket header
+    // here would blank a shipped surface in order to harden a type that cannot carry
+    // script anyway. Belt and braces for a future image type that can (the load-bearing
+    // control is the allowlist above, not this line); nothing for the PDF, which keeps
+    // exactly the headers it has always had.
+    if (rawType.startsWith('image/')) {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    }
     serveMedia(req, res, absTarget, st.size, rawType);
     return;
   }

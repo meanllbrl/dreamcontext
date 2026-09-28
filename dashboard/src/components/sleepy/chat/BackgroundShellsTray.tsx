@@ -3,6 +3,13 @@ import {
   formatClock, runDurationMs, summarizeBackgroundShells, useGroupCollapse, groupOutcomeNote,
   type SubAgentRun,
 } from './chatEntities';
+import { AGENT_ROLES, identityForRole } from '../../../lib/agentRoles';
+
+/** A running teammate's name in the tray: its registered role ("Planner"), else its own name. */
+function teammateLabel(run: SubAgentRun): string {
+  const id = identityForRole(run.role);
+  return id ? AGENT_ROLES[id.role].label : (run.name.trim() || 'Teammate');
+}
 
 /**
  * ORGANISM — the background-shells tray: a persistent strip above the composer listing every
@@ -38,16 +45,32 @@ function statusWord(status: SubAgentRun['status']): string {
 }
 
 export function BackgroundShellsTray({
-  runs, onOpen, onStop,
+  runs, onOpen, onStop, teammates = [], onOpenTeammate,
 }: {
   runs: SubAgentRun[];
   onOpen: (run: SubAgentRun) => void;
   onStop: (run: SubAgentRun) => void;
+  /**
+   * RUNNING headless teammates (a planner or builder the lead launched as `claude -p`).
+   *
+   * The owner, 2026-09-26: "the planner was running, where is it? we only see a shell". The
+   * teammate's card sits in the transcript where it was launched, and the lead then writes a
+   * long message, so the only live thing left on screen was the lead's own "Wait for planner…"
+   * loop down here. A running teammate is live state exactly like a running shell, so it is
+   * docked here too, ABOVE the shells: its role, what it is doing now, its clock, and a click
+   * that opens its own transcript. Gone from here the moment it stops running; its card in
+   * the transcript keeps the record.
+   */
+  teammates?: SubAgentRun[];
+  onOpenTeammate?: (run: SubAgentRun) => void;
 }) {
   // `tick` is this surface's clock: it drives the live elapsed readouts AND the eviction of
   // finished rows, so both read the same instant.
   const [tick, setTick] = useState(() => Date.now());
-  const { shells, running, total, nextExpiryAt } = summarizeBackgroundShells(runs, tick);
+  const { shells, running: shellsRunning, total: shellTotal, nextExpiryAt } = summarizeBackgroundShells(runs, tick);
+  const mates = teammates.filter((r) => r.status === 'running');
+  const running = shellsRunning + mates.length;
+  const total = shellTotal + mates.length;
   // Collapsed once nothing is running: a finished shell is reference material (its output is
   // still readable, one click away), a running one is live state worth having open. The
   // tray sits over the composer, so a list that never closes costs the transcript real
@@ -72,7 +95,7 @@ export function BackgroundShellsTray({
   const outcome = groupOutcomeNote(shells);
   // The group's own span: first start → last end, so the collapsed header says how long the
   // batch took without the per-row clocks it is hiding.
-  const earliestStart = Math.min(...shells.map((s) => s.startedAt));
+  const earliestStart = Math.min(...[...shells, ...mates].map((s) => s.startedAt));
   const lastEnd = Math.max(0, ...shells.map((s) => s.endedAt ?? 0));
   const elapsed = (running > 0 ? tick : lastEnd || tick) - earliestStart;
 
@@ -86,9 +109,14 @@ export function BackgroundShellsTray({
       >
         <span className="chat-bgshells-glyph" aria-hidden>▶</span>
         <span className="chat-bgshells-title">
-          {running > 0
-            ? `${running} background shell${running === 1 ? '' : 's'} running`
-            : `${total} background shell${total === 1 ? '' : 's'} finished`}
+          {mates.length > 0
+            ? [
+              `${mates.map(teammateLabel).join(', ')} ${mates.length === 1 ? 'is' : 'are'} working`,
+              shellsRunning > 0 ? `${shellsRunning} background shell${shellsRunning === 1 ? '' : 's'}` : null,
+            ].filter(Boolean).join(' · ')
+            : running > 0
+              ? `${running} background shell${running === 1 ? '' : 's'} running`
+              : `${total} background shell${total === 1 ? '' : 's'} finished`}
         </span>
         {/* Collapsed, this row is all that is left of the batch — so what went wrong, and how
             long it all took, are named here rather than only on the hidden rows. */}
@@ -98,9 +126,35 @@ export function BackgroundShellsTray({
         <span className="chat-bgshells-caret" aria-hidden>{expanded ? '▾' : '▸'}</span>
       </button>
 
-      {expanded && (
+      {(expanded || mates.length > 0) && (
         <ul className="chat-bgshells-rows">
-          {shells.map((run) => (
+          {/* Teammates first, and shown even with the tray collapsed: a collapsed tray is a
+              list of old shells, never a teammate that is working right now. */}
+          {mates.map((run) => (
+            <li className="chat-bgshells-row chat-bgshells-row--mate" key={`mate:${run.taskId}`} data-status={run.status}>
+              <button
+                type="button"
+                className="chat-bgshells-open"
+                onClick={() => onOpenTeammate?.(run)}
+                title="Open this teammate's conversation"
+              >
+                <span className="chat-bgshells-row-name">
+                  <span className="chat-bgshells-mate-role">{teammateLabel(run)}</span>
+                  {(run.activity || run.name) && (
+                    <span className="chat-bgshells-mate-doing">{run.activity || run.name}</span>
+                  )}
+                </span>
+                <span className="chat-bgshells-row-meta">
+                  <span className="chat-bgshells-row-status" data-status={run.status}>working</span>
+                  <span className="chat-bgshells-row-clock">{formatClock(runDurationMs(run, tick))}</span>
+                </span>
+              </button>
+              <span className="chat-bgshells-row-actions">
+                <button type="button" className="chat-bgshells-btn" onClick={() => onOpenTeammate?.(run)}>Open</button>
+              </span>
+            </li>
+          ))}
+          {expanded && shells.map((run) => (
             <li className="chat-bgshells-row" key={run.taskId} data-status={run.status}>
               <button
                 type="button"

@@ -25,13 +25,30 @@
 export interface QuestionOption {
   label: string;
   description?: string;
+  /** A self-contained HTML fragment to compare this option by (the CLI's `preview`, sent
+   *  because the chat spawn sets `CLAUDE_CODE_QUESTION_PREVIEW_FORMAT=html`). */
+  preview?: string;
 }
+
+/** How a question is answered. `choice` (the CLI's default) picks from `options`; `text`
+ *  and `number` carry no options at all — they exist only while the spawn sets
+ *  `CLAUDE_CODE_QUESTION_EXTENDED`. */
+export type QuestionKind = 'choice' | 'text' | 'number';
 
 export interface QuestionSpec {
   question: string;
   header?: string;
   options: QuestionOption[];
   multiSelect?: boolean;
+  kind?: QuestionKind;
+  /** One helper line under the question — the "why am I being asked" the card shows. */
+  description?: string;
+  placeholder?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  defaultValue?: number;
+  unit?: string;
 }
 
 /**
@@ -253,7 +270,10 @@ export type ChatEvent =
    *  fallback (see {@link fromControlRequest}). It is what tells the session never to
    *  auto-allow this one from "always allow this session": the CLI asked for a person. */
   | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string; requiresInteraction?: boolean }
-  | { kind: 'question'; requestId: string; toolName: string; questions: QuestionSpec[] }
+  /** `title` is the one-line context the card leads with; `source` is `metadata.source`
+   *  (`"swipe"` asks for the swipe deck); `input` is the request verbatim, echoed back on
+   *  answer so nothing the parser did not model is lost on the way to the tool. */
+  | { kind: 'question'; requestId: string; toolName: string; questions: QuestionSpec[]; title?: string; source?: string; input?: unknown }
   /** ExitPlanMode's approval gate — a `can_use_tool` request flagged
    *  `requires_user_interaction` whose input is `{plan, planFilePath}` rather than
    *  `{questions}` (captured on CLI 2.1.220). Answering it `allow` is what actually leaves
@@ -269,6 +289,10 @@ export type ChatEvent =
   | { kind: 'prompt-echo'; text: string }
   | { kind: 'meta-exit'; code: number | null }
   | { kind: 'meta-error'; message: string }
+  /** The dreamcontext Assistant's relay: a UI verb the server sent DOWN the assistant's own chat
+   *  socket for the notch to execute (src/lib/assistant/relay.ts). Only the `__assistant__`
+   *  session ever receives one; the notch answers with an `assistant_command_result` frame. */
+  | { kind: 'assistant-command'; id: string; verb: string; args: Record<string, unknown> }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -350,7 +374,12 @@ export type ClientControl =
   /** Rewind the conversation to just BEFORE the user message with this transcript uuid —
    *  translated into a `rewind_conversation` control_request (`interrupt_if_running: true`).
    *  Conversation-only: the CLI does NOT restore files through this channel. */
-  | { type: 'rewind'; requestId: string; targetUuid: string };
+  | { type: 'rewind'; requestId: string; targetUuid: string }
+  /** The notch declares this socket the Assistant's SURFACE — the channel the relay sends UI
+   *  verbs down. Ignored by the server on every session but `__assistant__`. */
+  | { type: 'assistant_surface' }
+  /** The notch's answer to one relayed `assistant-command`. */
+  | { type: 'assistant_command_result'; id: string; ok: boolean; result?: unknown; error?: string };
 
 // ─── Small object-shape helpers (kept local — this module takes no dependencies) ───
 
@@ -364,6 +393,10 @@ function str(v: unknown): string | undefined {
 
 function bool(v: unknown): boolean {
   return v === true;
+}
+
+function num(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 function ignored(rawType: string): ChatEvent {
@@ -745,7 +778,7 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
     // branches have been dropping sub-agent frames since the leak was found; the TEXT branch
     // could not, because the event had nowhere to carry the answer. So a sub-agent's text
     // block arriving as a top-level `assistant` frame rendered in the main transcript as if
-    // this conversation had said it — and in J.A.R.V.I.S mode it would then be SPOKEN as the
+    // this conversation had said it — and in assistant mode it would then be SPOKEN as the
     // main conversation's own words, out of order with the real turn. Fixed before the speech
     // queue was wired to this event, deliberately: wiring first would have made a rendering
     // bug audible before it was fixed.
@@ -798,8 +831,24 @@ function parseQuestions(input: unknown): QuestionSpec[] {
     const rawOptions = Array.isArray(q.options) ? q.options : [];
     const options: QuestionOption[] = rawOptions
       .filter((o): o is Record<string, unknown> => isRecord(o) && typeof o.label === 'string')
-      .map((o) => ({ label: o.label as string, description: str(o.description) }));
-    out.push({ question, header: str(q.header), options, multiSelect: bool(q.multiSelect) });
+      .map((o) => ({ label: o.label as string, description: str(o.description), preview: str(o.preview) || undefined }));
+    const kind: QuestionKind = q.kind === 'text' || q.kind === 'number' ? q.kind : 'choice';
+    // A choice question with nothing to choose is unanswerable; text/number never have options.
+    if (kind === 'choice' && options.length === 0) continue;
+    out.push({
+      question,
+      header: str(q.header),
+      options: kind === 'choice' ? options : [],
+      multiSelect: bool(q.multiSelect),
+      kind,
+      description: str(q.description) || undefined,
+      placeholder: str(q.placeholder) || undefined,
+      min: num(q.min),
+      max: num(q.max),
+      step: num(q.step),
+      defaultValue: num(q.defaultValue),
+      unit: str(q.unit) || undefined,
+    });
   }
   return out;
 }
@@ -829,7 +878,15 @@ function fromControlRequest(obj: Record<string, unknown>): ChatEvent {
     const plan = parsePlan(input);
     if (plan) return { kind: 'plan-review', requestId, toolName, plan: plan.plan, planFilePath: plan.planFilePath, input };
     const questions = parseQuestions(input);
-    if (questions.length) return { kind: 'question', requestId, toolName, questions };
+    if (questions.length) {
+      const rec = isRecord(input) ? input : {};
+      const meta = isRecord(rec.metadata) ? rec.metadata : {};
+      return {
+        kind: 'question', requestId, toolName, questions, input,
+        title: str(rec.title)?.trim() || undefined,
+        source: str(meta.source)?.trim() || undefined,
+      };
+    }
     // Neither shape. This USED to emit a `question` with an empty list, which rendered a
     // survey card with no question, no options and a dead Submit — the turn could not be
     // answered from Chat at all (owner report 07-26: ExitPlanMode, before it had a card of
@@ -980,6 +1037,12 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       loggedIn: typeof obj.loggedIn === 'boolean' ? obj.loggedIn : null,
     };
   }
+  if (subtype === 'assistant_command') {
+    const id = str(obj.id);
+    const verb = str(obj.verb);
+    if (!id || !verb) return ignored('_meta:assistant_command');
+    return { kind: 'assistant-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
+  }
   return ignored('_meta:' + (subtype ?? 'unknown'));
 }
 
@@ -1073,12 +1136,28 @@ export function parseChatLine(line: string): ChatEvent | null {
  * `{questions: [...], answers: {<question text>: <label|comma-joined labels>}}`.
  * A multiSelect question's picked value is treated as an already comma-joined string (the
  * caller is responsible for joining multiple chosen labels before calling this).
+ *
+ * `extra.notes` becomes `annotations: {<question text>: {notes}}` — the CLI renders it to
+ * the model as `notes: …` after the pick, and a question with a note and NO pick still
+ * reaches it as `(no option selected) notes: …`. `extra.input` is the request as it
+ * arrived: echoed first so `title`/`metadata` and every option field the parser does not
+ * model (and so would silently drop) go back exactly as they came.
  */
-export function buildQuestionAnswer(questions: QuestionSpec[], picked: Record<string, string>): unknown {
+export function buildQuestionAnswer(
+  questions: QuestionSpec[],
+  picked: Record<string, string>,
+  extra: { input?: unknown; notes?: Record<string, string> } = {},
+): unknown {
   const answers: Record<string, string> = {};
+  const annotations: Record<string, { notes: string }> = {};
   for (const q of questions) {
     const answer = picked[q.question];
     if (typeof answer === 'string' && answer.length > 0) answers[q.question] = answer;
+    const note = extra.notes?.[q.question]?.trim();
+    if (note) annotations[q.question] = { notes: note };
   }
-  return { questions, answers };
+  const echoed = isRecord(extra.input) && Array.isArray(extra.input.questions)
+    ? { ...extra.input }
+    : { questions };
+  return Object.keys(annotations).length ? { ...echoed, answers, annotations } : { ...echoed, answers };
 }

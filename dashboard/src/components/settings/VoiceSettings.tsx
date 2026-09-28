@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
 import { SettingGroup, SettingRow, Toggle } from './SettingRow';
+import { MaturityTag } from '../common/MaturityTag';
 import { isDesktop } from '../../lib/desktop';
 import { chordFromEvent, formatHotkey, hotkeyLabel, isLatchKey, parseHotkey } from '../../lib/voice/hotkey';
 import { adoptVoicePrefs } from '../../lib/voice/voicePrefs';
+import { DictationInstall } from './DictationInstall';
 
 /**
- * The Voice card — J.A.R.V.I.S mode's one key, its push-to-talk chord, and the preferences
+ * The Voice card — assistant mode's one key, its push-to-talk chord, and the preferences
  * that decide how it listens and how it answers.
  *
  * MACHINE group, not a project one, because that is where the key belongs: it is the owner's
@@ -25,11 +27,8 @@ interface VoiceStatus {
   key: boolean;
   voice: string;
   sttLanguage: string;
-  sttEngine: 'auto' | 'local' | 'cloud';
-  groq: boolean;
   /** The local model this machine was found to have, or null. */
   localWhisper: string | null;
-  correction: boolean;
   pushToTalk: string;
   pushToTalkMode: 'hold' | 'toggle';
   speech: boolean;
@@ -87,7 +86,6 @@ const RATES = [
 export function VoiceSettings() {
   const [status, setStatus] = useState<VoiceStatus | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
-  const [groqDraft, setGroqDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   /** True while the hotkey field is focused and listening for the next chord. */
@@ -177,13 +175,13 @@ export function VoiceSettings() {
 
   return (
     <SettingGroup
-      title="Voice — J.A.R.V.I.S mode"
+      title="Voice — dreamcontext Assistant"
       collapsible
       // ALPHA, not BETA (owner, 2026-09-13). The mode works end to end — push-to-talk,
       // transcription, spoken answers — and is still earlier than beta, and the two surfaces
       // that announce it must not disagree about how finished it is: the composer's mode card
       // carries the same word.
-      badge={<span className="settings-beta-badge">ALPHA</span>}
+      badge={<MaturityTag level="alpha" />}
       note={
         isDesktop()
           ? 'Hold the microphone in the chat composer, speak, and hear the answer. Everything runs through OpenRouter on one key, stored on this machine.'
@@ -193,9 +191,9 @@ export function VoiceSettings() {
       <SettingRow
         title="OpenRouter key"
         hint={status.key
-          ? 'A key is set. Paste a new one to replace it, or clear it to turn voice off.'
-          : 'Without a key the mode still works as text — it just cannot listen or speak.'}
-        more={'One key covers all three calls: transcription, the vocabulary check, and speech. It is stored on THIS MACHINE at ~/.dreamcontext/voice.json with 0600 permissions, never in a project, so a team sync cannot carry it anywhere. The server reports only whether a key exists — there is no route that returns the key itself, which is why this field can never show you the one already set. No OpenAI key is read or requested anywhere in this feature.'}
+          ? 'A key is set. It is used only to read replies aloud; clear it to turn speech off.'
+          : 'Only needed to read replies aloud. Dictation is local and needs no key.'}
+        more={'The key is used for ONE thing: reading replies aloud, and only while read-aloud is on. Dictation never uses it. It is stored on THIS MACHINE at ~/.dreamcontext/voice.json with 0600 permissions, never in a project, so a team sync cannot carry it anywhere. The server reports only whether a key exists — there is no route that returns the key itself, which is why this field can never show you the one already set. No OpenAI key is read or requested anywhere in this feature.'}
         control={
           <span className="voice-key-row">
             <input
@@ -230,48 +228,6 @@ export function VoiceSettings() {
           </span>
         }
         status={status.key ? 'Key set' : 'No key'}
-      />
-
-      <SettingRow
-        title="Groq key (optional)"
-        hint={status.groq
-          ? 'Set — transcription goes to Groq first.'
-          : 'Free tier. Makes transcription faster and steadier; everything works without it.'}
-        more={'Only transcription uses it, and only when the transcriber is set to the API. It exists because the shared route measured between 1.3 and 14.2 seconds for the same take while Groq runs the same model on its own hardware for $0.04 an hour with a free tier this feature will not exhaust. Stored beside the other one at ~/.dreamcontext/voice.json, 0600, never in a project — and like the other one, the server reports only whether it exists.'}
-        control={
-          <span className="voice-key-row">
-            <input
-              className="settings-text-input"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              aria-label="Groq key"
-              placeholder={status.groq ? '••••••••••••' : 'gsk_…'}
-              value={groqDraft}
-              disabled={saving}
-              onChange={(e) => setGroqDraft(e.target.value)}
-            />
-            <button
-              type="button"
-              className="btn btn--secondary"
-              disabled={saving || !groqDraft.trim()}
-              onClick={() => { void save({ groqKey: groqDraft.trim() }).then(() => setGroqDraft('')); }}
-            >
-              Save
-            </button>
-            {status.groq && (
-              <button
-                type="button"
-                className="btn btn--secondary"
-                disabled={saving}
-                onClick={() => { void save({ groqKey: null }); }}
-              >
-                Clear
-              </button>
-            )}
-          </span>
-        }
-        status={status.groq ? 'Key set' : undefined}
       />
 
       <SettingRow
@@ -335,31 +291,10 @@ export function VoiceSettings() {
       />
 
       <SettingRow
-        title="Transcriber"
-        hint={status.sttEngine === 'cloud'
-          ? (status.groq
-            ? 'Whisper large-v3-turbo on Groq — the fastest of the three, and it detects the language itself.'
-            : 'Whisper large-v3-turbo through OpenRouter. Add a Groq key below to make it faster and steadier.')
-          : status.localWhisper
-            ? `Running on this machine — whisper.cpp ${status.localWhisper}.`
-            : 'No local whisper is installed here, so takes go to the API instead.'}
-        more={'All three run the SAME model — whisper-large-v3-turbo, a real speech recogniser that detects the language itself. What differs is where. Measured on one Turkish take: local whisper.cpp answered in 0.85s every time; OpenRouter answered in 1.3s, then 9.2s, then 14.2s, then 1.3s — the model is right but its routing is not something a push-to-talk button can depend on; Groq serves it on its own hardware at about 200x realtime for $0.04 an hour, with a free tier that covers this feature outright. So: local if you have it, Groq if you would rather the laptop stayed idle, OpenRouter as the one that needs no second account.'}
-        control={
-          <select
-            className="settings-text-input"
-            aria-label="Transcriber"
-            value={status.sttEngine}
-            disabled={saving}
-            onChange={(e) => { void save({ sttEngine: e.target.value }); }}
-          >
-            <option value="auto">Automatic — local if installed</option>
-            <option value="local">Local whisper.cpp</option>
-            <option value="cloud">API (Groq, else OpenRouter)</option>
-          </select>
-        }
-        status={status.sttEngine !== 'cloud' && status.localWhisper
-          ? <span className="settings-field-hint">{status.localWhisper}</span>
-          : undefined}
+        title="Dictation"
+        hint="Runs on this Mac with whisper.cpp — the same model Handy uses, primed with this project's words. No take is ever sent to an API."
+        more={'Local only, by the owner\'s decision: every take is transcribed here, for nothing, and never falls back to a paid service. Measured on one Turkish take, a warm local whisper answered in 0.85s every time. The install decides its own route: whisper.cpp through Homebrew, and the speech model is reused if one is already on disk (Handy\'s included) or downloaded once otherwise.'}
+        control={<DictationInstall />}
       />
 
       <SettingRow
@@ -449,21 +384,6 @@ export function VoiceSettings() {
             )}
             {DUCKS.map((d) => <option key={d.value} value={String(d.value)}>{d.label}</option>)}
           </select>
-        }
-      />
-
-      <SettingRow
-        title="Fix project words"
-        hint="Repairs project jargon a transcriber has never heard — “Sırıp” becomes “sleep”."
-        more={'Anything it CHANGES waits in the composer with the change marked, for you to send. Only an untouched transcript goes on its own. That is a rule about behaviour rather than a confidence score, because there is no score that separates a legitimate repair from a dangerous one — “start” to “stop” and “Sırıp” to “sleep” are equally close. Turn this off and takes go through exactly as heard.'}
-        labelled
-        control={
-          <Toggle
-            label="Fix project words"
-            checked={status.correction}
-            disabled={saving}
-            onChange={(next) => { void save({ correction: next }); }}
-          />
         }
       />
 

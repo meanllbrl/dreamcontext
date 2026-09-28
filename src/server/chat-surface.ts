@@ -43,17 +43,22 @@
  *                             unstyled markup, which is exactly the broken promise this
  *                             file's standing rule forbids.
  *   • `dream-view`          — `lib/chatViewSpec.ts` (`parseViewBlock`, the schema + caps) and
- *                             `chat/ChatViews.tsx` (insight + checklist + secret + run).
- *                             `secret` submits to `POST /api/agent/secret`
+ *                             `chat/ChatViews.tsx` (insight + checklist + secret + run +
+ *                             agent-thread). `secret` submits to `POST /api/agent/secret`
  *                             (`lib/env-secrets.ts` owns every guard) and `run` opens a PTY
  *                             over `/api/agent/terminal?kind=exec` (`chat/InlineTerminal.tsx`).
+ *                             `agent-thread` is DERIVED FROM DISK like `insight`: the agent
+ *                             names its channel and `chat/AgentThreadCard.tsx` draws the
+ *                             thread, so asserted contents are dropped with a notice.
  *                             `pin` and `progress` are hoisted OUT of the transcript onto the
- *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`
+ *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`.
+ *                             `title` renames the agent's own tab — applied by
+ *                             `AgentSurface.tsx` (`armAgentTitle`), drawn nowhere.
  * A capability named here that the view doesn't render is worse than one left unnamed: the
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts` and `tests/unit/chat-html.test.ts`.
  */
-/** The surface's three sections, kept apart for reading only — they are concatenated
+/** The surface's sections, kept apart for reading only — they are concatenated
  *  verbatim into {@link CHAT_SURFACE_BRIEFING} below and nothing else consumes them. */
 const BRIEFING_HEAD = `# Surface: dreamcontext Chat (not a terminal)
 
@@ -145,6 +150,28 @@ chart library (nothing loads), never a hardcoded palette. Axis labels go in a \`
 BELOW the svg: svg text scales with the viewBox, so 10px in a 320-wide box renders at 3x.
 `;
 
+/** How to ask — the AskUserQuestion card (`chat/SurveyCard.tsx`) and the CLI fields the
+ *  spawn switches on for it (`CHAT_QUESTION_ENV` in `routes/agent-chat.ts`). */
+const BRIEFING_ASK = `## Asking — a card read cold
+
+The user runs several sessions and reaches your AskUserQuestion card from a notification,
+not from your last message. Every card must stand alone:
+
+- \`title\` — always: the work and the decision point, "Invoice export → date format".
+- \`question\` — the decision in plain words; no names only this conversation knows.
+  \`description\` — why you need it now and what changes with the answer. Clear, not clever.
+- Option \`label\` says what happens if picked; \`description\` its concrete cost.
+- **Things to LOOK at** (screens, layouts, styles, clips): give each option a \`preview\` —
+  drawn as an A/B/C board with a fullscreen door. \`dc-\` classes work inside; a project file
+  alone is drawn natively: \`<img src="docs/a.png">\` or \`<video src="tmp/a.mp4"></video>\`.
+- **Quick verdicts** ("keep this?", one card per item): \`"metadata":{"source":"swipe"}\` with
+  2-option single-select questions — a swipe deck, right = the FIRST option, left = the
+  second; the thing judged goes in an option's \`preview\`.
+
+Every pick can carry a typed note (you get \`notes:\`). "Unclear? Ask again" comes back as a
+denial asking you to re-ask — add context, never resend the same card.
+`;
+
 /** Everything that is true of the surface whichever channel is in use — media, boards,
  *  paths, sub-agent cards, PDFs, the highlighter, buttons, and the typed `dream-view`
  *  blocks. */
@@ -177,7 +204,7 @@ const BRIEFING_REST = `## The rest of the surface
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
 
-## \`dream-view\` — the seven things HTML must NOT be
+## \`dream-view\` — the nine things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -253,12 +280,26 @@ you send is ignored and drawn as a notice.
 {"type":"progress","task":"my-task-slug"}
 \`\`\`
 
+**This tab's name.** Nothing drawn; your tab takes it. Send it once you understand the work,
+never before you have looked: 2-5 plain words in the user's language, spaced like a sentence,
+never a slug or hyphens. Re-send only when the subject truly moves. A name the user typed wins.
+
+\`\`\`dream-view
+{"type":"title","text":"Checkout redesign"}
+\`\`\`
+
+**An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.
+
+\`\`\`dream-view
+{"type":"agent-thread","slug":"daily-digest"}
+\`\`\`
+
 Only name paths that exist — a wrong one renders as a dead card. At most ~4 buttons, and only
-for a real next step. Don't narrate the mechanism ("I'll draw you a diagram"), just write it.
-Nothing else about how you do the work changes.`;
+for a real next step. Don't narrate the mechanism ("I'll draw you a diagram"), just write it.`;
 
 export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
 ${BRIEFING_DRAW_HTML}
+${BRIEFING_ASK}
 ${BRIEFING_REST}
 `;
 

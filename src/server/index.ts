@@ -7,9 +7,19 @@ import { Router } from './router.js';
 import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
+import { isDesktop } from './desktop.js';
+import { isLoopback } from './routes/agent-spawn-shared.js';
+import { assistantContextRoot, assistantExists, isAssistantVault } from '../lib/assistant/home.js';
+import { declineAllProposals } from '../lib/assistant/proposals.js';
+import {
+  handleAssistantStatus, handleAssistantRollup, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
+  handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
+  handleAssistantWindowRegister, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
+  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi,
+} from './routes/assistant.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import {
@@ -103,6 +113,17 @@ import {
   handleAutomationsQueue,
   handleAutomationsAttention,
   handleAutomationsAttentionAck,
+  handleAutomationsThreads,
+  handleAutomationsThreadGet,
+  handleAutomationsThreadRead,
+  handleAutomationsThreadReply,
+  handleAutomationsReplyJob,
+  handleAutomationsCreate,
+  handleAutomationsUpdate,
+  handleAutomationsDelete,
+  handleAutomationsPhotoGet,
+  handleAutomationsPhotoUpload,
+  handleAutomationsSay,
 } from './routes/automations.js';
 import {
   handleThesesList,
@@ -128,7 +149,6 @@ import {
   handleAgentInstall,
   handleAgentInstallStatus,
   handleAgentPromptToken,
-  handleAgentTitle,
   handleAgentModelConfig,
   handleAgentSessionModel,
   handleAgentSessionStats,
@@ -150,19 +170,19 @@ import {
   handleAgentMcpProjectGet, handleAgentMcpProjectAdopt, handleAgentMcpProjectRemove,
 } from './routes/agent-mcp-project.js';
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
-import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
+import { attachAgentChat, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
 import {
-  handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceCorrect,
-  handleVoiceFocus,
+  handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus,
+  handleDictationStatus, handleDictationInstall,
 } from './routes/agent-voice.js';
 import { handleAgentDownload } from './routes/agent-download.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handlePeerList, handlePeerLogo, handlePeerMailList, handlePeerSend, handlePeerMailStatus } from './routes/peer.js';
-import { handleMeetingState, handleMeetingThread, handleMeetingPost, handleMeetingReply, handleMeetingClose } from './routes/meeting.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
@@ -245,6 +265,7 @@ export function buildRouter(): Router {
   router.post('/api/task-overrides/statuses', handleTaskOverrideAddStatus);
   router.delete('/api/task-overrides/statuses/:key', handleTaskOverrideRemoveStatus);
   router.get('/api/tasks/:slug', handleTasksGet);
+  router.get('/api/tasks/:slug/readiness', handleTasksReadiness);
   router.delete('/api/tasks/:slug', handleTasksDelete);
   router.patch('/api/tasks/:slug', handleTasksUpdate);
   router.post('/api/tasks/:slug/changelog', handleTasksChangelog);
@@ -343,6 +364,27 @@ export function buildRouter(): Router {
   router.get('/api/launcher/defaults', handleLauncherDefaults);
   router.get('/api/launcher/catalog', handleLauncherCatalog);
   router.post('/api/launcher/register', handleLauncherRegister);
+
+  // The dreamcontext Assistant (vault-agnostic; every route self-gates — see routes/assistant.ts).
+  router.get('/api/assistant/status', handleAssistantStatus);
+  router.get('/api/assistant/rollup', handleAssistantRollup);
+  router.post('/api/assistant/create', handleAssistantCreate);
+  router.get('/api/assistant/profile', handleAssistantProfileGet);
+  router.post('/api/assistant/profile', handleAssistantProfileSet);
+  router.get('/api/assistant/avatar', handleAssistantAvatarGet);
+  router.post('/api/assistant/avatar', handleAssistantAvatarSet);
+  router.get('/api/assistant/proposals', handleAssistantProposalsList);
+  router.post('/api/assistant/proposals/:id', handleAssistantProposalDecide);
+  router.post('/api/assistant/windows', handleAssistantWindowRegister);
+  router.post('/api/assistant/open', handleAssistantOpen);
+  router.post('/api/assistant/commands/:id/bind', handleAssistantCommandBind);
+  router.post('/api/assistant/commands/:id/claim', handleAssistantCommandClaim);
+  router.post('/api/assistant/commands/:id/result', handleAssistantCommandResult);
+  router.get('/api/assistant/projects', handleAssistantProjects);
+  router.get('/api/assistant/sessions', handleAssistantSessions);
+  router.get('/api/assistant/watch', handleAssistantWatch);
+  router.post('/api/assistant/broadcast', handleAssistantBroadcast);
+  router.post('/api/assistant/ui/:verb', handleAssistantUi);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
   router.post('/api/launcher/agent-settings', handleAgentSettingsSet);
@@ -412,6 +454,8 @@ export function buildRouter(): Router {
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
+  // The project's cached `/` list, for composers with no chat process (the #agents channel).
+  router.get('/api/agent/slash-commands', handleAgentSlashCommands);
   // Every past conversation of THIS project, for the surface's "Past chats" picker —
   // registered before the bare /chat-history above only in reading order; they are
   // distinct exact paths.
@@ -429,6 +473,9 @@ export function buildRouter(): Router {
   // The user allowing ONE named file outside the project root to be shown inline.
   router.post('/api/agent/grant', handleAgentGrant);
   router.get('/api/agent/goal-live', handleAgentGoalLive);
+  // Headless teammates: registered/launched `claude -p` runs, read off their own transcripts.
+  router.get('/api/agent/teammates', handleAgentTeammates);
+  router.get('/api/agent/teammate-history', handleAgentTeammateHistory);
   router.get('/api/agent/council-live', handleAgentCouncilLive);
   // The chat's pinned shelf: run progress counted off the task file's own acceptance
   // criteria, and the branch/worktree this session acts on. VAULT-SCOPED — both read one
@@ -451,33 +498,31 @@ export function buildRouter(): Router {
   // transcript. Vault-SCOPED (the .env belongs to the project named in the header), and
   // NOT desktop-gated — see the route's header for why.
   router.post('/api/agent/secret', handleAgentSecret);
-  // J.A.R.V.I.S mode's two audio legs. Desktop-gated, and the ONLY routes in this server
+  // Assistant mode's two audio legs. Desktop-gated, and the ONLY routes in this server
   // that spend money — hence the server-side concurrency and rate caps in
   // `lib/voice/limits.ts` rather than a client-side limit that a direct POST walks past.
   //
   // CLASSIFICATION AGAINST `VAULT_AGNOSTIC_PREFIXES` (below), stated because the list is a
   // prefix match and a route nobody classified gets whichever answer its path happens to
-  // collide with. `/stt` is vault-SCOPED — Slice 2's correction pass reads the lexicon out
+  // collide with. `/stt` is vault-SCOPED — local whisper is primed with the vocabulary out
   // of the vault's brain, so the request has to say which vault it means. `/tts`, `/status`
   // and `/config` are vault-AGNOSTIC: speech reads no project state, and the key and the
   // preferences belong to the MACHINE, not to any one project.
   router.post('/api/agent/voice/stt', handleVoiceStt);
-  // Vault-SCOPED for the same reason as /stt, and more literally: it reads the lexicon out
-  // of this project's brain.
-  router.post('/api/agent/voice/correct', handleVoiceCorrect);
   router.post('/api/agent/voice/tts', handleVoiceTts);
   router.post('/api/agent/voice/warm', handleVoiceWarm);
   // Who owns the speaker, and what was paused or ducked to give it to them. Vault-agnostic:
   // it reads the machine's audio state and no project's brain.
   router.post('/api/agent/voice/focus', handleVoiceFocus);
   router.get('/api/agent/voice/status', handleVoiceStatus);
+  // Local dictation's engine + model: installed from Settings / the Assistant setup.
+  router.get('/api/agent/voice/dictation', handleDictationStatus);
+  router.post('/api/agent/voice/dictation', handleDictationInstall);
   router.put('/api/agent/voice/config', handleVoiceConfigPut);
   // An export the PAGE produced (a `dream-html` PNG/HTML) written into ~/Downloads, so the
   // surface can name the file it just made and offer to reveal it. Vault-agnostic: it
   // writes to the user's home, not into any project's brain. Desktop-gated.
   router.post('/api/agent/download', handleAgentDownload);
-  // Auto-title a session from its first user message (Haiku) — vault-scoped, desktop-only.
-  router.post('/api/agent/title', handleAgentTitle);
   // Per-vault session roster (titles + layout) so renamed tabs survive a reload
   // (desktop-gated, vault-scoped — same posture as /drop above).
   router.get('/api/agent/sessions', handleAgentSessionsGet);
@@ -493,14 +538,6 @@ export function buildRouter(): Router {
   // write is allowed in a route where a digest write is not). The LIVE path is
   // not here: it runs over /api/agent/chat?vault=<peer>.
   router.get('/api/peer/peers', handlePeerList);
-  // Meeting room — the hidden all-agents surface behind the launcher's core
-  // logo. Vault-agnostic (the room is owned by no vault; its store lives under
-  // ~/.dreamcontext/meeting-room). See routes/meeting.ts.
-  router.get('/api/meeting/state', handleMeetingState);
-  router.get('/api/meeting/thread/:id', handleMeetingThread);
-  router.post('/api/meeting/post', handleMeetingPost);
-  router.post('/api/meeting/reply', handleMeetingReply);
-  router.post('/api/meeting/close', handleMeetingClose);
   // `<img src>`-fetched (browser sends no headers), so the self vault rides the
   // standard GET `?vault=` param and the peer's name in `?peer=`.
   router.get('/api/peer/logo', handlePeerLogo);
@@ -574,6 +611,13 @@ export function buildRouter(): Router {
   // approval, the sleep-lock deferral, and the orphan guard are all enforced
   // inside `runAutomation`, not in these handlers.
   router.get('/api/automations', handleAutomationsList);
+  // Create is a POST on the COLLECTION, so it shares no shape with any `/:slug`
+  // route and needs no ordering care. Unlike `run`/`approve` a prompt DOES
+  // travel in this body — and then gets approved on this machine by the same
+  // primitive the CLI's `create` calls. See the handler's own comment: the
+  // tripwire exists to catch a manifest changing under the owner, not to stop
+  // the owner writing one at their own keyboard.
+  router.post('/api/automations', handleAutomationsCreate);
   router.get('/api/automations/runs', handleAutomationsRunStatus);
   // `dispatcher` is the machine-local scheduler switch — the dashboard half of
   // `automations install`. Same ordering constraint as `runs`: it MUST precede
@@ -600,8 +644,20 @@ export function buildRouter(): Router {
   // the same window rather than swallowing it.
   router.get('/api/automations/attention', handleAutomationsAttention);
   router.post('/api/automations/attention/ack', handleAutomationsAttentionAck);
+  // The #agents feed. Literal `threads`, so it goes above `/:slug` with the
+  // rest — and its read/ack is split for the same reason attention's is: a
+  // poll that consumed unread would clear a badge for a window nobody was
+  // looking at.
+  router.get('/api/automations/threads', handleAutomationsThreads);
+  router.post('/api/automations/threads/read', handleAutomationsThreadRead);
+  router.post('/api/automations/threads/say', handleAutomationsSay);
+  // Literal `reply-job`, so it goes above `/:slug` with the rest — registered after a
+  // param route it would be read as a slug named "reply-job" and 404 every poll.
+  router.get('/api/automations/reply-job/:id', handleAutomationsReplyJob);
   // Before `/:slug` — a literal sub-path registered after a param route is
   // swallowed by it, the same ordering constraint `runs` above documents.
+  router.get('/api/automations/:slug/thread', handleAutomationsThreadGet);
+  router.post('/api/automations/:slug/thread/reply', handleAutomationsThreadReply);
   router.get('/api/automations/:slug/session', handleAutomationsSession);
   router.get('/api/automations/:slug', handleAutomationsShow);
   router.post('/api/automations/:slug/run', handleAutomationsRunNow);
@@ -612,6 +668,16 @@ export function buildRouter(): Router {
   // theses comment below) — registration order relative to `/:slug` is not
   // load-bearing for these, only relative to one another (never ambiguous:
   // each has a unique literal suffix).
+  // Agent identity: edit, delete, and the photo. Same distinct-shape note as
+  // `flow`/`telegram` below — each carries a unique literal suffix, so only
+  // their order relative to one another would ever matter, and it doesn't.
+  // `delete` is a POST on purpose: `index.ts`'s cross-site write guard is
+  // written against state-changing POSTs, and reaching for a prettier verb
+  // that slips past a central security check is a bad trade.
+  router.post('/api/automations/:slug/update', handleAutomationsUpdate);
+  router.post('/api/automations/:slug/delete', handleAutomationsDelete);
+  router.get('/api/automations/:slug/photo', handleAutomationsPhotoGet);
+  router.post('/api/automations/:slug/photo', handleAutomationsPhotoUpload);
   router.get('/api/automations/:slug/flow', handleAutomationsFlow);
   router.get('/api/automations/:slug/telegram', handleAutomationsTelegramGet);
   router.post('/api/automations/:slug/telegram', handleAutomationsTelegramSet);
@@ -672,7 +738,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/meeting'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -719,9 +785,16 @@ export function requestedVaultName(req: Pick<IncomingMessage, 'headers' | 'metho
  * - unknown name     → 'INVALID'
  * - registered name  → join(vault.path, '_dream_context')
  */
-function resolveRequestVault(req: IncomingMessage): string | null | 'INVALID' {
+export function resolveRequestVault(req: IncomingMessage): string | null | 'INVALID' | 'FORBIDDEN' {
   const h = requestedVaultName(req);
   if (!h) return null;
+  // The dreamcontext Assistant's HIDDEN vault: the reused ChatPane on `__assistant__` needs the
+  // generic REST surface (history, attachments, file preview, voice), but ONLY from this
+  // machine's desktop app. A network-token holder on a `--host` bind is refused outright.
+  if (isAssistantVault(h)) {
+    if (!isLoopback(req) || !isDesktop()) return 'FORBIDDEN';
+    return assistantExists() ? assistantContextRoot() : 'INVALID';
+  }
   // Reject anything path-shaped or containing null bytes / dots.
   if (/[/\\:.\x00]/.test(h)) return 'INVALID';
   const v = listVaults().find((x) => x.name === h);
@@ -795,6 +868,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
             const hv = resolveRequestVault(req);
             if (hv === 'INVALID') {
               sendError(res, 400, 'invalid_vault', 'Unknown or invalid vault.');
+              return;
+            }
+            if (hv === 'FORBIDDEN') {
+              sendError(res, 403, 'assistant_local_only', 'The dreamcontext Assistant is only reachable from this machine\'s desktop app.');
               return;
             }
             const effRoot = hv ?? contextRoot;
@@ -880,6 +957,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // when this server exits — SIGKILL from the parent would skip this, but a
         // graceful SIGTERM or the parent-death watchdog both route through here.
         killTrackedChildren();
+        // Nothing the owner has not approved is sent: pending Assistant proposals are declined.
+        declineAllProposals();
         server.close(() => process.exit(0));
         setTimeout(() => process.exit(1), 5000);
       };

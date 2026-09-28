@@ -146,7 +146,7 @@
 }
 
 .btn--primary {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   border: none;
   box-shadow: 0 4px 12px var(--color-accent-soft);

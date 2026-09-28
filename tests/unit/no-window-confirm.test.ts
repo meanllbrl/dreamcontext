@@ -75,6 +75,21 @@ describe('no window.confirm anywhere in the dashboard', () => {
     ).toEqual([]);
   });
 
+  it('never calls alert() either — the same missing JS panel', () => {
+    // The Plan→Develop button's "task is not ready" refusal was an alert(): in the app it
+    // showed nothing, so the button read as dead (owner report 2026-09-26).
+    const CALLS_JS_PANEL = /(?<![\w.])(?:window\.)?alert\s*\(/;
+    const offenders = sourceFiles(SRC)
+      .filter((f) => CALLS_JS_PANEL.test(code(f)))
+      .map((f) => relative(SRC, f));
+
+    expect(
+      offenders,
+      'alert() is inert in the desktop webview (no WKUIDelegate JS panel). '
+        + 'Use confirmAction() from lib/desktop.ts, or render the message in the UI.',
+    ).toEqual([]);
+  });
+
   it('routes confirmAction through the native command in the desktop app', () => {
     const src = readFileSync(DESKTOP, 'utf8');
     expect(src).toMatch(/invoke<boolean>\(\s*['"]confirm_dialog['"]/);

@@ -129,3 +129,30 @@ export function developKickoffPrompt(taskSlug: string): string {
     'If you find the plan is genuinely wrong, stop and say so rather than quietly redesigning it.',
   ].join(' ');
 }
+
+// ── Train Me, bound to an automated agent ────────────────────────────────────────────
+
+/**
+ * The first message of a Train Me chat opened from an automation's detail panel.
+ *
+ * The Train Me briefing is the same for every session; only this prompt says WHICH
+ * automation the session is bound to, and so where the result goes. Bound, the confirmed
+ * rule is the automation's own playbook (the `## Pattern` section of its manifest), written
+ * through `automations learn --playbook-file`, which also refuses when learning is off.
+ * Never the project's knowledge/patterns: nothing an automation runs ever reads those.
+ *
+ * PURE. `slug` comes from the automation's own summary. Flattened to one paragraph by the
+ * server's `sanitizePrompt`, so no line structure is load-bearing.
+ */
+export function trainKickoffPrompt(slug: string, automationTitle: string): string {
+  const title = automationTitle.trim() || slug;
+  return [
+    `This Train Me session is bound to the automated agent "${title}" (automation \`${slug}\`).`,
+    `What you learn here is that automation's own playbook. Its current playbook is the \`## Pattern\` section of \`_dream_context/automations/${slug}.md\`;`,
+    `read it first with \`dreamcontext automations pattern ${slug}\` and ask me what to train it on.`,
+    'Then train as usual: rounds of cards, your predictions before each round, only the misses shown after.',
+    'When I end it, show the revised playbook and the diff against the current one, and write nothing until I say yes.',
+    `On my yes, write the full revised playbook to a temporary file and record it with \`dreamcontext automations learn ${slug} --playbook-file <that file>\`.`,
+    'That is the only place this result goes. Do not create or edit anything in the project\'s knowledge for it.',
+  ].join(' ');
+}

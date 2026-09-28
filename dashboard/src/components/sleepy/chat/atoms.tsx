@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   toolGlyph, formatTokenCount, formatDuration, avatarHue, splitInlineCode, pathChipLabel,
 } from './chatEntities';
+import { AGENT_ROLES, type AgentRoleId } from '../../../lib/agentRoles';
+import { VERDICT_LABELS, type Carries, type Verdict } from '../../../lib/quest';
+import { RoleCharacter } from './RoleCharacter';
 import './atoms.css';
 
 /**
@@ -186,14 +189,48 @@ export function TypeBadge({ children }: { children: ReactNode }) {
  * project is recognisably THAT project at a glance, not another tinted Sleepy. The hue ring
  * stays (same derivation, so the color still matches everywhere the agent appears), and a
  * broken image falls back to the face rather than to an empty circle.
+ *
+ * `role` makes the avatar a CHARACTER from the quest party (lib/agentRoles.ts, drawn by
+ * RoleCharacter.tsx): its own body, its own hue and its own prop, at every size, with no disc
+ * behind it (the silhouette IS the avatar). The character is static chrome, never a status;
+ * `running` is the status, carried by motion alone (`chat-a-work`), so the two never fight over
+ * the colour channel. A peer's logo beats the character. No role (or the plain `agent`) renders
+ * the name-hued face exactly as before, so every surface that never passes a role is untouched.
  */
-export function AgentAvatar({ name, size = 32, src }: { name: string; size?: number; src?: string | null }) {
+export function AgentAvatar({ name, size = 32, src, role, running = false }: {
+  name: string;
+  size?: number;
+  src?: string | null;
+  role?: AgentRoleId;
+  running?: boolean;
+}) {
   const hue = avatarHue(name);
   const [imgFailed, setImgFailed] = useState(false);
+  const character = role && role !== 'agent' ? AGENT_ROLES[role] : null;
+  if (character) {
+    const logo = !!src && !imgFailed;
+    return (
+      <span
+        className="chat-a-avatar"
+        data-role={character.id}
+        data-logo={logo || undefined}
+        data-running={running || undefined}
+        style={{ width: size, height: size }}
+        aria-hidden
+      >
+        {logo ? (
+          <img className="chat-a-avatar-img" src={src ?? undefined} alt="" onError={() => setImgFailed(true)} />
+        ) : (
+          <RoleCharacter role={character.id} size={size} />
+        )}
+      </span>
+    );
+  }
   return (
     <span
       className="chat-a-avatar"
       data-logo={(src && !imgFailed) || undefined}
+      data-running={running || undefined}
       style={{ width: size, height: size, '--avatar-hue': hue } as React.CSSProperties}
       aria-hidden
     >
@@ -206,6 +243,42 @@ export function AgentAvatar({ name, size = 32, src }: { name: string; size?: num
           <path d="M12 20 q4 3.5 8 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
       )}
+    </span>
+  );
+}
+
+const VERDICT_GOOD: Readonly<Record<Verdict, boolean>> = {
+  solid: true, pass: true, 'needs-work': false, fail: false,
+};
+
+/**
+ * A judge's verdict. The mark (✓ / ✗) and the word carry it, so it never rests on colour; the
+ * tint only confirms. Text stays `--color-text` on the tint (tinted surface, not a filled
+ * swatch), and "Needs work" is an error tint, never `--color-warning`: warning is reserved for
+ * genuinely hot things, and a sent-back plan is routine.
+ */
+export function VerdictChip({ verdict }: { verdict: Verdict }) {
+  const good = VERDICT_GOOD[verdict];
+  return (
+    <span className="chat-a-verdict" data-verdict={verdict} data-good={good || undefined}>
+      <span className="chat-a-verdict-mark" aria-hidden>{good ? '✓' : '✗'}</span>
+      {VERDICT_LABELS[verdict]}
+    </span>
+  );
+}
+
+const QUEST_BADGE_COPY: Readonly<Record<Carries, { label: string; title: string }>> = {
+  memory: { label: 'memory', title: 'Memory: it picked up the work so far instead of starting over' },
+  fresh: { label: 'fresh eyes', title: 'Fresh eyes: sees only the work, never the reasoning' },
+};
+
+/** What an agent carries into its work: the memory of what came before, or fresh eyes. The
+ *  explainer lives in `title`; a caller with a sharper one (the stage's) passes it. */
+export function QuestBadge({ carries, title }: { carries: Carries; title?: string }) {
+  const copy = QUEST_BADGE_COPY[carries];
+  return (
+    <span className="quest-badge" data-badge={carries} title={title ?? copy.title}>
+      {copy.label}
     </span>
   );
 }

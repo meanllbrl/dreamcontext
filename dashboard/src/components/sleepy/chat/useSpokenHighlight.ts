@@ -1,5 +1,5 @@
 /**
- * Mark the sentence J.A.R.V.I.S is SAYING, inside the message it is saying it from.
+ * Mark the sentence the Assistant is SAYING, inside the message it is saying it from.
  *
  * The owner, 2026-09-12: "you could highlight whichever sentence it is reading, so people can
  * follow it." Speech and the transcript were two separate channels — the answer scrolls past
@@ -161,7 +161,7 @@ export function rangeFor(root: Element, chunk: string): Range | null {
 /**
  * Paint the spoken chunk inside `ref`, for as long as it belongs to `itemId`.
  *
- * A no-op outside J.A.R.V.I.S mode (nothing is ever spoken), on a session that does not offer
+ * A no-op outside assistant mode (nothing is ever spoken), on a session that does not offer
  * the subscription, and on an engine without the Highlight API.
  */
 export function useSpokenHighlight(

@@ -383,8 +383,8 @@
 }
 
 .brain-segmented-btn--active {
-  background: var(--color-accent);
-  color: #fff;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
 }
 
 .brain-segmented-btn--active:hover {
@@ -490,9 +490,9 @@
 }
 
 .brain-settings-btn:hover:not(:disabled) {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
-  border-color: var(--color-accent);
+  border-color: var(--color-accent-strong);
 }
 
 .brain-settings-btn:disabled {
@@ -739,7 +739,7 @@
 .brain-drawer-footer .brain-btn {
   flex: 1;
   justify-content: center;
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   border-color: transparent;
   font-weight: var(--font-weight-semibold);

@@ -8,7 +8,8 @@ import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner
 import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { WindowChrome } from './components/layout/WindowChrome';
 import { ChecklistWindow } from './components/checklist/ChecklistWindow';
-import { MeetingRoom } from './components/meeting/MeetingRoom';
+import { Notch, ASSISTANT_VAULT } from './components/assistant/Notch';
+import { VaultProvider } from './context/VaultContext';
 import './styles/global.css';
 
 /**
@@ -60,7 +61,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 const params = new URLSearchParams(window.location.search);
 const initialVault = params.get('vault');
 const checklistId = params.get('checklist');
-const meetingMode = params.get('meeting') === '1';
+const assistantMode = params.get('assistant') === '1';
+/** The notch's one project instance has no chip strip and no siblings — its bus is its own. */
+const assistantBus = new EventTarget();
 
 export function App() {
   // The pinned checklist window (`?checklist=<id>`) — a separate, narrow-capability OS
@@ -79,27 +82,23 @@ export function App() {
   }
 
   /*
-   * The Meeting Room window (`?meeting=1`) — the machine-wide all-agents thread, which used to
-   * be a modal over the launcher.
+   * The dreamcontext Assistant's notch (`?assistant=1`, window label `assistant`) — a panel at
+   * the top of the screen, opened by the Rust shell (desktop/src-tauri/src/assistant.rs).
    *
-   * NO `VaultProvider`, and that absence is the design rather than an omission: the room is
-   * owned by no project (its store is `~/.dreamcontext/meeting-room/`, its routes are
-   * vault-agnostic), so `useVault()` resolves to `DEFAULT_VAULT_CONTEXT` — `vault: null` — and
-   * every surface it mounts reads that correctly. It is what makes the shared composer drop
-   * its Attach control (no project temp dir to upload a pasted image into) and skip the
-   * per-vault peer fetch in favour of the roster the room supplies.
-   *
-   * `QueryClientProvider` IS required: the composer's model/effort menu and its usage popover
-   * are react-query reads (`/api/agent/model-config`, `/api/agent/usage-limits`), and both of
-   * those routes are vault-agnostic, so they answer for a window with no project.
+   * ONE `VaultProvider`, pinned to the HIDDEN vault `__assistant__`: the reused ChatPane makes
+   * the same per-vault REST calls as in any project (history, attachments, file previews,
+   * voice), and the server resolves `__assistant__` for loopback desktop callers only. It is
+   * never a chip, never in the Launcher, never in `vaults.json`.
    */
-  if (meetingMode) {
+  if (assistantMode) {
     return (
       <ErrorBoundary>
         <ThemeProvider>
           <QueryClientProvider client={windowQueryClient}>
             <I18nProvider>
-              <MeetingRoom />
+              <VaultProvider vault={ASSISTANT_VAULT} instanceId="assistant" isActive bus={assistantBus}>
+                <Notch />
+              </VaultProvider>
             </I18nProvider>
           </QueryClientProvider>
         </ThemeProvider>

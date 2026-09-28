@@ -1,3 +1,4 @@
+import { cliAwarePath } from './cli-path.js';
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -6,6 +7,7 @@ import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifie
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
+import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
 import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
@@ -15,6 +17,7 @@ import { backfillQuestionSession, createQuestion, pendingQuestion } from './hitl
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
+import { appendThreadEntry, readThreadRun } from './threads.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
   clearRunSidecar,
@@ -43,6 +46,7 @@ import {
   type AutomationManifest,
   type RunEvent,
   type RunStatus,
+  type ThreadSystemEvent,
 } from './types.js';
 
 /**
@@ -98,6 +102,34 @@ export function buildPreamble(
     '(the numbers, the finding, what changed) — not "the job ran". That sentence becomes ' +
     'the desktop notification the user reads. Put a heading after it, never before it. ' +
     'To send a different banner, add a `## Notification` section and it wins.' +
+    // The thread is a CHANNEL a human reads, not a log. Without the "what NOT
+    // to post" half of this clause a run narrates itself — "starting now",
+    // "step 2 of 4" — and the channel becomes the transcript it exists to
+    // spare them. Same framing discipline as `buildLearningDirective`: name
+    // the floor (zero posts is a valid run) or everything gets posted.
+    ' THREAD: this run has a channel the human reads. Post only what is IMPORTANT — a finding, ' +
+    'a number that moved, something that needs a decision — with ' +
+    `\`dreamcontext automations post ${m.slug} "<one or two sentences>" [--file <brain-relative path>]\`. ` +
+    'Your slug and run are already in your environment; no ids needed. Do NOT post progress ' +
+    'narration, "starting now", or your whole document (it is saved for them already). ' +
+    'Zero posts is the right number for an unremarkable run.' +
+    // The RICHER shapes, after the floor above so the floor keeps the last word: a run
+    // told what it MAY attach before it is told that zero posts is fine will attach
+    // something to every post. Each clause names a real mechanism — `--kv`, `--file` and
+    // `automations propose --choice` all exist; a preamble that names a verb the CLI does
+    // not have spends the run's turn discovering that.
+    // What each type BECOMES in the thread, so a run that made a diagram, a PDF or a clip
+    // knows posting it is worth it — and WHERE to save it, because `--file` refuses any
+    // path outside the brain and a run left to guess writes to /tmp or the project root.
+    ' Attach up to 4 brain-relative paths with --file: an .excalidraw.md draws as a live board, ' +
+    'images show inline, .mp4/.webm/.mov video and .mp3/.m4a/.wav audio play inline, a .pdf ' +
+    'opens in the viewer, markdown in a reader. Save anything you attach NEXT TO your document ' +
+    `(${attachmentDirHint(outputPath)}, ` +
+    'brain-relative). Also up to 6 key=value rows with --kv — --kv ' +
+    'is for numbers, not prose. To ask with buttons: ' +
+    `\`dreamcontext automations propose ${m.slug} --title … --body … --choice "A" --choice ` +
+    '"B"` (≤4, ≤64 chars each; needs review on). Never post a question as plain text — it ' +
+    'has nothing to press.' +
     // Without this line, a run (or its resumed chat) that gets asked "why
     // didn't this reach my Telegram?" concludes — correctly, from its own
     // view — that no Telegram connection exists, and starts recommending the
@@ -180,6 +212,90 @@ export function sanitizeAutomationPrompt(s: string): string {
  * manifest, and the notes read as commentary on instructions already given
  * rather than as a preface that frames them.
  */
+/** "1m 12s" / "4s". The thread's system rows are read by a human at a glance,
+ *  and `72104ms` is not a glance. Duration and cost on the MESSAGE come from
+ *  the run cache, which owns them — this is only the one-line row inside the
+ *  thread panel, so it stays deliberately small rather than importing a
+ *  formatter across the client/server line. */
+function formatRunDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
+}
+
+/**
+ * What a capped run says for itself — ONE sentence, because it becomes three things at
+ * once: the run's `error`, the `system:failed` line in its thread, and the notification
+ * body. It names the window (a user who knows it was the weekly cap knows to stop
+ * retrying today), states plainly that nothing was published (the failure mode this whole
+ * gate exists to end was a banner published AS the document), and gives the reset when the
+ * envelope carried one.
+ *
+ * Local time on purpose: `resetsAt` is a moment the user waits for, and an ISO string in
+ * UTC is arithmetic they should not have to do.
+ */
+function limitReason(sig: LimitSignal): string {
+  const window = sig.window === 'session' ? '5-hour' : sig.window === 'weekly' ? 'weekly' : 'account';
+  if (sig.resetsAtMs === null) {
+    return `It stopped at the ${window} usage limit. Nothing was published. Try again once the window resets.`;
+  }
+  const at = new Date(sig.resetsAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `It stopped at the ${window} usage limit. Nothing was published. The window reopens ${at}.`;
+}
+
+/**
+ * Every thread write in this file goes through here, and every one of them is
+ * BEST-EFFORT. A thread is a display surface; the cache is the record. If an
+ * append fails (a full disk, a day file at its entry cap, a slug that somehow
+ * got past validation) the run's disposition must not change by one bit —
+ * same rule as the queue write below, and for the same reason: the user's job
+ * ran, and losing the note about it is strictly better than losing the job.
+ *
+ * Failures are LOGGED, not swallowed, so a channel that stops filling has a
+ * trail in the dispatcher log instead of looking like an agent that went quiet.
+ */
+function postSystemEntry(
+  contextRoot: string,
+  slug: string,
+  runId: string,
+  event: ThreadSystemEvent,
+  text: string,
+  logFn: (msg: string) => void,
+): void {
+  try {
+    appendThreadEntry(contextRoot, slug, { runId, kind: 'system', event, text, via: 'runner' });
+  } catch (err) {
+    logFn(`automation "${slug}": thread ${event} entry not written — ${(err as Error).message}`);
+  }
+}
+
+/**
+ * The last thing the run POSTED in this fire's thread, for the notification body.
+ *
+ * Best-effort in exactly the way `postSystemEntry` is, and for the same reason: a channel
+ * that cannot be read must not change what the run reports or silence its banner. A read
+ * failure degrades to null, and the caller falls back to the document's opening line.
+ *
+ * Scoped to this run — `readThreadRun` filters by `runId`, so yesterday's post can never
+ * become today's banner.
+ */
+function lastAgentPost(
+  contextRoot: string,
+  slug: string,
+  runId: string,
+  logFn: (msg: string) => void,
+): string | null {
+  try {
+    const posts = readThreadRun(contextRoot, slug, runId).filter((e) => e.kind === 'agent');
+    return posts[posts.length - 1]?.text.trim() || null;
+  } catch (err) {
+    logFn(`automation "${slug}": could not read the thread for the banner — ${(err as Error).message}`);
+    return null;
+  }
+}
+
 export function composePrompt(
   m: AutomationManifest,
   projectRoot: string,
@@ -191,6 +307,9 @@ export function composePrompt(
   /** The connected per-automation Telegram chat, when one exists — see
    *  `buildPreamble`. */
   telegramChatId?: string | null,
+  /** What the human typed into `#agents` to call this agent, when this fire is
+   *  an ask rather than a schedule. See {@link buildAskBlock}. */
+  ask?: string | null,
 ): string {
   const parts = [buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId), '', m.prompt.trim()];
   // The graph goes BEFORE the approved prompt, deliberately, and it is the only
@@ -207,7 +326,83 @@ export function composePrompt(
   if (pattern) parts.push('', pattern);
   const learning = buildLearningDirective(m);
   if (learning) parts.push('', learning);
+  // LAST, and deliberately so. Everything above is standing configuration a
+  // human approved at some point in the past; this is that same human typing
+  // right now. When the two disagree, the live instruction wins — which is
+  // only true because of where it sits.
+  const askBlock = ask ? buildAskBlock(ask, m) : '';
+  if (askBlock) parts.push('', askBlock);
   return sanitizeAutomationPrompt(parts.join('\n'));
+}
+
+/**
+ * Where a run should save what it attaches, as the BRAIN-relative folder its document
+ * lands in (`automations/output/<slug>/`) — the one place `--file` is sure to accept
+ * and the run already knows how to write. Falls back to words for an output path
+ * that is not under a brain, which only a test constructs.
+ */
+export function attachmentDirHint(outputPath: string): string {
+  const marker = '/_dream_context/';
+  const at = outputPath.indexOf(marker);
+  if (at < 0) return 'the folder your document is saved in';
+  return outputPath.slice(at + marker.length).replace(/[^/]+$/, '');
+}
+
+/**
+ * The block that carries a human's live ask from `#agents`.
+ *
+ * WHY THIS IS NOT AN APPROVAL HOLE, since it is the obvious objection: the
+ * approval hash covers the MANIFEST, and it exists to stop a stored prompt
+ * that was edited behind the owner's back from running unreviewed. An ask is
+ * never stored in the manifest, never replayed by the scheduler, and reaches
+ * this function only from a person typing into their own dashboard in that
+ * moment — a stronger authorisation than a recorded approval, not a weaker
+ * one. What it must NOT do is masquerade as the manifest, so it is fenced and
+ * labelled as speech, and the run's job description is still the approved
+ * prompt above.
+ *
+ * The text is quoted data on the way in and stays inside the fence; every
+ * prompt built here still goes through `sanitizeAutomationPrompt`.
+ */
+export function buildAskBlock(ask: string, m?: Pick<AutomationManifest, 'slug' | 'review'>): string {
+  const text = ask.trim();
+  if (!text) return '';
+  // Whether this agent CAN stop and ask with buttons: `propose` refuses under
+  // `review: off`, and a brief that names a verb the CLI will refuse spends a turn on it.
+  const canPropose = m ? m.review !== 'off' : false;
+  return [
+    '--- THE OWNER JUST ASKED YOU THIS, IN THE #agents CHANNEL ---',
+    text,
+    '--- END OF WHAT THEY SAID ---',
+    '',
+    'That is a live instruction from the human who owns this project, typed a moment ago. Do what',
+    'they asked, within the job described above. If it narrows the job, narrow it; if it asks for',
+    'something the job does not cover, do that instead and say so.',
+    // THE ANSWER FIRST. The thread shows the post in full and the document folded under
+    // it, so the post is what the owner reads: it has to BE the answer, not a pointer.
+    'ANSWER IN THE THREAD: post the direct answer to their question (a few sentences, the names',
+    'and numbers that matter, --kv for the figures). Your final message is still the document and',
+    'it is shown under your post, folded by section, so open it with the same answer and keep the',
+    'detail in sections below.',
+    // No blanket sign-off on a conversation (the runner skips the gates for an ask), so
+    // the agent must not write as if a human approval step follows it.
+    'This is a conversation, not an unattended run: no approval step runs after you, and the',
+    'owner can reply in the thread. Do not end with "approve to continue" or wait for a sign-off.',
+    ...(canPropose && m
+      ? [
+        'If something needs their go-ahead before it happens (sending, publishing, spending), do NOT',
+        `do it: ask with \`dreamcontext automations propose ${m.slug} --title … --body … --choice "…" --choice "…"\``,
+        'and stop. That is drawn as buttons; a question written as plain text has nothing to press.',
+      ]
+      : ['If something needs their go-ahead before it happens, do not do it: say so in your post and stop.']),
+    // The channel's `/` menu offers this project's skills and commands, so a `/name`
+    // in the ask is a PICK from that menu, not punctuation. Inside a `-p` brief the
+    // CLI will not expand it on its own; without this line the run reads "/whatsapp"
+    // as a word and never loads the skill the owner chose.
+    ...(/(^|\s)\/[\w:.-]+/.test(text)
+      ? ['A `/name` in what they said names a skill or command of this project: load it with the Skill tool (name without the slash) and follow it.']
+      : []),
+  ].join('\n');
 }
 
 // ─── Notification summary extraction ────────────────────────────────────────
@@ -309,6 +504,13 @@ export interface ClaudeResult {
   durationMs: number | null;
   permissionDenials: number;
   subtype: string | null;
+  /**
+   * The account's own refusal, when this envelope IS one. Read once here rather than at
+   * each use site: a capped turn comes back `is_error: false` with the limit banner sitting
+   * in `result`, so every consumer that keys off `isError` alone believes the run
+   * succeeded. `runAutomation` is the consumer that matters — see the usage-limit gate.
+   */
+  limit: LimitSignal | null;
 }
 
 const UNPARSEABLE: Omit<ClaudeResult, 'raw'> = {
@@ -321,6 +523,9 @@ const UNPARSEABLE: Omit<ClaudeResult, 'raw'> = {
   durationMs: null,
   permissionDenials: 0,
   subtype: null,
+  // Nothing parsed, so there is no envelope to read a refusal off. The raw stdout still
+  // reaches `outputPath` on that path, which is the pre-existing behaviour for garbage.
+  limit: null,
 };
 
 /** PURE — never throws. Unparseable JSON or a missing/non-string `result`
@@ -346,6 +551,10 @@ export function parseClaudeJson(stdout: string): ClaudeResult {
       durationMs: typeof p.duration_ms === 'number' ? p.duration_ms : null,
       permissionDenials: Array.isArray(p.permission_denials) ? p.permission_denials.length : 0,
       subtype: typeof p.subtype === 'string' ? p.subtype : null,
+      // Computed HERE because this is the one place that holds both halves at once: the
+      // whole envelope (for the structured readers, which carry the window and the reset)
+      // and the narrowed `result` string (for the gated text reader).
+      limit: readEnvelopeLimitSignal(p, result),
     };
   } catch {
     return { raw: stdout, ...UNPARSEABLE };
@@ -535,7 +744,9 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     // `opts.env` last: the per-account `CLAUDE_CONFIG_DIR` must win over an inherited one —
     // including account #0, whose entry is `undefined` and therefore REMOVES the inherited
     // value rather than leaving it to redirect the child (see `accountEnvFor`).
-    env: { ...process.env, PATH: claudeAwarePath(), ...(opts.env ?? {}) },
+    // `cliAwarePath` so the run can call `dreamcontext` (post, propose, recall) even when it
+    // was started from the app, whose environment has no login-shell PATH — see cli-path.ts.
+    env: { ...process.env, PATH: cliAwarePath(claudeAwarePath()), ...(opts.env ?? {}) },
     stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
     detached: true,
   };
@@ -694,6 +905,11 @@ interface RunOptionsBase {
    *  contract `tick.ts` holds for polling). Defaults to the real per-slug
    *  sender, which is a no-op when the automation has no bot configured. */
   sendTelegram?: (text: string) => Promise<void>;
+  /** What the human typed to call this agent from `#agents`. Present ONLY for
+   *  a fire a person started by hand; the scheduler never sets it. Rides into
+   *  the prompt through `buildAskBlock` and nowhere else — it is not stored,
+   *  not hashed, and not replayed. */
+  ask?: string | null;
 }
 
 type RunHostOpts =
@@ -868,6 +1084,35 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       coalesceRepeat: params.coalesceRepeat === true,
     });
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
+    // The run's terminal entry, AFTER `recordRun` so the thread can never claim
+    // an outcome the cache does not have. Only the three statuses that mean the
+    // job itself ran and ended get one: `blocked`/`deferred`/`orphaned` never
+    // started (there is no `started` entry to close), and `awaiting-*` is a
+    // question. The gate is the same shape as `params.notify` below, and exists
+    // for the same reason — a still-due automation must not narrate every tick.
+    //
+    // CAREFUL WITH THAT LAST ONE: "`awaiting-*` is a question, which the
+    // `asked` entry already covers" is true of the two MID-RUN review paths
+    // and FALSE of the step-4.5 short-circuit, which returns
+    // `awaiting-approval`/`awaiting-review` for a question raised by an
+    // EARLIER fire and never calls `createQuestion` — so nothing writes
+    // `asked` and this gate writes nothing either, leaving a run with no entry
+    // at all. That is correct for a scheduled fire (still owed, must not
+    // narrate every tick) and was a hole for a human ask, which is owed an
+    // answer; `answerIfSilent` in server/automation-job.ts closes it by asking
+    // the thread what is in it rather than by listing statuses here.
+    if (params.status === 'ok' || params.status === 'failed' || params.status === 'timeout') {
+      postSystemEntry(
+        contextRoot,
+        slug,
+        fireAt.toISOString(),
+        params.status,
+        params.status === 'ok'
+          ? `Finished in ${formatRunDuration(params.durationMs)}.`
+          : `${params.status === 'timeout' ? 'Timed out' : 'Failed'} after ${formatRunDuration(params.durationMs)}${params.error ? `: ${params.error}` : ''}`,
+        logFn,
+      );
+    }
     // Notify on COMPLETION, success included. A silent success defeats the point
     // of the feature: the run happened with nobody at the keyboard, so "your
     // digest is ready" is the whole payload. `params.notify` stays the gate for
@@ -889,7 +1134,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // job they asked for was "update the insights", withholds the entire
       // answer one click away for no reason.
       if (params.status === 'ok') {
-        const summary = params.summary ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done');
+        // THE AGENT'S OWN WORDS WIN. `params.summary` is the document's opening line, which
+        // is the right banner for a run that said nothing — but a run that CHOSE to post
+        // picked that sentence for this human to read, and the banner is realistically the
+        // only thing they see. Falling back in this order means the channel and the
+        // notification never disagree about what the run's headline was.
+        const summary = lastAgentPost(contextRoot, slug, fireAt.toISOString(), logFn)
+          ?? params.summary
+          ?? (params.outputPath ? `→ ${basename(params.outputPath)}` : 'done');
         // A run that ended owing a verdict must NOT read as "your digest is
         // ready" — nothing was published, and the banner is realistically the
         // only thing the user sees. It has to ask, not report.
@@ -1253,7 +1505,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       useFlowOutput ? { ...manifest, outputDir: flow.reportTarget } : manifest,
       fireAt,
     );
-    const prompt = composePrompt(manifest, projectRoot, fireAt, outputPath, flow, telegramCfg?.chatId ?? null);
+    const prompt = composePrompt(
+      manifest, projectRoot, fireAt, outputPath, flow, telegramCfg?.chatId ?? null, opts.ask ?? null,
+    );
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
     // wait under the timeout half of the kill matrix, parse. All of it lives in
@@ -1270,7 +1524,15 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     ensureSandbox(automationConfigDir);
     const execution = await executeClaudeDetached(claudeArgs, {
       cwd: projectRoot,
-      env: accountEnvFor(automationConfigDir),
+      // The two thread vars are HINTS, not capabilities. `automations post`
+      // still requires the slug as a positional and validates it, so a leaked
+      // or forged env var grants nothing it did not already have — it only
+      // spares the run from having to know its own fire time to post.
+      env: {
+        ...accountEnvFor(automationConfigDir),
+        DREAMCONTEXT_AUTOMATION_SLUG: slug,
+        DREAMCONTEXT_AUTOMATION_RUN: fireAt.toISOString(),
+      },
       timeoutMs,
       spawnImpl: spawnFn,
       killImpl: killFn,
@@ -1288,6 +1550,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           startedAt: spawnedAt.toISOString(),
           timeoutAt: new Date(spawnedAt.getTime() + timeoutMs).toISOString(),
         });
+
+        // The thread's ROOT entry. It is written here, next to the sidecar,
+        // rather than before the spawn, because the thread should only claim a
+        // run that actually started a child — every path that gives up before
+        // this point (blocked, deferred, the orphan guard) leaves the channel
+        // silent, which is the whole reason a still-due automation does not
+        // write an entry every five minutes forever.
+        postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', 'Run started.', logFn);
 
         // Step 10 — host wiring.
         if (opts.host === 'server') {
@@ -1378,7 +1648,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       } else {
         status = claudeResult.isError ? 'failed' : 'ok';
         if (status === 'failed') {
-          error = execution.stderrTail || 'claude reported is_error: true';
+          // The reader's WHY, not the envelope's flag: the result's own opening
+          // line ("Could not reach the analytics API: 401 Unauthorized.") is what
+          // the thread and the feed lead with, and "is_error: true" says nothing.
+          error = execution.stderrTail
+            || extractNotificationSummary(claudeResult.result ?? '')
+            || 'The run ended with an error and gave no reason.';
         }
 
         // The run's conversation id only exists HERE, in the JSON envelope —
@@ -1401,6 +1676,22 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // for one itself (`review: agent` → `automations propose`), or the
         // manifest asks for one on every document (`review: output`).
         const proposedQuestion = pendingQuestion(contextRoot, slug);
+        // A CONVERSATION IS NOT A DOCUMENT FOR SIGN-OFF. A run a human started by calling
+        // the agent by name, with a question, answers that question in the thread. The two
+        // BLANKET gates below (a graph `hitl` node, `review: output`) exist for the
+        // unattended fire whose document nobody asked for yet; on an ask they put an
+        // "Approve the document?" under a plain answer, which is a question about nothing
+        // the owner asked, and held the answer's full report unpublished behind it. So an
+        // ask skips both. The agent's OWN question still stops the run: `propose` (the
+        // `proposedThisRun` arm) is how a conversational run asks for a real decision, and
+        // the ask block tells it so. The usage-limit gate is untouched: it runs first.
+        const conversational = Boolean(opts.ask?.trim());
+        // ONE sign-off, however it was spelled. `review: output` and a graph `hitl` node in
+        // `output` mode (which the editor draws FOR that setting) are the same gate; the
+        // graph arm used to win and asked a bare "Approve the document?" with a free-text
+        // box and no document. Both now take the document arm: the report itself, and
+        // approve or reject.
+        const documentSignOff = manifest.review === 'output' || (flow.needsHitl && flow.hitlMode === 'output');
         const proposedThisRun = proposedQuestion?.runFiredAt === fireAt.toISOString() ? proposedQuestion : null;
 
         // THE FLOW'S OWN GATE. A `hitl` node in the graph means this run does not
@@ -1412,7 +1703,25 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // Checked BEFORE the `review` modes so a graph that says "ask" wins over
         // frontmatter that says "don't": the two can disagree, and the safe
         // resolution of that disagreement is to ask.
-        if (status === 'ok' && flow.needsHitl && !proposedThisRun) {
+        // THE USAGE-LIMIT GATE, and it sits HERE for a reason worth not re-deriving.
+        //
+        // A capped run comes back `is_error: false`, so `status` is 'ok' — which means the
+        // chain below does not merely publish the banner as the day's document. It can hand
+        // the banner to `createQuestion` as the BODY of a review question (the two arms
+        // right under this one) and end `awaiting-review`, so a quota message sits in the
+        // human's verdict queue as though the agent had produced it, and sleep consumes it
+        // as truth. Gating AFTER the chain, or gating on `status`, both leave that open —
+        // so this runs before either can.
+        //
+        // The session backfill above is deliberately NOT skipped: the session exists and is
+        // resumable, and a human asking the run what happened is exactly the right move.
+        if (claudeResult.limit) {
+          status = 'failed';
+          error = limitReason(claudeResult.limit);
+          // `finalOutputPath` stays null, so nothing publishes, nothing reaches Telegram,
+          // and the feed offers no file card for a document that was never written.
+          logFn(`automation "${slug}": ${error}`);
+        } else if (status === 'ok' && flow.needsHitl && !documentSignOff && !proposedThisRun && !conversational) {
           const document = claudeResult.result ?? '';
           try {
             const q = createQuestion(contextRoot, {
@@ -1426,6 +1735,18 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               nowISO: nowFn().toISOString(),
             });
             reviewCardId = q.id;
+            // `asked` belongs to the run that asked it. The APPROVAL question
+            // (the one raised before an unapproved manifest ever runs) writes
+            // nothing: its session is forced null and it is not a run of the
+            // job, so a thread entry there would open a run that never fires.
+            postSystemEntry(
+              contextRoot,
+              slug,
+              fireAt.toISOString(),
+              'asked',
+              `Asked: ${q.question.split(/\n\s*\n/)[0].slice(0, 200)}`,
+              logFn,
+            );
             recordAutomationSession(slug, claudeResult.sessionId, home);
             // Deliberately NOT written to the output directory: publishing is
             // what the question gates. The document lives in the session, which
@@ -1441,7 +1762,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
             error = 'could not record the flow question — see the dispatcher log for details';
             logFn(`automation "${slug}": flow question failed: ${(err as Error).message}`);
           }
-        } else if (status === 'ok' && manifest.review === 'output' && !proposedThisRun) {
+        } else if (status === 'ok' && documentSignOff && !proposedThisRun && !conversational) {
           // Blanket review, built the SAME way the flow's own HITL gate just
           // above is: the document lives in the session, unpublished, until a
           // human answers — there is no more staged file to move on approve
@@ -1456,13 +1777,25 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
               kind: 'flow-hitl',
               sessionId: claudeResult.sessionId,
               channel: 'chat',
-              question:
-                `"${manifest.title}" produced a document and is waiting for your verdict before it ` +
-                `publishes.\n\n${document}`,
+              // The FIRST paragraph is the question the block shows; the rest is the
+              // document, which the block folds by section under it.
+              question: `${manifest.title} wrote this report. Publish it?\n\n${document}`,
               choices: ['approve', 'reject'],
               nowISO: nowFn().toISOString(),
             });
             reviewCardId = q.id;
+            // `asked` belongs to the run that asked it. The APPROVAL question
+            // (the one raised before an unapproved manifest ever runs) writes
+            // nothing: its session is forced null and it is not a run of the
+            // job, so a thread entry there would open a run that never fires.
+            postSystemEntry(
+              contextRoot,
+              slug,
+              fireAt.toISOString(),
+              'asked',
+              `Asked: ${q.question.split(/\n\s*\n/)[0].slice(0, 200)}`,
+              logFn,
+            );
             recordAutomationSession(slug, claudeResult.sessionId, home);
             // Deliberately NOT written to the output directory: publishing is
             // what the question gates, exactly as the flow's own gate above.

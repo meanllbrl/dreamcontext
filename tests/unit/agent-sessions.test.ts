@@ -346,6 +346,15 @@ describe('sanitizeRoster — pane placement (the layout that used to be thrown a
   });
 });
 
+describe('sanitizeRoster — titleByAgent (the tab\'s agent named it and may rename it)', () => {
+  it('keeps `titleByAgent` only when it is exactly true', () => {
+    expect(sanitizeRoster({ sessions: [valid({ titleByAgent: true })] })?.[0].titleByAgent).toBe(true);
+    for (const titleByAgent of ['true', 1, {}, null, false]) {
+      expect(sanitizeRoster({ sessions: [{ ...valid(), titleByAgent }] })?.[0]).not.toHaveProperty('titleByAgent');
+    }
+  });
+});
+
 describe('handleAgentSessionsGet — the remembered permission mode + placement', () => {
   const dirs: string[] = [];
   const realDesktop = process.env.DREAMCONTEXT_DESKTOP;

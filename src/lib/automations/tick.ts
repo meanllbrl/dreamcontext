@@ -195,6 +195,19 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       logFn(`[automations] queued fire for ${fire.slug} has no manifest — dropping`);
       continue;
     }
+    // The manifest is re-resolved for exactly this class of change, and mode
+    // belongs in the same guard as `enabled`: a scheduled agent can have a
+    // fire queued (a sleep lock held it, say) and then be edited to on-call
+    // before the next drain. Without this, that stale fire would run — the
+    // one thing "the dispatcher never fires an on-call agent" promises it
+    // cannot. DROPPED rather than re-queued, unlike the disabled branch
+    // below: a disabled agent is paused and still owes that fire, whereas an
+    // on-call agent has no schedule at all, so the fire is not owed to
+    // anyone and re-queuing would keep it alive forever.
+    if (manifest.mode === 'call') {
+      logFn(`[automations] queued fire for ${fire.slug} is now an on-call agent — dropping (it runs only when called)`);
+      continue;
+    }
     if (!manifest.enabled) {
       // OWED, not lost: re-queue with the ORIGINAL firedAt so a later drain
       // still advances the watermark to the fire it answers for, never to
@@ -243,7 +256,11 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     }
 
     const cache = readAutomationCache(contextRoot, manifest.slug);
-    const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours);
+    // `manifest.mode` is the FIRST thing isDue looks at: an on-call agent is
+    // never fired by the dispatcher, whatever its schedule field happens to
+    // say. It still contributes a verdict ('on-call'), so a tick's report
+    // accounts for every manifest it considered.
+    const due = isDue(manifest.schedule, cache?.lastFireAt ?? null, now, manifest.catchupHours, manifest.mode);
     if (!due.due) {
       verdicts.push({ slug: manifest.slug, verdict: due.reason });
       continue;

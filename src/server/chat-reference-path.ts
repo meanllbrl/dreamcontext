@@ -85,7 +85,10 @@ function exists(p: string): boolean {
   try { statSync(p); return true; } catch { return false; }
 }
 
-function isInside(root: string, abs: string): boolean {
+/** Lexical containment. Exported so the SERVE path can re-run the same predicate over
+ *  REAL paths (`realpathSync`) instead of keeping a second, subtly different copy — the
+ *  two must agree on what "inside" means or the harder check is not the same check. */
+export function isInside(root: string, abs: string): boolean {
   return abs === root || abs.startsWith(root + sep);
 }
 

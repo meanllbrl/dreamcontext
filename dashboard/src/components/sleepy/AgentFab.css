@@ -4,7 +4,13 @@
 .agent-fab {
   position: fixed;
   right: var(--space-5);
-  bottom: var(--space-5);
+  /* Steps over a bottom-anchored composer strip when the page under it has one
+     (`--dc-bottom-strip`, published by whichever strip is mounted). Same rule
+     `.agent-dock--floating` applies for the same reason: this corner is not
+     always empty page, and a fixed button that lands on a Send button makes
+     that button unclickable. Zero when no strip is there, so every other page
+     is unchanged. */
+  bottom: calc(var(--space-5) + var(--dc-bottom-strip, 0px));
   z-index: 18;
   display: flex;
   align-items: center;

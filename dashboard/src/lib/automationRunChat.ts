@@ -202,3 +202,48 @@ export function runChatUnavailableReason(
   }
   return null;
 }
+
+// ── Train an automated agent (Train Me, bound to one automation) ──────────────────────
+//
+// The other bridge in this file RESUMES a conversation an automation already had; this one
+// STARTS a new one. A Train Me chat learns the owner's taste through swipe and A/B cards and
+// ends by writing a pattern. Bound to an automation, that pattern is the automation's OWN
+// playbook (its `## Pattern` section, written through `dreamcontext automations learn <slug>
+// --playbook-file`), never a file in the project's knowledge/patterns. The binding travels
+// in the kickoff prompt (`trainKickoffPrompt` in agentPrompt.ts), because the chat's mode
+// briefing is the same for every Train Me session and only the first message can name WHICH
+// automation this one is for.
+//
+// Same bus and same synchronous ACK as `openAutomationRunChat`, for the same reason: the
+// panel must say "could not open" out loud rather than close itself over nothing.
+
+export const TRAIN_CHAT_EVENT = 'dreamcontext-automation-train-chat';
+
+export interface TrainChatDetail {
+  slug: string;
+  /** The automation's human title, for the tab and the kickoff prompt. */
+  automationTitle: string;
+  /** Flipped to true by the AgentSurface listener only once it has actually spawned the
+   *  Train Me chat. Left false when its guards reject, or when no surface is listening. */
+  accepted?: boolean;
+}
+
+/**
+ * Ask THIS project's agent surface to open a Train Me chat bound to one automation.
+ * Returns whether it did. Synchronous for the same reason as `openAutomationRunChat`.
+ */
+export function openTrainChat(bus: EventTarget, args: { slug: string; automationTitle: string }): boolean {
+  const detail: TrainChatDetail = { slug: args.slug, automationTitle: args.automationTitle, accepted: false };
+  emitInstance<TrainChatDetail>(bus, TRAIN_CHAT_EVENT, detail);
+  return detail.accepted === true;
+}
+
+/** The Train Me tab's name: `Train · <automation title>`. Clipped to the same 34 chars as
+ *  `automationRunTabTitle`, keeping the `Train · ` prefix whole since it says what the tab is. */
+export function trainTabTitle(automationTitle: string): string {
+  const prefix = 'Train · ';
+  const name = automationTitle.trim() || 'Automation';
+  const room = 34 - prefix.length;
+  const clipped = name.length > room ? `${name.slice(0, room - 1).trimEnd()}…` : name;
+  return `${prefix}${clipped}`;
+}

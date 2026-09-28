@@ -55,6 +55,13 @@ export interface FlowExecResult {
   /** The question a `hitl` node asks, for the record the runner creates. Null
    *  when the graph has no such node. */
   hitlPrompt: string | null;
+  /**
+   * The first `hitl` node's `config.mode`, when it names one. `'output'` is the
+   * DOCUMENT sign-off (the node the editor draws for `review: output`): it asks
+   * approve or reject about the run's document, not a free question, and the
+   * runner builds it that way. Null otherwise.
+   */
+  hitlMode: string | null;
   /** The `dir` a `report` node names, VERBATIM and unvalidated — the runner
    *  resolves and contains it. Null when the graph names none. */
   reportTarget: string | null;
@@ -72,6 +79,7 @@ const EMPTY: FlowExecResult = {
   fragments: [],
   needsHitl: false,
   hitlPrompt: null,
+  hitlMode: null,
   reportTarget: null,
   order: [],
   passedThrough: [],
@@ -153,6 +161,7 @@ export function executeFlow(graph: FlowGraph | null): FlowExecResult {
   const passedThrough: string[] = [];
   let needsHitl = false;
   let hitlPrompt: string | null = null;
+  let hitlMode: string | null = null;
   let reportTarget: string | null = null;
 
   for (const node of order) {
@@ -170,7 +179,11 @@ export function executeFlow(graph: FlowGraph | null): FlowExecResult {
       // The FIRST hitl node's question is the one asked. A graph with several is
       // legal but the run stops at the first, so asking a later one's question
       // would describe a gate the run has not reached yet.
-      if (hitlPrompt === null) hitlPrompt = node.label?.trim() || 'This run needs your answer before its work takes effect.';
+      if (hitlPrompt === null) {
+        hitlPrompt = node.label?.trim() || 'This run needs your answer before its work takes effect.';
+        const mode = node.config?.mode;
+        hitlMode = typeof mode === 'string' && mode.trim() ? mode.trim() : null;
+      }
     }
 
     if (node.kind === 'report' && reportTarget === null) reportTarget = configDir(node);
@@ -183,6 +196,7 @@ export function executeFlow(graph: FlowGraph | null): FlowExecResult {
     fragments,
     needsHitl,
     hitlPrompt,
+    hitlMode,
     reportTarget,
     order: order.map((n) => n.id),
     passedThrough,

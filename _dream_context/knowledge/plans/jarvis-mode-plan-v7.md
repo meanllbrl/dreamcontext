@@ -2,8 +2,9 @@
 name: jarvis-mode-plan-v7
 type: knowledge
 description: >-
-  SUPERSEDED historical plan for J.A.R.V.I.S voice mode. Current truth is
-  features/jarvis-voice-mode. Kept for the design reasoning and the three
+  SUPERSEDED historical plan for J.A.R.V.I.S voice mode. The mode shipped and
+  was then RETIRED 2026-09-26 into the notch assistant — current truth is
+  features/dreamcontext-assistant. Kept for the design reasoning and the three
   four-lens review rounds; two of its factual claims are known wrong (see the
   banner at the top).
 tags:
@@ -19,8 +20,11 @@ date: '2026-09-07'
 
 > ## ⚠️ SUPERSEDED — this is the historical PLAN, not current truth
 >
-> **Current truth lives in `[[features/jarvis-voice-mode]]`.** The mode shipped
-> (`3d86451e`, `e425dc02`); read the PRD for what it actually does.
+> **Current truth lives in `[[features/dreamcontext-assistant]]`.** The mode shipped
+> (`3d86451e`, `e425dc02`) and was then **RETIRED 2026-09-26**: voice moved into the notch
+> assistant, the `jarvis` chat mode maps to Basic, and the picker cell it vacated became
+> Train Me. `[[features/jarvis-voice-mode]]` is itself `deprecated` and carries its own
+> RETIRED banner — read it for what the mode did, the assistant PRD for what runs today.
 >
 > **Two claims below are now known to be WRONG and must not be quoted:**
 >
@@ -33,6 +37,10 @@ date: '2026-09-07'
 > 2. The model ids in "Verified facts" came from an announcement blog post, not the models
 >    API — the plan says so itself, and the plan was right to. None of them should be treated
 >    as verified.
+>
+> Also dated: the out-of-scope list near the end rules out voice in "the Meeting Room" — that
+> subsystem was **deleted** on 2026-09-26, so it is not a surface anything can be scoped
+> against any more.
 >
 > Kept unedited as the record of how the design was reasoned about, including the review
 > rounds that changed the safety model. Retire at a deep cycle if it stops earning its keep.

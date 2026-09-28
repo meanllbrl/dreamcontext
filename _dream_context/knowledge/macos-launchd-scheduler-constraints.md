@@ -142,3 +142,4 @@ All five constraints above were verified empirically, not assumed:
 - Task: `state/automations-scheduled-headless-claude-jobs.md` — §1.1 dispatcher wrapper design, §1.4 timeout + orphan handling
 - Code: `src/lib/automations/launchd.ts` — `resolveDispatcherTarget`, `renderDispatcherWrapper`, `installDispatcher`
 - Pattern: `knowledge/patterns/test-isolation-injectable-home.md` — related lesson from same build (test pollution via real HOME)
+- Pattern: `knowledge/patterns/command-not-found-in-a-spawned-child.md`: the same minimal-PATH problem for runs started from the desktop app (Finder PATH), solved with a shim to the running CLI (2026-09-24)

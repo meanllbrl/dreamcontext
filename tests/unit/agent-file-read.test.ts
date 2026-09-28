@@ -229,15 +229,40 @@ describe('handleAgentFile — PDF bytes', () => {
   });
 });
 
-describe('handleAgentFile — SVG is served as text only, never as an executable image type', () => {
-  it('SVG with raw=1 still returns type:text JSON, never image/svg+xml', async () => {
-    const { res, status, header, body } = makeRes();
+describe('handleAgentFile — SVG is an image for <img>, never a live document', () => {
+  // Owner decision 2026-09-25: an .svg opens in the Lightbox as an <img>. An <img> never
+  // executes an SVG's script; the sandbox CSP keeps a DIRECT navigation to the same URL
+  // inert (no script, opaque origin, nothing fetched). The vault route still never serves
+  // one raw (graph-content-raw.test.ts).
+  it('SVG with raw=1 is image/svg+xml under a sandbox CSP, inline, nosniff', async () => {
+    const { res, status, header, raw, done } = makeRes();
     await handleAgentFile(makeReq('/api/agent/file?path=icon.svg&raw=1'), res, {}, contextRoot);
+    await done();
+    expect(status()).toBe(200);
+    expect(header('Content-Type')).toBe('image/svg+xml');
+    const csp = String(header('Content-Security-Policy') ?? '');
+    expect(csp).toContain('sandbox');
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).not.toContain('script-src');
+    expect(header('Content-Disposition')).toBe('inline');
+    expect(header('X-Content-Type-Options')).toBe('nosniff');
+    expect(String(raw())).toBe('<svg><script>alert(1)</script></svg>');
+  });
+
+  it('SVG WITHOUT raw=1 stays the text preview (the SlideOver source view)', async () => {
+    const { res, status, header, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=icon.svg'), res, {}, contextRoot);
     expect(status()).toBe(200);
     expect(header('Content-Type')).toBe('application/json');
-    expect(header('Content-Type')).not.toBe('image/svg+xml');
     expect(body().type).toBe('text');
     expect(body().content).toContain('<svg>');
+  });
+
+  it('an SVG over the preview cap is refused 413, raw or not', async () => {
+    writeFileSync(join(projectRoot, 'huge.svg'), `<svg>${'x'.repeat(600 * 1024)}</svg>`, 'utf-8');
+    const { res, status } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=huge.svg&raw=1'), res, {}, contextRoot);
+    expect(status()).toBe(413);
   });
 });
 

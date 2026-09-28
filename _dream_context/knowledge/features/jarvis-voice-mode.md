@@ -9,7 +9,7 @@ description: >-
   of reading it aloud. One OpenRouter key, per-machine, never in a vault.
 pinned: false
 date: '2026-09-10'
-status: in_review
+status: deprecated
 created: '2026-09-10'
 updated: '2026-09-13'
 released_version: null
@@ -26,6 +26,31 @@ related_tasks: []
 ---
 
 ## Why
+
+> # ⛔️ RETIRED — REMOVED FOR 0.28.0 (2026-09-26)
+>
+> **The J.A.R.V.I.S chat MODE no longer ships. Its voice pipeline does — in the dreamcontext
+> Assistant's notch** (`features/dreamcontext-assistant.md`, task `a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica`).
+>
+> **What was REMOVED:** `jarvis` as a chat mode. The server maps a saved `jarvis` chat to Basic
+> (`sanitizeChatMode`); the dashboard's mode is `assistant`, which only the hidden
+> `__assistant__` vault may run, and it is not in the composer's picker.
+>
+> **What MOVED, unchanged:** gated takes, `/stt` + the corrector (whose vocabulary now also
+> carries every registered project's name, for the Assistant only), sentence-by-sentence speech,
+> the music hold/hand-back, Hush, and "a CHANGED transcript waits for a keypress". The trigger is
+> the Assistant's Rust-owned global hotkey (hold, or toggle as the fallback).
+>
+> **What was KEPT:** `~/.dreamcontext/voice.json` (the OpenRouter key) — untouched. The voice
+> components themselves live on and are still maintained (`VoiceMeter`, the composer's
+> `lib/voice/*`, and since 2026-09-27 the opt-in `readAloud` toggle that gates `speak()` before
+> `/tts` is ever called) — they are the notch's pipeline now, not a dead mode's leftovers.
+>
+> **The picker cell it vacated became Train Me** (2026-09-27): `CHAT_MODES` is now
+> `basic | plan | develop | train | assistant`, so the 2×2 mode grid stayed full and nothing had
+> to be hidden to make room. **This feature's own task was cancelled as obsoleted**, not
+> completed — the capability shipped under the Assistant, so there was nothing here left to
+> finish.
 
 The composer had four chat modes and one of them was a lie: `jarvis` sat in `CHAT_MODES` with a
 "Soon" badge, was coerced to `basic` by `sanitizeChatMode`, and was answered by an empty briefing.

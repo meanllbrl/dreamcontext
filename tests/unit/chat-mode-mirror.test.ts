@@ -23,7 +23,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CHAT_MODES, DEFAULT_CHAT_MODE } from '../../src/server/chat-modes.js';
+import { CHAT_MODES, DEFAULT_CHAT_MODE, PICKER_MODES } from '../../src/server/chat-modes.js';
 import {
   CHAT_MODE_ROWS, DEFAULT_CHAT_MODE as CLIENT_DEFAULT_CHAT_MODE, chatModeRow,
 } from '../../dashboard/src/lib/chatModes.js';
@@ -33,7 +33,12 @@ const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 describe('chat modes — client menu <-> server allowlist mirror', () => {
   it('the menu offers exactly the modes the server accepts, in the same order', () => {
-    expect(CHAT_MODE_ROWS.map((r) => r.id)).toEqual([...CHAT_MODES]);
+    // PICKER_MODES, not CHAT_MODES: `assistant` is bound to the hidden vault and never offered.
+    expect(CHAT_MODE_ROWS.map((r) => r.id)).toEqual([...PICKER_MODES]);
+    // Four rows fill the composer's 2×2 grid; Train Me is the 4th cell.
+    expect(CHAT_MODE_ROWS.map((r) => r.id)).toEqual(['basic', 'plan', 'develop', 'train']);
+    expect([...CHAT_MODES]).toEqual(['basic', 'plan', 'develop', 'train', 'assistant']);
+    expect([...CHAT_MODES]).toContain('assistant');
   });
 
   it('both sides default to the same mode', () => {
@@ -51,15 +56,10 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     }
   });
 
-  it('J.A.R.V.I.S is a REAL row now — no badge, no disabled flag (AC1)', () => {
-    // This assertion is the inverse of the one it replaces. It used to require the PAIR —
-    // `disabled` plus a "Soon" badge — because the pair was what kept the announcement
-    // honest: `disabled` without a badge is a dead row the user pokes at, and a badge without
-    // `disabled` is a selectable mode with no behaviour behind it. The mode has behaviour
-    // now, so both come off together, and the same reasoning is what makes that safe.
-    const jarvis = CHAT_MODE_ROWS.find((r) => r.id === 'jarvis');
-    expect(jarvis?.disabled).toBeFalsy();
-    expect(jarvis?.badge).toBeFalsy();
+  it('J.A.R.V.I.S is retired from the picker, and the Assistant is never offered in it', () => {
+    const ids = CHAT_MODE_ROWS.map((r) => r.id as string);
+    expect(ids).not.toContain('jarvis');
+    expect(ids).not.toContain('assistant');
   });
 
   it('NO row is disabled — every mode the server briefs is selectable', () => {
@@ -72,9 +72,6 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     // that is NOT offered, `maturity` labels one that IS. Overloading `badge` for "ALPHA"
     // would have bought one word by deleting the pair rule below, which catches a real
     // mistake — so the maturity chip is its own field and never implies `disabled`.
-    const jarvis = CHAT_MODE_ROWS.find((r) => r.id === 'jarvis');
-    expect(jarvis?.maturity).toBe('ALPHA');
-    expect(jarvis?.disabled).toBeFalsy();
     for (const row of CHAT_MODE_ROWS) {
       if (row.maturity) expect(row.disabled, `mode "${row.id}"`).toBeFalsy();
     }
@@ -87,6 +84,15 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     for (const row of CHAT_MODE_ROWS) {
       expect(Boolean(row.disabled), `mode "${row.id}"`).toBe(Boolean(row.badge));
     }
+  });
+
+  it('Train Me is offered, selectable, and wears the ALPHA chip — not a badge', () => {
+    const train = chatModeRow('train');
+    expect(train.id).toBe('train');
+    expect(train.name).toBe('Train Me');
+    expect(train.maturity).toBe('ALPHA');
+    expect(train.disabled).toBeFalsy();
+    expect(train.badge).toBeUndefined();
   });
 
   it('chatModeRow falls back to the default rather than returning undefined', () => {

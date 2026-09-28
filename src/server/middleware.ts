@@ -58,6 +58,17 @@ export function sendError(res: ServerResponse, statusCode: number, error: string
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 /**
+ * A WebSocket upgrade from a BROWSER page on another origin. Browsers send `Origin` on every
+ * WS handshake and CORS does not apply to WebSockets, so without this a web page the owner
+ * merely visits could open `ws://127.0.0.1:<port>/…` — it IS loopback from the server's view.
+ * No `Origin` (a CLI, a test, a native client) is not a browser page and is not refused here.
+ */
+export function isForeignOriginUpgrade(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  return !!origin && !LOCAL_ORIGIN_RE.test(origin);
+}
+
+/**
  * True for a state-changing request issued from a cross-site origin.
  * Browsers always attach Origin on POST/PUT/PATCH/DELETE; a non-browser
  * client (curl, the CLI itself) sends none and is not a CSRF vector.

@@ -152,6 +152,18 @@
   --color-accent: var(--color-deep-violet);    /* #7b68ee — interactive */
   --color-accent-text: var(--color-snow);
   --color-accent-soft: rgba(123, 104, 238, 0.12);
+  /* The accent as INK on paper: a count, a link word. #7b68ee is validated on fills and
+     reads 4.15:1 as small text on white; the brand gradient's own first stop reads 5.64:1
+     (tinted-surface-not-filled-swatch: a swatch colour is not thereby a text colour). */
+  --color-accent-ink: #6647f0;
+  /* The accent as a FILL that carries text (a labelled button, a count badge, a selected day).
+     White on #7b68ee is 4.15:1, and on the dark theme's #9d8cff 2.75:1; on #6647f0 it is 5.64:1.
+     Deliberately NOT overridden in the dark block: a fill carries its own contrast whatever the
+     page theme is, which is also why this is not `--color-accent-ink` (dark resets that one to
+     the accent, because ink sits on the dark canvas). Non-text fills (dots, bars, tracks) keep
+     `--color-accent`; tests/unit/accent-strong.test.ts holds the line. */
+  --color-accent-strong: #6647f0;
+  --gradient-brand-strong: linear-gradient(135deg, #5535e0, var(--color-accent-strong));
 
   /* ─── Categorical chart scale (lab charts read these directly from SVG) ───
      Series colours, in order. Hues are the ones the charts already used; the
@@ -166,6 +178,60 @@
   --chart-7: #d63f95;
   --chart-8: #0ea5a5;
 
+  /* ─── Nav SECTION IDENTITY ───
+     Static chrome, never a status. The ★★★ rule is colour = MOOD, movement = MODE, and
+     this does not contend with it: a group hue never changes at runtime and never carries
+     news, so there is nothing about it to miss. It is spent as a TINTED SURFACE on the
+     idle icon badge (Sidebar.css), and the ACTIVE badge still takes the full accent — so
+     identity always loses to status, which is the property that makes it compliant.
+
+     NOT --chart-1: that IS --color-accent, and a Workspace hue equal to the accent would
+     make every idle Workspace icon read as active. --chart-3/-5 stay unused too — both
+     neighbour --color-warning, reserved for genuinely hot things.
+
+     RE-DECLARED in the dark block on purpose, even though --chart-* already are: it is
+     what makes the drift test's "exists in both blocks" check meaningful, so a hue added
+     light-only fails loudly instead of silently inheriting. */
+  --nav-hue-workspace: var(--chart-2);
+  --nav-hue-memory:    var(--chart-4);
+  --nav-hue-brain:     var(--chart-8);
+  --nav-hue-control:   var(--chart-6);
+
+  /* ─── Agent ROLE identity (the quest party) ───
+     Same contract as the nav hues above: static chrome, never a status. A role's family is
+     spent as a TINTED SURFACE on the quest chips (chat/atoms.css); the avatar itself wears `--role-c-*`;
+     running keeps its own motion and status keeps its own ink. `maker` roles carry memory (the
+     planner and the builders it seeds), `judge` roles arrive with fresh eyes. Not --chart-1
+     (the accent), not --chart-7 (the asking magenta), not --chart-3/-5 (warning's neighbours).
+     Re-declared in the dark block for the same drift-test reason as the nav hues. */
+  --role-hue-maker:   var(--chart-2);
+  --role-hue-judge:   var(--chart-8);
+  --role-hue-neutral: var(--chart-6);
+  /* Each role's OWN body colour (chat/RoleCharacter.css): one slot each around the brand wheel,
+     so the reviewers sitting side by side never share a hue. Same contract as above: static
+     chrome, never a status. The lead is the brand violet, darkened so Sleepy's lavender eyes
+     glow on it; every other body carries a dark ink face, so none of these ever holds text. */
+  --role-c-lead:          hsl(250 62% 50%);
+  --role-c-planner:       var(--chart-2);
+  --role-c-critic:        var(--chart-5);
+  --role-c-pragmatist:    hsl(84 62% 42%);
+  --role-c-edge:          #db04b4;
+  --role-c-security:      #2535e2;
+  --role-c-plan-reviewer: var(--chart-7);
+  --role-c-builder:       var(--chart-3);
+  --role-c-reviewer:      #8200a6;
+  --role-c-validator:     var(--chart-4);
+  --role-c-scout:         var(--chart-8);
+  --role-c-peer:          var(--color-vivid-purple);
+  --role-c-headless:      hsl(226 12% 36%);
+  --role-c-agent:         var(--chart-6);
+  /* A step's status as INK on paper: "Reading ChatPane.tsx…" running, "Couldn't edit …" failed.
+     The base swatches are dot/fill colours and fail as 12px text on the tertiary chip surface.
+     Measured (WCAG, 2026-09-25) on bg / bg-secondary / bg-tertiary:
+     success-ink 6.10 / 6.10 / 5.11, error-ink 6.96 / 6.96 / 5.84. */
+  --color-success-ink: hsl(142 71% 26%);
+  --color-error-ink:   hsl(0 72% 40%);
+
   /* ─── Semantic Colors (data viz) ─── */
   --color-success: hsl(142 71% 40%);
   --color-success-subtle: hsl(142 71% 95%);
@@ -173,6 +239,12 @@
   --color-warning-subtle: hsl(22 100% 95%);
   --color-error: hsl(0 72% 51%);
   --color-error-subtle: hsl(0 72% 96%);
+  /* Warning as INK on paper ("needs you", "didn't run"). The caution swatch is 2.61:1 as
+     12px text on white; this is 5.39:1. Fills and dots keep --color-warning. */
+  --color-warning-ink: hsl(25 100% 35%);
+  /* A field's placeholder. Light is Chromium's own default (4.61:1), declared so dark can
+     differ: the same grey on a dark card is 3.56:1. */
+  --color-text-placeholder: #757575;
   /* "The agent is talking to you." A distinct state and therefore a distinct token: the
      obvious choice — purple, the way voice assistants are always drawn — is unavailable here
      because `--color-accent` IS Deep Violet, so speaking would have looked identical to
@@ -247,6 +319,14 @@
   --transition-slow: 400ms ease;
   --transition-bounce: 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
 
+  /* ─── Motion ───
+     One deceleration curve for everything that ENTERS (a panel, a new row, a pill): quick off
+     the mark, settling into place. And one loop period for a thing that is ALIVE (a running
+     agent's dot): slow enough to read as breathing, never as blinking. Every use stands down
+     under `prefers-reduced-motion`. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --motion-breath: 1600ms;
+
   /* ─── Layout (compact density) ─── */
   --sidebar-width: 220px;
   --sidebar-width-collapsed: 56px;
@@ -282,6 +362,11 @@
    everything inside keeps using the ordinary tokens. */
 [data-theme='dark'],
 .surface-night {
+  /* Native controls (scrollbars, <audio>/<video> chrome, selects, date fields) draw for a
+     dark page. Without it an audio player on a dark card is a bright white pill. A
+     `.surface-night` is dark in both themes, so it wants the same. */
+  color-scheme: dark;
+
   --color-bg: #14171f;                         /* deep navy canvas */
   --color-bg-secondary: #1c1f2a;               /* card surface */
   --color-bg-tertiary: #2a2f3d;                /* chip / tag / input on card */
@@ -300,6 +385,7 @@
   --color-accent: #9d8cff;
   --color-accent-text: var(--color-snow);
   --color-accent-soft: rgba(157, 140, 255, 0.18);
+  --color-accent-ink: var(--color-accent);      /* 6.5:1 on the dark canvas already */
 
   --gradient-brand: linear-gradient(135deg, #6647f0, #9d8cff);
   --gradient-brand-subtle: linear-gradient(135deg, rgba(157, 140, 255, 0.16), rgba(0, 145, 255, 0.16));
@@ -314,6 +400,37 @@
   --chart-7: #f472b6;
   --chart-8: #22d3ee;
 
+  /* Nav section identity — see the :root block for why these are aliases AND why they are
+     re-declared here rather than left to inherit through --chart-*. */
+  --nav-hue-workspace: var(--chart-2);
+  --nav-hue-memory:    var(--chart-4);
+  --nav-hue-brain:     var(--chart-8);
+  --nav-hue-control:   var(--chart-6);
+
+  /* Agent role identity + status inks — see the :root block. The dark error ink is LIGHTER
+     than --color-error: #ff5a5f is 4.38:1 on the tertiary chip, under AA.
+     Measured on bg / bg-secondary / bg-tertiary:
+     success-ink 10.15 / 9.31 / 7.57, error-ink 6.66 / 6.10 / 4.96. */
+  --role-hue-maker:   var(--chart-2);
+  --role-hue-judge:   var(--chart-8);
+  --role-hue-neutral: var(--chart-6);
+  --role-c-lead:          hsl(250 76% 68%);
+  --role-c-planner:       var(--chart-2);
+  --role-c-critic:        var(--chart-5);
+  --role-c-pragmatist:    hsl(84 62% 52%);
+  --role-c-edge:          hsl(312 88% 62%);
+  --role-c-security:      hsl(234 88% 68%);
+  --role-c-plan-reviewer: var(--chart-7);
+  --role-c-builder:       var(--chart-3);
+  --role-c-reviewer:      hsl(286 72% 64%);
+  --role-c-validator:     var(--chart-4);
+  --role-c-scout:         var(--chart-8);
+  --role-c-peer:          var(--chart-1);
+  --role-c-headless:      hsl(226 14% 58%);
+  --role-c-agent:         var(--chart-6);
+  --color-success-ink: hsl(142 71% 55%);
+  --color-error-ink:   hsl(0 100% 72%);
+
   /* Semantic colors lifted for dark contrast */
   --color-success: hsl(142 71% 55%);
   --color-success-subtle: rgba(39, 200, 90, 0.14);
@@ -321,6 +438,8 @@
   --color-warning-subtle: rgba(255, 174, 59, 0.14);
   --color-error: #ff5a5f;
   --color-error-subtle: rgba(255, 90, 95, 0.14);
+  --color-warning-ink: var(--color-warning);    /* 8.9:1 on the dark card */
+  --color-text-placeholder: var(--color-text-tertiary); /* 6.3:1 on #1c1f2a */
   --color-caution: #ffae3b;
   /* Electric Blue lifted for dark contrast, the same way `--color-accent` is. */
   --color-speaking: #4db5ff;

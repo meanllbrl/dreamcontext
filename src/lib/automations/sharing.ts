@@ -106,8 +106,16 @@ export function assertShareOrdering(contextRoot: string): ShareOrderingCheck {
  * SAME negations after — so every previously-shared slug survives the repair,
  * now guaranteed effective. Never invents or drops a negation; only relocates
  * what was already there.
+ *
+ * EXPORTED for the threads migration (0.28.0): adding a base wildcard to a
+ * `.gitignore` that already carries negations is exactly the F2 failure this
+ * function exists to prevent — a plain append puts the new wildcard BELOW
+ * every existing negation, and git then silently drops all of them. The
+ * migration therefore reaches this repair path, the same one
+ * `shareAutomation` uses, rather than appending — which is why this is public
+ * and not private.
  */
-function repairAutomationsBlock(
+export function repairAutomationsBlock(
   root: string,
   baseEntries: readonly string[],
   negationPrefix: string,
@@ -124,6 +132,88 @@ function repairAutomationsBlock(
       : [];
 
   return { removed, added: [...addedBase, ...addedNegations] };
+}
+
+/**
+ * ONE governing `.gitignore`'s threads migration. Returns the lines it wrote,
+ * empty when the file was already in its final state.
+ *
+ * Order of operations is the whole point:
+ *   1. If the file carries no automations block at all, do NOTHING. A vault
+ *      with no automations must not acquire the block from a migration — the
+ *      creation path writes it when the first manifest is created, and
+ *      conjuring it here would leave an ignore rule in a repo that never
+ *      opted into the feature.
+ *   2. Repair FIRST, so the new `automations/threads/*` wildcard lands with
+ *      the other wildcards, ABOVE every existing negation. Appending it
+ *      instead would sit it below them, and git drops a negation that precedes
+ *      its wildcard with no error and no warning (F2).
+ *   3. THEN backfill the fourth negation for every slug already shared. Those
+ *      slugs were shared under a three-line negation set; the new wildcard
+ *      would otherwise make their channel private while the frontmatter still
+ *      says `shared: true` — the exact lie this subsystem's ordering rules
+ *      exist to prevent, arriving by upgrade rather than by edit.
+ */
+function migrateThreadIgnoreOneRoot(
+  root: string,
+  baseEntries: readonly string[],
+  negationPrefix: string,
+  manifestRe: RegExp,
+  threadNegation: (slug: string) => string,
+): { path: string; added: string[] } | null {
+  const path = join(root, '.gitignore');
+  const text = readGitignoreText(root);
+  const lines = meaningfulLines(text);
+  // The block's signature is its manifest wildcard — the one entry that is
+  // always present when the block exists and never present when it does not.
+  const manifestWildcard = baseEntries.find((e) => e.endsWith('automations/*.md'));
+  if (!manifestWildcard || !lines.includes(manifestWildcard)) return null;
+
+  const sharedSlugs = slugsFromNegations(text, manifestRe);
+  const threadsWildcard = baseEntries.find((e) => e.endsWith('automations/threads/*/*')) as string;
+  const missingNegations = sharedSlugs.map(threadNegation).filter((l) => !lines.includes(l));
+  const needsRepair =
+    !lines.includes(threadsWildcard) || shareOrderingProblems(text, baseEntries).length > 0;
+
+  if (!needsRepair && missingNegations.length === 0) return null;
+
+  const added: string[] = [];
+  if (needsRepair) added.push(...repairAutomationsBlock(root, baseEntries, negationPrefix).added);
+  if (missingNegations.length > 0) {
+    added.push(...ensureGitignoreEntries(root, missingNegations, { comment: SHARE_COMMENT }));
+  }
+  return { path, added };
+}
+
+/**
+ * The 0.28.0 threads migration, across BOTH governing `.gitignore` files.
+ *
+ * Lives here rather than in `src/migrations/` because this module's standing
+ * rule is that every `.gitignore` mutation for this subsystem happens in one
+ * lane — the migration owns WHEN, this owns HOW.
+ *
+ * Idempotent: a second run finds the wildcard present, the ordering clean and
+ * every shared slug negated, and writes nothing.
+ */
+export function migrateThreadIgnoreBlocks(contextRoot: string): { path: string; added: string[] }[] {
+  const projectRoot = dirname(contextRoot);
+  const results = [
+    migrateThreadIgnoreOneRoot(
+      contextRoot,
+      AUTOMATIONS_GITIGNORE_ENTRIES,
+      BRAIN_NEGATION_PREFIX,
+      BRAIN_NEGATION_MANIFEST_RE,
+      (slug) => sharedSlugNegations(slug)[3],
+    ),
+    migrateThreadIgnoreOneRoot(
+      projectRoot,
+      AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
+      ROOT_NEGATION_PREFIX,
+      ROOT_NEGATION_MANIFEST_RE,
+      (slug) => sharedSlugNegationsRoot(slug)[3],
+    ),
+  ];
+  return results.filter((r): r is { path: string; added: string[] } => r !== null);
 }
 
 /**

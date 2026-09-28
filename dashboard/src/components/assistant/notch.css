@@ -1,0 +1,303 @@
+/* The dreamcontext Assistant's notch (Notch.tsx). The window is transparent; everything the
+   owner sees is drawn here. The pill hugs the hardware camera housing, which is black on
+   every theme and every Mac — so the notch's surface is that black, named once below, and
+   is NOT a theme colour. Open, the notch is ONE black island grown out of the housing (flat
+   top at y=0, rounded bottom), and everything inside it (the reused ChatPane, the Composer,
+   cards, chips) draws on that black. Everything else comes from the design tokens. */
+
+html:has(.dc-notch),
+html:has(.dc-notch) body,
+html:has(.dc-notch) #root {
+  background: transparent;
+  overflow: hidden;
+}
+
+/* The palette. Notch.tsx puts `surface-night` (tokens.css, dark in both themes) on the notch
+   root AND on <body> (`dc-notch-doc`, for the composer's portaled menus). On top of it the
+   canvas becomes the housing black and every lifted surface is that black with a few percent
+   of the text colour mixed in: lifted black, never the app's navy. Two classes each, so the
+   override outranks `.surface-night` whatever order the stylesheets load in. */
+.dc-notch.surface-night,
+.dc-notch-doc.surface-night {
+  /* The camera housing's colour (hardware, theme-independent). */
+  --notch-surface: #000;
+  --color-bg: var(--notch-surface);
+  --color-bg-secondary: color-mix(in srgb, var(--color-text) 7%, var(--notch-surface));
+  --color-bg-tertiary: color-mix(in srgb, var(--color-text) 12%, var(--notch-surface));
+  --color-bg-elevated: color-mix(in srgb, var(--color-text) 9%, var(--notch-surface));
+  --color-border: color-mix(in srgb, var(--color-text) 14%, var(--notch-surface));
+  --color-border-hover: color-mix(in srgb, var(--color-text) 24%, var(--notch-surface));
+  /* The island's hairline: sides and bottom only, so the top fuses with the housing. */
+  --notch-edge: color-mix(in srgb, var(--color-text) 10%, transparent);
+}
+
+.dc-notch {
+  --notch-gap: 0px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: var(--font-family);
+  color: var(--color-text);
+}
+
+/* Open: one shape. The root carries the black, the rounded bottom and the hairline, and clips
+   everything inside it, so the pill row and the panel cannot read as two stacked things. */
+.dc-notch--open {
+  box-sizing: border-box;
+  background: var(--notch-surface);
+  border: 1px solid var(--notch-edge);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
+  overflow: hidden;
+}
+
+.dc-notch__pill {
+  display: grid;
+  grid-template-columns: 1fr var(--notch-gap) 1fr;
+  align-items: center;
+  flex: 0 0 auto;
+  /* The housing's height (Notch.tsx sets it from the geometry), never the viewport's: if the
+     window is ever larger than the pill, the rest stays transparent instead of becoming a big
+     black box with the pill floating in its middle. */
+  height: var(--notch-pill-h, 100vh);
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  background: var(--notch-surface);
+  color: var(--color-text-on-brand);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.dc-notch--open .dc-notch__pill {
+  height: auto;
+  min-height: var(--space-10);
+  border-radius: 0;
+  color: var(--color-text);
+}
+
+.dc-notch__ear {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.dc-notch__ear--right { justify-content: flex-end; }
+
+.dc-notch__avatar {
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.dc-notch__avatar--initial {
+  display: grid;
+  place-items: center;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-xs);
+}
+
+.dc-notch__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The right ear's status bubbles are the tab strip's (ProjectTabs.css `.project-tab-bubble*`,
+   imported by Notch.tsx). Only the inset for the working ring is added here: the ring
+   overflows its bubble by 4px, and the ear must not clip it. */
+.dc-notch__bubbles { padding: var(--space-1); }
+
+.dc-notch__badge {
+  min-width: var(--space-5);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-warning);
+  color: var(--color-warning-ink);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+}
+
+/* Attention: a slow pulse on the avatar, never a colour flood. */
+.dc-notch--attention .dc-notch__avatar {
+  animation: dc-notch-pulse 1.6s ease-in-out infinite;
+}
+@keyframes dc-notch-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-accent-soft); }
+  50% { box-shadow: 0 0 0 var(--space-1) var(--color-accent-soft); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-notch--attention .dc-notch__avatar { animation: none; box-shadow: 0 0 0 var(--space-1) var(--color-accent-soft); }
+}
+
+.dc-notch__panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--notch-surface);
+  overflow: hidden;
+}
+.dc-notch__panel[hidden] { display: none; }
+
+/* Popped out (Notch.tsx "Pop out"): the same black island, now a floating window, so every
+   corner is rounded and the hairline runs all the way round. The top row is its title bar:
+   the whole row drags the window, so it gets the move cursor instead of a pointer. */
+.dc-notch--window {
+  border-top: 1px solid var(--notch-edge);
+  border-radius: var(--radius-2xl);
+}
+.dc-notch--window .dc-notch__pill {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dc-notch--window .dc-notch__pill:active { cursor: grabbing; }
+
+/* A slim, borderless line under the pill: quiet actions, dim until hovered. */
+.dc-notch__bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  padding: 0 var(--space-3);
+}
+.dc-notch__action {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-2xs);
+  cursor: pointer;
+}
+.dc-notch__action:hover,
+.dc-notch__action:focus-visible { background: var(--color-bg-secondary); color: var(--color-text); }
+
+/* The containing block for the reused ChatPane. `.chat-pane` is `position: absolute; inset: 0`
+   (ChatPane.css); without a positioned ancestor here it anchored to the VIEWPORT and painted
+   over the pill row and the bar, so the open notch showed no name at all. */
+.dc-notch__chat {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.dc-notch__chat > .agent-pane-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dc-notch__empty {
+  padding: var(--space-6);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+/* Proposals — what the assistant wants to do that needs a yes first. */
+.dc-proposals {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 40%;
+  overflow: auto;
+  border-bottom: 1px solid var(--color-border);
+}
+.dc-proposal {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-warning-subtle);
+}
+.dc-proposal__head { display: flex; gap: var(--space-2); align-items: baseline; }
+.dc-proposal__verb { font-weight: var(--font-weight-semibold); }
+.dc-proposal__target { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.dc-proposal__text {
+  margin: var(--space-2) 0;
+  white-space: pre-wrap;
+  font-size: var(--font-size-sm);
+}
+.dc-proposal__edit {
+  width: 100%;
+  margin: var(--space-2) 0;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.dc-proposal__why { margin: 0 0 var(--space-2); color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.dc-proposal__actions { display: flex; gap: var(--space-2); }
+.dc-proposal__btn {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.dc-proposal__btn--primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
+.dc-proposal__btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ── WHILE IT WORKS: one thin loading line (owner, 2026-09-27) ────────────────────────────
+   "Çok ufak bir çizgi loading ve çalıştığını göstersin": a 2px line across the top edge,
+   dreamcontext's own brand colours sweeping along it while a turn runs or its answer is
+   spoken. The first cut (a glowing ring with a blurred inner spill, Siri's spectrum) was
+   rejected as far too loud and not ours. */
+.dc-notch.surface-night {
+  --notch-glow-1: var(--color-brand-deep);
+  --notch-glow-2: var(--color-accent);
+  --notch-glow-3: var(--color-brand-hot);
+  --notch-glow-4: var(--color-accent);
+}
+.dc-notch--window { position: relative; }
+.dc-notch__glow {
+  position: absolute;
+  top: 0;
+  left: var(--radius-2xl);
+  right: var(--radius-2xl);
+  z-index: 5;
+  height: 2px;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent, var(--notch-glow-1), var(--notch-glow-2), var(--notch-glow-3),
+    var(--notch-glow-4), transparent) 0 0 / 50% 100% no-repeat;
+  animation: dc-notch-loading 1.4s ease-in-out infinite;
+}
+@keyframes dc-notch-loading {
+  from { background-position: -100% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* Stepping out to the side and going home again. The window itself jumps (a native frame
+   change); the panel inside grows out of / shrinks into the top corner it came from. */
+.dc-notch--arrive { animation: dc-notch-arrive 320ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
+.dc-notch--leave { animation: dc-notch-leave 280ms cubic-bezier(0.4, 0, 1, 1) both; }
+@keyframes dc-notch-arrive {
+  from { opacity: 0; transform: translateY(-14px) scale(0.86); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes dc-notch-leave {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-24px) scale(0.7); }
+}
+.dc-notch--arrive,
+.dc-notch--leave { transform-origin: top right; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-notch__glow,
+  .dc-notch--arrive,
+  .dc-notch--leave { animation: none; }
+}

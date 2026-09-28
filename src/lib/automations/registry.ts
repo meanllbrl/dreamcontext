@@ -312,6 +312,28 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // harmless: a local write verb re-approves on the spot, and a teammate
     // ADDING a gate that then blocks is failing in the safe direction.
     ...(m.review !== 'off' ? { review: m.review } : {}),
+    // OMITTED when 'sched', included when 'call' — the same byte-identity
+    // trick as `effort`/`learning`/`review`, and the same asymmetry of
+    // DIRECTION as `review`'s.
+    //
+    // It was tempting to leave `mode` out entirely on the grounds that it is
+    // the same class as `schedule` and `enabled`, which this payload already
+    // excludes. That reasoning is wrong in ONE direction and it is the
+    // direction that matters. `schedule` and `enabled` only ever change WHEN
+    // an already-autonomous job fires; `call → sched` changes whether it may
+    // fire unattended AT ALL. An agent the owner approved as "runs only when
+    // I ask" could otherwise have a schedule bolted on by a teammate's synced
+    // edit and start running headless on a timer with a byte-identical hash,
+    // so `checkApproval` would keep saying yes and no human would ever see a
+    // diff. That is precisely the manifest-changed-under-you case the
+    // tripwire exists for.
+    //
+    // Omitting at 'sched' keeps every manifest written before this field
+    // existed byte-identical (they all read 'sched'), so this can never block
+    // anything on upgrade. The `sched → call` direction costs a re-approval
+    // too, which is free: an on-call agent is not firing on a schedule, so a
+    // block there stops nothing.
+    ...(m.mode === 'call' ? { mode: m.mode } : {}),
     // OMITTED when absent, and LAST in the literal — the same byte-identity
     // reason as `effort`, `learning` and `review`, and the highest-stakes
     // instance of it. Every automation that exists today predates `## Flow`, so

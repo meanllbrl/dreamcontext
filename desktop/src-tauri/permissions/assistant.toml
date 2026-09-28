@@ -1,0 +1,39 @@
+"$schema" = "schemas/schema.json"
+
+# The dreamcontext Assistant's native commands (src/assistant.rs). Remote-loaded pages
+# (every window here is served by the Node server) get NO app command unless a capability
+# names its permission, so each one is granted exactly where it is used:
+# - the notch window (capabilities/assistant.json) reads its geometry and wakes itself;
+# - the Launcher wizard (capabilities/default.json, window `main`) applies the hotkey,
+#   toggles the Login Item and wakes the notch.
+# Pop out / dock is NOT a command: the notch emits `assistant://seat` and src/assistant.rs
+# listens for it (see capabilities/assistant.json, core:event:allow-emit), so nothing here.
+[[permission]]
+identifier = "allow-assistant-geometry"
+description = "Read where the notch (camera housing) is on the monitor the notch window is on."
+commands.allow = ["assistant_geometry"]
+
+[[permission]]
+identifier = "allow-assistant-apply-hotkey"
+description = "Re-read the Assistant config and (re)register its global hotkey; returns the real registration result."
+commands.allow = ["assistant_apply_hotkey"]
+
+[[permission]]
+identifier = "allow-assistant-set-autostart"
+description = "Turn the Assistant's Login Item on or off."
+commands.allow = ["assistant_set_autostart"]
+
+[[permission]]
+identifier = "allow-assistant-wake"
+description = "Build/show the Assistant notch and register its hotkey."
+commands.allow = ["assistant_wake"]
+
+[[permission]]
+identifier = "allow-assistant-set-enabled"
+description = "Switch the Assistant off (hide the notch, release the hotkey, drop the Login Item) or back on."
+commands.allow = ["assistant_set_enabled"]
+
+[[permission]]
+identifier = "allow-set-frames"
+description = "Move and resize windows by label as one atomic frame or one eased animation (src/frames.rs). Min size only as a preset (window-seat / clear / keep), never caller-chosen dimensions."
+commands.allow = ["set_frames"]

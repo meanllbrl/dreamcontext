@@ -519,14 +519,72 @@ describe('parseChatLine — control_request (permission prompts + AskUserQuestio
         header: 'Package manager',
         options: [{ label: 'npm', description: 'Node default' }, { label: 'pnpm', description: 'Faster, strict' }],
         multiSelect: false,
+        kind: 'choice',
       },
       {
         question: 'Which environments should get this fix?',
         header: 'Environments',
         options: [{ label: 'staging' }, { label: 'production' }, { label: 'dev' }],
         multiSelect: true,
+        kind: 'choice',
       },
     ]);
+  });
+
+  /* The EXTENDED payload, as the CLI actually sends it once the chat spawn sets
+     CLAUDE_CODE_QUESTION_EXTENDED + CLAUDE_CODE_QUESTION_PREVIEW_FORMAT=html — captured from
+     a live 2.1.281 `claude -p` run on 2026-09-26 (previews trimmed). Every field here is one
+     the card draws; dropping any of them in the parser is what this pins. */
+  it('extended questions: title, description, previews, kinds and metadata.source all survive', () => {
+    const input = {
+      title: 'Choose a design approach',
+      questions: [
+        {
+          question: 'Which layout pattern would you prefer for this interface?',
+          header: 'Layout',
+          description: 'Visual comparison of two common layout approaches',
+          options: [
+            { label: 'Sidebar Navigation', preview: '<div class="dc-card">Menu | Content</div>' },
+            { label: 'Top Navigation', preview: '<video src="tmp/top.mp4"></video>' },
+          ],
+          multiSelect: false,
+          kind: 'choice',
+        },
+        { question: 'Anything else I should know?', header: 'Notes', kind: 'text', placeholder: 'Optional' },
+        { question: 'How many slides?', header: 'Length', kind: 'number', min: 3, max: 20, step: 1, defaultValue: 8, unit: 'slides' },
+      ],
+      metadata: { source: 'swipe' },
+    };
+    const ev = parseChatLine(JSON.stringify({
+      type: 'control_request',
+      request_id: QUESTION_REQUEST_ID,
+      request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', requires_user_interaction: true, input },
+    }));
+    if (ev?.kind !== 'question') throw new Error('expected a question event');
+    expect(ev.title).toBe('Choose a design approach');
+    expect(ev.source).toBe('swipe');
+    expect(ev.input).toEqual(input);
+    const [choice, text, number] = ev.questions;
+    expect(choice.description).toBe('Visual comparison of two common layout approaches');
+    expect(choice.options.map((o) => o.preview)).toEqual([
+      '<div class="dc-card">Menu | Content</div>',
+      '<video src="tmp/top.mp4"></video>',
+    ]);
+    expect(text).toMatchObject({ kind: 'text', options: [], placeholder: 'Optional' });
+    expect(number).toMatchObject({ kind: 'number', options: [], min: 3, max: 20, step: 1, defaultValue: 8, unit: 'slides' });
+  });
+
+  it('a CHOICE question with no options is dropped — it could never be answered', () => {
+    const ev = parseChatLine(JSON.stringify({
+      type: 'control_request',
+      request_id: QUESTION_REQUEST_ID,
+      request: {
+        subtype: 'can_use_tool', tool_name: 'AskUserQuestion', requires_user_interaction: true,
+        input: { questions: [{ question: 'Pick one', options: [] }, { question: 'Say anything', kind: 'text' }] },
+      },
+    }));
+    if (ev?.kind !== 'question') throw new Error('expected a question event');
+    expect(ev.questions.map((q) => q.question)).toEqual(['Say anything']);
   });
 
   it('the discriminator is requires_user_interaction, not the tool name', () => {
@@ -960,6 +1018,37 @@ describe('buildQuestionAnswer', () => {
     };
     expect(result.answers).toEqual({ [singleSelect.question]: 'pnpm' });
     expect(Object.keys(result.answers)).not.toContain(multiSelect.question);
+  });
+
+  it('notes become annotations keyed by question text — blank notes are not sent', () => {
+    const result = buildQuestionAnswer(
+      [singleSelect, multiSelect],
+      { [singleSelect.question]: 'pnpm' },
+      { notes: { [singleSelect.question]: '  only for the monorepo  ', [multiSelect.question]: '   ' } },
+    );
+    expect(result).toEqual({
+      questions: [singleSelect, multiSelect],
+      answers: { [singleSelect.question]: 'pnpm' },
+      annotations: { [singleSelect.question]: { notes: 'only for the monorepo' } },
+    });
+  });
+
+  it('a note with NO pick still ships (the CLI reports it as "(no option selected) notes: …")', () => {
+    const result = buildQuestionAnswer([singleSelect], {}, { notes: { [singleSelect.question]: 'depends on CI' } }) as {
+      answers: Record<string, string>; annotations: Record<string, { notes: string }>;
+    };
+    expect(result.answers).toEqual({});
+    expect(result.annotations).toEqual({ [singleSelect.question]: { notes: 'depends on CI' } });
+  });
+
+  it('echoes the request verbatim when given — title, metadata and unmodelled option fields go back as they came', () => {
+    const input = {
+      title: 'Build setup',
+      questions: [{ ...singleSelect, kind: 'choice', options: [{ label: 'npm', preview: '<b>npm</b>', futureField: 1 }, { label: 'pnpm' }] }],
+      metadata: { source: 'swipe' },
+    };
+    const result = buildQuestionAnswer([singleSelect], { [singleSelect.question]: 'npm' }, { input });
+    expect(result).toEqual({ ...input, answers: { [singleSelect.question]: 'npm' } });
   });
 
   it('multiple questions answered together → both keyed by their own question text', () => {

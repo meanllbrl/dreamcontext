@@ -33,12 +33,12 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread', 'title'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec
-  | PinViewSpec | ProgressViewSpec | CheckoutViewSpec;
+  | PinViewSpec | ProgressViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -219,6 +219,48 @@ export interface CheckoutViewSpec {
   /** Absolute path, or null for a withdrawal. */
   path: string | null;
   reset?: true;
+}
+
+/**
+ * `type: "agent-thread"` — one agent's run thread, DERIVED FROM DISK.
+ *
+ * The same bargain `insight` and `progress` strike, for the third kind of thing this app
+ * already owns a canonical rendering of. A run's thread is a synced append-only file
+ * (`automations/threads/<slug>/<date>.md`) with a per-machine read watermark on top of it;
+ * an agent retyping its own posts into the transcript would fork that — two spellings of one
+ * exchange, one of them a transcription, and the "unread" it implies would be about nothing.
+ * So the agent NAMES the agent and the app draws the thread.
+ *
+ * Nothing about content may be asserted: `entries`, `text` and `messages` are dropped with a
+ * notice, exactly as `validateProgress` refuses a supplied percent. `run` pins one run
+ * (`RunEvent.firedAt`, an exact ISO string); omitted, the card shows that agent's newest.
+ */
+export interface AgentThreadViewSpec {
+  type: 'agent-thread';
+  /** The automation slug. Validated against the same shape the server's
+   *  `isSafeAutomationSlug` enforces — this is a path segment there. */
+  slug: string;
+  /** `RunEvent.firedAt`, an exact ISO timestamp. Absent ⇒ the newest run. */
+  run?: string;
+  /** How many trailing entries to draw, 1–20. Absent ⇒ the card's own default. */
+  limit?: number;
+}
+
+/**
+ * `type: "title"` — the name of the tab this conversation lives in, chosen by its own agent.
+ *
+ * This replaced the Haiku side-call that used to read the first user message and guess a
+ * name. The agent in the conversation is the one reader that actually knows what the work is
+ * about — after its first look at the code, not from one sentence of the ask — and it is the
+ * only one that can tell when the subject has genuinely moved, so it re-sends the block then.
+ *
+ * Nothing is drawn. `AgentSurface` applies it (`armAgentTitle`), and only onto a tab that
+ * still carries its default name or a name this agent gave it: a name the USER typed is never
+ * overwritten. `text` is cleaned to one short line by {@link cleanTabTitle}.
+ */
+export interface TitleViewSpec {
+  type: 'title';
+  text: string;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -738,6 +780,67 @@ function validateProgress(obj: Record<string, unknown>, notices: string[]): { vi
   return { view: { type: 'progress', task }, notices };
 }
 
+// ---------------------------------------------------------------------------------------
+// type: "agent-thread"
+// ---------------------------------------------------------------------------------------
+
+/**
+ * MIRROR of `isSafeAutomationSlug` (`src/lib/automations/store.ts`) — lowercase, no doubled
+ * or trailing dash. The dashboard is a separate bundle and cannot import from `src/`, so the
+ * shape is copied. The check that COUNTS is the server's (the slug is a path segment there);
+ * this one exists so a malformed slug is a notice under the message rather than a dead card
+ * after a round trip.
+ */
+const AGENT_SLUG_RE = /^[a-z0-9](?:-?[a-z0-9]+)*$/;
+/** An exact ISO round-trip, the same rule the reply route applies to a `runId`. */
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+/** Keys that would mean the agent is ASSERTING the thread's content instead of naming it. */
+const ASSERTED_THREAD_KEYS = ['entries', 'text', 'messages'] as const;
+
+export const MIN_AGENT_THREAD_LIMIT = 1;
+export const MAX_AGENT_THREAD_LIMIT = 20;
+
+function validateAgentThread(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const slug = typeof obj.slug === 'string' ? obj.slug.trim() : '';
+  if (!slug || !AGENT_SLUG_RE.test(slug)) {
+    notices.push('An agent-thread block was skipped — its "slug" is missing or is not an agent slug.');
+    return { view: null, notices };
+  }
+
+  // Loud, not silent — the same reason `validateProgress` announces a dropped percent. The
+  // thread is read from disk, so an agent that wrote out the exchange would otherwise be
+  // left believing the card shows what it typed.
+  if (ASSERTED_THREAD_KEYS.some((k) => obj[k] !== undefined)) {
+    notices.push('An agent-thread block supplied its own contents — they were ignored. The thread is read from the agent\'s own channel on disk.');
+  }
+
+  const view: AgentThreadViewSpec = { type: 'agent-thread', slug };
+
+  // A bad `run` costs the card its RUN, never its existence — the precedent `validatePinFact`
+  // sets for a rejected url. The card falls back to the agent's newest run, which is the
+  // same thing an omitted `run` asks for.
+  if (obj.run !== undefined) {
+    const run = typeof obj.run === 'string' ? obj.run.trim() : '';
+    if (run && ISO_RE.test(run)) view.run = run;
+    else notices.push('An agent-thread block named a "run" that is not an ISO timestamp — it was ignored, and the newest run is shown.');
+  }
+
+  if (obj.limit !== undefined) {
+    const raw = typeof obj.limit === 'number' && Number.isFinite(obj.limit) ? Math.floor(obj.limit) : null;
+    if (raw === null) {
+      notices.push('An agent-thread block\'s "limit" was not a number — it was ignored.');
+    } else {
+      const clamped = Math.min(MAX_AGENT_THREAD_LIMIT, Math.max(MIN_AGENT_THREAD_LIMIT, raw));
+      view.limit = clamped;
+      if (clamped !== raw) {
+        notices.push(`An agent-thread block asked for ${raw} entries — it was clamped to ${clamped}.`);
+      }
+    }
+  }
+
+  return { view, notices };
+}
+
 /**
  * `type: "checkout"` — a path, or a withdrawal. Anything else is a notice, because a block
  * that says neither is an agent that meant to move the shelf and did not.
@@ -755,6 +858,49 @@ function validateCheckout(obj: Record<string, unknown>, notices: string[]): { vi
     return { view: null, notices };
   }
   return { view: { type: 'checkout', path, reset: undefined }, notices };
+}
+
+/** The longest tab name an agent may set — the tab strip clips well before this anyway. */
+export const MAX_TAB_TITLE = 48;
+
+/**
+ * A slug read as a name: `her-ders-ve-program` -> `Her ders ve program`. Only a title that is
+ * NOTHING but hyphen- or underscore-joined words, so "Plan → Develop" or "e-posta ayarları"
+ * keep their punctuation. The owner (2026-09-27): a tab name must read, not drown in dashes.
+ */
+export function unslug(t: string): string {
+  if (!/^[\p{L}\p{N}]+(?:[-_][\p{L}\p{N}]+)+$/u.test(t)) return t;
+  const words = t.replace(/[-_]+/g, ' ');
+  return words.charAt(0).toLocaleUpperCase() + words.slice(1);
+}
+
+/**
+ * One line, no wrapping quotes or markdown emphasis, no trailing period, slug dashes turned
+ * into spaces ({@link unslug}), at most
+ * {@link MAX_TAB_TITLE} characters cut on a word boundary. `null` when nothing usable is left.
+ */
+export function cleanTabTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  let t = raw.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/^["'`*_#]+/, '').replace(/["'`*_.]+$/, '').trim();
+  t = unslug(t);
+  if (t.length > MAX_TAB_TITLE) {
+    const cut = t.slice(0, MAX_TAB_TITLE);
+    const space = cut.lastIndexOf(' ');
+    t = (space > MAX_TAB_TITLE / 2 ? cut.slice(0, space) : cut).trim();
+  }
+  return t.length >= 2 ? t : null;
+}
+
+/** `type: "title"` — a name, or a notice: a block with no usable text meant to rename the tab
+ *  and did not, and the agent should hear that rather than believe it worked. */
+function validateTitle(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const text = cleanTabTitle(obj.text);
+  if (!text) {
+    notices.push('A title block was skipped — it needs a short "text".');
+    return { view: null, notices };
+  }
+  return { view: { type: 'title', text }, notices };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -797,6 +943,8 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'pin': return validatePin(parsed, notices);
       case 'progress': return validateProgress(parsed, notices);
       case 'checkout': return validateCheckout(parsed, notices);
+      case 'agent-thread': return validateAgentThread(parsed, notices);
+      case 'title': return validateTitle(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

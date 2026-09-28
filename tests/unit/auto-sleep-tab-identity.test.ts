@@ -74,12 +74,6 @@ describe('the record gates refuse a background cycle by flag, not by ancestry', 
       .toBeLessThan(body.indexOf('recordAgentSession('));
   });
 
-  it('the captured first prompt (the tab auto-title) refuses too', () => {
-    const src = code(HOOK);
-    const call = src.slice(src.indexOf('recordAgentFirstPrompt(root, tabId, sid, prompt)') - 200);
-    expect(call).toMatch(/!isBackgroundAutoSleep\(\)[\s\S]{0,60}recordAgentFirstPrompt/);
-  });
-
   it('reads the flag the auto-sleep runner actually sets', () => {
     const body = fnBody(HOOK, 'function isBackgroundAutoSleep()');
     expect(body).toMatch(/process\.env\.DREAMCONTEXT_AUTO_SLEEP === '1'/);

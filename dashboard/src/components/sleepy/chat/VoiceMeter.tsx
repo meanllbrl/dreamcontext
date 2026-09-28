@@ -1,5 +1,5 @@
 /**
- * The live input meter for J.A.R.V.I.S mode — the bars that REPLACE the placeholder while a
+ * The live input meter for assistant mode — the bars that REPLACE the placeholder while a
  * take is recording.
  *
  * ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────────────────

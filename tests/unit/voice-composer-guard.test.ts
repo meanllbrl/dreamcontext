@@ -49,7 +49,7 @@ describe('AC15 — the mic exists in exactly one mode, on exactly one platform',
   it('gates on BOTH the mode and the desktop shell, in one expression', () => {
     // One flag, both conditions, so the two can never drift apart into a mic that renders on
     // the web because someone edited only the mode half.
-    expect(composer).toMatch(/const voiceEnabled = mode === 'jarvis' && isDesktop\(\)/);
+    expect(composer).toMatch(/const voiceEnabled = mode === 'assistant' && isDesktop\(\)/);
   });
 
   it('renders NOTHING mic-related unless that flag is true', () => {
@@ -77,18 +77,24 @@ describe('AC15 — the mic exists in exactly one mode, on exactly one platform',
   });
 });
 
-// ── AC3f / AC3k: the busy guard and the pending-text policy ──────────────────────────────
+// ── AC3f: the busy guard ──────────────────────────────
 
 describe('AC3f — a take in flight cannot be raced', () => {
   it('refuses a press while capture or transcription is unresolved', () => {
     // The mic press itself is guarded, and `voice.busy` covers recording AND transcribing
-    // (see `useVoiceCapture`'s returned `busy`). `voiceCorrecting` extends it across the
-    // correction round trip, which is the ~1-2s window a habitual double-tap lands in.
-    expect(composer).toMatch(/if \(!voiceEnabled \|\| voice\.busy \|\| voiceCorrecting\) return;/);
+    // (see `useVoiceCapture`'s returned `busy`) — the ~1s window a habitual double-tap lands in.
+    expect(composer).toMatch(/if \(!voiceEnabled \|\| voice\.busy\) return;/);
   });
 
   it('the button is DISABLED across the whole post-release pipeline, not just while recording', () => {
-    expect(composer).toMatch(/disabled=\{!connected \|\| voice\.state === 'transcribing' \|\| voiceCorrecting\}/);
+    // `canCompose`, not `connected`: the composer now separates "the transport is up" from
+    // "the user can act", because a surface can be perfectly connected and still have nowhere
+    // to send (the agents channel, while another agent holds the project's one run slot — see
+    // the `unavailable` prop). `canCompose = connected && !unavailable`, so this guard is
+    // strictly STRONGER than the one it replaced and the property under test is unchanged:
+    // a mic press cannot be raced, and now also cannot fire into a surface that is down.
+    expect(composer).toMatch(/disabled=\{!canCompose \|\| voice\.state === 'transcribing'\}/);
+    expect(composer).toMatch(/const canCompose = connected && !unavailable;/);
   });
 
   it('an async transcript NEVER overwrites text the owner typed while it was in flight', () => {
@@ -114,36 +120,10 @@ describe('AC3f — a take in flight cannot be raced', () => {
   });
 });
 
-describe('AC3k — a second press over PENDING text follows the specified policy', () => {
-  const startTake = composer.slice(composer.indexOf('const startTake'), composer.indexOf('const endTake'));
-
-  it('refuses when the owner has hand-edited the pending text', () => {
-    // Once they have typed into it, it is their text — AC3f's promise extends to
-    // machine-produced pending text too.
-    expect(startTake).toMatch(/if \(liveRef\.current\.draft !== pending\.text\)/);
-    const refuse = startTake.indexOf('!== pending.text');
-    expect(startTake.slice(refuse, refuse + 400)).toMatch(/setVoiceNotice\(/);
-    expect(startTake.slice(refuse, refuse + 400)).toContain('return;');
-  });
-
-  it('DISCARDS and re-records when the pending text is untouched', () => {
-    // Tapping the mic while looking at a bad correction IS the owner choosing to redo it.
-    // Refusing there would be obstruction.
-    expect(startTake).toMatch(/setPending\(null\)/);
-    expect(startTake).toMatch(/console\.info\(/); // the discarded transcript is logged
-  });
-
-  it('the two branches are ordered refuse-first, so an edit can never be discarded', () => {
-    const refuseAt = startTake.indexOf('!== pending.text');
-    const discardAt = startTake.indexOf('setPending(null)');
-    expect(refuseAt).toBeGreaterThan(-1);
-    expect(discardAt).toBeGreaterThan(refuseAt);
-  });
-
-  it('a fresh take after a discard snapshots an EMPTY draft, not the text it just cleared', () => {
-    // Otherwise the next transcript would compare against the discarded text, read as
-    // "hand-edited", and refuse to submit a take nobody had touched.
-    expect(startTake).toMatch(/draftAtTakeRef\.current = pending \? '' : liveRef\.current\.draft;/);
+describe('no second model rewrites a take (owner, 2026-09-27)', () => {
+  it('the transcript lands as heard — there is no correction call on the voice path', () => {
+    expect(composer).not.toMatch(/voice\/correct/);
+    expect(composer).not.toMatch(/voiceCorrecting|setPending/);
   });
 });
 

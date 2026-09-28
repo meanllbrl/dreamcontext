@@ -11,12 +11,12 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { createChatSession, type ChatSession, type ChatUserItem } from './chatSession';
+import { createChatSession, type ChatSession } from './chatSession';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
-  AGENT_SETTINGS_EVENT, type AgentSettings,
+  onAgentSettings, type AgentSettings,
   readChatPermissionMode, writeChatPermissionMode,
   CHAT_PERMISSION_MODE_EVENT, type ChatPermissionMode,
 } from '../../lib/agentSettings';
@@ -34,10 +34,10 @@ import {
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
-import { AutomationAttentionOpener } from './AutomationAttentionOpener';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
+  TRAIN_CHAT_EVENT, trainTabTitle, type TrainChatDetail,
 } from '../../lib/automationRunChat';
 import {
   AUTOMATION_CREATE_CHAT_EVENT, type AutomationCreateChatDetail,
@@ -45,16 +45,20 @@ import {
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
-import { preparePrompt, developKickoffPrompt } from '../../lib/agentPrompt';
+import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt } from '../../lib/agentPrompt';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { dropScratch } from './chat/composerScratch';
 import { postToSession } from './chat/postToSession';
+import { parseChatActions } from './chat/chatActions';
+import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
-import { pickFiles, pickFolders } from '../../lib/desktop';
+import { pickFiles, pickFolders, confirmAction } from '../../lib/desktop';
 import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
+import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
+import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 
 /**
@@ -123,6 +127,10 @@ interface SessionMeta {
    *  so a legacy roster needs no migration. Round-tripped through the server roster so a
    *  Develop tab reopens as one after a relaunch. */
   mode?: ChatMode;
+  /** The current title was set by the tab's own agent (a `title` dream-view block), so the
+   *  agent may rename it again when the work moves on. Cleared by a user rename — a name the
+   *  user typed is theirs for good. Round-tripped through the roster so it survives a relaunch. */
+  titleByAgent?: boolean;
 }
 
 /** A fresh Claude conversation UUID for a new tab. `crypto.randomUUID()` works on the
@@ -166,7 +174,8 @@ function withNotAvailableSuffix(title: string): string {
   return title.endsWith(NOT_AVAILABLE_SUFFIX) ? title : `${title}${NOT_AVAILABLE_SUFFIX}`;
 }
 
-/** "Is this tab still carrying the name we gave it?" — the auto-title eligibility gate.
+/** "Is this tab still carrying the name we gave it?" — half of the auto-title eligibility
+ *  gate (the other half is `SessionMeta.titleByAgent`: a name the agent itself set).
  *  Deliberately kind-AGNOSTIC across the two titleable kinds: a tab converted between
  *  terminal and chat (`openAgentInChat` / `resumeChatInTerminal`) keeps the roster title
  *  it had before the swap, so an "Agent 3" that became a chat — or a "Chat 3" that became
@@ -217,6 +226,8 @@ interface SavedMeta {
   pane?: number;
   /** Was this the visible tab of its pane? A pane with none falls back to its first tab. */
   active?: boolean;
+  /** Mirrors `SessionMeta.titleByAgent` — the tab's agent named it and may rename it. */
+  titleByAgent?: boolean;
 }
 
 /** The whole `GET /api/agent/sessions` body: the roster plus the two surface-level facts that
@@ -241,8 +252,8 @@ interface SavedSurface {
  *
  * No row is disabled today. J.A.R.V.I.S was the one — announced as "Soon" while
  * `sanitizeChatMode` coerced it back to Basic — and this comment used to state that as a
- * standing invariant ("the spawn can never honour it"). The voice work made that false: the
- * coercion is gone and jarvis now spawns like any other mode. The MECHANISM is kept because
+ * standing invariant ("the spawn can never honour it"). The voice work made that false, and
+ * jarvis has since been retired outright (voice moved to the Assistant). The MECHANISM is kept because
  * the shape recurs; what changed is that it currently gates nothing.
  */
 function knownChatMode(v: unknown): ChatMode | undefined {
@@ -399,7 +410,7 @@ export function AgentSurface() {
   const [minimizedIds, setMinimizedIds] = useState<string[]>([]);
   // A tab drag is in flight → render the per-pane split/combine drop overlays.
   const [draggingTab, setDraggingTab] = useState(false);
-  const [statusTick, bumpStatus] = useReducer((x: number) => x + 1, 0);
+  const [, bumpStatus] = useReducer((x: number) => x + 1, 0);
   // The session whose title is being edited inline (double-click on its tab), or ''.
   const [renamingId, setRenamingId] = useState('');
   // The header "＋ New ▾" split-button's dropdown (pick Agent vs Terminal) is open.
@@ -528,20 +539,6 @@ export function AgentSurface() {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
-  // The SAME fact as render state, for gates that are evaluated during render rather than
-  // inside an effect — today the D7 automation-attention opener, which must not put a tab
-  // on screen before the saved roster has landed. A ref cannot do that job: flipping it
-  // schedules no render, so a gate reading it would stay stale until something unrelated
-  // re-rendered the surface. Every write below sets both, always together.
-  const [hydrated, setHydrated] = useState(false);
-  // Auto-title bookkeeping. `autoTitledRef` holds session ids that are DONE — either
-  // successfully named or permanently ineligible (user-renamed / dormant) — so we never
-  // ask again. `titleInFlightRef` holds ids with a Haiku call currently outstanding, so a
-  // second busy→idle edge doesn't fire a duplicate concurrent request. Crucially, a call
-  // that comes back empty (transcript/message not flushed yet, e.g. an INTERRUPTED first
-  // turn) does NOT mark the id done — it stays retryable, so the tab you actually worked on
-  // still gets named on its next completed turn instead of silently losing the race.
-  // `busyPrevRef` is the prior busy state per session, so we fire on the busy→idle edge.
   // ── The Claude account changed underneath us ───────────────────────────────────────
   //
   // `claude` reads its credentials once, at startup, so signing into a different account
@@ -724,14 +721,58 @@ export function AgentSurface() {
     });
   }, []);
 
-  const autoTitledRef = useRef<Set<string>>(new Set());
-  const titleInFlightRef = useRef<Set<string>>(new Set());
-  // Attempts per session id — the retry BUDGET. "Empty response stays retryable" must
-  // not mean retry FOREVER: a persistently failing title call (unauthenticated CLI,
-  // offline) would otherwise spawn a fresh headless Haiku `claude` on every completed
-  // turn of every default-named tab. After the budget, the default name is final.
-  const titleAttemptsRef = useRef<Map<string, number>>(new Map());
-  const busyPrevRef = useRef<Map<string, boolean>>(new Map());
+  /**
+   * Auto-title: the chat's OWN agent names its tab (Settings → Agents → auto-name tabs).
+   *
+   * The agent writes a `title` dream-view block (`chatViewSpec.ts`) once it understands what
+   * the work is about, and again when the subject genuinely moves — it is the one reader that
+   * knows, which is why this replaced the Haiku side-call that guessed from the first message.
+   *
+   * Only LIVE items are read, never `conv.history`: a resumed chat replays its old answers
+   * there, and re-applying a title from yesterday's transcript would fight the roster's own
+   * record of it. Each finished text item is read once; the last `title` in it wins.
+   *
+   * The rename lands only on a tab that still carries its default "Agent N"/"Chat N" name or a
+   * name this agent set (`titleByAgent`). A user rename clears that flag, so their choice
+   * wins for good; a tab opened under a purpose-given name (a Develop task, Sleep) keeps it.
+   * The preference is read at APPLY time, so flipping it off stops renames immediately.
+   */
+  const armAgentTitle = useCallback((cs: ChatSession) => {
+    const read = new Set<string>();
+    const off = cs.subscribe(() => {
+      if (sessions.current.get(cs.id) !== cs) { off(); return; }  // closed/replaced
+      const items = cs.getModel().items;
+      let title: string | null = null;
+      // Newest first, stopping at the first item already read: text blocks finish in order,
+      // so everything before it has been read too — a streamed token costs O(1), not O(n).
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (read.has(it.id)) break;
+        if (it.kind !== 'text' || !it.done) continue;
+        read.add(it.id);
+        if (title !== null || !it.text.includes('dream-view')) continue;
+        const views = parseChatActions(it.text).views;
+        for (let v = views.length - 1; v >= 0; v--) {
+          const view = views[v];
+          if (view.type === 'title') { title = view.text; break; }
+        }
+      }
+      if (!title) return;
+      const s = agentSettingsRef.current;
+      if (!s.enabled || !s.autoTitle) return;
+      const next = title;
+      setSessionList((prev) => {
+        let changed = false;
+        const out = prev.map((m) => {
+          if (m.id !== cs.id || m.dormant || m.title === next) return m;
+          if (!m.titleByAgent && !DEFAULT_TAB_TITLE_RE.test(m.title)) return m;
+          changed = true;
+          return { ...m, title: next, titleByAgent: true };
+        });
+        return changed ? out : prev;
+      });
+    });
+  }, []);
 
   const started = sessionList.length > 0;
   // The action-focused pane (falls back to the first pane when the stored id is stale).
@@ -784,12 +825,9 @@ export function AgentSurface() {
       setAgentSettings(s);
       setSettingsReady(true);
     });
-    const onChange = (e: Event) => {
-      const detail = (e as CustomEvent<AgentSettings>).detail;
-      if (detail) setAgentSettings(detail);
-    };
-    window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
-    return () => { cancelled = true; window.removeEventListener(AGENT_SETTINGS_EVENT, onChange); };
+    // This window's own writes AND every other window's (see `onAgentSettings`).
+    const off = onAgentSettings(setAgentSettings);
+    return () => { cancelled = true; off(); };
   }, []);
 
   // ── Roster persistence (per-vault, server-side) ──────────────────────────────
@@ -895,7 +933,7 @@ export function AgentSurface() {
               // like any other tab, while the roster keeps `kind: 'automation'` so the glyph
               // survives the restore.
               const s = spawn(m.bypass, m.sessionId, true, claudeKind);
-              return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, automation: m.automation };
+              return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, automation: m.automation, ...(m.titleByAgent ? { titleByAgent: true } : {}) };
             }
             // An agent OR chat tab with a pinned conversation auto-RESUMES its real Claude
             // session on launch (both spawn a real `claude` against the same conversation
@@ -920,9 +958,10 @@ export function AgentSurface() {
               return {
                 id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId,
                 ...(kind === 'chat' ? { mode: savedMode } : {}),
+                ...(m.titleByAgent ? { titleByAgent: true } : {}),
               };
             }
-            return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true };
+            return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true, ...(m.titleByAgent ? { titleByAgent: true } : {}) };
           });
           // APPEND, NEVER REPLACE — and this is the whole bug fix, not a refinement.
           // These two lines used to read `prev.length > 0 ? prev : restored`, which
@@ -981,7 +1020,7 @@ export function AgentSurface() {
           if (cleanRestore && focusAt >= 0) setActivePaneId(built[focusAt].id);
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
-      finally { if (!cancelled) { hydratedRef.current = true; setHydrated(true); } }
+      finally { if (!cancelled) { hydratedRef.current = true; } }
     })();
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi]);
@@ -1020,6 +1059,7 @@ export function AgentSurface() {
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
             ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
             ...(activeTabs.has(m.id) ? { active: true } : {}),
+            ...(m.titleByAgent ? { titleByAgent: true } : {}),
             // Only carried for automation tabs — the server's `coerceMeta` drops it for
             // every other kind anyway, but there's no reason to send it otherwise.
             ...(m.kind === 'automation' && m.automation ? { automation: m.automation } : {}),
@@ -1069,7 +1109,12 @@ export function AgentSurface() {
   //   1 bp             2 claudeId      3 resume        4 kind
   //   5 initialPrompt  6 model         7 submitInitial 8 promptToken
   //   9 deferPrompt   10 effort       11 explicitBypass 12 mode
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE, accountId = '') => {
+  //  13 accountId     14 origin
+  //
+  // `origin` is 'assistant' ONLY from the doorbell's openChat (a chat the Assistant started);
+  // every other call site passes nothing. A respawn of that chat needs no client change: the
+  // server re-derives the marker from the conversation it resumes.
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE, accountId = '', origin: '' | 'assistant' = '') => {
     if (kind === 'chat') {
       // Read through the REF, not the state value: `changeChatPermissionMode` below can
       // respawn a conversation in the very same tick it changes the mode, and this closure's
@@ -1091,7 +1136,7 @@ export function AgentSurface() {
       // chatSession.ts's header note).
       // '' = let the server resolve the default (the preferred account, else account #0).
       // The picker and the auto-switch restart are the only callers that name one.
-      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId);
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       // Every chat spawned anywhere in this surface follows the signed-in account, for the
@@ -1099,6 +1144,7 @@ export function AgentSurface() {
       // one place to arm means no future spawn path can forget to.
       armAuthRestart(cs);
       armAccountSwitch(cs);
+      armAgentTitle(cs);
       return cs;
     }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
@@ -1106,7 +1152,7 @@ export function AgentSurface() {
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
-  }, [chatPermissionMode, vault, armAuthRestart]);
+  }, [chatPermissionMode, vault, armAuthRestart, armAgentTitle]);
 
   // Spawn a fresh session AND append its roster entry — the two steps every "new session"
   // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
@@ -1207,7 +1253,12 @@ export function AgentSurface() {
       // at the HTTP-upgrade level, indistinguishable from a crash. Refuse, and say why, rather
       // than silently doing nothing (the same "a refusal must not look like a crash" principle,
       // one click later).
-      alert(`${meta.title}\n\nThis automation's session was recorded on a different machine and was never bound here, so it can't be resumed on this one.`);
+      void confirmAction({
+        title: meta.title,
+        body: "This automation's session was recorded on a different machine and was never bound here, so it can't be resumed on this one.",
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+      });
       return;
     }
     // Agent/chat → resume the EXACT prior Claude conversation (`--resume <claudeId>`) in the
@@ -1508,6 +1559,36 @@ export function AgentSurface() {
    */
   const handoffToDevelop = useCallback((cs: ChatSession, taskSlug: string) => {
     void (async () => {
+      // The Develop session inherits NOTHING but the task file, so a plan that never reached
+      // it is lost the moment this tab closes. Refuse while the task is missing a part the
+      // Plan briefing requires (lib/handoff-readiness.ts on the server, the same check as
+      // `dreamcontext tasks ready`). Fails OPEN on a failed request: the check is a guard on
+      // the plan's completeness, and an unreachable guard must not strand a finished plan.
+      try {
+        const r = await scopedApi.get<{ ready: boolean; gaps: Array<{ field: string; problem: string }> }>(
+          `/tasks/${encodeURIComponent(taskSlug)}/readiness`,
+        );
+        if (!r.ready) {
+          // Never `alert()`: wry's WKWebView implements none of WebKit's JavaScript panel
+          // methods, so in the desktop app an alert shows nothing and this button read as
+          // dead (owner report 09-26). `confirmAction` works in every shell — and the refusal
+          // gets a next step instead of a dead end: one click asks the planner to fill the gaps.
+          const gaps = r.gaps.map((g) => `• ${g.field}: ${g.problem}`).join('\n');
+          const askPlanner = await confirmAction({
+            title: 'This plan is not ready for development yet',
+            body: `The new session would start without:\n\n${gaps}\n\nAsk the planning agent to fill these into the task, then click the button again.`,
+            confirmLabel: 'Ask the planner',
+            cancelLabel: 'Close',
+          });
+          if (askPlanner) {
+            postToSession(cs, `The "Go to development" hand-off for \`${taskSlug}\` was refused — the task is missing:\n\n${gaps}\n\n`
+              + `Fill each into the task with \`dreamcontext tasks insert ${taskSlug} <section> "…"\`, confirm \`dreamcontext tasks ready ${taskSlug}\` passes, then offer the develop button again.`);
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn('[agent-surface] Plan→Develop readiness check failed; handing off anyway:', err);
+      }
       let prepared: { inline: string; token: string };
       try {
         prepared = await preparePrompt(vault, developKickoffPrompt(taskSlug));
@@ -1515,12 +1596,20 @@ export function AgentSurface() {
         // `mintPromptToken` rejects rather than degrading to an unseeded session (see its
         // doc). Say so instead of opening a Develop tab that has no idea what it is for.
         console.error('[agent-surface] Plan→Develop hand-off could not prepare its prompt:', err);
-        alert(`Could not open the development session for "${taskSlug}".\n\n${err instanceof Error ? err.message : String(err)}`);
+        void confirmAction({
+          title: 'Could not open the development session',
+          body: `${taskSlug}\n\n${err instanceof Error ? err.message : String(err)}`,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+        });
         return;
       }
       const s = spawn(false, undefined, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
       const meta: SessionMeta = {
-        id: s.id, title: taskSlug, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'develop',
+        // Opens under the task's name read as words, and `titleByAgent` lets the Develop agent
+        // replace it with a real one — the slug alone (`her-ders-ve-program-…`) is unreadable
+        // and, outside DEFAULT_TAB_TITLE_RE, used to be stuck there for good.
+        id: s.id, title: cleanTabTitle(taskSlug) ?? taskSlug, titleByAgent: true, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'develop',
       };
       // Land at the plan tab's index in the plan tab's pane. Both lookups run BEFORE the close
       // below, while that tab still exists; `-1`/`undefined` degrade to "append to the focused
@@ -1538,7 +1627,7 @@ export function AgentSurface() {
       if (planPane) setActivePaneId(planPane.id);
       closeSessionById(cs.id);
     })();
-  }, [spawn, vault, panes, activePaneId, closeSessionById, modelForSession, effortForSession]);
+  }, [spawn, vault, scopedApi, panes, activePaneId, closeSessionById, modelForSession, effortForSession]);
 
   // ChatPane's "Open in app ↗" (state 3 — a dreamcontext entity referenced from chat).
   // AgentSurface is mounted beside Shell (under `ProjectInstance`) with no direct handle on
@@ -1954,6 +2043,61 @@ export function AgentSurface() {
     if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
   });
 
+  // ── Train an automated agent (the Train button on its detail panel) ───────────────
+  //
+  // A NEW chat in Train Me mode whose first message binds it to the automation, so the
+  // confirmed result lands in that automation's own playbook (`automations learn <slug>
+  // --playbook-file`) rather than the project's knowledge/patterns. Always a chat: the
+  // training rounds are AskUserQuestion cards, which only the chat transport draws.
+  //
+  // The ACK must be synchronous, and `preparePrompt` is async. The kickoff is a few hundred
+  // characters, so it takes `preparePrompt`'s inline branch, and that branch is taken HERE
+  // without awaiting: the spawn happens before the ACK is written. The token path is kept
+  // for a pathological title only; there the ACK means "the guards passed" and a failed
+  // mint is reported by its own dialog, the way the Develop hand-off reports one.
+  const openTrainSession = useCallback((detail: TrainChatDetail): boolean => {
+    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return false;
+    const title = trainTabTitle(detail.automationTitle);
+    const open = (inline: string, token: string) => {
+      const s = spawn(bypass, undefined, false, 'chat', inline, '', true, token, false, '', false, 'train');
+      setSessionList((prev) => [...prev, {
+        id: s.id, title, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'train',
+      }]);
+      if (panes.length === 0) {
+        const pid = nextPaneId();
+        setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+        setActivePaneId(pid);
+      } else {
+        const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+        setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+        setActivePaneId(apid);
+      }
+      setExpanded(true);
+    };
+    const prompt = trainKickoffPrompt(detail.slug, detail.automationTitle);
+    if (promptFitsInline(prompt)) {
+      open(prompt, '');
+      return true;
+    }
+    void preparePrompt(vault, prompt).then(
+      (prepared) => open(prepared.inline, prepared.token),
+      (err) => {
+        console.error('[agent-surface] Train Me could not prepare its prompt:', err);
+        void confirmAction({
+          title: 'Could not open the Train Me session',
+          body: `${detail.slug}\n\n${err instanceof Error ? err.message : String(err)}`,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+        });
+      },
+    );
+    return true;
+  }, [caps, claudeReady, agentSettings.enabled, spawn, bypass, panes, activePaneId, vault]);
+
+  useInstanceEvent<TrainChatDetail>(TRAIN_CHAT_EVENT, (detail) => {
+    if (detail?.slug && openTrainSession(detail)) detail.accepted = true;
+  });
+
   // ── Checklist submit bridge (T8, plan §1.11/§1.12) ────────────────────────────────
   // The pinned checklist window is a SEPARATE OS window with no WebSocket of its own; its
   // Submit reaches this surface via a targeted Tauri event (`checklistBridge.ts`) rather
@@ -1992,6 +2136,45 @@ export function AgentSurface() {
     if (!vault) return;
     return listenForChecklistSubmits(vault, handleChecklistSubmit);
   }, [vault, handleChecklistSubmit]);
+
+  // ── dreamcontext Assistant doorbell ────────────────────────────────────────────────
+  // The notch rings this window when the Assistant acts on THIS project (chat / send /
+  // answer / focus). The verbs live in `useAssistantDoorbell`; this surface only lends it
+  // what it owns: the live sessions, a spawn that lands revealed, and the reveal itself.
+  // Sessions resolve by conversation id through `sessionList`, like the checklist bridge.
+  const windowChrome = useChrome();
+  useAssistantDoorbell({
+    vault,
+    findChat: (claudeId) => {
+      const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
+      const session = entry ? sessions.current.get(entry.id) : undefined;
+      return session && session.kind === 'chat' ? session as ChatSession : null;
+    },
+    openChat: (inline, token, mode) => {
+      const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', false, mode, '', 'assistant');
+      setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId, mode }]);
+      // Placement mirrors `delegateAgent`'s reveal branch: a tab of the focused pane.
+      if (panes.length === 0) {
+        const pid = nextPaneId();
+        setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+        setActivePaneId(pid);
+      } else {
+        const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+        setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+        setActivePaneId(apid);
+      }
+      setExpanded(true);
+      return s as ChatSession;
+    },
+    reveal: () => {
+      if (vault) windowChrome.activate(vault);
+      setExpanded(true);
+    },
+    openPage: (page, id) => {
+      if (vault) windowChrome.activate(vault);
+      onOpenAppPage(page, id);
+    },
+  });
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN
@@ -2335,7 +2518,9 @@ export function AgentSurface() {
   const commitRename = useCallback((id: string, raw: string) => {
     const title = raw.trim();
     setRenamingId('');
-    if (title) setSessionList((prev) => prev.map((m) => (m.id === id ? { ...m, title } : m)));
+    // A name the user typed is theirs: dropping `titleByAgent` is what stops the tab's agent
+    // from renaming it again (see armAgentTitle).
+    if (title) setSessionList((prev) => prev.map((m) => (m.id === id ? { ...m, title, titleByAgent: undefined } : m)));
   }, []);
 
   // Settings → Agents' "auto-name tabs" preference, flipped from a tab's own right-click
@@ -2572,8 +2757,9 @@ export function AgentSurface() {
       // listeners on one node run in registration order, so ours fired first and collapsed
       // the whole surface out from under the picture the user was closing (measured 09-06 by
       // scripts/verify/chat-file-preview.mjs). Presence, not focus, for the same reason the
-      // two menus above use it: these portal to <body>.
-      if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay')) return;
+      // two menus above use it: these portal to <body>. The quest receipt ("How this was
+      // built") is one of them: it portals its own dialog and closes itself on Esc.
+      if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay, .quest-receipt-scrim')) return;
       // The phone's session drawer owns Esc while it is open — same presence test, same
       // reason (it portals no focus of its own). Without this the one key closed the drawer
       // AND collapsed the surface behind it, which on a phone means the chat vanishes.
@@ -2664,80 +2850,6 @@ export function AgentSurface() {
     document.body.dataset.mobileChat = 'true';
     return () => { delete document.body.dataset.mobileChat; };
   }, [isMobile, expanded]);
-
-  // ── Auto-title: name a tab from its first user message (Settings → Agents) ────────
-  // Fires on BOTH busy edges of a live AGENT or CHAT session — the chat engine is a
-  // different transport (headless stream-json, not a PTY) but the SAME identity: it
-  // spawns under `DREAMCONTEXT_TAB_SESSION` too, so its UserPromptSubmit hook records the
-  // first prompt into the very same session-map entry `/agent/title` reads. Nothing about
-  // the route is terminal-specific, so gating this on `kind === 'agent'` was the only
-  // reason chat tabs sat at "Chat N" forever. The idle→busy edge (turn START) is
-  // the fast path: a chat tab sends its own copy of the first message with the request
-  // (see below), and for terminal tabs the UserPromptSubmit hook has usually already
-  // captured the first prompt into the tab's session-map entry — so the server can title
-  // the tab seconds after the user types, no waiting for the whole first turn to finish.
-  // The busy→idle edge (turn COMPLETE) is the safety net for tabs the hook missed (the
-  // transcript exists by then).
-  // The title is applied ONLY if the tab still carries its default "Agent N"/"Chat N"
-  // name (a tab you renamed is never overwritten). It settles to at most ONE successful
-  // Haiku call per tab, but a call that finds nothing yet (an unwritten hook entry or an
-  // unflushed transcript) leaves the tab RETRYABLE — so the tab you worked on gets named on
-  // its next edge, instead of permanently losing its title to a slower tab's late rename.
-  useEffect(() => {
-    if (!agentSettings.enabled || !agentSettings.autoTitle) return;
-    sessions.current.forEach((s, id) => {
-      const wasBusy = busyPrevRef.current.get(id) ?? false;
-      busyPrevRef.current.set(id, s.busy);
-      if (wasBusy === s.busy) return;             // fire on every busy edge (start + complete)…
-      // …but skip if already named, ineligible, or a request is already outstanding.
-      if (s.kind === 'shell' || autoTitledRef.current.has(id) || titleInFlightRef.current.has(id)) return;
-      const meta = sessionList.find((m) => m.id === id);
-      // Permanently ineligible if the tab was renamed by the user or is a dormant restore.
-      if (!meta || meta.dormant || !DEFAULT_TAB_TITLE_RE.test(meta.title)) {
-        autoTitledRef.current.add(id);
-        return;
-      }
-      // Retry budget spent → keep the default name for good (see titleAttemptsRef).
-      const attempts = titleAttemptsRef.current.get(id) ?? 0;
-      if (attempts >= 8) { autoTitledRef.current.add(id); return; }
-      titleAttemptsRef.current.set(id, attempts + 1);
-      titleInFlightRef.current.add(id);           // one outstanding call at a time
-      // A chat session already HOLDS its first user message (its composer sent it, or the
-      // server echoed a spawn prompt into the model) — pass it along so the idle→busy edge
-      // titles on the FIRST attempt even before the hook entry / flushed transcript exists
-      // on disk. The server still prefers those on-disk sources; this is its last resort.
-      // Terminal tabs have no client-side copy (the PTY stream is raw bytes) and omit it.
-      const firstUserText = s.kind === 'chat'
-        ? (s as ChatSession).getModel().items.find((it): it is ChatUserItem => it.kind === 'user')?.text.trim()
-        : undefined;
-      void scopedApi.post<{ title: string | null; reason?: string }>(
-        '/agent/title',
-        firstUserText ? { claudeId: s.claudeId, message: firstUserText } : { claudeId: s.claudeId },
-      )
-        .then((r) => {
-          const title = r?.title?.trim();
-          // No title yet: leave the id retryable so the NEXT completed turn names this
-          // exact tab. Cost differs by WHY it failed: a miss WITH a reason is a cheap
-          // pre-spawn null (transcript/message not flushed yet — no claude process ran)
-          // and costs 1 of the 8-attempt budget; a miss WITHOUT a reason means a real
-          // Haiku spawn ran and produced nothing (unauthenticated / broken CLI — likely
-          // persistent) and costs 4, so a dead CLI burns at most 2 real spawns per tab
-          // instead of 8.
-          if (!title) {
-            if (!r?.reason) titleAttemptsRef.current.set(id, (titleAttemptsRef.current.get(id) ?? 1) + 3);
-            return;
-          }
-          autoTitledRef.current.add(id);          // got a name — done, never ask again
-          // Re-check the default guard inside the updater: the user may have renamed the
-          // tab while Haiku was thinking — their choice wins.
-          setSessionList((prev) => prev.map((m) => (
-            m.id === id && DEFAULT_TAB_TITLE_RE.test(m.title) ? { ...m, title } : m
-          )));
-        })
-        .catch(() => { /* best-effort: a failed title just leaves the default name */ })
-        .finally(() => { titleInFlightRef.current.delete(id); });
-    });
-  }, [statusTick, agentSettings.enabled, agentSettings.autoTitle, sessionList, scopedApi]);
 
   // ── Drop-overlay leak guard (the "terminal unreachable after a split" fix) ───────
   // While a tab is dragged, each pane mounts a full-bleed `.agent-pane-droplayer`
@@ -2841,7 +2953,14 @@ export function AgentSurface() {
 
   const openExternal = async () => {
     try { await scopedApi.post('/agent/open-terminal', { bypass }); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Could not open Terminal.'); }
+    catch (e) {
+      void confirmAction({
+        title: 'Could not open Terminal',
+        body: e instanceof Error ? e.message : undefined,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+      });
+    }
   };
 
   // ── File drag-drop → live Claude session ─────────────────────────────────────
@@ -2975,6 +3094,12 @@ export function AgentSurface() {
         title: meta?.title ?? id,
         info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
         sessionKind: meta?.kind ?? 'agent',
+        // WHICH AGENT this tab's run belongs to, so the strip can draw its FACE
+        // instead of the generic automation glyph. Read straight off the roster
+        // entry the hydrate path already round-trips (`SavedMeta.automation`) —
+        // nothing new is persisted, and it stays undefined for every other kind,
+        // which is what keeps a non-automation tab byte-identical to today.
+        automationSlug: meta?.automation?.slug,
         bypass: !!meta?.bypass,
         attention: !meta?.dormant && !!s?.attention,
       };
@@ -3233,26 +3358,6 @@ export function AgentSurface() {
 
   return (
     <>
-      {/* D7 — runs that stopped to ask, or crashed, open as tabs by themselves.
-          Renders nothing; it polls and calls the same `openAutomationRunChat`
-          the Automations panel does, so a run reaching a tab this way and one
-          reached by a click are the SAME tab (its bring-forward guard is what
-          makes that true). `ready` mirrors that callback's own guards so the
-          poll cannot exist on a build where nothing could come of it.
-
-          `hydrated` IS PART OF THAT GATE, and it is not defensive tidiness. This opener
-          reads a localStorage settings seed available on the first render and needs one
-          round-trip; the roster restore waits on the SERVER settings and then its own
-          fetch, so it needs two. Unguarded, this tab lands before the saved roster often
-          — not always, which is worse, because it made the resulting data loss look
-          random. Nothing may put a tab on screen before the roster it has to coexist with
-          has been read. The restore above now merges rather than bails, so this gate is
-          the belt and that is the braces; keep both, and see
-          `scripts/verify/automation-tab-restore.mjs`, which forces the losing order. */}
-      <AutomationAttentionOpener
-        ready={!!(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled && hydrated)}
-        onOpen={openAutomationRunChat}
-      />
       <div
         ref={hostRef}
         className={`agent-surface${expanded ? ' expanded' : closing ? ' closing' : ''}`}

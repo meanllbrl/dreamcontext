@@ -111,6 +111,8 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 | `tasks field <name> <key> [value\|clear]` | Set or clear a user-defined custom field declared in `overrides/task.md` (synced to ClickUp/GitHub). Validates select options + number types. |
 | `tasks insert <name> <section> <content...>` | Insert into a section: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. |
 | `tasks log <name> [content...]` | Add a changelog entry (cross-session continuity). **Use every session.** |
+| `tasks handoff <name> --done --next --decisions --learned --style --files [note...]` | Context handoff: writes all six parts as ONE changelog entry, sets `in_progress`, pins the task for a fresh session. **Refuses and writes nothing** while a part is missing (`none` is valid except for `--done`/`--next`, which need a real sentence). |
+| `tasks ready <name>` | Plan → Develop gate: exits 1 naming each gap (no `- [ ]` criterion, no `Validation method:` criterion, `technical_details` empty or naming no file). The Develop button runs the same check on click. |
 | `tasks status <name> <status> [reason...]` | Change status (logs to changelog). `<status>` is `todo\|in_progress\|in_review\|completed` or any key declared under `statuses:` in `overrides/task.md`. On the first move to an `active`-kind status (`in_progress`), stamps `start_date` with today if it is unset (a planned start is never overwritten) and pushes an already-passed `due_date` out to stay valid. On `completed`, stamps `due_date` with the real completion date (and `start_date` too when the task was never started — a same-day window). A `cancelled`-kind status stamps nothing. Moving to a `done`- or `review`-kind status hard-fails while a required custom field is unset. |
 | `tasks statuses` | Read-only: the project's status set — key, label, kind, **parent** (which shipped status it rides under), order, colour, shipped/declared, and how each maps to GitHub (`state+state_reason dc:<key>`) and to the cached remote list statuses (`<parent status> + dc:<key> tag`). `--json`. Declare statuses in `overrides/task.md` or the dashboard Settings. |
 | `tasks complete <name> [summary...]` | Mark completed (convenience). |
@@ -202,7 +204,7 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 
 | Command | Description |
 |---|---|
-| `automations create <slug>` | Scaffold a new automation manifest, private and auto-approved on this machine. `--title <title>` (required), `--days <daily\|mon,wed>` (required, schedule days), `--at <HH:MM>` (required, 24h local), `--model <model>` (default: let claude pick), `--effort <level>` (`low\|medium\|high\|xhigh\|max`, default: let claude pick), `--timeout <minutes>` (1-60, default 15), `--catchup <hours>` (1-168, default 6), `--prompt-file <path>` (read the `## Prompt` body from this file instead of the scaffold stub), `--shared` (publish the manifest, cache, and output immediately instead of staying private), `--no-notify` (stay silent when a scheduled run finishes; notifies on completion by default), `--disabled` (create with `enabled: false`). |
+| `automations create <slug>` | Scaffold a new automation manifest, private and auto-approved on this machine. `--title <title>` (required), `--mode <sched\|call>` (`sched` runs on a schedule and is the default; `call` has NO schedule — the dispatcher never fires it and it runs only when you call it), `--days <daily\|mon,wed>` (schedule days, required unless `--mode call`), `--at <HH:MM>` (24h local, required unless `--mode call`), `--photo <path>` (agent photo, brain-relative under `automations/photos/`; omit for initials), `--model <model>` (default: let claude pick), `--effort <level>` (`low\|medium\|high\|xhigh\|max`, default: let claude pick), `--timeout <minutes>` (1-60, default 15), `--catchup <hours>` (1-168, default 6), `--prompt-file <path>` (read the `## Prompt` body from this file instead of the scaffold stub), `--shared` (publish the manifest, cache, and output immediately instead of staying private), `--no-notify` (stay silent when a scheduled run finishes; notifies on completion by default), `--disabled` (create with `enabled: false`). |
 | `automations list` | List automations with schedule, approval, sharing state, and last-run status. `--json`. |
 | `automations show <slug>` | Show one automation's manifest, cache, approval, sharing state, and orphan state. `--json`, `--history <n>` (default 5). |
 | `automations run <slug>` | Run one automation now. `-f/--force` bypasses dueness and sleep-deference only, never approval and never the orphan guard. |
@@ -215,8 +217,11 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 | `automations telegram setup <slug>` | Point a Telegram bot at ONE automation, so its questions reach you when you are not at the Mac. Stored at `~/.dreamcontext/telegram/<slug>.json`, mode 0600, machine-local, never synced. `--token <token>`, `--chat <id>` (the only chat allowed to answer). The token is a capability: it can resume a `bypassPermissions` session on this machine, which is exactly why it is not in the brain. |
 | `automations telegram test <slug>` / `automations telegram off <slug>` | Post this automation's waiting question now and report what its bot can see / forget this automation's bot token and stop its channel. |
 | `automations session <slug>` | Show the claude session a run actually had — its turns, tool calls, and errors. |
+| `automations post <slug> "<text>" [--file <brain-relative>] [--kv key=value] [--run <id>]` | Post to this agent's channel — the ONE way anything reaches it on the agent's own behalf. A run calls this about itself and needs no ids: the runner exports `DREAMCONTEXT_AUTOMATION_SLUG`/`_RUN`, which are HINTS (the slug positional is still required and validated). With no run resolvable it exits non-zero and writes nothing rather than inventing one. `--file` is repeatable up to 4 (brain-relative, refused if it is a symlink or resolves outside the brain); `--kv` is repeatable up to 6 and renders as a key/value block — figures only, split on the first `=`, both halves required. Over either cap exits non-zero and writes nothing. |
+| `automations thread <slug> [--run <id>] [--limit N] [--json]` | Read a channel, or one run's thread, in id order. |
+| `automations read <slug> [--up-to <id>]` | Clear this MACHINE's unread for that channel. Monotonic — an older id never rewinds the mark. |
 | `automations pattern <slug>` / `automations learn <slug>` | Show what this automation has learned (its playbook and lesson ledger) / record a lesson into it. A run calls `learn` on itself; the pattern's CONTENTS are deliberately not approval-hashed, since they change every run by design — the `learning` switch that admits them is. |
-| `automations propose <slug>` | Stop and ask a human before acting. A run calls this about itself; it cannot be called by hand (a process-group probe refuses a nested call). |
+| `automations propose <slug> [--choice <text>]` | Stop and ask a human before acting. A run calls this about itself; it cannot be called by hand (a process-group probe refuses a nested call). `--choice` is repeatable up to 4, 64 chars each, and turns the question into buttons in the channel; over either cap exits non-zero and creates nothing. Refused entirely under `review: off` — buttons nobody is watching for are still nobody watching. |
 | `automations share <slug>` | Publish this automation: flips `shared` to `true` and publishes its manifest, cache, and output together. |
 | `automations unshare <slug>` | Stop publishing this automation from this machine. Prints a warning that this is not retroactive: anything already committed and pushed stays in git history. `-y/--yes` skips the interactive confirmation. |
 | `automations kill <slug>` | Kill a previous run's orphaned process group, read from its recorded sidecar. Never guesses with `pgrep`/`pkill`. `-y/--yes` skips confirmation, `--force` kills even when the sidecar is old enough that its process-group id may have been recycled. |
@@ -378,7 +383,29 @@ Never hand-edit `core/taxonomy.json` — mutate via these commands.
 | `peer reply <id> "<text>"` | Answer a peer that is waiting on the other end. |
 | `peer done <id>` | Close the thread. |
 
-Mail lives in `state/.peer-mail/<id>.json` on both ends and surfaces in the receiving project's SessionStart snapshot under `## Peer mail`. The **Meeting Room** (all vaults at once) has no CLI surface by design — it is the launcher UI only.
+Mail lives in `state/.peer-mail/<id>.json` on both ends and surfaces in the receiving project's SessionStart snapshot under `## Peer mail`. Addressing ALL vaults at once is the dreamcontext Assistant's `broadcast` (below); the Meeting Room that used to do it is retired.
+
+---
+
+## dreamcontext Assistant (see [integrations.md](integrations.md))
+
+Verbs for the Assistant that lives in the desktop app's notch, above every project. **Only its own chat session can run them** — elsewhere they fail with *"only the dreamcontext Assistant can drive the app"* (a per-boot token is injected into that one spawn; loopback + desktop only). `open` … `notify` need the notch to be running (`no_surface` otherwise).
+
+| Command | What it does |
+|---|---|
+| `assistant projects` | Every registered project: what it is, what is active, live chats counted `{working, stale, asking, idle}`. |
+| `assistant sessions [--vault <v>] [--status <s>]` | Live chats across every project, status `starting\|working\|asking\|idle\|gone`; each row also carries `activity` (adds `stale`, and a `starting` chat past 30 s reads `idle`) and `lastFrameAt`. |
+| `assistant watch <sessionId> [--until idle\|asking\|any] [--timeout 590]` | Wait for a chat to reach a state; returns at once if it has ended. |
+| `assistant broadcast "<message>" [--to a,b] [--timeout <s>]` | Each project's OWN agent writes it; one row per vault `replied\|failed\|timeout\|missing`. |
+| `assistant open <vault> [--page tasks\|knowledge\|core/<slug>] [--new-window]` | Open a project window (its own), optionally on a page. |
+| `assistant chat <vault> --prompt "…" [--mode basic\|plan\|develop]` | Start a chat in a project and send the prompt; returns its session id. |
+| `assistant send <sessionId> "<text>"` | Follow up in a live chat. |
+| `assistant answer <sessionId> --question <id> (--choice <label> \| --text "…")` | Answer a pending question, permission or plan prompt. |
+| `assistant focus <vault>` | Bring a project's window to the front. |
+| `assistant tile <vault…> [--layout columns\|rows\|grid]` | Place project windows on the notch's monitor. |
+| `assistant notify "<text>" [--level info\|attention]` | A notice in the notch; `attention` pulses the pill. |
+
+Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `answer` / `broadcast` run or become a proposal the owner approves in the notch; project-derived output comes back wrapped in `<untrusted-project-output>`.
 
 ---
 
@@ -431,6 +458,7 @@ The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-ch
 | `app install\|update\|status` | Manage the macOS desktop app. `--from <path>`, `--dir <dir>`. |
 | `marketing` / `mk` | Meta marketing skill surface. |
 | `transcript distill <session_id>` | Extract high-signal content from a transcript. `--since <ts>`, `--full`. |
+| `goal-live start\|phase\|actor\|state\|recipe\|clear` | The goal-skill orchestrator's (and a Develop chat's) live-run writer (the only writer of `_dream_context/tmp/.goal-skill-live.<CLAUDE_CODE_SESSION_ID>.json`, `.solo.json` when the id is unset). `start --goal <slug>` (stamps the session, sweeps files older than 3h); `phase <plan\|review\|task\|impl\|codereview\|validate\|done> [--wave N] [--waves N]`; `actor <id[=name],…> --kind <spawn\|fork\|resume\|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>] [--session <uuid>]` (the CLI measures the inherited context itself; never pass a number; `--session` registers the actor's own `claude -p --session-id`, one actor per call, so the app can read that run's transcript and draw it as a live teammate); `state <id=word> …` (`run\|done\|wait\|fail`, or `SOLID\|NEEDS_WORK\|PASS\|FAIL`); `clear` (escalation or abort only). **Develop mode:** `start --goal <slug> --mode develop` writes a `mode: develop` run and ADOPTS this task's unfinished Develop run (this pane's, or any pane's idle 10+ min; a fresh run of another pane is refused with one line) so a reopen or handoff keeps the map; unfinished develop files survive the sweep for 24h. `actor … --wave N` and `state … --wave N` stamp the wave (builders `w<N>-<lane>`, reviewers `w<N>-reviewer`; a reviewer PASS credits its wave to `reviewed`). `recipe develop` PRINTS the Develop run procedure (the one subcommand that prints). Silent on success, always exits 0. Chain each call with `&&` onto the step it describes; see the goal-skill pack's "Live run state". The app draws the file as the quest map. |
 | `reflect` | Surface recurring cross-session terms as candidates. `--min-sessions`, `--max`, `--write`. |
 | `snapshot` | Output the context snapshot (used by SessionStart). `--tokens`, `--vault <name>`. Budget-bounded — see [Snapshot budget](#snapshot-budget--the-harness-limit). |
 | `migrations pending\|apply-diagrams\|record` | Inspect/apply brain-structure migrations. `record --files --summary`. |

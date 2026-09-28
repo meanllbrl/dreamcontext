@@ -187,10 +187,61 @@ export const FLOW_EDGE_LABEL_MAX_CHARS = 24;
 /** A manifest read from `automations/<slug>.md`. Reads are LENIENT (the store
  *  degrades a malformed sub-block rather than throwing); this shape is always
  *  the fully-resolved, defaulted result of a read. */
+/**
+ * WHEN an automation runs, as a first-class manifest field.
+ *
+ * `'sched'` is every automation that has ever existed: a wall-clock schedule
+ * the dispatcher evaluates every five minutes. `'call'` is an agent that has
+ * NO schedule at all — it runs only when a human asks for it (a manual run
+ * now, and from step 4, an @mention). The dispatcher must never fire one.
+ *
+ * Reads LENIENTLY toward `'sched'`, the opposite direction from `shared`, and
+ * for the compatibility reason rather than a safety one: every manifest on
+ * disk today predates this field, and every one of them is scheduled. A
+ * missing or typo'd value reading as `'call'` would silently stop a working
+ * automation — and a stopped run notifies nobody, by design. A typo'd `'call'`
+ * that reads as `'sched'` costs nothing either, because such a manifest was
+ * written with no schedule and `isDue` refuses a null schedule anyway.
+ *
+ * IS approval-hashed, but only in the `'call'` direction — see
+ * `canonicalApprovalPayload`. The tempting reading is that `mode` belongs with
+ * `schedule` and `enabled`, which the payload excludes; that is wrong in the
+ * one direction that matters. Those two only ever change WHEN an
+ * already-autonomous job fires. `call → sched` changes whether it may fire
+ * unattended AT ALL, so an agent approved as "runs only when I ask" must not
+ * be able to acquire a schedule through a teammate's synced edit and keep a
+ * byte-identical hash. Omitting at `'sched'` means every manifest written
+ * before this field existed still hashes exactly as it did, so nothing blocks
+ * on upgrade.
+ */
+export type AutomationMode = 'sched' | 'call';
+
+export const AUTOMATION_MODES = ['sched', 'call'] as const;
+
+/** Where an agent's photo lives, contextRoot-relative. One file per slug,
+ *  extension derived from the uploaded bytes' magic number — never from a
+ *  client-supplied filename. */
+export const AUTOMATION_PHOTOS_DIR = 'automations/photos';
+
 export interface AutomationManifest {
   slug: string;
   id: string;
   title: string;
+  /** See {@link AutomationMode}. Never `undefined` on any read path. */
+  mode: AutomationMode;
+  /** The agent's photo, contextRoot-relative and always under
+   *  {@link AUTOMATION_PHOTOS_DIR}. `null` ⇒ render initials.
+   *
+   *  A stored value is NOT trusted on read: a manifest is a synced markdown
+   *  file a teammate (or a hand edit) can put any string in, so every consumer
+   *  resolves it through the store's `resolveAutomationPhoto`, which refuses
+   *  anything escaping the photos directory and anything that is not on disk.
+   *  Refusal degrades to initials, never to an error — a broken photo must not
+   *  cost you the agent.
+   *
+   *  NOT approval-hashed, for the same reason `title` is not: it is how you
+   *  recognise the agent, not what the run does. */
+  photo: string | null;
   enabled: boolean;
   /** null ⇒ malformed on disk ⇒ this automation is never due, flagged in `list`. */
   schedule: Schedule | null;
@@ -290,6 +341,111 @@ export interface AutomationManifest {
   path: string;
   body: string;
 }
+
+// ─── Threads: an agent's channel, as append-only synced markdown ────────────
+//
+// A run becomes a THREAD, rooted at its `system:started` entry. The store lives
+// at `automations/threads/<slug>/<YYYY-MM-DD>.md` — one file per slug per DAY,
+// which is the granularity the output archive already uses: one file per slug
+// grows unbounded and conflicts on every run from two machines, one file per
+// run explodes the directory (a 5-minute automation is 288 files a day), and
+// per-day bounds a git conflict to one day's file.
+
+/** `system` — the runner's own bookkeeping. `agent` — what the run chose to
+ *  say. `user` — a human's reply. A FILE is not a kind: files ride as `files[]`
+ *  on an `agent` entry, so there is one less renderer and one less way for a
+ *  post and its attachment to drift apart. */
+export type ThreadEntryKind = 'system' | 'agent' | 'user';
+
+/** `kind: 'system'` only. Mirrors `RunStatus`'s terminal set plus the two
+ *  conversational events a run can reach, plus `skipped`.
+ *
+ *  `skipped` is TERMINAL and means "this fire never became a run, and here is
+ *  why" — blocked on approval, deferred behind the sleep lock, stopped by the
+ *  orphan guard. A SCHEDULED fire deliberately writes nothing on those paths
+ *  (a still-due automation would otherwise post every five minutes forever);
+ *  this event exists for the other caller, a human who typed into the channel
+ *  and is owed an answer. One ask, at most one `skipped`. */
+export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked' | 'replied' | 'skipped';
+
+/** Where an entry came from. Provenance, for the same reason `ReviewChannel`
+ *  exists: "the agent said this" and "the runner said this on the agent's
+ *  behalf" are different claims and a reader is entitled to tell them apart. */
+export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat';
+
+/** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
+ *  not a free-form block: a summary the agent can write at any length is a
+ *  second body, and the message already has one. */
+export interface ThreadSummaryRow {
+  key: string;
+  value: string;
+}
+
+export interface ThreadEntry {
+  /** Time-prefixed, sortable, and THE MERGE KEY — see `newThreadEntryId`. A
+   *  duplicated id after a git merge is de-duplicated on read. */
+  id: string;
+  /** The scheduled fire this entry belongs to — `RunEvent.firedAt`. There is no
+   *  other run identity in this codebase (`RunEvent` has no `id`), and this is
+   *  the thread's root key. */
+  runId: string;
+  kind: ThreadEntryKind;
+  /** `kind: 'system'` only. */
+  event?: ThreadSystemEvent;
+  /** ISO. DISPLAY ORDER ONLY, never the sort key — two machines' clocks
+   *  disagree, and `id` is what survives that. */
+  at: string;
+  text: string;
+  /** Brain-relative paths only, validated at write. An absolute or escaping
+   *  path is rejected before it is stored, never after it is read. */
+  files?: string[];
+  /** A bounded key/value block on an `agent` entry — at most
+   *  {@link THREAD_SUMMARY_MAX_ROWS} rows. ABSENT, never empty: a zero-row
+   *  summary is a summary that was not posted, and rendering an empty block
+   *  would put a heading over nothing. */
+  summary?: ThreadSummaryRow[];
+  via: ThreadVia;
+}
+
+/** One run's thread, as a channel list renders it. */
+export interface ThreadRunSummary {
+  runId: string;
+  /** The run's own `system:started`, when it has one. */
+  startedAt: string | null;
+  /** Terminal system event, or null while the run is still going. */
+  status: ThreadSystemEvent | null;
+  entryCount: number;
+  /** Newest entry in the run — what a channel row previews. */
+  lastEntry: ThreadEntry | null;
+}
+
+/** Per entry. A post is a summary, not a document: the document rides as a
+ *  `files[]` path. */
+export const THREAD_TEXT_MAX_CHARS = 2000;
+/** Hard ceiling on one serialized entry block, after text truncation. */
+export const THREAD_ENTRY_MAX_BYTES = 8 * 1024;
+/** Per day file. A further append that day is REFUSED with an error, never
+ *  dropped silently — a post the agent believes it made is worse than one it
+ *  knows it could not. */
+export const THREAD_DAY_MAX_ENTRIES = 500;
+/** Matches `BINDING_TTL_MS` in session-registry, so a thread never outlives the
+ *  session that could resume it. */
+export const THREAD_RETENTION_DAYS = 90;
+/** Per entry. Four is what a message card can show without becoming a folder. */
+export const THREAD_FILES_MAX = 4;
+
+/** Per entry. Six rows is a glance; more is a table, and a table belongs in the
+ *  document the post attaches, not in the post. */
+export const THREAD_SUMMARY_MAX_ROWS = 6;
+/** A label, not a sentence. */
+export const THREAD_SUMMARY_KEY_MAX_CHARS = 40;
+/** A figure with its unit ("down 4% WoW", "$1,204"), not a paragraph. */
+export const THREAD_SUMMARY_VALUE_MAX_CHARS = 120;
+
+/** The marker every entry block opens with. The READER RE-SYNCS ON THIS: an
+ *  interleaved append from two processes costs at most one skipped entry
+ *  rather than a corrupt file. */
+export const THREAD_ENTRY_MARKER = '<!-- dc-thread-entry -->';
 
 /** A pattern parsed into its two halves. `## Pattern` holds curated prose (the
  *  playbook) followed by an optional `### Lessons` LIFO list; both are bounded
@@ -547,6 +703,23 @@ export const REVIEW_BODY_MAX_CHARS = 8_000;
 export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES = ['automations/hitl/'];
 export const AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT = ['_dream_context/automations/hitl/'];
 
+/**
+ * Agent photos — their own block, and OUT of the share-negation ordering set,
+ * for exactly the reason spelled out above {@link AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES}:
+ * appending a new base wildcard below existing negations makes
+ * `negationIsEffective` report every one of them as broken.
+ *
+ * The consequence is deliberate and is the fail-safe direction: a SHARED
+ * agent's photo does not travel to the team brain either. A teammate sees that
+ * agent's initials, which is a cosmetic loss; the alternative — a private
+ * agent's photo publishing because the wildcard had to live in the ordering
+ * set — is a real one. Publishing photos is a later decision, and it wants the
+ * repair pass that `shareAutomation` already performs, not a wildcard appended
+ * here.
+ */
+export const AUTOMATIONS_PHOTO_GITIGNORE_ENTRIES = ['automations/photos/'];
+export const AUTOMATIONS_PHOTO_GITIGNORE_ENTRIES_ROOT = ['_dream_context/automations/photos/'];
+
 /** Machine-local record of an in-flight (or just-finished) child, written only
  *  on a successful spawn, so an orphaned process group stays findable after its
  *  runner is SIGKILLed out from under it. NEVER brain-synced — lives beside the
@@ -757,6 +930,7 @@ export const AUTOMATIONS_GITIGNORE_ENTRIES = [
   'automations/*.md',
   'automations/cache/*.json',
   'automations/output/*/*',
+  'automations/threads/*/*',
 ];
 export const AUTOMATIONS_GITIGNORE_ENTRIES_ROOT = [
   '_dream_context/automations/cache/*.lock',
@@ -765,6 +939,7 @@ export const AUTOMATIONS_GITIGNORE_ENTRIES_ROOT = [
   '_dream_context/automations/*.md',
   '_dream_context/automations/cache/*.json',
   '_dream_context/automations/output/*/*',
+  '_dream_context/automations/threads/*/*',
 ];
 
 // ─── Sharing predicates (PURE — operate on already-read .gitignore text) ────
@@ -797,21 +972,38 @@ function longestCommonPrefix(entries: readonly string[]): string {
   return prefix;
 }
 
-/** The three negation lines that publish ONE slug's manifest, cache record and
- *  output directory, brain-relative (as they appear in `_dream_context/.gitignore`).
- *  Pure templating — assumes `slug` is already validated (isSafeAutomationSlug
- *  in store.ts); no I/O, no validation here. */
+/** The FOUR negation lines that publish ONE slug's manifest, cache record,
+ *  output directory and CHANNEL, brain-relative (as they appear in
+ *  `_dream_context/.gitignore`). Pure templating — assumes `slug` is already
+ *  validated (isSafeAutomationSlug in store.ts); no I/O, no validation here.
+ *
+ *  The thread line is the reason `automations/threads/*` is a base wildcard at
+ *  all. `automations/*.md` matches only files directly under `automations/`,
+ *  so a thread at `automations/threads/<slug>/<date>.md` would have published
+ *  by default — a PRIVATE automation's channel, carrying exactly the content
+ *  private-by-default exists to withhold, synced to the team brain. The photo
+ *  block could take a directory ignore of its own (`automations/photos/`) and
+ *  stop there; threads cannot, because a SHARED slug's channel must publish,
+ *  and git cannot re-include a file inside an ignored directory. Hence a
+ *  two-segment wildcard plus this negation, and hence the ordering rule below
+ *  matters here more than anywhere. */
 export function sharedSlugNegations(slug: string): string[] {
-  return [`!automations/${slug}.md`, `!automations/cache/${slug}.json`, `!automations/output/${slug}/*`];
+  return [
+    `!automations/${slug}.md`,
+    `!automations/cache/${slug}.json`,
+    `!automations/output/${slug}/*`,
+    `!automations/threads/${slug}/*`,
+  ];
 }
 
-/** Same three lines, project-root-relative (as they appear in the project
+/** Same four lines, project-root-relative (as they appear in the project
  *  root `.gitignore` for in-tree brain-sync mode). */
 export function sharedSlugNegationsRoot(slug: string): string[] {
   return [
     `!_dream_context/automations/${slug}.md`,
     `!_dream_context/automations/cache/${slug}.json`,
     `!_dream_context/automations/output/${slug}/*`,
+    `!_dream_context/automations/threads/${slug}/*`,
   ];
 }
 

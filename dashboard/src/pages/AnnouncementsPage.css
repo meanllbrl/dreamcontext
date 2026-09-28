@@ -176,7 +176,7 @@
 .ann-version-new {
   padding: 2px 8px;
   border-radius: var(--radius-full);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   box-shadow: var(--shadow-glow);
 }

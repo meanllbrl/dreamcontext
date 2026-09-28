@@ -110,8 +110,8 @@
   width: calc(100% - var(--space-4) * 2);
   margin: 0 var(--space-4) var(--space-4);
   padding: var(--space-2) var(--space-3);
-  background: var(--color-accent);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   border: none;
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);

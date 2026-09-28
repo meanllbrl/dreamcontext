@@ -28,12 +28,21 @@ tauri-plugin-clipboard-manager = "2"
 # side calls and delivers the banner through NSUserNotification. Used by the
 # "Claude is asking" alarm (dashboard/src/lib/attention.ts).
 tauri-plugin-notification = "2"
-# Converts the Sleepy notch window into a non-activating NSPanel so the hotkey
-# summons it OVER whatever app is focused — the user types into it without their
-# current app deactivating, and dismissing it never surfaces the dreamcontext
-# main window. Standard tool for macOS notch/Spotlight-style panels in Tauri 2.
+# The dreamcontext Assistant's notch (src/assistant.rs). All three PINNED EXACTLY — the
+# removed Sleepy notch floated on `branch = "v2"` and that is not repeated here.
+# - global-shortcut: registered from RUST so both Pressed and Released reach the notch
+#   (hold-to-talk), while another app is focused.
+# - nspanel: the notch as a non-activating NSPanel at y=0 (types without deactivating the
+#   app the owner is in). Rev acb3ec1c = the objc2-based v2.1 line, matching our objc2 0.6.
+# - autostart: the Login Item; an autostart launch opens only the notch.
+tauri-plugin-global-shortcut = "=2.3.2"
+tauri-plugin-autostart = "=2.5.1"
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "acb3ec1c2d2334916c9b07c74d5a0be9356674e3" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `set_frames` (src/frames.rs) bounds its wait on an AppKit animation with a hard deadline.
+# Already the runtime under tauri::async_runtime; only the timer is used directly.
+tokio = { version = "1", features = ["time"] }
 # Group-signal the dashboard-server child (SIGTERM→SIGKILL) on app exit so the
 # whole process group is reaped, not just the direct node process. Already present
 # transitively via tauri; pinned here so the direct use is explicit.
@@ -54,6 +63,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
     "block2",
     "NSAlert",
+    "NSAnimation",
+    "NSAnimationContext",
     "NSApplication",
     "NSButton",
     "NSCell",
@@ -61,6 +72,9 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSOpenPanel",
     "NSPanel",
     "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSWorkspace",
     "NSSavePanel",
     "NSView",
     "NSWindow",

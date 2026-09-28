@@ -1,0 +1,21 @@
+/* The agent's face. Neutral surface, never the accent — K8: the accent budget
+   is the primary button, switches and focus rings, and a grid of tinted
+   squares would spend all of it before the owner reached a single control. */
+.agent-av {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}
+
+.agent-av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

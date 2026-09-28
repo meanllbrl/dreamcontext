@@ -20,6 +20,9 @@
 // CRASH-SAFETY: any startup failure shows an explanatory error window instead
 // of panicking — a Finder double-click must never silently abort.
 
+mod assistant;
+mod frames;
+
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command};
@@ -54,7 +57,26 @@ pub fn run() {
         // AppKit returns a nil open panel — see the `pick_paths` doc comment.
         // `confirm_dialog` is here for the same reason: WKWebView has no
         // `window.confirm`, so a native sheet is the only working confirmation.
-        .invoke_handler(tauri::generate_handler![pick_paths, confirm_dialog])
+        .invoke_handler(tauri::generate_handler![
+            pick_paths,
+            confirm_dialog,
+            assistant::assistant_geometry,
+            assistant::assistant_apply_hotkey,
+            assistant::assistant_set_autostart,
+            assistant::assistant_wake,
+            assistant::assistant_set_enabled,
+            frames::set_frames,
+        ])
+        // Per-label generations for `set_frames` (src/frames.rs): the last requested frame wins.
+        .manage(frames::FramesState::default())
+        // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
+        // and the Login Item. See src/assistant.rs.
+        .plugin(tauri_nspanel::init())
+        .plugin(assistant::shortcut_plugin())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         // Native OS clipboard so the dashboard can write UTF-8 without the WKWebView JS
         // clipboard mangling non-ASCII as Mac Roman (issue #171). Used by the in-app agent
         // terminal's copy path via @tauri-apps/plugin-clipboard-manager on the loopback origin.
@@ -554,6 +576,16 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
             }
         }
         return Err(format!("{e}\n\nNode: {node}"));
+    }
+
+    // The Assistant: register its hotkey and seat the notch (no-op until it exists).
+    assistant::setup(&app, port);
+
+    // An autostart (Login Item) launch opens ONLY the notch — the owner did not ask for the
+    // Launcher, and the notch can open project windows itself.
+    let autostart = std::env::args().any(|a| a == "--autostart");
+    if autostart && assistant::assistant_enabled() {
+        return Ok(());
     }
 
     // First window: the Launcher (no vault pinned).

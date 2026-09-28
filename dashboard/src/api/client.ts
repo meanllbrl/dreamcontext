@@ -177,6 +177,45 @@ export class ApiClient {
   del<T>(path: string): Promise<T> {
     return this.request<T>(path, { method: 'DELETE' });
   }
+
+  /**
+   * POST raw bytes — a file, not a JSON envelope.
+   *
+   * Base64-in-JSON was the alternative and is worse on both ends: it inflates
+   * the payload by a third, and it would make the server decode a string
+   * before it could sniff the magic bytes it actually trusts. The vault still
+   * rides the header, because this is a POST and the `?vault=` query channel
+   * is deliberately GET-only (see `requestedVaultName`).
+   *
+   * `Content-Type` is `application/octet-stream` and is NOT a claim about what
+   * the file is: the server derives the real type from the bytes.
+   */
+  postBytes<T>(path: string, bytes: Blob | ArrayBuffer): Promise<T> {
+    return this.request<T>(path, {
+      method: 'POST',
+      body: bytes,
+      headers: { 'Content-Type': 'application/octet-stream' },
+    });
+  }
+}
+
+/**
+ * An agent's photo, as a URL an `<img>` can load.
+ *
+ * `?vault=` rather than the header for the reason `launcherLogoUrl` documents:
+ * a browser subresource carries no custom headers, and the server accepts the
+ * query channel on GET only.
+ *
+ * `v` is a CACHE BUSTER, not data: a photo is replaced in place at a stable
+ * URL, so without it the owner uploads a new picture and keeps looking at the
+ * old one. Callers pass something that changes when the photo does.
+ */
+export function automationPhotoUrl(vault: string | null, slug: string, v?: string | number): string {
+  const params = new URLSearchParams();
+  if (vault) params.set('vault', vault);
+  if (v !== undefined) params.set('v', String(v));
+  const qs = params.toString();
+  return `${BASE_URL}/automations/${encodeURIComponent(slug)}/photo${qs ? `?${qs}` : ''}`;
 }
 
 /**

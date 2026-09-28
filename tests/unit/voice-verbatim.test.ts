@@ -1,5 +1,6 @@
 /**
- * The two guards that stand between a model that did not do its job and the owner.
+ * The guard that stands between a speech model that did not do its job and the owner.
+ * (Its twin, the transcription echo guard, retired with cloud dictation on 2026-09-27.)
  *
  * Every string in here is REAL — measured against `openai/gpt-audio-mini` on the owner's key
  * on 2026-09-07, when the mode spoke a conversation of its own over a transcript that said
@@ -10,8 +11,6 @@
 
 import { describe, it, expect } from 'vitest';
 import { verbatimRatio, readVerbatim, VERBATIM_FLOOR, speechTokens } from '../../src/lib/voice/verbatim.js';
-import { usableTranscript, isPromptEcho, NO_SPEECH } from '../../src/lib/voice/echo.js';
-import { TRANSCRIBE_ASK } from '../../src/server/routes/agent-voice.js';
 
 /** Line sent → what the model actually spoke, when it answered instead of reading. */
 const ANSWERED: Array<[string, string]> = [
@@ -68,37 +67,5 @@ describe('verbatimRatio — did it read the line, or answer it', () => {
 
   it('is case-, accent- and punctuation-insensitive', () => {
     expect(speechTokens('Şu an, TAMAM mı?')).toEqual(speechTokens('şu an tamam mı'));
-  });
-});
-
-describe('usableTranscript — a take the model did not hear is never submitted', () => {
-  it('drops the ask recited back, which is what reached the agent as the owner\'s words', () => {
-    // Measured: 1.5 s of room tone, three times, three echoes of the prompt.
-    expect(usableTranscript(TRANSCRIBE_ASK, TRANSCRIBE_ASK)).toBe('');
-    // And the trimmed echo — the model drops the last sentence about as often as it repeats
-    // the paragraph whole.
-    const trimmed = TRANSCRIBE_ASK.split('If the audio')[0].trim();
-    expect(usableTranscript(trimmed, TRANSCRIBE_ASK)).toBe('');
-    expect(isPromptEcho(trimmed, TRANSCRIBE_ASK)).toBe(true);
-  });
-
-  it('drops the no-speech sentinel, however the model dresses it', () => {
-    expect(usableTranscript(NO_SPEECH, TRANSCRIBE_ASK)).toBe('');
-    expect(usableTranscript('NO_SPEECH.', TRANSCRIBE_ASK)).toBe('');
-    expect(usableTranscript(' no_speech ', TRANSCRIBE_ASK)).toBe('');
-  });
-
-  it('keeps a real transcript — including one that merely mentions the sentinel', () => {
-    expect(usableTranscript('sleep başlat', TRANSCRIBE_ASK)).toBe('sleep başlat');
-    expect(usableTranscript('  Şu an beni duyabiliyor musun?  ', TRANSCRIBE_ASK))
-      .toBe('Şu an beni duyabiliyor musun?');
-    expect(usableTranscript('the no_speech branch never runs', TRANSCRIBE_ASK))
-      .toBe('the no_speech branch never runs');
-  });
-
-  it('treats a non-string, or nothing at all, as nothing heard', () => {
-    expect(usableTranscript(undefined, TRANSCRIBE_ASK)).toBe('');
-    expect(usableTranscript({ text: 'hi' }, TRANSCRIBE_ASK)).toBe('');
-    expect(usableTranscript('   ', TRANSCRIBE_ASK)).toBe('');
   });
 });

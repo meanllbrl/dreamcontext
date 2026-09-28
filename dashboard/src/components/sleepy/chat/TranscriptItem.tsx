@@ -9,11 +9,13 @@ import {
 import { parseChatActions, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
 import { BoardEmbed } from './BoardEmbed';
+import { MediaEmbed } from './MediaEmbed';
 import { ChatBlockSegment, ChatViewNotices } from './ChatViews';
 import { IconButton } from './atoms';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
+import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
   ChatItem, ChatUserItem, ChatTextItem, ChatThinkingItem, ChatSession,
 } from '../chatSession';
@@ -26,8 +28,10 @@ import type {
  * Reused verbatim by the sub-agent drill-in (`SlideOver`'s `mode:'subagent'`) with
  * `readOnly` — the SAME components render a sidechain transcript, just with the hover
  * action bar reduced to Copy (no rewind/retry/quote, since a drill-in item has no live
- * `session` backing it and nothing to mutate). No avatar anywhere (hard rule 1):
- * `AssistantMessage` is a full-width block with no gutter, never a bubble-plus-icon row.
+ * `session` backing it and nothing to mutate). No avatar on a MESSAGE (hard rule 1):
+ * `AssistantMessage` is a full-width block with no gutter, never a bubble-plus-icon row. Step
+ * lines (tool rows, thinking) are the team log, and the lead of each stretch wears the
+ * speaker's 16px face.
  */
 
 function copyText(text: string): void {
@@ -78,11 +82,10 @@ function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path:
   }
   if (kind === 'video' || kind === 'audio') {
     return (
-      <video
+      <MediaEmbed
+        kind={kind}
         className="chat-msg-user-media-el"
         src={agentFileUrl(vault, path, { raw: true })}
-        controls
-        preload="metadata"
         onError={() => setFailed(true)}
       />
     );
@@ -173,12 +176,15 @@ function UserMessage({
  * what once let a whole answer revert to raw markdown, `<a href="…mp4">` and all, on
  * somebody else's re-render.
  */
-function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
+/** Exported for the `#agents` channel, which renders an agent's answer with THIS — the
+ *  chat's own card, markdown, leading and clickable paths — rather than a second, plainer
+ *  paragraph that reads like a different product. */
+export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
   text: string;
   onOpenFile?: (path: string) => void;
   /** The blinking cursor. Only the run that is currently being typed gets one. */
   caret?: boolean;
-  /** J.A.R.V.I.S mode's spoken-sentence marker needs both: the session to subscribe to, and
+  /** Assistant mode's spoken-sentence marker needs both: the session to subscribe to, and
    *  the item to compare the spoken chunk against. Absent everywhere else — a read-only
    *  drill-in has no session, and no session ever speaks. */
   session?: ChatSession;
@@ -221,8 +227,8 @@ function AssistantMessage({
    * This conversation's id — what a `dream-view` needs and nothing else does: a checklist's
    * Submit has to land somewhere, and an insight has to resolve against a project.
    *
-   * Absent on the two hosts that have no conversation: the read-only drill-in (SlideOver's
-   * sub-agent transcript) and the Meeting Room. Both still render the agent's `dream-html`,
+   * Absent on a host that has no conversation, such as the read-only drill-in (SlideOver's
+   * sub-agent transcript). It still renders the agent's `dream-html`,
    * which asks the host for nothing — see `viewsAllowed` below for why that stopped being one
    * gate with `onAction`.
    */
@@ -247,10 +253,9 @@ function AssistantMessage({
   //   `dream-view` asks for two real things — a conversation for a checklist's Submit to land
   //   in, and a project for an insight to resolve against.
   //
-  // The old `blocksAllowed = !!onAction && !!conversationId` charged HTML for both. The
-  // MEETING ROOM has neither (its store is machine-wide, its window holds no project), so an
-  // agent that answered the room with a drawn block had that block DROPPED — and dropped in
-  // silence, because the notices below rode the same gate. That is the one failure this
+  // The old `blocksAllowed = !!onAction && !!conversationId` charged HTML for both. A host
+  // with neither (a machine-wide store, a window that holds no project) had an agent's drawn
+  // block DROPPED — and dropped in silence, because the notices below rode the same gate. That is the one failure this
   // surface documents that it must never have.
   const viewsAllowed = !!conversationId;
 
@@ -354,7 +359,7 @@ function AssistantMessage({
 
 // ─── Thinking ───────────────────────────────────────────────────────────────────────
 
-function ThinkingBlock({ item }: { item: ChatThinkingItem }) {
+function ThinkingBlock({ item, stretch }: { item: ChatThinkingItem; stretch: StepStretch }) {
   const [open, setOpen] = useState(false);
   if (!item.text) return null;
   return (
@@ -364,15 +369,27 @@ function ThinkingBlock({ item }: { item: ChatThinkingItem }) {
       open={open}
       onToggle={() => setOpen((v) => !v)}
       body={item.text}
+      {...stretch}
     />
   );
 }
 
 // ─── Dispatcher ─────────────────────────────────────────────────────────────────────
 
+/** Where a step line sits in its speaker's stretch — see `stepStretches` (toolAction.ts). */
+interface StepStretch {
+  /** Who took the step. Absent reads as the lead. */
+  actor?: AgentRoleId;
+  /** Opens the stretch (shows the avatar) or follows it (keeps the column, hides the face). */
+  stretch?: 'lead' | 'follow';
+  /** A step in the stretch is running: the lead's avatar works. */
+  stretchRunning?: boolean;
+}
+
 function ItemViewInner({
   item, session, onOpenFile, onOpenBoard, onAction, conversationId, onQuote, readOnly = false,
-}: {
+  actor, stretch, stretchRunning,
+}: StepStretch & {
   item: ChatItem;
   /** The live session backing this item — omitted for a read-only drill-in transcript
    *  (SlideOver's `mode:'subagent'`), which has no session of its own to mutate. */
@@ -415,10 +432,20 @@ function ItemViewInner({
           readOnly={readOnly}
         />
       );
+    // Step lines: where they sit in their speaker's stretch is decided by the transcript
+    // (ChatPane, the drill-in), which is the only place that can see the neighbours.
     case 'thinking':
-      return <ThinkingBlock item={item} />;
+      return <ThinkingBlock item={item} stretch={{ actor, stretch, stretchRunning }} />;
     case 'tool':
-      return <ToolCard item={item} onOpenFile={onOpenFile} />;
+      return (
+        <ToolCard
+          item={item}
+          onOpenFile={onOpenFile}
+          actor={actor}
+          stretch={stretch}
+          stretchRunning={stretchRunning}
+        />
+      );
     default:
       return null;
   }
