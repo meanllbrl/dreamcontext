@@ -240,8 +240,9 @@ export async function hybridSearch(
     // ADD-ONLY: `corpus` may be type-scoped (e.g. the dashboard Knowledge search
     // asks only for knowledge+feature). Never evict out-of-scope vectors here, or
     // the next full-corpus query would re-embed the whole corpus inline. Pruning
-    // is the explicit refreshers' job.
-    refreshEmbeddings(contextRoot, corpus, undefined, { additive: true }),
+    // is the explicit refreshers' job. NEVER waits on the vault's cache lock: this
+    // runs in front of a prompt, so a held lock means search what is loaded.
+    refreshEmbeddings(contextRoot, corpus, undefined, { additive: true, waitForLock: false }),
     embedQuery(query),
   ]);
   if (refreshed === null || queryVec === null) return bm25Hits.slice(0, topK);
@@ -336,8 +337,8 @@ export async function denseSearch(
   denseExcludedTypes: readonly string[] = DENSE_EXCLUDED_TYPES,
 ): Promise<RecallHit[]> {
   const [refreshed, queryVec] = await Promise.all([
-    // ADD-ONLY, same reasoning as hybridSearch — never evict from a query-time corpus.
-    refreshEmbeddings(contextRoot, corpus, undefined, { additive: true }),
+    // ADD-ONLY and lock-never-waits, same reasoning as hybridSearch.
+    refreshEmbeddings(contextRoot, corpus, undefined, { additive: true, waitForLock: false }),
     embedQuery(query),
   ]);
   if (refreshed === null || queryVec === null) return [];

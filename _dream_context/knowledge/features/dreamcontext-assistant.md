@@ -1,7 +1,7 @@
 ---
-id: "feat_lWnraM5v"
-type: "feature"
-name: "dreamcontext-assistant"
+id: feat_lWnraM5v
+type: feature
+name: dreamcontext-assistant
 description: >-
   An assistant that lives ABOVE every project: a hidden vault
   (`~/.dreamcontext/assistant/`) driven by one long-lived Claude Code session,
@@ -11,11 +11,11 @@ description: >-
   mode and the Meeting Room retired into it. The native checks wait on the
   owner's manual checklist.
 pinned: false
-date: "2026-09-26"
-status: "in_review"
+date: '2026-09-26'
+status: in_review
 product: desktop
-created: "2026-09-26"
-updated: "2026-09-27"
+created: '2026-09-26'
+updated: '2026-09-27'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -26,6 +26,8 @@ tags:
 related_tasks:
   - >-
     a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica
+  - >-
+    the-notch-assistant-answers-without-the-15-40-s-of-plumbing-in-front-of-every-turn
 ---
 
 ## Why

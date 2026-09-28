@@ -80,6 +80,26 @@ export function acquireFileLock(
 }
 
 /**
+ * {@link acquireFileLock} with a bounded spin: retry every `pollMs` until the lock is held or
+ * `waitMs` has passed. `waitMs: 0` is a single try — the caller that must NEVER wait (the
+ * recall hook's embedding refresh) and the caller that waits (an index build) share one
+ * primitive. Resolves true when THIS process now holds the lock.
+ */
+export async function acquireFileLockWithin(
+  lockPath: string,
+  opts: { waitMs: number; staleMs: number; pollMs?: number; now?: () => number },
+): Promise<boolean> {
+  const now = opts.now ?? Date.now;
+  const pollMs = opts.pollMs ?? 25;
+  const deadline = now() + Math.max(0, opts.waitMs);
+  for (;;) {
+    if (acquireFileLock(lockPath, now(), opts.staleMs)) return true;
+    if (now() >= deadline) return false;
+    await new Promise((r) => { setTimeout(r, pollMs); });
+  }
+}
+
+/**
  * Release a lock acquired by {@link acquireFileLock}. Best-effort and idempotent
  * — safe to call if the lock is already gone (e.g. a stale-break handed it off).
  */

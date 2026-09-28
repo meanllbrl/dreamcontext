@@ -202,6 +202,12 @@ async function getExtractor(): Promise<Extractor | null> {
       try {
         const tf = await import('@huggingface/transformers');
         tf.env.cacheDir = EMBED_MODEL_CACHE_DIR;
+        // Offline once the model is on disk: the hook and the index build must never touch
+        // the network (a revalidation fetch is seconds in front of a prompt). Only a load with
+        // the model ABSENT — the explicit download door, POST /api/embeddings/download — may
+        // fetch. Set right before EVERY pipeline call because tf.env is process-global; this
+        // pipeline is memoized per process, so a later download attempt re-sets it.
+        tf.env.allowRemoteModels = !isEmbedModelDownloaded();
         const pipe = await tf.pipeline('feature-extraction', EMBED_MODEL, {
           dtype: 'q8',
           progress_callback: recordProgress,

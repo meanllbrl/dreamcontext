@@ -301,7 +301,8 @@ export async function dedupCandidate(
   let candidateVecs: Float32Array[] | null;
   try {
     [refreshed, candidateVecs] = await Promise.all([
-      refreshEmbeddings(contextRoot, corpus, embed, { additive: true, force: opts.force }),
+      // Bounded wait on the vault's cache lock; a timeout throws into the catch below.
+      refreshEmbeddings(contextRoot, corpus, embed, { additive: true, force: opts.force, waitForLock: true }),
       embed(candidateTexts),
     ]);
   } catch (err) {

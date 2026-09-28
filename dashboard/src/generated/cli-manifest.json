@@ -131,7 +131,7 @@
     },
     {
       "path": "assistant watch",
-      "desc": "Wait until a chat is idle / asking / changes; returns at once if it has ended",
+      "desc": "Wait until a chat settles (idle or asking) / is idle / asking / changes; returns at once if it has ended",
       "args": [
         "<sessionId>"
       ],

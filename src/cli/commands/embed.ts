@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, warn, error } from '../../lib/format.js';
 import { buildCorpus, type CorpusType } from '../../lib/recall.js';
-import { refreshEmbeddings, embeddingCacheExists } from '../../lib/embeddings/store.js';
+import { refreshEmbeddings, embeddingCacheExists, EmbeddingLockBusyError } from '../../lib/embeddings/store.js';
 import { EMBED_MODEL, embeddingsAvailable } from '../../lib/embeddings/embedder.js';
 import {
   dedupCandidate,
@@ -76,7 +76,15 @@ export function registerEmbedCommand(program: Command): void {
       }
       const t0 = performance.now();
       const corpus = buildCorpus(root);
-      const res = await refreshEmbeddings(root, corpus, undefined, { force: opts.force ?? false });
+      let res: Awaited<ReturnType<typeof refreshEmbeddings>>;
+      try {
+        res = await refreshEmbeddings(root, corpus, undefined, { force: opts.force ?? false, waitForLock: true });
+      } catch (err) {
+        if (!(err instanceof EmbeddingLockBusyError)) throw err;
+        warn(err.message);
+        process.exitCode = 1;
+        return;
+      }
       if (res === null) {
         warn('Refresh failed: embedding model unavailable.');
         process.exitCode = 1;

@@ -63,7 +63,13 @@ export interface AssistantConfig {
   /** The one long-lived conversation the notch resumes on every summon. */
   conversationId: string | null;
   speak: boolean;
+  /** The Assistant's own `--effort`. Deliberately NOT the owner's chat default: a notch turn
+   *  is a relay, and xhigh (the CLI default this machine inherits) makes every relay slow. */
+  effort?: AssistantEffort;
 }
+
+export const ASSISTANT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+export type AssistantEffort = typeof ASSISTANT_EFFORTS[number];
 
 export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
   name: 'Assistant',
@@ -73,6 +79,7 @@ export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
   enabled: true,
   conversationId: null,
   speak: false,
+  effort: 'medium',
 };
 
 export function assistantConfigPath(home: string = homedir()): string {
@@ -94,6 +101,9 @@ export function sanitizeConfigPatch(raw: unknown): Partial<AssistantConfig> {
   if (typeof r.name === 'string' && r.name.trim() && r.name.trim().length <= 40) out.name = r.name.trim();
   if (typeof r.autonomy === 'string' && (AUTONOMY_LEVELS as readonly string[]).includes(r.autonomy)) {
     out.autonomy = r.autonomy as Autonomy;
+  }
+  if (typeof r.effort === 'string' && (ASSISTANT_EFFORTS as readonly string[]).includes(r.effort)) {
+    out.effort = r.effort as AssistantEffort;
   }
   if (typeof r.autostart === 'boolean') out.autostart = r.autostart;
   if (typeof r.speak === 'boolean') out.speak = r.speak;

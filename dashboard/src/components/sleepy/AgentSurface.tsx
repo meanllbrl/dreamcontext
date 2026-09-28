@@ -1109,7 +1109,12 @@ export function AgentSurface() {
   //   1 bp             2 claudeId      3 resume        4 kind
   //   5 initialPrompt  6 model         7 submitInitial 8 promptToken
   //   9 deferPrompt   10 effort       11 explicitBypass 12 mode
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE, accountId = '') => {
+  //  13 accountId     14 origin
+  //
+  // `origin` is 'assistant' ONLY from the doorbell's openChat (a chat the Assistant started);
+  // every other call site passes nothing. A respawn of that chat needs no client change: the
+  // server re-derives the marker from the conversation it resumes.
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE, accountId = '', origin: '' | 'assistant' = '') => {
     if (kind === 'chat') {
       // Read through the REF, not the state value: `changeChatPermissionMode` below can
       // respawn a conversation in the very same tick it changes the mode, and this closure's
@@ -1131,7 +1136,7 @@ export function AgentSurface() {
       // chatSession.ts's header note).
       // '' = let the server resolve the default (the preferred account, else account #0).
       // The picker and the auto-switch restart are the only callers that name one.
-      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId);
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       // Every chat spawned anywhere in this surface follows the signed-in account, for the
@@ -2146,7 +2151,7 @@ export function AgentSurface() {
       return session && session.kind === 'chat' ? session as ChatSession : null;
     },
     openChat: (inline, token, mode) => {
-      const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', false, mode);
+      const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', false, mode, '', 'assistant');
       setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId, mode }]);
       // Placement mirrors `delegateAgent`'s reveal branch: a tab of the focused pane.
       if (panes.length === 0) {

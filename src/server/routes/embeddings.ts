@@ -48,7 +48,7 @@ export async function handleEmbeddingModelDownload(
 
 type IndexState = 'not_built' | 'building' | 'ready' | 'error';
 
-interface IndexBuildRun {
+export interface IndexBuildRun {
   state: IndexState;
   done: number;
   total: number;
@@ -61,6 +61,8 @@ interface IndexBuildRun {
 // One build at a time per vault (keyed by contextRoot). refreshEmbeddings is
 // incremental, so a re-run after the first is cheap.
 const indexRuns = new Map<string, IndexBuildRun>();
+/** The settle promise of each vault's latest run (one per key, replaced with the run). */
+const runFinished = new Map<string, Promise<void>>();
 
 /** Snapshot the vault's embedding-index status: a live build wins, else disk truth. */
 function indexStatusFor(contextRoot: string) {
@@ -120,22 +122,60 @@ export async function handleEmbeddingIndexBuild(
     sendError(res, 409, 'model_missing', 'Download the embedding model first.');
     return;
   }
+  // The owner pressed Build: an explicit retry is never held back by the failure cooldown.
+  startIndexBuild(contextRoot, { ignoreCooldown: true });
+  sendJson(res, 200, { ok: true, ...indexStatusFor(contextRoot) });
+}
 
+/** A build that ended in error is not re-fired automatically for this long (in memory:
+ *  a server restart forgets it — a crash-looping server may retry once per restart). */
+export const INDEX_BUILD_ERROR_COOLDOWN_MS = 30 * 60_000;
+
+type Embedder = Parameters<typeof refreshEmbeddings>[2];
+
+export interface StartIndexBuildOpts {
+  /** The explicit Build button bypasses the error cooldown; automatic callers never do. */
+  ignoreCooldown?: boolean;
+  /** Injectable for tests; defaults to the real model. */
+  embed?: Embedder;
+  now?: () => number;
+}
+
+/**
+ * Start (or join) this vault's background index build and return at once — the single-flight
+ * door every build goes through, keyed by contextRoot in {@link indexRuns}. Returns the run
+ * and whether THIS call started it. Never downloads the model: refreshEmbeddings only embeds
+ * with a model already on disk (see embedder.ts's offline flag); callers check
+ * `isEmbedModelDownloaded()` first. Errors land in the run's error state, never thrown.
+ */
+export function startIndexBuild(
+  contextRoot: string,
+  opts: StartIndexBuildOpts = {},
+): { started: boolean; run: IndexBuildRun; done: Promise<void> } {
+  const now = opts.now ?? Date.now;
   const existing = indexRuns.get(contextRoot);
   if (existing?.state === 'building') {
-    sendJson(res, 200, { ok: true, ...indexStatusFor(contextRoot) });
-    return;
+    return { started: false, run: existing, done: runFinished.get(contextRoot) ?? Promise.resolve() };
+  }
+  if (
+    !opts.ignoreCooldown && existing?.state === 'error'
+    && existing.endedAt !== undefined && now() - existing.endedAt < INDEX_BUILD_ERROR_COOLDOWN_MS
+  ) {
+    return { started: false, run: existing, done: Promise.resolve() };
   }
 
-  const run: IndexBuildRun = { state: 'building', done: 0, total: 0, chunks: 0, error: null, startedAt: Date.now() };
+  const run: IndexBuildRun = { state: 'building', done: 0, total: 0, chunks: 0, error: null, startedAt: now() };
   indexRuns.set(contextRoot, run);
 
-  // Fire-and-forget: the response returns immediately; the client polls status.
-  void (async () => {
+  // Fire-and-forget: the caller returns immediately; the client polls status.
+  const done = (async () => {
     try {
       const corpus = buildCorpus(contextRoot);
-      const result = await refreshEmbeddings(contextRoot, corpus, undefined, {
-        onProgress: (done, total) => { run.done = done; run.total = total; },
+      const result = await refreshEmbeddings(contextRoot, corpus, opts.embed, {
+        onProgress: (d, total) => { run.done = d; run.total = total; },
+        // A build waits (bounded) for another writer; a timeout lands in `error` below,
+        // so the cooldown applies and nothing is written.
+        waitForLock: true,
       });
       if (result === null) {
         run.state = 'error';
@@ -148,9 +188,35 @@ export async function handleEmbeddingIndexBuild(
       run.state = 'error';
       run.error = err instanceof Error ? err.message : 'Index build failed.';
     } finally {
-      run.endedAt = Date.now();
+      run.endedAt = now();
     }
   })();
+  runFinished.set(contextRoot, done);
+  return { started: true, run, done };
+}
 
-  sendJson(res, 200, { ok: true, ...indexStatusFor(contextRoot) });
+/**
+ * The Assistant's own index, built without the owner doing anything: iff the model is on
+ * disk and the vault's cache is not usable (never built, or invalidated by a model/version
+ * change), start a background build through {@link startIndexBuild}. Never downloads the
+ * model, never blocks, and a second call during a build (or inside the error cooldown) starts
+ * nothing. Returns whether a build was started.
+ */
+export function ensureIndexBuilt(
+  contextRoot: string,
+  deps: { modelOnDisk?: () => boolean; usable?: (root: string) => boolean } & StartIndexBuildOpts = {},
+): boolean {
+  try {
+    const modelOnDisk = (deps.modelOnDisk ?? isEmbedModelDownloaded)();
+    if (!modelOnDisk || (deps.usable ?? embeddingCacheUsable)(contextRoot)) return false;
+    return startIndexBuild(contextRoot, deps).started;
+  } catch {
+    return false; // a status read that throws must never fail a spawn
+  }
+}
+
+/** Test-only: forget every build run (the cooldown is in-memory by design). */
+export function _resetIndexRuns(): void {
+  indexRuns.clear();
+  runFinished.clear();
 }

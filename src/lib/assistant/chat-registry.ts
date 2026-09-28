@@ -84,6 +84,9 @@ export interface ChatEntry {
   lastFrameAt: string;
   /** Top-level tool calls asked for and not yet answered by a tool_result. */
   toolsInFlight: number;
+  /** Set when the Assistant started this chat (a delegation). Rides the entry's own lifetime:
+   *  a respawn of the same conversation inherits it via {@link isDelegatedConversation}. */
+  origin?: 'assistant';
 }
 
 export interface ChatHandle {
@@ -210,7 +213,7 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
 }
 
 /** Register a live chat. Returns the handle the bridge feeds. */
-export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string }): ChatHandle {
+export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant' }): ChatHandle {
   const existingDeath = deathTimers.get(init.sessionId);
   if (existingDeath) { clearTimeout(existingDeath); deathTimers.delete(init.sessionId); }
   const e: ChatEntry = {
@@ -225,6 +228,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     updatedAt: new Date().toISOString(),
     lastFrameAt: new Date().toISOString(),
     toolsInFlight: 0,
+    ...(init.origin === 'assistant' ? { origin: 'assistant' as const } : {}),
   };
   entries.set(init.sessionId, e);
   let dead = false;
@@ -312,6 +316,21 @@ export function listChats(filter: { vault?: string; status?: ChatStatus } = {}):
     .filter((e) => (!filter.vault || e.vault === filter.vault) && (!filter.status || e.status === filter.status))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .map(clone);
+}
+
+/**
+ * Did the Assistant start the conversation `conversationId`? True while an entry for it with
+ * `origin: 'assistant'` is still in the registry — live, or `gone` and not yet deleted
+ * (GONE_TTL_MS). That is how a respawn-in-place (Resume, account or mode switch — each a new
+ * spawn of the same conversation) keeps the delegation marker without a store of its own:
+ * the old entry is still here when the new spawn registers, and the new entry carries it on.
+ */
+export function isDelegatedConversation(conversationId: string): boolean {
+  if (!conversationId) return false;
+  for (const e of entries.values()) {
+    if (e.origin === 'assistant' && e.conversationId === conversationId) return true;
+  }
+  return false;
 }
 
 export function getChat(sessionId: string): ChatEntry | null {

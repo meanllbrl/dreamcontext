@@ -481,8 +481,20 @@ describe('modeBriefing', () => {
   // own text is a contract too, the owner's swipe verdicts: predict and show only misses, no
   // rule per round, a confirm-gated write, the automation's playbook route. The card SHAPES
   // stay in the surface briefing; nothing here re-explains them.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 3700 };  // assistant +500 (2026-09-27): the delegate-don't-do rule
+  //
+  // `assistant` went 3700 → 4000 (2026-09-28) for two latency rules: say what you are doing
+  // before a delegation call (it is spoken while the owner waits), and a single-quoted --prompt
+  // (a backtick in one failed and cost a 15 s retry). The test below keeps 150 chars of headroom.
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 4000 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules
   const DEFAULT_CEILING = 1600;
+
+  it('assistant: speaks before delegating, single-quotes --prompt, and stays 150 under its ceiling', () => {
+    const brief = assistantBriefing({ name: 'Assistant', character: '', autonomy: 'ask', roster: '' });
+    expect(brief).toContain('Before chat, watch, send or broadcast, first write ONE short sentence');
+    expect(brief).toContain('it is read aloud while you wait');
+    expect(brief).toContain('Pass --prompt in single quotes; never backticks or $() inside it.');
+    expect(brief.length).toBeLessThanOrEqual(3850);
+  });
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {
     for (const mode of CHAT_MODES) {

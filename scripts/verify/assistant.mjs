@@ -38,7 +38,8 @@ const PROJ = (n) => join(SCRATCH, 'projects', n);
 const ECHO = '<<<DC-SPAWN-ECHO>>>';
 
 const STANDIN = `#!${process.execPath}
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const argv = process.argv.slice(2);
@@ -60,11 +61,28 @@ const report = {
   permissionMode: flag('--permission-mode'),
   token: process.env.DREAMCONTEXT_ASSISTANT_TOKEN ?? null,
   url: process.env.DREAMCONTEXT_ASSISTANT_URL ?? null,
+  // What the latency legs read: the recall mode forced on this process's hooks, the effort and
+  // the pre-approved tools it was spawned with, and which conversation it pinned or resumed.
+  recallMode: process.env.DREAMCONTEXT_RECALL_MODE ?? null,
+  effort: flag('--effort'),
+  allowedTools: flag('--allowedTools'),
+  sessionIdArg: flag('--session-id'),
+  resumeArg: flag('--resume'),
   briefing,
 };
 let initDone = false;
 function turn(text) {
-  if (!initDone) { initDone = true; out({ type: 'system', subtype: 'init', session_id: 'conv-' + process.pid, model: 'x', cwd: process.cwd(), slash_commands: [] }); }
+  // Like the real CLI, init names the conversation it pinned (--session-id) or resumed
+  // (--resume): the chat registry keys a chat's conversation off this frame.
+  const convId = flag('--session-id') ?? flag('--resume');
+  if (!initDone) { initDone = true; out({ type: 'system', subtype: 'init', session_id: convId ?? 'conv-' + process.pid, model: 'x', cwd: process.cwd(), slash_commands: [] }); }
+  // KEEP:<text> leaves a transcript behind, as a real claude does after a first turn, so the
+  // server will --resume this conversation instead of pinning a fresh one.
+  if (text.startsWith('KEEP:') && convId) {
+    const dir = join(homedir(), '.claude', 'projects', 'verify-standin');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, convId + '.jsonl'), JSON.stringify({ type: 'user', sessionId: convId, message: { role: 'user', content: text } }) + '\\n');
+  }
   if (text === 'ASK') {
     out({ type: 'control_request', request_id: 'q-' + process.pid, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which DB?', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] } } });
     return;
@@ -115,6 +133,10 @@ function setupScratch() {
     const add = spawnSync(process.execPath, [CLI, 'vaults', 'add', n, PROJ(n)], { env: { ...process.env, HOME }, encoding: 'utf-8' });
     if (add.status !== 0) throw new Error(`vaults add ${n} failed: ${add.stderr || add.stdout}`);
   }
+  // alpha keeps the default recall mode (haiku); beta is switched to raw — a delegation must
+  // leave a non-haiku vault's recall alone.
+  const raw = spawnSync(process.execPath, [CLI, 'recall', 'raw'], { cwd: PROJ('beta-app'), env: { ...process.env, HOME, DREAMCONTEXT_RECALL_MODE: '' }, encoding: 'utf-8' });
+  if (raw.status !== 0) throw new Error(`recall raw failed: ${raw.stderr || raw.stdout}`);
   // A real task in alpha, for the W4 detail button to land on.
   const task = spawnSync(process.execPath, [CLI, 'tasks', 'create', 'Fix the login flow', '--why', 'Owners cannot sign in.'], { cwd: PROJ('alpha-app'), env: { ...process.env, HOME }, encoding: 'utf-8' });
   if (task.status !== 0) throw new Error(`tasks create failed: ${task.stderr || task.stdout}`);
@@ -128,10 +150,13 @@ const LINGER_MS = 2000;
 const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
 
 async function startServer(port) {
+  // A recall mode in THIS shell's env would override every vault's own (sleep.ts
+  // resolveRecallMode) and blind the latency legs; the server runs without one.
+  const { DREAMCONTEXT_RECALL_MODE: _shellRecall, ...shellEnv } = process.env;
   const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ('alpha-app'),
     // The linger is shortened so the W2 notch check can outwait it (agent-chat.ts closeLingerMs).
-    env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_CHAT_CLOSE_LINGER_MS: String(LINGER_MS) },
+    env: { ...shellEnv, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_CHAT_CLOSE_LINGER_MS: String(LINGER_MS) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
@@ -255,6 +280,10 @@ try {
   ok('the __assistant__ chat gets the token and a loopback URL', /^dca_[0-9a-f]{12}_[0-9a-f]{48}$/.test(a.token ?? '') && a.url === `http://127.0.0.1:${port}`, JSON.stringify({ token: a.token?.slice(0, 10), url: a.url }));
   ok('mode=basic in the URL is FORCED to the assistant briefing', (a.briefing ?? '').includes('# Mode: dreamcontext Assistant') && a.briefing.includes('**Nova**'));
   ok('autonomy ask → claude permission mode "default"', a.permissionMode === 'default', a.permissionMode);
+  ok('the __assistant__ spawn runs --effort medium (its config default)', a.effort === 'medium', String(a.effort));
+  ok('under ask the __assistant__ argv carries NO --allowedTools', a.allowedTools === null, String(a.allowedTools));
+  ok('its hooks recall raw (no embedding model on disk) — never haiku', a.recallMode === 'raw', String(a.recallMode));
+  ok('an ordinary project chat carries no --allowedTools and no forced recall mode', alphaReport.allowedTools === null && alphaReport.recallMode === null, JSON.stringify({ allowedTools: alphaReport.allowedTools, recallMode: alphaReport.recallMode }));
   ok('the briefing carries the roster and the untrusted rule', a.briefing.includes('## Projects (3)') && a.briefing.includes('alpha-app') && a.briefing.includes('UNTRUSTED CONTENT'));
   const env = { DREAMCONTEXT_ASSISTANT_URL: a.url, DREAMCONTEXT_ASSISTANT_TOKEN: a.token };
 
@@ -412,6 +441,86 @@ try {
     await sleep(500);
   }
 
+  // ── latency: the delegation marker, the recall it buys, effort, pre-approved verbs ──────
+  // Protocol level, against the contract the notch's doorbell uses (origin=assistant on the
+  // chat URL). The stand-in reports its own env/argv; alpha is a haiku vault, beta a raw one.
+  console.log('\n── latency: origin=assistant → cheap recall + medium effort; it survives a resume');
+  {
+    const turnIn = async (params, text = 'probe') => {
+      const s = openChat(WebSocket, port, params);
+      sockets.push(s);
+      try { return { s, r: await s.say(text) }; } catch (err) { s.close(); return { s, r: null, err: String(err) }; }
+    };
+    const pick = (r) => JSON.stringify(r && { recallMode: r.recallMode, effort: r.effort, allowedTools: r.allowedTools, sessionIdArg: r.sessionIdArg, resumeArg: r.resumeArg });
+
+    const ord = await turnIn({ vault: 'alpha-app', sessionId: randomUUID(), mode: 'basic' });
+    ok('an ordinary chat in a haiku vault is unchanged: no forced recall mode, no --effort', ord.r?.recallMode === null && ord.r?.effort === null, pick(ord.r));
+    ord.s.close();
+
+    const delSid = randomUUID();
+    const del = await turnIn({ vault: 'alpha-app', sessionId: delSid, mode: 'basic', origin: 'assistant' }, 'KEEP: delegated turn');
+    ok('a delegated chat in a haiku vault recalls raw (model absent), never haiku', del.r?.recallMode === 'raw', pick(del.r));
+    ok('a delegated basic chat with no URL effort runs --effort medium', del.r?.effort === 'medium', pick(del.r));
+    ok('a delegated chat carries no --allowedTools', del.r !== null && del.r.allowedTools === null, pick(del.r));
+
+    const plan = await turnIn({ vault: 'alpha-app', sessionId: randomUUID(), mode: 'plan', origin: 'assistant' });
+    ok('a delegated plan chat keeps the default effort (no --effort)', plan.r !== null && plan.r.effort === null, pick(plan.r));
+    plan.s.close();
+
+    const beta = await turnIn({ vault: 'beta-app', sessionId: randomUUID(), mode: 'basic', origin: 'assistant' });
+    ok('a delegated chat in a raw vault gets no forced recall mode (its own raw stands)', beta.r !== null && beta.r.recallMode === null, pick(beta.r));
+    beta.s.close();
+
+    // Close + resume the SAME conversation, WITHOUT origin on the URL: the server re-derives it.
+    del.s.close();
+    await sleep(LINGER_MS + 1000);
+    const back = await turnIn({ vault: 'alpha-app', resume: delSid, mode: 'basic' });
+    ok('delegate → close → resume the same id: it is a --resume of that conversation', back.r?.resumeArg === delSid, pick(back.r) + (back.err ?? ''));
+    ok('…and it still carries the delegation marker (recall raw, effort medium)', back.r?.recallMode === 'raw' && back.r?.effort === 'medium', pick(back.r));
+    back.s.close();
+
+    // Control: an ordinary conversation resumed the same way stays ordinary.
+    const plainSid = randomUUID();
+    const plain = await turnIn({ vault: 'alpha-app', sessionId: plainSid, mode: 'basic' }, 'KEEP: plain turn');
+    plain.s.close();
+    await sleep(LINGER_MS + 1000);
+    const plainBack = await turnIn({ vault: 'alpha-app', resume: plainSid, mode: 'basic' });
+    ok('control: an ordinary chat closed + resumed stays ordinary (no forced recall)', plainBack.r?.resumeArg === plainSid && plainBack.r?.recallMode === null, pick(plainBack.r) + (plainBack.err ?? ''));
+    plainBack.s.close();
+
+    // The embedding model "on disk" (the three files isEmbedModelDownloaded checks) → hybrid.
+    const modelDir = join(HOME, '.dreamcontext', 'models', 'Xenova', 'multilingual-e5-small');
+    mkdirSync(join(modelDir, 'onnx'), { recursive: true });
+    for (const f of ['onnx/model_quantized.onnx', 'config.json', 'tokenizer.json']) writeFileSync(join(modelDir, f), '');
+    try {
+      const hyb = await turnIn({ vault: 'alpha-app', sessionId: randomUUID(), mode: 'basic', origin: 'assistant' });
+      ok('with the model on disk, a delegated chat in a haiku vault recalls hybrid', hyb.r?.recallMode === 'hybrid', pick(hyb.r));
+      hyb.s.close();
+      const ordH = await turnIn({ vault: 'alpha-app', sessionId: randomUUID(), mode: 'basic' });
+      ok('with the model on disk, an ordinary chat is still unchanged', ordH.r !== null && ordH.r.recallMode === null, pick(ordH.r));
+      ordH.s.close();
+      const asH = await turnIn({ vault: '__assistant__', sessionId: randomUUID(), mode: 'basic' });
+      ok('with the model on disk, the __assistant__ spawn recalls hybrid', asH.r?.recallMode === 'hybrid', pick(asH.r));
+      asH.s.close();
+    } finally {
+      rmSync(join(HOME, '.dreamcontext', 'models'), { recursive: true, force: true });
+    }
+
+    // --allowedTools on the __assistant__ argv follows autonomy: auto only.
+    const allowed = {};
+    for (const level of ['auto', 'bypass', 'ask']) {
+      await post('/api/assistant/profile', { autonomy: level });
+      await sleep(300);
+      const as = await turnIn({ vault: '__assistant__', sessionId: randomUUID(), mode: 'basic' });
+      allowed[level] = as.r ? as.r.allowedTools : 'no-report';
+      as.s.close();
+      await sleep(300);
+    }
+    ok('__assistant__ argv: --allowedTools "Bash(dreamcontext assistant:*)" under auto', allowed.auto === 'Bash(dreamcontext assistant:*)', JSON.stringify(allowed));
+    ok('__assistant__ argv: no --allowedTools under bypass or ask', allowed.bypass === null && allowed.ask === null, JSON.stringify(allowed));
+    await post('/api/assistant/profile', { autonomy: 'ask' });
+  }
+
   // ── W2 notch UI in a real browser: collapse is never an unmount ───────────────────────
   console.log('\n── W2 notch UI (Chromium): collapsed past the linger, session + relay still answer');
   let browser = null;
@@ -447,6 +556,10 @@ try {
           }
           if (cmd === 'plugin:event|unlisten') { drop(args.event, args.eventId); return null; }
           window.__calls.push({ cmd, args: JSON.parse(JSON.stringify(args ?? {})) });
+          // A frame without monitor geometry keeps the window where it is (Notch.tsx frameItem),
+          // which reads the window's own position: answer it as the native side would.
+          if (cmd === 'plugin:window|outer_position') return { x: 0, y: 0 };
+          if (cmd === 'plugin:window|scale_factor') return 1;
           return null;
         },
       };
@@ -571,14 +684,19 @@ try {
     }
     const same = await page.waitForFunction(() => document.body.innerText.includes('"said":"second turn"'), null, { timeout: 30_000 }).then(() => true, () => false);
     ok('and the SAME session still answers a new turn', same);
+    // The stand-in answers in milliseconds; the pop-out's frame lands a few IPCs later
+    // (show, outer_position, scale_factor, then set_frames), so wait for it before reading.
+    await page.waitForFunction(() => window.__calls.some((c) => c.cmd === 'set_frames'), null, { timeout: 5000 }).catch(() => {});
     const popCalls = await page.evaluate(() => window.__calls.map((c) => {
       if (c.cmd === 'plugin:event|emit') return `emit ${c.args.event} ${JSON.stringify(c.args.payload)}`;
       if (c.cmd === 'plugin:window|set_size') { const v = c.args.value; const z = v?.Logical ?? v?.data ?? v; return `set_size ${z?.width}x${z?.height}`; }
+      // Windows move through ONE set_frames call (lib/windowFrames.ts → frames.rs): label + size per item.
+      if (c.cmd === 'set_frames') return `set_frames ${(c.args.items ?? []).map((i) => `${i.label} ${i.width}x${i.height}`).join(',')}`;
       if (c.cmd === 'plugin:window|set_focus') return 'set_focus';
       return null;
     }).filter(Boolean));
-    ok('it asked for the window seat at the side size (480x620)', popCalls.includes('emit assistant://seat {"seat":"window"}') && popCalls.includes('set_size 480x620'), popCalls.join(' | '));
-    ok('stepping out never takes focus from the app the owner is in', !popCalls.slice(0, popCalls.indexOf('set_size 480x620') + 1).includes('set_focus'), popCalls.join(' | '));
+    ok('it asked for the window seat at the side size (480x620)', popCalls.includes('emit assistant://seat {"seat":"window"}') && popCalls.includes('set_frames assistant 480x620'), popCalls.join(' | ') + ' || all: ' + (await page.evaluate(() => window.__calls.map((c) => c.cmd).join(','))));
+    ok('stepping out never takes focus from the app the owner is in', !popCalls.slice(0, popCalls.indexOf('set_frames assistant 480x620') + 1).includes('set_focus'), popCalls.join(' | '));
     const home = await page.waitForFunction(() => !document.querySelector('.dc-notch--window') && !!document.querySelector('.dc-notch__panel[hidden]'), null, { timeout: 15_000 }).then(() => true, () => false);
     ok('once the turn is over (nothing read aloud: after the reading pause) it goes home to the collapsed notch', home);
     const homeCalls = await page.evaluate(() => window.__calls.filter((c) => c.cmd === 'plugin:event|emit').map((c) => JSON.stringify(c.args.payload)));
@@ -599,6 +717,8 @@ try {
     const seatCalls = () => page.evaluate(() => window.__calls.map((c) => {
       if (c.cmd === 'plugin:event|emit') return `emit ${c.args.event} ${JSON.stringify(c.args.payload)}`;
       if (c.cmd === 'plugin:window|set_size') { const v = c.args.value; const z = v?.Logical ?? v?.data ?? v; return `set_size ${z?.width}x${z?.height}`; }
+      // Windows move through ONE set_frames call (lib/windowFrames.ts → frames.rs): label + size per item.
+      if (c.cmd === 'set_frames') return `set_frames ${(c.args.items ?? []).map((i) => `${i.label} ${i.width}x${i.height}`).join(',')}`;
       return null;
     }).filter(Boolean));
     const popBtn = await page.locator('.dc-notch__popout').count();
@@ -620,7 +740,7 @@ try {
     ok('popped out: the SAME .agent-pane-chat node (never an unmount)', popped.samePane, JSON.stringify(popped));
     const outCalls = await seatCalls();
     ok('popped out: it asks the native side for the window seat, then sizes itself 720x640',
-      outCalls.join(' | ') === 'emit assistant://seat {"seat":"window"} | set_size 720x640', outCalls.join(' | '));
+      outCalls.join(' | ') === 'emit assistant://seat {"seat":"window"} | set_frames assistant 720x640', outCalls.join(' | '));
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
     ok('popped out, Escape does not close the window', await page.locator('.dc-notch__panel').isVisible());
@@ -635,7 +755,7 @@ try {
     await page.waitForTimeout(300);
     const dockCalls = await seatCalls();
     ok('Dock asks the native side for the notch seat and sizes back to the open notch (580x560)',
-      dockCalls.join(' | ') === 'emit assistant://seat {"seat":"notch"} | set_size 580x560', dockCalls.join(' | '));
+      dockCalls.join(' | ') === 'emit assistant://seat {"seat":"notch"} | set_frames assistant 580x560', dockCalls.join(' | '));
     await page.waitForTimeout(300);
     const docked = await page.evaluate(() => ({
       window: !!document.querySelector('.dc-notch--window'),
@@ -645,6 +765,54 @@ try {
     }));
     ok('Dock returns it to the notch seat, still open, still the same pane', !docked.window && docked.popout && docked.open && docked.samePane, JSON.stringify(docked));
     await page.close();
+
+    // ── the notch shows it is working the moment you send, before any server frame ──────
+    // Every inbound frame on the chat socket is HELD in the page while the send happens, so
+    // whatever lights up can only have come from the client's own optimistic state.
+    console.log('\n── the notch lights up within 300 ms of send, with every server frame held back');
+    const wpage = await browser.newPage({ viewport: { width: 580, height: 560 } });
+    await wpage.addInitScript(notchTauri);
+    await wpage.addInitScript(() => {
+      window.__holdFrames = false;
+      window.__held = [];
+      const chat = (ws) => typeof ws.url === 'string' && ws.url.includes('/api/agent/chat');
+      const gate = (ws, fn) => function (ev) {
+        if (window.__holdFrames && chat(ws)) { window.__held.push(() => fn.call(this, ev)); return undefined; }
+        return fn.call(this, ev);
+      };
+      const desc = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
+      Object.defineProperty(WebSocket.prototype, 'onmessage', {
+        configurable: true,
+        get() { return desc.get.call(this); },
+        set(fn) { desc.set.call(this, typeof fn === 'function' ? gate(this, fn) : fn); },
+      });
+      const add = WebSocket.prototype.addEventListener;
+      WebSocket.prototype.addEventListener = function (type, fn, o) {
+        return add.call(this, type, type === 'message' && typeof fn === 'function' ? gate(this, fn) : fn, o);
+      };
+      window.__releaseFrames = () => { window.__holdFrames = false; const h = window.__held.splice(0); h.forEach((f) => f()); return h.length; };
+      document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && window.__holdFrames && window.__sendAt == null) window.__sendAt = performance.now(); }, true);
+      new MutationObserver(() => {
+        if (window.__holdFrames && window.__glowAt == null && document.querySelector('.dc-notch__glow')) window.__glowAt = performance.now();
+      }).observe(document, { subtree: true, childList: true, attributes: true });
+    });
+    await wpage.goto(`${base}/?assistant=1`);
+    await wpage.waitForSelector('.dc-notch__pill', { timeout: 20_000 });
+    await wpage.click('.dc-notch__pill');
+    await wpage.waitForSelector('.dc-notch__panel:not([hidden]) textarea', { timeout: 20_000 });
+    await wpage.waitForTimeout(1500);   // the chat socket is open and the session idle
+    ok('before the send, the notch is not wearing the working glow', await wpage.locator('.dc-notch__glow').count() === 0);
+    await wpage.fill('.dc-notch__chat textarea', 'working state probe');
+    await wpage.evaluate(() => { window.__sendAt = null; window.__glowAt = null; window.__holdFrames = true; });
+    await wpage.keyboard.press('Enter');
+    await wpage.waitForFunction(() => window.__glowAt != null, null, { timeout: 2000 }).catch(() => null);
+    const lit = await wpage.evaluate(() => ({ sendAt: window.__sendAt, glowAt: window.__glowAt, held: window.__held.length, holding: window.__holdFrames }));
+    const dt = lit.sendAt != null && lit.glowAt != null ? Math.round(lit.glowAt - lit.sendAt) : null;
+    ok('send → the working glow within 300 ms, while no server frame had reached the page', dt !== null && dt >= 0 && dt < 300 && lit.holding === true, JSON.stringify({ ...lit, dt }));
+    const releasedFrames = await wpage.evaluate(() => window.__releaseFrames());
+    const answered = await wpage.waitForFunction(() => document.body.innerText.includes('"said":"working state probe"'), null, { timeout: 30_000 }).then(() => true, () => false);
+    ok('releasing the held frames, the same turn is answered', answered, `released ${releasedFrames} frames`);
+    await wpage.close();
 
     // W7 the pill's right ear speaks the tab strip's language: ring bubbles, not a sentence.
     // The counts are routed (lane B owns what the server counts); first a server that does
@@ -725,6 +893,8 @@ try {
     // Positive control: a REAL command, minted by the assistant and bound to this window.
     // The scripted window above registered under OTHER labels, so a bind to `vault-alpha-app`
     // succeeds only if the page itself registered at mount.
+    const chatUrls = [];
+    vpage.on('websocket', (w) => { if (w.url().includes('/api/agent/chat')) chatUrls.push(w.url()); });
     const notch = openChat(WebSocket, port, { vault: '__assistant__', sessionId: randomUUID(), mode: 'assistant' });
     sockets.push(notch);
     const realCmds = [];
@@ -740,6 +910,9 @@ try {
     if (rc) await vpage.evaluate((pl) => window.__fireTauri('dream://assistant-command', pl), { commandId: rc.id, vault: 'alpha-app' });
     const realOut = await realRun;
     ok('a REAL doorbell is claimed and the project opens the chat (positive control)', realOut.code === 0 && typeof realOut.json?.result?.sessionId === 'string', realOut.stdout + realOut.stderr);
+    const delegatedUrl = chatUrls.find((u) => typeof realOut.json?.result?.sessionId === 'string' && u.includes(encodeURIComponent(realOut.json.result.sessionId))) ?? '';
+    ok('the chat the doorbell opened connects with origin=assistant on its WS URL', new URL(delegatedUrl || 'ws://x/').searchParams.get('origin') === 'assistant', JSON.stringify(chatUrls));
+    ok('no other chat socket this project opened carries an origin', chatUrls.filter((u) => u !== delegatedUrl).every((u) => !new URL(u).searchParams.has('origin')), JSON.stringify(chatUrls));
     if (rc) {
       await vpage.evaluate((pl) => window.__fireTauri('dream://assistant-command', pl), { commandId: rc.id, vault: 'alpha-app' });
       await vpage.waitForTimeout(1000);
@@ -866,6 +1039,7 @@ try {
           if (cmd === 'plugin:window|current_monitor') {
             return { name: 'Verify', scaleFactor: 2, position: { x: 0, y: 0 }, size: { width: 3600, height: 2336 }, workArea: { position: { x: 0, y: 50 }, size: { width: 3600, height: 2240 } } };
           }
+          if (cmd === 'set_frames') { window.__winCalls.push({ cmd, args: JSON.parse(JSON.stringify(args ?? {})) }); return null; }
           if (cmd.startsWith('plugin:window|')) window.__winCalls.push({ cmd: cmd.slice(14), args: JSON.parse(JSON.stringify(args ?? {})) });
           return null;
         },
@@ -896,12 +1070,10 @@ try {
       await notch4.evaluate(() => { window.__winCalls.length = 0; });
       const r = await cli(['assistant', 'tile', 'alpha-app', 'beta-app', '--layout', layout], env);
       const calls = await notch4.evaluate(() => window.__winCalls);
+      // Each window's whole frame, from the set_frames call that moved it (tile.ts → windowFrames.ts).
       const rect = (label) => {
-        const pos = calls.find((c) => c.cmd === 'set_position' && c.args.label === label)?.args.value;
-        const size = calls.find((c) => c.cmd === 'set_size' && c.args.label === label)?.args.value;
-        const p = pos?.Logical ?? pos?.data ?? pos;
-        const z = size?.Logical ?? size?.data ?? size;
-        return p && z ? { x: p.x, y: p.y, width: z.width, height: z.height } : null;
+        const it = calls.filter((c) => c.cmd === 'set_frames').flatMap((c) => c.args.items ?? []).find((i) => i.label === label);
+        return it ? { x: it.x, y: it.y, width: it.width, height: it.height } : null;
       };
       const got = { alpha: rect('vault-alpha-app'), beta: rect('vault-beta-app') };
       ok(`tile --layout ${layout}: each project's OWN window gets its measured slot`, r.code === 0 && r.json?.ok === true && JSON.stringify(got) === JSON.stringify(expect), JSON.stringify({ got, expect, out: r.stdout + r.stderr, calls: calls.slice(0, 6) }));

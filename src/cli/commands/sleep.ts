@@ -944,7 +944,9 @@ export function registerSleepCommand(program: Command): void {
       // `sleep done`. Best-effort by the same discipline as the syncs above.
       try {
         if (embeddingCacheExists(root)) {
-          const res = await refreshEmbeddings(root, buildCorpus(root), undefined, { force: true });
+          // waitForLock: a concurrent writer (the server's index build, a hook) holds the
+          // vault's cache lock for milliseconds — wait it out (bounded), never clobber it.
+          const res = await refreshEmbeddings(root, buildCorpus(root), undefined, { force: true, waitForLock: true });
           if (res === null) {
             warn('Embedding refresh: skipped — model unavailable (hybrid recall will refresh lazily).');
           } else if (res.stats.embedded > 0 || res.stats.evicted > 0) {

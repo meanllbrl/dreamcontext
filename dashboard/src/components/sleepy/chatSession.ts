@@ -643,6 +643,7 @@ export function createChatSession(
   deferPrompt = false,
   mode: ChatMode = DEFAULT_CHAT_MODE,
   accountId = '',
+  origin: '' | 'assistant' = '',
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -668,6 +669,11 @@ export function createChatSession(
   // server (the preferred account, else account #0), so a single-account machine's URL is
   // unchanged byte-for-byte and an `account` in the URL always means somebody chose one.
   const accountParam = accountId ? `&account=${encodeURIComponent(accountId)}` : '';
+  // Set only for a chat the Assistant started in this project (the doorbell's openChat). The
+  // server reads it as "delegated": cheaper recall and a medium effort default — it grants no
+  // capability, so a forged one costs nothing. A respawn of this chat re-derives the marker on
+  // the server from its --resume id; nothing else ever sends it.
+  const originParam = origin ? `&origin=${origin}` : '';
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -677,7 +683,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${promptParam}${deferParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}`;
   const ws = new WebSocket(url);
 
   let itemSeq = 0;

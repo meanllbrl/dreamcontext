@@ -48,7 +48,10 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, type Autonomy } from '../../lib/assistant/home.js';
-import { registerChat, type ChatHandle } from '../../lib/assistant/chat-registry.js';
+import { registerChat, isDelegatedConversation, type ChatHandle } from '../../lib/assistant/chat-registry.js';
+import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
+import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
+import { ensureIndexBuilt } from './embeddings.js';
 import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '../../lib/assistant/session-state.js';
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
@@ -261,6 +264,65 @@ export function permissionModeFor(bypass: boolean): 'bypassPermissions' | 'auto'
  *  `connections …`) are governed by this same mode. */
 export function assistantPermissionMode(autonomy: Autonomy): 'default' | 'auto' | 'bypassPermissions' {
   return autonomy === 'bypass' ? 'bypassPermissions' : autonomy === 'auto' ? 'auto' : 'default';
+}
+
+/**
+ * Pre-approval for the Assistant's own verbs, under `auto` ONLY. Under auto, every
+ * `dreamcontext assistant …` Bash call otherwise pays the auto-mode classifier (measured
+ * 11-26 s each on Spidey's context). The matcher refuses compound commands (`;`, `&&`, `|`,
+ * `$(…)`, a second line — security review 2026-09-27), and the server's gated()/decide()
+ * stays the real guard for send/answer/broadcast. `ask` must keep prompting (the CLI prompt
+ * IS the approval for the free verbs there); `bypass` needs nothing. Never on any other spawn.
+ */
+export function assistantAllowedTools(autonomy: Autonomy): string[] {
+  return autonomy === 'auto' ? ['--allowedTools', 'Bash(dreamcontext assistant:*)'] : [];
+}
+
+/**
+ * The recall mode a spawn's hooks run under, as an env override — or `{}` to leave the
+ * vault's own mode alone. The Assistant, and a chat it delegated into a vault whose mode is
+ * `haiku` (a `claude -p` per prompt: 10-27 s measured), get `hybrid` when the embedding model
+ * is on disk, else `raw`. NOT gated on index readiness: the env is fixed for the child's
+ * life, and the hook re-checks `hybridReady` per prompt and falls back to BM25 until the
+ * index lands. NOTE: DREAMCONTEXT_RECALL_MODE overrides the vault's mode for EVERY hook in
+ * that child process (sleep.ts resolveRecallMode), not one gate.
+ */
+export function recallEnvFor(o: {
+  isAssistant: boolean; delegated: boolean; vaultRecallMode: RecallMode | null; modelOnDisk: boolean;
+}): Record<string, string> {
+  if (o.isAssistant || (o.delegated && o.vaultRecallMode === 'haiku')) {
+    return { DREAMCONTEXT_RECALL_MODE: o.modelOnDisk ? 'hybrid' : 'raw' };
+  }
+  return {};
+}
+
+/**
+ * The `--effort` a spawn runs at ('' = none, the CLI's default). The Assistant runs at its own
+ * configured effort (default medium) whatever the URL asked; a delegated `basic` chat with no
+ * explicit effort runs at medium (a relay errand, not deep work); plan/develop delegations and
+ * every owner chat keep what the URL said.
+ */
+export function spawnEffortFor(o: {
+  isAssistant: boolean; assistantEffort?: string; delegated: boolean; mode: string; urlEffort: string;
+}): string {
+  if (o.isAssistant) return o.assistantEffort || 'medium';
+  if (o.delegated && o.mode === 'basic' && !o.urlEffort) return 'medium';
+  return o.urlEffort;
+}
+
+/**
+ * Live `__assistant__` sessions, told when the owner changes autonomy. The permission mode
+ * and `--allowedTools` are argv — fixed for a process's life — so a session spawned under
+ * `auto` would keep pre-approving its verbs after a switch to `ask`. Each listener respawns
+ * its session in place with `--resume` before its next turn.
+ */
+const assistantAutonomyListeners = new Set<(autonomy: Autonomy) => void>();
+
+/** Called wherever the Assistant's autonomy is written (routes/assistant.ts). */
+export function notifyAssistantAutonomy(autonomy: Autonomy): void {
+  for (const fn of [...assistantAutonomyListeners]) {
+    try { fn(autonomy); } catch { /* one session's failure is its own */ }
+  }
 }
 
 /** The character the owner gave the Assistant — its hidden vault's soul body, frontmatter
@@ -493,6 +555,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // than downgraded to HOME: running a prompt on an account the user did not pick is worse
     // than an error.
     const account = sanitizeAccountId(url.searchParams.get('account'));
+    // THREE meanings of "assistant" meet in this handler — keep them apart:
+    //   • `assistant` above — the HIDDEN VAULT `__assistant__` (the Assistant's own session);
+    //   • mode `assistant` — the CHAT MODE that vault runs in (its briefing);
+    //   • `origin=assistant` — a DELEGATION: an ordinary project chat the Assistant opened.
+    // The origin is read only for project chats. It lowers recall cost and the effort default
+    // and grants no capability, so a forged one from a loopback page buys nothing.
+    const fromAssistant = !assistant && url.searchParams.get('origin') === 'assistant';
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -532,7 +601,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         const assistantEnv = assistant
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant });
       });
     })();
   });
@@ -559,6 +628,11 @@ interface ChatSpawnOpts {
   vault?: string;
   /** `DREAMCONTEXT_ASSISTANT_URL` + `_TOKEN`, present ONLY for the `__assistant__` session. */
   assistantEnv?: Record<string, string>;
+  /** The Assistant opened this project chat (`origin=assistant`). A respawn of the same
+   *  conversation re-derives it from the chat registry, so no client ever re-sends it. */
+  fromAssistant?: boolean;
+  /** Internal: the notch surface an in-place respawn of the Assistant hands its successor. */
+  inheritedSurfaceDispose?: () => void;
 }
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
@@ -780,6 +854,32 @@ export function startChatSession(
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
 
+  // ── Delegation marker, effort, recall mode ──────────────────────────────────────────
+  // A chat the Assistant opened is `delegated`, and so is every later spawn of the SAME
+  // conversation (close + Resume, account or mode switch): those arrive without the URL
+  // flag, so the marker is re-derived from the registry entry the previous spawn left
+  // (live, or gone and not yet deleted). Checked before this spawn registers its own entry.
+  const delegated = !isAssistant && (!!opts.fromAssistant
+    || [resumeTarget, resumeId].some((c) => !!c && isDelegatedConversation(c)));
+  const spawnEffort = spawnEffortFor({
+    isAssistant, assistantEffort: assistantConfig?.effort, delegated, mode, urlEffort: effort,
+  });
+  let recallEnv: Record<string, string> = {};
+  if (isAssistant || delegated) {
+    try {
+      recallEnv = recallEnvFor({
+        isAssistant,
+        delegated,
+        vaultRecallMode: isAssistant ? null : resolveRecallMode(contextRoot),
+        modelOnDisk: isEmbedModelDownloaded(),
+      });
+    } catch { /* an unreadable sleep state leaves the vault's own mode in charge */ }
+  }
+  // The Assistant's own index, built in the background without the owner doing anything
+  // (every spawn: covers create, a model/version change that invalidated it, and existing
+  // installs). Never downloads the model, never blocks, one build per vault.
+  if (isAssistant) ensureIndexBuilt(contextRoot);
+
   const argv = [
     '-p',
     '--input-format', 'stream-json',
@@ -791,7 +891,8 @@ export function startChatSession(
     ...briefingArg,
     ...idArg,
     ...(model ? ['--model', model] : []),
-    ...(effort ? ['--effort', effort] : []),
+    ...(spawnEffort ? ['--effort', spawnEffort] : []),
+    ...(assistantConfig ? assistantAllowedTools(assistantConfig.autonomy) : []),
     // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
     // seeded with no MCP keys at any depth, so without this flag it would silently lose every
     // server the user has; copying them per account would multiply the secrets instead.
@@ -802,7 +903,8 @@ export function startChatSession(
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
   // value (UUID / model alias / effort level), so plain double-quoting is sufficient —
-  // none of them can contain a shell metacharacter.
+  // none of them can contain a shell metacharacter. (`Bash(dreamcontext assistant:*)` is a
+  // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
   const script = `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
 
   // An agent-chat process exports its tab's STABLE roster id so the SessionStart/Stop
@@ -844,7 +946,7 @@ export function startChatSession(
     // inherited can never leak into another mode. DREAMCONTEXT_CHAT_TAB (same rule) arms the
     // UserPromptSubmit reminder to name the tab (lib/chat-tab-title-nudge.ts); the Assistant
     // has no tab to name.
-    env: { ...process.env, PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...accountEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}) } as NodeJS.ProcessEnv,
+    env: { ...process.env, PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...accountEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv } as NodeJS.ProcessEnv,
   });
 
   // Every chat but the Assistant's own is listed in the Assistant's chat registry, its status
@@ -854,10 +956,21 @@ export function startChatSession(
     conversationId: heldConversation || null,
     vault: opts.vault ?? basename(projectRoot),
     mode,
+    ...(delegated ? { origin: 'assistant' as const } : {}),
   });
-  let disposeSurface = () => { /* not a surface */ };
+  let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };
+  // ── Autonomy respawn (the Assistant only) ──
+  // `respawnTo` is set when the owner's autonomy no longer matches what this process was
+  // spawned with; the respawn runs at once when idle, else at the turn boundary, and any
+  // owner message that arrives meanwhile is held for the successor (never written here).
+  // `handedOff` = this process is being replaced in place: its exit must not end the socket.
+  let respawnTo: Autonomy | null = null;
+  let handedOff = false;
+  const heldForSuccessor: Array<Buffer | string> = [];
+  let observedConversation = '';
+  let unlistenAutonomy = () => { /* not the Assistant */ };
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
   // answer/interrupt frame arriving after the child has exited must never throw on a
@@ -1042,8 +1155,10 @@ export function startChatSession(
     cleanupBriefing();
     unwatchAuth();
     registry?.exited();
-    disposeSurface();
+    // A respawn in place hands the notch's surface to its successor on the same socket.
+    if (!handedOff) disposeSurface();
     detachInbox();
+    unlistenAutonomy();
     // The session's checkout override dies with the session. Left behind it would be answered
     // to a RESUMED conversation of the same id whose agent is back in the project root — and
     // the same holds for its write counts, which would otherwise warn a fresh pane about
@@ -1128,8 +1243,17 @@ export function startChatSession(
       // over-decrement and read as "nothing running" while the main agent's turn continues —
       // the ONE direction that lets the account switch restart over live work. One property
       // read is the right price for closing that direction against a future CLI change.
+      if (obj.type === 'system' && obj.subtype === 'init' && typeof obj.session_id === 'string') {
+        observedConversation = obj.session_id;
+      }
+
       if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
         turnsInFlight = Math.max(0, turnsInFlight - 1);
+        // An autonomy change waited for this boundary.
+        // Through scheduleRespawn, never straight to respawnInPlace: a message may still be
+        // deciding in the switch gate (an account probe takes seconds), and ending stdin under
+        // it would lose it.
+        if (respawnTo !== null && turnsInFlight === 0) setImmediate(scheduleRespawn);
 
         // ── Context handoff: rotate this pane into a fresh session ────────────
         //
@@ -1239,12 +1363,14 @@ export function startChatSession(
 
   child.on('error', (err) => {
     teardown();
+    if (handedOff) { spawnSuccessor(); return; }
     sendMeta({ subtype: 'error', message: `Couldn't start claude: ${err.message}` });
     try { ws.close(); } catch { /* already closed */ }
   });
 
   child.on('close', (code) => {
     teardown();
+    if (handedOff) { spawnSuccessor(); return; }
     sendMeta({ subtype: 'exit', code });
     if (code !== 0 && stderrTail.trim()) {
       sendMeta({ subtype: 'error', message: stderrTail.trim() });
@@ -1531,7 +1657,8 @@ export function startChatSession(
     detachInbox = attachAssistantInbox({
       id: randomUUID(),
       deliver: (text) => new Promise<boolean>((resolve) => {
-        if (!alive) return resolve(false);
+        // A pending autonomy respawn: redelivered to the successor, never to this process.
+        if (!alive || respawnTo !== null || handedOff) return resolve(false);
         switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
           .catch(() => false)
           .then((held) => {
@@ -1546,8 +1673,97 @@ export function startChatSession(
     });
   }
 
+  // ── Autonomy changed under a live Assistant → respawn in place with --resume ─────────
+  //
+  // Permission mode and `--allowedTools` are argv, so the only way a running Assistant stops
+  // pre-approving its verbs after a switch to `ask` is a new process. The socket, the notch's
+  // surface and the conversation all survive: this process's socket listeners are detached,
+  // it is drained (stdin EOF, killed after the grace), and a successor is started on the SAME
+  // socket resuming the same conversation. Frames the notch sends in between are held and
+  // replayed to the successor, so nothing typed is lost and nothing reaches the old process.
+  if (isAssistant && assistantConfig) {
+    const spawnedAutonomy = assistantConfig.autonomy;
+    const listener = (autonomy: Autonomy): void => {
+      if (!alive || handedOff) return;
+      const wasPending = respawnTo !== null;
+      respawnTo = autonomy === spawnedAutonomy ? null : autonomy;
+      if (respawnTo !== null) { scheduleRespawn(); return; }
+      // Switched back before the turn ended: no respawn is coming, so the messages held for a
+      // successor go to THIS process, in arrival order.
+      if (wasPending) for (const raw of heldForSuccessor.splice(0)) onWsMessage(raw);
+    };
+    assistantAutonomyListeners.add(listener);
+    unlistenAutonomy = () => { assistantAutonomyListeners.delete(listener); };
+  }
+
+  let successorStarted = false;
+  let closedDuringHandoff = false;
+  const holdFrame = (raw: Buffer | string): void => { heldForSuccessor.push(raw); };
+  const holdClose = (): void => { closedDuringHandoff = true; };
+
+  /** Respawn once every message already queued on `switchGate` has been decided: a message
+   *  still inside `maybeSwitchAccount` is not yet counted in `turnsInFlight`, and ending stdin
+   *  under it would lose it. (Once `respawnTo` is set, the gate's tail holds, never writes.) */
+  function scheduleRespawn(): void {
+    const gate = switchGate;
+    void gate.then(() => {
+      // The gate grew while we waited: wait for its new tail too.
+      if (gate !== switchGate) { scheduleRespawn(); return; }
+      // Both the listener and the turn boundary may schedule; respawnInPlace's `handedOff`
+      // guard makes the second a no-op, so it fires exactly once.
+      if (turnsInFlight === 0) respawnInPlace();
+    });
+  }
+
+  /** Hold one owner frame for the successor — or, if the successor already took over the
+   *  socket, hand it straight to the successor's handler. */
+  function holdForSuccessor(raw: Buffer | string): void {
+    if (successorStarted) ws.emit('message', raw);
+    else heldForSuccessor.push(raw);
+  }
+
+  function respawnInPlace(): void {
+    if (!alive || handedOff || respawnTo === null) return;
+    // The socket already went (draining): the next summon spawns under the new autonomy anyway.
+    if (lingerTimer || lingerKillTimer || ws.readyState !== ws.OPEN) return;
+    handedOff = true;
+    ws.off('message', onWsMessage);
+    ws.off('close', onSocketGone);
+    ws.off('error', onSocketGone);
+    ws.on('message', holdFrame);
+    ws.on('close', holdClose);
+    ws.on('error', holdClose);
+    // An idle stream-json child exits on its own at stdin EOF; the kill is the backstop.
+    try { child.stdin.end(); } catch { /* already torn down */ }
+    lingerKillTimer = setTimeout(() => {
+      lingerKillTimer = null;
+      if (!alive) return;
+      try { child.kill(); } catch { /* already gone */ }
+    }, CLOSE_KILL_GRACE_MS);
+  }
+
+  function spawnSuccessor(): void {
+    if (successorStarted) return;
+    successorStarted = true;
+    ws.off('message', holdFrame);
+    ws.off('close', holdClose);
+    ws.off('error', holdClose);
+    const conversation = pinId || observedConversation;
+    startChatSession(ws, projectRoot, {
+      ...opts,
+      sessionId: conversation ? '' : opts.sessionId,
+      resumeId: conversation,
+      initialPrompt: '',
+      deferPrompt: false,
+      inheritedSurfaceDispose: disposeSurface,
+    });
+    // Replayed through the successor's own handler, in arrival order.
+    for (const raw of heldForSuccessor.splice(0)) ws.emit('message', raw);
+    if (closedDuringHandoff) ws.emit('close');
+  }
+
   // ── ws → claude stdin (client control frames) ──────────────────────────────────────
-  ws.on('message', (raw: Buffer | string) => {
+  function onWsMessage(raw: Buffer | string): void {
     if (!alive) return;
     const str = typeof raw === 'string' ? raw : raw.toString('utf-8');
     let msg: {
@@ -1558,6 +1774,10 @@ export function startChatSession(
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
     if (msg.type === 'user' && typeof msg.text === 'string' && msg.text) {
+      // An autonomy respawn is waiting for the running turn to end: the owner's next message
+      // is for the successor — it must not run under the old permissions. (Only user frames:
+      // an answer or an interrupt belongs to the turn in flight.)
+      if (respawnTo !== null) { holdForSuccessor(raw); return; }
       // Auto-switch evaluates BEFORE the turn goes to the CLI — the whole point is that the
       // message does not have to fail first. `maybeSwitchAccount` either sends the turn on
       // this account (the overwhelmingly common answer, and the answer whenever anything is
@@ -1574,6 +1794,8 @@ export function startChatSession(
         .catch(() => false)
         .then((held) => {
           if (!alive || held) return;
+          // Autonomy changed while this message waited in the gate: it belongs to the successor.
+          if (respawnTo !== null || handedOff) { holdForSuccessor(raw); return; }
           turnsInFlight += 1;
           lastSentText = text;
           registry?.userSent(text);
@@ -1759,8 +1981,9 @@ export function startChatSession(
     }
     // Unrecognized frame shape — ignore rather than throw (a forward-compat client field
     // must never crash an established session).
-  });
+  }
 
+  ws.on('message', onWsMessage);
   ws.on('close', onSocketGone);
   ws.on('error', onSocketGone);
 }

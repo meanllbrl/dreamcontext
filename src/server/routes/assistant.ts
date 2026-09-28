@@ -22,6 +22,7 @@ import {
 } from '../../lib/assistant/relay.js';
 import { listVaults } from '../../lib/vaults.js';
 import { recordDelegation } from '../../lib/assistant/delegations.js';
+import { notifyAssistantAutonomy } from './agent-chat.js';
 
 /**
  * `/api/assistant/*` — the dreamcontext Assistant's server surface.
@@ -398,7 +399,9 @@ export async function createAssistant(
     await runner(['init', '--yes', '--platforms', 'claude', '--name', input.name, '--description', `${input.name} — the owner's dreamcontext Assistant`], root);
     await runner(['setup', '--defaults', '--platforms', 'claude'], root);
   }
-  writeAssistantConfig(sanitizeConfigPatch({ name: input.name, autonomy: input.autonomy }), home);
+  const config = writeAssistantConfig(sanitizeConfigPatch({ name: input.name, autonomy: input.autonomy }), home);
+  // Re-running create on an existing Assistant may change its autonomy under a live session.
+  notifyAssistantAutonomy(config.autonomy);
   if (input.character?.trim()) writeCharacter(input.character.slice(0, 4000), home);
 }
 
@@ -435,6 +438,9 @@ export async function handleAssistantProfileSet(req: IncomingMessage, res: Serve
   if (!assistantExists()) { sendError(res, 404, 'no_assistant', 'The dreamcontext Assistant has not been created yet.'); return; }
   const body = (await parseJsonBody(req)) ?? {};
   const config = writeAssistantConfig(sanitizeConfigPatch(body));
+  // Autonomy is argv on the live session (permission mode, --allowedTools): a change respawns
+  // it in place with --resume before its next turn. A no-op when it did not change.
+  notifyAssistantAutonomy(config.autonomy);
   if (typeof body.character === 'string') writeCharacter(body.character.slice(0, 4000));
   sendJson(res, 200, { config });
 }
