@@ -6,12 +6,14 @@ import { setChipActiveProbe } from '../../lib/attention';
 import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
   focusWindow,
+  isDesktop,
   openVaultWindow,
   setGoToProjectHandler,
   startTitleBarDrag,
   toggleMaximizeWindow,
 } from '../../lib/desktop';
 import { HEARTBEAT_MS, findWindowForVault, publishOpenVaults, releaseWindow } from '../../lib/windowRegistry';
+import { ASSISTANT_WAKE_EVENT } from '../../lib/assistantBridge';
 import type { ProjectRollup } from '../sleepy/agentStatus';
 import { ProjectInstance } from '../../ProjectInstance';
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
@@ -613,6 +615,31 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     setGoToProjectHandler(async (vault: string) => { await addTab(vault); });
     return () => setGoToProjectHandler(null);
   }, [addTab]);
+
+  /**
+   * The Assistant wants a project this window holds as a COLD tab: rebuild it here, so its
+   * command lands in the window the owner already has instead of a new one
+   * (`commandExecutor.ts`). Only a tab this window already lists is ever woken — the event
+   * cannot add a project, only bring back one that is here.
+   */
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let off: (() => void) | null = null;
+    let gone = false;
+    void (async () => {
+      try {
+        // The same `listen` the doorbell uses (`assistantBridge.ts`): proven to hear `emitTo`.
+        // Every window hears it; only the one that holds the tab acts.
+        const { listen } = await import('@tauri-apps/api/event');
+        const fn = await listen<{ vault?: unknown }>(ASSISTANT_WAKE_EVENT, (e) => {
+          const vault = typeof e.payload?.vault === 'string' ? e.payload.vault : '';
+          if (vault && openRef.current.some((p) => p.vault === vault)) activate(vault);
+        });
+        if (gone) fn(); else off = fn;
+      } catch { /* no Tauri runtime / ACL — the notch falls back to its own window */ }
+    })();
+    return () => { gone = true; off?.(); };
+  }, [activate]);
 
   /**
    * Publish this window's chips to the cross-window registry, on every change and on a

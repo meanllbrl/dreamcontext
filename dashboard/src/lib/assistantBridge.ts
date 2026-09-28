@@ -21,6 +21,19 @@ import { thisWindowLabel } from './windowRegistry';
 
 export const ASSISTANT_COMMAND_EVENT = 'dream://assistant-command';
 
+/**
+ * "Wake this project here": the notch asks a window that lists `vault` as one of its tabs,
+ * but has no live instance of it (a cold chip), to rebuild that tab in place — so the command
+ * lands in the window the owner already has, not in a second one. It carries only the vault
+ * name and only ever re-activates a tab the window ALREADY holds; forging it can at most
+ * switch a tab.
+ */
+export const ASSISTANT_WAKE_EVENT = 'dream://assistant-wake';
+
+/** One id per page load. The server drops a label's registrations from an EARLIER load of
+ *  the same window (`relay.ts registerWindow`), whose listeners are gone. */
+const PAGE_ID = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+
 export interface AssistantWindowCommand {
   verb: string;
   args: Record<string, unknown>;
@@ -45,7 +58,7 @@ async function post(path: string, body: unknown): Promise<Response | null> {
 async function registerWindow(vault: string): Promise<string | null> {
   const label = await thisWindowLabel();
   if (!label) return null;
-  const res = await post('/api/assistant/windows', { vault, label });
+  const res = await post('/api/assistant/windows', { vault, label, page: PAGE_ID });
   if (!res?.ok) return null;
   try {
     const { nonce } = await res.json() as { nonce?: unknown };
@@ -104,5 +117,8 @@ export function listenForAssistantCommands(vault: string, handler: AssistantWind
   return () => {
     cancelled = true;
     unlisten?.();
+    // The instance is gone (tab closed or went cold): the server must stop naming this window
+    // as the place `vault` lives, or the notch would ring a doorbell nobody answers.
+    void noncePromise.then((nonce) => { if (nonce) void post('/api/assistant/windows/release', { nonce }); });
   };
 }

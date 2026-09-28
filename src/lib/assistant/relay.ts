@@ -120,18 +120,50 @@ export function failAllCommands(): void {
 
 // ─── Window nonces ────────────────────────────────────────────────────────────────────
 
-const windows = new Map<string, { vault: string; label: string; registeredAt: number }>();
+const windows = new Map<string, { vault: string; label: string; page: string; registeredAt: number }>();
 
-/** A vault window registers itself at bootstrap; the nonce stays in a module closure there. */
-export function registerWindow(vault: string, label: string): string {
+/**
+ * A vault window registers itself at bootstrap; the nonce stays in a module closure there.
+ *
+ * `page` is a random id the window's JS mints once per page load. A registration for the
+ * same label under a DIFFERENT page is a previous load of that window (a reload, a crash
+ * that rebuilt it) whose listeners are gone — it is dropped here, or it would keep answering
+ * "this project lives in that window" for a project the reloaded window may not hold.
+ */
+export function registerWindow(vault: string, label: string, page = ''): string {
+  if (page) {
+    for (const [n, w] of windows) if (w.label === label && w.page && w.page !== page) windows.delete(n);
+  }
   const nonce = randomBytes(16).toString('hex');
-  windows.set(nonce, { vault, label, registeredAt: Date.now() });
+  windows.set(nonce, { vault, label, page, registeredAt: Date.now() });
   // Bounded: a long session opens and closes many windows. Oldest first.
   if (windows.size > 200) {
     const oldest = [...windows.entries()].sort((a, b) => a[1].registeredAt - b[1].registeredAt)[0];
     if (oldest) windows.delete(oldest[0]);
   }
   return nonce;
+}
+
+/** A project instance went away (its tab closed or went cold): its nonce answers nothing. */
+export function releaseWindowNonce(nonce: string): boolean {
+  return windows.delete(nonce);
+}
+
+/**
+ * Every window label that holds a live instance of `vault`, newest registration first.
+ *
+ * THE AUTHORITATIVE ANSWER to "is this project already open?". The browser-side window
+ * registry is a localStorage heartbeat, and macOS throttles the timers of a window that sits
+ * behind other apps, so its row can go stale while the project is plainly open in a tab —
+ * which is how the notch used to conclude "not open" and build a second window for it.
+ * A registration here lives exactly as long as the instance that made it.
+ */
+export function windowLabelsForVault(vault: string): string[] {
+  const labels: string[] = [];
+  for (const w of [...windows.values()].reverse()) {
+    if (w.vault === vault && !labels.includes(w.label)) labels.push(w.label);
+  }
+  return labels;
 }
 
 export function windowVault(nonce: string): string | null {

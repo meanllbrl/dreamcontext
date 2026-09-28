@@ -19,6 +19,7 @@ import { broadcast, type BroadcastRow } from '../../lib/assistant/broadcast.js';
 import { AvatarError, findAvatar, writeAvatar, AVATAR_MAX_BYTES } from '../../lib/assistant/avatar.js';
 import {
   bindCommandToWindow, claimCommand, deliverResult, registerWindow, relayCommand, windowVault,
+  releaseWindowNonce, windowLabelsForVault,
 } from '../../lib/assistant/relay.js';
 import { listVaults } from '../../lib/vaults.js';
 import { recordDelegation } from '../../lib/assistant/delegations.js';
@@ -513,7 +514,22 @@ export async function handleAssistantWindowRegister(req: IncomingMessage, res: S
   const vault = typeof body.vault === 'string' ? body.vault : '';
   const label = typeof body.label === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(body.label) ? body.label : '';
   if (!listVaults().some((v) => v.name === vault) || !label) { sendError(res, 400, 'invalid_window', 'Unknown vault or bad window label.'); return; }
-  sendJson(res, 200, { nonce: registerWindow(vault, label) });
+  const page = typeof body.page === 'string' && /^[0-9a-f]{16,64}$/.test(body.page) ? body.page : '';
+  sendJson(res, 200, { nonce: registerWindow(vault, label, page) });
+}
+
+/** POST /api/assistant/windows/release {nonce} — a project instance unmounted. */
+export async function handleAssistantWindowRelease(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  const body = (await parseJsonBody(req)) ?? {};
+  releaseWindowNonce(String(body.nonce ?? ''));
+  sendJson(res, 200, { ok: true });
+}
+
+/** GET /api/assistant/windows?vault=<v> → {labels} — which windows hold a live instance of it. */
+export async function handleAssistantWindowLookup(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  sendJson(res, 200, { labels: windowLabelsForVault(q(req).get('vault') ?? '') });
 }
 
 /** POST /api/assistant/commands/:id/bind {vault, label} — the notch names the target window. */

@@ -14,7 +14,7 @@ import { declineAllProposals } from '../lib/assistant/proposals.js';
 import {
   handleAssistantStatus, handleAssistantRollup, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
-  handleAssistantWindowRegister, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
+  handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
   handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi,
 } from './routes/assistant.js';
 import { serveStatic } from './static.js';
@@ -376,6 +376,8 @@ export function buildRouter(): Router {
   router.get('/api/assistant/proposals', handleAssistantProposalsList);
   router.post('/api/assistant/proposals/:id', handleAssistantProposalDecide);
   router.post('/api/assistant/windows', handleAssistantWindowRegister);
+  router.post('/api/assistant/windows/release', handleAssistantWindowRelease);
+  router.get('/api/assistant/windows', handleAssistantWindowLookup);
   router.post('/api/assistant/open', handleAssistantOpen);
   router.post('/api/assistant/commands/:id/bind', handleAssistantCommandBind);
   router.post('/api/assistant/commands/:id/claim', handleAssistantCommandClaim);
