@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
 
 /**
  * Automations — the dashboard's read + "run now" + approve surface over
@@ -38,9 +39,11 @@ export type RunStatus =
   | 'awaiting-approval';
 export type Weekday = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 
+/** Every slot the agent fires on (union) — the backend's own type, imported
+ *  rather than mirrored so the two can never drift. */
+export type AutomationScheduleSlot = ScheduleSlot;
 export interface AutomationSchedule {
-  days: 'daily' | Weekday[];
-  at: string;
+  slots: ScheduleSlot[];
 }
 
 /** Why `approved` is false — mirrors registry.ts's `ApprovalVerdict['reason']`. */
@@ -79,6 +82,11 @@ export interface AutomationSummary {
   enabled: boolean;
   schedule: AutomationSchedule | null;
   scheduleLabel: string;
+  /** Which slot is broken when the manifest's schedule does not parse. */
+  scheduleError: string | null;
+  /** The earliest upcoming fire across every slot (ISO); null when on-call,
+   *  paused, or without a valid schedule. Server-computed. */
+  nextFireAt: string | null;
   model: string | null;
   /** On the summary so the Edit dialog can prefill straight from the list
    *  rather than fetching the manifest and flashing a default first. */
@@ -504,8 +512,10 @@ export interface AgentDraft {
   title: string;
   prompt: string;
   mode: AutomationMode;
-  days: 'daily' | Weekday[];
-  at: string;
+  /** Every time it fires. Wins over the one-slot `days`/`at`. */
+  slots?: ScheduleSlot[];
+  days?: 'daily' | Weekday[];
+  at?: string;
   model: string | null;
   effort: 'low' | 'medium' | 'high' | null;
 }

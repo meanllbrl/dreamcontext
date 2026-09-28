@@ -62,7 +62,7 @@ function makeManifest(overrides: Partial<AutomationManifest> = {}): AutomationMa
     id: 'auto_test1234',
     title: 'End of day digest',
     enabled: true,
-    schedule: { days: 'daily', at: '18:00' },
+    schedule: { slots: [{ kind: 'weekly', days: 'daily', at: '18:00' }] },
     model: null,
     effort: null,
     timeoutMinutes: 15,

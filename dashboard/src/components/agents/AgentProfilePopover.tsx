@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify';
 import type { AutomationSummary } from '../../hooks/useAutomations';
 import { useSetAutomationEnabled } from '../../hooks/useAutomations';
 import { AgentAvatar } from './AgentAvatar';
+import { nextFireWords } from '../../lib/agentDraft';
 import './AgentProfilePopover.css';
 
 /**
@@ -92,9 +93,12 @@ export function AgentProfilePopover({
     });
   };
 
+  const nextWhen = nextFireWords(summary.nextFireAt, new Date());
   const cadence = summary.mode === 'call'
     ? 'Runs when you call it'
-    : summary.enabled ? `Runs ${summary.cadenceLabel.toLowerCase()}` : `Paused · ${summary.cadenceLabel.toLowerCase()}`;
+    : summary.enabled
+      ? `Runs ${summary.cadenceLabel.toLowerCase()}${nextWhen ? ` · next ${nextWhen}` : ''}`
+      : `Paused · ${summary.cadenceLabel.toLowerCase()}`;
 
   return (
     <div className="agent-pop" ref={ref} style={{ left, top, width: POPOVER_WIDTH }} role="dialog" aria-label={`${summary.title} profile`}>

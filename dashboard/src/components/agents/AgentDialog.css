@@ -234,6 +234,72 @@
   flex-wrap: wrap;
 }
 
+/* ─── Schedule slots: one block per time the agent fires ─── */
+
+.agent-slot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.agent-slot + .agent-slot {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-1);
+}
+
+.agent-cadence {
+  flex: 0 1 200px;
+  min-width: 0;
+}
+
+.agent-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.agent-num {
+  width: 72px;
+}
+
+.agent-date {
+  width: 156px;
+}
+
+.agent-slot-text {
+  /* Basis 0 so the row's Remove stays on the row: the text takes what the
+     cadence, time and Remove leave, never more. */
+  flex: 1 1 0;
+  min-width: 96px;
+}
+
+.agent-slot-cron {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.agent-slot-remove {
+  margin-left: auto;
+}
+
+.agent-slot-days {
+  flex-wrap: wrap;
+}
+
+.agent-slot-error {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-error);
+}
+
+.agent-slot-add {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+}
+
 /* ─── The reveal (K18) ─── */
 
 .agent-reveal {

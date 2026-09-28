@@ -21,6 +21,7 @@ import { foreignRunEvidence, recordAutomationSession } from './session-registry.
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
 import { appendThreadEntry, readThreadRun } from './threads.js';
+import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
   clearRunSidecar,
@@ -77,6 +78,39 @@ const TELEGRAM_SEND_TIMEOUT_MS = 10_000;
 
 // ─── Preamble / prompt composition ──────────────────────────────────────────
 
+/**
+ * Which slot this fire belongs to, recomputed from the manifest and the fire
+ * moment itself — never carried alongside the fire. That is what keeps it
+ * right through the queue (a parked fire keeps its ORIGINAL `fireAt`) and a
+ * late catch-up (fired at 11:02, still the 09:30 slot). `null` when no slot
+ * names the moment: a manual run, or an on-call agent.
+ */
+export function fireSlotFor(m: Pick<AutomationManifest, 'mode' | 'schedule'>, fireAt: Date): string | null {
+  if (m.mode === 'call') return null;
+  return fireSlotLabel(m.schedule, fireAt);
+}
+
+/** `DREAMCONTEXT_AUTOMATION_SLOT`: the slot label in plain ASCII ("mon-fri
+ *  16:30"), or `manual` when no slot names this fire. */
+export function fireSlotEnv(m: Pick<AutomationManifest, 'mode' | 'schedule'>, fireAt: Date): string {
+  return fireSlotFor(m, fireAt)?.replace(/–/g, '-') ?? 'manual';
+}
+
+/** The preamble's one line on which slot fired. Prompts branch on this, not on
+ *  the wall clock, because a catch-up runs late and the clock then lies. Empty
+ *  for an on-call agent, which has no slots to name. */
+export function buildFireSlotLine(m: Pick<AutomationManifest, 'mode' | 'schedule'>, fireAt: Date): string {
+  if (m.mode === 'call' || m.schedule === null) return '';
+  const label = fireSlotFor(m, fireAt);
+  if (label === null) {
+    return `This fire: a manual run, not one of the scheduled slots (${formatSchedule(m.schedule)}). `;
+  }
+  return (
+    `This fire: the ${label} slot, scheduled for ${formatLocalFire(fireAt)} local time ` +
+    '(also in $DREAMCONTEXT_AUTOMATION_SLOT) — go by the slot, not the wall clock, since a catch-up can run late. '
+  );
+}
+
 export function buildPreamble(
   m: AutomationManifest,
   projectRoot: string,
@@ -91,6 +125,7 @@ export function buildPreamble(
     `You are scheduled dreamcontext automation "${m.title}" in ${projectRoot}. ` +
     'NO user available: never ask, finish autonomously. ' +
     `Fire time ${fireAt.toISOString()}. ` +
+    buildFireSlotLine(m, fireAt) +
     'Brain lives in `_dream_context/`; use the dreamcontext CLI as needed. ' +
     `OUTPUT CONTRACT: your final message is saved verbatim to ${outputPath} — ` +
     'write one complete, self-contained markdown document, with no meta-commentary. ' +
@@ -1565,6 +1600,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         ...accountEnvFor(acct.configDir, accountsHome),
         DREAMCONTEXT_AUTOMATION_SLUG: slug,
         DREAMCONTEXT_AUTOMATION_RUN: fireAt.toISOString(),
+        DREAMCONTEXT_AUTOMATION_SLOT: fireSlotEnv(manifest, fireAt),
       },
       timeoutMs: budgetMs,
       spawnImpl: spawnFn,

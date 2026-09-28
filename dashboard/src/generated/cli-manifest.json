@@ -169,6 +169,7 @@
       ],
       "valueFlags": [
         "--title",
+        "--slot",
         "--days",
         "--at",
         "--mode",
@@ -303,6 +304,20 @@
       "desc": "Run one automation now — dueness and sleep-deference bypassed only with --force",
       "args": [
         "<slug>"
+      ]
+    },
+    {
+      "path": "automations schedule",
+      "desc": "Show or edit an automation's fire slots — no YAML editing, no re-approval (the schedule is not approval-hashed)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--slot",
+        "--add",
+        "--remove",
+        "--days",
+        "--at"
       ]
     },
     {

@@ -9,6 +9,7 @@ import {
   readPattern,
   setAutomationEnabled,
   deriveFlowFromManifest,
+  flowForDisplay,
   createAutomation,
   updateAutomation,
   removeAutomation,
@@ -42,7 +43,7 @@ import {
   removeNotifierApp,
   NOTIFY_SOUND_OK,
 } from '../../lib/automations/notifier.js';
-import { formatSchedule } from '../../lib/automations/schedule.js';
+import { formatSchedule, nextFire } from '../../lib/automations/schedule.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
 import { allPendingQuestions, claimQuestion, pendingQuestion } from '../../lib/automations/hitl.js';
 import { resumeWithAnswer } from '../../lib/automations/verdict.js';
@@ -80,6 +81,7 @@ import {
   type AutomationQuestion,
   type EffortLevel,
   type FlowGraph,
+  type ScheduleSlot,
   type Weekday,
   THREAD_TEXT_MAX_CHARS,
 } from '../../lib/automations/types.js';
@@ -117,6 +119,11 @@ interface AutomationSummary {
   enabled: boolean;
   schedule: AutomationManifest['schedule'];
   scheduleLabel: string;
+  /** Which slot is broken, when the manifest's schedule does not parse. */
+  scheduleError: string | null;
+  /** The earliest upcoming fire across every slot (ISO), or null when the
+   *  agent is on-call, paused, or has no valid schedule. */
+  nextFireAt: string | null;
   /** What this agent DOES, in the owner's own words — its `## Prompt`, capped.
    *  The dialog writes the prompt from the plain-language description, so the
    *  prompt IS the description and there is no second field to drift from it. */
@@ -211,6 +218,12 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     enabled: m.enabled,
     schedule: m.schedule,
     scheduleLabel: formatSchedule(m.schedule),
+    scheduleError: m.scheduleError ?? null,
+    // The earliest fire across every slot. Server-computed so the card and the
+    // CLI's `list` can never disagree about when an agent next runs.
+    nextFireAt: m.mode === 'call' || !m.enabled || m.schedule === null
+      ? null
+      : (nextFire(m.schedule, new Date())?.toISOString() ?? null),
     mode: m.mode,
     hasPhoto: resolveAutomationPhoto(contextRoot, m.photo) !== null,
     description: m.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
@@ -574,7 +587,7 @@ export async function handleAutomationsFlow(
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
-    const flow: FlowGraph = manifest.flow ?? deriveFlowFromManifest(manifest);
+    const flow: FlowGraph = flowForDisplay(manifest);
     sendJson(res, 200, { flow, derived: manifest.flow === null });
   } catch {
     sendError(res, 500, 'flow_failed', 'Failed to read the automation flow.');
@@ -910,6 +923,15 @@ function readDays(v: unknown): 'daily' | Weekday[] | undefined {
   return days as Weekday[];
 }
 
+/** `slots` off the wire: a list of slot objects. Shape-checked only — every
+ *  rule lives in the store's `scheduleFromInput`, which both routes reach. */
+function readSlots(v: unknown): ScheduleSlot[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) throw new AutomationError('Invalid slots — expected a list.');
+  if (v.length === 0) throw new AutomationError('Add at least one time, or switch the agent to on-call.');
+  return v as ScheduleSlot[];
+}
+
 function readTimeout(v: unknown): number | undefined {
   if (v === undefined || v === null) return undefined;
   const n = Number(v);
@@ -996,6 +1018,7 @@ export async function handleAutomationsCreate(
       photo: null,
       days: readDays(body.days) ?? 'daily',
       at: str(body.at) ?? '09:00',
+      slots: readSlots(body.slots),
       model: str(body.model) ?? null,
       effort: readEffort(body.effort) ?? null,
       timeoutMinutes: readTimeout(body.timeoutMinutes),
@@ -1045,6 +1068,7 @@ export async function handleAutomationsUpdate(
     const manifest = updateAutomation(contextRoot, params.slug, {
       title: str(body.title),
       mode: readMode(body.mode),
+      slots: readSlots(body.slots),
       days: readDays(body.days),
       at: str(body.at),
       model: body.model === undefined ? undefined : (str(body.model) ?? null),

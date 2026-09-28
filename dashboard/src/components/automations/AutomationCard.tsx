@@ -3,6 +3,7 @@ import type { AutomationSummary, PendingQuestionSummary, RunStatus } from '../..
 import { useAnswerQuestion, useRunAutomation, useSetAutomationEnabled } from '../../hooks/useAutomations';
 import { useVault } from '../../context/VaultContext';
 import { openAutomationQuestionChat } from '../../lib/automationRunChat';
+import { nextFireWords } from '../../lib/agentDraft';
 import './AutomationCard.css';
 
 /*
@@ -396,6 +397,9 @@ export function AutomationCard({
 
       <div className="auto-card-meta">
         <span className="auto-card-schedule">{summary.scheduleLabel}</span>
+        {summary.nextFireAt && summary.enabled && summary.mode === 'sched' && (
+          <span className="auto-card-schedule">next {nextFireWords(summary.nextFireAt, new Date())}</span>
+        )}
         {summary.model && <span className="auto-card-model">{summary.model}</span>}
       </div>
 

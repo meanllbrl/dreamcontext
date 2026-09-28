@@ -291,7 +291,7 @@ async function main() {
     const card = page.locator('.agent-card:not(.agent-card--new)').first();
     const cardText = cardShown ? await card.innerText() : '';
     check('…showing its name', cardText.includes('Daily insight digest'), cardText.slice(0, 200));
-    check('…its cadence', /mon, tue, wed, thu, fri at 09:00/.test(cardText), cardText.slice(0, 200));
+    check('…its cadence', /mon–fri 09:00/.test(cardText), cardText.slice(0, 200));
     check('…its model', cardText.includes('opus'), cardText.slice(0, 200));
     check('…its description', cardText.includes('insight'), cardText.slice(0, 200));
     check('…and a last-run line', /has not run yet/i.test(cardText), cardText.slice(0, 200));
@@ -448,8 +448,8 @@ async function main() {
       await page.evaluate(() => [...document.querySelectorAll('.adp-panel *')]
         .filter((el) => getComputedStyle(el).textTransform === 'uppercase').length) === 0);
     check('…and an Edit button that opens the Edit dialog',
-      await page.locator('.adp-edit').count() === 1);
-    await page.locator('.adp-edit').click();
+      await page.locator('.adp-edit', { hasText: /^Edit$/ }).count() === 1);
+    await page.locator('.adp-edit', { hasText: /^Edit$/ }).click();
     const fromDetail = await until(async () => (await page.locator('.agent-modal').count()) > 0, 8000);
     check('Edit from the details screen opens the dialog', fromDetail);
     check('…and closes the details screen behind it', await page.locator('.adp-panel').count() === 0);

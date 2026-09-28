@@ -96,8 +96,9 @@ Automations are usually born from a conversation, not a form. When a user descri
 1. **Detect the intent.** The shape is a recurring cadence plus an output. Watch for time-of-day or day-of-week phrasing combined with "do X" or "write X up" or "check on X".
 2. **Dedupe first.** Before proposing anything new, check whether an automation already covers this. Use `dreamcontext automations list`, or `dreamcontext memory recall "<keywords>"`. Extend an existing automation's prompt rather than creating a near-duplicate.
 3. **Agree the schedule and the output, in the user's own words.** Confirm the days, the time, and what the output should look like and where it should go, before writing anything.
-4. **Scaffold it.** `dreamcontext automations create <slug> --title "..." --days <daily|mon,wed> --at HH:MM [--model] [--effort] [--timeout] [--catchup] [--photo]`.
-   **Ask which MODE it is before you ask for a time.** `--mode sched` (the default) runs on a wall-clock schedule. `--mode call` has no schedule at all: the dispatcher never fires it, `list` reports it as `When you call it` rather than a broken manifest, and it runs only when a human asks for it (`automations run <slug>`, or Run now on the Agents page). "her sabah" is `sched`; "çağırdığımda", "when I ask", "on demand" is `call` — and asking a person for a time they do not have one for is how a `call` agent ends up scheduled by accident.
+4. **Scaffold it.** `dreamcontext automations create <slug> --title "..." --slot "mon-fri@16:30" [--slot …] [--model] [--effort] [--timeout] [--catchup] [--photo]` (`--days <daily|mon,wed> --at HH:MM` still works as the one-slot shorthand).
+   **Ask which MODE it is before you ask for a time — then ask how many times and which cadence.** One agent can fire at several moments (`--slot` is repeatable, and the agent is due at every one), so "Monday 09:30 for the weekend, and weekdays 16:30 for yesterday" is ONE agent with two slots, never a second twin manifest: twins double the prompt (it drifts), split the thread, and split the lesson ledger, because each run learns into its own slug. Ask the cadence of each time too — every week, every N weeks (`2w:mon@10:00`), days of the month (`month:1,15,last@09:00`), the nth weekday of the month (`month:1st-mon@09:30`), or a cron expression (`cron:30 9 * * 1`) for anything else.
+   **Mode:** `--mode sched` (the default) runs on a wall-clock schedule. `--mode call` has no schedule at all: the dispatcher never fires it, `list` reports it as `When you call it` rather than a broken manifest, and it runs only when a human asks for it (`automations run <slug>`, or Run now on the Agents page). "her sabah" is `sched`; "çağırdığımda", "when I ask", "on demand" is `call` — and asking a person for a time they do not have one for is how a `call` agent ends up scheduled by accident.
 5. **Write the prompt from the conversation.** Edit the manifest's `## Prompt` section (and `## Output instructions` if the user cares how the result is formatted) to say, in full, what the scheduled run should do. This prompt is everything. The scheduled run has no user to ask follow-up questions, so it must be self-contained. Every run is already told to open its document with a one-line result, because that line becomes the desktop notification — for most runs the notification is the only thing the user reads, so it has to carry the answer rather than announce that a file exists.
 6. **Live-test it with the user watching.** `dreamcontext automations run <slug> --force` runs it right now, ignoring the schedule, and shows the user the actual output before they trust it to run unattended.
 7. **Confirm.** Once the user is happy with a live-tested run, the automation is ready. `automations create` already auto-approved it on this machine, since the creator is the local human who wrote the prompt. Nothing further is required here, but see the approval section below for what happens the moment anyone else touches it.
@@ -373,8 +374,7 @@ A known, accepted gap: if the fallback resolution itself ever hangs, an extremel
 | `title` | Human-readable name. |
 | `enabled` | `false` means the dispatcher skips it entirely; approval is untouched either way. |
 | `shared` | Whether this automation's manifest, cache, and output publish to the team's synced brain. Defaults to `false`; only the literal value `true` counts as shared. See "Sharing" above. |
-| `schedule.days` | `daily`, or a list of weekdays. |
-| `schedule.at` | 24-hour local time, `HH:MM`. |
+| `schedule` | One slot written flat (`schedule: { days: [mon, wed], at: '09:00' }` — the shape every one-slot agent has always had), or several under `schedule.slots: [...]`. The agent is due at **every** slot (a union); see the slot table below. Never approval-hashed. |
 | `model` | Optional model override. Omit to let `claude` pick. |
 | `effort` | Optional reasoning effort: `low`, `medium`, `high`, `xhigh`, or `max`. Omit to let `claude` pick. |
 | `timeout_minutes` | 1 to 60, default 15. The run is stopped if it runs longer. |
@@ -383,6 +383,33 @@ A known, accepted gap: if the fallback resolution itself ever hangs, an extremel
 | `notify` | Whether a desktop notification fires when a run finishes, success or failure. `automations install` sets up a small notifier app so these arrive branded as "dreamcontext", with a sound: a soft one on success, macOS's error sound on failure, so an unattended failure is audibly different from a success. macOS asks for permission once, and **until it is allowed, notifications are filed silently and never appear on screen**. Sound is a **separate** switch from permission (System Settings > Notifications > dreamcontext > "Play sound for notifications"); allowing alerts does not turn it on. `install --check` reports whether the notifier is present. Defaults to `true`; only the literal value `false` silences it. Note the asymmetry with `shared`, which defaults the other way: an over-share is a leak, but a run nobody is told about is a silent loss, so the two flags fail toward opposite states on purpose. Not an approval-hashed field, for the same reason `shared` isn't — it changes whether you are told, never what the run does. |
 | `learning` | Whether this automation keeps a `## Pattern` — read before every run, appended to after one. Defaults to `true` for anything created from now on (`create` writes it explicitly); a manifest written before this field existed reads `false`, which is what keeps its approved hash byte-identical across the upgrade. IS approval-hashed: turning it on widens what the run reads to a file the run itself rewrites. See "The pattern" above. |
 | `review` | Whether this automation stops and asks before its work takes effect, and who decides: `off` (default — publishes and notifies with no verdict in between), `agent` (the run decides at runtime, via `automations propose`), or `output` (blanket — every finished document waits for a verdict before it publishes; an @mention ask skips it, see Questions). Reads leniently toward `off` on anything unrecognised, the opposite of how `shared` fails, because a malformed `review` failing CLOSED would mean an automation silently stopping to ask a human who doesn't know a question exists. IS approval-hashed in the non-`off` direction: turning it on is a gate a teammate's synced edit must not be able to remove for free. |
+
+**Schedule slots.** Each slot is exactly one cadence. All times are 24-hour, machine-local wall clock.
+
+| Slot field(s) | Meaning | `--slot` string |
+|---|---|---|
+| `days` + `at` | `daily`, a list of weekdays, or a range string (`mon-fri`). | `mon@09:30`, `mon-fri@16:30`, `daily@07:00` |
+| `days` + `at` + `every_weeks` + `anchor` | Every N weeks (2..52). `anchor` is a `YYYY-MM-DD` in a week that fires; it fixes WHICH weeks (weeks run Monday to Sunday). Required when `every_weeks` ≥ 2. | `2w:mon@10:00` (anchors to this week), `2w/2026-09-28:mon@10:00` |
+| `monthdays` + `at` | Days of the month: `1..31`, or `-1..-31` counted from the end (`-1` or `last` = last day, so Feb 28/29 and the 30th of a 30-day month). A day a month lacks does not fire that month (`31` skips April) — use `-1` for "month end". | `month:1,15,last@09:00` |
+| `nth` + `at` | The nth weekday of the month: `[{ weekday: mon, n: 1 }]` or the string `1st-mon`; `n` 1..5 or -1..-5 (`-1` = last). A 5th weekday fires only in months that have one. | `month:1st-mon@09:30`, `month:last-fri@17:00` |
+| `cron` | A standard local-time cron expression (`minute hour day month weekday`: lists, ranges, steps, names, 7 = Sunday; when both day fields are set, either matches). No `at` — the time is inside it. The escape hatch: cron itself cannot say "every 2 weeks" or "last day of the month", so those have their own fields. | `cron:30 9 * * 1` |
+
+```yaml
+schedule:
+  slots:
+    - { days: [mon], at: '09:30' }
+    - { days: [mon, tue, wed, thu, fri], at: '16:30' }
+    - { days: [mon], at: '10:00', every_weeks: 2, anchor: '2026-09-28' }
+    - { monthdays: [1, 15, -1], at: '09:00' }
+    - { nth: [{ weekday: mon, n: 1 }], at: '09:30' }
+    - { cron: '30 9 * * 1' }
+```
+
+How a union fires: the most recent fire across all slots is what `isDue` asks about, one fire per due moment. Two slots on the same day both fire (09:30 ran → 16:30 is still owed). **If both of a day's slots were missed** (the Mac was asleep all day), **only the most recent one fires** once it wakes — the same collapse a single slot has always had after a week offline: the watermark moves to the fire that ran, and every earlier fire is behind it. A malformed slot fails the WHOLE schedule loudly (the agent is never due, and `list`/`show`/the card say `invalid schedule (slot 2: …)`) rather than silently running on half of it. Labels read `mon 09:30 · mon–fri 16:30`, `every 2 weeks mon 10:00`, `monthly 1, 15, last 09:00`; `list`, `show`, the Agents page and the card also show the next fire, which is the earliest across every slot.
+
+**The run knows which slot fired.** The runner exports `DREAMCONTEXT_AUTOMATION_SLOT` (the slot's label in ASCII, e.g. `mon 09:30` or `mon-fri 16:30`; `manual` for a run nobody scheduled) and the preamble says `This fire: the mon 09:30 slot, scheduled for Mon 2026-09-28 09:30 local time`. It is computed from the fire moment itself, so a late catch-up at 11:02 still reports the 09:30 slot. A prompt that behaves differently per slot ("on the Monday 09:30 fire report Friday+Saturday, otherwise yesterday") must branch on that line, never on the wall clock.
+
+**Editing the schedule** never needs the YAML: `automations schedule <slug>` lists the slots numbered, `--add <spec>` / `--remove <n>` change them, `--slot` (repeatable) replaces them all, `--days/--at` collapses to one weekly slot. The dashboard's Edit agent dialog has one row per time with Add another time / Remove. None of it re-approves, since the schedule is not hashed; a written `## Flow` keeps its (hashed) old trigger label on disk and is relabelled from the live schedule wherever it is drawn.
 
 Body sections:
 - **`## Prompt`**: required. What the scheduled run should do. Written as if there is no one to ask follow-up questions, because there isn't.
@@ -400,7 +427,8 @@ Full flags for every verb live in [cli-reference.md](cli-reference.md#automation
 | Command | What it's for |
 |---|---|
 | `automations create <slug>` | Scaffold a manifest and auto-approve it locally. |
-| `automations list` / `show <slug>` | See every automation, or one in full: schedule, approval state, run history, and whether a previous run is still orphaned. |
+| `automations list` / `show <slug>` | See every automation, or one in full: every slot, the next fire, approval state, run history, and whether a previous run is still orphaned. |
+| `automations schedule <slug>` | Show the slots, or edit them: `--add <spec>`, `--remove <n>`, `--slot <spec>` (replace all), `--days/--at` (one slot). No re-approval. |
 | `automations run <slug> --force` | Run it right now, ignoring the schedule. The live-test step of the capture protocol. |
 | `automations learn <slug> --lesson "…"` / `--playbook "…"` / `--playbook-file <file>` | Record what a run learned into its pattern, or replace its playbook. The run calls this itself; you can too, and a Train Me chat bound to the automation writes its confirmed playbook with `--playbook-file`. |
 | `automations post <slug> "…" [--file <p>]` | Post to this agent's channel. The run calls this itself; only what is IMPORTANT, and zero posts is a valid run. |

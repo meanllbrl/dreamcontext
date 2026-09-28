@@ -10,11 +10,17 @@ import { PHOTO_PRESETS, renderPreset } from '../../lib/agentPhotoPresets';
 import {
   DELETE_ARM_MS,
   deleteAction,
+  initialSlotRows,
   nameFromDescription,
-  packDays,
+  newSlotRow,
   shouldPrefill,
+  slotFromRow,
+  slotsFromRows,
   timeFromDescription,
+  type SlotCadence,
+  type SlotRow,
 } from '../../lib/agentDraft';
+import { formatSchedule } from '../../../../src/lib/automations/schedule.js';
 import { AgentAvatar, initialsFor } from './AgentAvatar';
 import './AgentDialog.css';
 
@@ -37,13 +43,133 @@ const DAYS: { key: Weekday; label: string }[] = [
   { key: 'sun', label: 'Su' },
 ];
 
-const WEEKDAYS_ALL: Weekday[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+/** The cadence a row can take — a closed dropdown (K92: it is a value on the
+ *  row, and every choice keeps the row one line high). */
+const CADENCES: { key: SlotCadence; label: string }[] = [
+  { key: 'weekly', label: 'Every week' },
+  { key: 'weeks', label: 'Every few weeks' },
+  { key: 'monthdays', label: 'Days of the month' },
+  { key: 'nth', label: 'A weekday of the month' },
+  { key: 'cron', label: 'Cron' },
+];
 
-function daysOf(summary: AutomationSummary | null): Weekday[] {
-  const sched = summary?.schedule;
-  if (!sched) return ['mon', 'tue', 'wed', 'thu', 'fri'];
-  if (sched.days === 'daily') return [...WEEKDAYS_ALL];
-  return sched.days;
+/**
+ * One "when" row: cadence, its inputs, a time, and Remove when there is more
+ * than one. Stateless — the dialog owns the rows, so the summary sentence and
+ * the Save gate read the same list this draws.
+ */
+function SlotRowEditor({
+  row,
+  index,
+  canRemove,
+  onChange,
+  onRemove,
+  onTimeTouched,
+}: {
+  row: SlotRow;
+  index: number;
+  canRemove: boolean;
+  onChange: (next: SlotRow) => void;
+  onRemove: () => void;
+  onTimeTouched: () => void;
+}) {
+  const set = (patch: Partial<SlotRow>) => onChange({ ...row, ...patch });
+  const parsed = slotFromRow(row);
+  const weekly = row.cadence === 'weekly' || row.cadence === 'weeks';
+  const n = index + 1;
+  return (
+    <div className="agent-slot">
+      <div className="agent-sched-row">
+        <select
+          className="agent-select agent-cadence"
+          value={row.cadence}
+          onChange={(e) => set({ cadence: e.target.value as SlotCadence })}
+          aria-label={`How time ${n} repeats`}
+        >
+          {CADENCES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+        {row.cadence === 'weeks' && (
+          <span className="agent-inline">
+            every
+            <input
+              className="agent-input agent-num"
+              type="number"
+              min={2}
+              max={52}
+              value={row.everyWeeks}
+              onChange={(e) => set({ everyWeeks: Number(e.target.value) })}
+              aria-label={`Weeks between fires, time ${n}`}
+            />
+            weeks, from
+            <input
+              className="agent-input agent-date"
+              type="date"
+              value={row.anchor}
+              onChange={(e) => set({ anchor: e.target.value })}
+              aria-label={`A day in the first week time ${n} fires`}
+            />
+          </span>
+        )}
+        {row.cadence === 'monthdays' && (
+          <input
+            className="agent-input agent-slot-text"
+            value={row.monthText}
+            onChange={(e) => set({ monthText: e.target.value })}
+            placeholder="1, 15, last"
+            aria-label={`Days of the month, time ${n}`}
+          />
+        )}
+        {row.cadence === 'nth' && (
+          <input
+            className="agent-input agent-slot-text"
+            value={row.nthText}
+            onChange={(e) => set({ nthText: e.target.value })}
+            placeholder="1st mon, last fri"
+            aria-label={`Weekday of the month, time ${n}`}
+          />
+        )}
+        {row.cadence === 'cron' && (
+          <input
+            className="agent-input agent-slot-text agent-slot-cron"
+            value={row.cron}
+            onChange={(e) => set({ cron: e.target.value })}
+            placeholder="30 9 * * 1"
+            aria-label={`Cron expression, time ${n} (minute hour day month weekday, local time)`}
+          />
+        )}
+        {row.cadence !== 'cron' && (
+          <input
+            className="agent-input agent-time"
+            type="time"
+            value={row.at}
+            onChange={(e) => { onTimeTouched(); set({ at: e.target.value }); }}
+            aria-label={`Time of day, time ${n}`}
+          />
+        )}
+        {canRemove && (
+          <button type="button" className="agent-btn agent-slot-remove" onClick={onRemove} aria-label={`Remove time ${n}`}>
+            Remove
+          </button>
+        )}
+      </div>
+      {weekly && (
+        <div className="agent-chips agent-slot-days">
+          {DAYS.map((d) => (
+            <button
+              key={d.key}
+              type="button"
+              className={`agent-chip agent-chip--day${row.days.includes(d.key) ? ' agent-chip--on' : ''}`}
+              onClick={() => set({ days: row.days.includes(d.key) ? row.days.filter((x) => x !== d.key) : [...row.days, d.key] })}
+              aria-pressed={row.days.includes(d.key)}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {'error' in parsed && <p className="agent-slot-error">{parsed.error}</p>}
+    </div>
+  );
 }
 
 /**
@@ -105,8 +231,8 @@ export function AgentDialog({
   const [title, setTitle] = useState(agent?.title ?? start?.title ?? '');
   const [prompt, setPrompt] = useState(agent?.description ?? start?.description ?? '');
   const [mode, setMode] = useState<AutomationMode>(agent?.mode ?? start?.mode ?? 'sched');
-  const [days, setDays] = useState<Weekday[]>(agent ? daysOf(agent) : start?.days ?? daysOf(null));
-  const [at, setAt] = useState(agent?.schedule?.at ?? start?.at ?? '09:00');
+  const [rows, setRows] = useState<SlotRow[]>(() =>
+    initialSlotRows(agent?.schedule?.slots, agent ? undefined : start, new Date()));
   const [model, setModel] = useState(agent?.model ?? 'opus');
   const [effort, setEffort] = useState<string>(agent?.effort ?? 'medium');
 
@@ -178,7 +304,7 @@ export function AgentDialog({
     setPrompt(value);
     if (shouldPrefill({ touched: atTouched.current, editing })) {
       const found = timeFromDescription(value);
-      if (found) setAt(found);
+      if (found) setRows((cur) => cur.map((r, i) => (i === 0 ? { ...r, at: found } : r)));
     }
     if (shouldPrefill({ touched: titleTouched.current, editing })) {
       setTitle(nameFromDescription(value));
@@ -203,6 +329,10 @@ export function AgentDialog({
       .catch((err: Error) => setError(err.message));
   };
 
+  /** Every row as a slot — the one list the summary, the Save gate and the
+   *  draft all read, validated by the backend's own `parseSlot`. */
+  const parsedSlots = useMemo(() => slotsFromRows(rows), [rows]);
+
   /** The one 14px sentence under the form — K5. Says what will actually
    *  happen, including that nothing runs until it is approved here. */
   const summary = useMemo(() => {
@@ -215,29 +345,24 @@ export function AgentDialog({
         </>
       );
     }
-    const dayText = days.length === 7
-      ? 'every day'
-      : days.length === 0
-        ? 'no day yet'
-        : DAYS.filter((d) => days.includes(d.key)).map((d) => d.label).join(', ');
+    const when = 'error' in parsedSlots ? 'at no valid time yet' : formatSchedule({ slots: parsedSlots.slots });
     return (
       <>
-        Runs <b>{dayText}</b> at <b>{at}</b> as <b>{model}</b> at <b>{effort}</b> effort, and nothing fires
+        Runs <b>{when}</b> as <b>{model}</b> at <b>{effort}</b> effort, and nothing fires
         until {name} is approved on this Mac.
       </>
     );
-  }, [mode, days, at, model, effort, title]);
+  }, [mode, parsedSlots, model, effort, title]);
 
   const canSave = title.trim().length > 0
     && prompt.trim().length > 0
-    && (mode === 'call' || days.length > 0);
+    && (mode === 'call' || !('error' in parsedSlots));
 
   const draft: AgentDraft = {
     title: title.trim(),
     prompt: prompt.trim(),
     mode,
-    days: packDays(days),
-    at,
+    ...(mode === 'sched' && !('error' in parsedSlots) ? { slots: parsedSlots.slots } : {}),
     model,
     effort: effort as AgentDraft['effort'],
   };
@@ -412,28 +537,27 @@ export function AgentDialog({
             inert={mode !== 'sched' ? true : undefined}
           >
             <div>
-              <div className="agent-sched-row">
-                <div className="agent-chips">
-                  {DAYS.map((d) => (
-                    <button
-                      key={d.key}
-                      type="button"
-                      className={`agent-chip agent-chip--day${days.includes(d.key) ? ' agent-chip--on' : ''}`}
-                      onClick={() => setDays((cur) => cur.includes(d.key) ? cur.filter((x) => x !== d.key) : [...cur, d.key])}
-                      aria-pressed={days.includes(d.key)}
-                    >
-                      {d.label}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  className="agent-input agent-time"
-                  type="time"
-                  value={at}
-                  onChange={(e) => { atTouched.current = true; setAt(e.target.value); }}
-                  aria-label="Time of day"
+              {/* Several rows = several times; the agent fires at every one
+                  of them (a union), and one agent keeps one prompt, one
+                  thread and one lesson ledger across all of them. */}
+              {rows.map((row, i) => (
+                <SlotRowEditor
+                  key={row.id}
+                  row={row}
+                  index={i}
+                  canRemove={rows.length > 1}
+                  onChange={(next) => setRows((cur) => cur.map((r) => (r.id === row.id ? next : r)))}
+                  onRemove={() => setRows((cur) => cur.filter((r) => r.id !== row.id))}
+                  onTimeTouched={() => { atTouched.current = true; }}
                 />
-              </div>
+              ))}
+              <button
+                type="button"
+                className="agent-btn agent-slot-add"
+                onClick={() => setRows((cur) => [...cur, newSlotRow(new Date(), { at: cur[cur.length - 1]?.at ?? '09:00' })])}
+              >
+                Add another time
+              </button>
             </div>
           </div>
 
