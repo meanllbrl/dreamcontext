@@ -78,6 +78,14 @@
       ]
     },
     {
+      "path": "assistant look",
+      "desc": "Screenshot the owner's screen(s) and print the image paths to Read — only when the owner asks",
+      "args": [],
+      "valueFlags": [
+        "--display"
+      ]
+    },
+    {
       "path": "assistant notify",
       "desc": "Show a notice in the notch",
       "args": [

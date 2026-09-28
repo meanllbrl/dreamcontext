@@ -15,7 +15,7 @@ import {
   handleAssistantStatus, handleAssistantRollup, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
-  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi,
+  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
 } from './routes/assistant.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
@@ -387,6 +387,7 @@ export function buildRouter(): Router {
   router.get('/api/assistant/watch', handleAssistantWatch);
   router.post('/api/assistant/broadcast', handleAssistantBroadcast);
   router.post('/api/assistant/ui/:verb', handleAssistantUi);
+  router.post('/api/assistant/look', handleAssistantLook);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
   router.post('/api/launcher/agent-settings', handleAgentSettingsSet);

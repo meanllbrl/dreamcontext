@@ -367,6 +367,7 @@ dreamcontext assistant focus <vault>
 dreamcontext assistant tile <vault…> [--layout columns|rows|grid]
 dreamcontext assistant broadcast "<message>" [--to a,b]
 dreamcontext assistant notify "<text>" [--level info|attention]
+dreamcontext assistant look — ONLY when the owner asks you to see their screen; then Read each path
 \`\`\`
 A rule the owner wants everywhere goes through \`broadcast\`: each project's own agent writes it.
 Run \`send\`, \`answer\`, \`broadcast\`, \`chat\` and \`watch\` with the Bash tool's \`timeout: 600000\`: a

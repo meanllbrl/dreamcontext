@@ -546,6 +546,7 @@ dreamcontext assistant answer <sessionId> --question <id> (--choice <label> | --
 dreamcontext assistant focus <vault>
 dreamcontext assistant tile <vault…> [--layout columns|rows|grid]
 dreamcontext assistant notify "<text>" [--level info|attention]
+dreamcontext assistant look [--display n]           # "ekranıma bak": screenshot(s) to Read, ONLY on request
 ```
 
 Run anywhere else they fail with *"only the dreamcontext Assistant can drive the app"*: the
@@ -555,10 +556,14 @@ token is refused. A token from before a restart is told apart from a wrong one (
 restarted — this turn cannot drive it").
 
 **How a verb reaches a project window (the relay).** `open`/`chat`/`send`/`answer`/`focus` go
-down the notch's own socket; the notch finds that project's window, or opens the project in a
-window of its OWN (never a chip in somebody else's window — if even that fails the answer is
-`ceiling`), binds the command id to that window by label, and rings a doorbell carrying only
-the id. The window claims the command from the server with the nonce it registered at
+down the notch's own socket; the notch finds the window the project is ALREADY open in — as
+one tab among several — by asking the server which windows hold a live instance of it
+(`GET /api/assistant/windows?vault=`; every instance registers at mount and withdraws at
+unmount), not the localStorage heartbeat, which goes stale when macOS throttles a background
+window. A tab that is listed but cold is woken in place (`dream://assistant-wake`). Only a
+project open nowhere gets a window of its OWN (never a chip in somebody else's window — if even
+that fails the answer is `ceiling`). The notch binds the command id to that window by label
+and rings a doorbell carrying only the id. The window claims the command from the server with the nonce it registered at
 bootstrap and posts the result. A forged, reused, unbound or mis-addressed id lands nothing.
 
 **Autonomy and taint.** `ask` — send, answer and broadcast become PROPOSALS the owner approves,
@@ -576,6 +581,13 @@ of M". **Detail buttons**: a notch answer's `dream-actions` `task`/`knowledge`/`
 carries `"vault"`; clicking it posts `POST /api/assistant/open`, which rides the same relay, so
 the project's window opens on that page. **Tile** moves only dreamcontext's own windows (no
 Accessibility), each project in its own window, columns / rows / grid on the notch's monitor.
+
+**Looking at the screen.** `look` runs macOS `screencapture` from the app's process tree, one
+JPEG per display shrunk to 1920 px, into the hidden vault's `tmp/screens/` (deleted after 30
+min); the assistant Reads the paths. Free only while the owner's own words are the last thing
+the session heard (the same rule as `chat`), so a project reply cannot ask to see the desktop.
+macOS asks for **Screen Recording** the first time (listed in the wizard's permissions step);
+without it the answer is `screen_permission` and the Privacy pane opens.
 
 **Retired, with the records kept.** The Meeting Room's code is gone; its threads stay on disk
 at `~/.dreamcontext/meeting-room/threads/`, unread. The voice key stays in

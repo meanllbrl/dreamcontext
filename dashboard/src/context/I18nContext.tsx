@@ -897,6 +897,8 @@ const translations: Record<string, Record<string, string>> = {
     'assistant.perm.notifications.why': 'To tell you when a project needs you.',
     'assistant.perm.appleEvents': 'Control Music and Spotify',
     'assistant.perm.appleEvents.why': 'To pause your music while it speaks.',
+    'assistant.perm.screen': 'Screen Recording',
+    'assistant.perm.screen.why': 'To look at your screen, only when you ask it to.',
     'assistant.perm.loginItem': 'Login item',
     'assistant.perm.loginItem.why': 'To start at login, if you turned that on.',
     'assistant.perm.test': 'Send a test notification',

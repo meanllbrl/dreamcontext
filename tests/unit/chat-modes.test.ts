@@ -485,7 +485,9 @@ describe('modeBriefing', () => {
   // `assistant` went 3700 → 4000 (2026-09-28) for two latency rules: say what you are doing
   // before a delegation call (it is spoken while the owner waits), and a single-quoted --prompt
   // (a backtick in one failed and cost a 15 s retry). The test below keeps 150 chars of headroom.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 4000 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules
+  // Then 4000 → 4100 (2026-09-28, owner: "şu ekranıma bak"): the one `look` line that says the
+  // assistant may screenshot the owner's screen ONLY on their own request.
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 4100 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look
   const DEFAULT_CEILING = 1600;
 
   it('assistant: speaks before delegating, single-quotes --prompt, and stays 150 under its ceiling', () => {
@@ -493,7 +495,8 @@ describe('modeBriefing', () => {
     expect(brief).toContain('Before chat, watch, send or broadcast, first write ONE short sentence');
     expect(brief).toContain('it is read aloud while you wait');
     expect(brief).toContain('Pass --prompt in single quotes; never backticks or $() inside it.');
-    expect(brief.length).toBeLessThanOrEqual(3850);
+    expect(brief).toContain('dreamcontext assistant look — ONLY when the owner asks you to see their screen');
+    expect(brief.length).toBeLessThanOrEqual(3950);
   });
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

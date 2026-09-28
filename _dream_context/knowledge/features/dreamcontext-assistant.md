@@ -15,7 +15,7 @@ date: '2026-09-26'
 status: in_review
 product: desktop
 created: '2026-09-26'
-updated: '2026-09-27'
+updated: '2026-09-28'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -28,6 +28,7 @@ related_tasks:
     a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica
   - >-
     the-notch-assistant-answers-without-the-15-40-s-of-plumbing-in-front-of-every-turn
+  - sesli-asistan-ekrani-gorur-ve-acik-sekmedeki-projeye-baglanir
 ---
 
 ## Why
@@ -122,6 +123,8 @@ drives all of it against the real built server on an isolated HOME.**
 - **Notch shell.** `desktop/src-tauri/src/assistant.rs`, window label `assistant`, shortcut registered IN RUST from `config.hotkey`, `tauri-plugin-autostart`, capability `capabilities/assistant.json` (window chrome, webview creation, size/position/focus, `emit-to`/`listen`, notification, global-shortcut listen — NO `shell:*`).
 - **Voice** reuses `/api/agent/voice/stt` with `vault=__assistant__`, `/correct`, `/tts`, SpeechQueue, audioFocus and Hush through the notch's Composer (mode `assistant`). The Rust hotkey's edges reach it through `lib/voice/externalPushToTalk.ts` (a pure `pushToTalkAction` table: hold / toggle); the summoning press un-hides the panel synchronously first so the composer owns the chord. `src/lib/voice/lexicon.ts` puts every registered project name FIRST in the Assistant's vocabulary (only for the hidden vault). The voice key is written by the wizard to the same `~/.dreamcontext/voice.json`; Settings → Voice stays where it was.
 - **Shape, pop-out, truthful counts, opt-in speech (W6/W7, owner 2026-09-26).** Open, the notch is one black shape (`--notch-surface`, `.surface-night` inside, lifted surfaces `color-mix`ed from the black) flush with the camera housing, 460x400; the reused chat pane is anchored by `.dc-notch__chat { position: relative }` (the pane is `position:absolute; inset:0` and used to cover the pill). **Pop out / Dock** moves the SAME webview between the notch seat and a 720x640 resizable floating window (`assistant://seat` event, handled in `assistant.rs`; payload is only `window|notch`), remembered for the app run. The pill's right ear wears the project tab strip's bubbles (green ring = working, grey = idle + stale, counts in words in the aria-label). The registry's `activityOf` is the truth behind them: a chat opened but never sent a message is idle after a 30 s grace (the 7 tabs reopened with `--resume` on relaunch were the "10 working"), a working chat silent for 3 min (11 min with a tool call open) is `stale`, `asking` never goes stale; `/api/assistant/rollup` = `{starting, working, stale, asking, idle, proposals}`, the roster uses the same rule. **Read-aloud is opt-in**: a composer toggle (`.chat-cmp-readaloud`, `lib/voice/readAloud.ts`, localStorage, default OFF) gates `speak()` in `chatSession.ts` before `speech.push`, so off means no `/tts` request; switching off mid-reply stops speech.
+- **Where a project is open (2026-09-28).** `commandExecutor.findOpenProject` asks the server (`relay.ts windowLabelsForVault`, fed by every instance's registration and emptied by `POST /api/assistant/windows/release`), intersected with `WebviewWindow.getAll()`, before the browser registry; a registry window the server does not list holds the project as a COLD tab and is woken with `dream://assistant-wake` (`WindowChrome` only re-activates a tab it already holds). A new window only for a project open nowhere.
+- **`look` (2026-09-28).** `src/lib/assistant/screen.ts`: `screencapture -x -t jpg` with one path per display (max 4, or `-D n`), `sips -Z 1920`, into the hidden vault's `tmp/screens/`, pruned after 30 min. Gate: `decide()` treats `look` like `chat` (free while clean, a proposal once tainted, bypass passes). No permission → `screen_permission` and the Privacy pane opens; the wizard's permissions step lists Screen Recording.
 - **Retirements** (`pattern-retire-shipped-capability`): the `jarvis` mode became `assistant` (server maps a saved `jarvis` to Basic), and the Meeting Room's components/hooks/routes/lib/capability/verify script/i18n/tests were removed. `runPeerHeadless` (in `peer-delivery.ts`) STAYS. Voice modules were kept and rewired to the notch.
 
 ## Notes
@@ -131,6 +134,9 @@ drives all of it against the real built server on an isolated HOME.**
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-28 - `look` sees the owner's screen; a command lands in the tab that is already open
+- Owner: "şu ekranıma bak" must work, and a project already open as a tab must not get a second window. The notch read "where is X open?" only from the localStorage heartbeat, which goes stale when macOS throttles a background window; it now asks the server's live-instance list first (`GET /api/assistant/windows`, released on unmount, earlier page loads dropped), and wakes a cold tab in place (`dream://assistant-wake`). `look` screenshots every display (gated like `chat`, Screen Recording permission reported as `screen_permission`). Task `sesli-asistan-ekrani-gorur-ve-acik-sekmedeki-projeye-baglanir`.
 
 ### 2026-09-27 - W6/W7: black compact notch, pop-out window, truthful working/stale, opt-in read-aloud
 - Owner verdicts on the real app ("aynı renk olsun, küçük olsun, notch ile perfect"; "sığması lazım, pencere olarak açılabilmeli, gerçekten working/stale göstermeli"; "okuma modu sadece açıksa okusun"). Built by Develop-mode builders, each wave reviewed clean; `verify:assistant` 107/107 (fit, bubbles, pop-out same node + socket, read-aloud off → zero TTS).

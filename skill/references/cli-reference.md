@@ -405,6 +405,7 @@ Verbs for the Assistant that lives in the desktop app's notch, above every proje
 | `assistant focus <vault>` | Bring a project's window to the front. |
 | `assistant tile <vault…> [--layout columns\|rows\|grid]` | Place project windows on the notch's monitor. |
 | `assistant notify "<text>" [--level info\|attention]` | A notice in the notch; `attention` pulses the pill. |
+| `assistant look [--display <n>]` | Screenshot the owner's screen(s) (macOS) and print the image paths to Read. Only on the owner's own request: gated like `chat`, a proposal once the session has read project output. No Screen Recording permission → `screen_permission`, and the Privacy pane opens. Shots are deleted after 30 min. |
 
 Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `answer` / `broadcast` run or become a proposal the owner approves in the notch; project-derived output comes back wrapped in `<untrusted-project-output>`.
 
