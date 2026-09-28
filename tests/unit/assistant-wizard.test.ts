@@ -68,6 +68,14 @@ describe('hotkey capture', () => {
   });
 });
 
+describe('off switch', () => {
+  it('keeps a boolean enabled and drops anything else', () => {
+    expect(sanitizeConfigPatch({ enabled: false }).enabled).toBe(false);
+    expect(sanitizeConfigPatch({ enabled: true }).enabled).toBe(true);
+    expect('enabled' in sanitizeConfigPatch({ enabled: 'no' })).toBe(false);
+  });
+});
+
 describe('chord display', () => {
   it('draws Mac glyphs in the standard order whatever order was stored', () => {
     expect(formatChordGlyphs({ code: 'KeyJ', mods: ['Meta', 'Alt', 'Control'] })).toBe('⌃⌥⌘J');

@@ -239,6 +239,8 @@ export function AssistantWizard({ exists: existsProp, onClose, onChanged }: Assi
 
   async function wakeUp() {
     setWake({ kind: 'waking' });
+    // Waking is switching on: an assistant the owner turned off from the card comes back here.
+    await persist({ enabled: true });
     const r = await wakeAssistant();
     if (r.desktopOnly) setWake({ kind: 'desktop_only' });
     else if (!r.woke) setWake({ kind: 'failed', error: r.error ?? '' });

@@ -102,14 +102,36 @@ struct HotkeyCfg {
 #[derive(serde::Deserialize)]
 struct Cfg {
     hotkey: Option<HotkeyCfg>,
+    /// The owner's off switch (the Launcher card). Absent = on: every config written before
+    /// the switch existed belongs to an assistant the owner set up and was using.
+    #[serde(default = "on")]
+    enabled: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+fn read_cfg() -> Result<Option<Cfg>, String> {
+    let Some(dir) = assistant_dir() else { return Ok(None) };
+    let Ok(raw) = std::fs::read_to_string(dir.join("config.json")) else { return Ok(None) };
+    serde_json::from_str(&raw).map(Some).map_err(|e| format!("config.json is malformed: {e}"))
+}
+
+/// The assistant exists AND the owner has not switched it off. Everything that would put
+/// the notch on screen or grab the hotkey asks this, not `assistant_exists`. A malformed
+/// config counts as on, so a typo never silently hides an assistant the owner relies on.
+pub fn assistant_enabled() -> bool {
+    assistant_exists() && read_cfg().ok().flatten().map(|c| c.enabled).unwrap_or(true)
 }
 
 /// Parse the config's physical `KeyboardEvent.code` + modifier names into a Shortcut.
 /// A chord without a modifier is refused — it would fire on every keystroke in every app.
 fn shortcut_from_config() -> Result<Option<(Shortcut, String)>, String> {
-    let Some(dir) = assistant_dir() else { return Ok(None) };
-    let Ok(raw) = std::fs::read_to_string(dir.join("config.json")) else { return Ok(None) };
-    let cfg: Cfg = serde_json::from_str(&raw).map_err(|e| format!("config.json is malformed: {e}"))?;
+    let Some(cfg) = read_cfg()? else { return Ok(None) };
+    if !cfg.enabled {
+        return Ok(None);
+    }
     let Some(h) = cfg.hotkey else { return Ok(None) };
     let code: Code = h.code.parse().map_err(|_| format!("unknown key code {}", h.code))?;
     let mut mods = Modifiers::empty();
@@ -205,7 +227,7 @@ pub fn shortcut_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             log_edge(state);
             // Idempotent: a summon shows the notch if hidden; the webview ignores a Pressed
             // that arrives while it is already recording.
-            if state == "pressed" {
+            if state == "pressed" && assistant_enabled() {
                 let _ = ensure_notch(app);
             }
             let _ = app.emit_to(NOTCH_LABEL, "assistant://hotkey", serde_json::json!({ "state": state }));
@@ -329,6 +351,26 @@ pub fn assistant_set_autostart<R: Runtime>(app: AppHandle<R>, enabled: bool) -> 
     al.is_enabled().map_err(|e| e.to_string())
 }
 
+/// The owner's off switch, applied natively AFTER the server wrote `enabled` to config.json.
+/// Off: the notch is hidden (not closed; tauri-nspanel panels are not safely destroyable, and
+/// the next launch never builds it), the chord is released so the keys go back to other apps,
+/// and the Login Item is removed (a login that opens nothing is worse than none). On: seat the
+/// notch and register the chord again. The Login Item stays off; the wizard's step turns it on.
+#[tauri::command]
+pub fn assistant_set_enabled<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Result<HotkeyStatus, String> {
+    // Told first, so a seat change already in flight in the webview cannot show it again.
+    let _ = app.emit_to(NOTCH_LABEL, "assistant://enabled", serde_json::json!({ "enabled": enabled }));
+    if enabled {
+        ensure_notch(&app)?;
+        return Ok(apply_hotkey(&app));
+    }
+    if let Ok(panel) = app.get_webview_panel(NOTCH_LABEL) {
+        panel.hide();
+    }
+    let _ = app.autolaunch().disable();
+    Ok(apply_hotkey(&app))
+}
+
 /// Show the notch (after the wizard's "Wake up"), registering the hotkey too.
 #[tauri::command]
 pub fn assistant_wake<R: Runtime>(app: AppHandle<R>) -> Result<HotkeyStatus, String> {
@@ -378,7 +420,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, port: u16) {
         // AppKit only on the main thread.
         let _ = handle.run_on_main_thread(move || apply_seat(&h, window));
     });
-    if assistant_exists() {
+    if assistant_enabled() {
         let _ = apply_hotkey(app);
         let _ = ensure_notch(app);
     }

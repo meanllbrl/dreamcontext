@@ -25,6 +25,7 @@
     "allow-assistant-apply-hotkey",
     "allow-assistant-set-autostart",
     "allow-assistant-wake",
+    "allow-assistant-set-enabled",
     "clipboard-manager:allow-write-text",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

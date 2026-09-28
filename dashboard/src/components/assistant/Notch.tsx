@@ -141,12 +141,19 @@ if (isDesktop()) {
 }
 
 /**
+ * The owner switched the assistant off (the Launcher card → `assistant_set_enabled`, which
+ * hides this panel and emits `assistant://enabled`). A hidden panel must STAY hidden, so no
+ * seat change shows it again until it is switched back on.
+ */
+let switchedOff = false;
+
+/**
  * Size + seat the window for a state. `claimed` is a seat change the caller already claimed
  * (synchronously, at the click) — it is dropped if a newer one came since. The notch seat never
  * has a min size, so it always clears one a popped-out window left behind.
  */
 async function seat(expanded: boolean, geo: Geometry | null, ms: number = frameMotionMs(), claimed?: number): Promise<void> {
-  if (!isDesktop()) return;
+  if (!isDesktop() || switchedOff) return;
   const f = notchFrame(expanded, geo);
   const gen = claimed ?? claimSeat(f);
   if (!wantSeat(gen, f)) return;
@@ -184,7 +191,7 @@ async function seatWindow(
   ms: number = frameMotionMs(),
   claimed?: number,
 ): Promise<void> {
-  if (!isDesktop()) return;
+  if (!isDesktop() || switchedOff) return;
   const gen = claimed ?? claimSeat(null);
   if (!wantSeat(gen, null)) return;
   try {
@@ -446,6 +453,24 @@ export function Notch() {
     // Moved by hand, it is the owner's window now: it no longer goes home by itself.
     autoRef.current = false;
     void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().startDragging()).catch(() => { /* no runtime */ });
+  }, []);
+
+  // The off switch from Rust (assistant://enabled). Off: stop re-seating (see `switchedOff`).
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const fn = await listen<{ enabled: boolean }>('assistant://enabled', (e) => {
+          switchedOff = e.payload?.enabled === false;
+          if (switchedOff) setExpanded(false);
+        });
+        if (cancelled) fn(); else unlisten = fn;
+      } catch { /* no runtime */ }
+    })();
+    return () => { cancelled = true; unlisten?.(); };
   }, []);
 
   // Hotkey edges from Rust (assistant://hotkey) — the ONE chord that summons the notch AND

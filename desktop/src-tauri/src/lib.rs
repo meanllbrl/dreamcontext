@@ -64,6 +64,7 @@ pub fn run() {
             assistant::assistant_apply_hotkey,
             assistant::assistant_set_autostart,
             assistant::assistant_wake,
+            assistant::assistant_set_enabled,
             frames::set_frames,
         ])
         // Per-label generations for `set_frames` (src/frames.rs): the last requested frame wins.
@@ -583,7 +584,7 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     // An autostart (Login Item) launch opens ONLY the notch — the owner did not ask for the
     // Launcher, and the notch can open project windows itself.
     let autostart = std::env::args().any(|a| a == "--autostart");
-    if autostart && assistant::assistant_exists() {
+    if autostart && assistant::assistant_enabled() {
         return Ok(());
     }
 

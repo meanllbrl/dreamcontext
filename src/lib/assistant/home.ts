@@ -57,6 +57,9 @@ export interface AssistantConfig {
   hotkey: AssistantHotkey | null;
   autonomy: Autonomy;
   autostart: boolean;
+  /** The owner's off switch. Off: no notch, no hotkey, no Login Item; the vault and the
+   *  conversation are kept, so switching back on resumes where it was. */
+  enabled: boolean;
   /** The one long-lived conversation the notch resumes on every summon. */
   conversationId: string | null;
   speak: boolean;
@@ -67,6 +70,7 @@ export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
   hotkey: null,
   autonomy: 'ask',
   autostart: false,
+  enabled: true,
   conversationId: null,
   speak: false,
 };
@@ -93,6 +97,7 @@ export function sanitizeConfigPatch(raw: unknown): Partial<AssistantConfig> {
   }
   if (typeof r.autostart === 'boolean') out.autostart = r.autostart;
   if (typeof r.speak === 'boolean') out.speak = r.speak;
+  if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
   if (r.conversationId === null) out.conversationId = null;
   else if (typeof r.conversationId === 'string' && UUID_RE.test(r.conversationId)) out.conversationId = r.conversationId;
   if (r.hotkey === null) out.hotkey = null;

@@ -19,6 +19,7 @@ export interface AssistantConfig {
   hotkey: AssistantHotkey | null;
   autonomy: AssistantAutonomy;
   autostart: boolean;
+  enabled: boolean;
   conversationId: string | null;
   speak: boolean;
 }
@@ -43,6 +44,7 @@ export interface AssistantProfilePatch {
   name?: string;
   autonomy?: AssistantAutonomy;
   autostart?: boolean;
+  enabled?: boolean;
   speak?: boolean;
   hotkey?: AssistantHotkey | null;
   character?: string;
@@ -186,6 +188,20 @@ export async function setAssistantAutostart(enabled: boolean): Promise<Autostart
   } catch (err) {
     // The shell refused before changing anything, so the Login Item is still where it was.
     return { ok: false, enabled: !enabled, error: errorText(err) };
+  }
+}
+
+/**
+ * Apply the off switch natively (hide the notch, release the hotkey, drop the Login Item — or
+ * seat it again). Call AFTER `saveProfile({ enabled })`: the shell re-reads config.json.
+ */
+export async function setAssistantEnabled(enabled: boolean): Promise<{ ok: boolean; error: string | null; desktopOnly?: boolean }> {
+  if (!isDesktop()) return { ok: false, error: null, desktopOnly: true };
+  try {
+    await invokeShell<RawHotkeyStatus>('assistant_set_enabled', { enabled });
+    return { ok: true, error: null };
+  } catch (err) {
+    return { ok: false, error: errorText(err) };
   }
 }
 
