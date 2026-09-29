@@ -1448,6 +1448,10 @@ export function AgentSurface() {
    * resume path wholesale: same conversation UUID (`--resume`, transcript intact), same model,
    * effort, permission mode and half-typed draft (`carryDraftInto`), new mode. The composer's
    * menu says so out loud rather than letting the reconnect read as a glitch.
+   *
+   * The new append file alone does NOT reach the model: a resume restores the system prompt
+   * from the transcript's snapshot. The server sees the mismatch on this respawn and tells the
+   * conversation instead (src/server/chat-mode-drift.ts).
    */
   const changeChatMode = useCallback((sid: string, mode: ChatMode) => {
     const cs = sessions.current.get(sid);

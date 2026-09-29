@@ -20,6 +20,7 @@ import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
+import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
 import { describeFreshStart, freshSessionOnDefaultBranch } from '../../lib/session-start-branch.js';
@@ -854,6 +855,36 @@ export function startChatSession(
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
 
+  // ── A RESUMED conversation is told its mode — its system prompt cannot be ───────────
+  // A resume restores the system prompt from the transcript's snapshot, so the append file
+  // above is read and ignored (chat-mode-drift.ts has the measurement). When the model is
+  // holding a different mode than this spawn's, a SessionStart hook scoped to THIS process
+  // (`--settings`) adds a note saying the new brief replaces the old; on `compact` too when
+  // the snapshot differs, since a compaction drops the note. A failure degrades to today's
+  // behaviour, never to a failed spawn.
+  let modeNoteArg: string[] = [];
+  let cleanupModeNote = () => { /* nothing written */ };
+  if (resumeTarget && !isAssistant) {
+    try {
+      const transcript = findFirstTranscriptPath([resumeTarget]);
+      const state = transcript ? heldModeFromTranscript(readFileSync(transcript, 'utf-8')) : null;
+      const sources = modeNoteSources(state, mode);
+      if (state && sources.length) {
+        const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
+        const id = randomUUID();
+        const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
+        const settings = join(tmpdir(), `dreamcontext-chat-mode-settings-${id}.json`);
+        if (!isShellSafePath(out) || !isShellSafePath(settings)) throw new Error('unsafe tmpdir');
+        writeFileSync(out, modeNoteHookOutput(modeSwitchNote(state.held, mode, brief)), { encoding: 'utf-8', mode: 0o600 });
+        writeFileSync(settings, modeNoteSettings(`cat "${out}"`, sources), { encoding: 'utf-8', mode: 0o600 });
+        modeNoteArg = ['--settings', settings];
+        cleanupModeNote = () => {
+          for (const p of [out, settings]) { try { rmSync(p, { force: true }); } catch { /* tmp cleanup */ } }
+        };
+      }
+    } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
+  }
+
   // ── Delegation marker, effort, recall mode ──────────────────────────────────────────
   // A chat the Assistant opened is `delegated`, and so is every later spawn of the SAME
   // conversation (close + Resume, account or mode switch): those arrive without the URL
@@ -889,6 +920,7 @@ export function startChatSession(
     '--permission-prompt-tool', 'stdio',
     '--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass),
     ...briefingArg,
+    ...modeNoteArg,
     ...idArg,
     ...(model ? ['--model', model] : []),
     ...(spawnEffort ? ['--effort', spawnEffort] : []),
@@ -1153,6 +1185,7 @@ export function startChatSession(
     releaseHeld();
     cleanupDeferred();
     cleanupBriefing();
+    cleanupModeNote();
     unwatchAuth();
     registry?.exited();
     // A respawn in place hands the notch's surface to its successor on the same socket.
