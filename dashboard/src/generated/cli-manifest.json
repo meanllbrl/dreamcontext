@@ -2647,6 +2647,14 @@
       ]
     },
     {
+      "path": "tasks priority",
+      "desc": "Print or set a task's priority (logs \"priority: old -> new\" to the task changelog)",
+      "args": [
+        "<name>",
+        "[priority]"
+      ]
+    },
+    {
       "path": "tasks provision",
       "desc": "Create the recommended fields on the remote task container (urgency, summary, RICE, …)",
       "args": []
@@ -2738,6 +2746,14 @@
       "desc": "Lift a decline so the idea may be filed again",
       "args": [
         "<key>"
+      ]
+    },
+    {
+      "path": "tasks urgency",
+      "desc": "Print or set a task's urgency (logs \"urgency: old -> new\" to the task changelog)",
+      "args": [
+        "<name>",
+        "[urgency]"
       ]
     },
     {

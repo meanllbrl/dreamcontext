@@ -98,6 +98,8 @@ dreamcontext tasks start <name> 2026-06-25   # set planned start (range start)
 dreamcontext tasks due <name> 2026-07-01     # set due/end (range end)
 dreamcontext tasks start <name> clear        # clear the start
 dreamcontext tasks due <name> clear          # clear the due
+dreamcontext tasks priority <name> high      # change priority (omit the value to print it); logs "priority: medium -> high", syncs on next `tasks sync`
+dreamcontext tasks urgency <name> critical   # same for urgency; same value = no-op
 dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01
 ```
 - `start` is always **on or before** `due`. Moving the **start** past the due date doesn't fail — the due date is pushed out by just enough to preserve the window's length (a 5-day job that starts late is still a 5-day job). Moving the **due** end before the start is still rejected, since that's a direct contradiction.

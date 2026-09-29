@@ -106,6 +106,8 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 | `tasks rice <name>` | Print or update RICE values. `--reach`/`--impact`/`--confidence`/`--effort`, `--clear`. |
 | `tasks start <name> <YYYY-MM-DD\|clear>` | Set or clear a planned start date (range start). A start past the due date pushes the due date out by just enough to keep the window's length — it is never rejected. Setting it removes the `backlog` tag. |
 | `tasks due <name> <YYYY-MM-DD\|clear>` | Set or clear a due/end date (range end). Must be ≥ the start date. |
+| `tasks priority <name> [critical\|high\|medium\|low]` | Print (no value) or change priority on an existing task. Same values as `PATCH /api/tasks`; logs `priority: old -> new` to the task changelog, bumps `updated_at`, and the next `tasks sync` pushes it (ClickUp native priority). Same value = no-op; an invalid value exits 1. |
+| `tasks urgency <name> [critical\|high\|medium\|low]` | Same as `tasks priority`, for urgency (ClickUp: the urgency custom field). |
 | `tasks objectives <name> [slugs\|clear]` | Print, set (comma-separated, validated against `core/objectives/`), or clear the roadmap objectives a task serves. LOCAL-ONLY — never synced to a cloud backend. |
 | `tasks tag <name> <tags...>` | Add (or `--remove`) tags. `person:<slug>` assigns a person. |
 | `tasks field <name> <key> [value\|clear]` | Set or clear a user-defined custom field declared in `overrides/task.md` (synced to ClickUp/GitHub). Validates select options + number types. |

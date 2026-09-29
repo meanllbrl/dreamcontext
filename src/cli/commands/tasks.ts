@@ -155,6 +155,48 @@ function reportDateStamps(
   }
 }
 
+/** Priority and urgency share one value set — the same one PATCH /api/tasks accepts. */
+const TASK_LEVELS = ['critical', 'high', 'medium', 'low'] as const;
+
+/**
+ * Print or set `priority` / `urgency` on an existing task. The write goes
+ * through `backend.updateFields` (the path `tasks version` uses), so a cloud
+ * backend queues the change and the next `tasks sync` carries it to the remote.
+ * An unchanged value writes nothing — no updated_at bump, no changelog line.
+ */
+async function setTaskLevel(field: 'priority' | 'urgency', name: string, value: string | undefined): Promise<void> {
+  const backend = getTaskBackend();
+  const slug = await resolveTaskSlug(backend, name);
+  if (!slug) return;
+  const task = await backend.get(slug);
+  if (!task) {
+    error(`Task not found: ${name}`);
+    process.exitCode = 1;
+    return;
+  }
+  const current = task[field];
+
+  if (value === undefined) {
+    console.log(`${slug} → ${field}: ${current ?? '(none)'}`);
+    return;
+  }
+
+  const next = value.trim().toLowerCase();
+  if (!(TASK_LEVELS as readonly string[]).includes(next)) {
+    error(`${field === 'priority' ? 'Priority' : 'Urgency'} must be one of: ${TASK_LEVELS.join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (next === current) {
+    console.log(chalk.dim(`${slug} → ${field} already ${next} (no change)`));
+    return;
+  }
+
+  await backend.addChangelog(slug, `### ${today()} - ${field === 'priority' ? 'Priority' : 'Urgency'} changed\n- ${field}: ${current ?? '(none)'} -> ${next}`, { fallbackAppend: true });
+  await backend.updateFields(slug, { [field]: next, updated_at: today() });
+  success(`${slug} → ${field}: ${current ?? '(none)'} -> ${next}`);
+}
+
 /**
  * Set or CLEAR one end of a task's date range. `raw` is a YYYY-MM-DD or the
  * literal "clear". Shared by `tasks start` and `tasks due` so both behave
@@ -1231,6 +1273,22 @@ export function registerTasksCommand(program: Command): void {
         ));
       }
     });
+
+  // PRIORITY / URGENCY on existing tasks (synced to the remote backend).
+  // `tasks create -p/-u` set them once; before these verbs the only way to change
+  // them later was the dashboard's PATCH /api/tasks, which a headless run (e.g.
+  // a scheduled product-owner automation) cannot rely on. Same value set as that
+  // route; same-value is a no-op so a recompute pass does not churn the changelog.
+  for (const field of ['priority', 'urgency'] as const) {
+    tasks
+      .command(field)
+      .argument('<name>', 'Task slug or name')
+      .argument(`[${field}]`, `${TASK_LEVELS.join(' | ')}, or omit to print`)
+      .description(`Print or set a task's ${field} (logs "${field}: old -> new" to the task changelog)`)
+      .action(async (name: string, value: string | undefined) => {
+        await setTaskLevel(field, name, value);
+      });
+  }
 
   // User-defined custom fields (declared in overrides/task.md; synced to the remote backend)
   tasks
