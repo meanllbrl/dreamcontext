@@ -20,7 +20,7 @@ import './SleepSettings.css';
 /**
  * Settings › Sleep — the per-brain sleep tuning that used to be constants in
  * `src/lib/sleep-consolidation.ts` and hardcoded `model:` lines in the sleep agent
- * files (five specialists since sleep-federation was retired).
+ * files.
  *
  * Two things this screen is careful about:
  *

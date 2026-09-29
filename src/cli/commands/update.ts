@@ -25,6 +25,7 @@ import {
   type Manifest,
 } from '../../lib/manifest.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
+import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
 
 // ─── Update Summary ──────────────────────────────────────────────────────────
 
@@ -34,7 +35,19 @@ export interface UpdateSummaryInput {
   packs: string[];
   removed: string[];
   setupVersion: string | null;
+  /**
+   * What happened to the managed CLAUDE.md block. Omitted (or null) when the
+   * refresh did not run at all, e.g. `--packs-only`.
+   */
+  rootInstructions?: ManagedBlockRefreshAction | null;
 }
+
+const ROOT_INSTRUCTIONS_SUMMARY: Record<ManagedBlockRefreshAction, string> = {
+  refreshed: 'CLAUDE.md managed block refreshed (text outside the block untouched)',
+  unchanged: 'CLAUDE.md managed block already current',
+  absent: 'no dreamcontext block in CLAUDE.md, left alone',
+  'not-a-file': 'CLAUDE.md is not a regular file (symlink?), left alone',
+};
 
 /**
  * Build a relay-able plain-text summary of what the update command did.
@@ -54,6 +67,9 @@ export function buildUpdateSummary(input: UpdateSummaryInput): string {
     lines.push(`Pruned files: ${removed.join(', ')}`);
   } else {
     lines.push('Pruned files: none');
+  }
+  if (input.rootInstructions) {
+    lines.push(`Root instructions: ${ROOT_INSTRUCTIONS_SUMMARY[input.rootInstructions]}`);
   }
   if (setupVersion !== null) {
     lines.push(`Setup version: ${setupVersion}`);
@@ -197,7 +213,7 @@ export async function pruneStaleFiles(
 export function registerUpdateCommand(program: Command): void {
   program
     .command('update')
-    .description('Refresh installed dreamcontext files (core skill, agents, hooks, packs) to the latest shipped version')
+    .description('Refresh installed dreamcontext files (core skill, agents, hooks, packs, and the managed CLAUDE.md block when one exists) to the latest shipped version')
     .option('--packs-only', 'Only refresh installed packs, skip core skill/agents/hooks')
     .option('--core-only', 'Only refresh core skill/agents/hooks, skip packs')
     .option('-y, --yes', 'Skip confirmation prompts when deleting stale files')
@@ -265,11 +281,25 @@ export function registerUpdateCommand(program: Command): void {
         const installed: string[] = [];
         const notes: string[] = [];
 
+        let rootInstructions: ManagedBlockRefreshAction | null = null;
         if (!opts.packsOnly) {
           for (const platform of platforms) {
             const result = await installCoreForPlatform(platform, projectRoot, newManifest);
             installed.push(...result.installed);
             notes.push(...result.notes);
+          }
+
+          // The managed CLAUDE.md block is core content too, but only when the
+          // project already carries one: update never creates the file and never
+          // adds a block the user removed (that is `install-instructions`' job).
+          try {
+            rootInstructions = refreshManagedInstructionsBlock(projectRoot, 'claude').action;
+            if (rootInstructions === 'refreshed') {
+              installed.push('CLAUDE.md (managed block)');
+            }
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notes.push(chalk.yellow(`CLAUDE.md managed block not refreshed: ${msg}`));
           }
 
           console.log();
@@ -332,6 +362,7 @@ export function registerUpdateCommand(program: Command): void {
           packs,
           removed: pruneResult.removed,
           setupVersion: newSetupVersion,
+          rootInstructions,
         });
         console.log();
         console.log(miniBox(summary.split('\n'), { color: 'green' }));

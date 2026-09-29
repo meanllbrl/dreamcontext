@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
@@ -150,6 +150,68 @@ export async function installInstructions(
   const sep = existing.endsWith('\n') ? '\n' : '\n\n';
   writeFileSync(target, existing + sep + block, 'utf-8');
   return { action: 'appended', target, platform };
+}
+
+/**
+ * What `refreshManagedInstructionsBlock` did to the root instruction file.
+ * - `refreshed`: the managed block was rewritten from the shipped template.
+ * - `unchanged`: the block already matched the template; nothing was written.
+ * - `absent`: no file, or a file without a complete dreamcontext block; nothing was written.
+ * - `not-a-file`: the path is a symlink or not a regular file; refused, nothing was written.
+ */
+export type ManagedBlockRefreshAction = 'refreshed' | 'unchanged' | 'absent' | 'not-a-file';
+
+export interface ManagedBlockRefreshResult {
+  action: ManagedBlockRefreshAction;
+  target: string;
+  platform: PlatformId;
+}
+
+/**
+ * Refresh the dreamcontext-managed fenced block of an ALREADY-INSTALLED root
+ * instruction file, and nothing else. Used by `dreamcontext update`.
+ *
+ * Unlike `installInstructions`, this never creates the file, never appends a
+ * block to a file that has none, and never prompts: a project that removed the
+ * block (or never had one) keeps exactly what it has. The swap is byte-surgical,
+ * so every byte outside the fence, including the blank lines around it, stays
+ * identical. A symlinked target is refused rather than written through.
+ */
+export function refreshManagedInstructionsBlock(
+  projectRoot: string,
+  platform: PlatformId = 'claude',
+): ManagedBlockRefreshResult {
+  const spec = INSTRUCTION_SPECS[platform];
+  const target = join(projectRoot, spec.targetFile);
+  const result = (action: ManagedBlockRefreshAction): ManagedBlockRefreshResult => ({ action, target, platform });
+
+  let isRegularFile: boolean;
+  try {
+    isRegularFile = lstatSync(target).isFile();
+  } catch {
+    return result('absent');
+  }
+  if (!isRegularFile) return result('not-a-file');
+
+  const existing = readFileSync(target, 'utf-8');
+  const startFence = getFenceStart(platform);
+  const endFence = getFenceEnd(platform);
+  const startIdx = existing.indexOf(startFence);
+  const endIdx = startIdx === -1 ? -1 : existing.indexOf(endFence, startIdx + startFence.length);
+  if (startIdx === -1 || endIdx === -1) return result('absent');
+
+  const templatePath = findTemplate(spec.templateFile);
+  if (!templatePath) {
+    throw new Error(`${spec.templateFile} template not found. Try reinstalling dreamcontext.`);
+  }
+  // buildBlock ends with the end fence plus one newline; the span being replaced
+  // ends AT the end fence, so the trailing newline stays with the untouched tail.
+  const span = buildBlock(platform, readFileSync(templatePath, 'utf-8')).trimEnd();
+  const next = existing.slice(0, startIdx) + span + existing.slice(endIdx + endFence.length);
+  if (next === existing) return result('unchanged');
+
+  writeFileSync(target, next, 'utf-8');
+  return result('refreshed');
 }
 
 export async function installClaudeMd(

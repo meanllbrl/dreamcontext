@@ -63,7 +63,7 @@ ${chalk.bold('Setup')}
   ${chalk.magentaBright('install-skill')}     ${chalk.dim('(deprecated)')} Install skill + agents + optional packs
   ${chalk.magentaBright('install-instructions')} ${chalk.dim('(deprecated)')} Install managed root instruction files
   ${chalk.magentaBright('install-claude-md')} ${chalk.dim('(deprecated)')} Legacy alias for CLAUDE.md install
-  ${chalk.magentaBright('update')}            Refresh installed skill, agents, hooks, and packs
+  ${chalk.magentaBright('update')}            Refresh installed skill, agents, hooks, packs, and an existing CLAUDE.md block
   ${chalk.magentaBright('upgrade')}           Upgrade the dreamcontext CLI itself to the latest version
 
 ${chalk.bold('Content')}

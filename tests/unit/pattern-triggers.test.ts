@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -428,11 +428,15 @@ describe('review findings — regression locks', () => {
     const linkedDir = join(ROOT, 'knowledge', 'patterns', 'linked');
     symlinkSync(outside, linkedDir);
 
-    const { patterns } = loadPatternsReporting(ROOT);
-    expect(patterns.map((p) => p.slug)).not.toContain('sneaky-thing');
-
-    rmSync(linkedDir);
-    rmSync(outside, { recursive: true, force: true });
+    try {
+      const { patterns } = loadPatternsReporting(ROOT);
+      expect(patterns.map((p) => p.slug)).not.toContain('sneaky-thing');
+    } finally {
+      // Remove the LINK itself. rmSync on a symlink to a directory follows it on
+      // newer Node ("Path is a directory"); unlinkSync never follows.
+      unlinkSync(linkedDir);
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('C1: refuses an oversized pattern rather than reading it on every prompt', () => {

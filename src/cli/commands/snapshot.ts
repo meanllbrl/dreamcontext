@@ -37,7 +37,8 @@ import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { buildAutomationsSnapshot } from '../../lib/automations/snapshot.js';
 import { RECALL_GUIDANCE, TASK_CREATE_GUIDANCE, BRIEFING_RECOVERY_NOTE } from '../../lib/agent-guidance.js';
 import {
-  applyBudget, resolveBudget, resolveSubagentBriefingBudget, demoteMemoryBlock, demoteTaskList,
+  applyBudget, resolveBudget, resolveSubagentBriefingBudget, SUBAGENT_BRIEFING_MAX_CHARS,
+  demoteMemoryBlock, demoteTaskList,
   renderOverBudgetBanner, HARNESS_PERSIST_CHAR_LIMIT,
   type BudgetSection, type BudgetRung, type BudgetResult,
 } from '../../lib/snapshot-budget.js';
@@ -2394,6 +2395,62 @@ export interface SubagentBriefingMeasure {
   bodyChars: number;
   overBudget: boolean;
   demoted: Array<{ id: string; level: number }>;
+  /** Never-shrink blocks the hard cap had to clip (empty when the ladder alone fit). */
+  clipped: string[];
+}
+
+/** A never-shrink block the hard cap may clip, and where its full text lives. */
+interface ClippableBlock {
+  id: string;
+  text: string;
+  pointer: string;
+}
+
+/**
+ * Cut one block down by `excess` chars at a line boundary, ending in the pointer
+ * line. The first line (the block's label, e.g. `ACTIVE TASK-FORMAT OVERRIDE:`)
+ * always survives: an agent must still learn the block EXISTS even when its body
+ * does not fit. Any shortfall this leaves is absorbed by the next clip.
+ */
+function clipBlock(block: ClippableBlock, excess: number): string {
+  const target = Math.max(0, block.text.length - excess);
+  const [label, ...rest] = block.text.split('\n');
+  const kept: string[] = [label];
+  let used = label.length + 1 + block.pointer.length + 1;
+  for (const line of rest) {
+    if (used + line.length + 1 > target) break;
+    kept.push(line);
+    used += line.length + 1;
+  }
+  return [...kept, block.pointer, ''].join('\n');
+}
+
+/**
+ * The hard cap behind SUBAGENT_BRIEFING_MAX_CHARS. The ladder only shrinks
+ * demotable sections, so an oversized never-shrink block (a long task-format
+ * override, many linked repos) could still push the briefing over the cap.
+ * Clip those blocks in order, each with a one-line pointer to its full text;
+ * if that is still not enough (pathological), cut the tail at a line boundary.
+ */
+function enforceBriefingCap(text: string, blocks: ClippableBlock[], max: number): { text: string; clipped: string[] } {
+  let out = text;
+  const clipped: string[] = [];
+  for (const block of blocks) {
+    if (out.length <= max) break;
+    const at = out.indexOf(block.text);
+    if (at === -1) continue;
+    const replacement = clipBlock(block, out.length - max);
+    if (replacement.length >= block.text.length) continue;
+    out = out.slice(0, at) + replacement + out.slice(at + block.text.length);
+    clipped.push(block.id);
+  }
+  if (out.length > max) {
+    const tail = '\n(briefing cut at its size cap: `dreamcontext knowledge index` and `dreamcontext memory recall "<keywords>"` recover the rest)';
+    const cut = out.lastIndexOf('\n', max - tail.length);
+    out = out.slice(0, Math.max(0, cut)) + tail;
+    clipped.push('tail');
+  }
+  return { text: out, clipped };
 }
 
 interface BriefingFeature {
@@ -2654,13 +2711,17 @@ function briefingTasksSection(root: string): BudgetSection | null {
  * for a brain small enough to fit; past the budget, sections demote cheapest
  * loss first (objectives, tasks, core files, knowledge, features), and every
  * pinned file, pattern and feature stays named or counted. The directives, the
- * task-format override, the project line and the awareness rules never shrink.
+ * task-format override, the project line and the awareness rules never demote,
+ * but the total is a HARD cap (`SUBAGENT_BRIEFING_MAX_CHARS`): if those blocks
+ * alone overflow it, the override and then the linked repos are clipped with a
+ * pointer to their full text (`enforceBriefingCap`). Unbounded renders are exempt.
  */
 export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): SubagentBriefingMeasure {
   const root = opts.root ?? resolveContextRoot();
-  if (!root) return { text: '', bodyChars: 0, overBudget: false, demoted: [] };
+  if (!root) return { text: '', bodyChars: 0, overBudget: false, demoted: [], clipped: [] };
 
   const sections: BudgetSection[] = [];
+  const clippable: ClippableBlock[] = [];
 
   // 1. Top-priority directive (MUST be the first thing the sub-agent reads) and
   // the recall directive, which applies to every sub-agent type.
@@ -2681,10 +2742,12 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
   // one, and every sub-agent that creates or reconciles a task must honour it.
   const override = loadTaskOverride(root);
   if (override) {
-    sections.push({
+    const text = ['ACTIVE TASK-FORMAT OVERRIDE:', renderOverrideBriefing(override), ''].join('\n');
+    sections.push({ id: 'task-override', neverEvict: true, text });
+    clippable.push({
       id: 'task-override',
-      neverEvict: true,
-      text: ['ACTIVE TASK-FORMAT OVERRIDE:', renderOverrideBriefing(override), ''].join('\n'),
+      text,
+      pointer: '(override clipped to fit the briefing cap: read `_dream_context/overrides/task.md` for the full text before creating or reconciling a task)',
     });
   }
 
@@ -2709,7 +2772,15 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
   }
   const linkedGlance = renderLinkedReposGlance(root, 'briefing');
   if (linkedGlance) project.push(...linkedGlance);
-  if (project.length > 0) sections.push({ id: 'project', neverEvict: true, text: project.join('\n') });
+  if (project.length > 0) {
+    const text = project.join('\n');
+    sections.push({ id: 'project', neverEvict: true, text });
+    clippable.push({
+      id: 'project',
+      text,
+      pointer: '- (linked repos clipped to fit the briefing cap: `dreamcontext link ls` lists every one)',
+    });
+  }
 
   // 4. Demotable sections, in reading order (features first: most actionable).
   for (const section of [
@@ -2753,13 +2824,19 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
     fixHint: BRIEFING_FIX_HINT,
   });
 
-  const footerAt = result.text.lastIndexOf('\n\n---\n_Budget note:');
-  const body = footerAt === -1 ? result.text : result.text.slice(0, footerAt);
+  // An unbounded render (budget disabled) is exempt: the cap belongs to the budget.
+  const capped = budgetTokens === null
+    ? { text: result.text.trim(), clipped: [] as string[] }
+    : enforceBriefingCap(result.text.trim(), clippable, SUBAGENT_BRIEFING_MAX_CHARS);
+
+  const footerAt = capped.text.lastIndexOf('\n\n---\n_Budget note:');
+  const body = footerAt === -1 ? capped.text : capped.text.slice(0, footerAt);
   return {
-    text: result.text.trim(),
+    text: capped.text,
     bodyChars: body.trim().length,
     overBudget: result.overBudget,
     demoted: result.demoted,
+    clipped: capped.clipped,
   };
 }
 
