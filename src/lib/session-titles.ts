@@ -1,8 +1,9 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ensureGitignoreEntries } from './gitignore.js';
 import { UUID_RE } from './agent-session-map.js';
+import { findTranscriptBySessionId } from './transcript-locate.js';
 
 /**
  * Per-vault, machine-local memory of the NAME each Claude conversation carried in its tab,
@@ -19,6 +20,10 @@ import { UUID_RE } from './agent-session-map.js';
  * Stored as ONE small JSON blob (titles only — ~100 bytes a conversation), capped at
  * {@link MAX_TITLES}, oldest-updated evicted first. Best-effort throughout: a failed read is
  * "no stored titles" and the picker falls back to first prompts, which is what it did before.
+ *
+ * Each new name is also written INTO the conversation's Claude transcript as the same
+ * `custom-title` record Claude Code's own `/rename` appends, so `claude --resume` and every
+ * other Claude surface list the conversation under the name its tab carries.
  */
 
 const TITLES_REL_PATH = join('state', '.session-titles.json');
@@ -29,6 +34,8 @@ interface TitleEntry {
   title: string;
   /** ISO timestamp of the last change — eviction order only. */
   updated: string;
+  /** `title` is already in the Claude transcript as its `custom-title`. */
+  stamped?: boolean;
 }
 
 type TitleStore = Record<string, TitleEntry>;
@@ -47,9 +54,13 @@ function readStore(contextRoot: string): TitleStore {
     const out: TitleStore = {};
     for (const [id, v] of Object.entries(titles as Record<string, unknown>)) {
       if (!UUID_RE.test(id) || !v || typeof v !== 'object') continue;
-      const { title, updated } = v as { title?: unknown; updated?: unknown };
+      const { title, updated, stamped } = v as { title?: unknown; updated?: unknown; stamped?: unknown };
       if (typeof title !== 'string' || !title.trim()) continue;
-      out[id] = { title: title.trim().slice(0, MAX_TITLE), updated: typeof updated === 'string' ? updated : '' };
+      out[id] = {
+        title: title.trim().slice(0, MAX_TITLE),
+        updated: typeof updated === 'string' ? updated : '',
+        ...(stamped === true ? { stamped: true } : {}),
+      };
     }
     return out;
   } catch {
@@ -63,19 +74,61 @@ export function readSessionTitles(contextRoot: string): Map<string, string> {
 }
 
 /**
- * Remember `title` for each conversation id in `updates`. Invalid ids and blank titles are
- * skipped; an unchanged title costs no write (the roster is saved on every tab change, so
+ * Rename the Claude conversation `sessionId` to `title` the way Claude Code's `/rename` does:
+ * append a `custom-title` record to its transcript (the last one wins, and it outranks the
+ * `ai-title` Claude generates). Appending is what Claude itself does to a live transcript, so a
+ * running session is not disturbed. False when the transcript is not on disk yet — a tab named
+ * before its first prompt — so the caller can retry on a later save. Never throws.
+ */
+export function stampClaudeSessionTitle(sessionId: string, title: string, home?: string): boolean {
+  try {
+    const path = findTranscriptBySessionId([sessionId], home);
+    if (!path || !lstatSync(path).isFile()) return false;
+    // Claude writes whole lines; still, never glue our record onto a line in flight.
+    let lead = '';
+    const fd = openSync(path, 'r');
+    try {
+      const size = fstatSync(fd).size;
+      if (size > 0) {
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, size - 1);
+        if (last[0] !== 0x0a) lead = '\n';
+      }
+    } finally {
+      closeSync(fd);
+    }
+    appendFileSync(path, `${lead}${JSON.stringify({ type: 'custom-title', customTitle: title, sessionId })}\n`, 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remember `title` for each conversation id in `updates`, and rename the Claude conversation
+ * to match ({@link stampClaudeSessionTitle}). Invalid ids and blank titles are skipped; an
+ * unchanged, already-stamped title costs no write (the roster is saved on every tab change, so
  * this runs often and must be a no-op in the steady state). Best-effort, never throws.
  */
-export function recordSessionTitles(contextRoot: string, updates: ReadonlyArray<{ sessionId: string; title: string }>): void {
+export function recordSessionTitles(
+  contextRoot: string,
+  updates: ReadonlyArray<{ sessionId: string; title: string }>,
+  opts: { home?: string } = {},
+): void {
   try {
     const store = readStore(contextRoot);
     const now = new Date().toISOString();
     let changed = false;
     for (const { sessionId, title } of updates) {
       const t = title.trim().slice(0, MAX_TITLE);
-      if (!UUID_RE.test(sessionId) || !t || store[sessionId]?.title === t) continue;
-      store[sessionId] = { title: t, updated: now };
+      if (!UUID_RE.test(sessionId) || !t) continue;
+      const prev = store[sessionId];
+      if (prev?.title === t && prev.stamped) continue;
+      // Only an open tab is ever in `updates`, so an unstamped name is retried while its tab
+      // lives and dropped with it — never a probe per save for every conversation ever named.
+      const stamped = stampClaudeSessionTitle(sessionId, t, opts.home);
+      if (prev?.title === t && !stamped) continue;
+      store[sessionId] = { title: t, updated: prev?.title === t ? prev.updated : now, ...(stamped ? { stamped: true } : {}) };
       changed = true;
     }
     if (!changed) return;

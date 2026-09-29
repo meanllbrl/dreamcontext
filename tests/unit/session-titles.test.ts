@@ -59,6 +59,41 @@ describe('session titles', () => {
   });
 });
 
+describe('renaming the Claude conversation', () => {
+  let home: string;
+  let transcript: string;
+  beforeEach(() => {
+    home = join(projectRoot, 'home');
+    mkdirSync(join(home, '.claude', 'projects', '-tmp-proj'), { recursive: true });
+    transcript = join(home, '.claude', 'projects', '-tmp-proj', `${A}.jsonl`);
+  });
+  const customTitles = () => readFileSync(transcript, 'utf-8').split('\n').filter(Boolean)
+    .map((l) => JSON.parse(l)).filter((r) => r.type === 'custom-title');
+
+  it('appends the custom-title record /rename writes, once per new name', () => {
+    writeFileSync(transcript, '{"type":"user"}\n');
+    recordSessionTitles(contextRoot, [{ sessionId: A, title: 'Invoice export' }], { home });
+    recordSessionTitles(contextRoot, [{ sessionId: A, title: 'Invoice export' }], { home });
+    expect(customTitles()).toEqual([{ type: 'custom-title', customTitle: 'Invoice export', sessionId: A }]);
+    recordSessionTitles(contextRoot, [{ sessionId: A, title: 'Invoice export v2' }], { home });
+    expect(customTitles().map((r) => r.customTitle)).toEqual(['Invoice export', 'Invoice export v2']);
+  });
+
+  it('never glues the record onto an unterminated line', () => {
+    writeFileSync(transcript, '{"type":"user"}');
+    recordSessionTitles(contextRoot, [{ sessionId: A, title: 'Refactor' }], { home });
+    expect(readFileSync(transcript, 'utf-8').split('\n')[1]).toContain('"custom-title"');
+  });
+
+  it('retries a name recorded before its transcript existed', () => {
+    recordSessionTitles(contextRoot, [{ sessionId: A, title: 'Early' }], { home });
+    expect(readSessionTitles(contextRoot).get(A)).toBe('Early');
+    writeFileSync(transcript, '{"type":"user"}\n');
+    recordSessionTitles(contextRoot, [{ sessionId: A, title: 'Early' }], { home });
+    expect(customTitles().map((r) => r.customTitle)).toEqual(['Early']);
+  });
+});
+
 describe('rosterTitleUpdates', () => {
   const base = { bypass: false, minimized: false, size: 1 };
 
