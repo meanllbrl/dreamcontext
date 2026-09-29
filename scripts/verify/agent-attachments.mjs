@@ -223,7 +223,7 @@ async function main() {
     await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
     for (let i = 0; i < 4; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
-    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
 
     // ── 1: the ask, from a Finder-shaped environment ──
     console.log('\n═══ 1. An ask started from the app can post ═══');
@@ -322,7 +322,7 @@ async function main() {
       await p.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
       await p.waitForTimeout(2000);
       for (let i = 0; i < 4; i++) { await p.keyboard.press('Escape'); await p.waitForTimeout(150); }
-      await p.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+      await p.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
       await until(async () => (await p.locator('.agent-msg').count()) >= 3, 20000);
     };
     const row = (p, title) => p.locator('article.agent-msg', { has: p.locator('.agent-msg-name', { hasText: title }) }).first();
@@ -584,7 +584,7 @@ async function main() {
       await op.goto(`http://127.0.0.1:${port2}/?vault=proj`, { waitUntil: 'domcontentloaded' });
       await op.waitForTimeout(2000);
       for (let i = 0; i < 4; i++) { await op.keyboard.press('Escape'); await op.waitForTimeout(150); }
-      await op.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+      await op.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
       const offCard = row(op, 'Pack builder').locator('.agent-msg-file--board').first();
       await until(async () => (await offCard.count()) > 0, 15000);
       const tag = await offCard.evaluate((el) => el.tagName).catch(() => '(none)');

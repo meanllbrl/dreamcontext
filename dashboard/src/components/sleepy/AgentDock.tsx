@@ -6,7 +6,7 @@ import { orderRows, rollupKind, wantsALook, type SessionRow } from './agentStatu
 
 /**
  * The bottom-right session dock — shown when the full overlay is closed and ≥1 session
- * exists (a lone "Agent" FAB stands in at zero sessions). It is NOT a panel/popover: it's
+ * exists (a lone "Chat" FAB stands in at zero sessions). It is NOT a panel/popover: it's
  * a bare vertical stack of chip TILES anchored in the corner, growing upward. Each tile —
  * `[figure] [title / state] [✕]` — is its OWN solid, shadowed pill, so the names stay
  * legible over WHATEVER page/terminal content sits behind the fixed dock. The FIGURE is

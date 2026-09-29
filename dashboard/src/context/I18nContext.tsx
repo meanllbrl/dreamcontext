@@ -11,7 +11,10 @@ const translations: Record<string, Record<string, string>> = {
     // cadences and models, not a list of scheduled jobs. The `Page` union
     // value stays 'automations': renaming the route key would break persisted
     // nav state for no user-visible gain.
-    'nav.automations': 'Agentic Automations',
+    'nav.automations': 'Automations',
+    // The agent overlay's rail row: the sessions you drive yourself. Automations is what runs
+    // without you — "Agents" beside "Chat" read as one thing twice (owner, 2026-09-29).
+    'nav.chat': 'Chat',
     'nav.core': 'Core',
     'nav.knowledge': 'Knowledge',
     'nav.sleep': 'Sleep Cycle',
@@ -287,7 +290,7 @@ const translations: Record<string, Record<string, string>> = {
 
     'settings.nav.platforms': 'Platforms',
     'settings.nav.format': 'Task Format',
-    'settings.nav.agents': 'Agents',
+    'settings.nav.agents': 'Chat',
     'settings.nav.memory': 'Native memory',
     'settings.nav.sleep': 'Sleep',
     'settings.nav.learning': 'Learning',
@@ -377,10 +380,10 @@ const translations: Record<string, Record<string, string>> = {
     'settings.agents.surface.title': 'The agent panel',
     'settings.agents.session.title': 'What a new session starts with',
     'settings.learning.row_hint': 'Sleep re-tests open hypotheses against fresh evidence and records what changed.',
-    'settings.agents.title': 'Agents — in-app Claude Code',
-    'settings.agents.enable': 'Enable the Agents surface',
-    'settings.agents.enable_hint': 'Show the in-app agent launcher — the corner button and the session dock.',
-    'settings.agents.enable_more': 'Turning this off hides it and closes any open agent view; running sessions keep going in the background.',
+    'settings.agents.title': 'Chat — in-app Claude Code',
+    'settings.agents.enable': 'Enable Chat',
+    'settings.agents.enable_hint': 'Show Chat in the sidebar, the corner button and the session dock.',
+    'settings.agents.enable_more': 'Turning this off hides it and closes any open chat; running sessions keep going in the background.',
     'settings.agents.restore_tabs': 'Reopen past tabs on launch',
     'settings.agents.restore_tabs_hint': 'When the app starts, restore the agent tabs from your last session.',
     'settings.agents.restore_tabs_more': 'Agents resume their conversation. Off means every launch starts with a clean slate.',

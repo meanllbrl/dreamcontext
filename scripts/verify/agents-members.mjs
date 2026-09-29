@@ -139,7 +139,7 @@ async function main() {
    *  TOGGLE, so clicking it blind closes the very view it was meant to open. */
   const showRoster = async () => {
     if ((await page.locator('.agent-card').count()) > 0) return;
-    await page.locator('.agents-switch-opt', { hasText: 'Agents' }).click();
+    await page.locator('.agents-switch-opt', { hasText: 'Automations' }).click();
     await page.waitForTimeout(400);
   };
 
@@ -168,8 +168,8 @@ async function main() {
     // "Agentic Automations" since 2026-09-24 (owner's call). The item must be the ONLY
     // one that says so — a second "Automations" entry would be the old page resurfacing.
     console.log('\n═══ 1. Sidebar and page ═══');
-    const agentsNav = page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first();
-    check('the sidebar reads "Agentic Automations"', await agentsNav.count() > 0);
+    const agentsNav = page.locator('.sidebar-item', { hasText: 'Automations' }).first();
+    check('the sidebar reads "Automations"', await agentsNav.count() > 0);
     const navCount = await page.locator('.sidebar-item', { hasText: 'Automations' }).count();
     check('…and it is the only Automations entry', navCount === 1, `found ${navCount} Automations item(s)`);
     await agentsNav.click();
@@ -249,7 +249,7 @@ async function main() {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
     await dismissOverlays();
-    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
     // The page OPENS on the channel now, not the roster — the owner's own
     // correction after the first pass ("Slack mesaj alanı gibi açılacak").
     check('the page opens on the channel, not the roster',
@@ -269,7 +269,7 @@ async function main() {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
     await dismissOverlays();
-    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
     await until(async () => (await page.locator('.agents-feed-zero-note').count()) > 0, 10000);
     const zeroNote = await page.locator('.agents-feed-zero-note').innerText().catch(() => '');
     check('[F17] with the scheduler off, the empty channel leads with the @-ask, not "the next scheduled run" (was the scheduled-run promise)',

@@ -263,11 +263,13 @@ describe('sidebar rail — section hues (C6)', () => {
 });
 
 describe('sidebar rail — the hero row (C5)', () => {
-  it('puts Agents first in Workspace, at beta, flagged hero', () => {
+  it('puts Automations right after Tasks in Workspace, at beta, flagged hero', () => {
     const items = navItems(read(SIDEBAR_TSX));
-    expect(items[0].page).toBe('automations');
-    expect(items[0].maturity).toBe('beta');
-    expect(items[0].hero).toBe(true);
+    // Chat (a launcher row, not a page) leads; Tasks then Automations follow (owner, 2026-09-29).
+    expect(items[0].page).toBe('tasks');
+    expect(items[1].page).toBe('automations');
+    expect(items[1].maturity).toBe('beta');
+    expect(items[1].hero).toBe(true);
     // Exactly one hero: the emphasis is only worth anything if it is not shared.
     expect(items.filter((i) => i.hero)).toHaveLength(1);
   });

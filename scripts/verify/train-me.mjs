@@ -401,10 +401,10 @@ async function runTheme(chromium, base, theme, report) {
   console.log('── 4: an automation\'s Train button opens a train tab bound to it');
   for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(250); }
   const openPanel = async (t) => {
-    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
     // The page opens on the Messages feed; the cards are on its Agents switch.
-    await until(async () => (await page.locator('.agents-switch-opt', { hasText: 'Agents' }).count()) > 0, 10000);
-    await page.locator('.agents-switch-opt', { hasText: 'Agents' }).first().click().catch(() => {});
+    await until(async () => (await page.locator('.agents-switch-opt', { hasText: 'Automations' }).count()) > 0, 10000);
+    await page.locator('.agents-switch-opt', { hasText: 'Automations' }).first().click().catch(() => {});
     if (!(await until(async () => (await page.locator('.agent-card').count()) >= 2, 15000))) {
       await shotPage(`board-missing-${t.replace(/\W+/g, '-')}`);
       report.note(`board shows ${await page.locator('.agent-card').count()} cards: ${JSON.stringify(await page.locator('.agent-card-name').allInnerTexts())}`);

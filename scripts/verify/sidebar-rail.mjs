@@ -206,6 +206,7 @@ async function readRail(page) {
         maturity: (hero.querySelector('.sidebar-maturity')?.textContent || '').trim(),
         maturityTransform: cs(hero.querySelector('.sidebar-maturity'), 'text-transform'),
         isFirst: hero === firstItem,
+        afterTasks: (hero.closest('li')?.previousElementSibling?.querySelector('.sidebar-label')?.textContent || '').trim() === 'Tasks',
         title: hero.getAttribute('title'),
       } : null,
       plain: plain ? {
@@ -329,13 +330,13 @@ async function main() {
     console.log('\n═══ 1. The Agents entry ═══');
     const le = snaps['light-expanded'];
     check('the rail has a hero item at all', !!le.hero, JSON.stringify(le.hero));
-    check('it reads "Agentic Automations" — the nav label IS the page title', le.hero?.label === 'Agentic Automations', `label="${le.hero?.label}"`);
-    check('…and it is FIRST in Workspace', le.hero?.isFirst === true);
+    check('it reads "Automations" — the nav label IS the page title', le.hero?.label === 'Automations', `label="${le.hero?.label}"`);
+    check('…and it sits right after Tasks in Workspace (owner, 2026-09-29)', le.hero?.afterTasks === true);
     check('…wearing a Beta tag', le.hero?.maturity === 'Beta', `tag="${le.hero?.maturity}"`);
     // F16: the tooltip is user-visible copy too, and it joined the label and the tag with an
     // em dash ("Agentic Automations — Beta"). A parenthesis says the same without one.
-    check('[F16] the hero tooltip reads "Agentic Automations (Beta)", no em dash (was "Agentic Automations — Beta")',
-      le.hero?.title === 'Agentic Automations (Beta)', `title="${le.hero?.title}"`);
+    check('[F16] the hero tooltip reads "Automations (Beta)", no em dash',
+      le.hero?.title === 'Automations (Beta)', `title="${le.hero?.title}"`);
     check('…in sentence case, not shouted (K15)', le.hero?.maturityTransform === 'none',
       `text-transform: ${le.hero?.maturityTransform}`);
 
@@ -422,13 +423,15 @@ async function main() {
     check('nothing renders uppercase in dark either', de.uppercase.length === 0, de.uppercase.join(', '));
     check('…and nothing spends --color-warning in dark either', de.warned.length === 0, de.warned.join(', '));
     check('the hero is still first, named and Beta in dark',
-      de.hero?.label === 'Agentic Automations' && de.hero?.isFirst === true && de.hero?.maturity === 'Beta',
+      de.hero?.label === 'Automations' && de.hero?.afterTasks === true && de.hero?.maturity === 'Beta',
       JSON.stringify(de.hero));
     check('dark collapsed keeps its four distinct hues', distinct(dc),
       GROUPS.map((g) => `${g.label}=${dc.sample[g.label]?.bg}`).join(' '));
 
     // ── 8 (round 2): the label wraps instead of truncating ───────────────
-    // R2-1 (owner decision 1a): "Agentic Automations" wraps to two lines rather than
+    // R2-1 (owner decision 1a): the label wraps rather than truncating. Since 2026-09-29 the
+    // hero reads "Automations", which fits on ONE line; the check is that it paints whole.
+    // Originally: "Agentic Automations" wrapped to two lines rather than
     // painting as "Agentic A…". Pre-fix the label was `nowrap` + ellipsis in about 75px,
     // so its text painted as ONE line running well past its box.
     console.log('\n═══ 8. Round 2: the label wraps, the rail stays centred ═══');
@@ -436,8 +439,8 @@ async function main() {
     for (const theme of ['light', 'dark']) {
       const geo = snaps[`${theme}-expanded`].geo;
       const hero = geo.find((g) => g.hero);
-      check(`[R2-1] ${theme}: the hero label paints on 2 lines and fits its box (was 1 line spilling past it)`,
-        hero?.lines === 2 && hero.spill <= 0.5, JSON.stringify(hero));
+      check(`[R2-1] ${theme}: the hero label paints whole and fits its box`,
+        hero?.lines === 1 && hero.spill <= 0.5, JSON.stringify(hero));
       const others = geo.filter((g) => !g.hero && g.text);
       const bad = others.filter((g) => g.lines !== 1 || g.spill > 0.5);
       check(`[guard] ${theme}: every other expanded label paints on one line inside its box`,

@@ -457,7 +457,7 @@ async function main() {
     await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
     await dismissOverlays();
-    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
     check('the channel opens', await until(async () => (await page.locator('.agent-msg').count()) >= 2, 20000));
 
     const digestMsg = page.locator('.agent-msg', { hasText: 'Daily insight digest' }).first();
@@ -707,7 +707,7 @@ async function main() {
     await deskPage.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
     await deskPage.waitForTimeout(2500);
     for (let i = 0; i < 4; i++) { await deskPage.keyboard.press('Escape'); await deskPage.waitForTimeout(200); }
-    await deskPage.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await deskPage.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
     // In the THREAD: the feed row now draws only a post's first visual and folds the rest
     // into cards (A4), and this post's first visual is its picture.
     await deskPage.locator('.agent-msg', { hasText: 'Daily insight digest' }).first().locator('.agent-thread-bar').click();
@@ -790,7 +790,7 @@ async function main() {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
     await dismissOverlays();
-    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
     await until(async () => (await page.locator('.agent-msg').count()) >= 2, 20000);
     const openBtn = page.locator('.agent-msg', { hasText: 'Daily insight digest' }).first()
       .getByText('Open session').first();
@@ -818,7 +818,7 @@ async function main() {
       await p.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
       await p.waitForTimeout(2000);
       for (let i = 0; i < 4; i++) { await p.keyboard.press('Escape'); await p.waitForTimeout(200); }
-      await p.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+      await p.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
       await p.locator('.agent-msg').first().waitFor({ timeout: 20000 }).catch(() => {});
     };
     const namedRow = (title, p = page) => p.locator('article.agent-msg', { has: p.locator('.agent-msg-name', { hasText: title }) }).first();

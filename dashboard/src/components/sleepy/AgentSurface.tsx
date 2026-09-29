@@ -18,7 +18,7 @@ import {
   doubleTapToken, createDoubleTapMatcher,
   onAgentSettings, type AgentSettings,
   readChatPermissionMode, writeChatPermissionMode,
-  CHAT_PERMISSION_MODE_EVENT, type ChatPermissionMode,
+  CHAT_PERMISSION_MODE_EVENT, type ChatPermissionMode, OPEN_AGENT_SURFACE_EVENT, AGENT_SURFACE_EXPANDED_EVENT,
 } from '../../lib/agentSettings';
 import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow } from './agentStatus';
 import { PaneFragment, type PaneActions } from './PaneFragment';
@@ -75,7 +75,7 @@ import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
  * a NEW pane (split) and ⌘⇧D a fresh terminal likewise; ⌘T/＋ adds a tab to the active pane; dragging a tab onto another
  * pane's centre COMBINES it there, onto an edge SPLITS it into a new pane, onto a tab
  * REORDERS. COLLAPSED, each session is a horizontal chip in the bottom-right dock
- * (`AgentDock`); with zero sessions a lone "Agent" FAB is the entry point.
+ * (`AgentDock`); with zero sessions a lone "Chat" FAB is the entry point.
  *
  * ── Why an imperative session manager ────────────────────────────────────────────
  * A session's xterm + WebSocket + running `claude` must survive (a) becoming the active
@@ -2886,6 +2886,16 @@ export function AgentSurface() {
   // switching back lands on the agent you left open rather than on its page.
   useInstanceEvent('dreamcontext-navigate', () => setExpanded((cur) => (cur ? false : cur)));
 
+  // The sidebar's Chat row. Same gate as the corner FAB (desktop + enabled in Settings): a
+  // rail that shows the row only under those conditions can still be a beat ahead of `caps`,
+  // and expanding a surface that renders nothing would leave an invisible overlay eating clicks.
+  useInstanceEvent(OPEN_AGENT_SURFACE_EVENT, () => {
+    if (caps?.desktop && agentSettings.enabled) setExpanded(true);
+  });
+  // …and tell the rail whether the overlay is up, so Chat reads as the current place (not the
+  // page hidden underneath it).
+  useEffect(() => { emitInstance<boolean>(bus, AGENT_SURFACE_EXPANDED_EVENT, expanded); }, [bus, expanded]);
+
   // ── "＋ New ▾" dropdown: close on outside-click or Esc ────────────────────────
   // The menu is opened by clicking the caret and stays open (no hover-close). A
   // pointerdown outside the split wrapper — or Esc — dismisses it, the way a real
@@ -3287,7 +3297,7 @@ export function AgentSurface() {
     body = (
       <Centered>
         <BotMark />
-        <h2 style={titleStyle}>Agent — real Claude Code</h2>
+        <h2 style={titleStyle}>Chat — real Claude Code</h2>
         <p style={subStyle}>
           {chatMode ? (
             <>
@@ -3589,13 +3599,13 @@ export function AgentSurface() {
           sessions keep running in the garage but the surface is out of the way). With
           sessions: the bottom-right chip dock (one chip per session, each coloured by its
           OWN state; collapsible to a handle), click a chip to open + focus. With zero
-          sessions: a single "Agent" FAB. */}
+          sessions: a single "Chat" FAB. */}
       {caps?.desktop && agentSettings.enabled && !expanded && (
         sessionList.length === 0 ? (
           <AgentFab
             status="idle"
             mood="idle"
-            label="Agent"
+            label="Chat"
             sessionCount={0}
             attention={false}
             onClick={() => setExpanded(true)}

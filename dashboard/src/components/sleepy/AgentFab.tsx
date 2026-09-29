@@ -15,7 +15,7 @@ export type FabStatus = 'idle' | 'connecting' | 'live' | 'streaming' | 'ended';
 interface AgentFabProps {
   status: FabStatus;
   mood: SleepyMood;
-  /** Focused session title (+ `· +N` when more sessions exist), or "Agent" when idle. */
+  /** Focused session title (+ `· +N` when more sessions exist), or "Chat" when idle. */
   label: string;
   sessionCount: number;
   /** A backgrounded session finished / rang the bell while you weren't looking. */
@@ -31,7 +31,7 @@ export function AgentFab({ status, mood, label, sessionCount, attention, onClick
       data-status={status}
       data-count={sessionCount}
       onClick={onClick}
-      aria-label={label === 'Agent' ? label : `Agent: ${label}`}
+      aria-label={label === 'Chat' ? label : `Chat: ${label}`}
       title={label}
     >
       <span className="agent-fab-mascot" aria-hidden="true">

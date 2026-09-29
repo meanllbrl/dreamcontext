@@ -1,15 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
 import { MaturityTag } from '../common/MaturityTag';
-import { NavIcon } from './NavIcons';
+import { NavIcon, ChatIcon } from './NavIcons';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
 import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
 import { useAgentFeed } from '../../hooks/useAutomations';
 import { useTheses } from '../../hooks/useTheses';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
-import { useVault } from '../../context/VaultContext';
+import { useVault, useInstanceEvent } from '../../context/VaultContext';
+import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
+import {
+  AGENT_SURFACE_EXPANDED_EVENT, onAgentSettings, openAgentSurface, readAgentSettings,
+} from '../../lib/agentSettings';
+import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
+import type { ProjectRollup } from '../sleepy/agentStatus';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
@@ -44,7 +50,14 @@ interface NavItem {
 /** `hue` is a CSS CUSTOM PROPERTY NAME, not a colour: the group sets `--nav-hue` from it
  *  and `.sidebar-icon` mixes it into a tinted surface. Keeping the name (not the value)
  *  here is what keeps every hue resolving through `tokens.css` in both themes. */
-interface NavGroup { labelKey: string; hue: string; items: NavItem[] }
+/**
+ * A row that LAUNCHES rather than routes. Chat is the always-mounted agent overlay, not a
+ * page: making it a route would re-home live PTYs and chat portals on every navigation, which
+ * is the one thing `AgentSurface` exists to never do. So the row only asks the surface to
+ * expand, and `activePage` never becomes 'chat'.
+ */
+interface NavLauncher { launch: 'chat'; labelKey: string }
+interface NavGroup { labelKey: string; hue: string; items: (NavItem | NavLauncher)[] }
 
 // Grouped by job-to-be-done so the rail reads as a scannable hierarchy rather
 // than one flat list of 9+ items:
@@ -60,10 +73,12 @@ const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.group.workspace',
     hue: '--nav-hue-workspace',
     items: [
-      // FIRST, and that is the emphasis — position is the loudest signal a rail has, and
-      // it costs no colour. Agents is the product's centre of gravity (owner, 2026-09-22).
-      { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
+      // Chat first, then Tasks, then Automations (owner, 2026-09-29): what you drive yourself
+      // leads, what runs without you follows. "Agents" is retired as a rail word — next to
+      // Chat it read as the same thing twice. Automations keeps the hero weight, not position.
+      { launch: 'chat', labelKey: 'nav.chat' },
       { page: 'tasks', labelKey: 'nav.tasks' },
+      { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'alpha' },
@@ -131,7 +146,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { t } = useI18n();
   // Which project this rail belongs to. Read from the instance, NOT from `?vault=`: the
   // window's URL names the first chip, and several projects render their own rail here.
-  const { vault } = useVault();
+  const { vault, bus } = useVault();
   // aboutSeen: whether the user has opened "What is this?" at least once.
   // Until then, the entry bounces to invite the first click.
   const [aboutSeen, setAboutSeen] = useState<boolean>(() => readFlag(ABOUT_SEEN_STORAGE_KEY));
@@ -160,6 +175,21 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   // worse than one that simply doesn't label it yet.
   const { data: thesesData } = useTheses();
   const learningOff = thesesData?.enabled === false;
+  // The Chat row shows under the SAME gate as the corner FAB — desktop, and the surface
+  // enabled in Settings — so the rail never offers a launcher that opens nothing.
+  const { data: caps } = useAgentCapabilities();
+  const [chatEnabled, setChatEnabled] = useState<boolean>(() => readAgentSettings().enabled);
+  useEffect(() => onAgentSettings((cfg) => setChatEnabled(cfg.enabled)), []);
+  const showChat = !!caps?.desktop && chatEnabled;
+  // Live chats in THIS project, and whether one of them wants you. The surface publishes the
+  // rollup on change only; it starts at zero sessions, so a rail mounted with it never misses
+  // a count that mattered.
+  const [chatRollup, setChatRollup] = useState<{ live: number; waiting: number }>({ live: 0, waiting: 0 });
+  useInstanceEvent<ProjectRollup>(PROJECT_ROLLUP_EVENT, (r) => setChatRollup({ live: r.live, waiting: r.waiting }));
+  // While the overlay covers the page, Chat is where the user IS — one active row, not two.
+  const [chatOpen, setChatOpen] = useState(false);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
+  const current: Page | null = chatOpen && showChat ? null : activePage;
   const vaultLabel = vault ?? '';
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
@@ -221,7 +251,34 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         >
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {group.items.map(({ page, labelKey, maturity, hero }) => {
+            {group.items.map((item) => {
+              if ('launch' in item) {
+                if (!showChat) return null;
+                staggerIndex += 1;
+                const label = t(item.labelKey);
+                const { live, waiting } = chatRollup;
+                return (
+                  <li key={item.launch} className={`animate-stagger animate-stagger-${staggerIndex}`}>
+                    <button
+                      className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
+                      aria-current={chatOpen ? 'page' : undefined}
+                      onClick={() => openAgentSurface(bus)}
+                      title={live > 0 ? `${label} (${live} open)` : label}
+                    >
+                      <span className="sidebar-icon"><ChatIcon /></span>
+                      <span className="sidebar-label">{label}</span>
+                      {/* A COUNT of what is open, not an unread number — so it wears the quiet
+                          pill, and only takes the accent when a session is waiting on you. */}
+                      {live > 0 && (
+                        <span className="sidebar-item-end">
+                          <span className={`sidebar-badge${waiting > 0 ? '' : ' sidebar-badge--quiet'}`}>{live}</span>
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              }
+              const { page, labelKey, maturity, hero } = item;
               staggerIndex += 1;
               const label = t(labelKey);
               // An off layer replaces its maturity tag rather than adding a second
@@ -237,16 +294,16 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
-                    className={`sidebar-item ${activePage === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
+                    className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
                     onClick={isAbout ? openAbout : () => onNavigate(page)}
                     title={tag ? `${label} (${tag})` : label}
-                    aria-current={activePage === page ? 'page' : undefined}
+                    aria-current={current === page ? 'page' : undefined}
                     data-hero={hero || undefined}
                   >
                     <span className="sidebar-icon"><NavIcon page={page} /></span>
                     <span className="sidebar-label">{label}</span>
                     {/* The count and the maturity tag STACK at the row's trailing edge, so a long
-                        label keeps the width to wrap onto two lines in full ("Agentic Automations"
+                        label keeps the width to wrap onto two lines in full (the old "Agentic Automations"
                         read "Agentic A…" beside both). Only rendered when it holds something, so a
                         plain row pays no extra gap. */}
                     {(badgeCount > 0 || level) && (

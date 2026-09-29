@@ -253,6 +253,20 @@ export async function initAgentSettingsFromServer(): Promise<AgentSettings> {
 
 export type ChatPermissionMode = 'auto' | 'bypass';
 
+/** "Open the Chat overlay" — the sidebar's Chat row asks for it on the INSTANCE BUS, so only
+ *  the project whose rail was clicked expands. `AgentSurface` owns the gate (desktop + enabled);
+ *  the row is a launcher, never a route, so the always-mounted sessions are never re-homed. */
+export const OPEN_AGENT_SURFACE_EVENT = 'dc-agent-surface-open';
+
+/** The surface's `expanded` state, published on the INSTANCE BUS whenever it changes, so the
+ *  rail can mark Chat as the current place while the overlay covers the page. Detail: boolean. */
+export const AGENT_SURFACE_EXPANDED_EVENT = 'dc-agent-surface-expanded';
+
+/** Ask this instance's agent surface to expand. */
+export function openAgentSurface(bus: EventTarget): void {
+  emitInstance(bus, OPEN_AGENT_SURFACE_EVENT);
+}
+
 /** Storage key. Namespaced per vault by {@link permissionModeStorageKey}, never read bare. */
 export const CHAT_PERMISSION_MODE_KEY = 'agent:settings:chatPermissionMode';
 

@@ -314,7 +314,7 @@ async function main() {
 
     // ── 1: the sidebar badge, BEFORE the channel is opened ───────────────
     console.log('\n═══ 1. The sidebar badge ═══');
-    const badge = page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).locator('.sidebar-badge');
+    const badge = page.locator('.sidebar-item', { hasText: 'Automations' }).locator('.sidebar-badge');
     const badged = await until(async () => (await badge.count()) > 0, 20000);
     check('the rail carries an unread badge before the page is ever opened', badged);
     const badgeText = badged ? await badge.innerText() : '';
@@ -347,13 +347,13 @@ async function main() {
         spill: Math.round(spill * 10) / 10, labelW: Math.round(box.width), badgeIn: inside('.sidebar-badge'), tagIn: inside('.sidebar-maturity'),
       };
     });
-    check('[R2-1] with its unread badge and Beta tag, "Agentic Automations" paints on 2 lines inside its box, badge and tag in the row (was 1 line in ~75px, spilling past it)',
-      heroGeo?.lines === 2 && heroGeo.spill <= 0.5 && heroGeo.badgeIn === true && heroGeo.tagIn === true, JSON.stringify(heroGeo));
+    check('[R2-1] with its unread badge and Beta tag, "Automations" paints whole inside its box, badge and tag in the row',
+      heroGeo?.lines === 1 && heroGeo.spill <= 0.5 && heroGeo.badgeIn === true && heroGeo.tagIn === true, JSON.stringify(heroGeo));
     // R2-5: the unread badge is a filled accent control carrying text (its count).
     const badgeInk = badged ? await fillContrast(badge.first()) : null;
     check('[R2-5] the unread badge count reads at >=4.5:1 on its fill in light (was 4.15)', (badgeInk ?? 0) >= 4.5, `contrast=${badgeInk}`);
 
-    await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+    await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
     await page.waitForTimeout(1500);
 
     // ── 2: one message per run ───────────────────────────────────────────
@@ -579,7 +579,7 @@ async function main() {
     // clicking an agent's name in any message — and the chips are keyed by channel, not by
     // component, precisely so a glance at the roster does not throw away a file you just
     // attached. The bucket is dropped when the PAGE goes, not when the feed remounts.
-    await page.locator('.agents-switch-opt', { hasText: 'Agents' }).first().click();
+    await page.locator('.agents-switch-opt', { hasText: 'Automations' }).first().click();
     await page.locator('.agents-switch-opt', { hasText: 'Messages' }).first().click();
     check('a staged attachment survives a trip to the roster and back',
       await until(async () => (await chip.count()) === 1, 5000), `chips: ${await chip.count()}`);
@@ -815,7 +815,7 @@ async function main() {
       await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(2000);
       await dismissOverlays();
-      await page.locator('.sidebar-item', { hasText: 'Agentic Automations' }).first().click();
+      await page.locator('.sidebar-item', { hasText: 'Automations' }).first().click();
       await until(async () => (await page.locator('.agent-msg').count()) >= 3, 20000);
     };
     const askRow = (text) => page.locator('.agent-msg--you').filter({ hasText: text }).first();
@@ -1500,7 +1500,7 @@ async function main() {
       const row = document.querySelector('.agents-head-row');
       return { out, first: row?.firstElementChild?.className ?? null };
     });
-    const titled = headText.out.filter((x) => x.text === 'Agentic Automations');
+    const titled = headText.out.filter((x) => x.text === 'Automations');
     const big = headText.out.filter((x) => x.size === '18px');
     check('[C6] the header paints no repeated title and nothing at 18px (was "Agentic Automations" at 18px)',
       titled.length === 0 && big.length === 0, JSON.stringify({ titled, big }));

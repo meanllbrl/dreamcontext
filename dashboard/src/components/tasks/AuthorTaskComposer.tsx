@@ -61,7 +61,7 @@ export function AuthorTaskComposer({ onClose, onStarted, initialStatus }: Author
         if (!accepted) {
           setError(
             "Couldn't start the agent — the in-app Claude agent isn't available right now. "
-            + 'Check that the Agents surface is enabled in Settings → Agents and that the Claude CLI is installed.',
+            + 'Check that Chat is enabled in Settings → Chat and that the Claude CLI is installed.',
           );
           return;
         }

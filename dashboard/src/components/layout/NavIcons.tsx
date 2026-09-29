@@ -230,6 +230,17 @@ function AutomationsIcon() {
   );
 }
 
+/** Chat — a speech bubble with a line of text in it: you, talking to the agent now.
+ *  Not in {@link ICONS}: Chat is a launcher row, not a `Page`. */
+export function ChatIcon() {
+  return (
+    <Svg>
+      <path d="M4 5.5h16a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1H10l-4.5 3.5V17H4a1 1 0 0 1-1-1V6.5a1 1 0 0 1 1-1z" />
+      <line x1="7.5" y1="11.2" x2="16.5" y2="11.2" />
+    </Svg>
+  );
+}
+
 /**
  * Page → icon. Sleepy is handled separately (its animated eyes mark).
  *

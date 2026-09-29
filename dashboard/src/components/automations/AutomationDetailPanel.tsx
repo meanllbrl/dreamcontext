@@ -282,7 +282,7 @@ function RunHandoff({
       // No surface took it: not the desktop app, the CLI is missing, or Agents is switched
       // off in Settings. Say so — the alternative is a button that visibly does nothing.
       sentRef.current = false;
-      setRefused('The Agents surface could not take this — it needs the desktop app with the claude CLI, and Agents enabled in Settings.');
+      setRefused('Chat could not take this — it needs the desktop app with the claude CLI, and Chat enabled in Settings.');
       return;
     }
     // The chat overlay is now the screen the user asked for; leaving this modal stacked
@@ -404,7 +404,7 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
       automationTitle: automation?.title || summary.title,
     });
     if (!accepted) {
-      onToast('The Agents surface could not take this — it needs the desktop app with the claude CLI, and Agents enabled in Settings.');
+      onToast('Chat could not take this — it needs the desktop app with the claude CLI, and Chat enabled in Settings.');
       return;
     }
     // The Train Me chat is now the screen; same dismissal as a run's chat opening.

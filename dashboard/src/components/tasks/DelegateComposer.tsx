@@ -130,7 +130,7 @@ export function DelegateComposer({ task, onClose, onDelegated, reveal }: Delegat
         if (!accepted) {
           setError(
             "Couldn't start the agent — the in-app Claude agent isn't available right now. "
-            + 'Check that the Agents surface is enabled in Settings → Agents and that the Claude CLI is installed.',
+            + 'Check that Chat is enabled in Settings → Chat and that the Claude CLI is installed.',
           );
           return;
         }
@@ -167,7 +167,7 @@ export function DelegateComposer({ task, onClose, onDelegated, reveal }: Delegat
             Hands <strong style={{ color: 'var(--color-text-secondary)' }}>{title}</strong> to an in-app Claude Code
             agent.{' '}
             {watching
-              ? <>It opens in <strong style={{ color: 'var(--color-text-secondary)' }}>Agents</strong> so you can watch it work.</>
+              ? <>It opens in <strong style={{ color: 'var(--color-text-secondary)' }}>Chat</strong> so you can watch it work.</>
               : <>It starts <strong style={{ color: 'var(--color-text-secondary)' }}>minimized</strong> in the corner
                  and works in the background — click its chip to watch it as a pane.</>}
           </p>

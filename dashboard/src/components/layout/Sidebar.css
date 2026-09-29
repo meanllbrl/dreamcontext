@@ -296,6 +296,13 @@
   line-height: 16px;
 }
 
+/* A count of what is OPEN (the Chat row's live sessions), not of what is unread — the accent
+   pill would read as "new", so it sits on the rail's own surface until a session waits on you. */
+.sidebar-badge--quiet {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
 /* Collapsed rail hides the label (and with it, the pill's trailing anchor) —
    reposition as a small corner dot on the icon button instead. Geometry
    borrowed from .sidebar-item--nudge::after above; the count itself is
