@@ -45,8 +45,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
-import { spawn } from 'node:child_process';
-import { defaultAncestryProbe, defaultPgidProbe, proposeFromRun, resumeWithAnswer, resumeWithMessage } from '../../src/lib/automations/verdict.js';
+import { execFileSync, spawn } from 'node:child_process';
+import { defaultAncestryProbe, proposeFromRun, resumeWithAnswer, resumeWithMessage } from '../../src/lib/automations/verdict.js';
 import { createAutomation, lockPathFor, readRunSidecar, writeRunSidecar } from '../../src/lib/automations/store.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { latestBoundSession, readAutomationSession, recordAutomationSession } from '../../src/lib/automations/session-registry.js';
@@ -60,6 +60,11 @@ let home: string;
 const NOW = new Date('2026-08-03T18:00:00.000Z');
 const SESSION = 'sess-abc123';
 const RUN_PGID = 4242;
+
+/** The real process group of `pid`, read the way an operator would. */
+function pgidOf(pid: number): number {
+  return Number.parseInt(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf-8' }).trim(), 10);
+}
 
 // ─── fakes ───────────────────────────────────────────────────────────────────
 
@@ -149,13 +154,13 @@ afterEach(() => {
 
 // ─── The propose guard ───────────────────────────────────────────────────────
 
-describe('propose is guarded by the run process group', () => {
+describe('propose is guarded by the run\'s ancestry', () => {
   const input = { title: 'Publish this', body: 'the proposal' };
 
-  it('accepts a call from inside the run own process group, and produces a flow-hitl question', () => {
+  it('accepts a call from below the run child, and produces a flow-hitl question', () => {
     makeAutomation();
     putSidecar();
-    const r = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => RUN_PGID });
+    const r = proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => [5000, RUN_PGID, 1000] });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.card.state).toBe('pending');
@@ -167,36 +172,29 @@ describe('propose is guarded by the run process group', () => {
     }
   });
 
-  it('REFUSES a caller in a different process group — a human shell, another run', () => {
+  it('REFUSES a caller the run child is not an ancestor of — a human shell, another run', () => {
     // The load-bearing case. A planted question is a request to resume an
     // arbitrary conversation with bypassPermissions on the operator's tap.
     makeAutomation();
     putSidecar();
-    const r = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => 777, ancestryProbe: () => [900, 800] });
+    const r = proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => [900, 800] });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/own run/);
     expect(listQuestions(contextRoot, 'digest')).toEqual([]);
   });
 
-  it('accepts a caller in ANOTHER process group whose ancestry reaches the run child — the Claude Bash tool shape', () => {
-    // Claude Code's Bash tool runs each command in a fresh process group, so the
-    // `dreamcontext` a run invokes never shares the run's pgid. Parentage does.
+  it('REFUSES a process reparented away from the run, whatever group it kept', () => {
+    // A double-forked daemon keeps the run's pgid but its parent is launchd:
+    // the chain no longer reaches the run child, so it is not the run any more.
     makeAutomation();
     putSidecar();
-    const r = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => 86960, ancestryProbe: () => [86960, RUN_PGID, 1000] });
-    expect(r.ok).toBe(true);
-  });
-
-  it('REFUSES when the pgid probe fails and the ancestry does not reach the run', () => {
-    makeAutomation();
-    putSidecar();
-    const r = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => null, ancestryProbe: () => [900] });
+    const r = proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => [] });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/own run/);
   });
 
   it('REAL processes: a descendant in its own process group is admitted by the default probes; an outsider is not', async () => {
-    // No mocks — the pgidProbe mock is what hid the bug. The run child is a
+    // No mocks — a pgid mock is what hid the bug. The run child is a
     // detached shell (its own group, like the runner's spawn); with job control
     // on, its background job gets a FRESH group, the shape Claude Code's Bash
     // tool gives every command. That job is the caller.
@@ -211,7 +209,7 @@ describe('propose is guarded by the run process group', () => {
       });
       makeAutomation();
       putSidecar('digest', run.pid as number);
-      expect(defaultPgidProbe(caller)).not.toBe(run.pid);
+      expect(pgidOf(caller)).not.toBe(run.pid);
       expect(defaultAncestryProbe(caller)).toContain(run.pid);
       const r = proposeFromRun(contextRoot, 'digest', input, { callerPid: caller });
       expect(r.ok).toBe(true);
@@ -225,19 +223,44 @@ describe('propose is guarded by the run process group', () => {
     }
   });
 
+  it('REAL processes: a daemon that double-forked out of the run keeps its pgid and is still refused', async () => {
+    // The looseness the group check had: `( … & )` reparents the grandchild to
+    // launchd while it keeps the run's process group. It is not the run's any more.
+    const run = spawn('/bin/sh', ['-c', 'sleep 30 & (sleep 30 & echo $!) ; wait'], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    try {
+      const daemon = await new Promise<number>((resolve, reject) => {
+        run.stdout!.once('data', (d: Buffer) => resolve(Number.parseInt(d.toString().trim(), 10)));
+        run.once('error', reject);
+      });
+      makeAutomation();
+      putSidecar('digest', run.pid as number);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(pgidOf(daemon)).toBe(run.pid);
+      expect(defaultAncestryProbe(daemon)).not.toContain(run.pid);
+      const r = proposeFromRun(contextRoot, 'digest', input, { callerPid: daemon });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/own run/);
+    } finally {
+      try { process.kill(-(run.pid as number), 'SIGKILL'); } catch { /* gone */ }
+    }
+  });
+
   it('REFUSES when no run is in flight at all', () => {
     makeAutomation();
-    const r = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => RUN_PGID });
+    const r = proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => [5000, RUN_PGID, 1000] });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/no run/);
   });
 
-  it('FAILS CLOSED when the process group cannot be determined', () => {
+  it('FAILS CLOSED when the caller\'s ancestry cannot be determined', () => {
     // "Could not check" must never read as "must be fine" — that would make the
     // guard decorative on any machine where the probe happens to break.
     makeAutomation();
     putSidecar();
-    const r = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => null, ancestryProbe: () => null });
+    const r = proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => null });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/could not verify/i);
     expect(listQuestions(contextRoot, 'digest')).toEqual([]);
@@ -246,8 +269,8 @@ describe('propose is guarded by the run process group', () => {
   it('refuses a second question while one is still open — the serial gate at the source', () => {
     makeAutomation();
     putSidecar();
-    proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => RUN_PGID });
-    const second = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => RUN_PGID });
+    proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => [5000, RUN_PGID, 1000] });
+    const second = proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => [5000, RUN_PGID, 1000] });
     expect(second.ok).toBe(false);
     if (!second.ok) expect(second.reason).toMatch(/already has a question awaiting an answer/);
   });
@@ -259,7 +282,7 @@ describe('propose is guarded by the run process group', () => {
     // sensitive field the one nothing verified.
     makeAutomation();
     putSidecar();
-    const r = proposeFromRun(contextRoot, 'digest', input, { pgidProbe: () => RUN_PGID });
+    const r = proposeFromRun(contextRoot, 'digest', input, { ancestryProbe: () => [5000, RUN_PGID, 1000] });
     expect(r.ok && r.card.sessionId).toBeNull();
   });
 });
