@@ -120,6 +120,10 @@ export function AgentsFeed({
   // second poll is what makes a run started elsewhere (another tab, "run now") visible here.
   const { data, isLoading } = useAgentFeed();
   const runSlots = useMemo(() => data?.runSlots ?? {}, [data]);
+  // Who is WORKING, whatever started the turn (a schedule, a reply, another tab): the
+  // agent's run lock, as the server reads it. Wider than `runSlots`, which only knows the
+  // runs this server started.
+  const working = useMemo(() => data?.working ?? {}, [data]);
   const markRead = useMarkThreadRead();
   const { vault } = useVault();
   const { data: dispatcher } = useAutomationDispatcher();
@@ -292,11 +296,11 @@ export function AgentsFeed({
   // A running agent's title, for the sentence that says it is busy: under the channel field when
   // a draft names it, and in its own thread's composer. Null for an agent that is free.
   const agents = useMemo(() => data?.agents ?? [], [data]);
+  const isBusy = useCallback((slug: string) => slug in runSlots || slug in working, [runSlots, working]);
   const busyTitle = useCallback(
-    (slug: string) => (slug in runSlots ? (agents.find((a) => a.slug === slug)?.title ?? slug) : null),
-    [runSlots, agents],
+    (slug: string) => (isBusy(slug) ? (agents.find((a) => a.slug === slug)?.title ?? slug) : null),
+    [isBusy, agents],
   );
-  const isBusy = useCallback((slug: string) => slug in runSlots, [runSlots]);
 
   const say = useSayInChannel();
   const mentions = useMemo(() => agents.map((a) => agentMention(a, vault)), [agents, vault]);
@@ -346,12 +350,12 @@ export function AgentsFeed({
 
   // A "still running" note is about a slot, not about a keystroke: when the agent it names
   // finishes, the note goes with it, rather than waiting for the reader to type again.
-  const slotKey = Object.keys(runSlots).sort().join();
+  const slotKey = [...new Set([...Object.keys(runSlots), ...Object.keys(working)])].sort().join();
   const noteNow = useRef(note);
   noteNow.current = note;
   useEffect(() => {
     const busySlug = noteNow.current?.busySlug;
-    if (busySlug && !(busySlug in runSlots)) setNote(null);
+    if (busySlug && !isBusy(busySlug)) setNote(null);
     // `slotKey` is the trigger; `runSlots` is read for the answer it gives at that moment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slotKey, setNote]);
@@ -505,7 +509,11 @@ export function AgentsFeed({
                   threadOpen={openThread?.message.key === m.key}
                   panelId={THREAD_PANEL_ID}
                   // The run's own start, from the slot it holds, for the live elapsed time.
-                  runStartedAt={m.status === 'running' ? (runSlots[m.slug]?.startedAt ?? null) : null}
+                  runStartedAt={m.status === 'running'
+                    ? (runSlots[m.slug]?.startedAt
+                      ?? (working[m.slug]?.runId === m.runId ? working[m.slug]?.since : undefined)
+                      ?? null)
+                    : null}
                 />
               </div>
             );
@@ -594,6 +602,7 @@ export function AgentsFeed({
           onToast={setToast}
           // Only THIS thread's agent can hold its composer down; another agent's run does not.
           busyWith={busyTitle(openThread.message.slug)}
+          working={working[openThread.message.slug] ?? null}
           closeOnEscape={!fileOpen}
           autoFocus={openThread.focus}
           footRef={setFootEl}

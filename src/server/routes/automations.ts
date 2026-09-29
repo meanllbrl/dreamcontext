@@ -59,6 +59,8 @@ import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib
 import {
   startAutomationJob, currentAutomationJob, runningAutomationJobs,
   startAutomationReplyJob, currentReplyJob, reconcileReplyThreads,
+  agentActivity,
+  agentActivities,
 } from '../automation-job.js';
 
 /** The feed's hard ceiling. A channel is read from the bottom: a window past
@@ -1590,7 +1592,11 @@ export async function handleAutomationsThreads(
     const runSlots = Object.fromEntries(runningAutomationJobs(contextRoot).map((j) => [
       j.slug, { runId: j.runId ?? null, startedAt: j.startedAt },
     ]));
-    sendJson(res, 200, { ...buildFeed(contextRoot, { limit }), runSlots });
+    // WHO IS WORKING, from each agent's run lock: every turn, whatever started it. This is
+    // what the channel and the thread draw as "working"; `runSlots` stays the narrower
+    // "which run did this server start" the run-now poll needs.
+    const working = agentActivities(contextRoot);
+    sendJson(res, 200, { ...buildFeed(contextRoot, { limit }), runSlots, working });
   } catch {
     sendError(res, 500, 'feed_failed', 'Failed to read the agents channel.');
   }
@@ -1645,6 +1651,9 @@ export async function handleAutomationsThreadGet(
       replyCount: replies?.count ?? 0,
       lastReplyAt: replies?.lastAt ?? null,
       unread: threadUnread(contextRoot, params.slug),
+      // What the agent is doing right now, so the thread can say "working" and mark the
+      // reader's queued messages. Whole-agent, not per run: the panel compares `runId`.
+      working: agentActivity(contextRoot, params.slug),
     });
   } catch {
     sendError(res, 500, 'thread_failed', 'Failed to read that thread.');
@@ -1753,12 +1762,32 @@ export async function handleAutomationsSay(
     // ── synchronous from here to the job start ──
     // Per AGENT: only a second run of THIS agent is refused — it would write into the same
     // thread and resume the same session. Another agent's run is no reason to wait.
+    //
+    // A message to an agent that is WORKING is not refused any more: it is written into the
+    // thread of the run in flight and queued behind it, exactly as a reply typed in that
+    // thread is. The owner talks to a busy agent the way they would to a busy colleague, and
+    // the words land where the work is. Only when nothing names that run (the moment before
+    // a first run's child spawns) is it still refused.
     const busy = currentAutomationJob(contextRoot, slug);
-    if (busy?.status === 'running') {
-      sendError(
-        res, 409, 'say_busy',
-        `${manifest.title} is still running. Try again when it finishes.`,
-      );
+    const working = agentActivity(contextRoot, slug);
+    if (busy?.status === 'running' || working) {
+      const liveRun = working?.runId
+        ?? (busy?.status === 'running' ? busy.runId : null)
+        ?? listThreadRuns(contextRoot, slug, 1)[0]?.runId
+        ?? null;
+      if (!liveRun || pendingQuestion(contextRoot, slug)?.kind === 'approval') {
+        sendError(
+          res, 409, 'say_busy',
+          `${manifest.title} is still running. Try again when it finishes.`,
+        );
+        return;
+      }
+      const entry = appendThreadEntry(contextRoot, slug, { runId: liveRun, kind: 'user', text, via: 'dashboard' });
+      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id });
+      sendJson(res, 200, {
+        job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
+        started: true, runId: liveRun, slug, mode: manifest.mode, queued: true,
+      });
       return;
     }
     const fireAt = new Date();
@@ -1894,7 +1923,8 @@ export async function handleAutomationsThreadReply(
     // THE MACHINE-LOCAL BINDING IS THE AUTHORITY. Null means no run on THIS machine ever
     // produced a session, so nothing here could carry the reply — and a reply that will
     // never execute must not be left in the channel looking delivered.
-    if (!latestBoundSession(slug)) {
+    // A run in flight is the exception: it is about to bind the session this reply queues for.
+    if (!latestBoundSession(slug) && !agentActivity(contextRoot, slug)) {
       sendError(
         res, 409, 'not_bound',
         `${manifest.title} has no session to talk to yet. It needs one finished run on this machine first.`,

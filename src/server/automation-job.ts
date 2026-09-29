@@ -1,10 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { runAutomation, type RunOutcome } from '../lib/automations/runner.js';
 import { enqueueFire } from '../lib/automations/queue.js';
 import {
   announceTurn, appendThreadEntry, newThreadEntryId, readThread,
 } from '../lib/automations/threads.js';
-import { getAutomation, listAutomations, readRunSidecar } from '../lib/automations/store.js';
+import {
+  getAutomation, listAutomations, lockPathFor, readRunSidecar,
+} from '../lib/automations/store.js';
 import { resumeWithAnswer, resumeWithMessage, type TalkOutcome } from '../lib/automations/verdict.js';
 import { pendingQuestion } from '../lib/automations/hitl.js';
 import { trackChild } from './lifecycle.js';
@@ -266,6 +269,9 @@ export interface ReplyJobState {
   /** The `user` entry this job is delivering. What reconciliation keys on. */
   entryId: string;
   status: 'running' | 'ok' | 'refused' | 'failed';
+  /** While `running`: `waiting` behind the turn that holds this agent's run lock, or
+   *  `delivering` once it holds the lock itself. Meaningless once settled. */
+  phase: 'waiting' | 'delivering';
   /** The server's own sentence on a non-ok settle — never a generic "failed".
    *  On `refused` this is `resumeWithMessage`'s reason, already written for a human. */
   reason: string | null;
@@ -308,6 +314,93 @@ function pruneSettledReplyJobs(now: number = Date.now()): void {
 export function currentReplyJob(jobId: string): ReplyJobState | null {
   pruneSettledReplyJobs();
   return replyJobs.get(jobId) ?? null;
+}
+
+/**
+ * WHAT ONE AGENT IS DOING RIGHT NOW, for the thread and the channel to draw.
+ *
+ * Asked of the subject, not of this process's bookkeeping: the per-slug RUN LOCK is held by
+ * every turn of an agent whatever started it (a scheduled fire, the CLI, "run now", a reply
+ * resume, an answer), so it is the one place "is it working" has a true answer. `runSlots`
+ * only ever knew the runs this server started, which is why a reply turn or a scheduled run
+ * used to look idle in its own thread.
+ *
+ * `runId` is the thread that turn writes into: the reply job holding the lock knows its own,
+ * and a run's sidecar carries its fire time, which IS its thread's run id. Null when neither
+ * says (the moment before a run's child spawns).
+ *
+ * `queued` is every reply still WAITING for the lock, oldest first, so the thread can mark
+ * the message the reader just sent as queued rather than leave them guessing.
+ */
+export interface AgentActivity {
+  /** When the turn holding the lock began, epoch ms. */
+  since: number;
+  runId: string | null;
+  queued: { entryId: string; runId: string }[];
+}
+
+/** The run lock's holder, or null when it is free, unreadable, dead or past its window. */
+function liveLockSince(contextRoot: string, slug: string, staleMs: number, nowMs: number): number | null {
+  let info: { pid?: unknown; at?: unknown };
+  try {
+    info = JSON.parse(readFileSync(lockPathFor(contextRoot, slug), 'utf-8')) as typeof info;
+  } catch {
+    return null;
+  }
+  const at = typeof info.at === 'number' && Number.isFinite(info.at) ? info.at : null;
+  if (at === null || nowMs - at > staleMs) return null;
+  if (typeof info.pid === 'number' && Number.isInteger(info.pid) && info.pid > 0) {
+    try {
+      process.kill(info.pid, 0);
+    } catch (err) {
+      // ESRCH: the holder is gone and the lock is litter. EPERM: alive, just not ours.
+      if ((err as NodeJS.ErrnoException)?.code === 'ESRCH') return null;
+    }
+  }
+  return at;
+}
+
+export function agentActivity(
+  contextRoot: string,
+  slug: string,
+  nowMs: number = Date.now(),
+): AgentActivity | null {
+  pruneSettledReplyJobs(nowMs);
+  const manifest = getAutomation(contextRoot, slug);
+  const staleMs = ((manifest?.timeoutMinutes ?? 30) * 60_000) + 300_000;
+  const mine = [...replyJobs.values()]
+    .filter((j) => j.slug === slug && j.status === 'running')
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  const delivering = mine.find((j) => j.phase === 'delivering') ?? null;
+  const waiting = mine.filter((j) => j.phase === 'waiting');
+  const since = liveLockSince(contextRoot, slug, staleMs, nowMs);
+  const queued = waiting.map((j) => ({ entryId: j.entryId, runId: j.runId }));
+  if (since === null) {
+    // Nothing holds the lock, but a reply is about to take it (it polls): the agent is
+    // about to work on it, which is what the reader needs to hear.
+    if (waiting.length === 0) return null;
+    const [next, ...rest] = waiting;
+    return {
+      since: Date.parse(next.startedAt) || nowMs,
+      runId: next.runId,
+      queued: rest.map((j) => ({ entryId: j.entryId, runId: j.runId })),
+    };
+  }
+  const runJob = jobs.get(contextRoot)?.get(slug);
+  const runId = delivering?.runId
+    ?? readRunSidecar(contextRoot, slug)?.fireAt
+    ?? (runJob?.status === 'running' ? runJob.runId : null);
+  return { since, runId, queued };
+}
+
+/** {@link agentActivity} for every agent in the project that is doing something. */
+export function agentActivities(contextRoot: string, nowMs: number = Date.now()): Record<string, AgentActivity> {
+  const out: Record<string, AgentActivity> = {};
+  for (const m of listAutomations(contextRoot)) {
+    const a = agentActivity(contextRoot, m.slug, nowMs);
+    if (a) out[m.slug] = a;
+  }
+  return out;
 }
 
 /**
@@ -434,6 +527,7 @@ export function startAutomationReplyJob(
     runId: opts.runId,
     entryId: opts.entryId,
     status: 'running',
+    phase: 'waiting',
     reason: null,
     startedAt: new Date().toISOString(),
     finishedAt: null,
@@ -501,6 +595,7 @@ async function runReplyJob(
       // minute, which is the longest the turn ahead of it can legitimately take.
       lockWaitMs: ((manifest?.timeoutMinutes ?? 30) + 1) * 60_000,
       ...(opts.lockPollMs ? { lockPollMs: opts.lockPollMs } : {}),
+      onLockAcquired: () => { job.phase = 'delivering'; },
     };
     outcome = await replyOrAnswer(contextRoot, job.slug, opts.text, verdictOpts);
     job.status = outcome.status === 'ok' ? 'ok' : outcome.status === 'refused' ? 'refused' : 'failed';

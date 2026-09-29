@@ -290,7 +290,11 @@ async function acquireRunLockWaiting(
   let waited = 0;
   for (;;) {
     const lockPath = acquireRunLock(contextRoot, m, nowFn().getTime());
-    if (lockPath || waited >= waitMs) return lockPath;
+    if (lockPath) {
+      opts.onLockAcquired?.();
+      return lockPath;
+    }
+    if (waited >= waitMs) return null;
     await sleep(pollMs);
     waited += pollMs;
   }
@@ -361,6 +365,9 @@ export interface VerdictOptions {
   lockPollMs?: number;
   /** The wait itself. Injectable so a test does not sleep in real time. */
   sleep?: (ms: number) => Promise<void>;
+  /** Called once, the moment this message stops WAITING and holds the run lock. A queued
+   *  thread reply uses it to tell the reader "queued" from "being read". */
+  onLockAcquired?: () => void;
 }
 
 /** What answering a question produced. */
@@ -805,15 +812,18 @@ export async function resumeWithMessage(
   // THE MACHINE-LOCAL BINDING IS THE AUTHORITY, same rule as an answer. Null
   // means no run on THIS machine ever produced a session, and a talk must
   // refuse rather than fall back to what the synced cache claims.
+  //
+  // A message that may WAIT is checked again under the lock instead: the run it queues
+  // behind can be this agent's first, and that run binds the session the message resumes.
+  const noSession: TalkOutcome = {
+    status: 'refused',
+    error: 'This agent has no session to talk to yet. It needs one finished run on this machine first.',
+    result: null,
+    costUsd: null,
+  };
+  const waits = (opts.lockWaitMs ?? 0) > 0;
   const sessionId = latestBoundSession(slug, home);
-  if (!sessionId) {
-    return {
-      status: 'refused',
-      error: 'This agent has no session to talk to yet. It needs one finished run on this machine first.',
-      result: null,
-      costUsd: null,
-    };
-  }
+  if (!sessionId && !waits) return noSession;
 
   const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
   if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null, costUsd: null };
@@ -831,7 +841,8 @@ export async function resumeWithMessage(
         costUsd: null,
       };
     }
-    const liveSessionId = (opts.lockWaitMs ?? 0) > 0 ? latestBoundSession(slug, home) ?? sessionId : sessionId;
+    const liveSessionId = waits ? latestBoundSession(slug, home) ?? sessionId : sessionId;
+    if (!liveSessionId) return noSession;
     const execution = await spawnSessionResume(
       contextRoot,
       manifest,

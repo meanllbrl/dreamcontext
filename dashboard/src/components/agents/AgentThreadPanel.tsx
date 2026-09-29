@@ -5,11 +5,11 @@ import {
 import {
   useAgentThread, useAutomations, useProjectSlashCommands, useReplyDelivery, useReplyToAgentThread,
   useSetAutomationEnabled,
-  type FeedMessage, type RunAnswer, type ThreadEntry,
+  type AgentActivity, type FeedMessage, type RunAnswer, type ThreadEntry,
 } from '../../hooks/useAutomations';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentFiles, AgentMessage, AgentProse } from './AgentMessage';
-import { trimFailureEcho } from './agentRunState';
+import { runDuration, trimFailureEcho, useNow } from './agentRunState';
 // The answer is drawn with the chat's own card (`.chat-msg-assistant-body`), whose rules
 // live here — imported by the panel that uses them rather than borrowed from whichever
 // surface happened to load first.
@@ -84,11 +84,15 @@ function AuthoredRow({
   entry,
   message,
   onOpenFile,
+  queued = false,
 }: {
   entry: ThreadEntry;
   message: FeedMessage;
   onOpenFile: (path: string) => void;
+  /** Your message, still waiting for the turn ahead of it to end. */
+  queued?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className={`agent-thread-post agent-thread-post--${entry.kind}`}>
       <RowFace who={entry.kind === 'user' ? 'user' : 'agent'} message={message} />
@@ -96,6 +100,7 @@ function AuthoredRow({
       <div className="agent-thread-post-head">
         <span className="agent-thread-post-who">{entry.kind === 'user' ? 'You' : message.title}</span>
         <span className="agent-thread-post-time">{hhmm(entry.at)}</span>
+        {queued && <span className="agent-thread-post-queued">{t('agents.thread.queued')}</span>}
       </div>
       <AgentProse text={entry.text} className="agent-thread-post-text" />
       {entry.summary && entry.summary.length > 0 && <AgentSummaryBlock rows={entry.summary} />}
@@ -111,6 +116,34 @@ function AuthoredRow({
         />
       )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * THE AGENT IS WORKING, said at the bottom of the thread where the next thing will appear.
+ *
+ * Without it a thread read the same while the agent worked as after it had stopped, and a
+ * message just sent left the reader asking whether anything had heard it. The dot breathes
+ * (the channel's own running dot), the time climbs, and the messages still waiting for this
+ * turn are counted. Drawn from the agent's run lock, so a scheduled run, a reply turn and a
+ * run started elsewhere all show.
+ */
+function LiveRow({ activity, waiting }: { activity: AgentActivity; waiting: number }) {
+  const { t } = useI18n();
+  const now = useNow(true);
+  const time = runDuration(now - activity.since) ?? '';
+  return (
+    <div className="agent-thread-live" role="status" aria-live="polite">
+      <span className="agent-msg-live-dot" aria-hidden="true" />
+      <span className="agent-thread-live-text agent-msg-elapsed">{t('agents.thread.live').replace('{time}', time)}</span>
+      {waiting > 0 && (
+        <span className="agent-thread-live-queue">
+          {waiting === 1
+            ? t('agents.thread.liveQueued.one')
+            : t('agents.thread.liveQueued.other').replace('{n}', String(waiting))}
+        </span>
+      )}
     </div>
   );
 }
@@ -220,6 +253,7 @@ export function AgentThreadPanel({
   onOpenAgent,
   onToast,
   busyWith,
+  working: feedWorking = null,
   closeOnEscape,
   autoFocus,
   footRef,
@@ -233,10 +267,11 @@ export function AgentThreadPanel({
   /** Where an answer that could not be recorded is reported — the inline
    *  question block needs one, and the panel has no toast surface of its own. */
   onToast?: (msg: string) => void;
-  /** This thread's agent, by title, while it holds its own run slot; null otherwise. The
-   *  server refuses a reply (`busy`) to an agent that is mid-run, so the field goes down and
-   *  says so. Another agent's run never holds this one down. */
+  /** This thread's agent, by title, while it is working; null otherwise. The field stays
+   *  open: a reply to a working agent queues behind its turn, and the placeholder says so. */
   busyWith: string | null;
+  /** What this thread's agent is doing, from the feed, until the thread's own read says. */
+  working?: AgentActivity | null;
   /** False while a file viewer is open over the page: Esc there closes the viewer, and
    *  must not close the thread under it in the same keystroke. */
   closeOnEscape: boolean;
@@ -275,6 +310,17 @@ export function AgentThreadPanel({
   }, [answer, entries]);
   // The server's count, the one the feed row prints too.
   const replyCount = data?.replyCount ?? message.replyCount;
+
+  // ── Working ───────────────────────────────────────────────────────────────
+  // The thread's own read wins (it polls every 2s while the agent works); the feed's copy
+  // covers the moment before it lands. Drawn when the turn writes into THIS run, or when a
+  // message of yours here is waiting behind a turn elsewhere.
+  const activity = data?.working !== undefined ? data.working : feedWorking;
+  const queuedHere = useMemo(
+    () => new Set((activity?.queued ?? []).filter((q) => q.runId === message.runId).map((q) => q.entryId)),
+    [activity, message.runId],
+  );
+  const liveHere = !!activity && (activity.runId === message.runId || queuedHere.size > 0);
 
   // ── Replying ──────────────────────────────────────────────────────────────
   //
@@ -353,7 +399,10 @@ export function AgentThreadPanel({
   // One sentence, one owner (K5): a server refusal outranks the delivery note,
   // and the host's own note (an empty reply) outranks both because it is the
   // thing the user did last.
-  const footNote = note ?? (refusal ? { kind: 'error' as const, text: refusal } : deliveryNote(delivery, t));
+  // A running delivery is said by the live row in the thread, not a second time down here.
+  const footNote = note ?? (refusal
+    ? { kind: 'error' as const, text: refusal }
+    : liveHere && delivery?.status === 'running' ? null : deliveryNote(delivery, t));
 
   // ── Keyboard and focus ────────────────────────────────────────────────────
   const closeBtn = useRef<HTMLButtonElement>(null);
@@ -503,7 +552,7 @@ export function AgentThreadPanel({
         </div>
 
         {isLoading && entries.length === 0 && <p className="agent-thread-empty">Reading the thread…</p>}
-        {!isLoading && entries.length === 0 && !answer && (
+        {!isLoading && entries.length === 0 && !answer && !liveHere && (
           <p className="agent-thread-empty">This run left nothing in its thread.</p>
         )}
 
@@ -513,12 +562,13 @@ export function AgentThreadPanel({
             {e.kind === 'system'
               // An ask's root is the reader's question, not the reason, so nothing is trimmed.
               ? <SystemRow entry={e} rootText={message.ask ? null : message.text} />
-              : <AuthoredRow entry={e} message={message} onOpenFile={onOpenFile} />}
+              : <AuthoredRow entry={e} message={message} onOpenFile={onOpenFile} queued={queuedHere.has(e.id)} />}
           </Fragment>
         ))}
         {answer && answerAt === entries.length && (
           <AnswerRow answer={answer} message={message} onOpenFile={onOpenFile} />
         )}
+        {liveHere && activity && <LiveRow activity={activity} waiting={queuedHere.size} />}
       </div>
 
       <footer className="agent-thread-foot" ref={footRef}>

@@ -229,15 +229,28 @@ describe('the overlay is Chat\'s SlideOver, and only a split can be resized', ()
 
 // ── One run slot per agent: only the agent named is refused ──────────────────────────────
 
-describe('the channel refuses only a message to an agent that is already running', () => {
+describe('a message to a working agent goes into its running thread, not back to the field', () => {
   const channel = host.slice(host.indexOf('export function useAgentsChannelHost'), host.indexOf('export function useAgentThreadHost'));
 
-  it('asks isBusy about the agent the draft names', () => {
+  it('asks isBusy about the agent the draft names, for the note under the field', () => {
     expect(channel).toMatch(/live\.current\.isBusy\(target\.slug\)/);
   });
 
-  it('refuses it without clearing, so the draft and its chips stay', () => {
-    expect(channel).toMatch(/if \(live\.current\.isBusy\(target\.slug\)\) \{[\s\S]{0,300}return false as const;/);
+  it('the note is a hint, and send no longer refuses a busy agent', () => {
+    expect(channel).toMatch(/busyNote = \(target: ComposerAgent\): ChannelNote => \(\{\s*kind: 'hint'/);
+    expect(channel).not.toMatch(/if \(live\.current\.isBusy\(target\.slug\)\) \{[\s\S]{0,300}return false as const;/);
+  });
+});
+
+describe('the thread says when its agent is working', () => {
+  it('draws a live row from the agent activity, with the queued count', () => {
+    expect(panel).toMatch(/\{liveHere && activity && <LiveRow activity=\{activity\} waiting=\{queuedHere\.size\} \/>\}/);
+    expect(panel).toMatch(/t\('agents\.thread\.live'\)/);
+  });
+
+  it('marks a message of yours that is still waiting as queued', () => {
+    expect(panel).toMatch(/queued=\{queuedHere\.has\(e\.id\)\}/);
+    expect(panel).toMatch(/t\('agents\.thread\.queued'\)/);
   });
 });
 

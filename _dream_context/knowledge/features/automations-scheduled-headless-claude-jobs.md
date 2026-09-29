@@ -206,6 +206,16 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+### 2026-09-29: A working agent is visible in its thread, and a message to it queues instead of being refused
+
+Owner report: in a thread there was no way to tell whether the agent was working, and a message sent while it worked left them guessing whether anything heard it. Two root causes: `runSlots` only knew runs THIS server started, so a reply turn or a scheduled run looked idle in its own thread; and the channel refused an @mention to a running agent (`say_busy`) while the thread quietly queued the same message.
+
+- **"Working" is asked of the run lock** (`agentActivity` in `src/server/automation-job.ts`, pattern `ask-the-subject-not-its-configuration`): a lock held by a live pid within its stale window is a turn, whatever started it. `runId` comes from the delivering reply job, else the sidecar's `fireAt`. `queued` lists replies still waiting (`ReplyJobState.phase`, set by the new `VerdictOptions.onLockAcquired`). Carried as `working` on the feed and on the thread GET; `runSlots` is unchanged for the run-now poll.
+- **The thread's last line says it**: breathing dot, "Working · 1m 12s", "N messages wait for this turn to end", your waiting messages tagged Queued; 2s polling while shown.
+- **The channel no longer refuses a busy agent**: `say` writes the message into the running run's thread and starts a reply job behind it, then the thread opens. `say_busy` survives only when no run can be named or an approval question is open.
+- **A queued message no longer needs a bound session up front**: `resumeWithMessage` with `lockWaitMs > 0` re-checks the session under the lock, since the run it waited behind may be the agent's first. The reply route skips `not_bound` while the agent is working.
+- Proof: `automation-reply-job.test.ts` (activity: idle, live lock, dead lock, waiting to delivering), `automation-threads-routes.test.ts` (same-agent @mention queues into the running thread), `verify:agents-feed` `[Q1]`-`[Q3]`.
+
 ### 2026-09-25: Elevated UX pass, the decisions it rests on
 
 - **Needs-you stays warning ink (K26/K40).** The proposal suggested the accent tint for the needs-you row; the owner's reply left it open, so the orchestrator kept warning rather than reverse a standing decision unasked. The tray's needs-you row leads with a warning dot, the scheduler WARN keeps its warning tint. Switching needs-you to the accent tint is a one-line change to `.agents-needyou-dot` if the owner wants it.
