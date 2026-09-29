@@ -22,6 +22,7 @@ import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
+import { autoModeSettings } from '../../lib/auto-mode-rules.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
 import { describeFreshStart, freshSessionOnDefaultBranch } from '../../lib/session-start-branch.js';
 import { createWorktreeWatcher } from '../worktree-frames.js';
@@ -862,8 +863,13 @@ export function startChatSession(
   // (`--settings`) adds a note saying the new brief replaces the old; on `compact` too when
   // the snapshot differs, since a compaction drops the note. A failure degrades to today's
   // behaviour, never to a failed spawn.
+  // Every spawn also carries dreamcontext's auto-mode carve-outs (auto-mode-rules.ts): the
+  // classifier reads them only from flag/user/managed settings, never the repo's own, so one
+  // `--settings` file holds both. Written even under bypass — a live switch to auto keeps them.
+  const spawnSettings: Record<string, unknown> = autoModeSettings();
   let modeNoteArg: string[] = [];
   let cleanupModeNote = () => { /* nothing written */ };
+  const tmpFiles: string[] = [];
   if (resumeTarget && !isAssistant) {
     try {
       const transcript = findFirstTranscriptPath([resumeTarget]);
@@ -873,16 +879,24 @@ export function startChatSession(
         const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
         const id = randomUUID();
         const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
-        const settings = join(tmpdir(), `dreamcontext-chat-mode-settings-${id}.json`);
-        if (!isShellSafePath(out) || !isShellSafePath(settings)) throw new Error('unsafe tmpdir');
+        if (!isShellSafePath(out)) throw new Error('unsafe tmpdir');
         writeFileSync(out, modeNoteHookOutput(modeSwitchNote(state.held, mode, brief)), { encoding: 'utf-8', mode: 0o600 });
-        writeFileSync(settings, modeNoteSettings(`cat "${out}"`, sources), { encoding: 'utf-8', mode: 0o600 });
-        modeNoteArg = ['--settings', settings];
-        cleanupModeNote = () => {
-          for (const p of [out, settings]) { try { rmSync(p, { force: true }); } catch { /* tmp cleanup */ } }
-        };
+        tmpFiles.push(out);
+        Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${out}"`, sources)));
       }
     } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
+  }
+  try {
+    const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
+    if (!isShellSafePath(settings)) throw new Error('unsafe tmpdir');
+    writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
+    tmpFiles.push(settings);
+    modeNoteArg = ['--settings', settings];
+  } catch { /* no carve-outs and no mode note this spawn — auto mode keeps its defaults */ }
+  if (tmpFiles.length) {
+    cleanupModeNote = () => {
+      for (const p of tmpFiles) { try { rmSync(p, { force: true }); } catch { /* tmp cleanup */ } }
+    };
   }
 
   // ── Delegation marker, effort, recall mode ──────────────────────────────────────────
