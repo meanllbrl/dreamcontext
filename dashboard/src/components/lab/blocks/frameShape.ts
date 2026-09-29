@@ -1,0 +1,79 @@
+import { applyFrameOps, frameOpsFromOptions, type Frame, type FrameOps } from '../../../generated/frameOps';
+import type { Block, BlockFilter } from '../board/boardTypes';
+
+/**
+ * Shaping a block's frame on the client: the static options (`where`, `sort`,
+ * `limit`, series pick) plus the interactive `filter` blocks of the same
+ * card, through the mirrored frameOps in ONE pass (where -> filter -> sort ->
+ * limit), so a filtered table's `total` is taken after the filter and before
+ * the limit. Zero network: the server's frames come back un-limited.
+ *
+ * `BlockProps.frame` is the OUTPUT of `shapeBlockFrame`. Shape exactly once:
+ * a second pass would see "nothing filtered out" and report the source's
+ * grand total instead of the filtered one.
+ */
+
+/** What a filter block narrows: the insight + dataset of its own table frame. */
+export interface FilterTarget {
+  insight: string;
+  dataset: string | null;
+}
+
+/** One filter block's current choice, keyed by the block's frame key (card id + path). */
+export interface ActiveFilter {
+  key: string;
+  target: FilterTarget;
+  filter: BlockFilter;
+}
+
+/** The dataset a filter block's frame reads, or null when it has no table to filter. */
+export function filterTarget(frame: Frame | null | undefined): FilterTarget | null {
+  return frame && frame.kind === 'table' ? { insight: frame.insight, dataset: frame.dataset } : null;
+}
+
+/** Record (or clear, with `filter: null`) one filter block's choice. Returns a new list. */
+export function setActiveFilter(
+  list: readonly ActiveFilter[],
+  key: string,
+  target: FilterTarget | null,
+  filter: BlockFilter | null,
+): ActiveFilter[] {
+  const rest = list.filter((f) => f.key !== key);
+  return filter && target ? [...rest, { key, target, filter }] : rest;
+}
+
+/** The choice a filter block shows as active (its own entry), or null. */
+export function activeFilterFor(list: readonly ActiveFilter[], key: string): BlockFilter | null {
+  return list.find((f) => f.key === key)?.filter ?? null;
+}
+
+/**
+ * The ops one block runs. The first filter on the block's dataset is the
+ * interactive filter; any further ones fold into `where` (AND), so the whole
+ * thing is still one applyFrameOps pass.
+ */
+export function blockFrameOps(block: Block, frame: Frame, active: readonly ActiveFilter[]): FrameOps {
+  const ops = frameOpsFromOptions(block.options);
+  if (block.type === 'filter' || frame.kind !== 'table') return ops;
+  const mine = active.filter((f) => f.target.insight === frame.insight && f.target.dataset === frame.dataset);
+  if (mine.length === 0) return ops;
+  ops.filter = mine[0].filter;
+  if (mine.length > 1) {
+    const where: Record<string, string[]> = { ...(ops.where ?? {}) };
+    for (const { filter } of mine.slice(1)) {
+      const allowed = where[filter.dim];
+      where[filter.dim] = allowed ? allowed.filter((v) => v === filter.value) : [filter.value];
+    }
+    ops.where = where;
+  }
+  return ops;
+}
+
+/**
+ * The frame a block draws. A filter block is shaped by its own static options
+ * only, never by a filter (its chips would collapse to the one chosen value).
+ */
+export function shapeBlockFrame(block: Block, raw: Frame | null | undefined, active: readonly ActiveFilter[] = []): Frame | null {
+  if (!raw) return null;
+  return applyFrameOps(raw, blockFrameOps(block, raw, active));
+}

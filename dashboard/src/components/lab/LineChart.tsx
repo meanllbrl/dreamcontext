@@ -19,9 +19,31 @@ interface Props {
   unit?: string | null;
   height?: number;
   emptyHint?: string;
+  /** Fill the area under each line (board `line` block `area`). */
+  area?: boolean;
+  /** 1-based palette slot the first series starts at (board block `color`, 1-8). */
+  colorIndex?: number;
+  /** Series names kept, in this order; unknown names are skipped (board block `series`). */
+  seriesFilter?: readonly string[] | null;
 }
 
-export function LineChart({ series, unit = null, height = 200, emptyHint }: Props) {
+/** The series a `seriesFilter` keeps, in the filter's order. Empty filter = all. */
+export function pickSeries(series: Series[], names: readonly string[] | null | undefined): Series[] {
+  if (!names || names.length === 0) return series;
+  const byName = new Map(series.map((s) => [s.name, s] as [string, Series]));
+  return names.map((n) => byName.get(n)).filter((s): s is Series => s !== undefined);
+}
+
+/** Palette color for series `i` when the scale starts at slot `colorIndex` (1-based). */
+export function seriesColor(i: number, colorIndex = 1): string {
+  const offset = Math.max(0, Math.round(colorIndex) - 1);
+  return COLORS[(offset + i) % COLORS.length];
+}
+
+export function LineChart({
+  series: allSeries, unit = null, height = 200, emptyHint, area = false, colorIndex = 1, seriesFilter = null,
+}: Props) {
+  const series = useMemo(() => pickSeries(allSeries, seriesFilter), [allSeries, seriesFilter]);
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -44,13 +66,23 @@ export function LineChart({ series, unit = null, height = 200, emptyHint }: Prop
       return keys.length <= 1 ? PAD.left + innerW / 2 : PAD.left + (idx / (keys.length - 1)) * innerW;
     };
     const yForFn = (v: number): number => PAD.top + innerH - ((v - minV) / range) * innerH;
-    const lines = series.map((s, i) => ({
-      name: s.name,
-      color: COLORS[i % COLORS.length],
-      path: s.points.map((p) => `${xForFn(p.t)},${yForFn(p.v)}`).join(' '),
-    }));
+    const baseY = PAD.top + innerH;
+    const lines = series.map((s, i) => {
+      const xy = s.points.map((p) => `${xForFn(p.t)},${yForFn(p.v)}`);
+      const first = s.points[0];
+      const last = s.points[s.points.length - 1];
+      return {
+        name: s.name,
+        color: seriesColor(i, colorIndex),
+        path: xy.join(' '),
+        // The line's own points closed down to the baseline: the area under it.
+        areaPath: first && last
+          ? `${xForFn(first.t)},${baseY} ${xy.join(' ')} ${xForFn(last.t)},${baseY}`
+          : '',
+      };
+    });
     return { xKeys: keys, xFor: xForFn, yFor: yForFn, polylines: lines, hasData: allPoints.length > 0 };
-  }, [series, innerW, innerH]);
+  }, [series, innerW, innerH, colorIndex]);
 
   if (!hasData) {
     return <ChartEmpty hint={emptyHint} />;
@@ -79,7 +111,7 @@ export function LineChart({ series, unit = null, height = 200, emptyHint }: Prop
   const hoverRows = hoverKey !== null
     ? series.map((s, i) => ({
         name: s.name,
-        color: COLORS[i % COLORS.length],
+        color: seriesColor(i, colorIndex),
         point: s.points.find((p) => p.t === hoverKey) ?? null,
       }))
     : [];
@@ -100,6 +132,9 @@ export function LineChart({ series, unit = null, height = 200, emptyHint }: Prop
         onPointerLeave={() => setHoverIdx(null)}
       >
         <line x1={PAD.left} y1={PAD.top + innerH} x2={PAD.left + innerW} y2={PAD.top + innerH} stroke="var(--color-border)" strokeWidth={1} />
+        {area && polylines.map((l) => (
+          l.areaPath ? <polygon key={`area-${l.name}`} data-area="" points={l.areaPath} fill={l.color} fillOpacity={0.16} stroke="none" /> : null
+        ))}
         {polylines.map((l) => (
           <polyline key={l.name} points={l.path} fill="none" stroke={l.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         ))}
@@ -152,7 +187,7 @@ export function LineChart({ series, unit = null, height = 200, emptyHint }: Prop
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
           {series.map((s, i) => (
             <span key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: COLORS[i % COLORS.length], display: 'inline-block' }} />
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: seriesColor(i, colorIndex), display: 'inline-block' }} />
               {s.name}
             </span>
           ))}

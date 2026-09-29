@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { Series } from '../../hooks/useLab';
 import { CHART_COLORS } from './chartColors';
 import { ChartEmpty, ChartTooltip, formatValue, unionTimeKeys, type ChartBodyProps } from './chartBody';
 
@@ -21,15 +22,36 @@ const SERIES_CAP = 6;
 const GROUP_GAP = 0.22;
 
 export function BarCompareBody({ summary, series, full = false, emptyHint }: ChartBodyProps) {
+  return <BarCompareChart series={series} unit={summary.unit} full={full} emptyHint={emptyHint} />;
+}
+
+/**
+ * The grouped-bar drawing behind `bar_compare`, and behind a board `bar`
+ * block's `comparePrev` (one group per row, a previous and a current bar).
+ * `groups` names the groups in display order; absent = the last few time
+ * buckets, the render's own rule. `colorIndex` is the palette slot (1-8) the
+ * first series takes.
+ */
+export function BarCompareChart({ series, unit, full = false, emptyHint, groups, colorIndex = 1, height: heightProp }: {
+  series: Series[];
+  unit: string | null;
+  full?: boolean;
+  emptyHint?: string;
+  groups?: readonly string[];
+  colorIndex?: number;
+  height?: number;
+}) {
   const [hover, setHover] = useState<{ key: string; name: string; value: number; x: number } | null>(null);
 
-  const height = full ? 260 : 150;
+  const height = heightProp ?? (full ? 260 : 150);
   const innerW = WIDTH - PAD.left - PAD.right;
   const innerH = height - PAD.top - PAD.bottom;
+  const offset = Math.max(0, Math.round(colorIndex) - 1);
+  const colorAt = (i: number) => CHART_COLORS[(offset + i) % CHART_COLORS.length];
 
   const drawn = series.slice(0, SERIES_CAP);
   const hiddenSeries = series.length - drawn.length;
-  const keys = unionTimeKeys(drawn).slice(-(full ? BUCKETS.full : BUCKETS.card));
+  const keys = groups ? [...groups] : unionTimeKeys(drawn).slice(-(full ? BUCKETS.full : BUCKETS.card));
 
   if (keys.length === 0) return <ChartEmpty hint={emptyHint} />;
 
@@ -76,7 +98,7 @@ export function BarCompareBody({ summary, series, full = false, emptyHint }: Cha
                     width={Math.max(1, barW - 1.5)}
                     height={h}
                     rx={2}
-                    fill={CHART_COLORS[si % CHART_COLORS.length]}
+                    fill={colorAt(si)}
                     opacity={hover === null || active ? 1 : 0.45}
                     style={{ transition: 'opacity 0.12s ease' }}
                     onPointerEnter={() => setHover({ key, name: s.name, value: point.v, x: x + barW / 2 })}
@@ -106,7 +128,7 @@ export function BarCompareBody({ summary, series, full = false, emptyHint }: Cha
         >
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{hover.key}</div>
           <span style={{ fontWeight: 700, color: 'var(--color-text)', fontFamily: 'var(--font-mono)' }}>
-            {formatValue(hover.value, summary.unit)}
+            {formatValue(hover.value, unit)}
           </span>
           <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6 }}>{hover.name}</span>
         </ChartTooltip>
@@ -116,7 +138,7 @@ export function BarCompareBody({ summary, series, full = false, emptyHint }: Cha
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
           {drawn.map((s, i) => (
             <span key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: CHART_COLORS[i % CHART_COLORS.length], display: 'inline-block' }} />
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: colorAt(i), display: 'inline-block' }} />
               {s.name}
             </span>
           ))}

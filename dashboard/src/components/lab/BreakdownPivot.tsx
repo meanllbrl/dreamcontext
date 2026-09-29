@@ -340,3 +340,49 @@ export function BreakdownBody({ summary, cache, series, full = false, emptyHint,
     </div>
   );
 }
+
+/**
+ * A matrix set with its dims reordered so `rows` leads and `cols` follows
+ * (the rest keep their order and become filter chips). Unknown names are
+ * ignored, so a stale option degrades to the declared order.
+ */
+export function orderPivotDims(set: MatrixSet, rows?: string | null, cols?: string | null): MatrixSet {
+  const dims = [...set.dims];
+  const lead: typeof dims = [];
+  for (const key of [rows, cols]) {
+    if (!key) continue;
+    const at = dims.findIndex((d) => d.key === key);
+    if (at !== -1) lead.push(...dims.splice(at, 1));
+  }
+  return { ...set, dims: [...lead, ...dims] };
+}
+
+/**
+ * The pivot fed a dataset directly (board `pivot` block): a dataset/v1 table
+ * already IS a matrix set, so it skips the cache and goes straight to the
+ * breakdown view, with `rows`/`cols` choosing the axes. Keyed by the axes so
+ * a changed option starts a fresh view instead of keeping stale chip state.
+ */
+export function PivotBody({ set, unit, rows, cols, full = false, emptyHint }: {
+  set: MatrixSet;
+  unit: string | null;
+  rows?: string | null;
+  cols?: string | null;
+  full?: boolean;
+  emptyHint?: string;
+}) {
+  if (set.dims.length === 0 || set.rows.length === 0) return <ChartEmpty hint={emptyHint} />;
+  const ordered = orderPivotDims(set, rows, cols);
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <BreakdownView
+        key={ordered.dims.map((d) => d.key).join('|')}
+        matrix={{ set: ordered, notices: [], range: { fromISO: '', toISO: '' } }}
+        matrixHistory={undefined}
+        fetchedAt=""
+        unit={unit}
+        full={full}
+      />
+    </div>
+  );
+}

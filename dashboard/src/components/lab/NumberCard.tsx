@@ -18,8 +18,21 @@ const SPARK_POINTS = 24;
 /** A `number` render: latest value + unit + a delta-vs-previous indicator, with
  *  an inline sparkline so the number carries its own trend (a single figure
  *  can't say whether it is climbing or falling). */
-export function NumberCard({ latest, unit, series }: { latest: number | null; unit: string | null; series: Series[] }) {
-  const delta = computeDelta(series);
+export function NumberCard({ latest, unit, series, delta: deltaOverride, showDelta = true, showSpark = true, format }: {
+  latest: number | null;
+  unit: string | null;
+  series: Series[];
+  /** The change to show; absent = last minus previous point of the first series. */
+  delta?: number | null;
+  /** Board `stat` block `delta: none` hides the change. */
+  showDelta?: boolean;
+  /** Board `stat` block `spark: false` hides the sparkline. */
+  showSpark?: boolean;
+  /** Board `stat` block `format`: how the figure and its change are written. */
+  format?: (v: number) => string;
+}) {
+  const delta = showDelta ? (deltaOverride !== undefined ? deltaOverride : computeDelta(series)) : null;
+  const fmt = format ?? ((v: number) => v.toLocaleString());
   const deltaColor = delta === null ? 'var(--color-text-tertiary)' : delta > 0 ? 'var(--color-success)' : delta < 0 ? 'var(--color-error)' : 'var(--color-text-tertiary)';
   const deltaSign = delta !== null && delta > 0 ? '+' : '';
   const sparkPoints = (series[0]?.points ?? []).slice(-SPARK_POINTS);
@@ -27,15 +40,15 @@ export function NumberCard({ latest, unit, series }: { latest: number | null; un
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
       <span style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 32, color: 'var(--color-text)', letterSpacing: '-0.02em' }}>
-        {latest !== null ? latest.toLocaleString() : '—'}
+        {latest !== null ? fmt(latest) : '—'}
       </span>
       {unit && <span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>{unit}</span>}
       {delta !== null && (
         <span style={{ fontSize: 13, fontWeight: 600, color: deltaColor }}>
-          {deltaSign}{delta.toLocaleString()}
+          {deltaSign}{delta < 0 ? `-${fmt(Math.abs(delta))}` : fmt(delta)}
         </span>
       )}
-      {sparkPoints.length > 1 && (
+      {showSpark && sparkPoints.length > 1 && (
         <span
           style={{ alignSelf: 'center', marginLeft: 'auto', flexShrink: 0 }}
           title={`Last ${sparkPoints.length} points`}

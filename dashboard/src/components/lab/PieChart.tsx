@@ -28,19 +28,36 @@ function arcPath(cx: number, cy: number, r: number, startAngle: number, endAngle
   return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
 }
 
-export function PieChart({ series, size = 140, unit = null, full = false, emptyHint }: {
+/** Inner radius of a donut, as a share of the outer one. */
+export const DONUT_HOLE = 0.58;
+
+/** A ring sector: the outer arc forward, the inner arc back. */
+export function donutPath(cx: number, cy: number, r: number, ri: number, startAngle: number, endAngle: number): string {
+  const at = (rad: number, angle: number) => [cx + rad * Math.cos(angle), cy + rad * Math.sin(angle)];
+  const [x1, y1] = at(r, startAngle);
+  const [x2, y2] = at(r, endAngle);
+  const [x3, y3] = at(ri, endAngle);
+  const [x4, y4] = at(ri, startAngle);
+  const large = endAngle - startAngle > Math.PI ? 1 : 0;
+  return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${ri} ${ri} 0 ${large} 0 ${x4} ${y4} Z`;
+}
+
+export function PieChart({ series, size = 140, unit = null, full = false, emptyHint, donut = false }: {
   series: Series[];
   size?: number;
   unit?: string | null;
   /** Detail panel: show every row instead of the card's top-N + "+k more". */
   full?: boolean;
   emptyHint?: string;
+  /** Draw a ring instead of a filled pie (board `pie` block `donut`). */
+  donut?: boolean;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
 
   const cx = size / 2;
   const cy = size / 2;
   const r = size * 0.43;
+  const ri = r * DONUT_HOLE;
 
   const slices: Slice[] = toBarRows(series);
 
@@ -57,7 +74,7 @@ export function PieChart({ series, size = 140, unit = null, full = false, emptyH
     const start = angle;
     const end = angle + s.frac * 2 * Math.PI;
     angle = end;
-    return { ...s, d: arcPath(cx, cy, r, start, end) };
+    return { ...s, d: donut ? donutPath(cx, cy, r, ri, start, end) : arcPath(cx, cy, r, start, end) };
   });
 
   const active = paths.find((p) => p.name === hovered) ?? null;
@@ -66,7 +83,7 @@ export function PieChart({ series, size = 140, unit = null, full = false, emptyH
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 16, paddingTop: full ? 0 : READOUT_GUTTER }}>
       <div style={{ position: 'relative', flexShrink: 0 }}>
-        <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label="Pie chart">
+        <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label={donut ? 'Donut chart' : 'Pie chart'} data-donut={donut ? '' : undefined}>
           {paths.map((p) =>
             // A lone slice is a full circle — its arc's endpoints coincide, and
             // per the SVG spec a coincident-endpoint arc segment renders nothing.
@@ -75,10 +92,11 @@ export function PieChart({ series, size = 140, unit = null, full = false, emptyH
                 key={p.name}
                 cx={cx}
                 cy={cy}
-                r={r}
-                fill={p.color}
-                stroke="var(--color-bg)"
-                strokeWidth={1}
+                // A lone donut slice is a ring: a stroked circle through the ring's middle.
+                r={donut ? (r + ri) / 2 : r}
+                fill={donut ? 'none' : p.color}
+                stroke={donut ? p.color : 'var(--color-bg)'}
+                strokeWidth={donut ? r - ri : 1}
                 onPointerEnter={() => setHovered(p.name)}
                 onPointerLeave={() => setHovered(null)}
               />

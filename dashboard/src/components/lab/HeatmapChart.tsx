@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChartEmpty, type ChartBodyProps } from './chartBody';
+import { ChartEmpty, formatValue, type ChartBodyProps } from './chartBody';
 
 /**
  * `heatmap` render — the contributions grid: weeks across, weekdays down, cell
@@ -40,10 +40,16 @@ function weekdayIndex(d: Date): number {
   return (d.getDay() + 6) % 7;
 }
 
-function levelColor(value: number, max: number): string {
+/** The chart token a heatmap tints with: palette slot 1-8 (board block `color`). */
+export function heatToken(colorIndex = 1): string {
+  const slot = Math.min(8, Math.max(1, Math.round(colorIndex)));
+  return `var(--chart-${slot})`;
+}
+
+export function levelColor(value: number, max: number, colorIndex = 1): string {
   if (value <= 0 || max <= 0) return 'var(--color-bg-tertiary)';
   const step = Math.min(LEVELS.length - 1, Math.ceil((value / max) * LEVELS.length) - 1);
-  return `color-mix(in srgb, var(--chart-1) ${Math.round(LEVELS[Math.max(0, step)] * 100)}%, transparent)`;
+  return `color-mix(in srgb, ${heatToken(colorIndex)} ${Math.round(LEVELS[Math.max(0, step)] * 100)}%, transparent)`;
 }
 
 /** One value per bucket: every series summed, because a heatmap cell is a day's
@@ -57,12 +63,31 @@ function bucketTotals(series: { name: string; points: { t: string; v: number }[]
 }
 
 export function HeatmapBody({ summary, cache, series, full = false, emptyHint }: ChartBodyProps) {
+  return (
+    <HeatmapChart
+      series={series}
+      unit={summary.unit}
+      granularity={cache?.granularity ?? summary.granularity}
+      full={full}
+      emptyHint={emptyHint}
+    />
+  );
+}
+
+/** The heatmap drawing. `colorIndex` picks the chart token (1-8) the cells tint with. */
+export function HeatmapChart({ series, unit, granularity, full = false, emptyHint, colorIndex = 1 }: {
+  series: { name: string; points: { t: string; v: number }[] }[];
+  unit: string | null;
+  granularity: string | null;
+  full?: boolean;
+  emptyHint?: string;
+  colorIndex?: number;
+}) {
   const [hover, setHover] = useState<{ cell: Cell; x: number } | null>(null);
 
   const totals = bucketTotals(series);
   if (totals.size === 0) return <ChartEmpty hint={emptyHint} />;
 
-  const granularity = cache?.granularity ?? summary.granularity;
   const size = cellSize(full);
   const max = Math.max(...totals.values(), 0);
   const keys = [...totals.keys()].sort();
@@ -78,7 +103,7 @@ export function HeatmapBody({ summary, cache, series, full = false, emptyHint }:
     >
       <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{hover.cell.key}</span>
       <span style={{ fontWeight: 700, color: 'var(--color-text)', fontFamily: 'var(--font-mono)', marginLeft: 6 }}>
-        {hover.cell.value.toLocaleString()}{summary.unit ? ` ${summary.unit}` : ''}
+        {hover.cell.value.toLocaleString()}{unit ? ` ${unit}` : ''}
       </span>
     </div>
   );
@@ -87,7 +112,7 @@ export function HeatmapBody({ summary, cache, series, full = false, emptyHint }:
     width: size,
     height: size,
     borderRadius: 2,
-    background: levelColor(value, max),
+    background: levelColor(value, max, colorIndex),
   });
 
   // Weekly/monthly buckets: a week is not a weekday, so the grid degrades to one
@@ -168,6 +193,72 @@ export function HeatmapBody({ summary, cache, series, full = false, emptyHint }:
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A table frame's heatmap: rows = the first dim, columns = the second, each
+ * cell tinted by its share of the largest cell. One dim = a single row of
+ * cells. What a board `heatmap` block bound to a dataset draws.
+ */
+export function HeatmapMatrix({ dims, rows, unit, colorIndex = 1, emptyHint }: {
+  dims: readonly { key: string; label: string }[];
+  rows: readonly { d: Record<string, string>; v: number | null }[];
+  unit: string | null;
+  colorIndex?: number;
+  emptyHint?: string;
+}) {
+  const rowDim = dims[0]?.key;
+  const colDim = dims[1]?.key;
+  if (!rowDim || rows.length === 0) return <ChartEmpty hint={emptyHint} />;
+  const distinct = (key: string) => rows.reduce<string[]>((acc, r) => {
+    const v = r.d[key];
+    if (v !== undefined && !acc.includes(v)) acc.push(v);
+    return acc;
+  }, []);
+  const rowValues = distinct(rowDim);
+  const colValues = colDim ? distinct(colDim) : [''];
+  const cells = new Map<string, number>();
+  for (const r of rows) {
+    if (typeof r.v !== 'number') continue;
+    const k = `${r.d[rowDim] ?? ''}\u0000${colDim ? r.d[colDim] ?? '' : ''}`;
+    cells.set(k, (cells.get(k) ?? 0) + r.v);
+  }
+  const max = Math.max(0, ...cells.values());
+
+  return (
+    <div style={{ overflow: 'auto' }}>
+      <table style={{ borderCollapse: 'separate', borderSpacing: GAP, fontSize: 11 }} role="img" aria-label="Heatmap">
+        {colDim && (
+          <thead>
+            <tr>
+              <th />
+              {colValues.map((c) => (
+                <th key={c} scope="col" style={{ fontWeight: 600, color: 'var(--color-text-tertiary)', padding: '0 2px', whiteSpace: 'nowrap' }}>{c}</th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {rowValues.map((rv) => (
+            <tr key={rv}>
+              <th scope="row" style={{ fontWeight: 400, color: 'var(--color-text-secondary)', textAlign: 'left', paddingRight: 6, whiteSpace: 'nowrap' }}>{rv}</th>
+              {colValues.map((cv) => {
+                const v = cells.get(`${rv}\u0000${cv}`);
+                return (
+                  <td
+                    key={cv}
+                    data-heat-cell=""
+                    title={`${rv}${cv ? ` / ${cv}` : ''}: ${formatValue(v ?? null, unit)}`}
+                    style={{ minWidth: 22, height: 18, borderRadius: 3, background: levelColor(v ?? 0, max, colorIndex) }}
+                  />
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

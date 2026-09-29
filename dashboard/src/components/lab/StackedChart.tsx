@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { Series } from '../../hooks/useLab';
 import { CHART_COLORS } from './chartColors';
 import { ChartEmpty, ChartTooltip, formatValue, unionTimeKeys, type ChartBodyProps } from './chartBody';
 
@@ -17,9 +18,23 @@ const PAD = { top: 10, right: 8, bottom: 22, left: 8 };
 const COLUMN_GAP = 0.18;
 
 export function StackedBody({ summary, series, full = false, emptyHint }: ChartBodyProps) {
+  return <StackedChart series={series} unit={summary.unit} full={full} emptyHint={emptyHint} />;
+}
+
+/** The stacked drawing. `colorIndex` is the palette slot (1-8) the bottom layer takes. */
+export function StackedChart({ series, unit, full = false, emptyHint, colorIndex = 1, height: heightProp }: {
+  series: Series[];
+  unit: string | null;
+  full?: boolean;
+  emptyHint?: string;
+  colorIndex?: number;
+  height?: number;
+}) {
   const [hoverKey, setHoverKey] = useState<string | null>(null);
 
-  const height = full ? 280 : 150;
+  const height = heightProp ?? (full ? 280 : 150);
+  const offset = Math.max(0, Math.round(colorIndex) - 1);
+  const colorAt = (i: number) => CHART_COLORS[(offset + i) % CHART_COLORS.length];
   const innerW = WIDTH - PAD.left - PAD.right;
   const innerH = height - PAD.top - PAD.bottom;
 
@@ -71,7 +86,7 @@ export function StackedBody({ summary, series, full = false, emptyHint }: ChartB
                     y={top}
                     width={barW}
                     height={h}
-                    fill={CHART_COLORS[si % CHART_COLORS.length]}
+                    fill={colorAt(si)}
                     opacity={hoverKey === null || hoverKey === key ? 1 : 0.45}
                     style={{ transition: 'opacity 0.12s ease' }}
                   />
@@ -106,9 +121,9 @@ export function StackedBody({ summary, series, full = false, emptyHint }: ChartB
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)', marginBottom: 4 }}>{hoverKey}</div>
           {series.map((s, si) => (
             <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: CHART_COLORS[si % CHART_COLORS.length], flexShrink: 0 }} />
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: colorAt(si), flexShrink: 0 }} />
               <span style={{ fontWeight: 700, color: 'var(--color-text)', fontFamily: 'var(--font-mono)' }}>
-                {formatValue(valueAt(si, hoverKey), summary.unit)}
+                {formatValue(valueAt(si, hoverKey), unit)}
               </span>
               {series.length > 1 && <span style={{ color: 'var(--color-text-secondary)', fontSize: 11.5 }}>{s.name}</span>}
             </div>
@@ -116,7 +131,7 @@ export function StackedBody({ summary, series, full = false, emptyHint }: ChartB
           {series.length > 1 && (
             <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', fontSize: 11.5 }}>
               Total <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
-                {formatValue(totals[hoverIndex], summary.unit)}
+                {formatValue(totals[hoverIndex], unit)}
               </span>
             </div>
           )}
@@ -127,7 +142,7 @@ export function StackedBody({ summary, series, full = false, emptyHint }: ChartB
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
           {series.map((s, i) => (
             <span key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: CHART_COLORS[i % CHART_COLORS.length], display: 'inline-block' }} />
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: colorAt(i), display: 'inline-block' }} />
               {s.name}
             </span>
           ))}
