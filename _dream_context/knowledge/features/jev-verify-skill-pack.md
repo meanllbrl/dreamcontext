@@ -9,11 +9,11 @@ pinned: false
 date: '2026-09-22'
 status: in_review
 created: '2026-09-22'
-updated: '2026-09-22'
+updated: '2026-09-29'
 released_version: null
 tags:
   - 'topic:skills'
-  - 'topic:testing'
+  - testing
   - 'topic:agents'
 related_tasks:
   - >-
@@ -49,6 +49,9 @@ Before this pack a browser check in this repo was a hand-written verify script: 
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-09-27 - No Jev plugin for validators
+The pack stays a skill an agent invokes; validators are NOT rewired through Jev. `goal-validator` has no model-driven browser step loop to accelerate (prewritten `verify:*` scripts, <10% ceiling). Measurement and verdict: [[decision-jev-for-validator-browser-loops]].
 
 ### 2026-09-22 - Dedicated key, no fallback to the voice key
 The plan reviewer proposed reading `~/.dreamcontext/voice.json → openRouterKey` as the last link so a configured machine never sees `unobtainable`. Rejected by owner instruction ("Openrouter_jev_key iste"): a validation tool's spend and blast radius stay separate from the assistant's. `doctor` names the source it resolved from so the first-run experience is a sentence, not a mystery.

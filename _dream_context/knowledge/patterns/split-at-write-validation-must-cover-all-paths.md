@@ -12,7 +12,7 @@ tags:
   - architecture
   - decisions
   - 'layer:backend'
-  - validation
+  - 'kind:testing'
 date: '2026-08-13'
 ---
 

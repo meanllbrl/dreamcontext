@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-27'
+updated: '2026-09-29'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -496,6 +496,11 @@ any future attempt (all of it is history — none of this ships):
 - [x] THE PLAN → DEVELOP HAND-OFF SURVIVES A REAL SLUG (2026-09-19, `5b094e64`). Owner report was "Plan mode very rarely offers the switch-to-Develop action"; the plan agent had been writing it every time — 83 real `develop` buttons across this machine's transcripts — and `toAction` silently dropped 49 of them (59%) on a 64-char bound that was never a property of a slug (task names are sentence-style, `slugify` truncates nothing, and 240 of this project's own 350 slugs exceed it). The gate is now `MAX_SLUG_CHARS` (252 = a 255-byte filename minus `.md`), the same derived ceiling the progress shelf uses; replaying all 83 recorded buttons honours 83 while the 12 `<the-task-slug>` placeholders quoted from the docs are still refused. The SILENCE was the other half of the defect — a button that vanishes is indistinguishable from a button never written — so `parseActionBlock` now reports every entry it cannot honour and `parseChatActions` renders those as a visible notice.
 - [x] RUNTIME-VERIFIED IN THE REAL APP, and it found three defects tests could not. `npm run verify:chat-secret-run` drives the real server, the real `/ws/agent-chat`, the real PTY bridge and a real browser against a scratch vault + scripted `claude` (no tokens): 76 assertions × light+dark green, covering all three cards — the third by having the stand-in raise a real `can_use_tool` Bash request and hold the turn open until the answer comes back, so "the blocked turn resumes" is measured rather than reasoned. It also WRITES SCREENSHOTS by default (`tmp/verify-shots/<theme>-NN-<phase>.png`, each scrolled to the card it is about), because "did you validate it" is a question an assertion count cannot answer; including the canary (the pasted value must appear in neither the CLI's stdin nor a pixel of the DOM) and a real `read` typed into from the card. What it caught: **(1)** `-ilc 'exec <command>'` ran only the FIRST simple command — `exec` binds there, so `echo READY; read line` became `echo READY` and the card ran something other than what it displayed; now an inner non-interactive shell takes the command as an OPERAND (`execShellArgs`, regression-locked). **(2)** xterm SUSPENDS its write buffer and its keyboard handling while its element is off-screen — output arrived on the socket and never painted, keystrokes went nowhere; the card now reveals itself on open (twice, 250ms apart, because the 300px growth makes the transcript re-pin to the bottom and undo a single scroll). **(3)** `ChatPane`'s click-to-focus handed the caret back to the composer on every click inside the terminal (xterm's screen is a `div`, so it was not in the exempt list) — every keystroke meant for a live `read` landed in the message box. All three are invisible to unit tests and all three would have shipped.
 
+- [x] **A chat's tab stays `working` while agents it started still run** (2026-09-28, `ae692a4b`): the pane reports whether any agent run it knows about is running and `deriveSessionStatus` reads that as `working` ("agents working") while the session is open; asking still wins, a closed/dormant session is not revived, plain background shells do not count.
+- [x] **A Develop run reads in order** (2026-09-27, `7536550f`): goal-live wave/round travel onto `SubAgentRun`; `questModel` groups build parties per registered wave (a resumed builder stays in its wave), anchors unplaced parties by time instead of trailing them, the kicker prints the real wave, one entry per agent; a finished party is never docked at the tail.
+- [x] **A Develop lead whose session id rotated keeps writing to its tab's run** (2026-09-27, `ddc4b201`): a goal-live write from a session with no file of its own continues its tab's open Develop run (never another tab's, a done run, or a tab-less one) and removes the orphan; resumed builders register with `--session`, one literal line per builder.
+- [x] **No `alert()` in the app** (2026-09-26, `f22dae76`): WKWebView implements no JS panel methods, so the Plan→Develop refusal and three other alerts use `confirmAction`; the refusal lists the missing parts and offers "Ask the planner". `no-window-confirm` bans `alert()` too.
+- [x] **Focusing a side-by-side pane lands in one layout** (2026-09-28, `5ed93d53`): no flex-basis transition; the accent bar is one `.agent-pane-glide` element FLIP-animated with transform only (`usePaneFocusGlide.ts`); reduced motion = no glide.
 
 ## Constraints & Decisions
 
@@ -678,6 +683,9 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 - Plan mode (`--permission-mode plan`) is always available via the external-terminal fallback (`POST /api/agent/open-terminal`); the in-app embedded plan mode is the remaining open AC.
 
 ## Changelog
+
+### 2026-09-29 — Develop reads in order, a tab keeps working while its agents do (sleep reconcile)
+- Five criteria added from `ae692a4b`, `7536550f`, `ddc4b201`, `f22dae76`, `5ed93d53`. Tab naming, question cards and Train Me were already reconciled.
 
 ### 2026-09-27 — A fourth mode that learns you, and two clocks that stopped lying
 

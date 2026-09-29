@@ -3,17 +3,15 @@ id: feat_iixpNXAm
 type: feature
 name: automations-scheduled-headless-claude-jobs
 description: >-
-  User-defined jobs that run headless Claude sessions unattended to produce
-  recurring outputs, driven by markdown manifests and gated by a machine-local
-  SHA256 approval tripwire; ships fully disabled until installed and approved.
-  Since 2026-09-19 they are also AGENTS: the page is a member list (photo, mode
-  sched|call), and every agent is a channel where a finished run posts one
-  message and keeps a thread.
+  Headless Claude jobs on a wall-clock schedule (multi-slot: weekly, every-N-
+  weeks, monthly, nth-weekday, cron), from markdown manifests behind a machine-
+  local approval hash; disabled until installed and approved. Every automation
+  is also an agent channel: runs post, threads resume, questions ask.
 pinned: false
 date: '2026-07-26'
 status: active
 created: '2026-07-26'
-updated: '2026-09-27'
+updated: '2026-09-29'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -22,6 +20,8 @@ tags:
   - 'topic:cli'
   - 'topic:desktop'
 related_tasks:
+  - >-
+    automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands
   - automations-scheduled-headless-claude-jobs
   - automations-branded-audible-completion-notifications
   - >-
@@ -64,6 +64,8 @@ related_tasks:
     an-automation-agent-can-be-called-with-from-any-chat-and-the-lead-claude-sees-every-agent-and-can-hand-it-work
   - >-
     an-agent-answering-an-question-never-asks-to-approve-a-document-and-a-run-never-opens-a-chat-tab-by-itself
+  - >-
+    bir-ajan-calisirken-thread-i-bunu-gosterir-ve-ona-yazilan-mesaj-o-thread-e-kuyruga-girer
 ---
 
 ## Why
@@ -100,6 +102,11 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 
 - [x] Manifest entity at `_dream_context/automations/<slug>.md` with frontmatter (id, title, enabled, `schedule: {days, at}`, model, effort, timeout_minutes, catchup_hours, output.dir, shared) and `## Prompt` / `## Output instructions` / `## Changelog` body. Lenient reads, strict writes.
 - [x] Structured schedule (`days: daily | [mon, wed]`, `at: "HH:MM"` local) with pure `mostRecentFire` + `isDue` predicates—injected `now`, unit-tested including midnight/week wrap and DST.
+- [x] **[2026-09-28] Several fire times per agent, richer cadences** (`786e781a`). `schedule.slots: [...]`, each slot one of: weekly days (+ `every_weeks` with an `anchor` date), `monthdays` (-1 = last), `nth` weekday of the month (-1 = last), or a 5-field local `cron`. `mostRecentFire` = latest across slots, `nextFire` = earliest; two missed slots collapse into the most recent one; day matching on local noon and weeks counted in whole days, so DST cannot move a fire or flip biweekly parity. Legacy `{days, at}` parses as one slot and is written back in that shape; the schedule stays out of the approval hash; a malformed slot fails the whole schedule with a named reason. The run learns its slot (`DREAMCONTEXT_AUTOMATION_SLOT`, `manual` for Run now). CLI `create --slot` (repeatable: `month:1,15,last@09:00`, `2w:mon@10:00`, `month:1st-mon@09:30`, `cron:30 9 * * 1`) and `automations schedule <slug> [--add|--remove]`; the dashboard dialog has one row per time validated by the same `parseSlot`.
+- [x] **[2026-09-28] A run uses every signed-in Claude account** (`f73326c4`): it picks its account with the chat's auto-switch rule before spawning, and a run the API refuses at a limit records the refusal and continues on the next account (resuming its session if it had done work), one attempt per account inside the single timeout. Answer and message resumes pick the same way.
+- [x] **[2026-09-28] Only the run's own process tree may `propose`** (`f6862718`, `bd7c4b34`, security): admitted iff the run's child pid is an ancestor of the caller; a run's own Bash-tool calls pass, a human shell, another run's descendant and a reparented daemon are refused, an unverifiable caller fails closed. Real-process tests; the daemon case fails against the interim guard.
+- [x] **[2026-09-28] Posts and documents are written to be skimmed** (`a0b0140e`): every owner-facing brief (run preamble, ask, thread reply) carries one shared `SKIMMABLE_MARKDOWN` rule (real lists one item per line, one bold anchor per line, short opener); banners flatten a post to one plain line (`plainPostText`).
+- [x] **[2026-09-27] A resumed turn's post notifies** (`454026e6`): `announceTurn` (`threads.ts`) is the one banner for a resumed turn (answer route + reply job): the agent's newest post or fresh question after the turn started, skipped only when already read or `notify: false`.
 - [x] ONE global launchd dispatcher: `~/Library/LaunchAgents/com.dreamcontext.automations.plist`, runs every 5 minutes, no baked node/CLI paths. Reads machine-local project registry `~/.dreamcontext/automations.json`.
 - [x] Runner composes preamble + manifest prose → `spawn(shell, ['-ilc', 'exec claude -p --permission-mode bypassPermissions --model "$1" "$0"', prompt, model])` with positionals, no interpolation. Timeout (default 15m, cap 60), stdout→`automations/output/<slug>/<date>.md`, run record in `automations/cache/<slug>.json`.
 - [x] Security tripwire: machine-local SHA256 approval per manifest (six fields: prompt, outputInstructions, model, effort, timeoutMinutes, outputDir); tick/run recompute and on mismatch/missing SKIPS with `status: blocked` until `automations approve <slug>`. Local write verbs re-approve; synced teammate edits never auto-approve.
@@ -151,7 +158,7 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 > **Status: shipped on `feat/agents-channel-composer`, UNMERGED.** 108+ changed files vs `main`, nothing committed to `main`. Validation PASS by the recorded method: root+dashboard `tsc` 0, build 0, `npm test` 529 files / 10,297 passed / 0 failed, `verify:agents-members` 64, `verify:agents-feed` 79, `verify:agent-threads` 77, `verify:sidebar-rail` 37. The owner's own UX verdict is the remaining gate.
 
 - [x] **A post carries structured content without a new entry KIND** — `question|summary|files|board` are not `ThreadEntryKind` members (that would break `feed.ts`'s `kind !== 'user'` unread math, the renderer and the CLI printer). Files are the existing capped `ThreadEntry.files[]`; a board is a `files[]` path ending `.excalidraw.md` rendered by extension; a **question is a JOIN** against `allPendingQuestions` filtered to `flow-hitl && pending && runFiredAt === runId`. The **only** schema addition in the whole step is one optional `ThreadEntry.summary?: {key,value}[]`, ≤6 rows (`post --kv`, a 7th exits non-zero writing nothing).
-- [x] **An agent can author its own option set — `automations propose --choice` (≤4, ≤64 chars each)**, not a new `ask` verb. `propose` is already the run's own stop-and-ask primitive, pgid-guarded so only the run's own process group may call it, and it refuses under `review: 'off'` — so choices are scoped to agents with `review: 'agent'|'output'`. **The caps live inside `parseChoices` (`hitl.ts`), not in the CLI**, so every producer AND every reader of a question file on disk inherits them — including one written by an older build or synced from a teammate. Control characters and newlines are stripped, not escaped: an over-long or newline-bearing choice makes the whole Telegram `inline_keyboard` send fail, so the human never sees the question and the run waits forever. (The Bot API's 64-**byte** limit is on `callback_data`, which we generate ourselves; this cap is about a legible button label and a payload that sends.)
+- [x] **An agent can author its own option set — `automations propose --choice` (≤4, ≤64 chars each)**, not a new `ask` verb. `propose` is already the run's own stop-and-ask primitive, ancestry-guarded so only the run's own process tree may call it (was pgid-guarded until 2026-09-28), and it refuses under `review: 'off'` — so choices are scoped to agents with `review: 'agent'|'output'`. **The caps live inside `parseChoices` (`hitl.ts`), not in the CLI**, so every producer AND every reader of a question file on disk inherits them — including one written by an older build or synced from a teammate. Control characters and newlines are stripped, not escaped: an over-long or newline-bearing choice makes the whole Telegram `inline_keyboard` send fail, so the human never sees the question and the run waits forever. (The Bot API's 64-**byte** limit is on `callback_data`, which we generate ourselves; this cap is about a legible button label and a payload that sends.)
 - [x] **Media is served through the vault route, not the desktop-gated one, and `.svg` is never served** — raster images (`.png/.jpg/.jpeg/.gif/.webp`) go through `/api/graph/content?raw=1`, so they render in a browser dashboard and on a tailnet phone; boards and docs stay desktop-only because their asset pipelines are. `.svg` is deliberately absent from `GRAPH_RAW_CONTENT_TYPE`: that route is generic and the Knowledge page `<iframe>`s it same-origin with no `sandbox`, so a script-bearing SVG would own the local API. The agents' use case is screenshots and plots — raster — so dropping it costs nothing real. **Amended 2026-09-25:** the vault route still never serves `.svg` (and refuses a symlink whose real path leaves the vault), but the DESKTOP route now serves it raw for the Lightbox's `<img>` under a `sandbox` CSP, following in-project symlinks by real-path containment (see Constraints & Decisions, 2026-09-25).
 - [x] **The image CSP is scoped to `image/*`, not the whole raw branch** — `sandbox` is a *document* directive and Chrome's PDF viewer is script-backed, so a blanket `Content-Security-Policy` here would have blanked a shipped Knowledge surface to harden a type that cannot carry script anyway. Two-sided test: a `.png` carries `default-src 'none'; sandbox`; a `.pdf` from the same route carries **no** CSP header.
 - [x] **A thread reply is a reply-JOB, not a fire** — `POST …/thread/reply` returns 202 with a job id, polled to settlement, reconciled on restart via **derived `<userEntryId>~r` ids** so a crash mid-reply appends exactly one entry, idempotent across two concurrent calls in one process and across two processes (entries newer than `PROCESS_STARTED_AT` are ignored). A running job survives a prune at any age; a settled one is pruned after 1h. Eight refusal rungs each answer with the **server's own sentence**: `reply_disabled`, `reply_unapproved`, `bad_text`, `bad_run`, `stale_run`, `not_bound`, `question_pending`, `busy`. (2026-09-25: those sentences were rewritten at the source in sentence case, saying "agent", with no em dash, so the app, the CLI and Telegram improve together; the panel still quotes them.)
@@ -366,7 +373,7 @@ The review-queue model (shipped 2026-08-04 under `f9ffba0`) was **retired and de
 - **Why session resumption is non-negotiable.** The single property Concierge teaches is not the approve button — it is that the verdict RESUMES the claude conversation that wrote the proposal. Because approving means "keep going" rather than "execute this payload", a card stores `sessionId` + context and nothing resembling an action, so the feature adds no capability on top of the `bypassPermissions` the approved prompt already bought. A card that carried an executable action would be a genuinely new capability; a card that says "unblock the conversation you already approved" is not.
 - **Review cards are machine-local, never brain-synced** — same boundary as approval registry, sharper reason. A card holds a resumable session id, so a synced card is an invitation for another machine to resolve your capability. The artifacts that live under `automations/review/` (cards + staged documents for `kind: 'output'`) have their own gitignore block (`AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES`), deliberately not part of `AUTOMATIONS_GITIGNORE_ENTRIES` — that array is the base-wildcard set `automations share` writes negations against, and `negationIsEffective` treats any base entry appearing after a negation as having silently killed it, so appending a new base wildcard to an existing `.gitignore` that already carries share negations would false-alarm every one. Review has no shareable direction at all.
 - **The serial gate (awaiting-review refusal) is the one rule that makes review compound.** A slug with a pending card refuses to spawn until the card is resolved. The scheduler runs at the human's speed instead of the clock's: a week away yields ONE owed fire rather than seven identical unreviewed proposals, and the human never comes back to a stack they have to rubber-stamp. Unlike `blocked`/`deferred`/`orphaned`, `awaiting-review` is not a fault — it is the design working.
-- **Process-group probe guards propose.** `defaultPgidProbe` shells out to `ps -o pgid= -p <pid>` (Node exposes no `getpgrp`) and the guard refuses when the proposing process's group id matches an active run's sidecar `childPgid` — so a nested `automations propose` call (e.g., a run that spawns another automation whose prompt says to propose) is caught and refused before the card is written, rather than producing a card that can never be answered because its session is still running.
+- **[2026-09-28] propose trusts the run's process ancestry ALONE (supersedes the process-group probe).** The old guard compared the caller's pgid to the run's `childPgid`, which broke twice: Claude Code's Bash tool runs every command in a fresh process group, so every real `propose` from inside a run was refused (`f6862718` added an ancestry check beside it); and a process that double-forks out of the run and is reparented to launchd KEEPS the run's pgid, so it was still admitted. Since `bd7c4b34` a caller is admitted only when the run's child pid is among its kernel-maintained ancestors; an unverifiable caller fails closed. Proven with real processes: a detached `claude -p` whose Bash tool called the built CLI was admitted; a human shell, a descendant of another run and a reparented daemon were refused.
 - **Steer is free text, never the thing that goes out.** A human corrects a card in words; the verdict resumes the session with the steer fenced as a correction; the agent re-drafts. A card can be steered arbitrarily without the human ever hand-editing the artifact, which is what "steering the conversation" means — the opposite of a diff-based approval UI that makes the human the writer.
 - **Drop vs discard.** `discard` judges THIS proposal (throw it away, the run wasted its fire); `drop` teaches the automation never to make this kind of proposal again (calls `automations learn` to record a lesson, then discards). Drop is the one people forget, and it is the one that makes review compound: not every proposal earns a durable lesson, but when one does, the human should not have to remember to write it separately.
 
@@ -397,7 +404,7 @@ The review-queue model (shipped 2026-08-04 under `f9ffba0`) was **retired and de
 - Product feature for all users (not personal setup); macOS launchd v1 backend; Linux cron later behind same `installDispatcher()` seam.
 - **Lego-flexible, Lab-Insights-modeled**: all job semantics live in manifest prose the agent writes from conversation; CLI carries only schedule/model/effort/timeout. No hardcoded job types, no built-in "digest" command.
 - **Headless runs use `bypassPermissions`—exactly WHY the SHA256 approval tripwire is non-negotiable**: brain-synced manifests are RCE-equivalent input.
-- Structured `{days, at}` schedule, NOT cron strings (self-documenting in synced brain; no NL→cron error class). Future `cron:` key may coexist; not in v1.
+- Structured `{days, at}` schedule, NOT cron strings, in v1 (self-documenting in synced brain; no NL→cron error class). **Superseded 2026-09-28:** a schedule is a union of slots and a 5-field local `cron` is one slot kind among the structured ones (see the multi-slot criterion).
 - One dispatcher plist, never per-automation plists (synced manifest edits arrive with no local CLI action → per-automation plists would drift; dispatcher re-reads manifests every tick and owns catch-up policy explicitly).
 - Do NOT reuse `sanitizePrompt()` from agent-terminal.ts (it collapses newlines for readline auto-submit; `-p` takes multi-line args). Strip NULs + cap ~100KB instead.
 - Cache + output are brain-synced (visibility); approvals/registry are machine-local (opt-in + duplicate-run guard across machines).
@@ -534,12 +541,14 @@ The review-queue model (shipped 2026-08-04 under `f9ffba0`) was **retired and de
 
 ### Future
 - Linux cron backend behind same `installDispatcher()` seam.
-- `cron:` key coexisting with structured schedule.
 - UTC schedule option (v1 is machine-local only).
 - Heartbeat/staleness warning (needs multi-hour safe threshold, or per-automation last-fire tracking).
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-29 - Multi-slot schedules, every account, ancestry-only propose guard (sleep reconcile)
+- Five criteria added from `786e781a`, `f73326c4`, `f6862718`/`bd7c4b34`, `a0b0140e`, `454026e6`. The process-group probe decision is superseded by the ancestry guard; the v1 "no cron" decision and the Future `cron:` item are superseded by slot schedules.
 
 ### 2026-09-25 - The owner's five decisions land
 

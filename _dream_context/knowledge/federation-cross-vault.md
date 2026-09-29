@@ -1,7 +1,11 @@
 ---
 id: federation-cross-vault
 name: "Cross-Vault Federation — When & What Two Vaults Read"
-description: "End-to-end model of dreamcontext federation: live-reference READ (crossVaultRecall default-on for connected peers, per-prompt hook, zero copies) + peer mail WRITE (addressed agent-to-agent correspondence, headless delivery, v0.25.0) + the parked copy-based PUSH half (sleep-driven sync/drain, disabled) kept as history. Covers consent gates, delivery modes, and why correspondence is not derived copies."
+description: >-
+  Federation end to end: live-reference READ (cross-vault recall on by default,
+  zero copies), peer-mail WRITE (addressed agent-to-agent correspondence,
+  v0.25.0), and the parked copy-based PUSH half kept as history; consent gates
+  and why correspondence is not a derived copy.
 tags: ["topic:federation", "architecture", "domain:knowledge", "topic:recall", "decisions"]
 pinned: false
 date: "2026-06-15"

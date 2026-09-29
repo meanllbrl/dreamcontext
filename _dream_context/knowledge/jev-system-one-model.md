@@ -2,17 +2,19 @@
 name: jev-system-one-model
 type: knowledge
 description: >-
-  What TypeSafe's Jev is (a System One decision model: typed state in, calibrated probabilities
-  out, no text), how it is reached through OpenRouter, what it measured at on dreamcontext's own
-  surfaces on 2026-09-21, and where in dreamcontext it does and does not belong.
+  What TypeSafe's Jev is (a System One decision model: typed state in,
+  calibrated probabilities out, no text), how it is reached through OpenRouter,
+  what it measured at on dreamcontext's own surfaces on 2026-09-21, and where in
+  dreamcontext it does and does not belong.
 tags:
-  - 'topic:testing'
+  - testing
   - 'topic:agents'
   - 'topic:recall'
   - research
   - decisions
 pinned: false
 date: '2026-09-22'
+updated: '2026-09-29'
 ---
 
 # Jev — a System One model, and where it fits dreamcontext
@@ -97,6 +99,9 @@ Candidates, ranked by the value they replace, not yet built:
    taxonomy vocabulary, staleness. Prose writing stays with Opus.
 6. **Vault content screening** — a Noul injection screen on peer mail and synced knowledge before
    it enters agent context (the shared-brain threat model already accepted).
+
+**Decided against (2026-09-27): a Jev plugin to speed up validators** — the browser bucket is
+script execution, not model thinking (ceiling ~9.5%). Measurement and verdict: [[decision-jev-for-validator-browser-loops]].
 
 Poor fits: snapshot budgeting (no prompt to judge relevance against at session start), anything
 that writes prose (sleep specialists, deep research, council), pixel/colour/theme judgements.

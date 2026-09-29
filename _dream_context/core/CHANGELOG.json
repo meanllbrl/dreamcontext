@@ -1,5 +1,159 @@
 [
   {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Replace frame-by-frame window jumps with a single smooth move/resize animation in the Tauri app.",
+    "breaking": false,
+    "summary": "Desktop windows move and resize in one smooth animation",
+    "references": [
+      "commit:1412f266"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Posts from a resumed agent turn now raise a notification, and the Agents page's focused pane lands in a single layout with a gliding accent bar instead of widening frame by frame.",
+    "breaking": false,
+    "summary": "Resumed-turn posts notify, and the focused pane glides into one layout",
+    "references": [
+      "commit:454026e6",
+      "commit:5ed93d53"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix tab naming (slugs lose dashes, Develop tabs renamable, hook reminder until named), keep a tab in working state while agents it started are still running, and open question-card option previews to most of the mock instead of a 180px slit.",
+    "breaking": false,
+    "summary": "Chat tabs: names read as words, the hook reminds the agent to name its tab, tabs stay working while their agents run, question previews open large",
+    "references": [
+      "commit:9312d733",
+      "commit:314d93e7",
+      "commit:ae692a4b",
+      "commit:e7f0e38d"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "develop-mode",
+    "description": "Build cards name their real wave, sit where they happened with one entry per agent, and a lead whose session id changed keeps writing to its tab's run without hiding the builders it registered.",
+    "breaking": false,
+    "summary": "A Develop run reads in order and survives a lead session-id change",
+    "references": [
+      "commit:7536550f",
+      "commit:ddc4b201"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "assistant",
+    "description": "Fix the notch hotkey freezing behind the mic, an outside click not closing an unfocused panel, and the seat guard staying off until quit after giving up.",
+    "breaking": false,
+    "summary": "Notch fixes: hotkey opens at once, outside click closes it, seat guard re-arms",
+    "references": [
+      "commit:aa5cca65",
+      "commit:2343ef78",
+      "commit:35636bc5"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "Extend the notch Assistant: it screenshots the owner's screens when asked, can be switched off without deleting it, is woken when a session it delegated asks, finishes a turn or closes, routes a command for an already-open project into that tab, steps out of the notch while working with pitch-preserved speech and Spidey delegation, and answers without 15-40 s of setup before each turn.",
+    "breaking": false,
+    "summary": "Assistant: look at my screen, switch-off, delegated sessions wake it, commands land in the open tab, and 15-40 s of per-turn plumbing removed",
+    "references": [
+      "commit:b4214fd9",
+      "commit:e79500cc",
+      "commit:11f18123",
+      "commit:2a8ed530",
+      "commit:42ff5c02",
+      "commit:e174cb67"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Add dreamcontext tasks priority and tasks urgency verbs that print the current level with no value or set it on an existing task.",
+    "breaking": false,
+    "summary": "tasks priority / tasks urgency print or change the level on an existing task",
+    "references": [
+      "commit:8db14f12"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Add multiple fire slots per automation and new cadences (weekly, every-N-weeks, monthly, nth weekday, cron); a run now uses every configured Claude account and moves to the next when a usage limit lands.",
+    "breaking": false,
+    "summary": "Automations fire at several times per day on weekly, every-N-weeks, monthly, nth-weekday or cron cadences, and rotate across every Claude account on usage limits",
+    "references": [
+      "commit:786e781a",
+      "commit:f73326c4"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "automations",
+    "description": "Rewrite the run prompt guidance so channel posts and the dated output document lead with the result in short scannable lines instead of narrative.",
+    "breaking": false,
+    "summary": "A run's posts and document are written to be skimmed",
+    "references": [
+      "commit:a0b0140e"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "automations",
+    "description": "Fix automations propose so a run's own calls made through Claude's Bash tool are admitted, then close the hole the first fix opened: identity is now decided by process ancestry alone, not a spoofable environment marker, so a daemon that detached from the run is refused. Decision: an automation-run identity check must rely on process ancestry, never an inheritable marker.",
+    "breaking": false,
+    "summary": "propose trusts only the run's process ancestry; the Bash-tool marker path that let a detached daemon pass is refused",
+    "references": [
+      "commit:f6862718",
+      "commit:bd7c4b34"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-27",
     "type": "decision",
     "scope": "validation",

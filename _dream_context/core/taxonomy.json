@@ -61,7 +61,8 @@
       "topic:context",
       "topic:git",
       "topic:announcements",
-      "topic:mobile"
+      "topic:mobile",
+      "topic:release"
     ]
   },
   "bareTags": [
@@ -123,6 +124,10 @@
     "topic:architecture": "architecture",
     "domain:dashboard": "topic:dashboard",
     "domain:frontend": "frontend",
-    "ui": "frontend"
+    "ui": "frontend",
+    "topic:design": "kind:design",
+    "validation": "kind:testing",
+    "release": "topic:release",
+    "topic:publishing": "topic:release"
   }
 }

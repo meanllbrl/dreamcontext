@@ -3,19 +3,17 @@ id: feat_lWnraM5v
 type: feature
 name: dreamcontext-assistant
 description: >-
-  An assistant that lives ABOVE every project: a hidden vault
-  (`~/.dreamcontext/assistant/`) driven by one long-lived Claude Code session,
-  summoned into a notch window by a global hotkey. It opens projects, starts and
-  steers chats in them, watches sessions, broadcasts a rule to every vault and
-  talks by voice; autonomy is a setting (ask / auto / bypass). The Jarvis chat
-  mode and the Meeting Room retired into it. The native checks wait on the
-  owner's manual checklist.
+  An assistant above every project: a hidden vault
+  (`~/.dreamcontext/assistant/`) with one long-lived Claude Code session,
+  summoned into the notch by a global hotkey. Opens projects, drives and watches
+  their chats, broadcasts rules, sees the screen, talks by voice; autonomy
+  ask/auto/bypass. Succeeds Jarvis mode and the Meeting Room.
 pinned: false
 date: '2026-09-26'
 status: in_review
 product: desktop
 created: '2026-09-26'
-updated: '2026-09-28'
+updated: '2026-09-29'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -56,6 +54,8 @@ the notch by a hotkey and answers there in two or three sentences.
 - [ ] As the owner, I see at a glance from the collapsed pill how many sessions are working, queued or waiting on me across every project.
 - [ ] As the owner, I choose how much the assistant may do on its own — `ask` (every follow-up, answer or broadcast needs my approval), `auto`, or `bypass` — and I am warned about what I am turning on.
 - [ ] As the owner, I set the assistant up in a Launcher wizard (name, avatar, character, hotkey, autonomy, voice key, permissions) and it can wake at login.
+- [x] As the owner, I switch the Assistant off from its Launcher card without deleting it (notch hidden, hotkey released, Login Item removed; switching back on resumes the same conversation).
+- [x] As the owner, a session the Assistant delegated wakes it when that session asks a question, finishes a turn, or closes, so I hear back without polling.
 - [ ] As the owner, the assistant's own memory improves: its hidden vault sleeps like any other, so what it learned about me persists.
 
 ## Acceptance Criteria
@@ -127,6 +127,8 @@ drives all of it against the real built server on an isolated HOME.**
 - **`look` (2026-09-28).** `src/lib/assistant/screen.ts`: `screencapture -x -t jpg` with one path per display (max 4, or `-D n`), `sips -Z 1920`, into the hidden vault's `tmp/screens/`, pruned after 30 min. Gate: `decide()` treats `look` like `chat` (free while clean, a proposal once tainted, bypass passes). No permission → `screen_permission` and the Privacy pane opens; the wizard's permissions step lists Screen Recording.
 - **Retirements** (`pattern-retire-shipped-capability`): the `jarvis` mode became `assistant` (server maps a saved `jarvis` to Basic), and the Meeting Room's components/hooks/routes/lib/capability/verify script/i18n/tests were removed. `runPeerHeadless` (in `peer-delivery.ts`) STAYS. Voice modules were kept and rewired to the notch.
 
+- **Off switch, delegation wakes, notch hardening (2026-09-27/28).** *Off:* `enabled` in the assistant `config.json` (default on, so older configs stay on) decides whether boot seats the notch, registers the hotkey and keeps the Login Item; the Launcher card's switch flips it, the wizard's Wake up turns it back on; the hidden vault and conversation are kept (`assistant.rs`, `AssistantEntryCard.tsx`). *Delegation wakes:* `src/lib/assistant/delegations.ts` tracks sessions the Assistant started or sent/answered into (fed by the registry's `onChatChange`); `asking` wakes at once, `idle` after a 2 s debounce, `gone` once after 3 s unless a respawn under the same id is live. A wake always taints (never clears taint), project text stays in `wrapUntrusted`, and with no Assistant chat attached events queue (one per session, cap 20) and flush on attach. `assistant watch --until settled` is the default. *Latency:* recall for the Assistant and the vaults it delegates to runs hybrid when the embedding model is on disk, else raw (hook 16.9 s -> 1.2 s); `--allowedTools 'Bash(dreamcontext assistant:*)'` only under `auto`; effort defaults to medium. *Window motion (`1412f266`):* Rust `set_frames` (`desktop/src-tauri/src/frames.rs`) moves every window of a call in ONE eased NSAnimationContext group (~200 ms); instant frames go through `animator()` in a zero-duration group so they cancel an in-flight animation; all-or-nothing on labels, per-label generations, a 50 ms spam bound, a hard deadline; granted only in `capabilities/assistant.json`, used by pop-out, dock, expand and tiling. *Notch:* a turn pops it out to a 480x620 side seat and it animates back when the turn ends; the summoning hotkey opens the panel first and only then starts a take (`summonTakeDue`), since WebKit audio start blocked the webview 1.6-3 s; a click outside closes the non-activating panel via NSEvent monitors (`assistant://outside-click`); `seatGuard.ts guardHeal` re-arms after giving up (seat change or 30 s cooldown); speech rate is time-stretched (WSOLA) so pitch holds; the briefing tells the Assistant to delegate project work to that project's own agent.
+
 ## Notes
 
 - **Open question the owner has not settled:** under `bypass`, should the assistant also act on text coming from OTHER projects without asking? The plan currently says yes, with warnings in the wizard.
@@ -134,6 +136,9 @@ drives all of it against the real built server on an isolated HOME.**
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-29 - Off switch, delegated sessions wake it, notch hardening (sleep reconcile)
+- Folded commits `e79500cc` (off switch), `11f18123` (delegation wakes), `e174cb67` (latency), `aa5cca65`/`2343ef78`/`35636bc5`/`42ff5c02` (notch hotkey, outside click, seat guard, side seat) into Technical Details; two owner stories ticked from shipped code + unit tests. Native owner checklist still open, status stays `in_review`.
 
 ### 2026-09-28 - `look` sees the owner's screen; a command lands in the tab that is already open
 - Owner: "şu ekranıma bak" must work, and a project already open as a tab must not get a second window. The notch read "where is X open?" only from the localStorage heartbeat, which goes stale when macOS throttles a background window; it now asks the server's live-instance list first (`GET /api/assistant/windows`, released on unmount, earlier page loads dropped), and wakes a cold tab in place (`dream://assistant-wake`). `look` screenshots every display (gated like `chat`, Screen Recording permission reported as `screen_permission`). Task `sesli-asistan-ekrani-gorur-ve-acik-sekmedeki-projeye-baglanir`.
