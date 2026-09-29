@@ -98,6 +98,50 @@ export function defaultPgidProbe(pid: number): number | null {
   }
 }
 
+export type AncestryProbe = (pid: number) => number[] | null;
+
+/** Hop cap for {@link defaultAncestryProbe}: a real chain is a handful deep, and a
+ *  cycle in a racing `ps` snapshot must not spin. */
+const ANCESTRY_MAX_HOPS = 64;
+
+/**
+ * The caller's ancestor pids, nearest first (parent, grandparent, …), stopping
+ * before pid 1.
+ *
+ * Needed alongside the pgid because a process group is NOT inherited through
+ * Claude Code's Bash tool: it runs every command in a fresh group (measured —
+ * the tool's shell leads its own pgid, its parent is the `claude` process), so
+ * the `dreamcontext` a run invokes never shares the run's pgid. Parentage does
+ * survive that, and it is kernel-maintained: a process cannot make itself a
+ * descendant of a run it was not spawned by. One `ps` for the whole table, and
+ * null — a refusal, like the pgid probe — when it cannot answer.
+ */
+export function defaultAncestryProbe(pid: number): number[] | null {
+  let out: string;
+  try {
+    out = execFileSync('ps', ['-axo', 'pid=,ppid='], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+  const parentOf = new Map<number, number>();
+  for (const line of out.split('\n')) {
+    const [a, b] = line.trim().split(/\s+/).map((n) => Number.parseInt(n, 10));
+    if (Number.isInteger(a) && Number.isInteger(b)) parentOf.set(a, b);
+  }
+  if (!parentOf.has(pid)) return null;
+  const chain: number[] = [];
+  let cur = parentOf.get(pid);
+  while (cur !== undefined && cur > 1 && chain.length < ANCESTRY_MAX_HOPS && !chain.includes(cur)) {
+    chain.push(cur);
+    cur = parentOf.get(cur);
+  }
+  return chain;
+}
+
 export interface ProposeInput {
   title: string;
   summary?: string;
@@ -128,12 +172,14 @@ export type ProposeResult =
 /**
  * Create a question ON BEHALF OF A RUNNING RUN — the `automations propose` verb.
  *
- * THE GUARD: the caller's process group must equal the one recorded in this
- * automation's run sidecar. A detached run gets its own process group, and
- * every descendant of that run — including the `dreamcontext` process the agent
- * itself invokes — inherits it, so this is precise in both directions: it
- * admits the run's own calls and rejects a human's shell, another project's
- * run, and any other process on the machine.
+ * THE GUARD: the caller must be the run's own descendant — either in the
+ * process group recorded in this automation's run sidecar, or with the run's
+ * child among its ancestors. The pgid alone is NOT enough: Claude Code's Bash
+ * tool runs each command in a fresh process group, so the `dreamcontext` the
+ * agent invokes never inherits the run's pgid (every real `propose` was refused
+ * that way). Parentage survives it and is kernel-maintained, so the check stays
+ * precise in both directions: it admits the run's own calls and rejects a
+ * human's shell, another project's run, and any other process on the machine.
  *
  * Why it needs to be this strong: an answer resumes the session id the
  * question names. A planted question is therefore a request to run an arbitrary
@@ -152,24 +198,26 @@ export function proposeFromRun(
   contextRoot: string,
   slug: string,
   input: ProposeInput,
-  opts: { pgidProbe?: PgidProbe; callerPid?: number; nowISO?: string; sessionId?: string | null } = {},
+  opts: { pgidProbe?: PgidProbe; ancestryProbe?: AncestryProbe; callerPid?: number; nowISO?: string; sessionId?: string | null } = {},
 ): ProposeResult {
   const sidecar = readRunSidecar(contextRoot, slug);
   if (!sidecar) {
     return { ok: false, reason: `no run of "${slug}" is in flight — \`propose\` is for a run to call about itself` };
   }
-  const probe = opts.pgidProbe ?? defaultPgidProbe;
-  const callerPgid = probe(opts.callerPid ?? process.pid);
-  if (callerPgid === null) {
+  const callerPid = opts.callerPid ?? process.pid;
+  const callerPgid = (opts.pgidProbe ?? defaultPgidProbe)(callerPid);
+  const inRunGroup = callerPgid !== null && callerPgid === sidecar.childPgid;
+  const ancestors = inRunGroup ? null : (opts.ancestryProbe ?? defaultAncestryProbe)(callerPid);
+  if (!inRunGroup && callerPgid === null && ancestors === null) {
     // Fail CLOSED. An unverifiable caller is exactly the case this guard exists
     // for; treating "could not check" as "must be fine" would make the guard
     // decorative on any machine where the probe happens to break.
-    return { ok: false, reason: 'could not verify the calling process group — refusing to record a proposal' };
+    return { ok: false, reason: 'could not verify the calling process — refusing to record a proposal' };
   }
-  if (callerPgid !== sidecar.childPgid) {
+  if (!inRunGroup && !(ancestors ?? []).includes(sidecar.childPid)) {
     return {
       ok: false,
-      reason: `\`propose\` may only be called from inside "${slug}"'s own run (process group ${sidecar.childPgid})`,
+      reason: `\`propose\` may only be called from inside "${slug}"'s own run (process group ${sidecar.childPgid}, pid ${sidecar.childPid})`,
     };
   }
   const open = pendingQuestion(contextRoot, slug);
