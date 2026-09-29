@@ -29,14 +29,14 @@ tools:
 maxTurns: 12
 skills:
   - engineering
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
 
 - **engineering** — top-level engineering bar (security, error handling at
   boundaries, idempotency principles, SOLID/KISS/DRY/YAGNI).
-- **dreamcontext** — read the active task to scope severity.
+- **dreamcontext-agent-core**: read the active task to scope severity.
 
 **Mandatory additional reads** (do these at the start of every dispatch):
 - `.claude/skills/multi-review/REVIEWER_SHARED.md` — shared rubric.

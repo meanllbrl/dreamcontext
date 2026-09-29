@@ -30,7 +30,7 @@ maxTurns: 25
 # tools not restricted -- this agent needs all available MCP tools to search platforms
 skills:
   - brand-voice
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -39,8 +39,9 @@ skills:
   messaging, terminology, personas, examples). Without this, the discovery
   report devolves into a generic "documents found" dump instead of a brand-
   classified inventory.
-- **dreamcontext** — write the discovery report into `knowledge/` with the
-  conventions this skill enforces; tag with `brand`, `discovery`, `audit`.
+- **dreamcontext-agent-core**: write the discovery report into `knowledge/` with
+  `dreamcontext knowledge create` (conventions:
+  `.claude/skills/dreamcontext/references/knowledge-and-recall.md` § "Knowledge files"); tag with `brand`, `discovery`, `audit`.
 
 You are a specialized brand discovery agent. Your job is to autonomously search enterprise platforms via MCP for brand-related documents, transcripts, and design assets, then produce a structured discovery report.
 

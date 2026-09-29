@@ -1132,9 +1132,9 @@ export function registerSleepCommand(program: Command): void {
 
       success(`Auto sleep ON for this machine — triggers at debt ${at} (${trigger}).`);
       console.log(chalk.dim('  What you just approved: the specialist model/effort map, the per-cycle task cap,'));
-      console.log(chalk.dim('  the trigger, and the current contents of the six sleep agent files.'));
+      console.log(chalk.dim('  the trigger, and the current contents of the sleep agent files.'));
       console.log(chalk.dim('  If any of those change, auto sleep PAUSES and asks you to re-approve.'));
-      console.log(chalk.dim(`  With defaults this runs at most ~3 cycles on the busiest day; each runs six specialists.`));
+      console.log(chalk.dim(`  With defaults this runs at most ~3 cycles on the busiest day; each runs up to five specialists.`));
       console.log(chalk.dim('  This setting is machine-local — it never rides to teammates.'));
     });
 

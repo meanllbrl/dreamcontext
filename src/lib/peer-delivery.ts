@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import { claudeAwarePath } from './claude-path.js';
+import { SPAWNED_ENV } from './session-origin.js';
 import { listConnections } from './connections.js';
 import { currentVaultTarget } from './federation-recall.js';
 import { resolveVaultContextRoot, VaultError } from './vaults.js';
@@ -243,7 +244,9 @@ export function runPeerHeadless(
     const child = spawn(shell, ['-ilc', script, prompt], {
       cwd: peer.projectRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: claudeAwarePath() } as Record<string, string>,
+      // Marked spawned: a headless run in the peer vault adds no sleep debt there and gets
+      // no sleep directive (src/lib/session-origin.ts).
+      env: { ...process.env, PATH: claudeAwarePath(), [SPAWNED_ENV]: 'peer' } as Record<string, string>,
     });
 
     let stdout = '';

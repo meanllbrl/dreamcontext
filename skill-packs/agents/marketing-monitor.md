@@ -31,7 +31,7 @@ tools: Read, Glob, Grep, Bash, WebFetch
 skills:
   - meta-marketing
   - growth
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -42,7 +42,7 @@ Before issuing a verdict, ensure these dreamcontext skills are loaded:
   spend, snow-globe rule) and `account-ops.md` (post-launch optimization).
 - **growth** — lean-analytics-metrics sub-skill for cohort statistics, KPI
   windows, and conversion sufficiency.
-- **dreamcontext** — read the cohort task and prior learnings ledger entries
+- **dreamcontext-agent-core**: read the cohort task and prior learnings ledger entries
   before writing a verdict; never duplicate an existing entry.
 
 If a skill is missing, surface that as a blocker before issuing a verdict.

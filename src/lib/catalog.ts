@@ -10,6 +10,15 @@ import type { KnownArtifacts } from './manifest.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+/**
+ * The small core skill dreamcontext's own sub-agents preload instead of the full
+ * `dreamcontext` skill. One name for three places that must agree: the installed
+ * folder (`.claude/skills/<name>/`), the skill's frontmatter `name`, and the
+ * skill-recall exclusion (the main session already carries the full skill, so
+ * surfacing this one there is noise).
+ */
+export const AGENT_CORE_SKILL = 'dreamcontext-agent-core' as const;
+
 // ─── Catalog Types ────────────────────────────────────────────────────────────
 
 export interface CatalogSubSkill {

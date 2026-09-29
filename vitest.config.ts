@@ -21,6 +21,9 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist', 'e2e', 'dashboard'],
+    // Insulates the suite from a spawned parent: a builder that runs `npm test` must not have
+    // its own spawn marker or pane boundary leak into the hook processes the tests launch.
+    setupFiles: ['tests/setup/isolate-spawn-env.ts'],
     // `forks` (process IPC rather than worker threads) and the teardown margin
     // date from the v0.11.0 CI-red episode and are kept because they are cheap
     // and the suite is process-heavy either way.

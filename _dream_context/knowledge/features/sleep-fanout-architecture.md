@@ -123,6 +123,44 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 - Open question: the conditional-dispatch heuristics may need tuning. If `sleep-product` no-ops too often, signals are too aggressive; if it misses real updates, signals are too narrow.
 - If a future environment cannot fan out, the mitigation is manual sequential invocation of the 3 specialists. `dreamcontext-rem-sleep` has been removed and will not be restored.
 
+## Specialist prompt history (moved from agents/, 2026-09-30)
+
+When `agents/sleep-tasks.md`, `sleep-product.md` and `sleep-state.md` were slimmed to their contracts, the dated history and incident notes they carried moved here verbatim. The reasoning behind each rule moved to `skill/references/sleep-specialists.md`; the agents remain authoritative for the rules themselves.
+
+### sleep-tasks: The filing bar — clear ALL of it, or do not file
+
+Filing a task nobody asked for and nobody will do is the exact opposite of what
+consolidation is for: it makes the board something to be cleaned rather than
+something to be trusted. A 2026-09-06 audit of the 116 tasks this brain created
+since 2026-08-01 found the median task carries ~2,500 characters of
+justification and the thinnest real one carries 146 — and exactly ONE task had
+none at all. Be the 115, not the one.
+
+### sleep-tasks: 4. Status — review only when genuinely needed
+
+**Foreign tasks are NOT evidence (#177).** A task synced from a SHARED remote container (a ClickUp list two projects both sync) carries a `source_project:` frontmatter field, and the SessionStart snapshot flags it `⚠ FOREIGN`. That row describes work in ANOTHER repo. **Never treat a foreign `completed` task as proof that the corresponding work is done HERE** — it once nearly dropped a whole local work group because a sibling repo's finished task read as "already done". Do not reconcile, re-status, or close a native task on the strength of a foreign one; verify against THIS project's own source (its code, its changelog, its PRs) first. When in doubt, leave the native task as-is and flag the ambiguity in your report. A shared list is a data hazard — surface it (`dreamcontext doctor` warns when two registered projects share one list) rather than silently trusting it.
+
+### sleep-product: Rules
+
+- **Fewest files, sharp boundaries (B2 rubric).** Default to extending an existing file. Fold soft distinctions in — same vertical/brand/topic family, a narrower slice, an increment. Create a new file only for a genuinely separate topic whose own tags sharpen discovery. Not super-files, not fragmentation.
+8a. **Keep the store organized (B0).** NEW boards belong in their context folder (`knowledge/<context>/<title>/`); `apply-diagrams` is reserved for folding legacy flat `knowledge/diagrams/` boards into per-title folders (idempotent, any depth). Group clustered top-level knowledge into logical subfolders only at `deep` depth (flag candidates at light/standard). Subfolders are recall-safe — the index globs `**/*.md`. Folder and tags must tell the same story.
+8c. **Frontmatter `description` stays SHORT — max ~5 lines (~400 chars).** It is a card/index summary, not a table of contents; details belong in body sections. When touching a file whose description has bloated past this, distill it (user rule, 2026-07-20 — the desktop-beta description had grown to 52 lines).
+8b. **`knowledge/archive/` is off-limits.** It holds `sleep-state`'s ceiling-vs-promotion escalation writes (archive-before-delete, task `improve-sleep-quality` AC6) — never group, move, retag, or merge those files; they are not yours to organize.
+
+### sleep-state: A2. Add entries via CLI
+
+**Summary field (2026-05-23, Option E)**: optional but strongly preferred. Soft target ≤200 chars (CLI warns above; never rejects). The snapshot prefers `summary` over `description` for the Recent Changelog section — keep it scannable. If a change ships multiple concepts (e.g., schema + recall corpus + agent prompt), write the summary at the *theme* level ("Add `summary`+`references` to CHANGELOG schema and index CHANGELOG in recall corpus") and let `description` carry the multi-paragraph detail.
+
+**Supersedes field**: optional, only when a later entry reverses or replaces an earlier one (e.g., a "default-on" flip of a previously "opt-in" flag, or a v0.4 file path being deprecated). Use coarse keys like `"2026-05-23|memory"` (date + scope) — disambiguators only matter when multiple entries share the same date+scope, in which case fall back to the position-from-top index. Most entries do NOT supersede anything; leave the field absent.
+
+### sleep-state: B0a. Two-observation gate (preferences & decisions)
+
+**LIFO removal (2026-05-23, Option E).** The old `2.memory.md` LIFO ship-narrative section is gone. Ship events now live exclusively in `CHANGELOG.json`, which `memory recall` indexes. `2.memory.md` is reduced to **Technical Decisions** (long-lived architectural choices referenced repeatedly) and **Known Issues** (open bugs/footguns). Do NOT re-create a LIFO/session-log section here — write a CHANGELOG entry instead (see Pass A0 below).
+
+### sleep-state: C1. Anti-bloat sweep — ~4,000 char AND ~150 line ceiling per core file *and* per person constitution
+
+The line ceiling tightened from 300 to 150 in v0.4.0+ because `dreamcontext memory recall` can now retrieve any extracted content on demand; the ~4,000-char ceiling was added later, when measurement showed line counts miss the real cost entirely. The snapshot pre-loads only the freshest, most-cited entries; older context lives in knowledge files and is still findable via BM25 recall. Aggressive pruning is preferred over generous retention.
+
 ## Changelog
 <!-- LIFO: newest entry at top -->
 

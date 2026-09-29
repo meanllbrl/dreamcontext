@@ -362,3 +362,37 @@ export const DEMOTION_RANKS: Record<DemotableSectionId, number> = {
   // ranks before both became never-evict. Nothing should reclaim them without a
   // reason to demote AFTER Lab.
 };
+
+// ─── Sub-agent briefing (SubagentStart) ─────────────────────────────────────
+//
+// The briefing has its own, smaller ladder (budget in `snapshot-budget.ts`).
+// A sub-agent is task-scoped: it needs to be able to NAME every feature and
+// every rule-bearing pattern, not to read their summaries, so the caps below
+// shrink prose first and identifiers last.
+
+/** One-line "why" per feature at the briefing's first rung. */
+export const BRIEFING_FEATURE_WHY_CHARS = 90;
+/** Char budget of the feature slug roster at the floor rung. */
+export const BRIEFING_FEATURES_ROSTER_CHARS = 1_800;
+/** Char budget for non-pinned, non-pattern knowledge slugs at the first rung. */
+export const BRIEFING_KNOWLEDGE_REST_CHARS = 2_000;
+/** Active tasks kept at the first rung (the level-0 render keeps 12). */
+export const BRIEFING_TASKS_L1 = 5;
+/** Objectives kept at the first rung (the level-0 render keeps 10). */
+export const BRIEFING_OBJECTIVES_L1 = 5;
+
+/** Sections of the briefing the ladder may shrink. */
+export type BriefingSectionId = 'objectives' | 'tasks' | 'core-files' | 'knowledge-index' | 'features';
+
+/**
+ * Briefing demotion order, LOWER first. Objectives and the task list are the
+ * cheapest loss for a task-scoped agent; features demote last because the
+ * briefing's MANDATORY line tells the agent to check them before searching.
+ */
+export const BRIEFING_DEMOTION_RANKS: Record<BriefingSectionId, number> = {
+  objectives: 10,
+  tasks: 20,
+  'core-files': 30,
+  'knowledge-index': 40,
+  features: 50,
+};

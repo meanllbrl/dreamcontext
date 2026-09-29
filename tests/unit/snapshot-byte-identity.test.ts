@@ -416,3 +416,48 @@ describe.each(FIXTURES)('snapshot byte-identity — date-determinism (leg d) [$l
     expect(atEarlier).toBe(atPinned);
   });
 });
+
+/**
+ * Leg (e): the FLOOR rungs. Every fixture above is under budget, so none of them
+ * ever renders a demoted section. This one is built to force the knowledge
+ * index down to its deepest rung (8 pinned files, 40 patterns, 60 other
+ * knowledge files, rendered at a 2,000-token budget), so the rung renderers
+ * themselves are pinned byte for byte.
+ *
+ * `expected.txt` was generated from the UNMODIFIED renderer, before the
+ * knowledge-index helpers were extracted for the sub-agent briefing.
+ * `SOURCE_SHA256` records the sha256 of `src/cli/commands/snapshot.ts` at that
+ * moment (the tree was uncommitted, so there is no commit SHA to record). An
+ * extraction that changes a single byte of the floor render fails here.
+ */
+describe('snapshot byte-identity: floor rungs (leg e)', () => {
+  const DIR = join(FIXTURES_DIR, 'snapshot-golden-floors');
+  const VAULT = join(DIR, 'vault');
+  const CONTEXT = join(VAULT, '_dream_context');
+  const EXPECTED = join(DIR, 'expected.txt');
+
+  beforeEach(() => {
+    process.chdir(VAULT);
+    process.env.DREAMCONTEXT_PERSON = 'ada-fixture';
+    process.env.DREAMCONTEXT_SNAPSHOT_BUDGET = '2000';
+  });
+
+  it('renders the demoted floor byte-identically to the pre-extraction golden', () => {
+    const text = generateSnapshot(CONTEXT);
+    if (process.env.DC_GOLDEN_WRITE === '1') writeFileSync(EXPECTED, text, 'utf-8');
+    expect(text).toBe(readFileSync(EXPECTED, 'utf-8'));
+  });
+
+  it('actually reaches the knowledge-index floor (the leg is not vacuous)', () => {
+    const text = generateSnapshot(CONTEXT);
+    expect(text).toContain('Budget note');
+    // Rung 2 lists patterns by slug only, packed with a counted tail.
+    expect(text).toMatch(/\+\d+ more pattern\(s\)/);
+    expect(text).toContain('more knowledge file(s), not listed');
+  });
+
+  it('records the source hash the golden was generated from', () => {
+    const sha = readFileSync(join(DIR, 'SOURCE_SHA256'), 'utf-8').trim();
+    expect(sha).toMatch(/^[0-9a-f]{64}$/);
+  });
+});

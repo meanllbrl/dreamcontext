@@ -14,7 +14,7 @@
  * mode, the mail directory) the test binds to the real export instead of a copy.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PEER_PERMISSION_MODE } from '../../src/lib/peer-delivery.js';
@@ -25,7 +25,7 @@ const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 const SKILL_MD = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
 const INTEGRATIONS_MD = readFileSync(join(ROOT, 'skill', 'references', 'integrations.md'), 'utf-8');
 const CLI_REFERENCE_MD = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
-const SLEEP_FEDERATION_MD = readFileSync(join(ROOT, 'agents', 'sleep-federation.md'), 'utf-8');
+const SLEEP_MD = readFileSync(join(ROOT, 'skill', 'references', 'sleep.md'), 'utf-8');
 const PEER_CMD_TS = readFileSync(join(ROOT, 'src', 'cli', 'commands', 'peer.ts'), 'utf-8');
 const PEER_AGENT_GEN_TS = readFileSync(join(ROOT, 'src', 'lib', 'peer-agent-gen.ts'), 'utf-8');
 const SNAPSHOT_TS = readFileSync(join(ROOT, 'src', 'cli', 'commands', 'snapshot.ts'), 'utf-8');
@@ -141,14 +141,16 @@ describe('peer mail — the docs quote the real constants, not a stale copy', ()
 });
 
 describe('peer mail — sleep boundary is stated where sleep reads it', () => {
-  it('sleep-federation is told mail is not its to drain', () => {
-    // The two directories look alike and only one is a digest stream. Without this
-    // line a sleep run consolidates one side of a conversation into a project fact.
-    expect(SLEEP_FEDERATION_MD).toContain('state/.peer-mail/');
-    expect(SLEEP_FEDERATION_MD).toContain('not yours to drain');
+  // The rule used to live only in agents/sleep-federation.md. That specialist is
+  // retired (2026-09-30), so the boundary moved to the sleep flow every cycle reads.
+  it('sleep.md tells every specialist that mail is correspondence, not a digest', () => {
+    // The two directories look alike and only one was ever a digest stream. Without
+    // this line a sleep run consolidates one side of a conversation into a project fact.
+    expect(SLEEP_MD).toContain('`state/.peer-mail/` is correspondence between projects, not a digest');
+    expect(SLEEP_MD).toContain('no sleep specialist drains, consolidates or deletes it');
   });
 
-  it('still names the federation inbox as the thing it DOES consume', () => {
-    expect(SLEEP_FEDERATION_MD).toContain('state/.federation-inbox/');
+  it('no longer ships the retired sleep-federation agent', () => {
+    expect(existsSync(join(ROOT, 'agents', 'sleep-federation.md'))).toBe(false);
   });
 });

@@ -31,7 +31,7 @@ maxTurns: 12
 skills:
   - engineering
   - design
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -40,7 +40,7 @@ skills:
 - **design** — design tokens, accessibility rules, visual hierarchy bar
   (specialist quotes from `frontend-principles` and `design-web` sub-skills
   when they apply).
-- **dreamcontext** — read the active task to scope severity.
+- **dreamcontext-agent-core**: read the active task to scope severity.
 
 **Mandatory additional reads** (at start of every dispatch):
 - `.claude/skills/multi-review/REVIEWER_SHARED.md` — shared rubric.

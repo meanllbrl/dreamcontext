@@ -14,6 +14,19 @@ import { isSafeTaskSlug } from './task-backend/local.js';
  * the same guard the debt thresholds use, for the same reason.
  */
 
+/**
+ * WHICH specialists a sleep cycle dispatches, as one sentence. Every surface that
+ * asks for a sleep (the hook's directive, the Sleep buttons, the background
+ * dispatcher) states the roster through this clause, so a specialist added or
+ * retired changes all of them at once. `tests/unit/sleep-roster-lockstep.test.ts`
+ * pins every surface to it. Newline-free: a bare `\n` submits early in readline.
+ */
+export const SLEEP_ROSTER_CLAUSE =
+  'sleep-tasks + sleep-state always; sleep-product, sleep-migration and sleep-learn only when ' +
+  'their signals fire (sleep-product: knowledge/feature/research signals; sleep-migration: ' +
+  '`dreamcontext migrations pending` has output; sleep-learn: learning is enabled and a thesis ' +
+  'is due)';
+
 /** The consolidation request itself. Mirrored in dashboard/src/lib/sleepAgent.ts. */
 export const SLEEP_AGENT_PROMPT =
   'Think hard. Run a full dreamcontext memory consolidation ("sleep") for THIS project ' +
@@ -22,9 +35,8 @@ export const SLEEP_AGENT_PROMPT =
   '/ knowledge / feature files to current truth (prefer updating existing entities over ' +
   'creating new ones), then close the cycle with `dreamcontext sleep done "<one-paragraph ' +
   'summary>"` to reset the debt. I am explicitly requesting the sub-agent fan-out: dispatch ' +
-  'the sleep specialists as PARALLEL sub-agents via the Agent tool (sleep-tasks + sleep-state ' +
-  'always; sleep-product when knowledge/feature signals warrant; sleep-migration only if ' +
-  '`dreamcontext migrations pending` has output) — do NOT run those passes inline in your own ' +
+  `the sleep specialists as PARALLEL sub-agents via the Agent tool (${SLEEP_ROSTER_CLAUSE}) — ` +
+  'do NOT run those passes inline in your own ' +
   'context. When finished, reply with a SHORT Markdown summary of what was consolidated.';
 
 /**

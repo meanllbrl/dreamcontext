@@ -72,7 +72,7 @@ describe('logPoints — log-compressed bounded contribution', () => {
     expect(logPoints(NaN, 10, 100, 5)).toBe(0);
     // Garbage yields NO credit rather than maximum credit: corrupt input must
     // not be able to manufacture debt and force a spurious consolidation.
-    // (`novelTokensFromUsage` already filters non-finite usage fields, so this
+    // (`usageOf` in hook.ts already filters non-finite usage fields, so this
     // is the second line of defence, not the first.)
     expect(logPoints(Infinity, 10, 100, 5)).toBe(0);
   });
@@ -104,7 +104,17 @@ describe('logPoints — log-compressed bounded contribution', () => {
   });
 });
 
+/** One assistant record of API message `id`, carrying that message's usage. */
+function messageLine(id: string, u: Record<string, number>, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    ...extra,
+    message: { id, role: 'assistant', content: [{ type: 'text', text: 'x' }], usage: u },
+  });
+}
+
 describe('novel-token extraction', () => {
+  // Raw extraction is pinned with the startup subtraction OFF; the subtraction
+  // has its own describe block below.
   it('sums output + cache_creation + input across records', () => {
     const dir = makeTmpDir('dc-tok');
     const p = join(dir, 's.jsonl');
@@ -112,7 +122,7 @@ describe('novel-token extraction', () => {
       usageLine({ output_tokens: 100, cache_creation_input_tokens: 200, input_tokens: 5 }),
       usageLine({ output_tokens: 50, cache_creation_input_tokens: 0, input_tokens: 3 }),
     ].join('\n'));
-    expect(analyzeTranscript(p).novelTokens).toBe(358);
+    expect(analyzeTranscript(p, null, { subtractStartup: false }).novelTokens).toBe(358);
   });
 
   it('EXCLUDES cache_read_input_tokens — the same context re-read every turn', () => {
@@ -136,7 +146,127 @@ describe('novel-token extraction', () => {
       JSON.stringify({ usage: { output_tokens: -5, input_tokens: 7 } }),         // flat + negative
       'not json at all',
     ].join('\n'));
-    expect(analyzeTranscript(p).novelTokens).toBe(7);
+    expect(analyzeTranscript(p, null, { subtractStartup: false }).novelTokens).toBe(7);
+  });
+
+  it('counts a message ONCE when Claude Code splits it into one record per content block', () => {
+    // Real shape: every block of one API message repeats the full usage.
+    const dir = makeTmpDir('dc-tok');
+    const p = join(dir, 's.jsonl');
+    const u = { output_tokens: 900, cache_creation_input_tokens: 40_000, input_tokens: 2 };
+    writeFileSync(p, [
+      messageLine('msg_A', u),
+      messageLine('msg_A', u),
+      messageLine('msg_A', u),
+      messageLine('msg_B', { output_tokens: 10, cache_creation_input_tokens: 5, input_tokens: 0 }),
+    ].join('\n'));
+    expect(analyzeTranscript(p, null, { subtractStartup: false }).novelTokens).toBe(40_902 + 15);
+  });
+
+  it('keeps the largest usage seen for a message (a streamed message only grows)', () => {
+    const dir = makeTmpDir('dc-tok');
+    const p = join(dir, 's.jsonl');
+    writeFileSync(p, [
+      messageLine('msg_A', { output_tokens: 1, cache_creation_input_tokens: 100, input_tokens: 0 }),
+      messageLine('msg_A', { output_tokens: 300, cache_creation_input_tokens: 100, input_tokens: 0 }),
+    ].join('\n'));
+    expect(analyzeTranscript(p, null, { subtractStartup: false }).novelTokens).toBe(400);
+  });
+});
+
+describe('startup baseline — loading the session is not work', () => {
+  const BOUNDARY = '2026-08-04T17:00:00.000Z';
+  const BEFORE = '2026-08-04T16:00:00.000Z';
+  const AFTER = '2026-08-04T18:00:00.000Z';
+
+  it('subtracts the first API message\'s cache_creation + input, keeps its output', () => {
+    const dir = makeTmpDir('dc-base');
+    const p = join(dir, 's.jsonl');
+    writeFileSync(p, [
+      messageLine('msg_A', { output_tokens: 900, cache_creation_input_tokens: 40_000, input_tokens: 2 }),
+      messageLine('msg_A', { output_tokens: 900, cache_creation_input_tokens: 40_000, input_tokens: 2 }),
+      messageLine('msg_B', { output_tokens: 50, cache_creation_input_tokens: 3_000, input_tokens: 1 }),
+    ].join('\n'));
+    // (40_902 + 3_051) - (40_000 + 2)
+    expect(analyzeTranscript(p).novelTokens).toBe(3_951);
+  });
+
+  it('subtracts nothing when the first message lies before the consolidation bound', () => {
+    const dir = makeTmpDir('dc-base');
+    const p = join(dir, 's.jsonl');
+    writeFileSync(p, [
+      messageLine('msg_A', { output_tokens: 900, cache_creation_input_tokens: 40_000, input_tokens: 2 }, { timestamp: BEFORE }),
+      messageLine('msg_B', { output_tokens: 50, cache_creation_input_tokens: 3_000, input_tokens: 1 }, { timestamp: AFTER }),
+    ].join('\n'));
+    // msg_A is already consolidated; msg_B is real post-sleep work, not startup.
+    expect(analyzeTranscript(p, BOUNDARY).novelTokens).toBe(3_051);
+  });
+
+  it('applies to the MAIN transcript only: a sub-agent\'s first message still counts', () => {
+    const dir = makeTmpDir('dc-base');
+    const sessionId = 'orchestrator';
+    const mainPath = join(dir, `${sessionId}.jsonl`);
+    writeFileSync(mainPath, messageLine('msg_main', { output_tokens: 100, cache_creation_input_tokens: 30_000, input_tokens: 0 }));
+    const subDir = join(dir, sessionId, 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'agent-a1.jsonl'),
+      messageLine('msg_sub', { output_tokens: 200, cache_creation_input_tokens: 12_000, input_tokens: 0 }));
+
+    const loc = resolveTranscript(mainPath, { sessionId });
+    // main: 30_100 - 30_000 = 100; sub-agent: 12_200 kept whole.
+    expect(analyzeSession(loc).novelTokens).toBe(100 + 12_200);
+  });
+});
+
+describe('phantom counts — a record that MENTIONS a tool or a decision is not one', () => {
+  /** The shape of a real zero-work session: harness attachments listing every
+   *  tool, a SessionStart snapshot quoting decision words, one question, one
+   *  answer split across two records of the same API message. */
+  function idleTranscript(): string {
+    const attachment = (type: string, body: Record<string, unknown>) => JSON.stringify({
+      type: 'attachment', attachment: { type, ...body },
+    });
+    return [
+      attachment('deferred_tools_delta', { tools: [{ name: 'Write' }, { name: 'Edit' }, { name: 'Read' }, { name: 'Bash' }] }),
+      attachment('skill_listing', { content: 'we decided to use X instead of Y; actually wrong' }),
+      attachment('hook_success', { content: '"name":"Edit" "name":"Write" decided instead of' }),
+      JSON.stringify({ type: 'user', promptSource: 'sdk', message: { role: 'user', content: 'List five fruits.' } }),
+      messageLine('msg_A', { output_tokens: 900, cache_creation_input_tokens: 40_000, input_tokens: 2 }),
+      messageLine('msg_A', { output_tokens: 900, cache_creation_input_tokens: 40_000, input_tokens: 2 }),
+    ].join('\n');
+  }
+
+  it('an idle session analyzes to zero tools, zero changes and scores 0', () => {
+    const dir = makeTmpDir('dc-idle');
+    const p = join(dir, 's.jsonl');
+    writeFileSync(p, idleTranscript());
+    const a = analyzeTranscript(p);
+    expect(a.changeCount).toBe(0);
+    expect(a.toolCount).toBe(0);
+    expect(a.decisionMarkers).toBe(0);
+    expect(a.userTurns).toBe(1);
+    expect(a.novelTokens).toBe(900);
+    expect(scoreSession(a)).toBe(0);
+  });
+
+  it('userTurns and decisionMarkers ignore tool results and harness-injected turns', () => {
+    const dir = makeTmpDir('dc-inj');
+    const p = join(dir, 's.jsonl');
+    writeFileSync(p, [
+      // A human turn carrying a correction marker: counts once each.
+      JSON.stringify({ type: 'user', promptSource: 'typed', message: { role: 'user', content: 'no, use the staging endpoint' } }),
+      // A tool result on the user role: machine output.
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'decided wrong' }] } }),
+      // Harness injections, each shape Claude Code stamps.
+      JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: 'Base directory for this skill: x. Actually decided.' } }),
+      JSON.stringify({ type: 'user', promptSource: 'system', turnOrigin: 'task_notification', message: { role: 'user', content: '<task-notification> decided </task-notification>' } }),
+      JSON.stringify({ type: 'user', turnOrigin: 'peer', message: { role: 'user', content: 'Another Claude session sent a message: we decided X' } }),
+      // An assistant text block with a decision: counts.
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'We will use BM25.' }] } }),
+    ].join('\n'));
+    const a = analyzeTranscript(p);
+    expect(a.userTurns).toBe(1);
+    expect(a.decisionMarkers).toBe(2);
   });
 });
 

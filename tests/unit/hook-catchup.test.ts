@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   resolveCatchupFinalization,
   resolveStopCaptureBookmarks,
+  captureSessionMoments,
   analyzeTranscript,
 } from '../../src/cli/commands/hook.js';
 import { resolveTranscript, listSubagentTranscripts } from '../../src/lib/transcript-locate.js';
@@ -364,5 +365,47 @@ describe('AC8a — sub-agent harvest composition (resolveTranscript + distillSub
 
     expect(merged).toEqual(mainDistilled);
     expect(listSubagentTranscripts(loc)).toEqual([]);
+  });
+});
+
+describe('captureSessionMoments — what the catch-up files as auto-bookmarks', () => {
+  function userLine(text: string): string {
+    return JSON.stringify({ type: 'user', message: { role: 'user', content: text } });
+  }
+
+  /** A human session that fanned out a reviewer: the reviewer's brief is the
+   *  sub-agent transcript's first user-role record, as Claude Code writes it. */
+  function sessionWithReviewer(): ReturnType<typeof resolveTranscript> {
+    const dir = makeTmpDir('dc-capture');
+    const sessionId = 'capture-sess';
+    const mainPath = join(dir, `${sessionId}.jsonl`);
+    writeFileSync(mainPath, [
+      userLine('no, use the staging endpoint'),
+      assistantLine('Switching to staging.'),
+    ].join('\n'));
+    const subDir = join(dir, sessionId, 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'agent-r1.jsonl'), [
+      userLine('Review wave 1 of demo-task. Actually check the lane files, the builder was wrong about one path.'),
+      assistantLine('PASS'),
+    ].join('\n'));
+    return resolveTranscript(mainPath, { sessionId });
+  }
+
+  it('a sub-agent brief never becomes a User correction; the human one does', () => {
+    const { moments } = captureSessionMoments(sessionWithReviewer(), { spawned: false });
+    const corrections = moments.filter(m => m.message.startsWith('User correction:'));
+    expect(corrections.map(m => m.message)).toEqual(['User correction: no, use the staging endpoint']);
+  });
+
+  it('the digest still carries the sub-agent brief: only the moments drop it', () => {
+    const { digest } = captureSessionMoments(sessionWithReviewer(), { spawned: false });
+    expect(digest.userMessages.some(m => m.startsWith('Review wave 1'))).toBe(true);
+  });
+
+  it('a spawned session yields no moments at all, and still gets its digest', () => {
+    const { digest, moments } = captureSessionMoments(sessionWithReviewer(), { spawned: true });
+    expect(moments).toEqual([]);
+    expect(digest.userMessages).toContain('no, use the staging endpoint');
   });
 });

@@ -107,4 +107,17 @@ describe('platform-aware install flow (integration)', () => {
     const claude = readFileSync(join(tmpDir, 'CLAUDE.md'), 'utf-8');
     expect(claude).toContain('dreamcontext:claude:start');
   });
+
+  // Codex support was removed: no install path writes AGENTS.md any more, and a user's
+  // own AGENTS.md is theirs. Setting up root instructions must leave it byte-identical.
+  it('install-instructions leaves an existing user AGENTS.md untouched', () => {
+    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    const userAgents = '# My own agents file\n\nHand-written, not managed by dreamcontext.\n';
+    writeFileSync(join(tmpDir, 'AGENTS.md'), userAgents, 'utf-8');
+
+    run('install-instructions --platforms claude --mode append', tmpDir);
+
+    expect(readFileSync(join(tmpDir, 'AGENTS.md'), 'utf-8')).toBe(userAgents);
+    expect(existsSync(join(tmpDir, 'CLAUDE.md'))).toBe(true);
+  });
 });

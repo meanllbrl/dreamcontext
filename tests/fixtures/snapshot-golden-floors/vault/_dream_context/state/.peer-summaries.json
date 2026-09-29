@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-01-05T00:00:00.000Z",
+  "peers": [
+    {
+      "vault": "fixture-peer",
+      "whatItIs": "A sibling fixture vault used to prove the connected-projects block renders without any clock read.",
+      "lastActivity": ["Recorded the join lemma as an executable property"],
+      "activeTask": "peer-alignment",
+      "topTags": ["domain:knowledge", "kind:architecture"],
+      "pinnedKnowledge": ["arch-overview"]
+    }
+  ]
+}

@@ -13,14 +13,18 @@ const goalLiveLines = lines.filter((l) => /dreamcontext goal-live\b|(?:^|\s|`)go
 
 describe('the builder spawn (R6)', () => {
   const UNSETS = '-u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT';
-  const STRIP = `env ${UNSETS} nohup claude -p`;
+  const SPAWNED = 'DREAMCONTEXT_SPAWNED=develop';
+  const STRIP = `env ${UNSETS} ${SPAWNED} nohup claude -p`;
 
   it('every claude -p a builder runs under carries the full env strip', () => {
     const spawns = lines.filter((l) => /claude -p/.test(l) && !/^\s*BUILDER:|"You are/.test(l));
     expect(spawns.length).toBeGreaterThanOrEqual(2); // spawn + resume
-    // The account words ("$@", resume only) go LAST, right before nohup: env runs everything
-    // after a NAME=value as the command, so `env CLAUDE_CONFIG_DIR=x -u …` would exec "-u".
-    for (const l of spawns) expect(l, l).toMatch(new RegExp(`\\benv ${UNSETS} (?:"\\$@" )?nohup claude -p`));
+    // The account words ("$@", resume only) come right after the -u flags and BEFORE the
+    // DREAMCONTEXT_SPAWNED assignment: "$@" may be `-u CLAUDE_CONFIG_DIR`, and env runs
+    // everything after a NAME=value as the command, so a -u after an assignment would exec "-u".
+    // DREAMCONTEXT_SPAWNED=develop is what keeps the builder out of sleep debt and directives
+    // from its first SessionStart, before its goal-live registration exists.
+    for (const l of spawns) expect(l, l).toMatch(new RegExp(`\\benv ${UNSETS} (?:"\\$@" )?${SPAWNED} nohup claude -p`));
   });
 
   it('the spawn template: session id, opus, acceptEdits, Write/Edit/Bash allowed, json, log + $! pid', () => {

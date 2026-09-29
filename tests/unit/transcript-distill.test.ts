@@ -432,6 +432,24 @@ describe('distillTranscript drops system coordination noise from user messages',
     // Only the real human correction survives.
     expect(result.userMessages).toEqual(['No, actually use yarn instead of npm here.']);
   });
+
+  it('excludes records the harness stamped as injected (isMeta, system prompt source, injected turn origins)', () => {
+    const file = join(tmpDir, 'provenance.jsonl');
+    const injected = (text: string, fields: Record<string, unknown>): string => JSON.stringify({
+      type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, ...fields,
+    });
+    writeFileSync(file, [
+      injected('Another Claude session sent a message: actually, use X instead of Y', { isMeta: true, promptSource: 'system', turnOrigin: 'peer' }),
+      injected('Base directory for this skill: wrong path', { isMeta: true }),
+      injected('Queued job finished; wrong result', { promptSource: 'system', turnOrigin: 'task_notification' }),
+      injected('Continue the sleep cycle instead of stopping', { promptSource: 'system', turnOrigin: 'scheduled' }),
+      injected('Idle notice: actually idle', { turnOrigin: 'system' }),
+      injected('no, use the staging endpoint', { promptSource: 'sdk', turnOrigin: 'sdk' }),
+    ].join('\n'));
+
+    const result = distillTranscript(file);
+    expect(result.userMessages).toEqual(['no, use the staging endpoint']);
+  });
 });
 
 function emptySection(): DistilledSection {

@@ -30,14 +30,14 @@ tools:
 maxTurns: 12
 skills:
   - engineering
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
 
 - **engineering** — error-handling rules, idempotency principles, "validate at
   boundaries" rule.
-- **dreamcontext** — read the active task. The task often tells you the
+- **dreamcontext-agent-core**: read the active task. The task often tells you the
   intended happy path; your job is to find what's not on it.
 
 **Mandatory read at start**: `.claude/skills/multi-review/REVIEWER_SHARED.md`.

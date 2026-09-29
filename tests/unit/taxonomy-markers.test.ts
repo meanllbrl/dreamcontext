@@ -237,7 +237,7 @@ describe('skill/references lab doc markers', () => {
   it('documents reports: the entity-router row, the CLI verbs, and date honesty', () => {
     const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
     expect(skill).toContain('**Report** — `lab/reports/<slug>.md`');
-    expect(skill).toContain('thirteen distinct entity types');
+    expect(skill).toContain('fourteen distinct entity types');
     const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
     expect(cli).toContain('lab report create');
     expect(cli).toContain('lab report show');

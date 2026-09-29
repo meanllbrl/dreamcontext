@@ -223,3 +223,12 @@ older than the installed CLI.
 dreamcontext upgrade   # the CLI itself
 dreamcontext update    # this project's skill/agent/hook files, to match the CLI
 ```
+
+## Detail behind the SKILL.md summaries
+
+SKILL.md keeps one line per capability and one home per rule. This is the fuller text those lines summarize, kept here so nothing an agent needs is lost.
+
+### Capability summaries
+
+- **Duplicate task family repair**: `dreamcontext tasks dedup [--dry-run] [--yes]` heals `state/<slug>-2/-3/-4.md` duplicates left by a corrupted/conflicted sync ledger (`tasks list` showing the same task 2–4×) — merges each family to its canonical slug, repoints `.tasks-map.json`, removes the redundant files. **LOCAL-ONLY, never touches the remote.** `--dry-run` first, always; the mutating run requires `--yes`.
+- **Troubleshooting**: Symptom → cause → careful fix for broken-brain states: duplicate tasks (`tasks dedup`), a `corrupt_ledger` sync refusal, a brain sync stuck `awaiting-agent`, structure drift (`doctor`; agents use `doctor --json` for machine-readable diagnoses with `supportedFixes`), CLI/project version drift

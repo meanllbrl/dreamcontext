@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 import { checkbox, confirm } from '@inquirer/prompts';
@@ -306,7 +306,9 @@ export {
   type CatalogSubSkill,
   type CatalogAgent,
 } from '../../lib/catalog.js';
-import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform } from '../../lib/catalog.js';
+import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform, AGENT_CORE_SKILL } from '../../lib/catalog.js';
+import { readFrontmatter } from '../../lib/frontmatter.js';
+import { isCustomizedAgent } from '../../lib/sleep-specialist-frontmatter.js';
 import {
   installPack,
   installAgentForPlatform,
@@ -661,6 +663,67 @@ function printInstallSummary(installed: string[], warnings: string[]): void {
   console.log();
 }
 
+/**
+ * Core agents dreamcontext once shipped and has retired. The package no longer
+ * carries them, so nothing reinstalls them, but installers never prune: a project
+ * upgraded from an older release would keep the file (and keep offering the agent)
+ * forever. `sleep-federation` retired 2026-09-30: federation reads peers live at
+ * recall time, so there is nothing for a sleep specialist to drain or distribute.
+ */
+export const RETIRED_CORE_AGENTS = ['sleep-federation'] as const;
+
+/**
+ * Delete the installed copy of every retired core agent that is still exactly
+ * what dreamcontext wrote. Runs from every install path (setup, install-skill,
+ * update), which is why it exists next to the generic stale-file prune: that one
+ * only runs in `update`, skips a first run, and cannot see a legacy project whose
+ * manifest never listed the file.
+ *
+ * Refuses rather than guesses: a symlink is never followed, a file whose
+ * frontmatter `name` is not the retired agent is not ours, and a customized copy
+ * (its content no longer matches the baseline recorded at install) is someone's
+ * work, left for the generic prune to offer. The baseline comes from the manifest
+ * ON DISK: during `update` the in-memory manifest is the fresh one being built,
+ * while the file still holds the previous install's record.
+ */
+export function pruneRetiredCoreAgents(projectRoot: string, manifest?: Manifest): string[] {
+  const notes: string[] = [];
+  const recorded = readManifest(projectRoot);
+  for (const name of RETIRED_CORE_AGENTS) {
+    const rel = `.claude/agents/${name}.md`;
+    const abs = join(projectRoot, rel);
+    let isSymlink: boolean;
+    try {
+      isSymlink = lstatSync(abs).isSymbolicLink();
+    } catch {
+      continue; // not installed
+    }
+    if (isSymlink) {
+      notes.push(chalk.dim(`Left ${rel} alone: it is a symlink, and the retired ${name} agent is never followed through one.`));
+      continue;
+    }
+    let content: string;
+    let declaredName: unknown;
+    try {
+      content = readFileSync(abs, 'utf-8');
+      declaredName = readFrontmatter(abs).data.name;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notes.push(chalk.dim(`Left ${rel} alone: could not read it (${msg}).`));
+      continue;
+    }
+    if (declaredName !== name) continue; // same file name, not our agent
+    if (isCustomizedAgent(content, recorded?.files[rel]?.baselineSha)) {
+      notes.push(chalk.dim(`Kept ${rel} because it was edited. The ${name} agent is retired and never dispatched; \`dreamcontext update\` may still list it as a stale file to remove.`));
+      continue;
+    }
+    rmSync(abs, { force: true });
+    if (manifest) delete manifest.files[rel];
+    notes.push(`Removed the retired ${name} agent (${rel}); dreamcontext no longer ships it.`);
+  }
+  return notes;
+}
+
 export async function installCoreForPlatform(
   platform: PlatformId,
   projectRoot: string,
@@ -825,6 +888,22 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, patternsSkillRel));
   }
 
+  // Copy the `dreamcontext-agent-core` skill: the small operating minimum that
+  // dreamcontext's own sub-agents preload (`skills: [dreamcontext-agent-core]`)
+  // instead of the full skill. Foundational, not a pack: every shipped agent that
+  // names it would otherwise start without it. Shipped at repo root in
+  // `skill-agent-core/` (package.json `files`); recorded 'core' so `update`
+  // refreshes it. Non-fatal if absent (older/partial packages still install).
+  const agentCoreSkillSource = findPackageFile('skill-agent-core', 'SKILL.md');
+  if (agentCoreSkillSource) {
+    const agentCoreDestDir = join(skillRoot, AGENT_CORE_SKILL);
+    mkdirSync(agentCoreDestDir, { recursive: true });
+    writeFileSync(join(agentCoreDestDir, 'SKILL.md'), readFileSync(agentCoreSkillSource, 'utf-8'), 'utf-8');
+    const agentCoreSkillRel = `${skillRootRel}/${AGENT_CORE_SKILL}/SKILL.md`;
+    recordIfManifest(manifest, agentCoreSkillRel, 'core');
+    installed.push(platformPrefixed(platform, agentCoreSkillRel));
+  }
+
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
@@ -835,6 +914,8 @@ export async function installCoreForPlatform(
       installed.push(platformPrefixed(platform, agent.relPath));
     }
   }
+
+  notes.push(...pruneRetiredCoreAgents(projectRoot, manifest));
 
   // Per-peer envoy agents. Unlike everything above these are GENERATED, not
   // copied from the package: one per active federation connection, carrying that

@@ -27,7 +27,7 @@ tools:
 maxTurns: 20
 skills:
   - council
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -35,8 +35,8 @@ skills:
 - **council** — defines the final-report shape (Verdict, Decision card, Why,
   Position timeline, Minority view & revisit conditions, Open risks) that
   `dreamcontext council promote` extracts when copying the decision into
-  `knowledge/`. A synthesis written without the skill loaded will fail promotion.
-- **dreamcontext** — read the active task to ensure the verdict ties back
+  `knowledge/`. A synthesis written without the council skill loaded will fail promotion.
+- **dreamcontext-agent-core**: read the active task to ensure the verdict ties back
   to the project's stated goals + constraints; cite `_dream_context/` files
   in the Why section when relevant.
 

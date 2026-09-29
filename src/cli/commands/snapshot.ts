@@ -35,9 +35,10 @@ import type { ThesisManifest } from '../../lib/theses/types.js';
 import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { buildAutomationsSnapshot } from '../../lib/automations/snapshot.js';
+import { RECALL_GUIDANCE, TASK_CREATE_GUIDANCE, BRIEFING_RECOVERY_NOTE } from '../../lib/agent-guidance.js';
 import {
-  applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList, renderOverBudgetBanner,
-  HARNESS_PERSIST_CHAR_LIMIT,
+  applyBudget, resolveBudget, resolveSubagentBriefingBudget, demoteMemoryBlock, demoteTaskList,
+  renderOverBudgetBanner, HARNESS_PERSIST_CHAR_LIMIT,
   type BudgetSection, type BudgetRung, type BudgetResult,
 } from '../../lib/snapshot-budget.js';
 import {
@@ -59,7 +60,9 @@ import {
   CONNECTED_L1_CHARS, CONNECTED_L2_CHARS, PEOPLE_ROSTER_L1_CHARS,
   OBJECTIVES_L2_CHARS, OBJECTIVE_ITEM_CHARS, THESES_CLAIM_CHARS,
   BANNER_MAX_CORE_FILES, DEMOTION_RANKS,
-  type DemotableSectionId, type NeverEvictSectionId,
+  BRIEFING_FEATURE_WHY_CHARS, BRIEFING_FEATURES_ROSTER_CHARS, BRIEFING_KNOWLEDGE_REST_CHARS,
+  BRIEFING_TASKS_L1, BRIEFING_OBJECTIVES_L1, BRIEFING_DEMOTION_RANKS,
+  type DemotableSectionId, type NeverEvictSectionId, type BriefingSectionId,
 } from '../../lib/snapshot-caps.js';
 
 /**
@@ -73,8 +76,8 @@ export const DEFAULT_PINNED_PREVIEW_LINES = 60;
  * the pinned block (level 0, rung 1, rung 2) so they cannot drift apart. It is
  * never dropped at any rung, however deep the ladder goes.
  *
- * `generateSubagentBriefing` deliberately keeps its own copy: that function is
- * contractually untouched by this rework, and the briefing has no ladder.
+ * The sub-agent briefing uses the same banner for its pinned block, so the
+ * two surfaces can never word the warning differently.
  */
 const PINNED_BANNER =
   '> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n';
@@ -182,6 +185,53 @@ function namedRosterTail(names: string[], budget: number, noun: string, recovery
   // read as if the colon introduced the omitted names.
   const tail = omitted > 0 ? ` — +${omitted} unnamed` : '';
   return `- (+${names.length} more ${noun}: ${named.join(', ')}${tail} — ${recovery})`;
+}
+
+/**
+ * Pattern index lines: slug and path, plus one short clause when `withBrief`.
+ * Shared by the snapshot and the sub-agent briefing.
+ */
+function patternIndexLines(entries: ReturnType<typeof buildKnowledgeIndex>, withBrief: boolean): string[] {
+  return entries.map((e) => {
+    const brief = withBrief && e.description
+      ? `: ${shrinkBody(e.description, PATTERN_BRIEF_CHARS, false)}`
+      : '';
+    return `- **${e.slug}** (_dream_context/knowledge/${e.slug}.md)${brief}`;
+  });
+}
+
+/**
+ * The count line standing in for non-pinned, non-pattern knowledge. Shared by
+ * the snapshot's knowledge index (every rung) and the sub-agent briefing's floor
+ * so both teach the same two recovery commands.
+ */
+function knowledgeRestLine(count: number): string {
+  return `(+${count} more knowledge file(s), not listed — search: `
+    + '`dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: '
+    + '`dreamcontext knowledge index`)';
+}
+
+/**
+ * The patterns block at its FLOOR: slugs only, banner intact, packed with a
+ * named tail. Rules must never fold into anonymous inventory, however deep the
+ * ladder goes, in the snapshot and in the sub-agent briefing alike.
+ */
+function patternsFloorLines(patternEntries: ReturnType<typeof buildKnowledgeIndex>): string[] {
+  if (patternEntries.length === 0) return [];
+  return [
+    '### Patterns (kurallar):\n',
+    PATTERNS_BANNER,
+    ...packToCharBudget(
+      patternEntries,
+      (e) => `- **${e.slug}**`,
+      PATTERNS_FLOOR_CHARS,
+      (rest) => namedRosterTail(
+        rest.map((e) => e.slug), PATTERNS_FLOOR_CHARS,
+        'pattern(s)', '`dreamcontext knowledge index`',
+      ),
+    ),
+    '',
+  ];
 }
 
 /** Recovery pointer for anything that lives inside `core/2.memory.md`. */
@@ -2076,20 +2126,13 @@ export function measureSnapshot(
 
     const patternEntries = nonPinnedEntries.filter((e) => e.slug.startsWith('patterns/'));
     const restEntries = nonPinnedEntries.filter((e) => !e.slug.startsWith('patterns/'));
-    const patternLines = (withBrief: boolean): string[] => patternEntries.map((e) => {
-      const brief = withBrief && e.description
-        ? `: ${shrinkBody(e.description, PATTERN_BRIEF_CHARS, false)}`
-        : '';
-      return `- **${e.slug}** (_dream_context/knowledge/${e.slug}.md)${brief}`;
-    });
+    const patternLines = (withBrief: boolean): string[] => patternIndexLines(patternEntries, withBrief);
 
     // Non-pinned, non-pattern knowledge is NOT listed at all (owner decision
     // 2026-07-30: "pinlenmemiş knowledge'ları listelemeyelim — sadece
     // komutlarla nasıl aranabileceğini gösterelim"). One honest count + the
     // search/browse commands replace the old grouped folder inventory.
-    const restLine = `(+${restEntries.length} more knowledge file(s), not listed — search: `
-      + '`dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: '
-      + '`dreamcontext knowledge index`)';
+    const restLine = knowledgeRestLine(restEntries.length);
 
     const renderBody = (patternsWithBrief: boolean): string[] => {
       const out: string[] = [];
@@ -2105,26 +2148,6 @@ export function measureSnapshot(
       }
       return out;
     };
-
-    // The FLOOR keeps the patterns block too — slugs only, banner intact,
-    // packed with a named tail. Rules must never fold into anonymous folder
-    // inventory, however deep the ladder goes.
-    const patternsFloorBlock = (): string[] => (patternEntries.length > 0
-      ? [
-        '### Patterns (kurallar):\n',
-        PATTERNS_BANNER,
-        ...packToCharBudget(
-          patternEntries,
-          (e) => `- **${e.slug}**`,
-          PATTERNS_FLOOR_CHARS,
-          (rest) => namedRosterTail(
-            rest.map((e) => e.slug), PATTERNS_FLOOR_CHARS,
-            'pattern(s)', '`dreamcontext knowledge index`',
-          ),
-        ),
-        '',
-      ]
-      : []);
 
     parts.push('## Knowledge Index\n');
     parts.push(...pinnedBlockFull);
@@ -2142,7 +2165,7 @@ export function measureSnapshot(
         ...(pinnedEntries.length > 0
           ? renderPinnedBlock(pinnedEntries, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS)
           : []),
-        ...patternsFloorBlock(),
+        ...patternsFloorLines(patternEntries),
         ...(restEntries.length > 0 ? [restLine] : []),
         '',
       ].join('\n'),
@@ -2217,7 +2240,7 @@ export function measureSnapshot(
   // from `readPeerSummaryCache(root)`: a single LOCAL file read of
   // state/.peer-summaries.json in the CURRENT vault. NO peer resolution, NO peer
   // corpus build — the cache is refreshed OFF the hot path (by `federation
-  // peers`, the sleep-federation cycle, and connect/disconnect). If the cache is
+  // peers` and connect/disconnect). If the cache is
   // absent or empty, the section is omitted entirely (issue #25 LOCKED hot-path
   // invariant: no cross-vault work in generateSnapshot).
   const peerCache = readPeerSummaryCache(root);
@@ -2351,49 +2374,327 @@ export function generateSnapshot(rootOverride?: string, opts: SnapshotOptions = 
   return measureSnapshot(rootOverride, opts).text;
 }
 
+/** Options for {@link measureSubagentBriefing} / {@link generateSubagentBriefing}. */
+export interface SubagentBriefingOptions {
+  /** Context root (`_dream_context/`). Defaults to the one resolved from CWD. */
+  root?: string;
+  /**
+   * Ladder budget in tokens. `undefined` resolves from the environment
+   * (`resolveSubagentBriefingBudget`: the default, or unbounded when
+   * DREAMCONTEXT_SNAPSHOT_BUDGET is `off`); `null` is unbounded; a number is used
+   * as given.
+   */
+  budgetTokens?: number | null;
+}
+
+/** The briefing plus what the ladder did to it. */
+export interface SubagentBriefingMeasure {
+  text: string;
+  /** Length of `text` WITHOUT the budget note: what the ladder actually fitted. */
+  bodyChars: number;
+  overBudget: boolean;
+  demoted: Array<{ id: string; level: number }>;
+}
+
+interface BriefingFeature {
+  slug: string;
+  status: string;
+  updated: string;
+  why: string;
+  /** The level-0 entry, byte-identical to the pre-budget briefing. */
+  fullLine: string;
+}
+
+const BRIEFING_FEATURES_HEADER = '## Features (read these BEFORE searching code)\n';
+const BRIEFING_FEATURES_PATHS = 'Each is at `_dream_context/knowledge/features/<slug>.md`.';
+const BRIEFING_KNOWLEDGE_PATHS = 'Each is at `_dream_context/knowledge/<slug>.md`.';
+const BRIEFING_FIX_HINT = 'FIX: pin fewer files or retire stale patterns; `dreamcontext doctor` audits sizes.';
+
+/** A demotable briefing section with its rank attached. */
+function briefingSection(id: BriefingSectionId, text: string, demotions: BudgetRung[]): BudgetSection {
+  return { id, text, demotions, demotionRank: BRIEFING_DEMOTION_RANKS[id] };
+}
+
 /**
- * Output a lightweight context briefing for sub-agents.
- * Lighter than generateSnapshot(): no soul/user/memory content, no sleep state,
- * no changelog, no features detail. Includes project summary, active tasks,
- * knowledge index, and pinned knowledge.
- * Plain text, no chalk — consumed by SubagentStart hook.
+ * Whole names packed into one line, with an honest count of the rest. Unlike
+ * `namedRosterTail` this is the WHOLE list, not a tail under other lines.
  */
-export function generateSubagentBriefing(): string {
-  const root = resolveContextRoot();
-  if (!root) return '';
+function briefingRoster(names: string[], budget: number, noun: string): string {
+  const named: string[] = [];
+  let used = 0;
+  for (const name of names) {
+    const cost = name.length + 2;
+    if (named.length > 0 && used + cost > budget) break;
+    named.push(name);
+    used += cost;
+  }
+  const omitted = names.length - named.length;
+  return `- ${named.join(', ')}${omitted > 0 ? ` (+${omitted} more ${noun})` : ''}`;
+}
 
-  const parts: string[] = ['# Agent Context -- Sub-agent Briefing\n'];
+function readBriefingFeatures(root: string): BriefingFeature[] {
+  const featuresPath = featuresDir(root);
+  if (!existsSync(featuresPath)) return [];
+  // Recurse so features grouped into topical/product subfolders are listed too.
+  // Excalidraw boards are knowledge, not PRDs.
+  const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true })
+    .filter((f) => !f.endsWith('.excalidraw.md'));
+  const features: BriefingFeature[] = [];
+  for (const file of featureFiles) {
+    try {
+      const { data } = readFrontmatter(file);
+      // Folder-qualified slug gives a correct path pointer for nested features.
+      const slug = featureSlug(featuresPath, file);
+      const tags = Array.isArray(data.tags) ? data.tags.join(', ') : '';
+      let why = '';
+      try {
+        const whyContent = readSection(file, 'Why');
+        const firstLine = whyContent?.split('\n').find((l) => l.trim() && !l.trim().startsWith('('))?.trim();
+        if (firstLine) why = capAtWordBoundary(firstLine, 120);
+      } catch { /* a PRD without a readable Why still gets listed */ }
+      const relatedTasks = Array.isArray(data.related_tasks) && data.related_tasks.length > 0
+        ? data.related_tasks.join(', ')
+        : '';
+      const details: string[] = [];
+      if (tags) details.push(`  Tags: ${tags}`);
+      if (why) details.push(`  Why: ${why}`);
+      if (relatedTasks) details.push(`  Tasks: ${relatedTasks}`);
+      const head = `- **${slug}** --> Read: _dream_context/knowledge/features/${slug}.md`;
+      features.push({
+        slug,
+        status: String(data.status ?? 'unknown'),
+        updated: String(data.updated ?? data.created ?? ''),
+        why,
+        fullLine: details.length > 0 ? `${head}\n${details.join('\n')}` : head,
+      });
+    } catch {
+      // skip unreadable files
+    }
+  }
+  return features;
+}
 
-  // 1. Top-priority directive (MUST be first thing the sub-agent reads)
-  parts.push('MANDATORY: This project has documented context files. You MUST check the feature list');
-  parts.push('and knowledge index below BEFORE using Glob, Grep, or searching code. If any feature');
-  parts.push('name or tag matches your task, Read that feature file first. Searching the codebase');
-  parts.push('without checking context wastes tokens and duplicates existing documentation.\n');
+function briefingFeaturesSection(root: string): BudgetSection | null {
+  const features = readBriefingFeatures(root);
+  if (features.length === 0) return null;
+  // Same order the snapshot demotes by: live work first, then most recent.
+  const activeFirst = [...features].sort((a, b) => {
+    const rank = (s: string): number =>
+      s === 'in_progress' || s === 'active' ? 0 : s === 'planned' || s === 'todo' ? 1 : 2;
+    return rank(a.status) - rank(b.status) || b.updated.localeCompare(a.updated);
+  });
+  const full = [BRIEFING_FEATURES_HEADER, features.map((f) => f.fullLine).join('\n'), ''].join('\n');
+  const withWhy = (): string => [
+    BRIEFING_FEATURES_HEADER,
+    BRIEFING_FEATURES_PATHS,
+    ...activeFirst.map((f) => (f.why
+      ? `- **${f.slug}**: ${capAtWordBoundary(f.why, BRIEFING_FEATURE_WHY_CHARS)}`
+      : `- **${f.slug}**`)),
+    '',
+    FEATURES_FOOTER,
+    '',
+  ].join('\n');
+  const roster = (): string => [
+    BRIEFING_FEATURES_HEADER,
+    BRIEFING_FEATURES_PATHS,
+    briefingRoster(activeFirst.map((f) => f.slug), BRIEFING_FEATURES_ROSTER_CHARS, 'feature(s)'),
+    '',
+    FEATURES_FOOTER,
+    '',
+  ].join('\n');
+  return briefingSection('features', full, [withWhy, roster]);
+}
 
-  // 1b. Recall directive — applies to EVERY sub-agent type, not just dreamcontext-explore,
-  // and does not depend on this briefing being honoured (the agent runs recall itself).
-  parts.push('RECALL: For any "where / why / what do we know about X" question, run');
-  parts.push('`dreamcontext memory recall "<keywords>"` (BM25 over knowledge/features/tasks/');
-  parts.push('memory/changelog, <100ms, zero token overhead) BEFORE Glob/Grep — it frequently');
-  parts.push('beats blind exploration outright.\n');
+function briefingKnowledgeSection(root: string): BudgetSection | null {
+  const entries = buildKnowledgeIndex(root);
+  if (entries.length === 0) return null;
+  const pinned = entries.filter((e) => e.pinned);
+  const pinnedSlugs = new Set(pinned.map((e) => e.slug));
+  const nonPinned = entries.filter((e) => !pinnedSlugs.has(e.slug));
+  const patterns = nonPinned.filter((e) => e.slug.startsWith('patterns/'));
+  const rest = nonPinned.filter((e) => !e.slug.startsWith('patterns/'));
+  const described = (e: (typeof entries)[number], pin: string): string => {
+    const tagsStr = e.tags.length > 0 ? ` [${e.tags.join(', ')}]` : '';
+    return `- ${pin}**${e.slug}** (_dream_context/knowledge/${e.slug}.md): ${e.description}${tagsStr}`;
+  };
 
-  // 1c. Active project overrides — a project-local task format/field override
-  // shadows the shipped task shape. soul/user bodies never reach sub-agents;
-  // THIS does, so every sub-agent that creates or reconciles a task must honor it.
-  const subOverride = loadTaskOverride(root);
-  if (subOverride) {
-    parts.push('ACTIVE TASK-FORMAT OVERRIDE:');
-    parts.push(renderOverrideBriefing(subOverride));
-    parts.push('');
+  // Level 0: every entry described, exactly as the briefing rendered before it
+  // had a budget, so a small brain sees no change at all.
+  const full: string[] = ['## Knowledge Index\n'];
+  if (pinned.length > 0) full.push(PINNED_BANNER, ...pinned.map((e) => described(e, '📌 ')), '');
+  if (nonPinned.length > 0) {
+    if (pinned.length > 0) full.push('### Other knowledge:\n');
+    full.push(nonPinned.map((e) => described(e, '')).join('\n'));
+  }
+  full.push('');
+
+  const patternsBlock = (withBrief: boolean): string[] => (patterns.length > 0
+    ? ['### Patterns (kurallar):\n', PATTERNS_BANNER, ...patternIndexLines(patterns, withBrief), '']
+    : []);
+  const restNamed = (): string[] => (rest.length > 0
+    ? [
+      '### Other knowledge:\n',
+      ...packToCharBudget(
+        rest,
+        (e) => `- **${e.slug}**`,
+        BRIEFING_KNOWLEDGE_REST_CHARS,
+        (left) => namedRosterTail(
+          left.map((e) => e.slug), BRIEFING_KNOWLEDGE_REST_CHARS,
+          'knowledge file(s)', '`dreamcontext knowledge index`',
+        ),
+      ),
+      '',
+    ]
+    : []);
+
+  return briefingSection('knowledge-index', full.join('\n'), [
+    // Rung 1: every pinned file and pattern stays described; other knowledge
+    // keeps its name only.
+    () => [
+      '## Knowledge Index\n',
+      BRIEFING_KNOWLEDGE_PATHS,
+      ...renderPinnedBlock(pinned, PINNED_ITEM_CHARS, Number.POSITIVE_INFINITY),
+      ...patternsBlock(true),
+      ...restNamed(),
+    ].join('\n'),
+    // Rung 2: the snapshot's own floor, so both surfaces fail the same way.
+    () => [
+      '## Knowledge Index\n',
+      BRIEFING_KNOWLEDGE_PATHS,
+      ...renderPinnedBlock(pinned, PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS),
+      ...patternsFloorLines(patterns),
+      ...(rest.length > 0 ? [knowledgeRestLine(rest.length)] : []),
+      '',
+    ].join('\n'),
+  ]);
+}
+
+function briefingObjectivesSection(root: string): BudgetSection | null {
+  try {
+    const model = buildRoadmapModel(root);
+    if (model.objectives.length === 0) return null;
+    const active = orderByTimebox(model.objectives.filter((o) => o.status !== 'done'), new Date());
+    const done = model.objectives.filter((o) => o.status === 'done');
+    const lines = [...active, ...done].slice(0, 10).map(objectiveSnapshotLine);
+    if (lines.length === 0) return null;
+    const header = '## Objectives (project goals — the WHY behind the work)\n';
+    const full = [
+      header,
+      lines.join('\n'),
+      'Tasks declare the objectives they serve via `objectives:` frontmatter (many-to-many).',
+      '',
+    ].join('\n');
+    return briefingSection('objectives', full, [
+      () => [header, ...active.slice(0, BRIEFING_OBJECTIVES_L1).map(objectiveCompactLine), ''].join('\n'),
+      () => [
+        header,
+        `- ${active.length} active objective(s), ${done.length} done: \`dreamcontext roadmap\``,
+        '',
+      ].join('\n'),
+    ]);
+  } catch {
+    return null; // never block the briefing on a malformed objective
+  }
+}
+
+function briefingCoreFilesSection(root: string): BudgetSection | null {
+  const coreDir = join(root, 'core');
+  if (!existsSync(coreDir)) return null;
+  const files = fg.sync(['[0-9]*'], { cwd: coreDir, absolute: true });
+  if (files.length === 0) return null;
+  files.sort((a, b) => basename(a).localeCompare(basename(b), undefined, { numeric: true }));
+
+  const entries = files.map((file) => {
+    const filename = basename(file);
+    const relativePath = `_dream_context/core/${filename}`;
+    if (filename.endsWith('.json')) {
+      const name = filename.replace(/^\d+\./, '').replace(/\.\w+$/, '').replace(/_/g, ' ');
+      return { bare: `- **${name}** (${relativePath})`, summary: '' };
+    }
+    try {
+      const { data } = readFrontmatter(file);
+      const bare = `- **${String(data.name ?? filename)}** (${relativePath})`;
+      return { bare, summary: data.summary ? `: ${String(data.summary)}` : '' };
+    } catch {
+      return { bare: `- **${filename}** (${relativePath})`, summary: '' };
+    }
+  });
+  const full = ['## Core Files\n', ...entries.map((e) => e.bare + e.summary), ''].join('\n');
+  return briefingSection('core-files', full, [
+    () => ['## Core Files\n', ...entries.map((e) => e.bare), ''].join('\n'),
+  ]);
+}
+
+function briefingTasksSection(root: string): BudgetSection | null {
+  // Sub-agents are task-scoped and never need the full backlog: activity-sorted,
+  // 12 at level 0, fewer as the ladder descends.
+  const tasks = sortTaskEntriesByActivity(getActiveTaskEntries(root)).map((t) => t.text);
+  if (tasks.length === 0) return null;
+  const render = (lines: string[]): string => ['## Active Tasks\n', lines.join('\n'), ''].join('\n');
+  const firstLines = (): string[] => {
+    const kept = tasks.slice(0, BRIEFING_TASKS_L1).map((t) => t.split('\n')[0]);
+    const more = tasks.length - kept.length;
+    return more > 0 ? [...kept, `- (+${more} more active task(s))`] : kept;
+  };
+  return briefingSection('tasks', render(demoteTaskList(tasks, 12)), [
+    () => render(demoteTaskList(tasks, BRIEFING_TASKS_L1)),
+    () => [render(firstLines()), tasksFooter(loadStatuses(root)), ''].join('\n'),
+  ]);
+}
+
+/**
+ * Build the SubagentStart briefing and report what its budget ladder did.
+ *
+ * Lighter than the snapshot: no soul, person or memory content, no sleep state,
+ * no changelog. It carries the project line, objectives, features, the
+ * knowledge index, core files, active tasks and the task-awareness rules.
+ *
+ * Every sub-agent pays for this before its first tool call, so it is budgeted
+ * (`SUBAGENT_BRIEFING_BUDGET_TOKENS`). Level 0 is the full render, unchanged
+ * for a brain small enough to fit; past the budget, sections demote cheapest
+ * loss first (objectives, tasks, core files, knowledge, features), and every
+ * pinned file, pattern and feature stays named or counted. The directives, the
+ * task-format override, the project line and the awareness rules never shrink.
+ */
+export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): SubagentBriefingMeasure {
+  const root = opts.root ?? resolveContextRoot();
+  if (!root) return { text: '', bodyChars: 0, overBudget: false, demoted: [] };
+
+  const sections: BudgetSection[] = [];
+
+  // 1. Top-priority directive (MUST be the first thing the sub-agent reads) and
+  // the recall directive, which applies to every sub-agent type.
+  sections.push({
+    id: 'header',
+    neverEvict: true,
+    text: [
+      '# Agent Context -- Sub-agent Briefing\n',
+      'MANDATORY: This project has documented context files. You MUST check the feature list',
+      'and knowledge index below BEFORE using Glob, Grep, or searching code. If any feature',
+      'name or tag matches your task, Read that feature file first. Searching the codebase',
+      'without checking context wastes tokens and duplicates existing documentation.\n',
+      `${RECALL_GUIDANCE}\n`,
+    ].join('\n'),
+  });
+
+  // 2. Active project override: a project-local task shape shadows the shipped
+  // one, and every sub-agent that creates or reconciles a task must honour it.
+  const override = loadTaskOverride(root);
+  if (override) {
+    sections.push({
+      id: 'task-override',
+      neverEvict: true,
+      text: ['ACTIVE TASK-FORMAT OVERRIDE:', renderOverrideBriefing(override), ''].join('\n'),
+    });
   }
 
-  // 2. Project summary (first meaningful line from soul file content)
+  // 3. Project summary (first meaningful soul line) and linked repos.
+  const project: string[] = [];
   const soulPath = join(root, 'core', '0.soul.md');
   if (existsSync(soulPath)) {
     const { data, content } = readFrontmatter(soulPath);
     const projectName = typeof data.name === 'string' ? data.name : '';
-    const lines = content.split('\n');
-    const summaryLine = lines.find(l => {
+    const summaryLine = content.split('\n').find((l) => {
       const t = l.trim();
       return t && !t.startsWith('#') && !t.startsWith('>') && !t.startsWith('<!--') && !t.startsWith('---');
     });
@@ -2403,182 +2704,71 @@ export function generateSubagentBriefing(): string {
         const capped = capAtWordBoundary(summaryLine.trim(), 120);
         summary += summary ? `: ${capped}` : capped;
       }
-      parts.push(`Project: ${summary}\n`);
+      project.push(`Project: ${summary}\n`);
     }
   }
-
-  // 2b. Linked repos — resolved local paths are machine facts a sub-agent
-  // otherwise asks for or greps after. Compact one-liners; sanitization + the
-  // external-data framing live in renderLinkedReposGlance.
   const linkedGlance = renderLinkedReposGlance(root, 'briefing');
-  if (linkedGlance) parts.push(...linkedGlance);
+  if (linkedGlance) project.push(...linkedGlance);
+  if (project.length > 0) sections.push({ id: 'project', neverEvict: true, text: project.join('\n') });
 
-  // 2c. Objectives — the project's goals, so every sub-agent decision knows the
-  // WHY. Lean: one line per objective, capped, active first.
-  try {
-    const model = buildRoadmapModel(root);
-    if (model.objectives.length > 0) {
-      const active = orderByTimebox(model.objectives.filter((o) => o.status !== 'done'), new Date());
-      const rest = model.objectives.filter((o) => o.status === 'done');
-      const lines = [...active, ...rest].slice(0, 10).map(objectiveSnapshotLine);
-      if (lines.length > 0) {
-        parts.push('## Objectives (project goals — the WHY behind the work)\n');
-        parts.push(lines.join('\n'));
-        parts.push('Tasks declare the objectives they serve via `objectives:` frontmatter (many-to-many).');
-        parts.push('');
-      }
-    }
-  } catch { /* never block the briefing on a malformed objective */ }
-
-  // 3. Features summary (name, status, tags, why, related tasks)
-  // Features come FIRST because they're the most actionable context for sub-agents.
-  const featuresPath = featuresDir(root);
-  if (existsSync(featuresPath)) {
-    // Recurse so features grouped into topical/product subfolders are listed too.
-    // Excalidraw boards are knowledge, not PRDs — one living under features/
-    // (misplaced content) must not be presented as a feature.
-    const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true })
-      .filter((f) => !f.endsWith('.excalidraw.md'));
-    const features: string[] = [];
-
-    for (const file of featureFiles) {
-      try {
-        const { data } = readFrontmatter(file);
-        // Folder-qualified slug → correct Read: path pointer for nested features.
-        const name = featureSlug(featuresPath, file);
-        const status = String(data.status ?? 'unknown');
-        const tags = Array.isArray(data.tags) ? data.tags.join(', ') : '';
-
-        let why = '';
-        try {
-          const whyContent = readSection(file, 'Why');
-          if (whyContent) {
-            const firstLine = whyContent.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
-            if (firstLine) {
-              why = capAtWordBoundary(firstLine, 120);
-            }
-          }
-        } catch { /* skip */ }
-
-        const relatedTasks = Array.isArray(data.related_tasks) && data.related_tasks.length > 0
-          ? data.related_tasks.join(', ')
-          : '';
-
-        let featureLine = `- **${name}** --> Read: _dream_context/knowledge/features/${name}.md`;
-        const details: string[] = [];
-        if (tags) details.push(`  Tags: ${tags}`);
-        if (why) details.push(`  Why: ${why}`);
-        if (relatedTasks) details.push(`  Tasks: ${relatedTasks}`);
-
-        if (details.length > 0) {
-          featureLine += '\n' + details.join('\n');
-        }
-        features.push(featureLine);
-      } catch {
-        // skip unreadable files
-      }
-    }
-
-    if (features.length > 0) {
-      parts.push('## Features (read these BEFORE searching code)\n');
-      parts.push(features.join('\n'));
-      parts.push('');
-    }
+  // 4. Demotable sections, in reading order (features first: most actionable).
+  for (const section of [
+    briefingObjectivesSection(root),
+    briefingFeaturesSection(root),
+    briefingKnowledgeSection(root),
+    briefingCoreFilesSection(root),
+    briefingTasksSection(root),
+  ]) {
+    if (section) sections.push(section);
   }
 
-  // 4. Knowledge Index + Pinned Knowledge
-  const knowledgeEntries = buildKnowledgeIndex(root);
-  if (knowledgeEntries.length > 0) {
-    const indexLines: string[] = [];
-    const pinnedEntries: typeof knowledgeEntries = [];
+  // 5. Task awareness and the context directory map.
+  sections.push({
+    id: 'awareness',
+    neverEvict: true,
+    text: [
+      '## Task Awareness\n',
+      'All significant work should be linked to a task in `_dream_context/state/`.',
+      'If you are creating a plan or completing an implementation:',
+      '- Check if an existing task in Active Tasks above relates to this work',
+      '- If planning: after the plan is approved, ask the user: "Would you like to save this plan as an dreamcontext task?"',
+      `- ${TASK_CREATE_GUIDANCE}`,
+      '- To log progress: `dreamcontext tasks log <name> "what was done"`',
+      'Untracked work gets lost across sessions. Tasks are how knowledge persists.',
+      '',
+      '## Context Directory\n',
+      '`_dream_context/core/` -- Core files: soul (0), memory (2), extended (3+); people live in `_dream_context/people/`',
+      '`_dream_context/knowledge/` -- Deep research documents on specific topics (includes features/ — feature PRDs as typed knowledge)',
+      '`_dream_context/state/` -- Active task files with progress logs',
+      '',
+    ].join('\n'),
+  });
 
-    for (const entry of knowledgeEntries) {
-      const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
-      indexLines.push(`- **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
-      if (entry.pinned) {
-        pinnedEntries.push(entry);
-      }
-    }
+  const budgetTokens = opts.budgetTokens === undefined
+    ? resolveSubagentBriefingBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET)
+    : opts.budgetTokens;
+  const result = applyBudget(sections, budgetTokens, {
+    subject: 'briefing',
+    recoveryNote: BRIEFING_RECOVERY_NOTE,
+    fixHint: BRIEFING_FIX_HINT,
+  });
 
-    parts.push('## Knowledge Index\n');
+  const footerAt = result.text.lastIndexOf('\n\n---\n_Budget note:');
+  const body = footerAt === -1 ? result.text : result.text.slice(0, footerAt);
+  return {
+    text: result.text.trim(),
+    bodyChars: body.trim().length,
+    overBudget: result.overBudget,
+    demoted: result.demoted,
+  };
+}
 
-    if (pinnedEntries.length > 0) {
-      parts.push('> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n');
-      for (const entry of pinnedEntries) {
-        const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
-        parts.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
-      }
-      parts.push('');
-    }
-
-    const pinnedSlugs2 = new Set(pinnedEntries.map(e => e.slug));
-    const nonPinnedLines2 = indexLines.filter((_, i) => !pinnedSlugs2.has(knowledgeEntries[i]?.slug));
-    if (nonPinnedLines2.length > 0) {
-      if (pinnedEntries.length > 0) parts.push('### Other knowledge:\n');
-      parts.push(nonPinnedLines2.join('\n'));
-    }
-    parts.push('');
-  }
-
-  // 5. All Core Files index (so sub-agents know what exists to read/update)
-  const coreDir = join(root, 'core');
-  if (existsSync(coreDir)) {
-    const allCoreFiles = fg.sync(['[0-9]*'], { cwd: coreDir, absolute: true });
-    allCoreFiles.sort((a, b) => basename(a).localeCompare(basename(b), undefined, { numeric: true }));
-
-    if (allCoreFiles.length > 0) {
-      parts.push('## Core Files\n');
-      for (const file of allCoreFiles) {
-        const filename = basename(file);
-        const relativePath = `_dream_context/core/${filename}`;
-
-        if (filename.endsWith('.json')) {
-          const name = filename.replace(/^\d+\./, '').replace(/\.\w+$/, '').replace(/_/g, ' ');
-          parts.push(`- **${name}** (${relativePath})`);
-          continue;
-        }
-
-        try {
-          const { data } = readFrontmatter(file);
-          const name = String(data.name ?? filename);
-          const summary = data.summary ? `: ${String(data.summary)}` : '';
-          parts.push(`- **${name}** (${relativePath})${summary}`);
-        } catch {
-          parts.push(`- **${filename}** (${relativePath})`);
-        }
-      }
-      parts.push('');
-    }
-  }
-
-  // 6. Active tasks (sub-agent briefings stay lean: activity-sorted, capped at
-  // 12 — sub-agents are task-scoped and never need the full backlog)
-  const activeTasks = sortTaskEntriesByActivity(getActiveTaskEntries(root)).map((t) => t.text);
-  if (activeTasks.length > 0) {
-    parts.push('## Active Tasks\n');
-    parts.push(demoteTaskList(activeTasks, 12).join('\n'));
-    parts.push('');
-  }
-
-  // 7. Task-awareness instruction (for Plan agents and all sub-agents)
-  parts.push('## Task Awareness\n');
-  parts.push('All significant work should be linked to a task in `_dream_context/state/`.');
-  parts.push('If you are creating a plan or completing an implementation:');
-  parts.push('- Check if an existing task in Active Tasks above relates to this work');
-  parts.push('- If planning: after the plan is approved, ask the user: "Would you like to save this plan as an dreamcontext task?"');
-  parts.push('- To create: `dreamcontext tasks create <name> --status pending --priority <p> --tags <t>`');
-  parts.push('- To log progress: `dreamcontext tasks log <name> "what was done"`');
-  parts.push('Untracked work gets lost across sessions. Tasks are how knowledge persists.');
-  parts.push('');
-
-  // 8. Context directory reference
-  parts.push('## Context Directory\n');
-  parts.push('`_dream_context/core/` -- Core files: soul (0), user (1), memory (2), extended (3+)');
-  parts.push('`_dream_context/knowledge/` -- Deep research documents on specific topics (includes features/ — feature PRDs as typed knowledge)');
-  parts.push('`_dream_context/state/` -- Active task files with progress logs');
-  parts.push('');
-
-  return parts.join('\n').trim();
+/**
+ * The SubagentStart briefing as plain text (no chalk), budgeted. See
+ * {@link measureSubagentBriefing}; the hook calls this with no arguments.
+ */
+export function generateSubagentBriefing(opts: SubagentBriefingOptions = {}): string {
+  return measureSubagentBriefing(opts).text;
 }
 
 export function registerSnapshotCommand(program: Command): void {

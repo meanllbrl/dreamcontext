@@ -112,7 +112,7 @@ export async function installPlatformIntegration(
     directPackInstall(packs, projectRoot, platforms, manifest);
   }
 
-  // Install root instructions (CLAUDE.md / AGENTS.md).
+  // Install root instructions (CLAUDE.md).
   info('Installing root instruction file(s)...');
   for (const platform of platforms) {
     try {

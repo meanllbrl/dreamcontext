@@ -363,7 +363,7 @@ describe('sleep 360° — debt levels & directive injection (WS2)', () => {
     const d = getConsolidationDirective(baseState({ debt: DEBT_MUST_SLEEP }));
     expect(d).not.toBeNull();
     expect(d).toContain('CONSOLIDATION REQUIRED');
-    expect(d).toContain('You MUST inform the user and consolidate NOW.');
+    expect(d).toContain('Tell the user, then consolidate before starting new work');
   });
 
   it('session-start prepends a softer advisory at DEBT_SLEEPY', () => {

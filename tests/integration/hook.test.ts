@@ -137,6 +137,45 @@ describe('hook stop (integration)', () => {
     expect(sessions[0].tool_count).toBeNull();
   });
 
+  it('a spawned session is recorded with its marker, score 0, no debt and no rhythm bump', () => {
+    const transcript = join(tmpDir, 'builder.jsonl');
+    writeFileSync(transcript, [toolUseLine('Write'), toolUseLine('Edit'), toolUseLine('Edit')].join('\n'));
+    writeSleep(ctx, { debt: 5, sessions_since_last_sleep: 1, sessions: [] });
+
+    const input = JSON.stringify({
+      session_id: 'sess-builder',
+      transcript_path: transcript,
+      // Carries a decision marker: a human session's transcript-less Stop would bookmark it.
+      last_assistant_message: 'We decided to switch to BM25.',
+    });
+    runWithStdin('hook stop', input, tmpDir, { ...process.env, DREAMCONTEXT_SPAWNED: 'develop' });
+
+    const state = readSleep(ctx);
+    const session = (state.sessions as any[]).find((s: any) => s.session_id === 'sess-builder');
+    expect(session.spawn).toEqual({ by: 'develop', via: 'env' });
+    expect(session.score).toBe(0);
+    expect(session.change_count).toBe(3); // the analysis is still recorded
+    expect(state.debt).toBe(5);
+    expect(state.sessions_since_last_sleep).toBe(1);
+  });
+
+  it('a spawned session with no transcript on disk is never left pending and bookmarks nothing', () => {
+    writeSleep(ctx, { debt: 5, sessions: [], bookmarks: [] });
+    const input = JSON.stringify({
+      session_id: 'sess-builder-2',
+      transcript_path: join(tmpDir, 'not-flushed-yet.jsonl'),
+      last_assistant_message: 'We decided to switch to BM25.',
+    });
+    runWithStdin('hook stop', input, tmpDir, { ...process.env, DREAMCONTEXT_AUTOMATION_RUN: '2026-09-29T09:00:00.000Z' });
+
+    const state = readSleep(ctx);
+    const session = (state.sessions as any[])[0];
+    expect(session.spawn).toEqual({ by: 'automation', via: 'env' });
+    expect(session.score).toBe(0);
+    expect(state.bookmarks).toEqual([]);
+    expect(state.debt).toBe(5);
+  });
+
   it('records stopped_at as ISO 8601 timestamp', () => {
     const input = JSON.stringify({ session_id: 'sess-ts', transcript_path: '/tmp/t.jsonl' });
     runWithStdin('hook stop', input, tmpDir);
@@ -543,7 +582,26 @@ describe('hook session-start (integration)', () => {
     const output = runWithStdin('hook session-start', input, tmpDir);
 
     expect(output).toContain('CONSOLIDATION REQUIRED');
-    expect(output).toContain('Context files are stale and bloated');
+    expect(output).toContain(`Sleep debt is ${DEBT_MUST_SLEEP} (Must Sleep at ${DEBT_MUST_SLEEP})`);
+    expect(output).toContain('# Agent Context');
+  });
+
+  it('names the OVERDUE tier at twice Must Sleep', () => {
+    writeSleep(ctx, { debt: 200, sessions: [] });
+
+    const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir);
+
+    expect(output).toContain('>>> CONSOLIDATION REQUIRED: OVERDUE <<<');
+  });
+
+  it('a spawned session gets NO sleep directive, even at debt 200, but still gets its snapshot', () => {
+    writeSleep(ctx, { debt: 200, sessions: [] });
+
+    const input = JSON.stringify({ session_id: 'sess-builder', source: 'startup', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir, { ...process.env, DREAMCONTEXT_SPAWNED: 'develop' });
+
+    expect(output).not.toContain('CONSOLIDATION');
     expect(output).toContain('# Agent Context');
   });
 
@@ -1337,6 +1395,33 @@ describe('hook user-prompt-submit (integration)', () => {
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
     expect(output).toContain(`Sleep debt is ${DEBT_MUST_SLEEP + 2}`);
     expect(output).toContain('CONSOLIDATION REQUIRED');
+  });
+
+  it('a spawned session gets no reminder at debt 200; a human one gets the OVERDUE tier', () => {
+    writeSleep(ctx, { debt: 200, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'do something' });
+
+    const spawned = runWithStdin('hook user-prompt-submit', input, tmpDir, { ...process.env, DREAMCONTEXT_SPAWNED: 'develop' });
+    expect(spawned).not.toContain('CONSOLIDATION');
+    expect(spawned).not.toContain('Sleep debt');
+
+    const human = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(human).toContain('CONSOLIDATION REQUIRED: OVERDUE');
+  });
+
+  it('a session already recorded as spawned stays silent without its env (the stored record decides)', () => {
+    writeSleep(ctx, {
+      debt: 200,
+      sessions: [{
+        session_id: 'sess-recorded', transcript_path: null, stopped_at: '2026-09-29T10:00:00.000Z',
+        last_assistant_message: null, change_count: 0, tool_count: 0, score: 0, task_slugs: [],
+        spawn: { by: 'goal-skill', via: 'goal-live' },
+      }],
+      bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [],
+    });
+    const input = JSON.stringify({ session_id: 'sess-recorded', prompt: 'continue' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).not.toContain('CONSOLIDATION');
   });
 
   it('critical bookmark triggers output even at low debt', () => {

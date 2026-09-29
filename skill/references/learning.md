@@ -215,3 +215,12 @@ status ∈ {validated, invalidated}
 ```
 
 `related_workflows` is reserved and unpopulated in v1 — nothing writes it yet — so this always evaluates `false` today, and every promotion routes through the plain knowledge path. This is deliberate: v1 ships the shared constant + the proposal path only; `knowledge-workflows` will later populate `related_workflows` and import the same constant, so the two subsystems can never drift on what "significant enough" means. PO confirmation is always required regardless of which path a promotion takes.
+
+## Detail behind the SKILL.md summaries
+
+SKILL.md keeps one line per capability and one home per rule. This is the fuller text those lines summarize, kept here so nothing an agent needs is lost.
+
+### Capability summary and routing
+
+- **Proactive learning (Hypotheses)**: Falsifiable **theses** validated/invalidated across sleep cycles: derived confidence from an evidence ledger, pre-registered predictions, understanding changelog, relations to insights/objectives/tasks, dashboard "Hypotheses" board. Opt-in — off until `dreamcontext theses enable`
+- **Thesis** — `theses/<slug>.md`. Triggers: "I have a thesis: X improves Y", "track this hypothesis", "anything worth testing in these notes?". A falsifiable OPTIMIZATION claim validated/invalidated across cycles; confidence is DERIVED from an evidence ledger, never asserted. Create with: `dreamcontext theses create "<claim>"` (quality bar FIRST — "if validated, what do we change and which revenue-bearing outcome improves?"; an observation like "step X loses 84%" is evidence, never a thesis; then offer-and-confirm, recall-dedup, default draft; layer off (`learning.enabled`) → offer `theses enable` first, never capture silently → [learning.md](references/learning.md))

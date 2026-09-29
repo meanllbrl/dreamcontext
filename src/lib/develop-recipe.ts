@@ -75,12 +75,14 @@ Per lane L (ids are wave-qualified: \`wN-L\`, never a bare lane name):
   SID="$( (uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid) | tr 'A-Z' 'a-z')"
   CFG="\${CLAUDE_CONFIG_DIR:--}"      # the RAW value: - = the machine's own account
   # the brief: write it to $ROOT/tmp/develop/$S/wN-L.md (section 5)
-  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT nohup claude -p "$(cat "$ROOT/tmp/develop/$S/wN-L.md")" --session-id "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json > "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
+  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT DREAMCONTEXT_SPAWNED=develop nohup claude -p "$(cat "$ROOT/tmp/develop/$S/wN-L.md")" --session-id "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json > "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
   PID=$!
   dreamcontext tasks log "$S" "wN-L spawned sid $SID pid $PID cfg $CFG"
   dreamcontext goal-live actor wN-L="<what it builds>" --kind spawn --role implementer --wave N --session "$SID" || true
 
 The env strip is REQUIRED: a nohup'd builder otherwise hijacks this pane's resume id.
+DREAMCONTEXT_SPAWNED=develop is REQUIRED too: it keeps the builder's session out of sleep debt
+and out of sleep directives, even before its goal-live registration below lands.
 \`cfg -\` means CLAUDE_CONFIG_DIR was unset (the primary account): never record or set it to
 $HOME/.claude, since any value relocates ~/.claude.json and loses the login.
 Never start a builder with the Bash tool's run_in_background: it reads as finished at once,
@@ -184,10 +186,11 @@ stop and tell the owner.
 
 Resume (always under the recorded cfg; \`cfg -\` = UNSET the variable, never set it):
 
-  # set -- , not a string (zsh never word-splits a string variable), and "$@" LAST, right
-  # before nohup: env takes everything after a NAME=value as the command to run
+  # set -- , not a string (zsh never word-splits a string variable), and "$@" right after the
+  # -u flags, before DREAMCONTEXT_SPAWNED: "$@" may be -u, and env takes everything after a
+  # NAME=value as the command to run
   if [ "$cfg" = "-" ]; then set -- -u CLAUDE_CONFIG_DIR; else set -- CLAUDE_CONFIG_DIR="$cfg"; fi
-  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT "$@" nohup claude -p "<exactly the findings, or: continue>" --resume "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json >> "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
+  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT "$@" DREAMCONTEXT_SPAWNED=develop nohup claude -p "<exactly the findings, or: continue>" --resume "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json >> "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
   dreamcontext tasks log "$S" "wN-L resumed sid $SID pid $! cfg $cfg"
   dreamcontext goal-live actor wN-L --kind resume --role implementer --wave N --round <r> --session "$SID" || true
 

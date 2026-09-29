@@ -4,16 +4,22 @@ Sleep (RemSleep) is how working-session changes get folded back into the durable
 
 ## When to sleep
 
-Sleep debt accumulates automatically via hooks. Each finished session is scored **0–10** by a weighted sum over four axes — novel tokens consumed, file changes, tool calls, and substance (decisions, task breadth, exchange length) — so a heavy session costs several times a light one. A typical session scores ~5. Hooks inject directives — honor them.
+Sleep debt accumulates automatically via hooks. Each finished session is scored **0–10** by a weighted sum over four axes (novel tokens consumed, file changes, tool calls, and substance: decisions, task breadth, exchange length), so a heavy session costs several times a light one. An idle or question-only session scores 0; a heavy multi-agent session approaches 10. Hooks inject directives: honor them.
 
-Thresholds are calibrated against measured DAILY work volume (30 real days: median 42 debt/day, busiest 185), targeting **at most ~3 consolidations on the heaviest day and none required on a typical one**.
+What counts is real work only. Tool calls and file changes are counted from the actual `tool_use` blocks (tool listings attached to the transcript are not calls); a model reply's token usage is counted once, not once per content block; the context a session loads at startup is subtracted; and only turns a human typed count as turns.
+
+Thresholds are calibrated against measured DAILY work volume (30 real days: median 42 debt/day, busiest 185), targeting **at most ~3 consolidations on the heaviest day and none required on a typical one**. Those daily figures predate the 2026-09-29 counting fix, so the same work now produces less debt; re-measure before retuning.
 
 | Debt | Level | Required behavior |
 |------|-------|-------------------|
 | 0–23 | Alert | No action |
 | 24–39 | Drowsy | After completing a task: **inform user + offer** consolidation |
 | 40–59 | Sleepy | At session start: **inform user + recommend** consolidation before new work |
-| 60+ | Must sleep | **Consolidate**, before or right after the current task |
+| 60–89 | Must sleep | **Consolidate** before new work, or right after the current task |
+| 90–119 | Must sleep, deep | Consolidate before new work; `sleep start` normally picks a deep cycle |
+| 120+ | Overdue | Stop and consolidate now; this overrides the cooldown |
+
+**Spawned sessions carry no debt.** Sessions dreamcontext or an orchestrator spawns (Develop and registered goal-skill builders, automation runs, background sleep, peer and lab runs, `claude -p` run synchronously under a session) are recorded with a `spawn` marker, add no debt, get no auto-bookmarks and receive no sleep directive. The orchestrator's own session carries the run's weight; the builders' work still reaches the cycle through their `task_slugs`, the task log and git. A `claude -p` launched by hand with `nohup`, not registered with `goal-live actor --session` and not marked, scores as a session of its own.
 
 **These numbers are DEFAULTS, not constants.** A brain sets its own ladder in Settings › Sleep or `dreamcontext sleep config` (`.config.json` `sleep.thresholds`); the derived deep-consolidation authority (×1.5) and cooldown override (×2) follow the configured Must Sleep. Read the live values with `dreamcontext sleep config` rather than assuming 24/40/60.
 
@@ -38,8 +44,10 @@ brain that nobody mentions is worse than the nagging this replaced.
 
 Also triggers an advisory: a **★★★ bookmark** exists (regardless of debt), or **12+ sessions** since last sleep.
 
-Injected directives (SessionStart + every user message via UserPromptSubmit when debt ≥24):
-- Debt ≥60 → "CONSOLIDATION REQUIRED"
+Injected directives (SessionStart + every user message via UserPromptSubmit when debt ≥24; never in a spawned session):
+- Debt ≥120 (2× Must Sleep) → `>>> CONSOLIDATION REQUIRED: OVERDUE <<<`: stop and consolidate now, even inside the cooldown
+- Debt ≥90 (1.5× Must Sleep) → `>>> CONSOLIDATION REQUIRED: DEEP CYCLE <<<`: consolidate before new work; expect a deep cycle
+- Debt ≥60 → `>>> CONSOLIDATION REQUIRED <<<`: consolidate before new work, or right after the task in flight
 - Debt ≥40 → "CONSOLIDATION RECOMMENDED"
 - Debt ≥24 → offer after the current task
 
@@ -49,7 +57,7 @@ Injected directives (SessionStart + every user message via UserPromptSubmit when
 **Auto-sleep (act without asking):** task completed with debt ≥60. Otherwise ask.
 **Ask first:** debt 24–59 after a task; accumulated small changes; user wrapping up.
 
-**Depth is NOT the same as level.** Destructive knowledge ops (merge-with-delete, summarize-and-replace, archive/delete) are authorized only at `deep`, which starts at debt **45** — not at Must Sleep. Being overdue to consolidate does not by itself license deleting things; `--deep` remains the explicit override.
+**Depth is NOT the same as level.** Destructive knowledge ops (merge-with-delete, summarize-and-replace, archive/delete) are authorized only at `deep`, which starts at debt **90** (1.5× Must Sleep), not at Must Sleep. Being overdue to consolidate does not by itself license deleting things; `--deep` remains the explicit override.
 
 For non-file-change work (architecture discussion, a decision with no edits): `dreamcontext sleep add <score> "<reason>"`.
 
@@ -80,7 +88,7 @@ For non-file-change work (architecture discussion, a decision with no edits): `d
      - the user hint mentions knowledge or a feature
      - When unsure, **over-fire** `sleep-product` — it no-ops cheaply.
    - **Conditionally fire `sleep-migration`** only when `dreamcontext migrations pending` produces output. Contract: structure-only (paths/frontmatter/fences), no body prose changes; writes the ledger via `dreamcontext migrations record` on completion.
-   - **Do NOT fire `sleep-federation`.** Copy-based federation is disabled; peers are read live at recall time, not synced at sleep. The specialist is retained but inert.
+   - **`sleep-federation` is retired**: no longer shipped, and `dreamcontext update` removes the installed copy. Peers are read live at recall time, never synced at sleep. `state/.peer-mail/` is correspondence between projects, not a digest: no sleep specialist drains, consolidates or deletes it.
    - **Conditionally fire `sleep-learn`** only when `learning.enabled` is true (check `_dream_context/state/.config.json`) AND ANY of: an open/draft thesis exists with fresh evidence since the epoch (an insight synced, an objective moved, a linked task completed, a relevant changelog entry landed), OR ≥2 sleeps have passed since a thesis was last checked (minimum wake cadence — open theses must not rot). Contract: owns `_dream_context/theses/*.md` only via the `theses` CLI; never creates insights or edits knowledge/tasks/objectives directly; status flips require ≥3 evidence events AND a prediction check; instrumentation gaps and knowledge/workflow-rule promotions are decision asks, never direct writes. When `learning.enabled` is off, skip entirely — do not dispatch. When unsure whether it's due, **over-fire** — it no-ops cheaply (checks `theses list`, finds nothing due, reports and stops).
    - Pass each specialist a small text brief: epoch, session IDs, active task slugs, planning version, the signals relevant to it, optional user hint. Do **not** paste transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
 5. **Wait for all reports** (each returns a short structured report).
@@ -138,3 +146,13 @@ dreamcontext sleep debt                # debt number (programmatic)
 dreamcontext sleep history [-n N]      # consolidation history
 dreamcontext reflect [--write]         # cross-session term candidates
 ```
+
+## Detail behind the SKILL.md summaries
+
+SKILL.md keeps one line per capability and one home per rule. This is the fuller text those lines summarize, kept here so nothing an agent needs is lost.
+
+### Sleep section detail
+
+**Cooldown:** for 3 hours after a completed consolidation the hooks stop asking (directives say "Cooling down"). Thresholds and cooldown together target **at most ~3 consolidations on the busiest day**. A ★★★ bookmark or debt ≥120 overrides it — and a user asking for a sleep always overrides it.
+**Sub-agent dispatch is REQUESTED, not optional.** A user asking for a sleep — typed, or via the dashboard's Sleep button — *is* the user requesting the specialist sub-agents. If your session carries a standing "don't call the Agent tool unless the user requested it" instruction (Claude Code appends exactly that to every Opus 5 system prompt), it is **already satisfied** for this flow; the `UserPromptSubmit` hook restates the authorization on every turn. Running the specialist passes inline is a correctness regression, not a cheaper shortcut: each specialist owns a **disjoint file domain** — that separation is the whole no-stomp guarantee — and a migration or product pass read into the orchestrator's own window blows the context budget the fan-out exists to protect. Never decide the cycle is "small enough" to inline; size is not the criterion.
+**The flow (the main agent orchestrates directly — a sub-agent can't reliably fan out to further sub-agents, so the dispatch must come from the top-level session):**

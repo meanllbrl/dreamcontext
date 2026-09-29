@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
@@ -111,8 +111,20 @@ export async function pruneStaleFiles(
   yes: boolean,
 ): Promise<{ removed: string[]; keep: string[] }> {
   const diff = diffManifests(oldManifest, newManifest);
-  const candidates = diff.removed.filter((p) => isSafeDeletePath(p));
-  const unsafe = diff.removed.filter((p) => !isSafeDeletePath(p));
+  // A stale path that is already gone needs no confirmation and no tracking: an
+  // install step (e.g. the retired-agent prune) may have removed it this run.
+  // lstat, not existsSync, so a dangling symlink still counts as present.
+  const onDisk = (rel: string): boolean => {
+    try {
+      lstatSync(join(projectRoot, rel));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const removedPresent = diff.removed.filter(onDisk);
+  const candidates = removedPresent.filter((p) => isSafeDeletePath(p));
+  const unsafe = removedPresent.filter((p) => !isSafeDeletePath(p));
 
   if (unsafe.length > 0) {
     console.log();
@@ -185,7 +197,7 @@ export async function pruneStaleFiles(
 export function registerUpdateCommand(program: Command): void {
   program
     .command('update')
-    .description('Refresh installed dreamcontext files (core skill, agents, hooks, packs, root instructions) to the latest shipped version')
+    .description('Refresh installed dreamcontext files (core skill, agents, hooks, packs) to the latest shipped version')
     .option('--packs-only', 'Only refresh installed packs, skip core skill/agents/hooks')
     .option('--core-only', 'Only refresh core skill/agents/hooks, skip packs')
     .option('-y, --yes', 'Skip confirmation prompts when deleting stale files')

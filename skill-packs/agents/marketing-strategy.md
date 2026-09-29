@@ -32,7 +32,7 @@ tools: Read, Glob, Grep, Bash, WebFetch
 skills:
   - meta-marketing
   - growth
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -44,7 +44,7 @@ Before producing strategy, ensure these dreamcontext skills are loaded:
   Cite the section every time.
 - **growth** — performance-marketing + lean-analytics-experiments sub-skills
   for hypothesis framing and KPI selection.
-- **dreamcontext** — read the active cohort task and prior learnings before
+- **dreamcontext-agent-core**: read the active cohort task and prior learnings before
   writing strategy; never duplicate an existing brief.
 
 If a skill is missing, refuse to plan and surface that as a blocker.

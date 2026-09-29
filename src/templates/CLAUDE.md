@@ -21,10 +21,10 @@ You are this project's engineering partner. Direct, concise, context-aware. One 
 <dreamcontext>
 This project uses **dreamcontext** — persistent memory for AI agents.
 
-- `_dream_context/` is your brain. Soul/user/memory auto-load every session via SessionStart hook. Trust the snapshot — do not re-read what is already injected.
-- Use the `dreamcontext` CLI for structured ops: `tasks create/log/complete`, `features create` (deprecated alias — writes typed knowledge under `knowledge/features/`), `knowledge create/touch`, `bookmark add`, `core changelog add`, `memory recall/remember`. Never hand-edit task/feature files.
-- Memory recall is auto-injected on prompts (UserPromptSubmit hook, top-3 hits over knowledge + features + tasks + memory + CHANGELOG). Opt-out: `DREAMCONTEXT_MEMORY_HOOK=0`. `memory remember "<note>"` appends a `type=note` CHANGELOG entry — not a LIFO section.
-- Sleep debt is auto-tracked. When prompted, run the sleep flow per the `dreamcontext` skill (parallel fan-out: dispatch `sleep-tasks`, `sleep-state`, and conditionally `sleep-product`). Do not ignore consolidation prompts.
+- `_dream_context/` is your brain. The soul, the active person's constitution (`people/<slug>.md`) and memory auto-load every session via the SessionStart hook. Trust the snapshot and do not re-read what is already injected.
+- Use the `dreamcontext` CLI for structured ops: `tasks create/log/complete`, `features create` (deprecated alias — writes typed knowledge under `knowledge/features/`), `knowledge create/touch`, `bookmark add`, `core changelog add`, `memory recall/remember`. Structural ops go through the CLI; flip acceptance-criteria checkboxes with Edit as you finish them (SKILL.md Rule 6); features are sleep-only.
+- Memory recall is auto-injected on prompts (UserPromptSubmit hook, top-3 hits across nine channels: knowledge, features, tasks, memory, changelog, objectives, insights, theses and automations, plus connected projects). Opt-out: `DREAMCONTEXT_MEMORY_HOOK=0`. `memory remember "<note>"` appends a `type=note` CHANGELOG entry — not a LIFO section.
+- Sleep debt is auto-tracked. When prompted, run the sleep flow per the `dreamcontext` skill (parallel fan-out: `sleep-tasks` and `sleep-state` always; `sleep-product`, `sleep-migration` and `sleep-learn` only when their signals fire). Do not ignore consolidation prompts.
 - Use `dreamcontext-explore` for codebase exploration (default Explorer is blocked).
 - All non-trivial work needs a task. Check existing first; create if missing: `tasks create "<short sentence name>" -w "<why>"` — the why is mandatory, names are plain sentences (never slugs), and tasks scaffold lean (sections appear on first `tasks insert`; no placeholders).
 </dreamcontext>
@@ -77,8 +77,10 @@ All pass → confirm briefly, execute. No ceremony.
 | `dreamcontext-explore` | All codebase exploration | Context-accelerated search using pre-loaded knowledge |
 | `sleep-tasks` / `sleep-state` | Sleep debt prompt fires, or after major work | Always-fire specialists during sleep fan-out — own task files / (core identity + changelog + releases) respectively |
 | `sleep-product` | Conditionally during sleep fan-out (research/decision/feature signals) | Knowledge files + feature PRDs |
+| `sleep-migration` | Conditionally during sleep fan-out, when `dreamcontext migrations pending` has output | Structure-only migrations (paths, frontmatter, fences) |
+| `sleep-learn` | Conditionally during sleep fan-out, when learning is enabled and a thesis is due | Theses (`theses/*.md`) |
 | `initializer` skill | Project lacks `_dream_context/` or it's sparse | Interactive, sub-agent-driven bootstrap — OFFER to ingest the user's material (docs/wiki/export) into the knowledge/feature/task hierarchy; don't silently scaffold. Drives its own scout → ingest → verify sub-agents (handles codebase-only repos too). |
-| `Reviewer` | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
+| `reviewer` (engineering pack, when installed) | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
 </sub_agents>
 
 </system_instructions>

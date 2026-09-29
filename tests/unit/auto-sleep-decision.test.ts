@@ -12,6 +12,8 @@ import { updateSetupConfig, writeBrainLocal, type BrainLocalState } from '../../
 import { buildAutoSleepPreamble, buildAutoSleepPrompt, SLEEP_AGENT_PROMPT } from '../../src/lib/sleep-prompt.js';
 import { emptyManifest, recordFile, writeManifest } from '../../src/lib/manifest.js';
 import { agentBaselineSha } from '../../src/lib/sleep-specialist-frontmatter.js';
+import { resolveMaxNewTasksPerCycle } from '../../src/lib/sleep-settings.js';
+import { createHash } from 'node:crypto';
 
 /**
  * C1 — every condition that must hold before a Stop hook may hand the brain to
@@ -237,6 +239,37 @@ describe('the consent fingerprint', () => {
     const before = currentAutoSleepFingerprint(project);
     updateSetupConfig(project, { disableNativeMemory: false });
     expect(currentAutoSleepFingerprint(project)).toBe(before);
+  });
+
+  it('does NOT change across the sleep-federation retirement: legacy payload, with and without sleep-federation.md installed', () => {
+    // The payload the fingerprint hashed BEFORE the retirement, rebuilt by hand
+    // for a brain whose six sleep agents are installed, untouched and un-overridden.
+    // Retiring a specialist is a routine package refresh; if it moved this hash,
+    // every approved background sleep would pause on upgrade.
+    const LEGACY_ROSTER = [
+      'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-federation', 'sleep-learn',
+    ];
+    const agentsDir = join(project, '.claude', 'agents');
+    mkdirSync(agentsDir, { recursive: true });
+    const m = emptyManifest();
+    for (const name of LEGACY_ROSTER) {
+      const shipped = `---\nname: ${name}\n---\n\n# Body\n`;
+      writeFileSync(join(agentsDir, `${name}.md`), shipped);
+      recordFile(m, `.claude/agents/${name}.md`, '1.0.0', 'agent', { baselineSha: agentBaselineSha(shipped) });
+    }
+    writeManifest(project, m);
+
+    const specialists: Record<string, unknown> = {};
+    for (const name of LEGACY_ROSTER) specialists[name] = { model: null, effort: null, digest: 'none' };
+    const legacy = createHash('sha256').update(JSON.stringify({
+      specialists,
+      cap: resolveMaxNewTasksPerCycle(undefined),
+      trigger: 'must-sleep',
+    }), 'utf-8').digest('hex');
+
+    expect(currentAutoSleepFingerprint(project)).toBe(legacy);
+    rmSync(join(agentsDir, 'sleep-federation.md'));
+    expect(currentAutoSleepFingerprint(project)).toBe(legacy);
   });
 });
 

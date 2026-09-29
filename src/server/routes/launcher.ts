@@ -53,6 +53,7 @@ import { GitSyncError } from '../../lib/git-sync/git.js';
 import { sanitizeModel, sanitizeEffort } from './agent-spawn-shared.js';
 import { ApiError } from '../../lib/task-backend/api-adapter.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
+import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
 import { readAppManifest } from '../../cli/commands/app.js';
 import {
   consolidationDepth,
@@ -1138,8 +1139,7 @@ export function buildSleepPrompt(depth: ConsolidationDepth): string {
     `close the cycle with \`dreamcontext sleep done "<one-paragraph summary>"\` to ` +
     `reset the debt. ${depthLine} I am explicitly requesting the sub-agent fan-out: ` +
     `dispatch the sleep specialists as PARALLEL sub-agents via the Agent tool ` +
-    `(sleep-tasks + sleep-state always; sleep-product when knowledge/feature signals ` +
-    `warrant; sleep-migration only if \`dreamcontext migrations pending\` has output) — ` +
+    `(${SLEEP_ROSTER_CLAUSE}) — ` +
     `do NOT run those passes inline in your own context. When finished, reply with a ` +
     `SHORT GitHub-flavored Markdown summary (a few bullets) of what was consolidated. ` +
     `Keep it concise.`

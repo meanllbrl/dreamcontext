@@ -1,4 +1,34 @@
 ---
+name: sleep-federation-agent-retired
+type: knowledge
+date: "2026-09-30"
+description: >-
+  Verbatim copy of the retired sleep-federation specialist prompt (agents/sleep-federation.md),
+  kept so an offline-mirror redesign of cross-vault sync has something to resume from. Not
+  shipped, not installed, never dispatched.
+tags:
+  - kind:archive
+  - topic:federation
+---
+
+# Retired: the sleep-federation specialist
+
+- **Retired:** 2026-09-30. Removed from `agents/`, from the tunable specialist list, and from the
+  sub-agent dispatch authorization. `dreamcontext update` deletes an uncustomized installed copy
+  (`.claude/agents/sleep-federation.md`).
+- **Why:** it implemented the COPY-based digest pipeline (`federation drain` then `federation sync`),
+  which broke single source of truth and has been an inert no-op since federation became a live,
+  read-only reference. Dispatching it wasted a cycle and returned nothing.
+- **What replaces it:** peers are read live at recall time (`crossVaultRecall`); a peer that should
+  learn something is told through `dreamcontext peer send` / `peer ask`. Peer mail
+  (`state/.peer-mail/`) is correspondence, not a digest, and no sleep specialist drains it.
+- **Context:** `knowledge/federation-cross-vault.md`.
+
+The prompt below is the last shipped version, unedited.
+
+---
+
+---
 name: sleep-federation
 description: >
   RETIRED — DO NOT DISPATCH. This specialist implemented the COPY-based

@@ -49,8 +49,10 @@ export const SLEEP_AGENT_PROMPT =
   'creating new ones), then close the cycle with `dreamcontext sleep done "<one-paragraph ' +
   'summary>"` to reset the debt. I am explicitly requesting the sub-agent fan-out: dispatch ' +
   'the sleep specialists as PARALLEL sub-agents via the Agent tool (sleep-tasks + sleep-state ' +
-  'always; sleep-product when knowledge/feature signals warrant; sleep-migration only if ' +
-  '`dreamcontext migrations pending` has output) — do NOT run those passes inline in your own ' +
+  'always; sleep-product, sleep-migration and sleep-learn only when their signals fire ' +
+  '(sleep-product: knowledge/feature/research signals; sleep-migration: `dreamcontext ' +
+  'migrations pending` has output; sleep-learn: learning is enabled and a thesis is due)) — ' +
+  'do NOT run those passes inline in your own ' +
   'context. When finished, reply with a SHORT Markdown summary of what was consolidated.';
 
 /** Ask THIS project's Agent surface to open + run a "Sleep" consolidation session. */

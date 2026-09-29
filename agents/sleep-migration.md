@@ -10,7 +10,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 model: claude-sonnet-5
 effort: low
 skills:
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 <!-- Model: claude-sonnet-5 · effort low. Chosen 2026-09-05 because it applies a registered, deterministic structural migration. There is nothing to decide.

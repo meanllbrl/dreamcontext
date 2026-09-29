@@ -12,7 +12,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 model: claude-sonnet-5
 effort: low
 skills:
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 <!-- Model: claude-sonnet-5 · effort low. Chosen 2026-09-05 because it re-tests open theses on a fixed rubric and no-ops cheaply when nothing is due.
@@ -45,8 +45,8 @@ skills:
 
 2. **Quality bar + recall-dedup before creating ANY new thesis.** A thesis is
    an OPTIMIZATION claim, not an observation — before anything else, run the
-   candidate through the SO-WHAT test (full bar in the skill's
-   `references/learning.md`): *if validated, what do we CHANGE, and which
+   candidate through the SO-WHAT test (full bar in
+   `.claude/skills/dreamcontext/references/learning.md`): *if validated, what do we CHANGE, and which
    outcome that matters (revenue, retention, north-star, an objective's KR)
    improves?* No concrete answer → not a thesis. "Step X loses 84%" or
    "page Y is broken" restate a metric; they are observations — attach them

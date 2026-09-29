@@ -41,7 +41,7 @@ describe('sub-agent dispatch authorization', () => {
     it('covers every fan-out flow, so no skill is left arguing its own case', () => {
       for (const flow of [
         'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration',
-        'sleep-federation', 'sleep-learn',
+        'sleep-learn',
         'curator', 'initializer', 'goal-skill', 'dreamcontext-deep-research',
         'council', 'multi-review',
         // The Plan and Develop chat MODES are here too: their briefings are system-prompt
@@ -52,6 +52,10 @@ describe('sub-agent dispatch authorization', () => {
       ]) {
         expect(SUBAGENT_DISPATCH_AUTHORIZATION).toContain(flow);
       }
+    });
+
+    it('no longer authorizes the retired sleep-federation specialist', () => {
+      expect(SUBAGENT_DISPATCH_AUTHORIZATION).not.toContain('sleep-federation');
     });
 
     it('stays scoped — it is not a blanket licence to spawn agents', () => {

@@ -1,0 +1,41 @@
+[
+  {
+    "date": "2026-01-05",
+    "type": "feat",
+    "scope": "snapshot",
+    "summary": "Section flush boundaries became individually addressable",
+    "description": "Each snapshot block now seals into a named budget section instead of one flat parts array, so a section can carry its own demotion ladder without moving any bytes in the full render.",
+    "authors": [
+      "ada-fixture"
+    ]
+  },
+  {
+    "date": "2026-01-04",
+    "type": "fix",
+    "scope": "budget",
+    "summary": "Demotion rungs resolve lazily",
+    "description": "Rungs are thunks now, so an under-budget vault resolves none of them and pays nothing on the SessionStart hot path.",
+    "authors": [
+      "bob-fixture"
+    ]
+  },
+  {
+    "date": "2026-01-03",
+    "type": "test",
+    "scope": "fixtures",
+    "summary": "Golden fixture pinned to a recorded base SHA",
+    "description": "The expected render is generated in a detached worktree at the recorded BASE_SHA so it can never be circular with the change under test."
+  },
+  {
+    "date": "2026-01-02",
+    "type": "chore",
+    "scope": "fixtures",
+    "summary": "Fixture vault seeded"
+  },
+  {
+    "date": "2026-01-01",
+    "type": "docs",
+    "scope": "fixtures",
+    "summary": "Recorded why this vault has no dated frontmatter"
+  }
+]

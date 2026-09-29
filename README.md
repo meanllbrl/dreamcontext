@@ -80,7 +80,7 @@ An agent can only run your project if it *remembers* your project. Everything in
   <img src="public/image/diagram-memory.png" alt="The memory mechanism: Capture (hooks and bookmarks record decisions while you work) → Sleep (agents fan out, distill sessions into human-readable knowledge) → Start ready (the next session opens with the full picture pre-loaded) — every session sharpens the next" width="880" />
 </p>
 
-- **Capture** — while you work, hooks and bookmarks record what matters — decisions, constraints, discoveries — with zero effort from you. Seven hooks do it automatically: Stop records what happened, SessionStart injects everything before the first message, SubagentStart briefs sub-agents, PreToolUse blocks blind exploration when curated context exists, UserPromptSubmit surfaces sleep debt and relevant memories on every message, PostToolUse auto-formats and type-checks edited files, PreCompact saves state before context compaction. Bookmarks tag the important moments with salience levels; critical ones trigger immediate consolidation advisories.
+- **Capture** — while you work, hooks and bookmarks record what matters — decisions, constraints, discoveries — with zero effort from you. Seven hooks do it automatically: Stop records what happened, SessionStart injects everything before the first message, SubagentStart briefs sub-agents (a budgeted briefing of about 12K chars), PreToolUse blocks blind exploration when curated context exists, UserPromptSubmit surfaces sleep debt and relevant memories on every message, PostToolUse auto-formats and type-checks edited files, PreCompact saves state before context compaction. Bookmarks tag the important moments with salience levels; critical ones trigger immediate consolidation advisories.
 - **Sleep** — a brain doesn't file raw experience; it consolidates during sleep. So does dreamcontext: when enough has happened, agents fan out in parallel — reading bookmarks first, distilling transcripts for high-signal content, extracting recurring patterns, promoting learnings, cleaning stale entries — and fold it all back into human-readable files. The single source of truth, refreshed.
 - **Start ready** — the next session opens with the full picture already loaded: identity, decisions, active work, the knowledge index. Zero tool calls. Anything deeper is one recall away — instant, local, zero tokens. The snapshot stays inside its budget as the brain grows: sections step down through curated summaries that keep every name and file path, never a blind cut through the middle of a file, and `dreamcontext doctor` tells you when it is time to trim.
 
@@ -246,6 +246,8 @@ your-project/
 │   │   └── SKILL.md            # Interactive brain refactor (drives the curator-* agents)
 │   ├── skills/dreamcontext-deep-research/
 │   │   └── SKILL.md            # Iterative corpus synthesis (fans out dreamcontext-explore searchers)
+│   ├── skills/dreamcontext-agent-core/
+│   │   └── SKILL.md            # Small operating core preloaded into dreamcontext's own sub-agents
 │   ├── agents/
 │   │   ├── initializer-scout.md     # bootstrap: intake → ingestion manifest
 │   │   ├── initializer-ingestor.md  # bootstrap: fan-out write into the hierarchy
@@ -256,8 +258,8 @@ your-project/
 │   │   ├── dreamcontext-explore.md
 │   │   ├── sleep-tasks.md       # RemSleep specialists —
 │   │   ├── sleep-state.md       #   the agent fans out to
-│   │   ├── sleep-product.md     #   these three in parallel
-│   │   ├── sleep-federation.md  # disabled (read-only federation; copy-sync parked on roadmap)
+│   │   ├── sleep-product.md     #   these in parallel (tasks + state always, product when signaled)
+│   │   ├── sleep-learn.md       # conditional: when learning is enabled and a thesis is due
 │   │   └── sleep-migration.md   # conditional: when a migration is pending
 │   └── settings.json           # 7 hooks (see CLI Reference → System)
 ```
@@ -801,7 +803,7 @@ dreamcontext sleep done <summary>             # Complete consolidation, reset
 dreamcontext transcript distill <session_id>  # Structural filter of a session transcript (pure Node, no AI)
 ```
 
-Sleep debt is tracked automatically via hooks; the UserPromptSubmit hook reminds on every user message, so the agent cannot dismiss it. `transcript distill` extracts high-signal content (user messages, decisions, code changes, errors, bookmarks) for the RemSleep specialists' selective deep analysis.
+Sleep debt is tracked automatically via hooks; the UserPromptSubmit hook reminds on every user message, so the agent cannot dismiss it. Only real work counts: sessions dreamcontext itself spawns (Develop and goal-skill builders, automation runs, background sleep) are recorded but add no debt, and the warning grows firmer in three steps past Must Sleep (required, deep cycle, overdue). `transcript distill` extracts high-signal content (user messages, decisions, code changes, errors, bookmarks) for the RemSleep specialists' selective deep analysis.
 
 ### System
 

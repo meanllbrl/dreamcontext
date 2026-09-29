@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readSetupConfig, updateSetupConfig, KNOWN_SLEEP_MODELS, SLEEP_SPECIALISTS } from '../../src/lib/setup-config.js';
+import {
+  readSetupConfig, updateSetupConfig, KNOWN_SLEEP_MODELS, SLEEP_SPECIALISTS, RETIRED_SLEEP_SPECIALISTS,
+} from '../../src/lib/setup-config.js';
 import {
   DEBT_DROWSY,
   DEBT_SLEEPY,
@@ -155,6 +157,17 @@ describe('sanitizeSleep (via readSetupConfig)', () => {
     expect(readSetupConfig(root)?.sleep?.specialists).toEqual({ 'sleep-tasks': { effort: 'low' } });
   });
 
+  it('an old config still carrying a sleep-federation override parses, and the retired entry is dropped', () => {
+    writeConfig({
+      specialists: {
+        'sleep-tasks': { effort: 'low' },
+        'sleep-federation': { model: 'claude-sonnet-5', effort: 'low' },
+      },
+    });
+    expect(() => readSetupConfig(root)).not.toThrow();
+    expect(readSetupConfig(root)?.sleep?.specialists).toEqual({ 'sleep-tasks': { effort: 'low' } });
+  });
+
   it('drops a model that would not be shell-safe (the sanitizeModel gate)', () => {
     writeConfig({ specialists: { 'sleep-tasks': { model: 'opus; rm -rf /', effort: 'low' } } });
     expect(readSetupConfig(root)?.sleep?.specialists).toEqual({ 'sleep-tasks': { effort: 'low' } });
@@ -195,10 +208,17 @@ describe('updateSetupConfig persists the sleep block', () => {
 });
 
 describe('the known-model list and specialist roster', () => {
-  it('covers the six specialists the sleep flow dispatches', () => {
+  it('covers the five specialists the sleep flow dispatches', () => {
     expect([...SLEEP_SPECIALISTS]).toEqual([
-      'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-federation', 'sleep-learn',
+      'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-learn',
     ]);
+  });
+
+  it('keeps the retired sleep-federation off the tunable roster', () => {
+    expect(RETIRED_SLEEP_SPECIALISTS).toEqual(['sleep-federation']);
+    for (const retired of RETIRED_SLEEP_SPECIALISTS) {
+      expect(SLEEP_SPECIALISTS as readonly string[]).not.toContain(retired);
+    }
   });
 
   it('every known model is itself shell-safe, so the UI can offer it unescaped', () => {

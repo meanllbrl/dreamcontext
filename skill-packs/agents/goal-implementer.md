@@ -28,7 +28,7 @@ maxTurns: 60
 color: green
 skills:
   - engineering
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Forked from the planner — role re-binding (v2)
@@ -53,7 +53,7 @@ free context, not a promotion. **You are NO LONGER the planner** — you are the
   boundaries, testing, idempotency, naming). Code that ignores it fails Phase 5 review.
   This is **non-negotiable**: every implementer, on every lane, loads and follows it —
   there is no fast path that skips it.
-- **dreamcontext** — the task at `_dream_context/state/<slug>.md` is your spec and
+- **dreamcontext-agent-core**: the task at `_dream_context/state/<slug>.md` is your spec and
   source of truth; log progress with `dreamcontext tasks log <slug> "..."`.
 
 If the task touches a domain skill (`firebase-firestore`, `firebase-cloud-functions`,

@@ -12,9 +12,9 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 |---|---|
 | `setup` | **Front door.** One-shot: init + install-skill + install-instructions, and on macOS offers to install the desktop app. Flags: `--defaults` (claude, no packs, single-product, no prompts), `-y/--yes`, `--platforms <list>`, `--packs <list>`, `--multi-product <list>`, `--keep-native-memory`, `--install-app` (force desktop app), `--skip-app`. (`DREAMCONTEXT_INSTALL_NO_APP=1` also skips the app.) |
 | `init` | *(deprecated standalone)* Scaffold `_dream_context/` only. Flags: `-y/--yes`, `--name`, `--description`, `--user`, `--stack`, `--priority`, `--platforms <list>`, `--multi-product <list>`. |
-| `install-skill` | *(deprecated standalone)* Install skill + agents + hooks. Flags: `--platforms <list>`, `--packs [names...]` (interactive if none), `--skill <name>` (one sub-skill), `--list`. |
-| `install-instructions` | *(deprecated standalone)* Install managed root instructions (CLAUDE.md / AGENTS.md). Flags: `--platforms <list>`, `--mode append\|replace\|skip`. (`install-claude-md` is a legacy alias.) |
-| `update` | Refresh THIS project's installed skill, agents, hooks, packs, references, and root instructions to the latest shipped version. Flags: `--packs-only`, `--core-only`, `-y/--yes`. **Exit code is load-bearing:** `1` when no platform is installed (it prints `No installed platforms found. Run \`dreamcontext install-skill\` first.` and refreshes nothing) or when the refresh throws; `0` only when a refresh actually ran. A cancelled interactive prompt (Ctrl-C) stays `0` — unreachable without a TTY. |
+| `install-skill` | *(deprecated standalone)* Install skill + agents + hooks, plus the small `dreamcontext-agent-core` skill that dreamcontext's own sub-agents preload instead of this full skill. Flags: `--platforms <list>`, `--packs [names...]` (interactive if none), `--skill <name>` (one sub-skill), `--list`. |
+| `install-instructions` | *(deprecated standalone)* Install the managed CLAUDE.md block. Flags: `--platforms <list>`, `--mode append\|replace\|skip`. (`install-claude-md` is a legacy alias.) |
+| `update` | Refresh THIS project's installed skill (with `dreamcontext-agent-core`), agents, hooks, packs and references to the latest shipped version, and remove retired agents. It does not rewrite the managed CLAUDE.md block: only `setup` and `install-instructions` write it. Flags: `--packs-only`, `--core-only`, `-y/--yes`. **Exit code is load-bearing:** `1` when no platform is installed (it prints `No installed platforms found. Run \`dreamcontext install-skill\` first.` and refreshes nothing) or when the refresh throws; `0` only when a refresh actually ran. A cancelled interactive prompt (Ctrl-C) stays `0` — unreachable without a TTY. |
 | `upgrade` | Upgrade the CLI, then update the desktop app (if installed) and offer to refresh **every registered project** — one command brings the whole machine current. Flags: `--check` (print current vs latest, don't install), `-y/--yes` (refresh app + all projects non-interactively). |
 | `doctor` | Validate `_dream_context/` structure and report issues — including two size checks that make an invisible failure visible. **Snapshot size:** `error` when the never-evict tier ALONE exceeds the 20,000-char harness limit (no ladder rung can fix that — the usual cause is an oversized `core/0.soul.md` or `people/<slug>.md`, which both render verbatim and must be slimmed by extraction); `warn` when the rendered snapshot exceeds 20,000 chars (the harness persists it to a file and injects only a 2,000-char blind preview); `warn` when it is past the 18,000-char ladder target (4,500 tok × 4) but still lands inline; `ok` otherwise, printing the size and its % of the limit. Under `DREAMCONTEXT_SNAPSHOT_BUDGET=off` the message names the *disabled ladder* rather than blaming core files. **Core-file size:** one `warn` per `core/[0-9]*.md` **and per `people/<slug>.md`** over the ~4,000-char or ~150-line ceiling, naming chars first (chars are what bind — see [Snapshot budget](#snapshot-budget--the-harness-limit)). **People:** see the check matrix in [People](#people--who-works-in-this-vault). Flags: `--heal-links` (apply the deterministic task↔feature fixes first), `--json` (machine-readable diagnostics — see [the diagnostic contract](#doctor---json--the-diagnostic-contract)). |
 | `config show` | Print project config (platforms, packs, products, people, native-memory, shareable, task backend). |
@@ -37,6 +37,15 @@ For agents (and scripts), `doctor --json` replaces the human output with one JSO
 **JSON data files are checked for shape, not just parseability.** `core/CHANGELOG.json` and `core/RELEASES.json` must be a **bare array**; `core/taxonomy.json`, `state/.sleep.json` and `state/.platforms.json` must be an **object**. A file that parses but holds the wrong top-level shape used to report `ok` — which is how a vault hand-scaffolded as `{"entries": []}` / `{"releases": []}` could fail `core releases add` loudly while the snapshot's recent-changelog section and `memory recall --types changelog` came back empty *silently*. Three codes now cover it: `doctor/json-wrapped-array` (**warn** — the array is wrapped in an object; readers unwrap it and the next write normalises the file, so nothing is lost), `doctor/json-not-array` and `doctor/json-not-object` (**error** — no reader can recover the shape). Today's `init` writes `[]` for both files, so these only ever fire on a vault created some other way.
 
 ---
+
+### Hooks that offer the initializer, and the setup commands in full
+
+**The hooks now surface this for you.** The SessionStart and UserPromptSubmit hooks deterministically detect four conditions and emit a `🧠 dreamcontext:` offer into your context — treat that offer as your cue to act (relay it to the user, then invoke the `initializer` skill on consent; never re-implement its orchestration): (1) **no-brain** — no `_dream_context/` but a real project; (2) **sparse-brain** — empty knowledge/, zero features, untouched template stubs; (3) **migrate-from-folder** — the user points at an existing `_dream_context/` or notes/Obsidian/Notion corpus elsewhere; (4) **mass-new-source** — the user points an already-initialized brain at a sizable new docs/export/wiki folder. (Set `DREAMCONTEXT_INITIALIZER_HOOK=0` to silence.)
+
+- `dreamcontext setup` — the **front door**: init + install-skill + install-instructions in one step, and on macOS offers to install the desktop app too (`--install-app` to force, `--skip-app` to opt out). (`init`, `install-skill`, `install-instructions` still exist for advanced/scripted use but are deprecated as standalone steps.)
+- `dreamcontext update` — refresh THIS project's installed skill, agents, hooks, packs, and reference set to the latest shipped version. **Exits 1 when it refreshed nothing** (no installed platform — run `install-skill` first) or when the refresh throws, so a script may trust the exit code.
+- `dreamcontext upgrade` — upgrade the CLI, then (one command) update the desktop app if installed and offer to refresh **every registered project** to match (`--yes` does it all non-interactively). **Keeping projects + app updated is the CLI's job — you should not run per-project updates by hand or ask the user to.**
+- `dreamcontext doctor` — validate `_dream_context/` structure. Add `--json` for the machine-readable diagnostic contract (stable `code` per check, plus `subject`/`evidence`/`supportedFixes` where annotated) — the form sub-agents and repair loops should consume ([cli-reference.md](references/cli-reference.md)).
 
 ## People — who works in this vault
 
@@ -478,10 +487,11 @@ The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-ch
 | `DREAMCONTEXT_AUTO_UPGRADE=0` | Disable automatic CLI self-upgrade. |
 | `DREAMCONTEXT_VERSION_CHECK=0` | Disable the version-check nag. |
 | `DREAMCONTEXT_PERSON` | **Rung 1** of active-person resolution: the person slug for THIS process (constitution rendering + author stamping). Wins over the machine pin and git email. Must be a real roster key — an invalid value is rejected, recorded in the resolution `reason`, and resolution falls through to the next rung. See [People](#people--who-works-in-this-vault). |
-| `DREAMCONTEXT_SNAPSHOT_BUDGET` | Token budget cap for the SessionStart snapshot (default 4,500 tok ≈ 18,000 chars; `0`/`off` disables the ladder; clamped to a 2,000-tok floor). See [Snapshot budget](#snapshot-budget--the-harness-limit). |
+| `DREAMCONTEXT_SNAPSHOT_BUDGET` | Token budget cap for the SessionStart snapshot (default 4,500 tok ≈ 18,000 chars; `0`/`off` disables the ladder; clamped to a 2,000-tok floor). `0`/`off` also lifts the [sub-agent briefing budget](#sub-agent-briefing-budget); a number applies to the SessionStart snapshot only. See [Snapshot budget](#snapshot-budget--the-harness-limit). |
 | `DREAMCONTEXT_SKILLS_HOOK=0` | Disable skill-suggestion injection on prompts. |
 | `DREAMCONTEXT_DRIFT_CHECK` / `DREAMCONTEXT_APP_AUTO_UPDATE` | Asset-drift check / desktop app auto-update toggles. |
 | `DREAMCONTEXT_DEBUG` | Verbose diagnostics (e.g. recall decisions to stderr). |
+| `DREAMCONTEXT_SPAWNED` | Set by dreamcontext on the headless sessions it launches (`develop` on Develop builders, `peer` on peer runs, `lab` on report commentary). The hooks record such a session with a `spawn` marker, add no sleep debt for it, skip bookmark auto-capture and inject no sleep directive. Never set it in your own shell: every session under it would stop counting. The dashboard server clears it at boot so no pane inherits it. |
 
 ---
 
@@ -527,3 +537,107 @@ The chain **ends at `theses`**. Lab has no rungs at all (every insight's name + 
 | > 20,000 chars | A `⚠️ CONTEXT IS INCOMPLETE` banner directly under the H1, deliberately **inside the 2,000-char preview window** so it survives the harness cut. It names the never-evict byte count, the sections at their floor, and the oversized core files to trim. |
 
 **When you see the banner:** run `dreamcontext doctor`, then trim the files it flags (extract detail to `knowledge/`, keep a summary + reference) — starting with `core/0.soul.md` and the active `people/<slug>.md`, since those two the ladder cannot help with at all. See [troubleshooting.md](troubleshooting.md).
+
+## Sub-agent briefing budget
+
+Every sub-agent starts with a briefing from the SubagentStart hook (`hook subagent-start`). It is budgeted separately from the SessionStart snapshot: **at most 12,000 chars in total**, the budget note included, with a ladder body budget of 2,900 tokens (about 11,600 chars). A small brain renders in full; a mature one demotes through the same curated ladder the snapshot uses, and nothing is raw-truncated.
+
+- **Never demoted:** the header (the MANDATORY check-context-first line and the recall directive), an active task-format override, the project line with linked repos, and the task-awareness block.
+- **Demotion order, cheapest loss first:** objectives, then the active task list, then the core-files index, then the knowledge index, then features. Features go last because the briefing tells the agent to check them before searching.
+- **What always stays named:** every pinned knowledge file (with its path) and every pattern; features and other knowledge are listed by name or counted in a `+N` tail, never silently dropped.
+- **Recovery:** when anything was demoted, the budget note names the sections and the commands that recover the rest: `dreamcontext memory recall "<keywords>"` and `dreamcontext knowledge index`.
+- **Switch:** `DREAMCONTEXT_SNAPSHOT_BUDGET=off` (or `0`/`false`) lifts this budget as well as the snapshot's; a numeric value applies to the SessionStart snapshot only.
+
+## Detail behind the SKILL.md summaries
+
+SKILL.md keeps one line per capability and one home per rule. This is the fuller text those lines summarize, kept here so nothing an agent needs is lost.
+
+### What the SessionStart snapshot contains
+
+- **Other People (this vault)** — the rest of the roster, one `- **Name** (\`person:<slug>\`) — role` line each, on multi-person vaults only (a solo vault renders zero ceremony about people)
+- **Extended core files index** — names/types of style guide, tech stack, system flow
+- **Active tasks** — status, priority, last updated, and the objectives each serves (answer "which tasks are active?" from this)
+- **Objectives (roadmap)** — active + recently-finished objectives with progress %, target vs forecast, and slip flags. **Weigh decisions against these outcomes** — they are WHAT the project is driving toward
+- **Lab insights** — cached analytics metrics (title / latest value / staleness / group) when `lab/insights/` is non-empty. Answer "what's our MRR/WAU?" from it; `dreamcontext lab sync` only when stale
+- **Bookmarks** — tagged important moments from prior sessions, by salience
+- **Contextual reminders** — triggers matching active tasks (prospective memory)
+- **Recent changelog** — top entries detailed, next ~10 titles-only
+- **Connected projects** — readable federation peers (if any)
+- **Active product knowledge** — injected when the active task has a `product:` field (multi-product)
+**On a mature brain this shrinks — but never blindly, and never the two constitutions.** The snapshot is bounded by the harness's 20,000-char hook-output limit. Past it, sections demote through *curated* summaries, cheapest-loss first — memory's decisions collapse to titles, inventories to names + paths (every file path stays; `Read` or `memory recall` recovers the full text), and the chain ends at Lab. **`core/0.soul.md` and the active `people/<slug>.md` are exempt — the agent's constitution and the person's constitution render verbatim at every budget**, so either one over the limit raises the banner and a `doctor` error instead. The fix is to slim the file (extract conditional rules to `knowledge/patterns/`; move anything that is not about the person out of that person's constitution), not to compress it. The *roster* of other people is a different thing entirely and does demote (rank 110) — but every person stays NAMED with their `person:<slug>` tag, never a bare count. Some sections have floors and never shrink below name + value (Lab metrics, objectives, hypotheses, ★★★ bookmarks). If it *still* cannot fit, a loud **`⚠️ CONTEXT IS INCOMPLETE`** banner sits directly under the snapshot's H1 and names the fix — believe it, and act on it before assuming the brain is empty. Full ladder → [cli-reference.md](references/cli-reference.md).
+
+### Loading files on demand
+
+- **HISTORY**: "What happened, in order?" — ship events over time. `dreamcontext changelog list --page <n>` (paginated, `--grep`/`--type`/`--scope`); recall answers "where did we do X?", this answers the timeline
+- `knowledge/features/<name>.md`: Feature scoping, sprint work, planning, "what's next"
+- `core/3.style_guide_and_branding.md`: UI/UX, frontend, branding, copy, design
+- `core/4.tech_stack.md`: Architecture, integrations, dependencies, infra
+- `knowledge/data-structures/<product>.md` (or `default.md`): Database, API design, schema, data modeling
+- `knowledge/<topic>.md`: Deep context on a specific topic (index is auto-loaded)
+- `state/<task>.md`: Continuing previous work — the Changelog section is where you left off
+- `core/CHANGELOG.json` / `RELEASES.json`: Bug investigations, "what changed/shipped recently?"
+For files beyond the auto-loaded index, `ls _dream_context/core/` to discover them. Projects vary — never assume a fixed list.
+
+### Skill triage: the skills dreamcontext ships and their triggers
+
+   - UI / frontend / components, design systems → `design` + `engineering`
+   - Backend, APIs, security, refactor, testing, code standards → `engineering`
+   - Thorough multi-aspect review of a diff / PR → `multi-review`
+   - Driving a big feature end-to-end (plan → review → implement → validate) → `goal-skill`
+   - Meta / Facebook / Instagram ads, ROAS, cohorts → `meta-marketing` + `growth`
+   - Acquisition, retention, push, ASO, paywalls, monetization → `growth`
+   - Brand-aligned writing (emails, decks, posts) → `brand-voice`
+   - Multi-perspective decisions, "let's debate" → `council`
+   - Writing / reviewing system prompts or agent definitions → `system-prompts`
+   - Diagrams / boards in the vault → `excalidraw`
+   - Watching / transcribing a video → `video-watching`
+   - Discovering or validating a business idea → `business-idea-discovery` / `business-idea-validation`
+
+### Rule 12 in full, and bookmark rules
+
+12. **Be surgical.** Only touch what changed. Core files carry two anti-bloat ceilings: ~150 lines **and ~4,000 characters** (`CORE_FILE_CHAR_CEILING`). The character one is what actually binds — a 69-line file of dense bullets is still 13KB, and the SessionStart snapshot pays that cost every single session — so measure bytes, not lines. `dreamcontext doctor` reports both. Over either ceiling: extract detail to knowledge, keep a summary + reference. LIFO inserts go at the top (CHANGELOG, task changelog, constraint sections).
+- Every bookmark during task work MUST include `--task <slug>` — this is how sessions link to tasks, so the sleep agent knows which task docs to update. **Don't know the slug? Find it (`dreamcontext tasks list`) before bookmarking, not during sleep** — the CLI warns on stderr when you skip it, and an unaddressed bookmark only becomes findable again by reading the session transcript, which `sleep done` eventually GCs. Saved one without it: `dreamcontext bookmark relink <id> --task <slug>` (ids come from `bookmark list`).
+- **Minimum one bookmark per task-modifying session.** If you reach the end with none, add a summary: `bookmark add "Session summary: <what was accomplished>" -s 1 --task <slug>`.
+- Salience: ★(1) notable · ★★(2) architectural / preference / correction · ★★★(3) critical constraint / breaking change.
+
+### Linked repos
+
+- **Linked repos**: One brain governs **bare code repos** (products in their own GitHub repos, no `_dream_context/`): the shared `{name,url}` travels with the team; a machine-local `url→path` registry (`~/.dreamcontext/linked-repos.json`, never synced) resolves each on THIS machine. `dreamcontext link add\|clone\|ls\|rm`, a session-start present/missing glance, a trust-gated clone, a dashboard panel. A **pointer to code, not a sync**.
+
+### Brain layout (full tree)
+
+```
+_dream_context/
+├── core/
+│   ├── 0.soul.md  2.memory.md            ← slot 1 is RETIRED (the user file became people/)
+│   ├── 3.style_guide_and_branding.md  4.tech_stack.md  6.system_flow.md
+│   ├── CHANGELOG.json  RELEASES.json  taxonomy.json
+├── people/                           ← WHO works in this vault (`dreamcontext people`)
+│   ├── people.json                   ←   the structural roster: {version, people:{<slug>:{name,emails[],role?}}}
+│   └── <slug>.md                     ←   one constitution per person — verbatim in the snapshot when active,
+│                                     ←   NOT knowledge and NOT recall-indexed
+├── knowledge/                        ← Deep research — grouped by context, indexed recursively
+│   ├── <topic>.md                    ←   flat top-level docs are fine
+│   ├── <context>/                    ←   PROMOTED: group related docs into a context folder
+│   │   ├── <doc>.md                  ←     the context's knowledge
+│   │   └── <title>/<title>.excalidraw.md  ← diagrams live INSIDE their context folder
+│   ├── features/<feature>.md         ← Feature PRDs, typed knowledge (type: feature; may include product:)
+│   ├── data-structures/{default,<product>}.md   ← schemas (recall-indexed; ```sql body)
+│   └── products/<product>.md         ← per-product knowledge (multi-product)
+├── lab/                              ← Analytics insights (curated metrics — NOT knowledge)
+│   ├── insights/<slug>.md            ←   insight manifests (`dreamcontext lab create`)
+│   ├── cache/<slug>.json             ←   synced series snapshots (never hand-edit)
+│   ├── scripts/<slug>.mjs            ←   custom-script adapters (run locally with your credentials)
+│   └── credentials.json              ←   gitignored — write ONLY via `lab credentials set`
+├── overrides/
+│   ├── task.md                       ← OPTIONAL: project task template + custom_fields schema (briefed to agents)
+│   └── chat-html-kit.css             ← OPTIONAL: brand override for the Chat view's rendered-HTML kit
+├── state/
+│   ├── <task>.md                     ← Active tasks (frontmatter may include product:, start_date, due_date, custom_fields)
+│   ├── .config.json                  ← platforms, packs, multiProduct, taskBackend, peopleIdentity, linkedRepos…
+│   │                                    (the `people` roster key was RETIRED in 0.23.0 → people/people.json)
+│   ├── .brain-local.json             ← gitignored: machine-local state incl. the active-person pin
+│   │                                    (linked-repo LOCAL paths live in ~/.dreamcontext/linked-repos.json, never synced)
+│   ├── .active-version.json          ← current sprint (active planning version)
+│   ├── .sleep.json  .secrets.json (gitignored)  .active-task
+```

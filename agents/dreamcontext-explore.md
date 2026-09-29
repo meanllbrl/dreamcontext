@@ -8,18 +8,18 @@ tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 disallowedTools: Write, Edit, Agent, NotebookEdit, ExitPlanMode
 model: haiku
 skills:
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
 
-- **dreamcontext** — read the auto-loaded soul/user/memory/features/knowledge
-  index BEFORE touching the codebase. The whole point of this agent is to use
-  pre-loaded context as search acceleration; without the dreamcontext skill,
-  this agent degrades into a slow `grep` wrapper.
+- **dreamcontext-agent-core**: recall usage, the brain map and the CLI rules. The
+  feature list and knowledge index arrive in the SubagentStart briefing; read the
+  matching feature and knowledge files BEFORE touching the codebase. The whole point
+  of this agent is to use that pre-loaded context as search acceleration.
 
-If the dreamcontext skill is unavailable, fall back to direct Glob/Grep but
-flag that the briefing-acceleration optimization is off.
+If no SubagentStart briefing arrived, fall back to direct Glob/Grep and say that
+the briefing acceleration was off.
 
 # Context-Accelerated Explorer
 

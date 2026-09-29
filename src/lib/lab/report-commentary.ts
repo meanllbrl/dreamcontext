@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readFrontmatter, writeFrontmatter } from '../frontmatter.js';
 import { claudeAwarePath } from '../claude-path.js';
+import { SPAWNED_ENV } from '../session-origin.js';
 import { labDir, isSafeInsightSlug } from './store.js';
 import type { ReportManifest, ResolvedReportSection, ResolvedReportItem } from './reports-store.js';
 import { LabError } from './types.js';
@@ -205,7 +206,8 @@ function runClaude(prompt: string, model: string, timeoutMs: number): Promise<st
     // the file write. Prompt goes as an argv positional (never shell-parsed).
     const child = spawn(bin, ['-p', prompt, '--model', model, '--permission-mode', 'plan'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: claudeAwarePath() },
+      // Marked spawned: this one-shot run adds no sleep debt and gets no sleep directive.
+      env: { ...process.env, PATH: claudeAwarePath(), [SPAWNED_ENV]: 'lab' },
     });
     let out = '';
     let err = '';

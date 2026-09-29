@@ -121,3 +121,12 @@ Failures are swallowed by design (they never fail sleep or block a session). Whe
 ## `brain` command surface (5 subcommands)
 
 `status`, `enable`, `disable`, `scrub`, `sync`. (`sync` flags: `--pull-only`, `--push-only`, `--strict`, `--continue`, `--resume` — the last two are attended-only; never drive them unattended.) `brain enable` turns cloud sync ON (whole-project `full-repo` sync — needs a GitHub `origin`); `brain disable` reverts to `in-tree`. Merge internals live in the `/dream-sync` skill and `skill-sync/references/merge-rules.md`; full feature status in `knowledge/features/brain-repo-sync.md`.
+
+## Detail behind the SKILL.md summaries
+
+SKILL.md keeps one line per capability and one home per rule. This is the fuller text those lines summarize, kept here so nothing an agent needs is lost.
+
+### Capability summary and routing
+
+- **✅ Team brain sync (whole project)**: **Yes — a team OR one person across machines can share ONE brain.** Cloud sync pushes the WHOLE project (code + `.claude/` + `_dream_context/`) to its GitHub `origin` on the current branch (`full-repo`); when off it's `in-tree` (commit-only). `sleep done` auto fetch→merge→commit→pushes it; the `/dream-sync` skill resolves prose conflicts. Different from federation (read-only cross-project recall) and cloud task sync (tasks only). Each machine needs its own token.
+- **Team collaboration / shared brain / second machine** — when the user wants to **use one brain with other people or on another computer** ("share the brain", "collaborate on tasks/knowledge together", "sync my project to GitHub", "set it up on my other machine"), that's **whole-project cloud sync**: `dreamcontext brain enable` (turn it on — needs a GitHub `origin`) / `brain status`, auto-synced at `sleep done`, prose conflicts resolved by the **`/dream-sync`** skill. **Guide them into it — don't say "unsupported".** Two modes (`full-repo` when on / `in-tree` when off), per-machine token, and cross-OS setup → [brain-sync.md](references/brain-sync.md).

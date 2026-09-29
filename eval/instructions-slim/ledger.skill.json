@@ -1,0 +1,50 @@
+[
+  {
+    "match": "They are NOT auto-loaded — open one with `Read` when the task calls for it",
+    "disposition": "deleted",
+    "reason": "Reworded in place: the Capabilities footer in SKILL.md still says references are NOT auto-loaded and to Read one when the task calls for it."
+  },
+  {
+    "match": "Read it before running a sleep cycle if you're unsure of the details",
+    "disposition": "deleted",
+    "reason": "Pointer sentence condensed to: Specialist contracts, deep sleep and epoch safety -> sleep.md."
+  },
+  {
+    "match": "scheduled headless claude runs: the capture protocol, the ## Flow graph",
+    "disposition": "deleted",
+    "reason": "Reference Index blurb condensed; automations.md itself is the content and the index line still names the channel."
+  },
+  {
+    "match": "whole-project GitHub cloud sync: the two modes",
+    "disposition": "deleted",
+    "reason": "Reference Index blurb condensed; brain-sync.md itself is the content."
+  },
+  {
+    "match": "Sleep state — current debt level, sessions since last sleep, history",
+    "disposition": "corrected-stale-fact",
+    "reason": "The snapshot has no sleep-state section; it renders a Sleep Pending Analysis section and debt reaches the agent as hook directives (snapshot.ts:1732).",
+    "home": "skill/SKILL.md",
+    "anchor": "Pending Analysis` section when sessions await scoring"
+  },
+  {
+    "match": "Features summary — all features with status",
+    "disposition": "corrected-stale-fact",
+    "reason": "Features render as name, status and path, demoting to a named roster on a mature brain.",
+    "home": "skill/SKILL.md",
+    "anchor": "**Features**: name, status and path"
+  },
+  {
+    "match": "Knowledge index — all knowledge files with descriptions, tags, staleness",
+    "disposition": "corrected-stale-fact",
+    "reason": "Only pinned files and patterns are listed; other knowledge is counted, not listed (snapshot.ts:2086-2092).",
+    "home": "skill/SKILL.md",
+    "anchor": "other knowledge is counted, not listed"
+  },
+  {
+    "match": "Warm knowledge — recently accessed / task-relevant files with a preview",
+    "disposition": "corrected-stale-fact",
+    "reason": "Warm Knowledge previews were removed from the snapshot (snapshot.ts:2056); the corrected list names what is injected instead.",
+    "home": "skill/SKILL.md",
+    "anchor": "Pinned bodies are NOT inlined"
+  }
+]

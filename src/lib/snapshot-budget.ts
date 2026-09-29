@@ -117,6 +117,19 @@ export const HARNESS_PREVIEW_CHARS = 2_000;
 export const DEFAULT_SNAPSHOT_BUDGET_TOKENS = 4_500;
 
 /**
+ * The SubagentStart briefing's ladder budget. Every sub-agent pays for the
+ * briefing before its first tool call, and a briefing past the harness persist
+ * limit reaches the agent as a 2,000-char positional preview, so the feature
+ * list and knowledge index it is told to check first were never seen. 2,900
+ * tokens is 11,600 chars at `estimateTokens`, which leaves room for the budget
+ * note `applyBudget` appends AFTER deciding fit, under the hard total below.
+ */
+export const SUBAGENT_BRIEFING_BUDGET_TOKENS = 2_900;
+
+/** Hard cap on the whole briefing, budget note included. What tests assert. */
+export const SUBAGENT_BRIEFING_MAX_CHARS = 12_000;
+
+/**
  * Resolve the active budget from DREAMCONTEXT_SNAPSHOT_BUDGET:
  *   unset       → DEFAULT_SNAPSHOT_BUDGET_TOKENS
  *   "0" / "off" → null (budget disabled, legacy unbounded behaviour)
@@ -130,6 +143,36 @@ export function resolveBudget(env: string | undefined): number | null {
   const n = Number.parseInt(v, 10);
   if (Number.isNaN(n)) return DEFAULT_SNAPSHOT_BUDGET_TOKENS;
   return Math.max(2000, n);
+}
+
+/**
+ * Resolve the sub-agent briefing budget from DREAMCONTEXT_SNAPSHOT_BUDGET.
+ *
+ * The one escape hatch is shared: `0` / `off` / `false` lifts BOTH budgets, so
+ * debugging an unbounded render needs a single switch. A NUMBER is ignored
+ * here: it is calibrated for the SessionStart snapshot (4,500-token default),
+ * and reusing it would silently resize every sub-agent's briefing.
+ */
+export function resolveSubagentBriefingBudget(env: string | undefined): number | null {
+  if (env !== undefined) {
+    const v = env.trim().toLowerCase();
+    if (v === '0' || v === 'off' || v === 'false') return null;
+  }
+  return SUBAGENT_BRIEFING_BUDGET_TOKENS;
+}
+
+/**
+ * Wording of the budget note, for a caller that is not the SessionStart
+ * snapshot. Every field defaults to the snapshot's own text, so a call without
+ * options renders byte-identically to before these options existed.
+ */
+export interface BudgetFooterOptions {
+  /** What the note calls the document ("snapshot" by default). */
+  subject?: string;
+  /** Replaces the "every demoted item keeps its file path above" sentence. */
+  recoveryNote?: string;
+  /** Replaces the exhausted note's FIX advice. */
+  fixHint?: string;
 }
 
 export interface BudgetResult {
@@ -163,6 +206,7 @@ export interface BudgetResult {
 export function applyBudget(
   sections: BudgetSection[],
   budgetTokens: number | null,
+  footer: BudgetFooterOptions = {},
 ): BudgetResult {
   // Resolved rungs, keyed by `${id}:${level}`. Keying by id alone would serve
   // rung 1's text for every deeper rung and silently freeze the ladder.
@@ -243,9 +287,9 @@ export function applyBudget(
   const overBudget = preFooterTokens > budgetTokens;
 
   if (overBudget) {
-    text += renderExhaustedFooter(demoted, flooredSectionIds, preFooterTokens, budgetTokens);
+    text += renderExhaustedFooter(demoted, flooredSectionIds, preFooterTokens, budgetTokens, footer);
   } else if (demoted.length > 0) {
-    text += renderFittedFooter(demoted);
+    text += renderFittedFooter(demoted, footer);
   }
 
   return {
@@ -262,13 +306,18 @@ export function applyBudget(
  * The ladder ran and the snapshot FITS. Byte-identical to the pre-rank format —
  * small vaults and any vault whose ladder succeeds must see exactly this.
  */
-function renderFittedFooter(demoted: Array<{ id: string }>): string {
+function renderFittedFooter(demoted: Array<{ id: string }>, opts: BudgetFooterOptions = {}): string {
   const ids = demoted.map((d) => d.id).join(', ');
+  const recovery = opts.recoveryNote === undefined
+    ? [
+      'Nothing is lost — every demoted item keeps its file path above, and',
+      '`dreamcontext memory recall "<keywords>"` surfaces the full content on demand._',
+    ]
+    : [`${opts.recoveryNote}_`];
   return [
     '\n\n---',
-    `_Budget note: sections demoted to fit the snapshot budget (${ids}).`,
-    'Nothing is lost — every demoted item keeps its file path above, and',
-    '`dreamcontext memory recall "<keywords>"` surfaces the full content on demand._',
+    `_Budget note: sections demoted to fit the ${opts.subject ?? 'snapshot'} budget (${ids}).`,
+    ...recovery,
   ].join('\n');
 }
 
@@ -287,6 +336,7 @@ function renderExhaustedFooter(
   flooredSectionIds: string[],
   tokens: number,
   budgetTokens: number,
+  opts: BudgetFooterOptions = {},
 ): string {
   // When every demoted section is also at its floor — the usual exhausted state
   // — one list tells the whole story. The old footer printed the same ids
@@ -306,13 +356,23 @@ function renderExhaustedFooter(
   } else {
     inventory = `Demoted: ${demoted.map((d) => d.id).join(', ')}. At their floor, unable to shrink further: ${flooredSectionIds.length > 0 ? flooredSectionIds.join(', ') : 'none'}.`;
   }
+  // Custom wording (the sub-agent briefing) replaces the recovery and FIX lines
+  // as a pair; without it the snapshot's own three lines render untouched.
+  const tail = opts.recoveryNote === undefined && opts.fixHint === undefined
+    ? [
+      'Every demoted item keeps its file path above, and `dreamcontext memory recall "<keywords>"` surfaces the full content —',
+      'but you are reading a thinner brain than this project has. FIX: slim the core files below their',
+      'ceilings or extract content to knowledge — `dreamcontext doctor` audits every size._',
+    ]
+    : [
+      opts.recoveryNote ?? 'Demoted items keep their file path above; `dreamcontext memory recall "<keywords>"` recovers them.',
+      `You are reading less than this project holds. ${opts.fixHint ?? 'FIX: `dreamcontext doctor` audits every size.'}_`,
+    ];
   return [
     '\n\n---',
-    `_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (${tokens} tok vs ${budgetTokens} tok).`,
+    `_Budget note: the demotion ladder is EXHAUSTED and the ${opts.subject ?? 'snapshot'} is still over budget (${tokens} tok vs ${budgetTokens} tok).`,
     inventory,
-    'Every demoted item keeps its file path above, and `dreamcontext memory recall "<keywords>"` surfaces the full content —',
-    'but you are reading a thinner brain than this project has. FIX: slim the core files below their',
-    'ceilings or extract content to knowledge — `dreamcontext doctor` audits every size._',
+    ...tail,
   ].join('\n');
 }
 

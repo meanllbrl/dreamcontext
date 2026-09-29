@@ -35,7 +35,7 @@ maxTurns: 20
 color: red
 skills:
   - engineering
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -44,7 +44,7 @@ skills:
   secrets handling, input validation, idempotency, race conditions, error
   handling at boundaries). Reviews written without this skill miss the
   rules the project has already committed to.
-- **dreamcontext** — read the task that produced the change so the review
+- **dreamcontext-agent-core**: read the task that produced the change so the review
   is scoped to the stated acceptance criteria, not generic "things I'd
   prefer." Cite `_dream_context/state/<task>.md` when flagging scope creep.
 

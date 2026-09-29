@@ -85,6 +85,20 @@ describe('pruneStaleFiles — partition + keep contract', () => {
     expect(keep).not.toContain(REVIEW_COORD);
   });
 
+  it('T6b: an owned stale path already gone from disk is dropped silently (no prompt, not re-tracked)', async () => {
+    // An install step (the retired-agent prune) may have removed it earlier in the same run.
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    const old = emptyManifest();
+    old.files[REVIEW_COORD] = { version: '0.4.2', kind: 'agent' }; // tracked, but NOT on disk
+    const next = emptyManifest();
+
+    const { removed, keep } = await pruneStaleFiles(tmp, old, next, false, false);
+
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(removed).toEqual([]);
+    expect(keep).toEqual([]);
+  });
+
   it('T7a (mixed, yes:true): owned deleted, heuristic kept', async () => {
     const old = oldWith(tmp, {
       [REVIEW_COORD]: { version: '0.4.2', kind: 'agent' },

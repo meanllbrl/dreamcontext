@@ -435,7 +435,7 @@ const translations: Record<string, Record<string, string>> = {
     'settings.sleep.auto_note': 'Let this machine consolidate the brain on its own when debt is high, instead of asking you. Machine-local — it is never shared with your team.',
     'settings.sleep.auto_toggle': 'Consolidate in the background',
     'settings.sleep.auto_toggle_hint': 'When debt reaches the trigger at the end of a turn, a headless session runs the full sleep flow. You stop being asked about sleep at all.',
-    'settings.sleep.auto_more': 'With the default thresholds this runs at most about three cycles on your busiest day, and each one dispatches six specialists — so it is not free. The background session works while you keep working: it is told which tasks you have open and leaves them alone. Turning this on approves the specialist models, the task cap, the trigger, and the current contents of the six sleep agent files; if any of those change, it pauses and asks you to look again.',
+    'settings.sleep.auto_more': 'With the default thresholds this runs at most about three cycles on your busiest day, and each one dispatches up to five specialists, so it is not free. The background session works while you keep working: it is told which tasks you have open and leaves them alone. Turning this on approves the specialist models, the task cap, the trigger, and the current contents of the sleep agent files; if any of those change, it pauses and asks you to look again.',
     'settings.sleep.auto_stale': 'Paused — the sleep settings changed since you approved them. Review them above, then switch this back on.',
     'settings.sleep.auto_trigger': 'Start at',
     'settings.sleep.auto_trigger_hint': 'Which debt level sets a background cycle going.',

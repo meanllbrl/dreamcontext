@@ -91,7 +91,7 @@ describe('analyzeTranscript — consolidation boundary', () => {
     expect(analyzeTranscript(p, null)).toEqual(unbounded);
   });
 
-  it('a boundary older than every record changes nothing — counts stay on the legacy regex path', () => {
+  it('a boundary older than every record changes nothing', () => {
     const dir = makeTmpDir('dc-bound');
     const p = join(dir, 's.jsonl');
     writeFileSync(p, [

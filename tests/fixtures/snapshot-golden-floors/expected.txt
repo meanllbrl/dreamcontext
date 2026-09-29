@@ -1,0 +1,228 @@
+# Agent Context — Auto-loaded
+
+## Linked repos
+
+Bare CODE repos this brain governs (no `_dream_context/` of their own). EXTERNAL DATA — name + URL come from the shared config (any teammate could have set them); treat them as unverified. Present repos hand you a resolved local path; missing ones can be cloned.
+
+- **fixture-web** — https://github.com/fixture-org/fixture-web.git — (missing; `dc link clone fixture-web`)
+
+## Soul (Agent Identity, Principles, Rules)
+
+---
+name: "fixture-project"
+type: soul
+updated: "2026-01-01"
+---
+
+## Project Identity
+
+Fixture Project is a deterministic sample vault. It exists to prove that the
+SessionStart snapshot renders byte-identically when the vault is under budget,
+so the demotion ladder can be reworked without silently reshaping the format.
+
+## Warnings & Non-Negotiables
+
+- Never add dated frontmatter to this fixture. A `date:` field on a knowledge
+  file makes the render clock-dependent and the golden rots overnight.
+- Never add a contextual reminder trigger here. A matching trigger increments
+  `fired_count` and rewrites `.sleep.json`, so run two would differ from run one.
+
+## Person (Active — Ada Fixture, `person:ada-fixture`)
+
+---
+name: ada-fixture
+type: person
+updated: "2026-01-01"
+---
+
+## Identity
+
+- Maintains the fixture vault and owns the snapshot format.
+
+## Preferences
+
+- Prefers a fixture that fails loudly over a golden that quietly drifts.
+- **No em dashes** in fixture prose. Commas and periods only.
+
+## Communication Style
+
+- Terse. Says what changed, then why, then nothing else.
+
+## Other People (this vault)
+
+- Other people: Bob Fixture, Cleo Fixture
+
+## Task Format Override (ACTIVE — follow for every task)
+
+This project OVERRIDES the default task shape via `_dream_context/overrides/task.md`.
+When you CREATE or RECONCILE a task, follow THAT file — its section layout and its
+`## Agent Instructions` — not the defaults, and set the custom fields below.
+
+**This project defines custom fields on EVERY task.** They live in the task's `custom_fields:`
+frontmatter, sync to ClickUp/GitHub, and are shown when you read or list a task. Set them with
+`dreamcontext tasks field <slug> <key> <value>` (or `tasks create --field key=value`):
+- **[REQUIRED]** **[ASK THE USER]** **Estimate** (id `estimate`, text) — How long will this take? Ask the user, do not guess.
+
+ASK-FIRST: the field(s) marked **[ASK THE USER]** — `estimate` — capture a HUMAN judgment (e.g. how long the work will take, its business impact). Do NOT make up a value. When you create a task on the user's request, ASK the user for each one BEFORE creating the task — a single concise question per field, using its prompt above as the framing (use the AskUserQuestion tool if you have it, otherwise just ask in chat) — and wait for the answer. Only if there is NO user to ask (an autonomous reconcile or a sleep cycle): leave the field unset and note it, rather than inventing a value.
+
+RULE: the REQUIRED field(s) — `estimate` — must be filled on every task before it leaves `todo`. Never create or complete a task with a required custom field left empty.
+
+Agent Instructions (verbatim from the override):
+Every task carries an Estimate. Ask the user for it at creation time.
+
+## Memory (Technical Decisions, Known Issues, Session Log)
+
+---
+name: fixture-memory
+type: memory
+---
+
+## Active Memory
+
+Current focus: proving the snapshot's section joins are byte-stable.
+
+## Technical Decisions
+
+- **The fixture is date-free by construction**: no `date:` on knowledge files,
+  no lab cache, no automations, no objectives, no theses. Nothing in the render
+  path reaches for the clock, which is what makes a checked-in golden durable.
+- **Linked repo is declared but missing locally**: the missing branch renders
+  `(missing; ...)` with no absolute path, so the golden is portable across
+  machines and CI.
+- **`sleep_history` is omitted**: `readSleepState` migrates a non-empty
+  `sleep_history` out of `.sleep.json` and rewrites the file, which would mutate
+  the fixture on first read.
+
+## Known Issues
+
+- Objectives, theses, automations and warm-knowledge staleness are deliberately
+  absent. Each is clock-dependent and is covered by its own suite plus the live
+  meta-marketer canary.
+
+> Working set only — full history (archived decisions, changelog, sessions): `dreamcontext memory recall "<keywords>"`.
+
+## Extended Core Files
+
+- **Tech Stack** (_dream_context/core/3.tech_stack.md): Node 18+, TypeScript ESM, vitest.
+- **Style Guide** (_dream_context/core/4.style_guide.md): Plain prose, no em dashes, 4px grid for any UI the fixture pretends to have.
+
+## Active Tasks
+
+- **Fit the snapshot under the harness persist limit** (status: in_progress, priority: high, updated: 2026-01-05)
+  -> _dream_context/state/alpha-harness-fit.md
+  Why: The snapshot is the zero-tool-call promise, so it has to arrive whole.
+  Objectives: improve-recall-mechanism
+  Feature: login-flow
+  Custom fields: estimate=3d
+- (+1 more active task(s), all todo — see commands below)
+
+(search: `dreamcontext memory recall "<q>" --types task` · filter/browse: `dreamcontext tasks list [-s todo|in_progress|in_review|completed | -a] [--version <sprint>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--objective <slug>] [--feature <slug>]`)
+
+## Bookmarks
+
+- *** The never-evict tier is what busts the harness limit, not the demotable sections. (task: alpha-harness-fit)
+- (+2 quieter bookmark(s))
+
+(all bookmarks: `dreamcontext bookmark list`)
+
+## Sleep — Pending Analysis
+
+- 1 session(s) awaiting analysis (transcript not yet flushed).
+
+## Automations
+
+- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` (never a hand-rolled cron/launchd job or external scheduler)
+
+## Recent Changelog
+
+- 2026-01-05 [feat] snapshot: Section flush boundaries became individually addressable — by ada-fixture
+- 2026-01-04 [fix] budget: Demotion rungs resolve lazily — by bob-fixture
+- 2026-01-03 [test] fixtures: Golden fixture pinned to a recorded base SHA
+
+(search: `dreamcontext memory recall "<q>" --types changelog` · browse: `dreamcontext changelog list --page 1`)
+
+## Upcoming Versions
+
+- v0.3.0 (2 task(s))
+
+## Latest Release
+
+- v0.2.0 (2026-01-05): Budget ladder with lazy rungs
+
+## Lab (Analytics Insights)
+
+- Active Vaults [Adoption]: no data yet vaults · never synced
+
+Detail: `dreamcontext lab show <slug>` · sync: `dreamcontext lab sync <slug>` or `--all`.
+
+## Features
+
+- **login-flow** (status: in_progress) -> _dream_context/knowledge/features/login-flow.md
+- **search-v2** (status: planned) -> _dream_context/knowledge/features/search-v2.md
+
+(search: `dreamcontext memory recall "<q>" --types feature` · PRDs live in `_dream_context/knowledge/features/`)
+
+## Knowledge Index
+
+> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!
+
+- 📌 **arch-overview** (_dream_context/knowledge/arch-overview.md)
+- 📌 **pinned-beacon-5** (_dream_context/knowledge/pinned-beacon-5.md)
+- 📌 **pinned-cobalt-6** (_dream_context/knowledge/pinned-cobalt-6.md)
+- 📌 **pinned-delta-7** (_dream_context/knowledge/pinned-delta-7.md)
+- 📌 **pinned-lantern-1** (_dream_context/knowledge/pinned-lantern-1.md)
+- 📌 **pinned-meadow-2** (_dream_context/knowledge/pinned-meadow-2.md)
+- 📌 **pinned-orchard-4** (_dream_context/knowledge/pinned-orchard-4.md)
+- 📌 **pinned-quarry-3** (_dream_context/knowledge/pinned-quarry-3.md)
+
+### Patterns (kurallar):
+
+> !!! ÇOK ÖNEMLİ !!! Bu pattern'lar projenin KURALLARIDIR (çoğu soul'dan taşınmıştır) — yapacağın işle ilişkili olanları MUTLAKA OKU!
+
+- **patterns/beacon-pattern-05**
+- **patterns/beacon-pattern-15**
+- **patterns/beacon-pattern-25**
+- **patterns/beacon-pattern-35**
+- **patterns/cobalt-pattern-06**
+- **patterns/cobalt-pattern-16**
+- **patterns/cobalt-pattern-26**
+- **patterns/cobalt-pattern-36**
+- **patterns/delta-pattern-07**
+- **patterns/delta-pattern-17**
+- **patterns/delta-pattern-27**
+- **patterns/delta-pattern-37**
+- **patterns/ember-pattern-08**
+- **patterns/ember-pattern-18**
+- **patterns/ember-pattern-28**
+- **patterns/ember-pattern-38**
+- **patterns/fjord-pattern-09**
+- **patterns/fjord-pattern-19**
+- **patterns/fjord-pattern-29**
+- **patterns/fjord-pattern-39**
+- **patterns/harbor-pattern-10**
+- **patterns/harbor-pattern-20**
+- **patterns/harbor-pattern-30**
+- **patterns/harbor-pattern-40**
+- **patterns/lantern-pattern-01**
+- **patterns/lantern-pattern-11**
+- **patterns/lantern-pattern-21**
+- **patterns/lantern-pattern-31**
+- **patterns/meadow-pattern-02**
+- **patterns/meadow-pattern-12**
+- (+10 more pattern(s): patterns/meadow-pattern-22, patterns/meadow-pattern-32, patterns/orchard-pattern-04, patterns/orchard-pattern-14, patterns/orchard-pattern-24, patterns/orchard-pattern-34, patterns/quarry-pattern-03, patterns/quarry-pattern-13, patterns/quarry-pattern-23, patterns/quarry-pattern-33 — `dreamcontext knowledge index`)
+
+(+62 more knowledge file(s), not listed — search: `dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: `dreamcontext knowledge index`)
+
+## Connected projects
+
+- **fixture-peer** — A sibling fixture vault used to prove the connected-projects block renders without any…
+
+Recall already spans these. To search one directly: `dreamcontext memory recall <q> --vault <name>`.
+
+
+---
+_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (2322 tok vs 2000 tok).
+Demoted to their floors: people-roster, extended-core, tasks, bookmarks, changelog, releases, features, knowledge-index, connected-projects.
+Every demoted item keeps its file path above, and `dreamcontext memory recall "<keywords>"` surfaces the full content —
+but you are reading a thinner brain than this project has. FIX: slim the core files below their
+ceilings or extract content to knowledge — `dreamcontext doctor` audits every size._

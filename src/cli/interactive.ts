@@ -140,7 +140,7 @@ const CATEGORIES: MenuCategory[] = [
       {
         emoji: '\u{1F4D6}',
         name: 'Install root instructions',
-        description: 'Install managed CLAUDE.md / AGENTS.md blocks',
+        description: 'Install the managed CLAUDE.md block',
         argv: ['install-instructions'],
         args: [
           {

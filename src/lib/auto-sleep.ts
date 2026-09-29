@@ -10,7 +10,9 @@ import {
   type SleepThresholds,
 } from './sleep-consolidation.js';
 import { effectiveDebt } from './sleep-consolidation.js';
-import { readSetupConfig, readBrainLocal, SLEEP_SPECIALISTS, type BrainLocalState } from './setup-config.js';
+import {
+  readSetupConfig, readBrainLocal, isSleepSpecialist, type BrainLocalState,
+} from './setup-config.js';
 import { resolveMaxNewTasksPerCycle } from './sleep-settings.js';
 import { readManifest } from './manifest.js';
 import { agentBaselineSha, isCustomizedAgent } from './sleep-specialist-frontmatter.js';
@@ -160,6 +162,29 @@ export function liveAutoSleepJob(contextRoot: string): AutoSleepSidecar | null {
  * after every routine refresh, which trains people to re-approve without
  * looking. That is the failure mode a consent check exists to avoid.
  */
+/**
+ * The roster the consent fingerprint is computed over, FROZEN in the order it
+ * had when consent was first recorded. It is deliberately not `SLEEP_SPECIALISTS`:
+ * retiring a specialist is a routine package refresh, and hashing the live list
+ * would pause every approved background sleep on upgrade (the exact failure the
+ * "what is deliberately out" rule above exists to prevent).
+ *
+ * A retired name keeps its slot and always hashes as an untouched, un-overridden,
+ * installed agent (`digest: 'none'`), which is what it hashed as on virtually
+ * every brain before it was retired. A brain that had customized or overridden
+ * it sees consent go stale once, which is the safe direction.
+ */
+const CONSENT_FINGERPRINT_ROSTER = [
+  'sleep-tasks',
+  'sleep-state',
+  'sleep-product',
+  'sleep-migration',
+  'sleep-federation',
+  'sleep-learn',
+] as const;
+
+const RETIRED_FINGERPRINT_ENTRY = { model: null, effort: null, digest: 'none' } as const;
+
 export function currentAutoSleepFingerprint(projectRoot: string): string {
   try {
     const config = readSetupConfig(projectRoot);
@@ -167,7 +192,11 @@ export function currentAutoSleepFingerprint(projectRoot: string): string {
     const manifest = readManifest(projectRoot);
 
     const specialists: Record<string, unknown> = {};
-    for (const name of SLEEP_SPECIALISTS) {
+    for (const name of CONSENT_FINGERPRINT_ROSTER) {
+      if (!isSleepSpecialist(name)) {
+        specialists[name] = RETIRED_FINGERPRINT_ENTRY;
+        continue;
+      }
       const override = config?.sleep?.specialists?.[name] ?? {};
       const relPath = `.claude/agents/${name}.md`;
       const installedPath = join(projectRoot, relPath);

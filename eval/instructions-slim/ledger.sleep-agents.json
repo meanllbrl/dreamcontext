@@ -1,0 +1,72 @@
+[
+  {
+    "match": "every operation you do (read `.sleep.json`, run `dreamcontext tasks` CLI verbs",
+    "disposition": "corrected-stale-fact",
+    "reason": "The agent no longer preloads the full dreamcontext skill; its Skills section now names dreamcontext-agent-core and cites where the task CLI and protocol live.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "**dreamcontext-agent-core**: CLI over hand-editing, recall, task essentials and path safety."
+  },
+  {
+    "match": "Without it, you'd hand-edit JSON and miss the structural guarantees",
+    "disposition": "corrected-stale-fact",
+    "reason": "Same Skills bullet: the never-hand-edit-JSON rule now lives in the agent-core skill the agent preloads.",
+    "home": "skill-agent-core/SKILL.md",
+    "anchor": "Never hand-edit JSON state"
+  },
+  {
+    "match": "Single-person projects (`.config.json` `people` has 0 or 1 entry)",
+    "disposition": "corrected-stale-fact",
+    "reason": "The roster moved from .config.json to people/people.json in 0.23.0; the rule now reads the roster.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "Single-person projects (roster has 0 or 1 entry): this step is a NO-OP."
+  },
+  {
+    "match": "Never inject a `person:` tag on a solo project.",
+    "disposition": "corrected-stale-fact",
+    "reason": "Kept in the agent with the corrected roster source.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "Never inject a `person:` tag; the output must stay byte-identical to today."
+  },
+  {
+    "match": "If 0 or 1 entry, step 2.5 is a complete NO-OP",
+    "disposition": "corrected-stale-fact",
+    "reason": "Step 2.5 now states it against the people/people.json roster.",
+    "home": "agents/sleep-tasks.md",
+    "anchor": "Single-person projects (roster has 0 or 1 entry): this step is a NO-OP."
+  },
+  {
+    "match": "knowledge files use `dreamcontext knowledge create` with the standard tag set",
+    "disposition": "corrected-stale-fact",
+    "reason": "The agent now preloads dreamcontext-agent-core; the knowledge, tag and pinning rules are cited in the knowledge-and-recall reference.",
+    "home": "agents/sleep-product.md",
+    "anchor": "Knowledge files, tags and pinning: .claude/skills/dreamcontext/references/knowledge-and-recall.md"
+  },
+  {
+    "match": "Feature PRDs use `dreamcontext features create` (deprecated compat alias",
+    "disposition": "corrected-stale-fact",
+    "reason": "Feature commands stay in the domain table; the schema is cited in tasks-and-features.md.",
+    "home": "agents/sleep-product.md",
+    "anchor": "`dreamcontext features create <name>` / `features insert <name> <section>`"
+  },
+  {
+    "match": "The skill defines the PRD schema",
+    "disposition": "corrected-stale-fact",
+    "reason": "The PRD schema lives in the tasks-and-features reference, not in a preloaded skill.",
+    "home": "agents/sleep-product.md",
+    "anchor": "The PRD schema (sections, status values, `related_tasks`): .claude/skills/dreamcontext/references/tasks-and-features.md"
+  },
+  {
+    "match": "are auto-loaded by the dreamcontext skill at session start",
+    "disposition": "corrected-stale-fact",
+    "reason": "The core files reach the main session through the SessionStart hook, not through a skill; the specialist reads them from disk.",
+    "home": "agents/sleep-state.md",
+    "anchor": "The core files reach the MAIN session through the SessionStart hook; you read them from disk."
+  },
+  {
+    "match": "The skill also defines the `dreamcontext core changelog add`",
+    "disposition": "corrected-stale-fact",
+    "reason": "Changelog, release and trigger schemas are cited in cli-reference.md.",
+    "home": "agents/sleep-state.md",
+    "anchor": "Changelog and release schemas (types, ids, ordering, release linkage): .claude/skills/dreamcontext/references/cli-reference.md"
+  }
+]

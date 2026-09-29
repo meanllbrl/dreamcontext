@@ -2993,7 +2993,7 @@
     },
     {
       "path": "update",
-      "desc": "Refresh installed dreamcontext files (core skill, agents, hooks, packs, root instructions) to the latest shipped version",
+      "desc": "Refresh installed dreamcontext files (core skill, agents, hooks, packs) to the latest shipped version",
       "args": []
     },
     {

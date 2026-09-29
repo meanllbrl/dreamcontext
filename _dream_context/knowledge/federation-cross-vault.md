@@ -27,6 +27,7 @@ See the figure: `public/image/diagram-federation.png` (PDF: `public/image/diagra
 > **Why mail is not the parked digest:** the old **copy-based PUSH** (sleep `federation sync` → peer inbox → `federation drain` → `knowledge/<slug>--from-<vault>.md` with `federated:true`) carried *derived knowledge copies* — a write-once snapshot of someone else's knowledge that went stale the moment the source changed. That broke SSoT and was retired. Peer mail carries *addressed messages* instead: a question gets an answer, a note surfaces in the peer's next snapshot, and the thread lives in a mailbox that is not the knowledge corpus. Same disk neighborhood (`state/.peer-mail/` vs `state/.federation-inbox/`), different contract, separate directory.
 >
 > - The parked digest path (`federation sync` / `federation drain`) remains **disabled** — those commands print a roadmap note and write nothing. The `sleep-federation` specialist is **no longer dispatched**.
+> - **Retired 2026-09-30: the `sleep-federation` specialist.** No longer shipped in `agents/`, removed from the tunable sleep specialist list (`SLEEP_SPECIALISTS`) and from the sub-agent dispatch authorization; `dreamcontext update` deletes an uncustomized installed copy. Why: it only ran the parked copy pipeline above, so every dispatch was a wasted cycle. Replacement: live recall for reading, `peer send` / `peer ask` for telling. Its prompt is kept verbatim in `knowledge/archive/sleep-federation-agent-retired.md` as the resume point for an offline-mirror redesign. An old `.config.json` with a `sleep.specialists.sleep-federation` entry still parses; the entry is ignored.
 > - Leftover `federated:true` copies from the old path are removed with `dreamcontext federation purge [--all | --vault <name>]` (deliberate, never auto-run).
 > - The lib code (`federation-digest.ts`, `federation-ingest.ts`, `federation-inbox.ts`) stays in-tree but **unreferenced by any live path** — the seed for a future redesigned sync if one is ever warranted.
 >
@@ -163,7 +164,7 @@ The browser-reachable `POST /api/federation/sync` is dry-run by construction: it
 - `src/lib/federation-digest.ts` — `computeDigest`, `buildInterestProfile`, `kindOf`, watermark + transitive-leak filters.
 - `src/lib/federation-recall.ts` — `crossVaultRecall`, `resolveConnectedVaults`, serving exclusion + consent gate.
 - `src/lib/federation-ingest.ts` — drain → `knowledge/<slug>--from-<vault>.md` materialisation.
-- `agents/sleep-federation.md` — drain-then-sync contract, idempotency, conflict handling.
+- `knowledge/archive/sleep-federation-agent-retired.md` (was `agents/sleep-federation.md`, retired 2026-09-30): drain-then-sync contract, idempotency, conflict handling.
 - `src/lib/recall.ts:579` — default corpus types.
 - DEEP-DIVE.md `## Federation` — the prose companion to this file.
 

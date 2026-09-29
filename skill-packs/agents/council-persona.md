@@ -27,7 +27,7 @@ tools:
 maxTurns: 15
 skills:
   - council
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -36,7 +36,7 @@ skills:
   Reasoning, Reactions to peers, Open questions, optional Cross-examination) and
   the verdict contract. Output that doesn't match is rejected by
   `dreamcontext council report append` validation.
-- **dreamcontext** — read the active task and prior context before debating;
+- **dreamcontext-agent-core**: read the active task and prior context before debating;
   cite from `_dream_context/` when invoking project facts.
 
 If the persona file declares additional `skills:` (in its own frontmatter),

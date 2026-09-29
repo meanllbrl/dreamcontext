@@ -25,9 +25,13 @@ import {
   type StopUpsertInput,
 } from '../../lib/sleep-consolidation.js';
 import { DECISION_RE, CORRECTION_RE } from '../../lib/salience.js';
-import { distillTranscript, mergeDistilled, distillSubagents } from './transcript.js';
+import { distillTranscript, mergeDistilled, distillSubagents, type DistilledSection } from './transcript.js';
 import { buildDigest, writeDigest, digestExists, digestIsPartial } from '../../lib/session-digest.js';
-import { detectSalience, detectSalienceFromMessage } from '../../lib/salience.js';
+import { detectSalience, detectSalienceFromMessage, type SalientMoment } from '../../lib/salience.js';
+import { humanTurnText } from '../../lib/transcript-records.js';
+import {
+  resolveSpawnMarker, parsePsTable, isNestedInProcessTable, type SpawnMarker,
+} from '../../lib/session-origin.js';
 import { resolveTranscript, listSubagentTranscripts } from '../../lib/transcript-locate.js';
 import type { TranscriptLocation } from '../../lib/transcript-locate.js';
 import { generateId } from '../../lib/id.js';
@@ -56,6 +60,7 @@ import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
 import { readSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
+import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
 import {
   maybeNudge,
   pruneContextWatch,
@@ -106,15 +111,15 @@ function readStdin(): Record<string, unknown> | null {
  * Result of analyzing a JSONL transcript file.
  */
 export interface TranscriptAnalysis {
-  changeCount: number;  // Write + Edit tool calls only
-  toolCount: number;    // ALL tool calls (any tool name)
+  changeCount: number;  // Write + Edit tool_use blocks only
+  toolCount: number;    // ALL tool_use blocks (any tool name)
   taskSlugs: string[];  // task slugs extracted from tool calls and file paths
   // WS-DEBT substance signals — populated by a per-line JSON.parse pass so an
   // edit-free-but-information-dense session can still accrue debt:
-  userTurns: number;        // count of user-role transcript records
+  userTurns: number;        // turns a human typed (see humanTurnText)
   assistantChars: number;   // total chars across assistant text blocks (each capped)
-  decisionMarkers: number;  // lines matching DECISION_RE / CORRECTION_RE
-  novelTokens: number;      // Σ(output + cache_creation + input) — see novelTokensFromUsage
+  decisionMarkers: number;  // human turns + assistant text blocks matching DECISION_RE / CORRECTION_RE
+  novelTokens: number;      // Σ(output + cache_creation + input) once per API message, minus startup
 }
 
 const ZERO_ANALYSIS: TranscriptAnalysis = {
@@ -126,9 +131,27 @@ const ZERO_ANALYSIS: TranscriptAnalysis = {
 const MAX_TEXT_BLOCK_CHARS = 20000;
 
 /**
- * Analyze a JSONL transcript file for tool usage.
- * Returns change count (Write/Edit), total tool count, and auto-detected task slugs.
- * Returns zeros on any error.
+ * Analyze a JSONL transcript file for the debt axes, record by record.
+ * Returns change count (Write/Edit), total tool count, auto-detected task slugs
+ * and the substance signals. Returns zeros on any error.
+ *
+ * Every axis counts what actually happened, never what a record merely MENTIONS
+ * **[2026-09-29]**:
+ * - Tools and changes are `tool_use` content blocks. The old whole-file
+ *   `"name":"…"` regexes also matched the tool and skill listings Claude Code
+ *   writes into `attachment` records, so a session with zero tool calls scored
+ *   4 changes / 28 tools.
+ * - Claude Code writes one JSONL record per content block and repeats the whole
+ *   `message.usage` on each, so usage is counted ONCE per `message.id` (summing
+ *   per record over-counted 2.16x at p50 across 262 local transcripts).
+ * - With `subtractStartup` (the default; `analyzeSession` passes false for
+ *   sub-agents) the first counted API message's `cache_creation + input` is
+ *   subtracted: loading the session's context is not work, and without this a
+ *   session that did nothing still scored ~1 point of tokens.
+ * - `userTurns` counts only turns a human typed and `decisionMarkers` only scans
+ *   that text plus assistant text blocks: tool results, harness injections and
+ *   the SessionStart snapshot (which quotes "decided" / "instead of" freely) no
+ *   longer fire the substance signals.
  *
  * `sinceISO` (the last completed consolidation, `state.last_consolidated_at`)
  * bounds what counts as debt: records stamped at or before it are EXCLUDED
@@ -138,22 +161,26 @@ const MAX_TEXT_BLOCK_CHARS = 20000;
  * re-stop scored the full file from scratch and debt could never reach 0.
  * The same bound zeroes out the sleep fan-out itself: the orchestrating
  * session's sub-agent transcripts (the sleep specialists) all predate
- * `sleep done`, so they stop counting as ~10 fresh debt per cycle.
+ * `sleep done`, so they stop counting as ~10 fresh debt per cycle. A startup
+ * message that falls before the bound is not subtracted (it was never counted).
  *
  * Task slugs stay whole-transcript on purpose — they are linkage metadata,
  * not debt, and dropping a pre-boundary slug would orphan the session.
  * Records without a parseable timestamp count (fail-open): losing real work
  * is worse than over-counting a malformed line.
  */
-export function analyzeTranscript(transcriptPath: string, sinceISO?: string | null): TranscriptAnalysis {
+export function analyzeTranscript(
+  transcriptPath: string,
+  sinceISO?: string | null,
+  opts: { subtractStartup?: boolean } = {},
+): TranscriptAnalysis {
   if (!existsSync(transcriptPath)) return ZERO_ANALYSIS;
+  const subtractStartup = opts.subtractStartup ?? true;
   try {
     const stat = statSync(transcriptPath);
     if (stat.size === 0 || stat.size > MAX_TRANSCRIPT_BYTES) return ZERO_ANALYSIS;
     const content = readFileSync(transcriptPath, 'utf-8');
     const sinceMs = sinceISO ? Date.parse(sinceISO) : NaN;
-    const changeMatches = content.match(/"name"\s*:\s*"(?:Write|Edit)"/g);
-    const toolMatches = content.match(/"name"\s*:\s*"[A-Za-z_]+"/g);
 
     // Extract task slugs from dreamcontext CLI commands and task file paths.
     // Only match within "command":"..." JSON values to avoid prose/explanation noise.
@@ -169,64 +196,58 @@ export function analyzeTranscript(transcriptPath: string, sinceISO?: string | nu
       slugs.add(m[1]);
     }
 
-    // WS-DEBT substance signals — a per-line guarded JSON.parse pass over the
-    // already-in-memory transcript (one pass, no extra file I/O; malformed lines
-    // skipped). Raw regex over the flat string can't sum JSON-escaped multiline
-    // text-block lengths, so we parse each JSONL record instead.
+    // One guarded JSON.parse pass over the already-in-memory transcript (no
+    // extra file I/O; malformed lines skipped): every axis is read from the
+    // record's structure, so text that merely mentions a tool or a decision
+    // counts for nothing.
     let userTurns = 0;
     let assistantChars = 0;
     let decisionMarkers = 0;
-    let novelTokens = 0;
-    // Per-record tool counts, used ONLY when the boundary actually excluded
-    // something — the flat-regex counts above can't be time-bucketed. When
-    // nothing is excluded the regex counts are returned unchanged, so every
-    // session that doesn't span a consolidation scores bit-for-bit as before.
-    let excludedAny = false;
-    let boundedChanges = 0;
-    let boundedTools = 0;
+    let changeCount = 0;
+    let toolCount = 0;
+    const usage = new UsageLedger();
+    let lineIndex = 0;
     for (const line of content.split('\n')) {
+      lineIndex++;
       const trimmed = line.trim();
       if (!trimmed) continue;
-      const isDecision = DECISION_RE.test(trimmed) || CORRECTION_RE.test(trimmed);
       let rec: unknown;
       try {
         rec = JSON.parse(trimmed);
       } catch {
-        if (isDecision) decisionMarkers++;
         continue; // not a JSON record (or partial) — skip
       }
-      if (!rec || typeof rec !== 'object') {
-        if (isDecision) decisionMarkers++;
-        continue;
-      }
+      if (!rec || typeof rec !== 'object') continue;
+      usage.observe(rec, lineIndex);
       if (!Number.isNaN(sinceMs)) {
         const ts = recordTimestampMs(rec);
-        if (ts !== null && ts <= sinceMs) {
-          excludedAny = true;
-          continue; // already consolidated — contributes to no scored axis
-        }
+        if (ts !== null && ts <= sinceMs) continue; // already consolidated
       }
-      if (isDecision) decisionMarkers++;
-      novelTokens += novelTokensFromUsage(rec);
+      usage.add(rec, lineIndex);
       const role = recordRole(rec);
       if (role === 'user') {
-        userTurns++;
+        const typed = humanTurnText(rec);
+        if (typed !== null) {
+          userTurns++;
+          if (hasDecisionMarker(typed)) decisionMarkers++;
+        }
       } else if (role === 'assistant') {
         assistantChars += sumAssistantTextChars(rec);
+        decisionMarkers += countAssistantDecisionBlocks(rec);
       }
       const uses = countToolUseBlocks(rec);
-      boundedTools += uses.tools;
-      boundedChanges += uses.changes;
+      toolCount += uses.tools;
+      changeCount += uses.changes;
     }
 
     return {
-      changeCount: excludedAny ? boundedChanges : (changeMatches ? changeMatches.length : 0),
-      toolCount: excludedAny ? boundedTools : (toolMatches ? toolMatches.length : 0),
+      changeCount,
+      toolCount,
       taskSlugs: [...slugs],
       userTurns,
       assistantChars,
       decisionMarkers,
-      novelTokens,
+      novelTokens: usage.novelTokens(subtractStartup),
     };
   } catch {
     return ZERO_ANALYSIS;
@@ -273,9 +294,9 @@ function recordTimestampMs(rec: object): number | null {
 
 /**
  * Count `tool_use` content blocks in one record (and how many are Write/Edit).
- * The per-record twin of the whole-file `"name":"…"` regexes — used only when
- * a consolidation boundary excludes part of the transcript, where a flat regex
- * can't be time-bucketed.
+ * The ONLY tool counter: a tool name that appears anywhere else in a record (the
+ * tool and skill listings in `attachment` records, a prompt quoting `"name":"Write"`)
+ * is not a tool call.
  */
 function countToolUseBlocks(rec: object): { tools: number; changes: number } {
   const r = rec as { message?: { content?: unknown }; content?: unknown };
@@ -321,16 +342,97 @@ function recordRole(rec: object): string | null {
  * generated (`output`), plus context that entered the window for the first time
  * (`cache_creation` + uncached `input`).
  *
+ * `startup` is the part of it that is context entering the window
+ * (`cache_creation + input`): on a session's first API message that is the
+ * system prompt, the SessionStart snapshot and the first prompt, which
+ * {@link UsageLedger} can subtract.
+ *
  * Tolerates both the flat and `message`-nested record shapes, and any missing
- * field. Never throws.
+ * field. Null when the record carries no usage. Never throws.
  */
-function novelTokensFromUsage(rec: object): number {
+function usageOf(rec: object): { novel: number; startup: number } | null {
   const r = rec as { usage?: unknown; message?: { usage?: unknown } };
   const raw = (r.message && typeof r.message === 'object' ? r.message.usage : undefined) ?? r.usage;
-  if (!raw || typeof raw !== 'object') return 0;
+  if (!raw || typeof raw !== 'object') return null;
   const u = raw as Record<string, unknown>;
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
-  return num(u.output_tokens) + num(u.cache_creation_input_tokens) + num(u.input_tokens);
+  const startup = num(u.cache_creation_input_tokens) + num(u.input_tokens);
+  return { novel: num(u.output_tokens) + startup, startup };
+}
+
+/**
+ * The API message a record belongs to: `message.id`, else the record's `uuid`,
+ * else its line. Claude Code writes one record per content block and repeats the
+ * message's full usage on each, so records sharing this key are ONE API call.
+ */
+function usageKey(rec: object, lineIndex: number): string {
+  const r = rec as { uuid?: unknown; message?: { id?: unknown } };
+  if (r.message && typeof r.message === 'object' && typeof r.message.id === 'string' && r.message.id) {
+    return `m:${r.message.id}`;
+  }
+  if (typeof r.uuid === 'string' && r.uuid) return `u:${r.uuid}`;
+  return `l:${lineIndex}`;
+}
+
+/**
+ * Novel tokens counted once per API message, in transcript order.
+ *
+ * Keeps the LARGEST usage seen per message key (a streamed message's later
+ * records can only carry more output, never less), and remembers the
+ * transcript's FIRST API message so the session's startup context can be taken
+ * off the total. That first message is noted from every record, counted or not:
+ * when a consolidation bound excluded it, nothing is subtracted, because the
+ * first post-bound message is real work, not startup.
+ */
+class UsageLedger {
+  private readonly byMessage = new Map<string, { novel: number; startup: number }>();
+  private firstKey: string | null = null;
+
+  /** Note the transcript's first API message. Called for EVERY record, before the bound check. */
+  observe(rec: object, lineIndex: number): void {
+    if (this.firstKey === null && usageOf(rec)) this.firstKey = usageKey(rec, lineIndex);
+  }
+
+  /** Count a record that lies inside the scored window. */
+  add(rec: object, lineIndex: number): void {
+    const u = usageOf(rec);
+    if (!u) return;
+    const key = usageKey(rec, lineIndex);
+    const prev = this.byMessage.get(key);
+    if (!prev || u.novel > prev.novel) this.byMessage.set(key, u);
+  }
+
+  /** Σ novel over distinct counted messages; minus the first message's startup when asked. */
+  novelTokens(subtractStartup: boolean): number {
+    let total = 0;
+    for (const u of this.byMessage.values()) total += u.novel;
+    if (subtractStartup && this.firstKey !== null) {
+      total -= this.byMessage.get(this.firstKey)?.startup ?? 0;
+    }
+    return Math.max(0, total);
+  }
+}
+
+/** True when text carries a decision or correction phrase (the substance axis). */
+function hasDecisionMarker(text: string): boolean {
+  return DECISION_RE.test(text) || CORRECTION_RE.test(text);
+}
+
+/** Assistant text blocks (or a bare string content) that carry a decision/correction phrase. */
+function countAssistantDecisionBlocks(rec: object): number {
+  const r = rec as { message?: { content?: unknown }; content?: unknown };
+  const content = (r.message && typeof r.message === 'object' ? r.message.content : undefined) ?? r.content;
+  if (typeof content === 'string') return hasDecisionMarker(content) ? 1 : 0;
+  let count = 0;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block && typeof block === 'object') {
+        const b = block as { type?: unknown; text?: unknown };
+        if (b.type === 'text' && typeof b.text === 'string' && hasDecisionMarker(b.text)) count++;
+      }
+    }
+  }
+  return count;
 }
 
 /** Sum the chars of every assistant `type:'text'` block, capping each block. */
@@ -444,13 +546,28 @@ export function logPoints(x: number, k: number, full: number, weight: number): n
  * of 395 real transcripts (novel tokens p50 686k / p90 2.55M / p95 3.5M;
  * changes p50 6 / p90 36; tools p50 47 / p90 155).
  *
+ * **[2026-09-29] Token axis: two separate corrections.**
+ * (a) Measurement fix: usage is now counted once per `message.id`. The old
+ *     `k: 100_000, full: 3_500_000` were pinned to p10 / p95 of a quantity that
+ *     summed every content block's copy of the usage, 2.16x (p50) to 2.37x (p95)
+ *     too high over 262 local transcripts. Dividing both by the measured ~2.3
+ *     keeps the original calibration's meaning for the deduped measure.
+ * (b) Semantic change: the main transcript's startup context is subtracted
+ *     (see analyzeTranscript), because loading the snapshot is not work. That is
+ *     what lets a session that did nothing score 0.
+ * Together they under-read small sessions against the old scale, deliberately
+ * for idle ones. The values are provisional: post-dedup, post-baseline the same
+ * corpus measured p50 ~286k / p95 ~1.6M, and any retune follows a fresh
+ * measurement (eval/sleep-debt). The change and tool axes are unchanged: their
+ * phantom was additive, and counting real `tool_use` blocks removes it.
+ *
  * Weights encode how strongly each axis evidences "the brain changed":
  * generated + newly-ingested tokens and file mutations carry the most, tool
  * calls the least (most are read-only exploration that may find nothing).
  * They sum to exactly SESSION_SCORE_MAX.
  */
 export const SCORE_AXES = {
-  tokens:    { k: 100_000, full: 3_500_000, weight: 4 },
+  tokens:    { k: 45_000,  full: 1_500_000, weight: 4 },
   changes:   { k: 2,       full: 40,        weight: 3 },
   tools:     { k: 10,      full: 200,       weight: 1.5 },
   substance: { weight: 1.5 },
@@ -540,10 +657,40 @@ export function analyzeSession(loc: TranscriptLocation, sinceISO?: string | null
   try {
     const subPaths = listSubagentTranscripts(loc);
     if (subPaths.length === 0) return main;
-    return mergeAnalyses(main, subPaths.map(p => analyzeTranscript(p, sinceISO)));
+    // Only the MAIN transcript's startup is subtracted. A sub-agent's first
+    // message (its system prompt plus the brief it was handed) is context the
+    // fan-out really paid for, not the session's own boot.
+    return mergeAnalyses(main, subPaths.map(p => analyzeTranscript(p, sinceISO, { subtractStartup: false })));
   } catch {
     return main;
   }
+}
+
+/**
+ * Digest input and auto-bookmark moments for one session, as the SessionStart
+ * catch-up records them.
+ *
+ * The digest keeps everything it always had, sub-agent briefs included. The
+ * moments do not:
+ * - a sub-agent's user-role text is its orchestrator's brief or a continuation,
+ *   never something a human typed, so it is dropped before detection ("Review
+ *   wave 2 of …" was filed as a User correction this way);
+ * - a spawned session (a builder, an automation run, …) yields none at all: its
+ *   first message is an orchestrator brief and nothing in it is the owner's.
+ */
+export function captureSessionMoments(
+  loc: TranscriptLocation,
+  opts: { spawned: boolean },
+): { digest: DistilledSection; moments: SalientMoment[] } {
+  const main = loc.mainPath
+    ? distillTranscript(loc.mainPath)
+    : { userMessages: [], agentDecisions: [], codeChanges: [], errors: [], bookmarks: [] };
+  const subagents = distillSubagents(loc);
+  const digest = mergeDistilled([main, subagents]);
+  const moments = opts.spawned
+    ? []
+    : detectSalience(mergeDistilled([main, { ...subagents, userMessages: [] }]));
+  return { digest, moments };
 }
 
 // ─── Stop-hook transcript-less capture (AC2a) ────────────────────────────────
@@ -851,20 +998,86 @@ export interface AutoSleepNagState {
  */
 export function autoSleepNagLine(autoSleep: AutoSleepNagState): string {
   if (autoSleep.consentStale) {
-    return 'Auto sleep is PAUSED — the sleep settings changed since you approved them. '
+    return 'Auto sleep is PAUSED: the sleep settings changed since you approved them. '
       + 'Re-enable in Settings › Sleep or with `dreamcontext sleep auto on`. '
       + 'Until then this brain is not consolidating itself.';
   }
-  return 'Auto sleep is ON for this machine — never run, offer, or recommend a sleep cycle; '
+  return 'Auto sleep is ON for this machine: never run, offer, or recommend a sleep cycle; '
     + 'the brain consolidates itself in the background. '
     + 'When you create a task, pass `--by human` so it is not counted against a background cycle.';
+}
+
+/** How this hook's own session was started. A spawned session (see
+ *  src/lib/session-origin.ts) cannot run a sleep and is never told to. */
+export interface DirectiveOrigin {
+  spawned: boolean;
+}
+
+/**
+ * The three Must Sleep headers. The same text at debt 60 and 175 told the agent
+ * nothing about how overdue the brain was, so past Must Sleep the directive
+ * names its tier. Every header keeps the `CONSOLIDATION REQUIRED` marker.
+ * Quoted verbatim by skill/SKILL.md and skill/references/sleep.md.
+ */
+export const MUST_SLEEP_TIER_HEADERS = {
+  required: '>>> CONSOLIDATION REQUIRED <<<',
+  deep: '>>> CONSOLIDATION REQUIRED: DEEP CYCLE <<<',
+  overdue: '>>> CONSOLIDATION REQUIRED: OVERDUE <<<',
+} as const;
+
+export type MustSleepTier = keyof typeof MUST_SLEEP_TIER_HEADERS;
+
+/**
+ * Which Must Sleep tier a debt falls in, or null below Must Sleep. The tier
+ * edges are the thresholds the rest of sleep already runs on, so a brain that
+ * retunes Must Sleep moves all three: `deepAuthority` (where `sleep start`
+ * normally picks a deep cycle) and `cooldownOverride` (where the post-sleep
+ * cooldown stops holding the directive back).
+ */
+export function mustSleepTier(debt: number, t: SleepThresholds): MustSleepTier | null {
+  if (debt < t.mustSleep) return null;
+  if (debt < t.deepAuthority) return 'required';
+  if (debt < t.cooldownOverride) return 'deep';
+  return 'overdue';
+}
+
+/** How to consolidate, shared by every directive that asks for a sleep. The roster
+ *  comes from `SLEEP_ROSTER_CLAUSE` so the directive can never name a different set of
+ *  specialists than the Sleep buttons and the background dispatcher. */
+export const SLEEP_FLOW_LINE = 'Run the sleep flow in SKILL.md: `dreamcontext sleep start`, then dispatch the '
+  + `specialists in parallel (${SLEEP_ROSTER_CLAUSE}), then \`dreamcontext sleep done\`.`;
+
+/** The tier-specific lines under a Must Sleep header. */
+function mustSleepTierBody(tier: MustSleepTier, debt: number, t: SleepThresholds): string[] {
+  if (tier === 'required') {
+    return [
+      `Sleep debt is ${debt} (Must Sleep at ${t.mustSleep}).`,
+      'Tell the user, then consolidate before starting new work, or right after the task in flight.',
+    ];
+  }
+  if (tier === 'deep') {
+    return [
+      `Sleep debt is ${debt}, past the deep line (${t.deepAuthority}): \`sleep start\` normally picks a deep cycle, which authorizes merges and archives.`,
+      'Tell the user and consolidate before starting new work. Finish only the step you are in.',
+    ];
+  }
+  return [
+    `Sleep debt is ${debt}, at least twice Must Sleep (${t.cooldownOverride}). This overrides the post-sleep cooldown.`,
+    'Stop: tell the user, finish only the edit in progress, and start no new work until `sleep done`.',
+  ];
 }
 
 export function getConsolidationDirective(
   state: SleepState,
   t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS,
   autoSleep: AutoSleepNagState = { enabled: false, consentStale: false },
+  origin: DirectiveOrigin = { spawned: false },
 ): string | null {
+  // A spawned session (a builder, an automation run, a nested `claude -p`) has
+  // no human to tell and cannot run the sleep flow: every sleep line, even the
+  // in-progress and auto-sleep ones, is noise there.
+  if (origin.spawned) return null;
+
   // C4 — when the brain consolidates ITSELF, every debt- and rhythm-driven
   // directive is noise: there is nothing for the agent to do about it, and the
   // owner's whole complaint was being nagged. One line replaces all of them.
@@ -915,7 +1128,7 @@ export function getConsolidationDirective(
   if (cooldown.active && criticalBookmarks.length === 0) {
     if (debt >= t.drowsy) {
       return [
-        `> Consolidated recently; ${debt} debt has accrued since. Cooling down — do NOT consolidate`,
+        `> Consolidated recently; ${debt} debt has accrued since. Cooling down: do NOT consolidate`,
         `  again for another ${formatCooldownRemaining(cooldown.remainingMs)} unless the user asks.`,
         ...(pendingLine ? [pendingLine] : []),
         '',
@@ -924,18 +1137,17 @@ export function getConsolidationDirective(
     return null;
   }
 
-  if (debt >= t.mustSleep) {
+  const tier = mustSleepTier(debt, t);
+  if (tier) {
     return [
-      '>>> CONSOLIDATION REQUIRED <<<',
+      MUST_SLEEP_TIER_HEADERS[tier],
       '',
-      `Sleep debt is ${debt} (threshold: ${t.mustSleep}). Context files are stale and bloated.`,
+      ...mustSleepTierBody(tier, debt, t),
       ...(criticalBookmarks.length > 0
         ? [`${criticalBookmarks.length} critical bookmark(s) awaiting consolidation.`]
         : []),
       ...(pendingLine ? [pendingLine] : []),
-      'You MUST inform the user and consolidate NOW.',
-      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
-      'If the user has an urgent task, consolidate IMMEDIATELY after completing it.',
+      SLEEP_FLOW_LINE,
       '',
     ].join('\n');
   }
@@ -947,7 +1159,7 @@ export function getConsolidationDirective(
       ...criticalBookmarks.slice(0, 3).map(b => `  - ${b.message}`),
       ...(pendingLine ? [pendingLine] : []),
       'These represent important decisions/constraints that should be consolidated into context files.',
-      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
+      SLEEP_FLOW_LINE,
       '',
     ].join('\n');
   }
@@ -958,7 +1170,7 @@ export function getConsolidationDirective(
       `Sleep debt is ${debt}/${t.mustSleep}. Context files are growing stale.`,
       ...(pendingLine ? [pendingLine] : []),
       'You MUST inform the user and recommend consolidation before starting new work.',
-      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
+      SLEEP_FLOW_LINE,
       '',
     ].join('\n');
   }
@@ -1046,7 +1258,8 @@ export function writeAgentTurnState(envPath: string | undefined, state: 'working
  *
  * - consolidation in progress: suppress unless debt >= t.drowsy (then a "do
  *   not dispatch another sleep" note).
- * - debt >= t.mustSleep: CONSOLIDATION REQUIRED.
+ * - spawned session: null, always (nobody to tell, no way to sleep).
+ * - debt >= t.mustSleep: CONSOLIDATION REQUIRED, by tier (see mustSleepTier).
  * - critical (★★★) bookmark present: advisory regardless of debt.
  * - debt >= t.sleepy: recommended. debt >= t.drowsy: offer after current task.
  * - else: null (silent).
@@ -1055,7 +1268,10 @@ export function userPromptReminder(
   state: SleepState,
   t: SleepThresholds = DEFAULT_SLEEP_THRESHOLDS,
   autoSleep: AutoSleepNagState = { enabled: false, consentStale: false },
+  origin: DirectiveOrigin = { spawned: false },
 ): string | null {
+  if (origin.spawned) return null;
+
   // Same silence as the SessionStart directive — this one fires on EVERY user
   // message, so it is where an unwanted nag is actually felt.
   if (autoSleep.enabled) return autoSleepNagLine(autoSleep);
@@ -1086,13 +1302,20 @@ export function userPromptReminder(
   if (cooldown.active && criticalBookmarks.length === 0) {
     if (debt >= t.drowsy) {
       return `Consolidated recently; ${debt} debt since. Cooling down for another `
-        + `${formatCooldownRemaining(cooldown.remainingMs)} — do not consolidate again unless asked.`;
+        + `${formatCooldownRemaining(cooldown.remainingMs)}; do not consolidate again unless asked.`;
     }
     return null;
   }
 
-  if (debt >= t.mustSleep) {
-    return `Sleep debt is ${debt}${pendingSuffix}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`;
+  const tier = mustSleepTier(debt, t);
+  if (tier === 'required') {
+    return `Sleep debt is ${debt}${pendingSuffix}. CONSOLIDATION REQUIRED: consolidate before starting new work (sleep flow per SKILL.md, specialists in parallel).`;
+  }
+  if (tier === 'deep') {
+    return `Sleep debt is ${debt}${pendingSuffix}. CONSOLIDATION REQUIRED: DEEP CYCLE (debt past ${t.deepAuthority}). Consolidate before starting new work; sleep flow per SKILL.md.`;
+  }
+  if (tier === 'overdue') {
+    return `Sleep debt is ${debt}${pendingSuffix}. CONSOLIDATION REQUIRED: OVERDUE (2x Must Sleep, overrides the cooldown). Stop and consolidate now; sleep flow per SKILL.md.`;
   }
   if (criticalBookmarks.length > 0) {
     return `${criticalBookmarks.length} critical bookmark(s) need consolidation. Run sleep flow per SKILL.md.`;
@@ -1155,7 +1378,7 @@ export function userPromptReminder(
 export const SUBAGENT_DISPATCH_AUTHORIZATION =
   'Sub-agent dispatch is pre-authorized by the user for dreamcontext\'s documented '
   + 'orchestration flows — sleep (sleep-tasks / sleep-state / sleep-product / '
-  + 'sleep-migration / sleep-federation / sleep-learn), curator, initializer, goal-skill, '
+  + 'sleep-migration / sleep-learn), curator, initializer, goal-skill, '
   + 'dreamcontext-deep-research, council, multi-review, and the Plan and Develop chat '
   + 'modes\' clean judges (goal-plan-reviewer, reviewer, goal-validator). '
   + 'Running one of those flows IS '
@@ -1424,6 +1647,14 @@ export function registerHookCommand(program: Command): void {
       // timeout — the next finished turn re-records it.
       recordTabSessionFromHook(root, sessionId);
 
+      // Was this session spawned by dreamcontext or an orchestrator? Resolved here,
+      // BEFORE the lock (the ancestry walk may exec `ps`), and never from the stored
+      // record: Stop is the authoritative resolution. A spawned session is recorded
+      // for task linkage with score 0 (upsertSessionOnStop enforces it, stickily).
+      const spawn: SpawnMarker | null = resolveSpawnMarker({
+        env: process.env, contextRoot: root, sessionId, isNested: isNestedClaudeHook,
+      });
+
       // D2 — the WHOLE read-modify-write is inside the lock, not just the write.
       // The session ledger is rebuilt from a snapshot on every Stop, so a
       // background sleep cycle's own Stop hook interleaving with this one would
@@ -1458,8 +1689,9 @@ export function registerHookCommand(program: Command): void {
       // Weighted-sum debt: log-compressed token / change / tool axes plus the
       // substance ladder, summed and rounded onto 0..SESSION_SCORE_MAX. Replaces
       // the old max() composition, whose ceiling of 3 was hit by 77% of real
-      // sessions (see scoreSession).
-      const score = transcriptOnDisk ? scoreSession(analysis) : null;
+      // sessions (see scoreSession). A spawned session carries no debt, so it is
+      // never left pending either.
+      const score = spawn ? 0 : transcriptOnDisk ? scoreSession(analysis) : null;
 
       // Link unlinked bookmarks to this session
       for (const bookmark of state.bookmarks) {
@@ -1487,17 +1719,20 @@ export function registerHookCommand(program: Command): void {
         ...(transcriptOnDisk
           ? { novel_tokens: analysis.novelTokens, scoring_version: SCORING_VERSION }
           : {}),
+        ...(spawn ? { spawn } : {}),
       };
       const nextState = upsertSessionOnStop(state, upsertInput);
+      const stopSession = nextState.sessions.find(s => s.session_id === sessionId);
 
       // AC2(a) — transcript-less salience: when the transcript isn't on disk
       // yet (Claude Code's lazy flush), mine `last_assistant_message` with the
       // same DECISION_RE/CORRECTION_RE vocabulary so a never-flushed session
       // still leaves a trace instead of vanishing until the 7-day floor.
       // Wrapped — the Stop hook must NEVER throw; capture here is best-effort.
-      if (!transcriptOnDisk && lastAssistantMessage) {
+      // Never for a spawned session (the marker is sticky, so the stored record
+      // decides): a builder's closing message is a report to its orchestrator.
+      if (!transcriptOnDisk && lastAssistantMessage && !stopSession?.spawn) {
         try {
-          const stopSession = nextState.sessions.find(s => s.session_id === sessionId);
           const taskSlug = stopSession?.task_slugs?.[0] ?? null;
           const existingMessages = new Set(nextState.bookmarks.map(b => b.message));
           const newBookmarks = resolveStopCaptureBookmarks(lastAssistantMessage, existingMessages, {
@@ -1595,30 +1830,27 @@ export function registerHookCommand(program: Command): void {
       const out = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], {
         encoding: 'utf-8', timeout: 2000, maxBuffer: 8 * 1024 * 1024,
       });
-      const table = new Map<number, { ppid: number; command: string }>();
-      for (const line of out.split('\n')) {
-        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
-        if (m) table.set(Number(m[1]), { ppid: Number(m[2]), command: m[3] });
-      }
-      const serverPid = Number(process.env.DREAMCONTEXT_SERVER_PID || 0);
-      let pid = process.ppid;
-      let claudes = 0;
-      for (let hop = 0; hop < 15 && pid > 1; hop++) {
-        // Tab boundary: the server spawned the tab's PTY, so once the walk reaches it
-        // every remaining ancestor is outside the tab. (Absent on older servers → the
-        // walk continues to pid 1, accepting the pre-boundary behavior.)
-        if (serverPid && pid === serverPid) break;
-        const p = table.get(pid);
-        if (!p) break;
-        // Match `claude` as a command word (bare or path-tail), not path fragments
-        // like `~/.claude/…` (preceded by a dot) — the wrapper `sh -c 'claude -p …'`
-        // matching too is fine: that only happens on the nested path we want to skip.
-        if (/(^|[\s/])claude($|\s)/.test(p.command)) claudes++;
-        if (claudes >= 2) return true;
-        pid = p.ppid;
-      }
+      // Tab boundary: the server spawned the pane, so once the walk reaches it every
+      // remaining ancestor is outside the pane. (Absent on older servers → the walk
+      // continues to pid 1, accepting the pre-boundary behavior.) The walk itself
+      // lives in session-origin.ts so it can be tested against synthetic tables.
+      const serverPid = Number(process.env.DREAMCONTEXT_SERVER_PID || 0) || null;
+      return isNestedInProcessTable(parsePsTable(out), process.ppid, serverPid);
     } catch { /* ancestry unreadable → fail open */ }
     return false;
+  }
+
+  // Is THIS hook's session a spawned one, for the directive/reminder paths? Unlike
+  // Stop, these trust the stored ledger record when one exists (the `known` fast
+  // path): an existing session skips the goal-live scan and the `ps` walk, which
+  // matters on UserPromptSubmit because it fires on every message. A record written
+  // before the marker existed carries no `spawn` and reads as human here.
+  function selfSpawnMarker(root: string, sessionId: string | null, state: SleepState): SpawnMarker | null {
+    const known = sessionId ? state.sessions.find(s => s.session_id === sessionId) : undefined;
+    return resolveSpawnMarker({
+      env: process.env, contextRoot: root, sessionId, isNested: isNestedClaudeHook,
+      ...(known ? { known } : {}),
+    });
   }
 
   // The one shared gate for recording an embedded tab's session rotation — both hook
@@ -1759,23 +1991,20 @@ export function registerHookCommand(program: Command): void {
         // not block the catch-up: the full-transcript digest supersedes it.
         if (digestExists(root, session.session_id) && !digestIsPartial(root, session.session_id)) continue;
         try {
-          const mainDistilled = distillTranscript(loc.mainPath);
-          // AC8a — sub-agent harvest: merge findings from
-          // <sessionDir>/subagents/agent-*.jsonl into the same digest/salience
-          // pass. `distillSubagents` returns an all-empty section (never
-          // throws) when there's no sessionDir/no subagent files, so this is a
-          // no-op merge on every session that predates the dir layout.
-          const subagentDistilled = distillSubagents(loc);
-          const distilled = mergeDistilled([mainDistilled, subagentDistilled]);
+          // AC8a — sub-agent harvest: the digest merges findings from
+          // <sessionDir>/subagents/agent-*.jsonl. The auto-bookmark moments do
+          // NOT read sub-agent user text (orchestrator briefs), and a spawned
+          // session yields none at all (see captureSessionMoments).
+          const { digest, moments } = captureSessionMoments(loc, { spawned: !!session.spawn });
 
           // C1: bounded digest.
-          const md = buildDigest(distilled);
+          const md = buildDigest(digest);
           writeDigest(root, session.session_id, md);
 
           // C2: auto-salience → bookmarks. Skip any whose message already exists
           // (explicit or prior-auto) to avoid duplicates across catch-up runs.
           const taskSlug = session.task_slugs?.[0] ?? null;
-          for (const moment of detectSalience(distilled)) {
+          for (const moment of moments) {
             const exists = state.bookmarks.some(b => b.message === moment.message);
             if (exists) continue;
             const bookmark: Bookmark = {
@@ -1815,7 +2044,13 @@ export function registerHookCommand(program: Command): void {
 
       // Thresholds come from `.config.json` `sleep.thresholds` (defaults when
       // unset) so the hook, the CLI, /api/sleep and the dashboard all read ONE source.
-      const directive = getConsolidationDirective(state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root));
+      // A spawned session (builder, automation run, nested `claude -p`) gets no
+      // sleep directive: it has no human to tell and cannot run a sleep.
+      const selfSpawn = selfSpawnMarker(root, sid || null, state);
+      const directive = getConsolidationDirective(
+        state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root),
+        { spawned: selfSpawn !== null },
+      );
       if (directive) {
         console.log(directive);
       }
@@ -2067,7 +2302,13 @@ export function registerHookCommand(program: Command): void {
       // is unit-testable. Returns null below the threshold (stay silent). The
       // "consolidation in progress" early-return must still short-circuit the
       // rest of this handler, so re-check that condition here.
-      const reminder = userPromptReminder(state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root));
+      // A spawned session gets no sleep line at all (see selfSpawnMarker).
+      const promptSessionId = typeof input.session_id === 'string' ? input.session_id : null;
+      const selfSpawn = selfSpawnMarker(root, promptSessionId, state);
+      const reminder = userPromptReminder(
+        state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root),
+        { spawned: selfSpawn !== null },
+      );
       // A non-stale lock means a sleep is genuinely mid-cycle — short-circuit the
       // rest of the handler (initializer/recall gates) just like the reminder does.
       // A stale lock (crashed sleep) must NOT keep suppressing these forever.

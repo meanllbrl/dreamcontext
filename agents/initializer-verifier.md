@@ -60,7 +60,7 @@ Run the **real checks** and return a verdict with evidence. Do not reason about 
    near-duplicate knowledge files for the same subject.
 6. **Hierarchy sane.** Knowledge contexts are real folders with related docs, not a flat dump
    of verbatim copies; data-structures hold actual schemas where the code has them.
-7. **Core populated.** soul/user/memory/tech_stack carry real, project-specific content.
+7. **Core populated.** soul, memory, tech_stack and `people/` carry real, project-specific content.
 
 ## Iron rules
 

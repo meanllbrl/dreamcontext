@@ -15,8 +15,7 @@ import { resolveConnectedVaults, currentVaultTarget } from './federation-recall.
  * it to a LOCAL cache file (`state/.peer-summaries.json`). The snapshot hot path
  * reads ONLY that cache (a single local file read); it NEVER resolves or reads a
  * peer vault. The cache is refreshed off the hot path: by `dreamcontext
- * federation peers`, by the sleep-federation cycle, and right after a
- * connect/disconnect.
+ * federation peers` and right after a connect/disconnect.
  *
  * READ model (same as recall): peer B is readable from current vault A iff
  *   A→B connection direction is out/both AND not stale.

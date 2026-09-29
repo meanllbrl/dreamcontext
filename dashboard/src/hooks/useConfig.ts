@@ -18,9 +18,9 @@ export interface GitHubConfig {
   changelogTarget?: 'comments';
 }
 
-/** The six sleep specialists whose model/effort are tunable (mirrors SLEEP_SPECIALISTS). */
+/** The five sleep specialists whose model/effort are tunable (mirrors SLEEP_SPECIALISTS). */
 export const SLEEP_SPECIALISTS = [
-  'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-federation', 'sleep-learn',
+  'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-learn',
 ] as const;
 export type SleepSpecialist = (typeof SLEEP_SPECIALISTS)[number];
 

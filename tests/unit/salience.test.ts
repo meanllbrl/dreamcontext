@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { DistilledSection } from '../../src/cli/commands/transcript.js';
-import { detectSalience, detectSalienceFromMessage, MESSAGE_ONLY_MOMENT_CAP } from '../../src/lib/salience.js';
+import {
+  detectSalience, detectSalienceFromMessage, MESSAGE_ONLY_MOMENT_CAP,
+  leadingClause, CORRECTION_SCAN_MAX_CHARS,
+} from '../../src/lib/salience.js';
 
 function empty(): DistilledSection {
   return {
@@ -132,6 +135,87 @@ describe('detectSalience', () => {
     // the 10 identical correction messages collapse to one
     const corrections = moments.filter(m => m.message.includes('User correction'));
     expect(corrections.length).toBe(1);
+  });
+});
+
+describe('detectSalience: leading-clause gate (orchestrator briefs are not corrections)', () => {
+  const brief = [
+    'You are builder w1-A (Lane A, server) on task demo-task.',
+    'Read _dream_context/state/demo-task.md first.',
+    'Use the cached index instead of re-reading every file, and actually run the tests.',
+    'If a plan step is wrong, stop and report it.',
+    'The lead decided the wave map; you will use the lane files only.',
+  ].join(' ') + ' ' + 'Context. '.repeat(600);
+
+  it('a 5k-char brief with correction and decision words past its first sentence yields nothing', () => {
+    expect(brief.length).toBeGreaterThan(5000);
+    const d = empty();
+    d.userMessages = [brief];
+    expect(detectSalience(d)).toEqual([]);
+  });
+
+  it('a short correction still fires', () => {
+    const d = empty();
+    d.userMessages = ['no, use the staging endpoint'];
+    const moments = detectSalience(d);
+    expect(moments).toEqual([{ message: 'User correction: no, use the staging endpoint', salience: 2 }]);
+  });
+
+  it('a long message whose FIRST sentence carries the marker still fires', () => {
+    const d = empty();
+    d.userMessages = ['Actually the retry belongs in the client. ' + 'Here is the context. '.repeat(40)];
+    const moments = detectSalience(d);
+    expect(moments.filter(m => m.message.startsWith('User correction:'))).toHaveLength(1);
+  });
+
+  it('a short message is scanned whole, so a mid-message "instead of" still counts', () => {
+    const d = empty();
+    d.userMessages = ['Looks good. Use pnpm instead of npm though.'];
+    expect(detectSalience(d).some(m => m.message.startsWith('User correction:'))).toBe(true);
+  });
+
+  it('a long user message with a decision word past its first sentence is not a Decision', () => {
+    const d = empty();
+    d.userMessages = ['Here is the full brief for this run. ' + 'Filler text. '.repeat(40) + 'We decided on X.'];
+    expect(detectSalience(d)).toEqual([]);
+  });
+});
+
+describe('leadingClause', () => {
+  it('returns short messages whole (trimmed)', () => {
+    expect(leadingClause('  no, not that one. Try again.  ')).toBe('no, not that one. Try again.');
+  });
+
+  it('cuts a long message at the end of its first sentence', () => {
+    const long = 'First sentence here. ' + 'x'.repeat(400);
+    expect(leadingClause(long)).toBe('First sentence here.');
+  });
+
+  it('cuts at a newline too', () => {
+    const long = 'Heading line\n' + 'y'.repeat(400);
+    expect(leadingClause(long)).toBe('Heading line\n');
+  });
+
+  it('caps an unpunctuated long message at CORRECTION_SCAN_MAX_CHARS', () => {
+    const long = 'z'.repeat(1000);
+    expect(leadingClause(long)).toHaveLength(CORRECTION_SCAN_MAX_CHARS);
+  });
+});
+
+describe('detectSalience: sub-agent paperwork is not a Decision', () => {
+  it('skips [subagent…] agent decisions', () => {
+    const d = empty();
+    d.agentDecisions = [
+      '[subagent:a1b2] ## sleep-product report: we decided to merge the two PRDs.',
+      '[subagent-task] You are the sleep-state specialist; we will use the standard depth.',
+    ];
+    expect(detectSalience(d)).toEqual([]);
+  });
+
+  it('still detects the main agent\'s own decision', () => {
+    const d = empty();
+    d.agentDecisions = ['We decided to keep the regex as the fallback.'];
+    expect(detectSalience(d).some(m => m.message.startsWith('Decision:'))).toBe(true);
   });
 });
 

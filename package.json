@@ -15,6 +15,7 @@
     "skill-deep-research",
     "skill-sync",
     "skill-patterns",
+    "skill-agent-core",
     "skill-packs",
     "agents",
     "README.md",
@@ -82,7 +83,8 @@
     "announce:shots:gap": "node e2e/announce-shots-gap.mjs",
     "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs",
     "verify:pane-widen": "node scripts/verify/pane-focus-widen.mjs",
-    "verify:mobile-chat": "node scripts/verify/mobile-chat.mjs"
+    "verify:mobile-chat": "node scripts/verify/mobile-chat.mjs",
+    "verify:sleep-debt": "vitest run --config eval/sleep-debt/vitest.config.ts"
   },
   "keywords": [
     "ai",

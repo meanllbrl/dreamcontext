@@ -28,7 +28,7 @@ maxTurns: 40
 color: blue
 skills:
   - engineering
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -36,7 +36,7 @@ skills:
 - **engineering** — defines the quality bar the plan must target (security,
   error handling, testing, idempotency, architectural principles). A plan that
   ignores these produces work the `reviewer` will reject in Phase 5.
-- **dreamcontext** — read the active context (`_dream_context/core/` for
+- **dreamcontext-agent-core**: read the active context (`_dream_context/core/` for
   architecture/tech-stack, `_dream_context/state/` for related tasks) so the
   plan fits the real system, and follow the plan→task workflow so Phase 3 can
   persist your plan cleanly.

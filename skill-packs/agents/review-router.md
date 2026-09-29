@@ -27,7 +27,7 @@ tools:
 maxTurns: 8
 skills:
   - multi-review
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -35,7 +35,7 @@ skills:
 - **multi-review** — defines the tier rubric, the specialist roster, and the
   hot-path override rules you must apply. Routing decisions made without this
   skill loaded are ungrounded.
-- **dreamcontext** — read the active task before routing. The task often
+- **dreamcontext-agent-core**: read the active task before routing. The task often
   reveals which domain is actually at risk (e.g. an auth migration task means
   security gets every file regardless of path heuristics).
 

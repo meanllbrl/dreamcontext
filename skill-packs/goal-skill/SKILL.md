@@ -443,6 +443,11 @@ lands. Status is read from the run itself, so a builder that crashed never shows
 running, and one you forgot to mark `done` still shows as finished. Judges dispatched
 through the Agent tool need no `--session`: the app already sees them.
 
+The registration is also what keeps a builder out of sleep debt: the hooks read it and record
+the builder's session as spawned (score 0, no auto-bookmarks, no sleep directive), since your
+own session already carries the run. Register BEFORE the spawn, as the one-liners above do. A
+builder that is nohup'd and never registered scores as a full session of its own.
+
 **Never write a `ctx` number yourself.** `--context-of <sessionId>` names the session
 whose context the forks INHERIT (the planner's `session_id` from the Session registry);
 the CLI measures it from that session's own transcript and records it on fork events

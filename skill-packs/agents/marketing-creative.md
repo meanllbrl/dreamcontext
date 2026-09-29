@@ -22,7 +22,7 @@ maxTurns: 5
 tools: Read
 skills:
   - meta-marketing
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -31,7 +31,7 @@ Even though this agent is stubbed in v0, the refusal must be grounded:
 
 - **meta-marketing** — read `SKILL.md` to confirm the `marketing.creative_director.enabled`
   flag is still false; only then is the refusal correct.
-- **dreamcontext** — read the active marketing config to verify the flag's
+- **dreamcontext-agent-core**: read the active marketing config to verify the flag's
   current value at runtime, not at agent-author time.
 
 If a skill is missing, refuse with that as the explicit reason.

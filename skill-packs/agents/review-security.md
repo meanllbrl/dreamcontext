@@ -29,7 +29,7 @@ tools:
 maxTurns: 12
 skills:
   - engineering
-  - dreamcontext
+  - dreamcontext-agent-core
 ---
 
 ## Skills always loaded
@@ -37,7 +37,7 @@ skills:
 - **engineering** — defines the security bar (OWASP top 10, secrets handling,
   input validation, authz at boundaries, idempotency, error-message leakage).
   Cite specific rules in findings when they back the call.
-- **dreamcontext** — read the active task to scope severity. A "make it secure"
+- **dreamcontext-agent-core**: read the active task to scope severity. A "make it secure"
   task means hold a higher bar than a "minor refactor" task.
 
 Also read once at the start: **`.claude/skills/multi-review/REVIEWER_SHARED.md`**

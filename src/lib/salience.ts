@@ -1,5 +1,5 @@
 import type { DistilledSection } from '../cli/commands/transcript.js';
-import { isSystemNoiseMessage } from '../cli/commands/transcript.js';
+import { isSystemNoiseMessage } from './transcript-records.js';
 
 export interface SalientMoment {
   message: string;
@@ -29,6 +29,31 @@ export const DECISION_RE = /\b(decided|chose|switched to|will use|karar|seçtik)
 
 const MAX_MOMENTS = 5;
 const MAX_MESSAGE_CHARS = 200;
+
+/**
+ * Longest user message whose FULL text is scanned for correction and decision
+ * phrases. Past this, only the leading clause is scanned (see {@link leadingClause}).
+ */
+export const CORRECTION_SCAN_MAX_CHARS = 280;
+
+/**
+ * The part of a user message worth scanning for a correction or a decision.
+ *
+ * A real correction leads with its marker ("no, use…", "actually…", "that's wrong").
+ * A 5k-char orchestrator brief ("You are builder w1-A on task …") carries "instead of"
+ * or "actually" somewhere in its body, and an unanchored scan over the whole brief
+ * filed every one of them as a ★★ 'User correction': 24 of 24 bookmarks in the
+ * 2026-09-27..29 cycle. Short messages are scanned whole; longer ones only up to the
+ * end of their first sentence (`.`, `!`, `?` or a newline), capped at
+ * CORRECTION_SCAN_MAX_CHARS.
+ */
+export function leadingClause(message: string): string {
+  const text = message.trim();
+  if (text.length <= CORRECTION_SCAN_MAX_CHARS) return text;
+  const end = text.search(/[.!?\n]/);
+  const clause = end === -1 ? text : text.slice(0, end + 1);
+  return clause.slice(0, CORRECTION_SCAN_MAX_CHARS);
+}
 
 function clamp(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
@@ -65,9 +90,11 @@ export function detectSalience(distilled: DistilledSection): SalientMoment[] {
   // 1. User corrections (salience 2). Defense-in-depth: skip system-injected
   //    coordination noise (sub-agent notifications, agent-resume JSON, skill
   //    headers) even if it reached userMessages — it is never a real correction.
+  //    Only the leading clause is tested: a correction leads with its marker,
+  //    and a long brief carries the same words deep in its body.
   for (const msg of distilled.userMessages) {
     if (isSystemNoiseMessage(msg)) continue;
-    if (CORRECTION_RE.test(msg)) {
+    if (CORRECTION_RE.test(leadingClause(msg))) {
       push(`User correction: ${msg}`, 2);
     }
   }
@@ -80,14 +107,20 @@ export function detectSalience(distilled: DistilledSection): SalientMoment[] {
   }
 
   // 3. Explicit decisions (salience 2) — from agent decisions and user messages.
+  //    Excluded: `[thinking]` blocks, and `[subagent…` entries (a sub-agent's
+  //    brief-echo or report handed back to its orchestrator is agent-to-agent
+  //    paperwork, not a decision made with the user). User messages are tested on
+  //    their leading clause, like corrections.
   const decisionSources = [
-    ...distilled.agentDecisions.filter((d) => !d.startsWith('[thinking]')),
-    ...distilled.userMessages,
+    ...distilled.agentDecisions
+      .filter((d) => !d.startsWith('[thinking]') && !d.startsWith('[subagent'))
+      .map((d) => ({ text: d, scanned: d })),
+    ...distilled.userMessages.map((m) => ({ text: m, scanned: leadingClause(m) })),
   ];
   for (const src of decisionSources) {
-    if (isSystemNoiseMessage(src)) continue;
-    if (DECISION_RE.test(src)) {
-      push(`Decision: ${src}`, 2);
+    if (isSystemNoiseMessage(src.text)) continue;
+    if (DECISION_RE.test(src.scanned)) {
+      push(`Decision: ${src.text}`, 2);
     }
   }
 

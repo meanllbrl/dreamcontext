@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
+import { AGENT_CORE_SKILL } from './catalog.js';
 import { readJsonArray } from './json-file.js';
 import { expandQueryTerms } from './recall-synonyms.js';
 import { loadDigestDocs } from './session-digest.js';
@@ -795,6 +796,9 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
       const slug = (typeof data.name === 'string' && data.name)
         ? data.name
         : basename(dirname(file));
+      // EXCLUDE the sub-agent core skill: it is a trimmed copy of the dreamcontext
+      // skill the main session already carries, preloaded only into sub-agents.
+      if (slug === AGENT_CORE_SKILL) continue;
       const title = slug;
       const description = (typeof data.description === 'string') ? data.description : '';
       const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];

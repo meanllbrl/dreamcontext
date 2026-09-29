@@ -432,6 +432,44 @@ export function findTabRunToContinue(contextRoot: string, tab: string | null): {
 }
 
 /**
+ * Is `sessionId` a headless teammate some orchestrated run registered (`goal-live actor …
+ * --session <uuid>`)? Returns the run's mode and its orchestrator's conversation id, or null.
+ *
+ * Read by the sleep hooks to keep a registered builder's session out of the debt ledger. A
+ * `lineage[].sid` is only ever set from an explicit `actor --session` (see `applyActor`), and a
+ * lead's own conversation id only ever lands in `state.session`, so the lead is never matched;
+ * a file whose own `session` equals `sessionId` is refused anyway, so an orchestrator can never
+ * be read as its own child. A symlinked `tmp/` or file is refused (a shared brain repo must not
+ * steer this read), a malformed file is skipped, and nothing here ever throws: a hook calls it.
+ */
+export function findRegisteredActor(
+  contextRoot: string,
+  sessionId: string,
+): { mode: GoalLiveMode; orchestrator: string | null } | null {
+  if (!sessionId) return null;
+  const dir = join(contextRoot, 'tmp');
+  let names: string[];
+  try {
+    if (!lstatSync(dir).isDirectory()) return null; // a symlinked tmp/ is not a directory to lstat
+    names = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    if (!GOAL_LIVE_FILE_RE.test(name)) continue;
+    const path = join(dir, name);
+    try {
+      if (!lstatSync(path).isFile()) continue;
+      const state = readGoalLive(path);
+      if (!state || state.session === sessionId) continue;
+      if (!(state.lineage ?? []).some((l) => l.sid === sessionId)) continue;
+      return { mode: state.mode ?? 'goal', orchestrator: state.session ?? null };
+    } catch { /* vanished mid-scan */ }
+  }
+  return null;
+}
+
+/**
  * The context a fork INHERITS: the source session's last main-chain context, measured off
  * its own transcript (`lastMainChainContext`, the same formula the composer ring and the
  * handoff nudge use). Null when the transcript cannot be found or carries no usage — the

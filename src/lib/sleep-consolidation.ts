@@ -9,6 +9,7 @@
  */
 
 import type { SleepConfig } from './setup-config.js';
+import type { SpawnMarker } from './session-origin.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -34,10 +35,19 @@ export interface SessionRecord {
    *  `max(change, tool, substance)` scale; 2 = the weighted 0–10 scorer. Read by
    *  the rescale migration so it can never double-apply. */
   scoring_version?: number;
+  /** Present when dreamcontext or an orchestrator spawned this session (a Develop or goal-skill
+   *  builder, an automation run, background sleep, a peer or lab run, a nested `claude -p`).
+   *  Such a session is recorded for task linkage but carries NO debt: its score is always 0
+   *  (enforced by `upsertSessionOnStop`). Absent on human sessions and on records written
+   *  before the marker existed. See `src/lib/session-origin.ts`. */
+  spawn?: SpawnMarker;
 }
 
-/** Current scoring generation stamped onto every newly-scored session. */
-export const SCORING_VERSION = 2;
+/** Current scoring generation stamped onto every newly-scored session.
+ *  3 = the 2026-09-29 counting fix (real tool_use blocks, usage once per API
+ *  message minus startup, human-typed substance). Still the 0–10 scale, so the
+ *  legacy rescale (keyed on an ABSENT version) leaves it alone. */
+export const SCORING_VERSION = 3;
 
 export interface Bookmark {
   id: string;
@@ -752,6 +762,9 @@ export interface StopUpsertInput {
    *  fills both once it finalizes. */
   novel_tokens?: number;
   scoring_version?: number;
+  /** The spawn marker resolved at this Stop, when there is one. Sticky: once a session is
+   *  recorded as spawned it stays spawned even if a later Stop cannot resolve the marker. */
+  spawn?: SpawnMarker;
 }
 
 /**
@@ -762,6 +775,12 @@ export interface StopUpsertInput {
  *   add the new score. Does NOT bump sessions_since_last_sleep (a re-stop is not
  *   a new session).
  * - Else: unshift the new session, debt += score, bump sessions_since_last_sleep.
+ * - Spawned sessions (`spawn` on the input, or already on the stored record: the
+ *   marker is sticky) are recorded with score 0 whatever score was passed, so they
+ *   carry no debt and are never pending; a NEW spawned session does not bump
+ *   sessions_since_last_sleep. Debt measures work that needs a human-paced
+ *   consolidation, and an orchestrated run is already carried by its orchestrator.
+ *   Every human-session path is unchanged.
  *
  * Returns a CLONE; the input state is not mutated.
  */
@@ -773,6 +792,8 @@ export function upsertSessionOnStop(state: SleepState, input: StopUpsertInput): 
     const oldScore = next.sessions[existing].score ?? 0;
     next.debt = Math.max(0, next.debt - oldScore);
     const existingSlugs = next.sessions[existing].task_slugs ?? [];
+    const spawn = input.spawn ?? next.sessions[existing].spawn;
+    const score = spawn ? 0 : input.score;
     next.sessions[existing] = {
       ...next.sessions[existing],
       transcript_path: input.transcript_path,
@@ -780,13 +801,15 @@ export function upsertSessionOnStop(state: SleepState, input: StopUpsertInput): 
       last_assistant_message: input.last_assistant_message,
       change_count: input.change_count,
       tool_count: input.tool_count,
-      score: input.score,
+      score,
       task_slugs: [...new Set([...existingSlugs, ...input.task_slugs])],
       ...(input.novel_tokens !== undefined ? { novel_tokens: input.novel_tokens } : {}),
       ...(input.scoring_version !== undefined ? { scoring_version: input.scoring_version } : {}),
+      ...(spawn ? { spawn } : {}),
     };
-    next.debt += input.score ?? 0;
+    next.debt += score ?? 0;
   } else {
+    const score = input.spawn ? 0 : input.score;
     next.sessions.unshift({
       session_id: input.session_id,
       transcript_path: input.transcript_path,
@@ -794,13 +817,14 @@ export function upsertSessionOnStop(state: SleepState, input: StopUpsertInput): 
       last_assistant_message: input.last_assistant_message,
       change_count: input.change_count,
       tool_count: input.tool_count,
-      score: input.score,
+      score,
       task_slugs: input.task_slugs,
       ...(input.novel_tokens !== undefined ? { novel_tokens: input.novel_tokens } : {}),
       ...(input.scoring_version !== undefined ? { scoring_version: input.scoring_version } : {}),
+      ...(input.spawn ? { spawn: input.spawn } : {}),
     });
-    next.debt += input.score ?? 0;
-    next.sessions_since_last_sleep = (next.sessions_since_last_sleep || 0) + 1;
+    next.debt += score ?? 0;
+    if (!input.spawn) next.sessions_since_last_sleep = (next.sessions_since_last_sleep || 0) + 1;
   }
 
   return next;

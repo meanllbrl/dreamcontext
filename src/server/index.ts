@@ -220,6 +220,7 @@ import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { handleAdminShutdown } from './routes/admin.js';
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../lib/manifest.js';
+import { prepareDashboardEnv } from '../lib/session-origin.js';
 
 export interface ServerOptions {
   port: number;
@@ -833,6 +834,12 @@ function listNetworkHosts(host: string): string[] {
 }
 
 export function startDashboardServer(options: ServerOptions): Promise<void> {
+  // Before anything can spawn a pane: drop any inherited spawn marker (a server launched from a
+  // builder or automation must not zero a human pane's sleep debt) and stamp this server's pid
+  // as the hooks' ancestry boundary. Unpinned panes get no per-tab env, so without this the
+  // nested-claude walk runs past the server and reads a human pane as nested when the server
+  // itself was started from inside a Claude Code session.
+  prepareDashboardEnv(process.env, process.pid);
   const { port, contextRoot, open, host = '127.0.0.1' } = options;
   const router = buildRouter();
   const dashboardDir = getDashboardDir();

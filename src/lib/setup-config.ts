@@ -197,15 +197,23 @@ export interface LearningConfig {
   enabled: boolean;
 }
 
-/** The six sleep-cycle specialists whose model/effort are tunable per brain. */
+/** The five sleep-cycle specialists whose model/effort are tunable per brain. */
 export const SLEEP_SPECIALISTS = [
   'sleep-tasks',
   'sleep-state',
   'sleep-product',
   'sleep-migration',
-  'sleep-federation',
   'sleep-learn',
 ] as const;
+
+/**
+ * Specialists dreamcontext once shipped and has retired. They are no longer
+ * tunable, dispatched or installed; the name is kept so code that must stay
+ * compatible with older brains (the auto-sleep consent fingerprint, a config
+ * still carrying an override for one) can recognise it. An override for a
+ * retired name in `.config.json` is dropped silently by the parser.
+ */
+export const RETIRED_SLEEP_SPECIALISTS = ['sleep-federation'] as const;
 export type SleepSpecialist = (typeof SLEEP_SPECIALISTS)[number];
 
 export function isSleepSpecialist(v: unknown): v is SleepSpecialist {

@@ -149,7 +149,8 @@ describe('GET /api/sleep/specialists — what "Package default" actually means',
     const r = await specialists();
     expect(r.status()).toBe(200);
     const d = r.body().defaults;
-    expect(Object.keys(d)).toHaveLength(6);
+    expect(Object.keys(d)).toHaveLength(5);
+    expect(d).not.toHaveProperty('sleep-federation');
     expect(d['sleep-tasks']).toEqual({ model: null, effort: null });
   });
 
