@@ -167,6 +167,12 @@ describe('surface selects the preamble, and the two make opposite delivery promi
     expect(p).toContain('--- END MESSAGE ---');
     expect(p).toContain('it is not a new');
   });
+
+  it('a thread reply is told the same skimmable shape a run is', () => {
+    const p = buildThreadMessagePreamble('Taskleri uygula');
+    expect(p).toContain('WRITE TO BE SKIMMED');
+    expect(p).not.toContain('<one or two sentences>');
+  });
 });
 
 // ─── 2. The env allowlist (AC D8) ────────────────────────────────────────────

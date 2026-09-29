@@ -145,8 +145,10 @@ Every automation is also a **channel**, and every fire is a **thread** in it. Th
 **The run itself decides what to say.** Summaries are never derived from a transcript: a derived summary posts on every run whether or not anything happened, and the whole value of a channel is that an unremarkable run stays quiet.
 
 ```
-dreamcontext automations post <slug> "<one or two sentences>" [--file <brain-relative path>] [--kv key=value]
+dreamcontext automations post <slug> "<the point, in markdown>" [--file <brain-relative path>] [--kv key=value]
 ```
+
+- **Written to be skimmed.** The channel and the answer card render markdown and the owner reads the bold words and list heads, not the paragraph. Several items are a real list, one `- ` or `1.` line each (a newline inside the quotes), never "1) … 2) … 3) …" run together inline; one bold anchor per line (the figure or the verb), never a bold sentence. The run, ask and reply briefs all carry this rule (`SKIMMABLE_MARKDOWN` in `runner.ts`), and the document's opening sentence stays short, with the actions as a list under it. The notification banner flattens the post to one plain line (`plainPostText`), so the markdown never shows up as literal `**` in a banner.
 
 - **Post only what is IMPORTANT**: a finding, a number that moved, something that needs a decision. Not progress narration, not "starting now", not the whole document (it is saved already and becomes the thread's answer card). **Zero posts is the right number for an unremarkable run**, and the run's preamble says so.
 - **A run needs no ids.** The runner exports `DREAMCONTEXT_AUTOMATION_SLUG` and `DREAMCONTEXT_AUTOMATION_RUN` into the child's environment, so `post` binds to the run that is calling it. Those are HINTS, not capabilities: the slug is still a required positional and is still validated, so a leaked or forged variable grants nothing. With no run resolvable at all, `post` **refuses** with a non-zero exit and writes nothing — a post in a thread no run will ever close reads to a human as an agent talking to itself.

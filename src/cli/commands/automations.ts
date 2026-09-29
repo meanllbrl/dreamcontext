@@ -1174,7 +1174,7 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('post')
     .argument('<slug>', 'Automation slug')
-    .argument('<text>', 'One or two sentences: what is IMPORTANT about this run')
+    .argument('<text>', 'What is IMPORTANT about this run, in skimmable markdown (one list item per line)')
     .description('Post to this automation\'s channel (a run calls this about itself)')
     .option('--file <path>', 'Brain-relative path to attach (repeatable, max 4)', collectFile, [])
     .option('--kv <pair>', `A key=value summary row (repeatable, max ${THREAD_SUMMARY_MAX_ROWS})`, collectKv, [])

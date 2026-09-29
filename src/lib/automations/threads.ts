@@ -700,6 +700,29 @@ export function allThreadUnread(
 }
 
 /**
+ * A post as ONE plain line, for a notification banner.
+ *
+ * Posts are markdown written to be skimmed (bold anchors, one list item per line), which is
+ * right in the channel and wrong in a banner: macOS draws `**` and `- ` literally and keeps
+ * only the first line. So every line is kept, its list/quote/heading marker dropped, the
+ * emphasis unwrapped, and the lines joined; a numbered item keeps its number, because
+ * "1. bütçe 2. PIX" still reads as the list it was.
+ */
+export function plainPostText(markdown: string): string {
+  return markdown
+    .split('\n')
+    .map((line) => line.trim().replace(/^#{1,6}\s+/, '').replace(/^>\s*/, '').replace(/^[-*+]\s+/, ''))
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
  * One banner for what a RESUMED turn said — an answered question, a thread reply.
  *
  * A scheduled run announces itself when it finishes (the runner's completion banner).
@@ -736,7 +759,7 @@ export function announceTurn(
     const last = said[said.length - 1] ?? null;
     const watermark = threadReadWatermark(contextRoot, slug, home);
     if (last && watermark !== null && watermark >= last.id) return false;
-    const body = (last?.text ?? fallback ?? '').trim();
+    const body = plainPostText(last?.text ?? fallback ?? '');
     if (!body) return false;
     const title = last?.kind === 'system' ? `${manifest.title} — needs your answer` : manifest.title;
     return notifyViaBundle(

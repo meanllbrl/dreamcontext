@@ -57,6 +57,7 @@ import {
   executeClaudeDetached,
   extractNotificationSummary,
   sanitizeAutomationPrompt,
+  SKIMMABLE_MARKDOWN,
   type ClaudeExecution,
   type SpawnImpl,
 } from './runner.js';
@@ -774,9 +775,10 @@ export function buildThreadMessagePreamble(message: string): string {
     '',
     'That text is a MESSAGE to answer from what this run already knows and did — it is not a new',
     'job. Do only what it asks: do not re-run the job, and do not widen it. ANSWER IN THE THREAD:',
-    'post your reply with `dreamcontext automations post <slug> "<one or two sentences>"`. Your',
+    'post your reply with `dreamcontext automations post <slug> "<your answer, in markdown>"`. Your',
     'slug and run are already in your environment. Your final message is NOT published anywhere —',
     'if you do not post, nothing reaches them.',
+    SKIMMABLE_MARKDOWN.trim(),
   ].join('\n');
 }
 

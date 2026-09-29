@@ -20,7 +20,7 @@ import { backfillQuestionSession, createQuestion, pendingQuestion } from './hitl
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
-import { appendThreadEntry, readThreadRun } from './threads.js';
+import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
 import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
@@ -77,6 +77,21 @@ const TELEGRAM_RESULT_MAX_CHARS = 3_000;
 const TELEGRAM_SEND_TIMEOUT_MS = 10_000;
 
 // ─── Preamble / prompt composition ──────────────────────────────────────────
+
+/**
+ * How a run's words are SHAPED, said once and reused by every brief that asks an agent to
+ * write for the owner (the run preamble, an ask, a thread reply).
+ *
+ * The owner skims: the channel and the answer card render markdown, and they read the bold
+ * words and the list heads, not the paragraph. Left to itself a run writes the answer as one
+ * dense paragraph with "1) … 2) … 3) …" run together inline, which renders as a wall of text
+ * that reads like a list and is not one (observed 2026-09-29, a Product Owner run). Naming
+ * the anti-shape verbatim is what stops it; "use markdown" alone does not.
+ */
+export const SKIMMABLE_MARKDOWN =
+  ' WRITE TO BE SKIMMED (markdown renders): several items are a real list, one `- ` or `1.` line ' +
+  'each, never "1) … 2) … 3) …" run together inside a paragraph; bold the one word or figure per ' +
+  'line the eye should land on (**$54 CPA**, **bugün**), never whole sentences; short paragraphs.'
 
 /**
  * Which slot this fire belongs to, recomputed from the manifest and the fire
@@ -139,7 +154,9 @@ export function buildPreamble(
     'FIRST LINE: open the document with one plain sentence stating the actual RESULT ' +
     '(the numbers, the finding, what changed) — not "the job ran". That sentence becomes ' +
     'the desktop notification the user reads. Put a heading after it, never before it. ' +
-    'To send a different banner, add a `## Notification` section and it wins.' +
+    'Keep that sentence short: when the answer is several actions, it names the headline and the ' +
+    'actions follow it as a list. To send a different banner, add a `## Notification` section and it wins.' +
+    SKIMMABLE_MARKDOWN +
     // The thread is a CHANNEL a human reads, not a log. Without the "what NOT
     // to post" half of this clause a run narrates itself — "starting now",
     // "step 2 of 4" — and the channel becomes the transcript it exists to
@@ -147,7 +164,8 @@ export function buildPreamble(
     // the floor (zero posts is a valid run) or everything gets posted.
     ' THREAD: this run has a channel the human reads. Post only what is IMPORTANT — a finding, ' +
     'a number that moved, something that needs a decision — with ' +
-    `\`dreamcontext automations post ${m.slug} "<one or two sentences>" [--file <brain-relative path>]\`. ` +
+    `\`dreamcontext automations post ${m.slug} "<the point, in markdown>" [--file <brain-relative path>]\`. ` +
+    'A post is short and follows the same skimmable shape; a newline inside the quotes starts a new line. ' +
     'Your slug and run are already in your environment; no ids needed. Do NOT post progress ' +
     'narration, "starting now", or your whole document (it is saved for them already). ' +
     'Zero posts is the right number for an unremarkable run.' +
@@ -331,7 +349,8 @@ function lastAgentPost(
 ): string | null {
   try {
     const posts = readThreadRun(contextRoot, slug, runId).filter((e) => e.kind === 'agent');
-    return posts[posts.length - 1]?.text.trim() || null;
+    // Flattened: the post is markdown for the channel, the banner is one plain line.
+    return plainPostText(posts[posts.length - 1]?.text ?? '') || null;
   } catch (err) {
     logFn(`automation "${slug}": could not read the thread for the banner — ${(err as Error).message}`);
     return null;
@@ -422,10 +441,10 @@ export function buildAskBlock(ask: string, m?: Pick<AutomationManifest, 'slug' |
     'something the job does not cover, do that instead and say so.',
     // THE ANSWER FIRST. The thread shows the post in full and the document folded under
     // it, so the post is what the owner reads: it has to BE the answer, not a pointer.
-    'ANSWER IN THE THREAD: post the direct answer to their question (a few sentences, the names',
-    'and numbers that matter, --kv for the figures). Your final message is still the document and',
-    'it is shown under your post, folded by section, so open it with the same answer and keep the',
-    'detail in sections below.',
+    'ANSWER IN THE THREAD: post the direct answer to their question (the names and numbers that',
+    'matter, --kv for the figures). Your final message is still the document and it is shown under',
+    'your post, folded by section, so open it with the same answer and keep the detail in sections below.',
+    SKIMMABLE_MARKDOWN.trim(),
     // No blanket sign-off on a conversation (the runner skips the gates for an ask), so
     // the agent must not write as if a human approval step follows it.
     'This is a conversation, not an unattended run: no approval step runs after you, and the',
