@@ -22,21 +22,33 @@
  * WebKit only starts an AudioContext for a real user gesture. Created after
  * `await getUserMedia` it stays `suspended`, and a suspended graph delivers silence.
  *
- * ── THE DEVICE IS ASKED FOR THE RAW SIGNAL, AND THAT IS THE DICTATION FIX ───────────────
- * `getUserMedia({ audio: true })` does not hand over the microphone — it hands over the
- * microphone after the browser's VOICE-CALL processing chain: echo cancellation, noise
- * suppression and automatic gain control are all on by default, all tuned for narrowband
- * telephony, and all lossy in exactly the band a speech recogniser reads. Noise suppression
- * eats the breathy consonants Turkish leans on; AGC pumps the level between words; and echo
- * cancellation is the worst of the three here, because assistant mode is a mode where the
- * machine's own voice was playing seconds ago — the canceller adapts to it and carves a
- * matching notch out of the owner. The whisper.cpp the owner runs by hand gets none of that
- * done to it, which is most of why it sounded better with the same model.
+ * ── THE DEVICE IS ASKED FOR THE PROCESSED SIGNAL, BECAUSE THE RAW ONE IS SILENT ─────────
+ * `getUserMedia({ audio: true })` hands over the microphone after the browser's voice-call
+ * chain: echo cancellation, noise suppression and automatic gain control. From 2026-09-12
+ * this file asked for all three OFF, on the reasoning that they are tuned for telephony and
+ * lossy in the band a recogniser reads. On WebKit/macOS that reasoning never got to matter:
+ * the three are ONE switch there (the voice-processing audio unit), and with it off the
+ * built-in microphone arrives roughly 30x quieter.
  *
- * So every processing flag is asked OFF, and the constraints are `ideal` rather than exact:
- * a device that cannot honour one of them must still open. A browser that refuses the
- * constraint object outright falls back to `{ audio: true }` — a processed take beats no
- * take.
+ * MEASURED 2026-09-29, the owner speaking continuously into a MacBook Pro's built-in mic,
+ * a bare WKWebView running this exact graph (peak RMS over 5 s, half-second slices):
+ *   echoCancellation/NS/AGC off, 16 kHz context   0.009  (slices 0.000-0.002)
+ *   echoCancellation/NS/AGC off, 48 kHz context   0.008  (slices 0.001-0.005)
+ *   defaults (processing on),    16 kHz context   0.216  (slices 0.013-0.216)
+ *   defaults (processing on),    48 kHz context   0.131  (slices 0.024-0.131)
+ * The raw take sits at the silence gate's noise floor, so every take was refused as silent
+ * before it was ever uploaded. The owner heard that as "the microphone dies when I press the
+ * hotkey" (and saw the input level in System Settings drop when the take started). A take
+ * that is heard beats a cleaner take that is not.
+ *
+ * The echo-cancellation worry that motivated the raw request is smaller than it looked,
+ * too: read-aloud is opt-in, and starting a take barges in on anything still speaking, so
+ * the canceller has little of the machine's own voice to adapt to.
+ *
+ * The flags are asked ON explicitly rather than left to defaults, so a future default change
+ * cannot turn this back into a silent microphone, and `ideal` rather than exact, so a device
+ * that cannot honour one still opens. A browser that refuses the constraint object outright
+ * falls back to `{ audio: true }`.
  *
  * ── AND CAPTURED AT 16 kHz WHERE THE PLATFORM ALLOWS IT ─────────────────────────────────
  * An AudioContext built with `{ sampleRate: 16000 }` makes the platform's own resampler do
@@ -60,16 +72,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { wavFromTake, TARGET_SAMPLE_RATE } from './wavEncoder';
 
 /**
- * The constraint object that asks for the microphone RATHER THAN the voice-call chain.
+ * The constraint object: the voice-processing chain ON, one channel.
  *
- * `ideal` on every flag, not `exact`: the point is a better signal, and a device that cannot
- * switch one of these off must still open. See the module note for what each one does to a
- * transcript when it is left on.
+ * NOT the raw device: on WebKit/macOS turning the chain off leaves the built-in microphone
+ * ~30x quieter, below the silence gate. See the module note for the measurement.
  */
-export const RAW_MIC: MediaTrackConstraints = {
-  echoCancellation: { ideal: false },
-  noiseSuppression: { ideal: false },
-  autoGainControl: { ideal: false },
+export const MIC: MediaTrackConstraints = {
+  echoCancellation: { ideal: true },
+  noiseSuppression: { ideal: true },
+  autoGainControl: { ideal: true },
   channelCount: { ideal: 1 },
 };
 
@@ -103,8 +114,8 @@ export const SPEECH_OVER_NOISE = 3.5;
  * ── WHY THE GATE BECAME RELATIVE, 2026-09-12 ────────────────────────────────────────────
  * FOUND IN REVIEW, and it is the regression that would have traded one complaint for a worse
  * one. {@link RMS_FLOOR} was measured against a capture path that asked the browser for
- * automatic gain control; the raw-device capture this mode now uses (see {@link RAW_MIC})
- * deliberately switches AGC off, and a quiet speaker at arm's length can then land 20 dB —
+ * automatic gain control; the raw-device capture this mode used from 2026-09-12 to 2026-09-29
+ * switched AGC off, and a quiet speaker at arm's length can then land 20 dB —
  * about 10x in amplitude — under where the same voice used to arrive. A fixed absolute floor
  * calibrated on the boosted signal would have started discarding real sentences as silence,
  * with no transcript at all: "the dictation is bad" replaced by "the dictation did not
@@ -115,6 +126,9 @@ export const SPEECH_OVER_NOISE = 3.5;
  * about the ratio, and keeps the old absolute number as a CEILING it may never exceed:
  *
  *   threshold = max(ABSOLUTE_RMS_FLOOR, min(RMS_FLOOR, noise × SPEECH_OVER_NOISE))
+ *
+ * The capture is processed again ({@link MIC}), and the relative gate stays: it costs nothing
+ * and still covers a device or engine whose chain does not level the signal.
  *
  * By construction this can only ever ACCEPT MORE than the old rule did, never less — so it
  * cannot introduce a new false "that take was silent". And it still refuses a take of pure
@@ -451,10 +465,10 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
 
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: RAW_MIC });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: MIC });
       } catch (err) {
         // A constraint this device or engine will not take must not cost the take. Retried
-        // ONCE, unprocessed-ness given up: a processed transcript beats no transcript.
+        // ONCE with no constraints at all: a take in the default chain beats no take.
         if ((err as { name?: string })?.name === 'OverconstrainedError'
           || (err as { name?: string })?.name === 'TypeError') {
           try {
