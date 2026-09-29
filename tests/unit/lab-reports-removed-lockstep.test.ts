@@ -146,13 +146,13 @@ describe('Reports are gone: no identifier survives in src/ or dashboard/src/', (
     expect(files.length).toBeGreaterThan(100);
   });
 
-  it.each(['ReportPage', 'reportSlugs'])('%s appears nowhere', (identifier) => {
+  // WindowRange went with the transient window override (`window-cache.ts`,
+  // `SyncOptions.window`, the sync job's `windows`, the sync-jobs windows parse).
+  it.each(['ReportPage', 'reportSlugs', 'WindowRange'])('%s appears nowhere', (identifier) => {
     expect(holders(identifier)).toEqual([]);
   }, 60_000);
 
-  // WindowRange is not report-only: the transient window override (`window-cache.ts`,
-  // `SyncOptions.window`, the sync job's `windows`, the sync-jobs windows parse in
-  // routes/lab.ts) still uses it until Wave 1 L1 (server+CLI+sync wiring) removes the
-  // window code. Flip this to a live assertion in that lane.
-  it.todo('WindowRange appears nowhere (enabled by W1 L1 when the window code goes)');
+  it('the window cache module is gone', () => {
+    expect(existsSync(join(ROOT, 'src/lib/lab/window-cache.ts'))).toBe(false);
+  });
 });

@@ -196,7 +196,7 @@ export function LabBoard({ focus }: LabBoardProps = {}) {
 
   const handleSyncAll = () => {
     if (syncRunning) return;
-    startSyncAll.mutate({ force: true }, {
+    startSyncAll.mutate({ force: 'user' }, {
       onError: (err) => setToast(`Sync all failed to start: ${(err as Error).message}`),
     });
   };

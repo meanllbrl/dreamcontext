@@ -51,6 +51,10 @@ export interface InsightSummary {
   ttlMinutes: number;
   staleMinutes: number | null;
   stale: boolean | null;
+  /** This machine's last "upstream unchanged" confirmation (staleness counts from the newer of this and fetchedAt). */
+  checkedAt?: string | null;
+  /** The source's own plain-text freshness note, or null. */
+  freshnessNote?: string | null;
   tweaks: PublicTweak[];
 }
 
@@ -130,10 +134,15 @@ export interface InsightDetail {
 
 export interface SyncResult {
   slug: string;
-  status: 'ok' | 'fresh' | 'failed';
+  /** `skipped` = an automatic run backing off a recent failure. */
+  status: 'ok' | 'fresh' | 'failed' | 'skipped';
   latest?: number | null;
   granularity?: string;
   error?: string;
+  /** Why a `fresh`/`skipped` result did not fetch. */
+  reason?: 'ttl' | 'upstream-unchanged' | 'error-backoff';
+  /** The source's own plain-text freshness note. */
+  freshnessNote?: string;
 }
 
 /**
@@ -172,13 +181,23 @@ export function useLabInsight(slug: string | null) {
   });
 }
 
-/** Sync one insight (always forces a refetch — the explicit user action). */
+/**
+ * How hard a sync pushes past the freshness gate. `'user'` = someone pressed
+ * something (the TTL is skipped, the upstream probe still decides); `'hard'` =
+ * skip the probe too ("Force full refresh"). AUTOMATIC callers (board open,
+ * timers, visibility re-checks) send no force at all.
+ */
+export type LabSyncForce = 'user' | 'hard';
+
+/** Sync one insight: an explicit user action, so `'user'` unless `'hard'` is asked for. */
 export function useSyncInsight() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (slug: string) =>
-      api.post<{ results: SyncResult[]; failed: SyncResult[] }>('/lab/sync', { slug, force: true }),
+    mutationFn: (arg: string | { slug: string; force: LabSyncForce }) => {
+      const { slug, force } = typeof arg === 'string' ? { slug: arg, force: 'user' as const } : arg;
+      return api.post<{ results: SyncResult[]; failed: SyncResult[] }>('/lab/sync', { slug, force });
+    },
     onSuccess: () => invalidateLab(queryClient),
   });
 }
@@ -194,7 +213,8 @@ export function useSyncInsight() {
  */
 export interface LabSyncJob {
   id: string;
-  status: 'running' | 'success' | 'error';
+  /** `queued` = a follow-up waiting for the running job; it starts itself. */
+  status: 'queued' | 'running' | 'success' | 'error';
   done: number;
   total: number;
   attempt: number;
@@ -204,10 +224,10 @@ export interface LabSyncJob {
   results: SyncResult[];
   failed: string[];
   error: string | null;
-  /** The slugs the run is scoped to (a subset), or null = whole board. */
+  /** The slugs the run is scoped to (a subset), or null = every insight. */
   slugs: string[] | null;
-  /** Per-slug transient window overrides, or null. */
-  windows: Record<string, { fromISO: string; toISO: string }> | null;
+  /** null = an automatic run (no retry pass). */
+  force: LabSyncForce | null;
   /** The insight that settled most recently ("now syncing …" copy). */
   current: string | null;
 }
@@ -225,25 +245,32 @@ export function useLabSyncJob() {
   });
 }
 
-/** Start (or adopt) the bulk sync job — the whole board, or a `slugs` subset.
+/** What starting a job produced: a new run, the adopted running one, or the
+ *  queued follow-up (`queued: true`, `job` = that follow-up). */
+export interface LabSyncJobStart {
+  job: LabSyncJob;
+  started: boolean;
+  queued: boolean;
+  running: LabSyncJob | null;
+  pending: LabSyncJob | null;
+}
+
+/** Start (or adopt, or queue) the bulk sync job — every insight, or a `slugs`
+ *  subset. `force` ABSENT = automatic (board open, timers): the TTL and the
+ *  error backoff apply and there is no retry pass. User actions pass `'user'`.
  *  Returns immediately — watch `useLabSyncJob`. */
 export function useStartLabSyncJob() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (opts: {
-      force?: boolean;
-      slugs?: string[];
-      windows?: Record<string, { fromISO: string; toISO: string }>;
-    } = {}) =>
-      api.post<{ job: LabSyncJob; started: boolean }>('/lab/sync-jobs', {
-        force: opts.force !== false,
+    mutationFn: (opts: { force?: LabSyncForce; slugs?: string[] } = {}) =>
+      api.post<LabSyncJobStart>('/lab/sync-jobs', {
+        ...(opts.force ? { force: opts.force } : {}),
         ...(opts.slugs ? { slugs: opts.slugs } : {}),
-        ...(opts.windows ? { windows: opts.windows } : {}),
       }),
     onSuccess: (d) => {
       // Seed the poll cache so the progress chip appears immediately (no 800ms gap).
-      queryClient.setQueryData(['lab-sync-job'], { job: d.job });
+      queryClient.setQueryData(['lab-sync-job'], { job: d.running ?? d.job });
       queryClient.invalidateQueries({ queryKey: ['lab-sync-job'] });
     },
   });
@@ -336,7 +363,7 @@ export function useApplyTweaks() {
       await api.patch<{ insight: PublicManifest }>(`/lab/${slug}/tweaks`, { tweaks });
       const data = await api.post<{ results: SyncResult[]; failed: SyncResult[] }>(
         '/lab/sync',
-        { slug, force: true },
+        { slug, force: 'user' },
       );
       const result = data.results[0];
       return result?.status === 'failed'

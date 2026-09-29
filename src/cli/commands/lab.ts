@@ -1,11 +1,43 @@
 import { Command } from 'commander';
-import { dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, extname } from 'node:path';
 import chalk from 'chalk';
 import { password } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, header, warn } from '../../lib/format.js';
 import { createInsight, getInsight, listInsights, readCache, writeInsightTweaks } from '../../lib/lab/store.js';
-import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
+import {
+  bindInsight,
+  normalizeSyncForce,
+  planSyncInsight,
+  syncInsight,
+  syncAll,
+  type SyncForce,
+  type SyncPlan,
+  type SyncResult,
+} from '../../lib/lab/sync.js';
+import {
+  BoardStoreError,
+  createBoard,
+  deleteBoard,
+  deriveBoardsFromLegacy,
+  editBoard,
+  formatDiagnostic,
+  getBoard,
+  isMaterialized,
+  listBoards,
+  putBoard,
+  validateBoardSpec,
+  type Block,
+  type Board,
+  type BoardDiagnostic,
+  type Card,
+} from '../../lib/lab/boards.js';
+import { BLOCK_CATALOG, isBlockType, listBlockCatalog } from '../../lib/lab/blocks.js';
+import { getLibraryBlock, listLibraryBlocks, parseSafeFrontmatter, saveLibraryBlock, LIBRARY_INPUT_KINDS, type LibraryBlockInput } from '../../lib/lab/block-library.js';
+import { frameKey, resolveBoardFrames, type Frame } from '../../lib/lab/frames.js';
+import { applyFrameOps, frameOpsFromOptions } from '../../lib/lab/frameOps.js';
+import { findFreeSlot, isValidRect, type GridRect } from '../../lib/lab/grid.js';
 import { ProgressBar } from '../../lib/progress.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
@@ -180,6 +212,347 @@ function handleLabError(err: unknown): void {
   process.exitCode = 1;
 }
 
+// ─── Sync reporting ─────────────────────────────────────────────────────────
+
+const REASON_TEXT: Record<string, string> = {
+  ttl: 'inside its TTL',
+  'upstream-unchanged': 'upstream unchanged',
+  'error-backoff': 'backing off a recent failure',
+  'force-hard': 'forced full refresh',
+  'no-cache': 'never synced',
+  stale: 'past its TTL',
+  user: 'asked for',
+  'script-changed': 'script changed since the last run',
+  'no-source': 'no valid source',
+};
+
+/** One sync outcome, with the skip/fresh reason and the source's own note. */
+function printSyncResult(r: SyncResult): void {
+  const note = r.freshnessNote ? chalk.dim(` · source: ${r.freshnessNote}`) : '';
+  if (r.status === 'ok') {
+    success(`${r.slug}: synced (latest=${r.latest ?? 'n/a'}, ${r.granularity})${note}`);
+  } else if (r.status === 'fresh') {
+    console.log(chalk.dim(`  ${r.slug}: fresh (${REASON_TEXT[r.reason ?? 'ttl'] ?? r.reason}; skipped)`) + note);
+  } else if (r.status === 'skipped') {
+    console.log(chalk.yellow(`  ${r.slug}: skipped (${REASON_TEXT[r.reason ?? ''] ?? r.reason}${r.error ? `: ${r.error}` : ''}); use --force to retry now.`));
+  } else {
+    error(`${r.slug}: ${r.error}`);
+  }
+}
+
+function printSyncPlan(p: SyncPlan): void {
+  const verb = p.action === 'skip' ? chalk.dim('skip ') : p.action === 'probe' ? chalk.cyan('probe') : chalk.yellow('fetch');
+  console.log(`  ${verb}  ${chalk.magentaBright(p.slug)} ${chalk.dim(`(${REASON_TEXT[p.reason] ?? p.reason}): ${p.detail}`)}`);
+}
+
+// ─── Boards ─────────────────────────────────────────────────────────────────
+
+/** One block as `lab board show` resolves it: the SAME frames the board route
+ *  returns, shaped by the SAME frameOps the dashboard runs. */
+export interface BoardBlockView {
+  /** `0`, or `index.tab.index` inside tabs. */
+  path: string;
+  type: string;
+  data: string | null;
+  /** Tab label when the block sits inside a tabs block. */
+  tab?: string;
+  /** Binding blocks: the shaped frame. */
+  frame?: Frame;
+  /** html blocks: one frame per declared input. */
+  inputs?: Record<string, Frame>;
+  /** text / callout blocks. */
+  markdown?: string;
+  /** Legacy insight blocks: the cached headline. */
+  insight?: { latest: number | null; fetchedAt: string | null; error: string | null } | null;
+}
+
+export interface BoardCardView {
+  id: string;
+  title: string | null;
+  insight: string | null;
+  at: GridRect;
+  blocks: BoardBlockView[];
+}
+
+export interface BoardView {
+  board: Pick<Board, 'slug' | 'title' | 'rev' | 'derived' | 'error' | 'warnings'>;
+  cards: BoardCardView[];
+}
+
+function insightHeadline(root: string, slug: string | undefined): BoardBlockView['insight'] {
+  if (!slug) return null;
+  const cache = readCache(root, slug);
+  if (!cache) return null;
+  return { latest: cache.latest ?? null, fetchedAt: cache.fetchedAt || null, error: cache.error ?? null };
+}
+
+/** Resolve every card's blocks exactly as the dashboard draws them. */
+export function buildBoardView(root: string, board: Board): BoardView {
+  const frames = resolveBoardFrames(root, board);
+  const viewBlock = (card: Card, block: Block, path: number[], tab?: string): BoardBlockView => {
+    const out: BoardBlockView = { path: path.join('.'), type: block.type, data: block.data ?? null };
+    if (tab !== undefined) out.tab = tab;
+    const entry = BLOCK_CATALOG[block.type];
+    if (entry.data === 'binding') {
+      const frame = frames[frameKey(card.id, path)];
+      if (frame) out.frame = applyFrameOps(frame, frameOpsFromOptions(block.options));
+    } else if (entry.data === 'inputs') {
+      const prefix = `${frameKey(card.id, path)}#`;
+      out.inputs = {};
+      for (const [key, frame] of Object.entries(frames)) {
+        if (key.startsWith(prefix)) out.inputs[key.slice(prefix.length)] = frame;
+      }
+    } else if (entry.data === 'insight') {
+      out.insight = insightHeadline(root, block.data ?? card.insight);
+    } else if (typeof block.options.markdown === 'string') {
+      out.markdown = block.options.markdown;
+    }
+    return out;
+  };
+  const cards = board.cards.map((card): BoardCardView => {
+    const blocks: BoardBlockView[] = [];
+    if (!card.blocks || card.blocks.length === 0) {
+      blocks.push({ path: '0', type: 'insight', data: card.insight ?? null, insight: insightHeadline(root, card.insight) });
+    } else {
+      card.blocks.forEach((block, i) => {
+        if (block.type === 'tabs') {
+          blocks.push({ path: String(i), type: 'tabs', data: null });
+          (block.tabs ?? []).forEach((t, ti) => t.blocks.forEach((child, ci) => blocks.push(viewBlock(card, child, [i, ti, ci], t.label))));
+        } else {
+          blocks.push(viewBlock(card, block, [i]));
+        }
+      });
+    }
+    return { id: card.id, title: card.title ?? null, insight: card.insight ?? null, at: card.at, blocks };
+  });
+  const { slug, title, rev, derived, error: err, warnings } = board;
+  return { board: { slug, title, rev, derived, error: err, warnings }, cards };
+}
+
+function fmtNum(v: number | null | undefined, unit?: string | null): string {
+  if (v === null || v === undefined) return 'n/a';
+  return fmtV(v, unit ?? undefined);
+}
+
+/** A frame in a few terminal lines. */
+function frameLines(frame: Frame): string[] {
+  switch (frame.kind) {
+    case 'empty':
+      return [chalk.dim(`(no data: ${frame.reason}${frame.ref ? ` for "${frame.ref}"` : ''})`)];
+    case 'value':
+      return [`${fmtNum(frame.value, frame.unit)}${frame.prev !== null ? chalk.dim(` (prev ${fmtNum(frame.prev, frame.unit)})`) : ''}`];
+    case 'series':
+      return frame.series.map((s) => {
+        const last = s.points[s.points.length - 1];
+        const span = s.points.length > 0 ? chalk.dim(` · ${s.points.length} points ${s.points[0].t} → ${last.t}`) : chalk.dim(' · no points');
+        return `${s.name}: ${last ? fmtNum(last.v, frame.unit) : 'n/a'}${span}`;
+      });
+    case 'table': {
+      const lines = [`${frame.total.count} row(s), total ${fmtNum(frame.total.v, frame.unit)}${frame.dataset ? chalk.dim(` · dataset ${frame.dataset}`) : ''}`];
+      for (const row of frame.rows.slice(0, 10)) {
+        const dims = frame.dims.map((d) => row.d[d.key] ?? 'n/a').join(' / ');
+        lines.push(`  ${dims}: ${fmtNum(row.v, frame.unit)}`);
+      }
+      if (frame.rows.length > 10) lines.push(chalk.dim(`  … ${frame.rows.length - 10} more`));
+      return lines;
+    }
+    case 'funnel':
+      return frame.funnels.map((f) => `${f.name}: ${f.steps.map((st) => `${st.label} ${st.users}`).join(' → ')}`);
+  }
+}
+
+function printBoardView(view: BoardView): void {
+  const b = view.board;
+  console.log(header(`Board: ${b.title} (${b.slug})${b.derived ? ' · derived' : ''}`));
+  if (b.error) {
+    error(`${b.error.kind === 'conflict' ? 'merge conflict' : 'unreadable'}: ${b.error.message}`);
+    return;
+  }
+  for (const w of b.warnings) warn(formatDiagnostic(w));
+  if (view.cards.length === 0) console.log(chalk.dim('  (no cards)'));
+  for (const card of view.cards) {
+    console.log();
+    const at = `${card.at.x},${card.at.y} ${card.at.w}x${card.at.h}`;
+    console.log(`  ${chalk.magentaBright(card.id)}${card.title ? `: ${card.title}` : ''}${card.insight ? chalk.dim(` · ${card.insight}`) : ''} ${chalk.dim(`@ ${at}`)}`);
+    for (const block of card.blocks) {
+      const label = `    [${block.path}] ${block.type}${block.data ? ` ${block.data}` : ''}${block.tab ? chalk.dim(` (tab ${block.tab})`) : ''}`;
+      if (block.frame) {
+        const lines = frameLines(block.frame);
+        console.log(`${label}: ${lines[0]}`);
+        for (const line of lines.slice(1)) console.log(`      ${line}`);
+      } else if (block.inputs) {
+        console.log(label);
+        for (const [name, frame] of Object.entries(block.inputs)) console.log(`      ${name}: ${frameLines(frame)[0]}`);
+      } else if (block.type === 'insight') {
+        const h = block.insight;
+        console.log(`${label}: ${h ? `${fmtNum(h.latest)}${h.error ? chalk.red(` ⚠ ${h.error}`) : ''}${chalk.dim(` · fetched ${h.fetchedAt ?? 'never'}`)}` : chalk.dim('(no cache)')}`);
+      } else if (block.markdown !== undefined) {
+        console.log(`${label}: ${chalk.dim(block.markdown.split('\n')[0].slice(0, 80))}`);
+      } else {
+        console.log(label);
+      }
+    }
+  }
+}
+
+/** Read a board spec file: `.json`, or YAML with or without `---` fences (safe engine only). */
+function readSpecFile(file: string): { raw: unknown; body: string } {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf-8');
+  } catch (err) {
+    throw new LabError(`Cannot read ${file}: ${(err as Error).message}`);
+  }
+  try {
+    if (extname(file).toLowerCase() === '.json') return { raw: JSON.parse(text), body: '' };
+    const fenced = text.trimStart().startsWith('---') ? text.trimStart() : `---\n${text}\n---\n`;
+    const { data, content } = parseSafeFrontmatter(fenced);
+    return { raw: data, body: content.trim() };
+  } catch (err) {
+    throw new LabError(`${file} is not a readable board spec: ${(err as Error).message.split('\n')[0]}`);
+  }
+}
+
+function printDiagnostics(errors: BoardDiagnostic[], warnings: BoardDiagnostic[]): void {
+  for (const d of errors) error(formatDiagnostic(d));
+  for (const d of warnings) warn(formatDiagnostic(d));
+}
+
+function handleBoardError(err: unknown): void {
+  if (err instanceof BoardStoreError && err.diagnostics.length > 0) {
+    error(`${err.message.split('\n')[0]}`);
+    printDiagnostics(err.diagnostics, []);
+    process.exitCode = 1;
+    return;
+  }
+  handleLabError(err);
+}
+
+function parseAt(raw: string): GridRect {
+  const parts = raw.split(',').map((p) => Number(p.trim()));
+  const at = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+  if (parts.length !== 4 || !isValidRect(at)) {
+    throw new LabError(`--at must be x,y,w,h whole numbers on the 12-column grid (w 1..12, x 0..12-w, h 1..24); got "${raw}".`);
+  }
+  return at;
+}
+
+/** Parse `--block '<json>'` (file form `{"line": {...}}` or `{type, data?, options?}`), binding it to `insight` when it names no data. */
+function parseBlockArg(raw: string, insight: string | undefined): { block: Record<string, unknown>; type: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new LabError(`--block is not valid JSON: ${(err as Error).message}. Example: --block '{"line": {"area": true}}'.`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new LabError('--block must be one JSON object, e.g. {"stat": {"delta": "prev"}}.');
+  }
+  const obj = { ...(parsed as Record<string, unknown>) };
+  if (isBlockType(obj.type)) {
+    if (obj.data === undefined && insight && BLOCK_CATALOG[obj.type].data === 'binding') obj.data = insight;
+    return { block: obj, type: obj.type };
+  }
+  const keys = Object.keys(obj);
+  const type = keys.length === 1 ? keys[0] : '';
+  if (isBlockType(type)) {
+    const value = obj[type];
+    if (insight && BLOCK_CATALOG[type].data === 'binding' && (value === null || value === undefined || (typeof value === 'object' && !Array.isArray(value) && (value as Record<string, unknown>).data === undefined))) {
+      obj[type] = { ...((value as Record<string, unknown>) ?? {}), data: insight };
+    }
+  }
+  return { block: obj, type };
+}
+
+/** A card id not yet on the board: `base`, then `base-2`, `base-3`... */
+function freeCardId(cards: readonly Card[], base: string): string {
+  const taken = new Set(cards.map((c) => c.id));
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  return id;
+}
+
+/** The legacy footprint an insight's manifest asks for (the derivation's own rule). */
+function legacyFootprint(root: string, insight: string): { w: number; h: number } {
+  const m = getInsight(root, insight);
+  if (!m) return BLOCK_CATALOG.insight.defaultSize;
+  const hasHtmlBody = m.source?.adapter === 'script' && typeof readCache(root, m.slug)?.html === 'string';
+  const card = deriveBoardsFromLegacy([{ ...m, hasHtmlBody }])[0]?.spec.cards.find((c) => c.id === `c-${m.slug}`);
+  return card ? { w: card.at.w, h: card.at.h } : BLOCK_CATALOG.insight.defaultSize;
+}
+
+/** Append a card to a board under the shared lock (materializes derived boards first). */
+async function addCard(
+  root: string,
+  boardSlug: string,
+  opts: { insight?: string; block?: string; at?: string; id?: string },
+): Promise<Board> {
+  const parsed = opts.block !== undefined ? parseBlockArg(opts.block, opts.insight) : null;
+  const at = opts.at !== undefined ? parseAt(opts.at) : null;
+  const board = await editBoard(root, boardSlug, (current) => {
+    if (!current) throw new BoardStoreError('not-found', `Board "${boardSlug}" does not exist. Create it with \`dreamcontext lab board create ${boardSlug} --title "..."\`.`);
+    const size = parsed && isBlockType(parsed.type)
+      ? BLOCK_CATALOG[parsed.type].defaultSize
+      : opts.insight ? legacyFootprint(root, opts.insight) : BLOCK_CATALOG.insight.defaultSize;
+    const card: Record<string, unknown> = {
+      id: opts.id ?? freeCardId(current.cards, opts.insight ? `c-${opts.insight}` : 'card'),
+      at: at ?? findFreeSlot(current.cards, size.w, size.h),
+    };
+    if (opts.insight) card.insight = opts.insight;
+    if (parsed) card.blocks = [parsed.block];
+    return { ...current, cards: [...current.cards, card] };
+  });
+  return board!;
+}
+
+/**
+ * `lab create` placement (D2). Materialized boards: append to `--board`, else
+ * the board titled like the insight's category, else the first board.
+ * Derived boards place every insight by category already, so nothing is
+ * written unless `--board` asks for a specific one. `--no-board` opts out.
+ */
+async function placeNewInsight(root: string, slug: string, category: string | null, board: string | false | undefined): Promise<void> {
+  if (board === false) return;
+  if (!isMaterialized(root) && typeof board !== 'string') {
+    console.log(chalk.dim('  It shows on the board for its category (boards are still derived from categories).'));
+    return;
+  }
+  let target = typeof board === 'string' ? board : null;
+  if (!target) {
+    const boards = listBoards(root).boards.filter((b) => !b.error);
+    const want = (category ?? '').trim().toLowerCase();
+    target = (want ? boards.find((b) => b.title.trim().toLowerCase() === want) : undefined)?.slug ?? boards[0]?.slug ?? null;
+  }
+  if (!target) {
+    warn('No board to place it on: create one with `dreamcontext lab board create <slug> --title "..."`.');
+    return;
+  }
+  try {
+    const placed = await addCard(root, target, { insight: slug });
+    const card = placed.cards[placed.cards.length - 1];
+    success(`Placed on board "${target}" as card "${card.id}".`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (typeof board === 'string') {
+      error(`Could not place it on board "${target}": ${message}`);
+      process.exitCode = 1;
+    } else {
+      warn(`Could not place it on board "${target}": ${message}`);
+    }
+  }
+}
+
+/** Parse `--inputs name[:kind],name2` for `lab block save`. */
+function parseInputsArg(raw: string): LibraryBlockInput[] {
+  return raw.split(',').map((s) => s.trim()).filter(Boolean).map((part) => {
+    const [name, kind] = part.split(':').map((x) => x.trim());
+    if (kind && !(LIBRARY_INPUT_KINDS as readonly string[]).includes(kind)) {
+      throw new LabError(`--inputs: unknown kind "${kind}" for "${name}"; use one of ${LIBRARY_INPUT_KINDS.join(', ')}.`);
+    }
+    return { name, kind: (kind as LibraryBlockInput['kind']) || null };
+  });
+}
+
 export function registerLabCommand(program: Command): void {
   const lab = program
     .command('lab')
@@ -188,47 +561,62 @@ export function registerLabCommand(program: Command): void {
   lab
     .command('sync')
     .argument('[slug]', 'Insight slug to sync (omit with --all)')
-    .description('Sync one insight, or every insight with --all')
+    .description('Sync one insight, or every insight with --all (only pays for change: TTL, then the upstream probe)')
     .option('--all', 'Sync every insight')
-    .option('--force', 'Refetch even if the cached snapshot is still within its TTL')
-    .action(async (slug: string | undefined, opts: { all?: boolean; force?: boolean }) => {
+    .option('--force', 'Skip the TTL (the upstream freshness probe still decides whether to fetch)')
+    .option('--force-hard', 'Skip the TTL AND the probe: always a full fetch')
+    .option('--dry-run', 'Print what would be fetched, probed or skipped; sends ZERO upstream requests')
+    .option('--json', 'Emit as JSON')
+    .action(async (slug: string | undefined, opts: { all?: boolean; force?: boolean; forceHard?: boolean; dryRun?: boolean; json?: boolean }) => {
       const root = ensureContextRoot();
       if (!opts.all && !slug) {
         error('Provide an insight slug, or pass --all to sync every insight.');
         process.exitCode = 1;
         return;
       }
+      const force: SyncForce | undefined = normalizeSyncForce(opts.forceHard ? 'hard' : opts.force ? 'user' : undefined);
       try {
+        if (opts.dryRun) {
+          const slugs = opts.all ? listInsights(root).map((m) => m.slug) : [slug!];
+          const plans = slugs.map((s) => planSyncInsight(root, s, { force }));
+          if (opts.json) {
+            console.log(JSON.stringify({ dryRun: true, force: force ?? null, plans }, null, 2));
+            return;
+          }
+          console.log(header(`Sync plan (dry run${force ? `, force ${force}` : ''}): no request sent`));
+          for (const p of plans) printSyncPlan(p);
+          const count = (a: SyncPlan['action']): number => plans.filter((p) => p.action === a).length;
+          console.log();
+          console.log(chalk.dim(`  ${count('fetch')} fetch · ${count('probe')} probe · ${count('skip')} skip`));
+          return;
+        }
         if (opts.all) {
           // A full board runs for minutes across concurrent workers — without a
           // live bar the terminal looks hung until the very last insight lands.
-          const bar = new ProgressBar();
+          const bar = opts.json ? null : new ProgressBar();
           const { results, failed } = await syncAll(root, {
-            force: opts.force,
-            onProgress: (ev) => bar.update('insights', ev.done, ev.total),
+            force,
+            onProgress: (ev) => bar?.update('insights', ev.done, ev.total),
           });
-          bar.done();
-          for (const r of results) {
-            if (r.status === 'ok') success(`${r.slug}: synced (latest=${r.latest ?? 'n/a'}, ${r.granularity})`);
-            else if (r.status === 'fresh') console.log(chalk.dim(`  ${r.slug}: fresh (skipped)`));
-            else error(`${r.slug}: ${r.error}`);
-          }
-          console.log();
-          if (failed.length > 0) {
-            error(`${failed.length} of ${results.length} insight(s) failed to sync.`);
-            process.exitCode = 1;
+          bar?.done();
+          if (opts.json) {
+            console.log(JSON.stringify({ results, failed }, null, 2));
           } else {
+            for (const r of results) printSyncResult(r);
+            console.log();
+          }
+          if (failed.length > 0) {
+            if (!opts.json) error(`${failed.length} of ${results.length} insight(s) failed to sync.`);
+            process.exitCode = 1;
+          } else if (!opts.json) {
             success(`Synced ${results.length} insight(s).`);
           }
           return;
         }
-        const result = await syncInsight(root, slug!, { force: opts.force });
-        if (result.status === 'ok') success(`${result.slug}: synced (latest=${result.latest ?? 'n/a'}, ${result.granularity})`);
-        else if (result.status === 'fresh') console.log(chalk.dim(`  ${result.slug}: fresh (skipped) — use --force to refetch.`));
-        else {
-          error(`${result.slug}: ${result.error}`);
-          process.exitCode = 1;
-        }
+        const result = await syncInsight(root, slug!, { force });
+        if (opts.json) console.log(JSON.stringify({ results: [result], failed: result.status === 'failed' ? [result] : [] }, null, 2));
+        else printSyncResult(result);
+        if (result.status === 'failed') process.exitCode = 1;
       } catch (err) {
         handleLabError(err);
       }
@@ -472,7 +860,9 @@ export function registerLabCommand(program: Command): void {
     .option('--adapter <adapter>', 'http|script (default http)')
     .option('--unit <unit>', 'Display unit (e.g. "users")')
     .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440)')
-    .action((slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; width?: string; height?: string; adapter?: string; unit?: string; ttl?: string }) => {
+    .option('--board <slug>', 'Board to place the card on (default: the board titled like --category, else the first)')
+    .option('--no-board', 'Create the insight without placing it on a board')
+    .action(async (slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; width?: string; height?: string; adapter?: string; unit?: string; ttl?: string; board?: string | false }) => {
       const root = ensureContextRoot();
       try {
         const m = createInsight(root, {
@@ -491,6 +881,7 @@ export function registerLabCommand(program: Command): void {
           ttl_minutes: opts.ttl ? Number(opts.ttl) : undefined,
         });
         success(`Insight created: lab/insights/${m.slug}.md`);
+        await placeNewInsight(root, m.slug, m.category, opts.board);
         console.log(chalk.dim('  Edit the manifest to set the real endpoint/extract config, then `dreamcontext lab sync ' + m.slug + '`.'));
       } catch (err) {
         handleLabError(err);
@@ -537,6 +928,247 @@ export function registerLabCommand(program: Command): void {
         success(`${slug}: now feeds objective "${objective}".`);
         if (seededCurrent !== null) console.log(chalk.dim(`  metric.current seeded to ${seededCurrent} from the cached snapshot.`));
         for (const u of unbound) warn(`${u}: unbound from "${objective}" — an objective's Key Result has one feeder.`);
+      } catch (err) {
+        handleLabError(err);
+      }
+    });
+
+  const boardCmd = lab
+    .command('board')
+    .description('Boards of cards (lab/boards/<slug>.md): list, show resolved values, and edit them');
+
+  boardCmd
+    .command('list')
+    .description('List boards (derived from categories until the first edit)')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const { boards, derived } = listBoards(root);
+      if (opts.json) {
+        console.log(JSON.stringify({
+          derived,
+          boards: boards.map((b) => ({ slug: b.slug, title: b.title, order: b.order, rev: b.rev, cards: b.cards.length, error: b.error, warnings: b.warnings.length })),
+        }, null, 2));
+        return;
+      }
+      console.log(header(`Lab Boards${derived ? ' (derived from categories, nothing saved yet)' : ''}`));
+      if (boards.length === 0) {
+        console.log(chalk.dim('  (none yet: dreamcontext lab board create <slug> --title "...")'));
+        return;
+      }
+      for (const b of boards) {
+        const badge = b.error ? chalk.red(` ⚠ ${b.error.kind === 'conflict' ? 'merge conflict' : 'unreadable'}`) : '';
+        console.log(`  ${chalk.magentaBright(b.slug)}: ${b.title} · ${b.cards.length} card(s)${badge}`);
+      }
+    });
+
+  boardCmd
+    .command('show')
+    .argument('<slug>', 'Board slug')
+    .description('Show every card with its blocks resolved (the same values the dashboard draws; no fetch)')
+    .option('--json', 'Emit as JSON')
+    .action((slug: string, opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const board = getBoard(root, slug);
+      if (!board) {
+        error(`Board not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      const view = buildBoardView(root, board);
+      if (opts.json) console.log(JSON.stringify(view, null, 2));
+      else printBoardView(view);
+      if (board.error) process.exitCode = 1;
+    });
+
+  boardCmd
+    .command('create')
+    .argument('<slug>', 'Kebab-case board slug')
+    .description('Create an empty board after the last one')
+    .requiredOption('--title <title>', 'Board title')
+    .action(async (slug: string, opts: { title: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const wasDerived = !isMaterialized(root);
+        const board = await createBoard(root, slug, opts.title);
+        success(`Board created: lab/boards/${board.slug}.md`);
+        if (wasDerived) console.log(chalk.dim('  Every derived board was saved to lab/boards/ as well (first edit).'));
+      } catch (err) {
+        handleBoardError(err);
+      }
+    });
+
+  boardCmd
+    .command('add-card')
+    .argument('<board>', 'Board slug')
+    .description('Add a card: an insight (renders as v1) and/or one block')
+    .option('--insight <slug>', 'Primary insight (detail panel, refresh, range, tweaks)')
+    .option('--block <json>', 'One block, e.g. \'{"line": {"area": true}}\' (binds to --insight when it names no data)')
+    .option('--at <x,y,w,h>', 'Grid position (default: the first free slot)')
+    .option('--id <id>', 'Card id (default c-<insight>)')
+    .action(async (boardSlug: string, opts: { insight?: string; block?: string; at?: string; id?: string }) => {
+      const root = ensureContextRoot();
+      if (!opts.insight && opts.block === undefined) {
+        error('Provide --insight <slug>, --block <json>, or both.');
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const board = await addCard(root, boardSlug, opts);
+        const card = board.cards[board.cards.length - 1];
+        success(`${boardSlug}: card "${card.id}" added at ${card.at.x},${card.at.y} ${card.at.w}x${card.at.h}.`);
+        for (const w of board.warnings) warn(formatDiagnostic(w));
+      } catch (err) {
+        handleBoardError(err);
+      }
+    });
+
+  boardCmd
+    .command('set')
+    .argument('<board>', 'Board slug')
+    .description('Replace a board from a spec file (strict: every problem names the card, the block path and the fix)')
+    .requiredOption('--file <path>', 'Board spec: .md/.yaml (frontmatter or bare YAML) or .json')
+    .action(async (slug: string, opts: { file: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const current = getBoard(root, slug);
+        const { raw, body } = readSpecFile(opts.file);
+        const v = validateBoardSpec(raw, slug, { contextRoot: root, body });
+        if (!v.ok) {
+          error(`${opts.file}: ${v.errors.length} problem(s); board "${slug}" left unchanged.`);
+          printDiagnostics(v.errors, v.warnings);
+          process.exitCode = 1;
+          return;
+        }
+        const spec = { ...(raw as Record<string, unknown>), body };
+        const board = await putBoard(root, slug, spec, { expectedRev: current ? current.rev : null });
+        success(`Board saved: lab/boards/${slug}.md (${board?.cards.length ?? 0} card(s)).`);
+        printDiagnostics([], v.warnings);
+      } catch (err) {
+        handleBoardError(err);
+      }
+    });
+
+  boardCmd
+    .command('validate')
+    .description('Strict-validate a board spec file without writing anything')
+    .requiredOption('--file <path>', 'Board spec: .md/.yaml (frontmatter or bare YAML) or .json')
+    .option('--slug <slug>', 'Board slug the file is for (default: the file name)')
+    .action((opts: { file: string; slug?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const slug = opts.slug ?? (opts.file.split('/').pop() ?? 'board').replace(/\.[^.]+$/, '');
+        const { raw, body } = readSpecFile(opts.file);
+        const v = validateBoardSpec(raw, slug, { contextRoot: root, body });
+        printDiagnostics(v.errors, v.warnings);
+        if (!v.ok) {
+          error(`${opts.file}: ${v.errors.length} problem(s).`);
+          process.exitCode = 1;
+          return;
+        }
+        success(`${opts.file}: valid (${v.spec.cards.length} card(s)${v.warnings.length ? `, ${v.warnings.length} warning(s)` : ''}).`);
+      } catch (err) {
+        handleLabError(err);
+      }
+    });
+
+  boardCmd
+    .command('remove-card')
+    .argument('<board>', 'Board slug')
+    .argument('<card-id>', 'Card id (see lab board show)')
+    .description('Remove one card from a board')
+    .action(async (boardSlug: string, cardId: string) => {
+      const root = ensureContextRoot();
+      try {
+        await editBoard(root, boardSlug, (current) => {
+          if (!current) throw new BoardStoreError('not-found', `Board "${boardSlug}" does not exist.`);
+          if (!current.cards.some((c) => c.id === cardId)) {
+            throw new BoardStoreError('not-found', `Card "${cardId}" is not on board "${boardSlug}" (see \`dreamcontext lab board show ${boardSlug}\`).`);
+          }
+          return { ...current, cards: current.cards.filter((c) => c.id !== cardId) };
+        });
+        success(`${boardSlug}: card "${cardId}" removed.`);
+      } catch (err) {
+        handleBoardError(err);
+      }
+    });
+
+  boardCmd
+    .command('delete')
+    .argument('<board>', 'Board slug')
+    .description('Delete a board (its insights stay; they become unplaced)')
+    .action(async (boardSlug: string) => {
+      const root = ensureContextRoot();
+      try {
+        await deleteBoard(root, boardSlug);
+        success(`Board deleted: ${boardSlug}`);
+      } catch (err) {
+        handleBoardError(err);
+      }
+    });
+
+  const blockCmd = lab
+    .command('block')
+    .description('The block catalog and the vault library of custom HTML blocks (lab/blocks/<slug>.md)');
+
+  blockCmd
+    .command('list')
+    .description('List the block catalog (types, frames, options) and the vault library')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const catalog = listBlockCatalog();
+      const library = listLibraryBlocks(root).map(({ html: _html, ...rest }) => rest);
+      if (opts.json) {
+        console.log(JSON.stringify({ catalog, library }, null, 2));
+        return;
+      }
+      console.log(header('Block catalog'));
+      for (const b of catalog) {
+        const frames = b.frames.length > 0 ? chalk.dim(` [${b.frames.join('|')}]`) : '';
+        console.log(`  ${chalk.magentaBright(b.type)}: ${b.label.en}${frames} ${chalk.dim(`${b.defaultSize.w}x${b.defaultSize.h}`)}`);
+        console.log(chalk.dim(`    ${b.description.en}`));
+        for (const o of b.options) {
+          const range = o.enum ? `: ${o.enum.join('|')}` : o.min !== undefined ? `: ${o.min}..${o.max}` : '';
+          const def = o.default !== undefined && o.default !== null && o.default !== '' ? ` (default ${String(o.default)})` : '';
+          console.log(chalk.dim(`    · ${o.key} ${o.type}${range}${def}`));
+        }
+      }
+      console.log();
+      console.log(header('Library (custom HTML)'));
+      if (library.length === 0) console.log(chalk.dim('  (empty: dreamcontext lab block save <slug> --file <html>)'));
+      for (const l of library) {
+        const inputs = l.inputs.map((i) => (i.kind ? `${i.name}:${i.kind}` : i.name)).join(', ');
+        console.log(`  ${chalk.magentaBright(l.slug)}: ${l.title}${inputs ? chalk.dim(` · inputs ${inputs}`) : ''}`);
+      }
+    });
+
+  blockCmd
+    .command('save')
+    .argument('<slug>', 'Kebab-case library slug')
+    .description('Save an HTML file to the vault block library (reuse it on a card with html: {ref: <slug>})')
+    .requiredOption('--file <path>', 'The block markup (HTML)')
+    .option('--inputs <list>', 'Declared inputs: name[:series|table|value|funnel], comma separated')
+    .option('--title <title>', 'Title (default: the existing title, else the slug)')
+    .option('--description <text>', 'One-line description')
+    .action((slug: string, opts: { file: string; inputs?: string; title?: string; description?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        let html: string;
+        try {
+          html = readFileSync(opts.file, 'utf-8');
+        } catch (err) {
+          throw new LabError(`Cannot read ${opts.file}: ${(err as Error).message}`);
+        }
+        const existing = getLibraryBlock(root, slug);
+        const block = saveLibraryBlock(root, slug, {
+          title: opts.title ?? existing?.title ?? slug,
+          description: opts.description ?? existing?.description ?? null,
+          inputs: opts.inputs !== undefined ? parseInputsArg(opts.inputs) : existing?.inputs ?? [],
+          html,
+        }, existing ? existing.rev : null);
+        success(`Library block saved: lab/blocks/${block.slug}.md${block.inputs.length ? ` (inputs ${block.inputs.map((i) => i.name).join(', ')})` : ''}`);
+        console.log(chalk.dim(`  Use it on a card: - html: {ref: ${block.slug}${block.inputs.length ? `, inputs: {${block.inputs.map((i) => `${i.name}: <insight>`).join(', ')}}` : ''}}`));
       } catch (err) {
         handleLabError(err);
       }

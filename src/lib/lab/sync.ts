@@ -6,7 +6,6 @@ import { getAdapter, scriptFilePath } from './adapters/index.js';
 import { readCredentials, redactSecrets } from './credentials.js';
 import { getInsight, listInsights, readCache, writeCache, writeInsightBinding } from './store.js';
 import { resolveTweaks } from './tweaks.js';
-import { isValidWindow, writeWindowCache, type WindowRange } from './window-cache.js';
 import { rollupSeries } from './rollup.js';
 import {
   appendFunnelHistory,
@@ -120,16 +119,6 @@ export interface SyncOptions {
   force?: boolean | SyncForce;
   fetchImpl?: typeof fetch;
   now?: () => number;
-  /**
-   * Transient measurement-window override (report window inheritance). When
-   * set, the resolved range/from/to are replaced by this window and the result
-   * is written to the TRANSIENT window cache only — the canonical cache, the
-   * snapshot trails and the KR binding are never touched (the 42.31→0 lesson:
-   * a report aligning windows must not move the roadmap). TTL freshness is
-   * skipped (the window cache has its own read-side freshness policy) and a
-   * failed run writes nothing at all.
-   */
-  window?: WindowRange;
   /** Freshness-probe budget override in ms (tests); default FRESHNESS_PROBE_TIMEOUT_MS. */
   probeTimeoutMs?: number;
 }
@@ -152,9 +141,6 @@ export interface SyncAllOptions extends SyncOptions {
   concurrency?: number;
   /** Restrict the run to these slugs (used by the job layer's retry pass). */
   only?: string[];
-  /** Per-slug transient window overrides (report window inheritance) — each
-   *  listed slug syncs into the window cache instead of the canonical one. */
-  windows?: Record<string, WindowRange>;
   /** Called as each insight settles — the caller's live progress feed. */
   onProgress?: (ev: LabSyncProgress) => void;
   /** Per-insight watchdog in ms (default LAB_INSIGHT_TIMEOUT_MS). */
@@ -485,6 +471,132 @@ async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+/**
+ * The automatic gate (absent force only): a `fresh`/`skipped` result when the
+ * run must not touch the source, else null. PURE decision (the caller logs);
+ * `syncInsight` and the dry-run plan share it.
+ * Staleness age = now − max(fetchedAt, this machine's last unchanged probe).
+ */
+function automaticGate(
+  contextRoot: string,
+  slug: string,
+  manifest: InsightManifest,
+  prior: InsightCache,
+  nowMs: number,
+): { result: SyncResult; detail: string } | null {
+  const ttl = ttlOf(manifest);
+  const ageMin = (nowMs - lastConfirmedMs(contextRoot, slug, prior)) / 60_000;
+  if (Number.isFinite(ageMin) && ageMin >= 0 && ageMin < ttl) {
+    return {
+      result: { slug, status: 'fresh', reason: 'ttl', latest: prior.latest },
+      detail: `age ${Math.round(ageMin)}m < ttl ${ttl}m`,
+    };
+  }
+  // A slug that failed recently is left alone by automatic runs — a board
+  // open must not hammer a broken source every minute. A user run retries.
+  const errorAgeMin = prior.errorAt ? (nowMs - Date.parse(prior.errorAt)) / 60_000 : Number.NaN;
+  if (Number.isFinite(errorAgeMin) && errorAgeMin >= 0 && errorAgeMin < errorBackoffMinutes(manifest)) {
+    return {
+      result: { slug, status: 'skipped', reason: 'error-backoff', latest: prior.latest, error: prior.error ?? undefined },
+      detail: `failed ${Math.round(errorAgeMin)}m ago`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Whether the upstream probe runs, and whether its answer could save the
+ * fetch. A skip needs the last real fetch's marker for THIS queryKey, that
+ * fetch to have succeeded (a cache carrying an error is re-fetched), to be
+ * inside the max age, and the script unchanged (the tripwire: a changed script
+ * is never probed — its hash is in the queryKey, so it always fetches). An
+ * http probe also runs when a skip is impossible, to capture the marker
+ * BEFORE the data; a script captures its own inside the fetch child.
+ */
+function probePlan(
+  manifest: InsightManifest,
+  prior: InsightCache | null,
+  queryKey: string,
+  scriptChanged: boolean,
+  nowMs: number,
+): { skipEligible: boolean; wantsProbe: boolean } {
+  const priorMarker = prior?.sourceFreshness;
+  const fetchedMs = prior?.fetchedAt ? Date.parse(prior.fetchedAt) : Number.NaN;
+  const withinMaxAge = Number.isFinite(fetchedMs) && (nowMs - fetchedMs) / 60_000 < maxAgeMinutes(manifest);
+  const skipEligible = Boolean(
+    priorMarker && priorMarker.queryKey === queryKey && !prior?.error && withinMaxAge && !scriptChanged,
+  );
+  const wantsProbe = manifest.source?.adapter === 'http'
+    ? Boolean(manifest.refresh.freshness)
+    : skipEligible;
+  return { skipEligible, wantsProbe };
+}
+
+/** What `lab sync --dry-run` says a run would do for one insight. */
+export interface SyncPlan {
+  slug: string;
+  /**
+   * skip  - no request at all (inside the TTL, or backing off a recent error);
+   * probe - one cheap freshness probe; the fetch happens only if upstream changed;
+   * fetch - a real fetch (`probe: true` = a probe runs first to record the marker).
+   */
+  action: 'skip' | 'probe' | 'fetch';
+  /** Machine-readable why: the fresh/skip reason, or why a fetch is due. */
+  reason: FreshReason | SkipReason | 'force-hard' | 'no-cache' | 'stale' | 'user' | 'script-changed' | 'no-source';
+  probe: boolean;
+  /** One human sentence. */
+  detail: string;
+}
+
+/**
+ * Plan one insight's sync WITHOUT running it: the same gate and probe
+ * decisions `syncInsight` makes, from local files only (manifest, cache, the
+ * freshness sidecar, the script's hash). Never calls an adapter, so it fires
+ * ZERO upstream requests.
+ */
+export function planSyncInsight(contextRoot: string, slug: string, opts: Pick<SyncOptions, 'force' | 'now'> = {}): SyncPlan {
+  const manifest = getInsight(contextRoot, slug);
+  if (!manifest) throw new LabError(`Insight not found: ${slug}`);
+  const force = normalizeSyncForce(opts.force);
+  const nowMs = opts.now ? opts.now() : Date.now();
+  const prior = readCache(contextRoot, slug);
+
+  if (!force && prior) {
+    const gate = automaticGate(contextRoot, slug, manifest, prior, nowMs);
+    if (gate) {
+      return { slug, action: 'skip', reason: gate.result.reason!, probe: false, detail: gate.result.reason === 'ttl' ? `fresh (${gate.detail})` : `backing off (${gate.detail})` };
+    }
+  }
+  if (!manifest.source) {
+    return { slug, action: 'fetch', reason: 'no-source', probe: false, detail: 'no valid source block: the run would fail' };
+  }
+  const newHash = computeScriptHash(manifest);
+  const scriptChanged = Boolean(newHash && prior?.scriptHash && prior.scriptHash !== newHash);
+  const why: SyncPlan['reason'] = force === 'hard'
+    ? 'force-hard'
+    : scriptChanged
+      ? 'script-changed'
+      : !prior
+        ? 'no-cache'
+        : force === 'user' ? 'user' : 'stale';
+  if (force === 'hard') {
+    return { slug, action: 'fetch', reason: why, probe: false, detail: 'forced full refresh: fetch, no probe' };
+  }
+  const queryKey = computeQueryKey(manifest, resolveTweaks(manifest), newHash);
+  const { skipEligible, wantsProbe } = probePlan(manifest, prior, queryKey, scriptChanged, nowMs);
+  const canProbe = Boolean(getAdapter(manifest).probe) && wantsProbe;
+  if (canProbe && skipEligible) {
+    return { slug, action: 'probe', reason: why, probe: true, detail: 'probe upstream; fetch only if the marker changed' };
+  }
+  return {
+    slug,
+    action: 'fetch',
+    reason: why,
+    probe: canProbe,
+    detail: canProbe ? 'probe to record the marker, then fetch' : 'fetch',
+  };
+}
+
 /** Sync one insight by slug. */
 export async function syncInsight(
   contextRoot: string,
@@ -494,54 +606,22 @@ export async function syncInsight(
   const manifest = getInsight(contextRoot, slug);
   if (!manifest) throw new LabError(`Insight not found: ${slug}`);
 
-  const windowOverride = opts.window && isValidWindow(opts.window) ? opts.window : undefined;
-  if (opts.window && !windowOverride) {
-    throw new LabError(`Invalid window override for ${slug}: from/to must be YYYY-MM-DD with from ≤ to.`);
-  }
-
   const force = normalizeSyncForce(opts.force);
   const nowMs = opts.now ? opts.now() : Date.now();
   const prior = readCache(contextRoot, slug);
 
-  // ── Automatic gate (reported, never silent). A window-overridden run is
-  // always explicit — its freshness lives on the window-cache read side.
-  // Staleness age = now − max(fetchedAt, this machine's last unchanged probe). ──
-  if (!force && !windowOverride && prior) {
-    const ttl = ttlOf(manifest);
-    const ageMin = (nowMs - lastConfirmedMs(contextRoot, slug, prior)) / 60_000;
-    if (Number.isFinite(ageMin) && ageMin >= 0 && ageMin < ttl) {
-      console.log(`[lab] ${slug}: fresh (age ${Math.round(ageMin)}m < ttl ${ttl}m) — skipping; use --force to refetch.`);
-      return { slug, status: 'fresh', reason: 'ttl', latest: prior.latest };
-    }
-    // A slug that failed recently is left alone by automatic runs — a board
-    // open must not hammer a broken source every minute. A user run retries.
-    const errorAgeMin = prior.errorAt ? (nowMs - Date.parse(prior.errorAt)) / 60_000 : Number.NaN;
-    if (Number.isFinite(errorAgeMin) && errorAgeMin >= 0 && errorAgeMin < errorBackoffMinutes(manifest)) {
-      console.log(`[lab] ${slug}: failed ${Math.round(errorAgeMin)}m ago — automatic sync backing off; use --force to retry now.`);
-      return { slug, status: 'skipped', reason: 'error-backoff', latest: prior.latest, error: prior.error ?? undefined };
+  // ── Automatic gate (reported, never silent). ──
+  if (!force && prior) {
+    const gate = automaticGate(contextRoot, slug, manifest, prior, nowMs);
+    if (gate) {
+      console.log(gate.result.status === 'fresh'
+        ? `[lab] ${slug}: fresh (${gate.detail}) — skipping; use --force to refetch.`
+        : `[lab] ${slug}: ${gate.detail} — automatic sync backing off; use --force to retry now.`);
+      return gate.result;
     }
   }
 
-  let resolvedTweaks = resolveTweaks(manifest);
-  if (windowOverride) {
-    // Replace the window everywhere an adapter can read it: the range object
-    // (what scripts consume via ctx.resolvedTweaks.range), and the from/to
-    // values ({{tweak:from}}/{{tweak:to}} substitution). The relative `range`
-    // value is dropped so a script reading the string cannot contradict the
-    // object it sits next to.
-    const spanMs = Date.parse(`${windowOverride.toISO}T00:00:00Z`) - Date.parse(`${windowOverride.fromISO}T00:00:00Z`);
-    const values: Record<string, string> = {
-      ...resolvedTweaks.values,
-      from: windowOverride.fromISO,
-      to: windowOverride.toISO,
-    };
-    delete values.range;
-    resolvedTweaks = {
-      values,
-      range: { fromISO: windowOverride.fromISO, toISO: windowOverride.toISO },
-      spanDays: Math.max(0, Math.round(spanMs / 86_400_000)),
-    };
-  }
+  const resolvedTweaks = resolveTweaks(manifest);
   const credentials = readCredentials(contextRoot);
   const secretValues = Object.values(credentials);
 
@@ -561,25 +641,13 @@ export async function syncInsight(
   };
   const queryKey = computeQueryKey(manifest, resolvedTweaks, newHash);
 
-  // ── Upstream probe ('user' and stale automatic runs; never 'hard', never a
-  // window run). Skip only when marker AND queryKey match the last real fetch,
-  // that fetch succeeded (a cache carrying an error is re-fetched), it is not
-  // past the max age, and the script did not change (the tripwire: a changed
-  // script is never probed — its hash is in the queryKey, so it always fetches).
-  // An http probe also runs when a skip is impossible, to capture the marker
-  // BEFORE the data; a script captures its own inside the fetch child. ──
+  // ── Upstream probe ('user' and stale automatic runs; never 'hard'). Skip
+  // only when marker AND queryKey match the last real fetch (probePlan). ──
   let captured: Omit<SourceFreshness, 'queryKey'> | null = null;
-  if (force !== 'hard' && !windowOverride && manifest.source) {
+  if (force !== 'hard' && manifest.source) {
     const priorMarker = prior?.sourceFreshness;
-    const fetchedMs = prior?.fetchedAt ? Date.parse(prior.fetchedAt) : Number.NaN;
-    const withinMaxAge = Number.isFinite(fetchedMs) && (nowMs - fetchedMs) / 60_000 < maxAgeMinutes(manifest);
-    const skipEligible = Boolean(
-      priorMarker && priorMarker.queryKey === queryKey && !prior?.error && withinMaxAge && !scriptChanged,
-    );
+    const { skipEligible, wantsProbe } = probePlan(manifest, prior, queryKey, scriptChanged, nowMs);
     const adapter = getAdapter(manifest);
-    const wantsProbe = manifest.source.adapter === 'http'
-      ? Boolean(manifest.refresh.freshness)
-      : skipEligible;
     if (adapter.probe && wantsProbe) {
       const budgetMs = opts.probeTimeoutMs ?? FRESHNESS_PROBE_TIMEOUT_MS;
       try {
@@ -728,31 +796,6 @@ export async function syncInsight(
       latest = computeLatest(series, manifest.binding);
     }
 
-    if (windowOverride) {
-      // ── Transient window run: full cache SHAPE, but no history, no trails,
-      // no canonical write, no KR binding — the measurement answers a report's
-      // window question and nothing else. ──
-      const transient: InsightCache = {
-        slug,
-        fetchedAt: new Date(nowMs).toISOString(),
-        tweaks: resolvedTweaks.values,
-        granularity,
-        unit: manifest.unit,
-        series,
-        latest,
-        error: null,
-        errorAt: null,
-        scriptHash: null,
-      };
-      if (funnel) transient.funnel = funnel;
-      if (matrix) transient.matrix = matrix;
-      if (datasets) transient.datasets = datasets;
-      if (html !== undefined) transient.html = html;
-      if (app) transient.app = app;
-      writeWindowCache(contextRoot, slug, windowOverride, transient);
-      return { slug, status: 'ok', latest, granularity };
-    }
-
     const cache: InsightCache = {
       slug,
       fetchedAt: new Date(nowMs).toISOString(),
@@ -810,13 +853,6 @@ export async function syncInsight(
     const rawMsg = err instanceof LabError ? err.message : (err instanceof Error ? err.message : String(err));
     const message = redactSecrets(rawMsg, secretValues);
     console.error(`[lab] sync failed for ${slug}: ${message}`);
-
-    if (windowOverride) {
-      // A failed transient run writes NOTHING — the canonical cache's error
-      // state belongs to the canonical timeline, and there is no partial
-      // window measurement worth keeping.
-      return { slug, status: 'failed', error: message };
-    }
 
     const failCache: InsightCache = {
       slug,
@@ -956,10 +992,7 @@ export async function syncAll(
     for (;;) {
       const i = next++;
       if (i >= total) return;
-      const slugOpts: SyncOptions = opts.windows?.[slugs[i]]
-        ? { ...opts, window: opts.windows[slugs[i]] }
-        : opts;
-      const result = await settleInsight(contextRoot, slugs[i], slugOpts, timeoutMs);
+      const result = await settleInsight(contextRoot, slugs[i], opts, timeoutMs);
       results[i] = result;
       done++;
       // A throwing progress callback is the CALLER's bug and must not abort the

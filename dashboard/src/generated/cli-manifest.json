@@ -1318,6 +1318,105 @@
       ]
     },
     {
+      "path": "lab block",
+      "desc": "The block catalog and the vault library of custom HTML blocks (lab/blocks/<slug>.md)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "lab block list",
+      "desc": "List the block catalog (types, frames, options) and the vault library",
+      "args": []
+    },
+    {
+      "path": "lab block save",
+      "desc": "Save an HTML file to the vault block library (reuse it on a card with html: {ref: <slug>})",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--file",
+        "--inputs",
+        "--title",
+        "--description"
+      ]
+    },
+    {
+      "path": "lab board",
+      "desc": "Boards of cards (lab/boards/<slug>.md): list, show resolved values, and edit them",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "lab board add-card",
+      "desc": "Add a card: an insight (renders as v1) and/or one block",
+      "args": [
+        "<board>"
+      ],
+      "valueFlags": [
+        "--insight",
+        "--block",
+        "--at",
+        "--id"
+      ]
+    },
+    {
+      "path": "lab board create",
+      "desc": "Create an empty board after the last one",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--title"
+      ]
+    },
+    {
+      "path": "lab board delete",
+      "desc": "Delete a board (its insights stay; they become unplaced)",
+      "args": [
+        "<board>"
+      ]
+    },
+    {
+      "path": "lab board list",
+      "desc": "List boards (derived from categories until the first edit)",
+      "args": []
+    },
+    {
+      "path": "lab board remove-card",
+      "desc": "Remove one card from a board",
+      "args": [
+        "<board>",
+        "<card-id>"
+      ]
+    },
+    {
+      "path": "lab board set",
+      "desc": "Replace a board from a spec file (strict: every problem names the card, the block path and the fix)",
+      "args": [
+        "<board>"
+      ],
+      "valueFlags": [
+        "--file"
+      ]
+    },
+    {
+      "path": "lab board show",
+      "desc": "Show every card with its blocks resolved (the same values the dashboard draws; no fetch)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "lab board validate",
+      "desc": "Strict-validate a board spec file without writing anything",
+      "args": [],
+      "valueFlags": [
+        "--file",
+        "--slug"
+      ]
+    },
+    {
       "path": "lab body",
       "desc": "Read a script-authored card/app body from the cache (never fetches)",
       "args": [
@@ -1344,7 +1443,8 @@
         "--height",
         "--adapter",
         "--unit",
-        "--ttl"
+        "--ttl",
+        "--board"
       ]
     },
     {
@@ -1396,7 +1496,7 @@
     },
     {
       "path": "lab sync",
-      "desc": "Sync one insight, or every insight with --all",
+      "desc": "Sync one insight, or every insight with --all (only pays for change: TTL, then the upstream probe)",
       "args": [
         "[slug]"
       ]

@@ -5,7 +5,6 @@ import {
   type SyncForce,
   type SyncResult,
 } from '../lib/lab/sync.js';
-import type { WindowRange } from '../lib/lab/window-cache.js';
 
 /**
  * Background bulk-insight sync jobs for the dashboard Insights board.
@@ -42,22 +41,18 @@ export interface LabSyncJobState {
   startedAt: number;
   finishedAt: number | null;
   /** Every insight's latest outcome, newest write wins (manifest order).
-   *  Filled LIVE as each insight settles — the report page's progressive
-   *  section fill reads this mid-run, not only at the end. */
+   *  Filled LIVE as each insight settles, so a board card flips from syncing
+   *  to its outcome mid-run, not only at the end. */
   results: SyncResult[];
   /** Slugs still failing after the last pass. */
   failed: string[];
   /** Set only when the job itself broke (not when individual insights failed). */
   error: string | null;
-  /** The slugs this run is scoped to (a report's subset), or null = the board. */
+  /** The slugs this run is scoped to (one board's insights), or null = every insight. */
   slugs: string[] | null;
   /** How hard this run pushes past the freshness gate; null = automatic
    *  (TTL + error backoff apply, no retry pass). */
   force: SyncForce | null;
-  /** Per-slug transient window overrides (report window inheritance), or null.
-   *  Exposed so a client can tell whether the running job covers ITS window
-   *  request or is someone else's run to wait out. */
-  windows: Record<string, WindowRange> | null;
   /** The insight that settled most recently ("now syncing …" copy). */
   current: string | null;
 }
@@ -128,7 +123,6 @@ export function _setLabSyncAllImpl(impl: SyncAllFn | null): void {
 interface JobRequest {
   force: SyncForce | null;
   slugs: string[] | null;
-  windows: Record<string, WindowRange> | null;
 }
 
 function newJob(req: JobRequest, status: 'queued' | 'running'): LabSyncJobState {
@@ -145,14 +139,12 @@ function newJob(req: JobRequest, status: 'queued' | 'running'): LabSyncJobState 
     error: null,
     slugs: req.slugs ? [...req.slugs] : null,
     force: req.force,
-    windows: req.windows ? { ...req.windows } : null,
     current: null,
   };
 }
 
 /** Does the running job already do what this request asks? Its force must be
- *  at least as strong, its slugs a superset, and it must not be routing any
- *  requested slug into a window cache the request did not ask for. */
+ *  at least as strong and its slugs a superset. */
 function covers(job: LabSyncJobState, req: JobRequest): boolean {
   if (rank(job.force) < rank(req.force)) return false;
   if (job.slugs !== null) {
@@ -160,26 +152,15 @@ function covers(job: LabSyncJobState, req: JobRequest): boolean {
     const have = new Set(job.slugs);
     if (!req.slugs.every((s) => have.has(s))) return false;
   }
-  const jobWindows = job.windows ?? {};
-  const reqWindows = req.windows ?? {};
-  for (const [slug, w] of Object.entries(reqWindows)) {
-    const have = jobWindows[slug];
-    if (!have || have.fromISO !== w.fromISO || have.toISO !== w.toISO) return false;
-  }
-  for (const slug of Object.keys(jobWindows)) {
-    const wanted = req.slugs === null || req.slugs.includes(slug);
-    if (wanted && !(slug in reqWindows)) return false;
-  }
   return true;
 }
 
-/** Fold a later request into the queued job: union of slugs (null = the whole
- *  board absorbs any subset), the stronger force, later windows win per slug. */
+/** Fold a later request into the queued job: union of slugs (null = every
+ *  insight absorbs any subset) and the stronger force. */
 function mergeInto(queued: LabSyncJobState, req: JobRequest): void {
   if (queued.slugs === null || req.slugs === null) queued.slugs = null;
   else queued.slugs = [...new Set([...queued.slugs, ...req.slugs])];
   if (rank(req.force) > rank(queued.force)) queued.force = req.force;
-  if (req.windows) queued.windows = { ...(queued.windows ?? {}), ...req.windows };
 }
 
 /**
@@ -192,13 +173,12 @@ function mergeInto(queued: LabSyncJobState, req: JobRequest): void {
  */
 export function startLabSyncJob(
   contextRoot: string,
-  opts: { force?: boolean | SyncForce; slugs?: string[]; windows?: Record<string, WindowRange> } = {},
+  opts: { force?: boolean | SyncForce; slugs?: string[] } = {},
 ): LabSyncJobStart {
   pruneSettledJobs();
   const req: JobRequest = {
     force: normalizeSyncForce(opts.force) ?? null,
     slugs: opts.slugs && opts.slugs.length > 0 ? [...opts.slugs] : null,
-    windows: opts.windows && Object.keys(opts.windows).length > 0 ? { ...opts.windows } : null,
   };
   let slots = vaults.get(contextRoot);
   if (!slots) {
@@ -253,8 +233,8 @@ async function runLabSyncJob(
       job.done = ev.done;
       job.total = ev.total;
       job.current = ev.slug;
-      // Live per-insight results — the report page flips a section from
-      // skeleton to content the moment ITS insight settles, mid-run.
+      // Live per-insight results: a board card shows ITS outcome the moment
+      // its insight settles, mid-run.
       job.results = mergeLabResults(job.results, [
         {
           slug: ev.slug,
@@ -268,7 +248,6 @@ async function runLabSyncJob(
     let pass = await syncAllImpl(contextRoot, {
       force,
       only: job.slugs ?? undefined,
-      windows: job.windows ?? undefined,
       onProgress,
     });
     job.results = pass.results;
@@ -289,8 +268,7 @@ async function runLabSyncJob(
       pass = await syncAllImpl(contextRoot, {
         force,
         only: retrying,
-        windows: job.windows ?? undefined,
-        onProgress,
+          onProgress,
       });
       job.results = mergeLabResults(job.results, pass.results);
       job.failed = pass.failed.map((r) => r.slug);

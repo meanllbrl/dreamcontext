@@ -9,9 +9,8 @@ import {
 } from '../../lib/lab/store.js';
 import { resolveTweaks } from '../../lib/lab/tweaks.js';
 import { computeFunnelPrev } from '../../lib/lab/funnel.js';
-import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
-import { currentLabSyncJob, startLabSyncJob } from '../lab-sync-job.js';
-import { isValidWindow, type WindowRange } from '../../lib/lab/window-cache.js';
+import { bindInsight, lastCheckedAt, lastConfirmedMs, normalizeSyncForce, syncInsight, syncAll } from '../../lib/lab/sync.js';
+import { labSyncJobSlots, startLabSyncJob } from '../lab-sync-job.js';
 import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
 import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
 import { LabError, type Binding, type InsightCache, type InsightManifest } from '../../lib/lab/types.js';
@@ -59,17 +58,20 @@ function toPublicManifest(m: InsightManifest) {
   };
 }
 
-/** One row in GET /api/lab. */
-function toSummary(contextRoot: string, m: InsightManifest) {
+/**
+ * One row in GET /api/lab (and the board routes' `summaries`). Staleness is
+ * measured from the newest evidence the data is current: max(fetchedAt, this
+ * machine's last unchanged upstream probe), the same age the sync gate uses.
+ */
+export function toSummary(contextRoot: string, m: InsightManifest) {
   const cache = readCache(contextRoot, m.slug);
   let staleMinutes: number | null = null;
   let stale: boolean | null = null;
-  if (cache?.fetchedAt) {
-    const age = (Date.now() - Date.parse(cache.fetchedAt)) / 60_000;
-    if (Number.isFinite(age)) {
-      staleMinutes = Math.max(0, Math.round(age));
-      stale = age >= m.refresh.ttl_minutes;
-    }
+  const confirmedMs = lastConfirmedMs(contextRoot, m.slug, cache);
+  if (Number.isFinite(confirmedMs)) {
+    const age = (Date.now() - confirmedMs) / 60_000;
+    staleMinutes = Math.max(0, Math.round(age));
+    stale = age >= m.refresh.ttl_minutes;
   }
   return {
     slug: m.slug,
@@ -93,6 +95,10 @@ function toSummary(contextRoot: string, m: InsightManifest) {
     ttlMinutes: m.refresh.ttl_minutes,
     staleMinutes,
     stale,
+    /** This machine's last "unchanged upstream" confirmation, or null. */
+    checkedAt: lastCheckedAt(contextRoot, m.slug, cache),
+    /** The source's own plain-text note about its freshness, or null. */
+    freshnessNote: cache?.sourceFreshness?.note ?? null,
     tweaks: toPublicTweaks(m),
   };
 }
@@ -127,7 +133,7 @@ export async function handleLabList(
  * bundle) needs it either; `lab query --date` reads it straight off disk via
  * `readCache`, never through this route.
  */
-function withoutHistoryTrails(cache: InsightCache | null): InsightCache | null {
+export function withoutHistoryTrails(cache: InsightCache | null): InsightCache | null {
   if (!cache) return null;
   if (cache.funnelHistory === undefined && cache.datasetHistory === undefined) return cache;
   const { funnelHistory: _dropFunnelHistory, datasetHistory: _dropDatasetHistory, ...rest } = cache;
@@ -166,7 +172,7 @@ export async function handleLabShow(
 }
 
 /**
- * POST /api/lab/sync-jobs { force? } — START a bulk sync and return immediately.
+ * POST /api/lab/sync-jobs { force?, slugs? } — START a bulk sync and return immediately.
  *
  * The dashboard's "Sync all" uses THIS, not `POST /api/lab/sync {all:true}`: the
  * server caps a request at 30s of socket inactivity, and a real board's full
@@ -175,7 +181,15 @@ export async function handleLabShow(
  * the UI polls `/api/lab/sync-jobs/current`.
  *
  * `started: false` means a job was already running and has been ADOPTED — a
- * second engine writing the same cache files is never the right answer.
+ * second engine writing the same cache files is never the right answer. A
+ * request the running job does not cover (other slugs, a stronger force) is
+ * QUEUED as one follow-up job instead: `queued: true`, and `job` is that
+ * follow-up. `running` / `pending` carry both slots (with their ids).
+ *
+ * `force`: ABSENT = automatic (TTL, error backoff, no retry pass: board open
+ * and timers send nothing); `'user'` = someone asked (Sync board, ↻);
+ * `'hard'` = skip the upstream probe too. `true` is read as `'user'` for one
+ * release (old clients and scripts).
  */
 export async function handleLabSyncJobStart(
   req: IncomingMessage,
@@ -202,36 +216,20 @@ export async function handleLabSyncJobStart(
         return;
       }
     }
-    // Optional `windows` maps slug → {fromISO,toISO}: those slugs sync into the
-    // TRANSIENT window cache — never the canonical
-    // one, never a KR. Shape-validated here; sync.ts re-validates the dates.
-    let windows: Record<string, WindowRange> | undefined;
-    if (body.windows !== undefined) {
-      const raw = body.windows;
-      const isRecord = raw && typeof raw === 'object' && !Array.isArray(raw);
-      const entries = isRecord ? Object.entries(raw as Record<string, unknown>) : [];
-      const valid = isRecord && entries.length > 0 && entries.every(([, w]) =>
-        w && typeof w === 'object'
-        && isValidWindow(w as WindowRange));
-      if (!valid) {
-        sendError(res, 400, 'invalid_windows', '`windows` must map insight slugs to { fromISO, toISO } day windows (from ≤ to).');
-        return;
-      }
-      windows = Object.fromEntries(entries.map(([slug, w]) => {
-        const win = w as WindowRange;
-        return [slug.trim(), { fromISO: win.fromISO, toISO: win.toISO }];
-      }));
-    }
-    // Default force:true — pressing Sync all IS the explicit "refetch now".
-    const { job, started } = startLabSyncJob(contextRoot, { force: body.force !== false, slugs, windows });
-    sendJson(res, 200, { job, started });
+    const { job, started, queued, running, pending } = startLabSyncJob(contextRoot, {
+      force: normalizeSyncForce(body.force),
+      slugs,
+    });
+    sendJson(res, 200, { job, started, queued, running, pending });
   } catch (err) {
     console.error('[lab] sync job start failed:', err);
     sendError(res, 500, 'sync_failed', 'Failed to start the insight sync.');
   }
 }
 
-/** GET /api/lab/sync-jobs/current — the live (or last settled) bulk-sync job, or null. */
+/** GET /api/lab/sync-jobs/current — the live (or last settled) bulk-sync job
+ *  (`job` = `running`, null when none), the queued follow-up (`pending`, or
+ *  null) and `queued: true` while one waits. Same slot names as the start response. */
 export async function handleLabSyncJobCurrent(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -239,7 +237,8 @@ export async function handleLabSyncJobCurrent(
   contextRoot: string,
 ): Promise<void> {
   try {
-    sendJson(res, 200, { job: currentLabSyncJob(contextRoot) });
+    const { running, queued } = labSyncJobSlots(contextRoot);
+    sendJson(res, 200, { job: running, running, pending: queued, queued: queued !== null });
   } catch (err) {
     console.error('[lab] sync job read failed:', err);
     sendError(res, 500, 'sync_job_failed', 'Failed to read the sync job.');
@@ -247,6 +246,7 @@ export async function handleLabSyncJobCurrent(
 }
 
 /** POST /api/lab/sync { slug? | all?, force? } — runs the same engine as the CLI.
+ *  `force` as for sync-jobs: absent = automatic, `'user'`/`true`, `'hard'`.
  *  `all` stays for CLI/API parity and scripted callers; the dashboard's bulk
  *  button uses the job routes above so it can outlive the request timeout. */
 export async function handleLabSync(
@@ -260,7 +260,7 @@ export async function handleLabSync(
     sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
     return;
   }
-  const force = body.force === true;
+  const force = normalizeSyncForce(body.force);
   try {
     if (body.all === true) {
       const { results, failed } = await syncAll(contextRoot, { force });

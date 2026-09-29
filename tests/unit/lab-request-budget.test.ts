@@ -29,7 +29,7 @@ describe('the TTL gate is what a non-forced run relies on', () => {
     // If this shape changes, an automatic (unforced) run stops meaning "gated"
     // and this test's premise is gone — fail here rather than silently at runtime.
     expect(source).toContain('const force = normalizeSyncForce(opts.force);');
-    expect(source).toMatch(/if \(!force && !windowOverride && prior\)/);
+    expect(source).toMatch(/if \(!force && prior\)/);
     expect(source).toContain("status: 'fresh', reason: 'ttl'");
   });
 });
