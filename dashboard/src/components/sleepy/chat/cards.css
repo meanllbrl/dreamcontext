@@ -262,6 +262,16 @@ video.chat-msg-user-media-el { cursor: default; }
   color: var(--color-text);
 }
 
+/* ⌘F hits (ChatFindBar.tsx) — every match tinted, the current one filled so the eye finds
+   it among the rest. Same `::highlight()` property limits as above. */
+::highlight(dc-find) {
+  background-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+::highlight(dc-find-current) {
+  background-color: color-mix(in srgb, var(--color-warning) 75%, transparent);
+  color: var(--color-text);
+}
+
 /* MarkdownPreview's container is a document surface of its own (border + padding +
    background) — inside a chat card that reads as a box in a box. The card IS the
    surface here, so the inner one is flattened. */

@@ -35,6 +35,8 @@ import { PeerSessionHolder } from './chat/PeerSessionCard';
 import { usePeerMentions } from '../../hooks/usePeerMentions';
 import type { PeerMention } from '../../lib/agentComposer';
 import { PinShelf } from './chat/PinShelf';
+import { ChatFindBar } from './chat/ChatFindBar';
+import { isFindChord } from './chat/findInChat';
 import { useShelf } from './chat/useShelf';
 import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
@@ -1371,6 +1373,34 @@ export function ChatPane({
     return () => root.removeEventListener('keydown', onKey, true);
   }, [session]);
 
+  // ── ⌘F finds in this transcript ─────────────────────────────────────────────────────
+  // Bound on the pane root for the same reason as ⌃C above: in a split, only the pane that
+  // holds focus opens its bar. `findSignal` doubles as "open" (> 0) and as the re-focus
+  // nudge a second ⌘F sends to an already-open bar.
+  const [findSignal, setFindSignal] = useState(0);
+  useEffect(() => {
+    const root = paneRef.current;
+    if (!root) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isFindChord(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setFindSignal((n) => n + 1);
+    };
+    root.addEventListener('keydown', onKey, true);
+    return () => root.removeEventListener('keydown', onKey, true);
+  }, []);
+  const closeFind = useCallback(() => {
+    setFindSignal(0);
+    session.focus();
+  }, [session]);
+  /** A find jump is the reader moving the view — release stick-to-bottom so the next
+   *  streamed token does not drag it straight back down. */
+  const onFindJump = useCallback(() => {
+    upIntentAtRef.current = performance.now();
+    setStick(false);
+  }, [setStick]);
+
   // ── State 3/4: a clicked file reference either opens the Lightbox (an image) or the
   //    file SlideOver (everything else, including a board — no rasterizer exists, so a
   //    board's "Open board ↗" degrades to the same numbered text preview; see chatEntities'
@@ -1913,6 +1943,17 @@ export function ChatPane({
             peers={peers}
             onJump={jumpToSubAgent}
             onWheel={forwardWheelToTranscript}
+          />
+        )}
+        {findSignal > 0 && (
+          <ChatFindBar
+            focusSignal={findSignal}
+            contentRef={contentRef}
+            scrollRef={scrollRef}
+            hiddenCount={hiddenCount}
+            onRevealEarlier={revealEarlier}
+            onJump={onFindJump}
+            onClose={closeFind}
           />
         )}
         {!pinned && (
