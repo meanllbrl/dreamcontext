@@ -233,19 +233,6 @@ describe('skill/references lab doc markers', () => {
     expect(cli).toContain('DEPRECATED for new insights');
     expect(cli).toContain('no longer scaffolds a script template');
   });
-
-  it('documents reports: the entity-router row, the CLI verbs, and date honesty', () => {
-    const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
-    expect(skill).toContain('**Report** — `lab/reports/<slug>.md`');
-    expect(skill).toContain('thirteen distinct entity types');
-    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
-    expect(cli).toContain('lab report create');
-    expect(cli).toContain('lab report show');
-    const tf = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
-    expect(tf).toContain('Reports (My Reports');
-    expect(tf).toContain('OWNS NO DATA');
-    expect(tf).toContain('never an interpolation');
-  });
 });
 
 // ── skill/references/knowledge-and-recall.md markers ─────────────────────────

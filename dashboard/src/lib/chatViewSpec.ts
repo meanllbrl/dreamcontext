@@ -49,10 +49,9 @@ export type ChatViewSpec =
  * fork the truth — two spellings of one figure, one of them a transcription. So for anything
  * the Lab already tracks, the agent names it and the app draws it.
  *
- * `view` picks the card body or the fuller detail body. `breakdown` mirrors the report-item
- * contract (`src/lib/lab/reports-store.ts`) so the two composition surfaces stay one idea:
- * it selects pivot axes on a matrix insight and never mutates the insight's stored tweaks —
- * a chat message must not silently re-configure a board card.
+ * `view` picks the card body or the fuller detail body. `breakdown` selects pivot axes on a
+ * matrix insight and never mutates the insight's stored tweaks — a chat message must not
+ * silently re-configure a board card.
  */
 export interface InsightViewSpec {
   type: 'insight';

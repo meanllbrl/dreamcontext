@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
-import { LabError, type AdapterContext } from '../types.js';
+import { FRESHNESS_PROBE_TIMEOUT_MS, LabError, type AdapterContext } from '../types.js';
 
 /**
  * Out-of-process runner for `lab/scripts/*.mjs`.
@@ -65,15 +65,39 @@ let raw = '';
 process.stdin.setEncoding('utf-8');
 for await (const chunk of process.stdin) raw += chunk;
 
+// The optional freshness export, bounded: a probe that hangs is a probe that
+// failed, never a sync that hangs.
+const probe = (mod, ctx, ms) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('freshness() timed out after ' + ms + 'ms')), ms);
+  Promise.resolve().then(() => mod.freshness(ctx)).then(
+    (v) => { clearTimeout(timer); resolve(v === undefined ? null : v); },
+    (e) => { clearTimeout(timer); reject(e); },
+  );
+});
+
 let payload;
 try {
   const input = JSON.parse(raw);
   const mod = await import(input.scriptUrl);
-  const fn = mod.default;
-  if (typeof fn !== 'function') payload = { ok: false, noDefault: true };
-  else {
-    const result = await fn(input.ctx);
-    payload = { ok: true, result: result === undefined ? null : result };
+  if (input.mode === 'freshness') {
+    // Probe only: the script's freshness() answer, or noFreshness when it
+    // exports none. default() never runs.
+    if (typeof mod.freshness !== 'function') payload = { ok: true, noFreshness: true, result: null };
+    else payload = { ok: true, result: await probe(mod, input.ctx, input.probeMs) };
+  } else {
+    const fn = mod.default;
+    if (typeof fn !== 'function') payload = { ok: false, noDefault: true };
+    else {
+      // Marker BEFORE data: if the source changes between the two calls, the
+      // stored marker is the older one and the next probe refetches. The other
+      // order would pin new data to a marker that already hides a change.
+      let freshness = null;
+      if (typeof mod.freshness === 'function') {
+        try { freshness = await probe(mod, input.ctx, input.probeMs); } catch { freshness = null; }
+      }
+      const result = await fn(input.ctx);
+      payload = { ok: true, result: result === undefined ? null : result, freshness };
+    }
   }
 } catch (err) {
   payload = { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -125,8 +149,34 @@ export async function runScriptInChild(
   ctx: AdapterContext,
   label: string,
 ): Promise<unknown> {
-  const timeoutMs = resolveTimeoutMs();
+  return (await runScriptChild(scriptPath, ctx, label, 'fetch')).result;
+}
+
+/** What one child run produced: the script's result, plus (fetch mode) the
+ *  answer of its optional `freshness` export taken BEFORE the data, or (probe
+ *  mode) `noFreshness` when the script exports none. */
+export interface ScriptChildOutcome {
+  result: unknown;
+  freshness: unknown;
+  noFreshness: boolean;
+}
+
+/**
+ * Run one custom script in a fresh Node process. `fetch` mode runs the default
+ * export (and a bounded `freshness()` first when exported); `freshness` mode
+ * runs only the `freshness` export under the probe budget (timeoutMs).
+ */
+export async function runScriptChild(
+  scriptPath: string,
+  ctx: AdapterContext,
+  label: string,
+  mode: 'fetch' | 'freshness',
+  timeoutOverrideMs?: number,
+): Promise<ScriptChildOutcome> {
+  const timeoutMs = timeoutOverrideMs ?? resolveTimeoutMs();
   const payload = JSON.stringify({
+    mode,
+    probeMs: ctx.probeTimeoutMs ?? FRESHNESS_PROBE_TIMEOUT_MS,
     scriptUrl: pathToFileURL(scriptPath).href,
     // `fetchImpl` is a function and cannot cross a process boundary; every other
     // AdapterContext field is plain data. Scripts use the global `fetch`.
@@ -137,7 +187,7 @@ export async function runScriptInChild(
     },
   });
 
-  return await new Promise<unknown>((resolveResult, rejectResult) => {
+  return await new Promise<ScriptChildOutcome>((resolveResult, rejectResult) => {
     let child: ChildProcess;
     try {
       child = spawn(process.execPath, ['--input-type=module', '--eval', RUNNER_SOURCE], {
@@ -192,7 +242,14 @@ export async function runScriptInChild(
         return;
       }
 
-      let parsed: { ok?: boolean; result?: unknown; error?: string; noDefault?: boolean };
+      let parsed: {
+        ok?: boolean;
+        result?: unknown;
+        error?: string;
+        noDefault?: boolean;
+        freshness?: unknown;
+        noFreshness?: boolean;
+      };
       try {
         parsed = JSON.parse(raw) as typeof parsed;
       } catch {
@@ -210,7 +267,11 @@ export async function runScriptInChild(
         rejectResult(new Error(parsed.error ?? 'unknown error'));
         return;
       }
-      resolveResult(parsed.result ?? null);
+      resolveResult({
+        result: parsed.result ?? null,
+        freshness: parsed.freshness ?? null,
+        noFreshness: parsed.noFreshness === true,
+      });
     };
 
     resultChannel.on('data', (b: Buffer) => { chunks.push(b); });

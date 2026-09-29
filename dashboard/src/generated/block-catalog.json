@@ -1,0 +1,816 @@
+{
+  "types": [
+    "stat",
+    "line",
+    "bar",
+    "stacked",
+    "pie",
+    "table",
+    "heatmap",
+    "funnel",
+    "pivot",
+    "text",
+    "callout",
+    "tabs",
+    "filter",
+    "html",
+    "insight"
+  ],
+  "blocks": [
+    {
+      "type": "stat",
+      "data": "binding",
+      "frames": [
+        "value",
+        "series"
+      ],
+      "labelKey": "lab.block.stat",
+      "label": {
+        "en": "Stat",
+        "tr": "Sayı"
+      },
+      "descriptionKey": "lab.block.stat.description",
+      "description": {
+        "en": "One number with its change and a sparkline.",
+        "tr": "Değişimi ve küçük grafiğiyle tek bir sayı."
+      },
+      "defaultSize": {
+        "w": 3,
+        "h": 3
+      },
+      "options": [
+        {
+          "key": "delta",
+          "type": "enum",
+          "enum": [
+            "none",
+            "prev"
+          ],
+          "default": "none",
+          "labelKey": "lab.block.opt.delta",
+          "label": {
+            "en": "Change",
+            "tr": "Değişim"
+          }
+        },
+        {
+          "key": "spark",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.spark",
+          "label": {
+            "en": "Sparkline",
+            "tr": "Küçük grafik"
+          }
+        },
+        {
+          "key": "unit",
+          "type": "string",
+          "labelKey": "lab.block.opt.unit",
+          "label": {
+            "en": "Unit",
+            "tr": "Birim"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "number",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
+          }
+        },
+        {
+          "key": "series",
+          "type": "string-list",
+          "labelKey": "lab.block.opt.series",
+          "label": {
+            "en": "Series",
+            "tr": "Seriler"
+          }
+        }
+      ]
+    },
+    {
+      "type": "line",
+      "data": "binding",
+      "frames": [
+        "series"
+      ],
+      "labelKey": "lab.block.line",
+      "label": {
+        "en": "Line",
+        "tr": "Çizgi"
+      },
+      "descriptionKey": "lab.block.line.description",
+      "description": {
+        "en": "Series over time.",
+        "tr": "Zaman içindeki seriler."
+      },
+      "defaultSize": {
+        "w": 6,
+        "h": 4
+      },
+      "options": [
+        {
+          "key": "area",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.area",
+          "label": {
+            "en": "Fill area",
+            "tr": "Alanı doldur"
+          }
+        },
+        {
+          "key": "color",
+          "type": "number",
+          "min": 1,
+          "max": 8,
+          "default": 1,
+          "labelKey": "lab.block.opt.color",
+          "label": {
+            "en": "Color",
+            "tr": "Renk"
+          }
+        },
+        {
+          "key": "series",
+          "type": "string-list",
+          "labelKey": "lab.block.opt.series",
+          "label": {
+            "en": "Series",
+            "tr": "Seriler"
+          }
+        },
+        {
+          "key": "limit",
+          "type": "number",
+          "min": 1,
+          "max": 400,
+          "labelKey": "lab.block.opt.limit",
+          "label": {
+            "en": "Row limit",
+            "tr": "Satır sınırı"
+          }
+        }
+      ]
+    },
+    {
+      "type": "bar",
+      "data": "binding",
+      "frames": [
+        "table",
+        "series"
+      ],
+      "labelKey": "lab.block.bar",
+      "label": {
+        "en": "Bar",
+        "tr": "Çubuk"
+      },
+      "descriptionKey": "lab.block.bar.description",
+      "description": {
+        "en": "Values side by side.",
+        "tr": "Yan yana değerler."
+      },
+      "defaultSize": {
+        "w": 6,
+        "h": 4
+      },
+      "options": [
+        {
+          "key": "orientation",
+          "type": "enum",
+          "enum": [
+            "h",
+            "v"
+          ],
+          "default": "h",
+          "labelKey": "lab.block.opt.orientation",
+          "label": {
+            "en": "Orientation",
+            "tr": "Yön"
+          }
+        },
+        {
+          "key": "color",
+          "type": "number",
+          "min": 1,
+          "max": 8,
+          "default": 1,
+          "labelKey": "lab.block.opt.color",
+          "label": {
+            "en": "Color",
+            "tr": "Renk"
+          }
+        },
+        {
+          "key": "comparePrev",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.comparePrev",
+          "label": {
+            "en": "Compare with previous period",
+            "tr": "Önceki dönemle karşılaştır"
+          }
+        },
+        {
+          "key": "where",
+          "type": "where",
+          "labelKey": "lab.block.opt.where",
+          "label": {
+            "en": "Only rows where",
+            "tr": "Yalnızca şu satırlar"
+          }
+        },
+        {
+          "key": "sort",
+          "type": "sort",
+          "labelKey": "lab.block.opt.sort",
+          "label": {
+            "en": "Sort by",
+            "tr": "Sıralama"
+          }
+        },
+        {
+          "key": "limit",
+          "type": "number",
+          "min": 1,
+          "max": 400,
+          "labelKey": "lab.block.opt.limit",
+          "label": {
+            "en": "Row limit",
+            "tr": "Satır sınırı"
+          }
+        },
+        {
+          "key": "series",
+          "type": "string-list",
+          "labelKey": "lab.block.opt.series",
+          "label": {
+            "en": "Series",
+            "tr": "Seriler"
+          }
+        }
+      ]
+    },
+    {
+      "type": "stacked",
+      "data": "binding",
+      "frames": [
+        "table",
+        "series"
+      ],
+      "labelKey": "lab.block.stacked",
+      "label": {
+        "en": "Stacked",
+        "tr": "Yığılmış"
+      },
+      "descriptionKey": "lab.block.stacked.description",
+      "description": {
+        "en": "Parts of a whole over time.",
+        "tr": "Zaman içinde bütünün parçaları."
+      },
+      "defaultSize": {
+        "w": 6,
+        "h": 4
+      },
+      "options": [
+        {
+          "key": "color",
+          "type": "number",
+          "min": 1,
+          "max": 8,
+          "default": 1,
+          "labelKey": "lab.block.opt.color",
+          "label": {
+            "en": "Color",
+            "tr": "Renk"
+          }
+        },
+        {
+          "key": "where",
+          "type": "where",
+          "labelKey": "lab.block.opt.where",
+          "label": {
+            "en": "Only rows where",
+            "tr": "Yalnızca şu satırlar"
+          }
+        },
+        {
+          "key": "series",
+          "type": "string-list",
+          "labelKey": "lab.block.opt.series",
+          "label": {
+            "en": "Series",
+            "tr": "Seriler"
+          }
+        },
+        {
+          "key": "limit",
+          "type": "number",
+          "min": 1,
+          "max": 400,
+          "labelKey": "lab.block.opt.limit",
+          "label": {
+            "en": "Row limit",
+            "tr": "Satır sınırı"
+          }
+        }
+      ]
+    },
+    {
+      "type": "pie",
+      "data": "binding",
+      "frames": [
+        "table",
+        "series"
+      ],
+      "labelKey": "lab.block.pie",
+      "label": {
+        "en": "Pie",
+        "tr": "Pasta"
+      },
+      "descriptionKey": "lab.block.pie.description",
+      "description": {
+        "en": "Shares of a total. Seven or more slices draw as bars.",
+        "tr": "Toplamın payları. Yedi ve daha fazla dilim çubuk olarak çizilir."
+      },
+      "defaultSize": {
+        "w": 4,
+        "h": 4
+      },
+      "options": [
+        {
+          "key": "donut",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.donut",
+          "label": {
+            "en": "Donut",
+            "tr": "Halka"
+          }
+        },
+        {
+          "key": "where",
+          "type": "where",
+          "labelKey": "lab.block.opt.where",
+          "label": {
+            "en": "Only rows where",
+            "tr": "Yalnızca şu satırlar"
+          }
+        },
+        {
+          "key": "sort",
+          "type": "sort",
+          "labelKey": "lab.block.opt.sort",
+          "label": {
+            "en": "Sort by",
+            "tr": "Sıralama"
+          }
+        },
+        {
+          "key": "limit",
+          "type": "number",
+          "min": 1,
+          "max": 400,
+          "labelKey": "lab.block.opt.limit",
+          "label": {
+            "en": "Row limit",
+            "tr": "Satır sınırı"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "binding",
+      "frames": [
+        "table",
+        "series"
+      ],
+      "labelKey": "lab.block.table",
+      "label": {
+        "en": "Table",
+        "tr": "Tablo"
+      },
+      "descriptionKey": "lab.block.table.description",
+      "description": {
+        "en": "Rows and columns of numbers.",
+        "tr": "Sayılardan oluşan satırlar ve sütunlar."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "columns",
+          "type": "string-list",
+          "labelKey": "lab.block.opt.columns",
+          "label": {
+            "en": "Columns",
+            "tr": "Sütunlar"
+          }
+        },
+        {
+          "key": "where",
+          "type": "where",
+          "labelKey": "lab.block.opt.where",
+          "label": {
+            "en": "Only rows where",
+            "tr": "Yalnızca şu satırlar"
+          }
+        },
+        {
+          "key": "sort",
+          "type": "sort",
+          "labelKey": "lab.block.opt.sort",
+          "label": {
+            "en": "Sort by",
+            "tr": "Sıralama"
+          }
+        },
+        {
+          "key": "limit",
+          "type": "number",
+          "min": 1,
+          "max": 400,
+          "labelKey": "lab.block.opt.limit",
+          "label": {
+            "en": "Row limit",
+            "tr": "Satır sınırı"
+          }
+        }
+      ]
+    },
+    {
+      "type": "heatmap",
+      "data": "binding",
+      "frames": [
+        "table",
+        "series"
+      ],
+      "labelKey": "lab.block.heatmap",
+      "label": {
+        "en": "Heatmap",
+        "tr": "Isı haritası"
+      },
+      "descriptionKey": "lab.block.heatmap.description",
+      "description": {
+        "en": "Intensity across two axes.",
+        "tr": "İki eksen boyunca yoğunluk."
+      },
+      "defaultSize": {
+        "w": 6,
+        "h": 5
+      },
+      "options": [
+        {
+          "key": "color",
+          "type": "number",
+          "min": 1,
+          "max": 8,
+          "default": 1,
+          "labelKey": "lab.block.opt.color",
+          "label": {
+            "en": "Color",
+            "tr": "Renk"
+          }
+        },
+        {
+          "key": "where",
+          "type": "where",
+          "labelKey": "lab.block.opt.where",
+          "label": {
+            "en": "Only rows where",
+            "tr": "Yalnızca şu satırlar"
+          }
+        }
+      ]
+    },
+    {
+      "type": "funnel",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.funnel",
+      "label": {
+        "en": "Funnel",
+        "tr": "Huni"
+      },
+      "descriptionKey": "lab.block.funnel.description",
+      "description": {
+        "en": "Step by step conversion.",
+        "tr": "Adım adım dönüşüm."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "compact",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.compact",
+          "label": {
+            "en": "Compact",
+            "tr": "Sıkı"
+          }
+        }
+      ]
+    },
+    {
+      "type": "pivot",
+      "data": "binding",
+      "frames": [
+        "table"
+      ],
+      "labelKey": "lab.block.pivot",
+      "label": {
+        "en": "Pivot",
+        "tr": "Özet tablo"
+      },
+      "descriptionKey": "lab.block.pivot.description",
+      "description": {
+        "en": "One dimension down, another across.",
+        "tr": "Bir boyut aşağı, diğeri yana."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "rows",
+          "type": "string",
+          "labelKey": "lab.block.opt.rows",
+          "label": {
+            "en": "Rows",
+            "tr": "Satırlar"
+          }
+        },
+        {
+          "key": "cols",
+          "type": "string",
+          "labelKey": "lab.block.opt.cols",
+          "label": {
+            "en": "Columns",
+            "tr": "Sütunlar"
+          }
+        },
+        {
+          "key": "where",
+          "type": "where",
+          "labelKey": "lab.block.opt.where",
+          "label": {
+            "en": "Only rows where",
+            "tr": "Yalnızca şu satırlar"
+          }
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "data": "none",
+      "frames": [],
+      "labelKey": "lab.block.text",
+      "label": {
+        "en": "Text",
+        "tr": "Metin"
+      },
+      "descriptionKey": "lab.block.text.description",
+      "description": {
+        "en": "Markdown notes and headings.",
+        "tr": "Markdown notlar ve başlıklar."
+      },
+      "defaultSize": {
+        "w": 12,
+        "h": 1
+      },
+      "options": [
+        {
+          "key": "markdown",
+          "type": "markdown",
+          "default": "",
+          "labelKey": "lab.block.opt.markdown",
+          "label": {
+            "en": "Text",
+            "tr": "Metin"
+          }
+        }
+      ]
+    },
+    {
+      "type": "callout",
+      "data": "none",
+      "frames": [],
+      "labelKey": "lab.block.callout",
+      "label": {
+        "en": "Callout",
+        "tr": "Vurgu"
+      },
+      "descriptionKey": "lab.block.callout.description",
+      "description": {
+        "en": "A highlighted note.",
+        "tr": "Öne çıkarılmış bir not."
+      },
+      "defaultSize": {
+        "w": 6,
+        "h": 2
+      },
+      "options": [
+        {
+          "key": "tone",
+          "type": "enum",
+          "enum": [
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ],
+          "default": "info",
+          "labelKey": "lab.block.opt.tone",
+          "label": {
+            "en": "Tone",
+            "tr": "Ton"
+          }
+        },
+        {
+          "key": "markdown",
+          "type": "markdown",
+          "default": "",
+          "labelKey": "lab.block.opt.markdown",
+          "label": {
+            "en": "Text",
+            "tr": "Metin"
+          }
+        }
+      ]
+    },
+    {
+      "type": "tabs",
+      "data": "none",
+      "frames": [],
+      "labelKey": "lab.block.tabs",
+      "label": {
+        "en": "Tabs",
+        "tr": "Sekmeler"
+      },
+      "descriptionKey": "lab.block.tabs.description",
+      "description": {
+        "en": "Panels of blocks, one visible at a time. Tabs do not nest.",
+        "tr": "Her seferinde biri görünen blok panelleri. Sekmeler iç içe girmez."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "tabs",
+          "type": "tabs",
+          "labelKey": "lab.block.opt.tabs",
+          "label": {
+            "en": "Tabs",
+            "tr": "Sekmeler"
+          }
+        }
+      ]
+    },
+    {
+      "type": "filter",
+      "data": "binding",
+      "frames": [
+        "table"
+      ],
+      "labelKey": "lab.block.filter",
+      "label": {
+        "en": "Filter",
+        "tr": "Filtre"
+      },
+      "descriptionKey": "lab.block.filter.description",
+      "description": {
+        "en": "Chips that filter the blocks bound to the same dataset.",
+        "tr": "Aynı veri kümesine bağlı blokları süzen çipler."
+      },
+      "defaultSize": {
+        "w": 12,
+        "h": 1
+      },
+      "options": [
+        {
+          "key": "dim",
+          "type": "string",
+          "labelKey": "lab.block.opt.dim",
+          "label": {
+            "en": "Dimension",
+            "tr": "Boyut"
+          }
+        }
+      ]
+    },
+    {
+      "type": "html",
+      "data": "inputs",
+      "frames": [
+        "table",
+        "series",
+        "value",
+        "funnel"
+      ],
+      "labelKey": "lab.block.html",
+      "label": {
+        "en": "Custom HTML",
+        "tr": "Özel HTML"
+      },
+      "descriptionKey": "lab.block.html.description",
+      "description": {
+        "en": "Your own markup in a sandbox, fed only the inputs it declares.",
+        "tr": "Yalnızca bildirdiği girdileri alan, korumalı alanda kendi işaretlemeniz."
+      },
+      "defaultSize": {
+        "w": 6,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "html",
+          "type": "html",
+          "labelKey": "lab.block.opt.html",
+          "label": {
+            "en": "HTML",
+            "tr": "HTML"
+          }
+        },
+        {
+          "key": "ref",
+          "type": "string",
+          "labelKey": "lab.block.opt.ref",
+          "label": {
+            "en": "Library block",
+            "tr": "Kütüphane bloğu"
+          }
+        },
+        {
+          "key": "inputs",
+          "type": "inputs",
+          "labelKey": "lab.block.opt.inputs",
+          "label": {
+            "en": "Inputs",
+            "tr": "Girdiler"
+          }
+        }
+      ]
+    },
+    {
+      "type": "insight",
+      "data": "insight",
+      "frames": [],
+      "labelKey": "lab.block.insight",
+      "label": {
+        "en": "Insight",
+        "tr": "İçgörü"
+      },
+      "descriptionKey": "lab.block.insight.description",
+      "description": {
+        "en": "The insight exactly as it renders on its own.",
+        "tr": "İçgörü, kendi başına nasıl görünüyorsa öyle."
+      },
+      "defaultSize": {
+        "w": 4,
+        "h": 4
+      },
+      "options": []
+    }
+  ],
+  "renderDefaultSpan": {
+    "number": 1,
+    "line": 1,
+    "pie": 1,
+    "raw": 1,
+    "funnel": 2,
+    "bar": 1,
+    "bar_compare": 1,
+    "stacked": 1,
+    "table": 2,
+    "heatmap": 1,
+    "breakdown": 2,
+    "app": 2
+  },
+  "htmlInputDefaultFrames": [
+    "table",
+    "series",
+    "value"
+  ]
+}

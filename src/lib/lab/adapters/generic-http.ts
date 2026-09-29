@@ -1,6 +1,19 @@
 import { ApiAdapter, ApiError } from '../../task-backend/api-adapter.js';
 import { resolvePlaceholders, redactSecrets } from '../credentials.js';
-import { isRawFunnelSet, LabError, type AdapterContext, type AdapterResult, type ExtractConfig, type HttpSource, type LabAdapter, type RawSeries, type SeriesPoint } from '../types.js';
+import {
+  FRESHNESS_PROBE_TIMEOUT_MS,
+  isRawFunnelSet,
+  LabError,
+  type AdapterContext,
+  type AdapterResult,
+  type ExtractConfig,
+  type HttpFreshnessProbe,
+  type HttpSource,
+  type LabAdapter,
+  type RawFreshness,
+  type RawSeries,
+  type SeriesPoint,
+} from '../types.js';
 
 /**
  * Generic-HTTP adapter — declarative JSON API → RawSeries[]. Reuses the shared
@@ -125,4 +138,142 @@ export const genericHttpAdapter: LabAdapter = {
 
     return extractSeries(json, http.extract);
   },
+
+  async probe(ctx: AdapterContext): Promise<RawFreshness | null> {
+    const source = ctx.manifest.source;
+    const spec = ctx.manifest.refresh.freshness;
+    if (!source || source.adapter !== 'http' || !spec) return null;
+    const secretValues = Object.values(ctx.credentials);
+    const placeholderCtx = { cred: ctx.credentials, tweak: ctx.resolvedTweaks.values };
+    const redactedUrl = resolvePlaceholders(spec.url, placeholderCtx, { redact: true });
+    // Every probe error is built from the redacted URL + status only.
+    const fail = (why: string): LabError =>
+      new LabError(redactSecrets(`Freshness probe ${spec.method} ${redactedUrl} ${why}`, secretValues));
+
+    const plan = buildProbeRequest(source, spec, ctx.credentials, placeholderCtx);
+    if ('refused' in plan) throw fail(plan.refused);
+
+    // Re-check at resolve time: the URL actually handed to fetch is parsed
+    // again and must still satisfy the credential rule it was planned under.
+    let finalUrl: URL;
+    try {
+      finalUrl = new URL(plan.url);
+    } catch {
+      throw fail('has an invalid URL after resolution.');
+    }
+    if (plan.carriesCredential && finalUrl.origin !== plan.sourceOrigin) {
+      throw fail('refused: a credential may only go to the source origin.');
+    }
+
+    const fetchImpl = ctx.fetchImpl ?? fetch;
+    const controller = new AbortController();
+    const budgetMs = ctx.probeTimeoutMs ?? FRESHNESS_PROBE_TIMEOUT_MS;
+    const timer = setTimeout(() => controller.abort(), budgetMs);
+    timer.unref?.();
+    let res: Response;
+    try {
+      res = await fetchImpl(finalUrl.href, {
+        method: spec.method,
+        headers: plan.headers,
+        body: plan.body ?? undefined,
+        // A redirect could carry the credential somewhere else; it is a probe
+        // failure (full fetch), never followed.
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+    } catch {
+      throw fail(controller.signal.aborted ? `timed out after ${budgetMs}ms.` : 'failed.');
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.status < 200 || res.status >= 300) throw fail(`failed (${res.status}).`);
+    let json: unknown;
+    try {
+      json = await res.json();
+    } catch {
+      throw fail(`returned an unreadable body (${res.status}).`);
+    }
+    return {
+      marker: getPath(json, spec.extract.marker),
+      asOf: spec.extract.asOf ? getPath(json, spec.extract.asOf) : undefined,
+      note: spec.extract.note ? getPath(json, spec.extract.note) : undefined,
+    };
+  },
 };
+
+/** The probe request, or the reason the credential rule refuses it. */
+export type ProbePlan =
+  | {
+    url: string;
+    headers: Record<string, string>;
+    body: string | null;
+    sourceOrigin: string;
+    /** True when anything in the request is (or contains) a credential. */
+    carriesCredential: boolean;
+  }
+  | { refused: string };
+
+/**
+ * Plan a freshness probe under the same-origin credential rule, AFTER
+ * placeholder resolution: a `{{cred:*}}` that resolves the host, or a literal
+ * secret typed into a header, is judged by where the request would actually go.
+ * The source's own headers (its auth) are inherited only when the probe
+ * declares none AND the origins match. A cross-origin probe is refused as soon
+ * as a credential sits anywhere in it (URL, headers, body); without one it goes
+ * out bare.
+ */
+export function buildProbeRequest(
+  source: HttpSource,
+  spec: HttpFreshnessProbe,
+  credentials: Record<string, string>,
+  placeholderCtx: { cred: Record<string, string>; tweak: Record<string, string> },
+): ProbePlan {
+  let sourceOrigin: string;
+  let probeOrigin: string;
+  const url = resolvePlaceholders(spec.url, placeholderCtx);
+  try {
+    sourceOrigin = new URL(resolvePlaceholders(source.endpoint, placeholderCtx)).origin;
+  } catch {
+    return { refused: 'refused: the source endpoint does not resolve to a URL.' };
+  }
+  try {
+    probeOrigin = new URL(url).origin;
+  } catch {
+    return { refused: 'has an invalid URL after resolution.' };
+  }
+  const sameOrigin = probeOrigin === sourceOrigin;
+
+  const templates = [spec.url, ...Object.values(spec.headers ?? {}), spec.body ?? ''];
+  const headers: Record<string, string> = {};
+  for (const [k, val] of Object.entries(spec.headers ?? {})) {
+    headers[k] = resolvePlaceholders(val, placeholderCtx);
+  }
+  let inherited = false;
+  if (!spec.headers && sameOrigin) {
+    for (const [k, val] of Object.entries(source.headers)) {
+      headers[k] = resolvePlaceholders(val, placeholderCtx);
+    }
+    inherited = Object.keys(source.headers).length > 0;
+  }
+  let body: string | null = null;
+  if (spec.method === 'POST') {
+    const resolvedBody = resolvePlaceholders(spec.body ?? '{}', placeholderCtx);
+    try {
+      JSON.parse(resolvedBody);
+    } catch {
+      return { refused: 'has a POST body that did not resolve to valid JSON.' };
+    }
+    body = resolvedBody;
+    headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
+  }
+
+  const secrets = Object.values(credentials).filter((s) => s.length > 0);
+  const resolvedParts = [url, ...Object.values(headers), body ?? ''];
+  const carriesCredential = inherited
+    || templates.some((t) => /\{\{\s*cred:/.test(t))
+    || resolvedParts.some((part) => secrets.some((s) => part.includes(s)));
+  if (carriesCredential && !sameOrigin) {
+    return { refused: 'refused: a credential may only go to the source origin.' };
+  }
+  return { url, headers, body, sourceOrigin, carriesCredential };
+}

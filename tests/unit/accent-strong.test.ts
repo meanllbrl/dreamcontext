@@ -49,8 +49,6 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/lab/funnel/FunnelBars.css::.funnel-bars-fill': 'bar',
   'components/lab/funnel/FunnelCompareView.css::.funnel-cmp-barfill': 'bar',
   'components/lab/funnel/FunnelLane.css::.funnel-node-volume-fill': 'bar',
-  'components/lab/reports/ReportPage.css::.report-mark': 'decorative mark',
-  'components/lab/reports/ReportPage.css::.report-rule': 'rule',
   'components/search/BrainSearch.css::.bsearch-score-track > i': 'score bar',
   'components/layout/Sidebar.css::.sidebar-sleepy-eye': 'mascot eye',
   'components/sleepy/SleepyMascot.css::.smascot-hand': 'mascot art',

@@ -139,6 +139,62 @@ export interface ScriptSource {
 
 export type InsightSource = HttpSource | ScriptSource;
 
+/**
+ * Optional upstream-freshness probe for an `http` insight (`refresh.freshness`).
+ * A cheap request that answers "has the source changed?" with a MARKER (a
+ * last-modified stamp, a row count, a version) so a sync can skip the full
+ * fetch when the marker and the request fingerprint (`queryKey`) are unchanged.
+ *
+ * Resolved through the adapter's own `{{tweak:*}}`/`{{cred:*}}` placeholder
+ * path. Credentials (placeholders, literal secrets, and the source's own
+ * headers) only ever go to the SAME origin as the source endpoint, compared
+ * AFTER placeholder resolution; a cross-origin probe carrying a credential is
+ * refused (the sync falls back to a full fetch). Script insights probe through
+ * an optional `export async function freshness(ctx)` instead.
+ */
+export interface HttpFreshnessProbe {
+  /** May contain `{{tweak:key}}` / `{{cred:key}}` placeholders. */
+  url: string;
+  method: 'GET' | 'POST';
+  /** Probe-only headers; absent = the source's headers (same origin only). */
+  headers: Record<string, string> | null;
+  /** POST body template — must resolve to JSON. null for GET. */
+  body: string | null;
+  /** Dot/bracket paths into the probe response. */
+  extract: { marker: string; asOf: string | null; note: string | null };
+}
+
+/** The manifest's refresh policy. */
+export interface RefreshConfig {
+  ttl_minutes: number;
+  /** Optional http freshness probe (see HttpFreshnessProbe), else absent. */
+  freshness?: HttpFreshnessProbe | null;
+}
+
+/**
+ * What the source said about its own freshness at the last REAL fetch, stored
+ * in the synced cache. `checkedAt` is deliberately NOT here: probe checks are
+ * per machine and live in the machine-local sidecar `state/.lab-freshness.json`,
+ * so an unchanged probe never dirties the brain-synced cache file.
+ */
+export interface SourceFreshness {
+  /** ≤ 256 chars, already passed through `redactSecrets`. */
+  marker: string;
+  /** When the upstream data is "as of" (plain text), or null. */
+  asOf: string | null;
+  /** A short human note from the source (plain text, never markup), or null. */
+  note: string | null;
+  /** Fingerprint of the request that produced the cache (tweaks + window + source/script hash). */
+  queryKey: string;
+}
+
+/** A source's freshness answer before the engine normalizes it. */
+export interface RawFreshness {
+  marker?: unknown;
+  asOf?: unknown;
+  note?: unknown;
+}
+
 /** Optional binding that writes a bound objective's KR `metric.current` on sync. */
 export interface Binding {
   objective: string;
@@ -165,7 +221,7 @@ export interface InsightManifest {
   height: InsightHeight | null;
   /** null when the `source:` block is malformed (read stays lenient). */
   source: InsightSource | null;
-  refresh: { ttl_minutes: number };
+  refresh: RefreshConfig;
   tweaks: TweakDecl[];
   binding: Binding | null;
   credentials_used: string[];
@@ -507,6 +563,8 @@ export interface InsightCache {
   /** Optional script-authored card body (html/v1 hybrid) — drawn in a
    *  network-less sandboxed iframe; NEVER a substitute for the typed data. */
   html?: string;
+  /** The source's freshness marker at the last real fetch (freshness gate). */
+  sourceFreshness?: SourceFreshness;
 }
 
 /** Resolved-tweak bundle handed to adapters and the rollup. */
@@ -526,6 +584,8 @@ export interface AdapterContext {
   /** key → secret value (resolved from lab/credentials.json). */
   credentials: Record<string, string>;
   fetchImpl?: typeof fetch;
+  /** Freshness-probe budget override in ms (tests); default FRESHNESS_PROBE_TIMEOUT_MS. */
+  probeTimeoutMs?: number;
 }
 
 /** A raw (pre-validation) funnel-set payload passed through by an adapter.
@@ -591,11 +651,14 @@ export function isRawAppSpec(result: unknown): result is RawAppSpec {
   );
 }
 
-/** A `{ data, html?, app? }` envelope from a script (pre-validation). */
+/** A `{ data, html?, app?, freshness? }` envelope from a script (pre-validation).
+ *  `freshness` is the source's own marker for the data it just returned (the
+ *  freshness gate); the engine normalizes and caps it. */
 export interface RawPayloadEnvelope {
   data: RawSeries[] | RawFunnelSet | RawMatrixSet | RawDatasetBundle;
   html?: string;
   app?: RawAppSpec;
+  freshness?: RawFreshness;
 }
 
 /** Is this adapter result a `{ data, html?, app? }` envelope (vs a bare
@@ -616,10 +679,21 @@ export function isRawPayloadEnvelope(result: unknown): result is RawPayloadEnvel
  *  wrapping one of those. */
 export type AdapterResult = RawSeries[] | RawFunnelSet | RawMatrixSet | RawDatasetBundle | RawPayloadEnvelope;
 
+/** Upstream freshness probes get this much wall-clock (below the insight
+ *  watchdog); a timeout is a probe failure, which means a full fetch. */
+export const FRESHNESS_PROBE_TIMEOUT_MS = 5_000;
+
 /** The adapter contract. Implementations return RAW data; the engine rolls up
  *  series and validates/caps funnel-sets. */
 export interface LabAdapter {
   fetch(ctx: AdapterContext): Promise<AdapterResult>;
+  /**
+   * Optional cheap upstream-freshness check. Resolves the source's RAW
+   * freshness answer, or null when the insight declares no probe. Throws (a
+   * redacted LabError) on any failure — the engine treats a throw exactly like
+   * a changed marker: full fetch.
+   */
+  probe?(ctx: AdapterContext): Promise<RawFreshness | null>;
 }
 
 /** All lab failures throw this so callers can map it (400/404 in routes, exit 1 in CLI). */

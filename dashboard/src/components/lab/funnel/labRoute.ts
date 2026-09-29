@@ -34,9 +34,6 @@ export interface LabRoute {
    *  grammar sibling). Mutually exclusive with `funnelId` — the path grammar
    *  only ever matches one of `f`/`p` per URL. */
   pageId: string | null;
-  /** `/lab/reports/<slug>` — the My Reports page. `reports` is a reserved
-   *  first segment (the API reserves it identically), never an insight slug. */
-  report: string | null;
 }
 
 /**
@@ -114,19 +111,11 @@ function commit(target: string, mode: 'push' | 'replace', bus: EventTarget | und
 }
 
 export function parseLabPath(pathname: string): LabRoute {
-  const none: LabRoute = { slug: null, funnelId: null, pageId: null, report: null };
-  const report = /^\/lab\/reports\/([^/]+)\/?$/.exec(pathname);
-  if (report) {
-    try {
-      return { ...none, report: decodeURIComponent(report[1]) };
-    } catch {
-      return none;
-    }
-  }
+  const none: LabRoute = { slug: null, funnelId: null, pageId: null };
   // Group 2 is the segment kind (`f` funnel detail, `p` app page) — mutually
   // exclusive by construction, so at most one of funnelId/pageId is ever set.
   const m = /^\/lab\/([^/]+)(?:\/(f|p)\/([^/]+))?\/?$/.exec(pathname);
-  if (!m || m[1] === 'reports') return none;
+  if (!m) return none;
   try {
     const slug = decodeURIComponent(m[1]);
     const subId = m[3] ? decodeURIComponent(m[3]) : null;
@@ -156,15 +145,6 @@ export function labAppPath(slug: string, pageId: string | null): string {
   return pageId
     ? `/lab/${encodeURIComponent(slug)}/p/${encodeURIComponent(pageId)}`
     : `/lab/${encodeURIComponent(slug)}`;
-}
-
-export function labReportPath(slug: string): string {
-  return `/lab/reports/${encodeURIComponent(slug)}`;
-}
-
-/** Push the My Reports page for one report (same contract as pushLabPath). */
-export function pushLabReportPath(slug: string, bus?: EventTarget): void {
-  commit(labReportPath(slug) + splitTarget(currentTarget(bus)).search, 'push', bus);
 }
 
 /**

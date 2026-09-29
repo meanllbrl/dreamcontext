@@ -16,7 +16,8 @@ import { buildRoadmapModel } from '../../lib/roadmap-model.js';
 import { auditObjectiveLinkLoss } from '../../lib/roadmap-link-audit.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
 import { dirname } from 'node:path';
-import { listInsights, isSafeInsightSlug, getInsight, readCache } from '../../lib/lab/store.js';
+import { listInsights, getInsight, readCache } from '../../lib/lab/store.js';
+import { listRejectedLabFiles } from '../../lib/lab/block-library.js';
 import { parseFunnelSet, FUNNEL_HISTORY_MAX } from '../../lib/lab/funnel.js';
 import { parseMatrixSet, MATRIX_HISTORY_MAX, MATRIX_HISTORY_MAX_BYTES } from '../../lib/lab/matrix.js';
 import { parseAppSpec } from '../../lib/lab/app.js';
@@ -729,12 +730,22 @@ export function checkLab(root: string): CheckResult[] {
     }
   }
 
+  // Files every reader refuses (non-kebab name, symlink, outside lab/insights/)
+  // are never read, so they cannot reach the per-insight loop below: report
+  // them from their names alone.
+  for (const r of listRejectedLabFiles(root, 'insight')) {
+    results.push({
+      name: 'Lab',
+      status: 'warn',
+      message: r.reason === 'unsafe-slug'
+        ? `Insight slug not kebab-case: ${r.name} (lab/insights/${r.name}.md is skipped until renamed)`
+        : `Insight file lab/insights/${r.name}.md is ${r.reason === 'symlink' ? 'a symlink' : 'outside lab/insights/'} and is never read; replace it with a real file`,
+    });
+  }
+
   if (insights.length === 0) return results;
 
   for (const m of insights) {
-    if (!isSafeInsightSlug(m.slug)) {
-      results.push({ name: 'Lab', status: 'warn', message: `Insight slug not kebab-case: ${m.slug}` });
-    }
     if (!(RENDERS as readonly string[]).includes(m.render)) {
       results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: render "${m.render}" is not one of ${RENDERS.join('|')}` });
     }

@@ -1,7 +1,8 @@
 import { dirname, resolve, sep } from 'node:path';
 import { redactSecrets } from '../credentials.js';
-import { runScriptInChild } from './script-child.js';
+import { runScriptChild } from './script-child.js';
 import {
+  FRESHNESS_PROBE_TIMEOUT_MS,
   isRawAppSpec,
   isRawDatasetBundle,
   isRawFunnelSet,
@@ -12,6 +13,7 @@ import {
   type AdapterResult,
   type InsightManifest,
   type LabAdapter,
+  type RawFreshness,
   type RawPayloadEnvelope,
   type RawSeries,
   type SeriesPoint,
@@ -67,6 +69,65 @@ function coerceSeries(result: unknown): RawSeries[] {
   });
 }
 
+/** Shape-check a script's result into an adapter result (bare payload,
+ *  legacy series, or `{ data, html?, app?, freshness? }` envelope). */
+function normalizeScriptResult(result: unknown): AdapterResult {
+  // A bare `{ kind: "app/v1" }` return has NO `data` half — reject it here,
+  // by name, before it ever reaches `isRawPayloadEnvelope` (which returns
+  // false for it: a `kind` is present, so it reads as a bare typed payload,
+  // not an envelope) and falls into `coerceSeries`'s generic array error.
+  // `app` is presentation only and never substitutes for the numbers,
+  // exactly like `html` — the fix is to return `{ data, app }`.
+  if (isRawAppSpec(result)) {
+    throw new LabError('Custom script returned a bare { kind: "app/v1" } body without `data` — data is mandatory: return { data, app } (the app body is a presentation of the numbers, never a substitute for them).');
+  }
+  // A funnel-set/matrix/dataset-bundle payload passes through raw — the
+  // ENGINE validates + caps it (parseFunnelSet/parseMatrixSet/
+  // parseDatasetBundle), keeping the trust/validation boundary in one place.
+  if (isRawFunnelSet(result) || isRawMatrixSet(result) || isRawDatasetBundle(result)) return result;
+  // `{ data, html? }` / `{ data, app? }` envelope (html/v1 hybrid, app/v1):
+  // `data` is MANDATORY — html/app never replace the numbers. The inner
+  // payload gets the same treatment a bare return would; the html byte cap
+  // and the app spec's own caps are the engine's (sync.ts / app.ts).
+  if (isRawPayloadEnvelope(result)) {
+    if (!('data' in result) || result.data === undefined || result.data === null) {
+      throw new LabError('Custom script returned { html } or { app } without `data` — data is mandatory: the html/app body is a presentation of the numbers, never a substitute for them.');
+    }
+    const data = result.data;
+    const envelope: RawPayloadEnvelope = {
+      data: isRawFunnelSet(data) || isRawMatrixSet(data) || isRawDatasetBundle(data) ? data : coerceSeries(data),
+    };
+    if (result.html !== undefined) {
+      if (typeof result.html !== 'string') {
+        throw new LabError('Custom script envelope `html` must be a string.');
+      }
+      envelope.html = result.html;
+    }
+    // Shape check ONLY — caps (page count/id/bytes) are parseAppSpec's job
+    // (sync.ts), keeping validation in one place, same as funnel/matrix.
+    if (result.app !== undefined) {
+      if (!isRawAppSpec(result.app)) {
+        throw new LabError('Custom script envelope `app` must be a { kind: "app/v1", … } object.');
+      }
+      envelope.app = result.app;
+    }
+    // `freshness` is the source's own marker for this data (freshness gate).
+    // The engine normalizes and caps it; a malformed one is simply no marker.
+    const freshness = toRawFreshness(result.freshness);
+    if (freshness) envelope.freshness = freshness;
+    return envelope;
+  }
+  return coerceSeries(result);
+}
+
+/** A freshness answer as an object: `{ marker, asOf?, note? }`, or a bare
+ *  string/number read as the marker. Anything else is no answer. */
+function toRawFreshness(v: unknown): RawFreshness | undefined {
+  if (typeof v === 'string' || typeof v === 'number') return { marker: v };
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) return v as RawFreshness;
+  return undefined;
+}
+
 export const customScriptAdapter: LabAdapter = {
   async fetch(ctx: AdapterContext): Promise<AdapterResult> {
     const abs = scriptFilePath(ctx.manifest);
@@ -75,53 +136,48 @@ export const customScriptAdapter: LabAdapter = {
     try {
       // A fresh process per run — the ONLY way a shared `lab/scripts/lib-*.mjs`
       // edit is guaranteed to be seen (GitHub #242; see script-child.ts).
-      const result = await runScriptInChild(abs, ctx, file);
-      // A bare `{ kind: "app/v1" }` return has NO `data` half — reject it here,
-      // by name, before it ever reaches `isRawPayloadEnvelope` (which returns
-      // false for it: a `kind` is present, so it reads as a bare typed payload,
-      // not an envelope) and falls into `coerceSeries`'s generic array error.
-      // `app` is presentation only and never substitutes for the numbers,
-      // exactly like `html` — the fix is to return `{ data, app }`.
-      if (isRawAppSpec(result)) {
-        throw new LabError('Custom script returned a bare { kind: "app/v1" } body without `data` — data is mandatory: return { data, app } (the app body is a presentation of the numbers, never a substitute for them).');
+      const outcome = await runScriptChild(abs, ctx, file, 'fetch');
+      const normalized = normalizeScriptResult(outcome.result);
+      // A script that exports `freshness()` but returns a bare payload still
+      // gets its marker recorded: the child ran freshness() BEFORE the data.
+      const childFreshness = toRawFreshness(outcome.freshness);
+      if (childFreshness && !(isRawPayloadEnvelope(normalized) && normalized.freshness)) {
+        return isRawPayloadEnvelope(normalized)
+          ? { ...normalized, freshness: childFreshness }
+          : { data: normalized, freshness: childFreshness };
       }
-      // A funnel-set/matrix/dataset-bundle payload passes through raw — the
-      // ENGINE validates + caps it (parseFunnelSet/parseMatrixSet/
-      // parseDatasetBundle), keeping the trust/validation boundary in one place.
-      if (isRawFunnelSet(result) || isRawMatrixSet(result) || isRawDatasetBundle(result)) return result;
-      // `{ data, html? }` / `{ data, app? }` envelope (html/v1 hybrid, app/v1):
-      // `data` is MANDATORY — html/app never replace the numbers. The inner
-      // payload gets the same treatment a bare return would; the html byte cap
-      // and the app spec's own caps are the engine's (sync.ts / app.ts).
-      if (isRawPayloadEnvelope(result)) {
-        if (!('data' in result) || result.data === undefined || result.data === null) {
-          throw new LabError('Custom script returned { html } or { app } without `data` — data is mandatory: the html/app body is a presentation of the numbers, never a substitute for them.');
-        }
-        const data = result.data;
-        const envelope: RawPayloadEnvelope = {
-          data: isRawFunnelSet(data) || isRawMatrixSet(data) || isRawDatasetBundle(data) ? data : coerceSeries(data),
-        };
-        if (result.html !== undefined) {
-          if (typeof result.html !== 'string') {
-            throw new LabError('Custom script envelope `html` must be a string.');
-          }
-          envelope.html = result.html;
-        }
-        // Shape check ONLY — caps (page count/id/bytes) are parseAppSpec's job
-        // (sync.ts), keeping validation in one place, same as funnel/matrix.
-        if (result.app !== undefined) {
-          if (!isRawAppSpec(result.app)) {
-            throw new LabError('Custom script envelope `app` must be a { kind: "app/v1", … } object.');
-          }
-          envelope.app = result.app;
-        }
-        return envelope;
-      }
-      return coerceSeries(result);
+      return normalized;
     } catch (err) {
       if (err instanceof LabError) throw new LabError(redactSecrets(err.message, secretValues));
       const raw = err instanceof Error ? err.message : String(err);
       throw new LabError(redactSecrets(`Custom script ${file} threw: ${raw}`, secretValues));
     }
+  },
+
+  /**
+   * Upstream-freshness probe: runs ONLY the script's optional
+   * `export async function freshness(ctx)` in a fresh child, under the probe
+   * budget. null when the script exports none. The engine never calls this
+   * for a script whose hash moved since the last run (the tripwire): the
+   * request fingerprint includes the hash, so a changed script always fetches.
+   */
+  async probe(ctx: AdapterContext): Promise<RawFreshness | null> {
+    const abs = scriptFilePath(ctx.manifest);
+    const secretValues = Object.values(ctx.credentials);
+    const file = ctx.manifest.source && 'file' in ctx.manifest.source ? ctx.manifest.source.file : 'script';
+    let outcome;
+    try {
+      // The child's own hard ceiling sits a little above the in-child probe
+      // budget so a slow spawn is not mistaken for a slow source.
+      const budgetMs = ctx.probeTimeoutMs ?? FRESHNESS_PROBE_TIMEOUT_MS;
+      outcome = await runScriptChild(abs, ctx, file, 'freshness', budgetMs + 2_000);
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      throw new LabError(redactSecrets(`Freshness probe for ${file} failed: ${raw}`, secretValues));
+    }
+    if (outcome.noFreshness) return null;
+    const freshness = toRawFreshness(outcome.result);
+    if (!freshness) throw new LabError(`Freshness probe for ${file} returned no marker.`);
+    return freshness;
   },
 };

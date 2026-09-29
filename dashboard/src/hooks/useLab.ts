@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
-import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
+import type { FunnelCacheEntry, FunnelPrev } from '../components/lab/funnel/funnelModel';
 import type { MatrixCacheEntry, MatrixSnapshot } from '../components/lab/matrixModel';
 import type { AppCacheEntry, DatasetCacheEntry } from '../components/lab/appModel';
 import type { InsightHeight, InsightSize, InsightWidth, Render } from '../components/lab/chartRegistry';
@@ -200,13 +200,13 @@ export interface LabSyncJob {
   attempt: number;
   startedAt: number;
   finishedAt: number | null;
-  /** Filled LIVE as insights settle — the report page's progressive fill feed. */
+  /** Filled LIVE as insights settle. */
   results: SyncResult[];
   failed: string[];
   error: string | null;
-  /** The slugs the run is scoped to (a report's subset), or null = whole board. */
+  /** The slugs the run is scoped to (a subset), or null = whole board. */
   slugs: string[] | null;
-  /** Per-slug transient window overrides (report window inheritance), or null. */
+  /** Per-slug transient window overrides, or null. */
   windows: Record<string, { fromISO: string; toISO: string }> | null;
   /** The insight that settled most recently ("now syncing …" copy). */
   current: string | null;
@@ -225,8 +225,8 @@ export function useLabSyncJob() {
   });
 }
 
-/** Start (or adopt) the bulk sync job — the whole board, or a `slugs` subset
- *  (the report page's progressive fill). Returns immediately — watch `useLabSyncJob`. */
+/** Start (or adopt) the bulk sync job — the whole board, or a `slugs` subset.
+ *  Returns immediately — watch `useLabSyncJob`. */
 export function useStartLabSyncJob() {
   const queryClient = useQueryClient();
   const api = useApi();
@@ -246,140 +246,6 @@ export function useStartLabSyncJob() {
       queryClient.setQueryData(['lab-sync-job'], { job: d.job });
       queryClient.invalidateQueries({ queryKey: ['lab-sync-job'] });
     },
-  });
-}
-
-// ─── Reports ("My Reports") ─────────────────────────────────────────────────
-
-export interface ReportSummary {
-  slug: string;
-  title: string;
-  description: string | null;
-  date_nav: 'none' | 'daily' | 'weekly' | 'monthly';
-  sections: number;
-  items: number;
-}
-
-/** One resolved report item (see src/lib/lab/reports-store.ts). */
-export interface ResolvedReportItem {
-  insight: string;
-  missing: boolean;
-  title: string | null;
-  render: string | null;
-  unit: string | null;
-  view: string | null;
-  breakdown: { rows?: string; cols?: string; filter?: Record<string, string> } | null;
-  /** ISO sync time the shown data was taken at, or null = honest empty. */
-  asOf: string | null;
-  latest: number | null;
-  matrixSnapshot: MatrixSnapshot | null;
-  funnelSnapshot: FunnelSnapshot | null;
-  /** Live cache — only when resolving WITHOUT a date. */
-  cache: InsightCache | null;
-  /** Measurement window of the SHOWN data, or null = none recorded (honest;
-   *  never the engine's silent default, never today's tweak relabeling history). */
-  window: { fromISO: string; toISO: string } | null;
-  /** The `range` tweak value behind the live cache (e.g. `last_7_days`), or null. */
-  rangeKey: string | null;
-  /** The window this item SHOULD measure (report inheritance), or null = 'own'. */
-  targetWindow: { fromISO: string; toISO: string } | null;
-  /** How the shown data relates to the target window. */
-  windowStatus: 'own' | 'aligned' | 'window' | 'stale' | 'missing' | 'cannot';
-}
-
-export interface ResolvedReportSection {
-  title: string;
-  prose: string | null;
-  items: ResolvedReportItem[];
-}
-
-export interface ReportDetail {
-  report: {
-    slug: string;
-    title: string;
-    description: string | null;
-    date_nav: ReportSummary['date_nav'];
-    notes: string;
-    /** False = the report opted out of AI commentary (non-AI reports are
-     *  first-class); absent (older servers) = enabled. */
-    commentaryEnabled?: boolean;
-  };
-  /** The resolved-to date, or null = live. */
-  date: string | null;
-  sections: ResolvedReportSection[];
-}
-
-/** The stored AI commentary of one report view, or null. */
-export interface ReportCommentary {
-  slug: string;
-  dateKey: string;
-  generatedAt: string;
-  model: string;
-  body: string;
-}
-
-export interface ReportCommentaryJob {
-  id: string;
-  slug: string;
-  dateKey: string;
-  status: 'running' | 'success' | 'error';
-  startedAt: number;
-  finishedAt: number | null;
-  error: string | null;
-  commentary: ReportCommentary | null;
-}
-
-export function useLabReportCommentary(slug: string | null, date: string | null) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['lab-report-commentary', slug, date],
-    queryFn: () =>
-      api.get<{ commentary: ReportCommentary | null; job: ReportCommentaryJob | null }>(
-        `/lab/reports/${slug}/commentary${date ? `?date=${date}` : ''}`,
-      ),
-    enabled: !!slug,
-    // Poll while a generation runs; idle otherwise.
-    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? 1200 : false),
-    retry: 0,
-  });
-}
-
-/** Start (or adopt) the commentary generation for a report view. */
-export function useStartLabReportCommentary() {
-  const queryClient = useQueryClient();
-  const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, date, from }: { slug: string; date: string | null; from?: string | null }) =>
-      api.post<{ job: ReportCommentaryJob; started: boolean }>(
-        `/lab/reports/${slug}/commentary`,
-        { ...(date ? { date } : {}), ...(from ? { from } : {}) },
-      ),
-    onSuccess: (_d, vars) => {
-      queryClient.invalidateQueries({ queryKey: ['lab-report-commentary', vars.slug, vars.date] });
-    },
-  });
-}
-
-export function useLabReports() {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['lab-reports'],
-    queryFn: () => api.get<{ reports: ReportSummary[] }>('/lab/reports').then((r) => r.reports),
-    retry: 0,
-  });
-}
-
-export function useLabReport(slug: string | null, date: string | null, from: string | null = null) {
-  const api = useApi();
-  const params = new URLSearchParams();
-  if (date) params.set('date', date);
-  if (from) params.set('from', from);
-  const qs = params.toString();
-  return useQuery({
-    queryKey: ['lab-report', slug, date, from],
-    queryFn: () => api.get<ReportDetail>(`/lab/reports/${slug}${qs ? `?${qs}` : ''}`),
-    enabled: !!slug,
-    retry: 0,
   });
 }
 
