@@ -1,0 +1,10 @@
+"$schema" = "schemas/schema.json"
+
+# Claim a `dreamcontext://` link the shell parked from RunEvent::Opened (src/app_link.rs).
+# Take-once: whoever pops a link routes it, so this is granted only to the windows that
+# route (capabilities/default.json: the Launcher, the project windows, the inbox), never
+# to the viewer or the checklist, which render agent-authored markdown.
+[[permission]]
+identifier = "allow-take-app-link"
+description = "Pop the oldest unclaimed dreamcontext:// link, or nothing when none is waiting."
+commands.allow = ["take_app_link"]

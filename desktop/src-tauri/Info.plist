@@ -33,5 +33,23 @@
   <string>dreamcontext pauses your music player while J.A.R.V.I.S mode reads an answer aloud, and starts it again when the answer ends.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>dreamcontext records your voice while you hold the microphone button in J.A.R.V.I.S mode, so you can speak to your agent instead of typing.</string>
+  <!--
+    The dreamcontext:// URL scheme: the app's only external entry point. A clicked
+    notification (or a hook, or a browser) runs `open dreamcontext://…`; macOS hands the
+    link to the app as RunEvent::Opened, launching it first if needed, and src/app_link.rs
+    parks it for a window to route. Without this entry no app claims the scheme, and the
+    notification applet falls back to opening the file, as it did before links existed.
+  -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.dreamcontext.beta</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>dreamcontext</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
