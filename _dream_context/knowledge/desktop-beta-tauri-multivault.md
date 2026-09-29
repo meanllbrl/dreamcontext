@@ -822,6 +822,12 @@ Do NOT use `⌘R` (refresh): WKWebView's document cache retains the OLD bundle a
 
 Feature PRD: `_dream_context/core/features/in-app-agent-terminal.md`.
 
+## `dreamcontext://` links and routable banners (2026-09-29)
+
+The app's first external entry point. Info.plist declares the `dreamcontext` scheme and RunEvent::Opened pushes each link into a take-once pending slot (`take_app_link`); a `main`/`vault-*` window takes it and routes it (desktop/src-tauri `app_link.rs`, dashboard `lib/appLink.ts`). The Node side is the WRITER: `src/lib/app-link.ts` builds every shape (`project`, `session`, `automation[?file=]`, `page[/id]`, `view?path=`, `inbox`) and re-validates the same grammar as the dashboard reader, on purpose (neither trusts the other). A vault name is the registry key, percent-encoded UTF-8; a contextRoot maps to it by realpath through `listVaults()`, and an unregistered project gets no link, only the fallback file.
+
+The banner transport is the existing branded applet (`src/lib/automations/notifier.ts`): payload v2 carries title, sound, link, fallback file, body; the click runs `open <link>` and, when no app claims the scheme, `open <fallback>`. The poster writes v2 only to an applet whose Info.plist sha matches today's script, else the legacy three-line payload, so a not-yet-rebuilt applet never misparses (`upgrade` and `notify` rebuild a stale one). Every banner is logged to `~/.dreamcontext/notifications.jsonl` (cap 200) for the Notifications window, served by `GET /api/notifications`; the app posts its own ask banner through `POST /api/notify` and uses the Tauri plugin only on `posted:false`. `dreamcontext notify` is the hook-facing CLI (see cli-reference "Notifications").
+
 ## Status / deferred
 
 Working local beta. NOT Apple-signed/notarized (local install only; Gatekeeper

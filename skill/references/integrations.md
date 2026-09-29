@@ -385,6 +385,7 @@ dreamcontext app status      # show installed version and state
 - **Federation board** — projects rendered as Excalidraw-style cards; click source→target to wire a live "reads" relationship (violet wire = one project reads another's canonical memory live during recall; never a copy), gated by the target being shareable.
 - **In-app onboarding** — quiz-style wizard creates or initializes a project, scaffolds `_dream_context/`, runs `setup`, installs the global CLI; deterministic, LLM-free.
 - Delivery is CLI/curl-driven (no Apple notarization); prefers your auto-upgrading global CLI over its bundled copy. First launch may need right-click → Open.
+- **Routable banners (`dreamcontext://` URL scheme)** — the app claims the `dreamcontext` scheme, so a banner's click lands in the exact place: an automation banner on that agent's thread (its document opens in a small viewer window rendered as formatted markdown with its images), a "Claude is asking" banner on that chat tab (brought forward, or resumed if closed), a sleep banner on Sleep, and a banner with no in-app place in a Notifications window listing recent banners. The existing window and tab of that project come forward; a duplicate is never opened. Without the desktop app the click falls back to opening the file, as before. Hooks and scripts post their own with `dreamcontext notify` — see [cli-reference.md](cli-reference.md#notifications).
 
 ---
 

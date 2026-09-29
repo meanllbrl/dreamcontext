@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import { executeClaudeDetached, sanitizeAutomationPrompt } from './automations/runner.js';
 import { notifyViaBundle } from './automations/notifier.js';
+import { appLinkForContextRoot } from './app-link.js';
 import { buildAutoSleepPrompt } from './sleep-prompt.js';
 import {
   activeTaskSet,
@@ -83,7 +84,11 @@ function readEpoch(contextRoot: string): string | null {
 export interface RunAutoSleepOptions {
   /** Injected in tests so nothing actually spawns. */
   execImpl?: typeof executeClaudeDetached;
-  notifyImpl?: (title: string, body: string) => void;
+  /** `link` is the `dreamcontext://` link to this project's Sleep page, or null when the
+   *  project is not a registered vault. */
+  notifyImpl?: (title: string, body: string, link?: string | null) => void;
+  /** Home for the vault lookup behind that link. Tests inject a temp dir. */
+  home?: string;
   now?: () => Date;
   /** Injected so a test can drive gap detection without waiting a real minute. */
   heartbeatMs?: number;
@@ -108,7 +113,11 @@ export async function runAutoSleep(
 ): Promise<RunAutoSleepResult> {
   const exec = opts.execImpl ?? executeClaudeDetached;
   const now = opts.now ?? (() => new Date());
-  const notify = opts.notifyImpl ?? ((title: string, body: string) => { notifyViaBundle(title, body); });
+  // Every sleep banner lands on the Sleep page, where the cycle's outcome is shown.
+  const sleepLink = appLinkForContextRoot(contextRoot, { kind: 'page', page: 'sleep' }, opts.home);
+  const post = opts.notifyImpl
+    ?? ((title: string, body: string, link?: string | null) => { notifyViaBundle(title, body, opts.home, { link }); });
+  const notify = (title: string, body: string): void => post(title, body, sleepLink);
   const projectRoot = dirname(contextRoot);
 
   // ONE background cycle per brain. The lock outlives the timeout window so a

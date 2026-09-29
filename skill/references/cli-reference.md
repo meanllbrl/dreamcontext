@@ -454,6 +454,34 @@ The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-ch
 
 ---
 
+## Notifications
+
+`dreamcontext notify <title> [body]` posts a macOS banner through the branded `dreamcontext` notifier, and clicking it opens a `dreamcontext://` link in the desktop app, so the banner lands in the exact chat, thread or page instead of only raising the app. Works in any directory: no `_dream_context/` is needed, because the vault comes from the registry (`~/.dreamcontext/vaults.json`).
+
+| Flag | What the click opens |
+|---|---|
+| (none) | The Notifications window, which lists recent banners (`dreamcontext://inbox`). |
+| `--vault <name>` | That registered project (a registered NAME, never a path). Without it, the vault that contains the cwd is used for the flags below. |
+| `--session <claudeId>` | That Claude Code chat tab, brought forward if open, resumed if closed. |
+| `--session-stdin` | Same, reading `session_id` and `cwd` from a Claude Code hook payload on stdin (its `message` becomes the body when none is given). |
+| `--automation <slug>` | That automation's thread on the Automations page. With `--file` inside the brain, the document also opens in the viewer window. |
+| `--file <path>` | The document the banner is about: inside the project it opens in the viewer window; it is also the fallback the click opens when no app claims the link. |
+| `--link <url>` | An explicit, validated `dreamcontext://` link (not combinable with `--session`/`--automation`). |
+| `--sound <name>` | A system sound name (default `Glass`), or `none` for silence. |
+
+Builds the notifier on first use (and rebuilds a stale one), printing the macOS permission line the first time: macOS files an unauthorised banner silently. Exits 1 when nothing was posted (a refused flag, an unbuildable notifier), so a hook can branch on it; off macOS it is a no-op that exits 0.
+
+```bash
+# Claude Code Stop hook: "Claude finished" lands on that chat tab
+dreamcontext notify "Claude finished" --session-stdin
+```
+
+**The link grammar** (the desktop app drops anything else whole; total length at most 4096): `dreamcontext://project/<vault>`, `…/session/<claudeId>`, `…/automation/<slug>[?file=<brain-relative path>]`, `…/page/<sleep|automations|tasks|knowledge|core|lab|roadmap|hypotheses|settings>[/<id>]` (an id only for tasks, knowledge, core), `…/view?path=<project-relative path>`, and `dreamcontext://inbox`. `<vault>` is the registered name, percent-encoded UTF-8.
+
+Every posted banner is appended to `~/.dreamcontext/notifications.jsonl` (`{id, at, title, body, link, file}`, the newest 200, machine-local, never synced). The app reads it with `GET /api/notifications?limit=50` (`{notifications: [...]}`, newest first) and posts its own routable banners with `POST /api/notify {title, body, link?, sound?}` (`{posted}`; `posted:false` means no notifier here). Both routes are desktop-only and never build the notifier. Automation completion, verdict and failure banners, resumed-turn banners and background-sleep banners carry their links automatically when the project is a registered vault.
+
+---
+
 ## Other
 
 | Command | Description |

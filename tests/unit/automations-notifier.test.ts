@@ -14,7 +14,11 @@ import {
   renderNotifierScript,
   CLICK_ARM_DELAY_SECONDS,
   notifyArmedPath,
+  expectedNotifierScriptSha,
+  notifierScriptCurrent,
+  renderNotifyPayload,
 } from '../../src/lib/automations/notifier.js';
+import { readNotifications } from '../../src/lib/notification-log.js';
 
 /**
  * Branded-notifier tests. Every one of these takes an explicit `home`, so no
@@ -133,6 +137,35 @@ describe('renderNotifierScript', () => {
       .toBeLessThan(script.indexOf('do shell script "open "'));
   });
 
+  it('reads payload v2: title, sound, LINK, FALLBACK, then the body from line 5', () => {
+    expect(script).toContain('if (count of payloadLines) > 3 then');
+    expect(script).toContain('set lnk to item 3 of payloadLines');
+    expect(script).toContain('set fb to item 4 of payloadLines');
+    expect(script).toContain('repeat with i from 5 to count of payloadLines');
+  });
+
+  it('records BOTH the link and the fallback in the click target file', () => {
+    expect(script).toContain('if lnk is not "" or fb is not "" then');
+    expect(script).toMatch(/quoted form of lnk & " > " & quoted form of targetFile & "; echo >> "/);
+    expect(script).toContain('quoted form of fb & " >> " & quoted form of targetFile');
+  });
+
+  it('on click opens the LINK first and the fallback file only when that open fails', () => {
+    // No app claims the scheme when the desktop app is not installed: `open` exits
+    // non-zero, `do shell script` raises, and the file opens as it always did.
+    const click = script.slice(script.indexOf('if posted is 0 then'));
+    const openLink = click.indexOf('do shell script "open " & quoted form of lnk');
+    const onError = click.indexOf('on error');
+    const openFallback = click.indexOf('do shell script "open " & quoted form of fb');
+    expect(openLink).toBeGreaterThan(-1);
+    expect(onError).toBeGreaterThan(openLink);
+    expect(openFallback).toBeGreaterThan(onError);
+    // A target written by an older applet holds a lone path on line 1; it must
+    // still open, so the fallback line is optional.
+    expect(click).toContain('if (count of tgtLines) > 1 then set fb to item 2 of tgtLines');
+    expect(click).toContain('else if fb is not "" then');
+  });
+
   it('arms defensively — an unreadable stamp reads as "long ago", never as "just now"', () => {
     // A missing armed file must not swallow every click forever; it must
     // degrade to treating the launch as a click.
@@ -246,6 +279,62 @@ describe.skipIf(process.platform !== 'darwin')('notifyViaBundle', () => {
     expect(Math.abs(stamped - Math.floor(Date.now() / 1000))).toBeLessThan(5);
   });
 
+  /** A stand-in bundle whose Info.plist carries today's script sha, i.e. a CURRENT applet. */
+  const fakeCurrentBundle = (): void => {
+    const contents = join(notifierAppPath(home), 'Contents');
+    mkdirSync(contents, { recursive: true });
+    writeFileSync(join(contents, 'Info.plist'), [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0"><dict>',
+      `<key>DCNotifyScriptSha256</key><string>${expectedNotifierScriptSha(home)}</string>`,
+      '</dict></plist>',
+    ].join('\n'));
+  };
+  const onlyPayload = (): string => {
+    const files = readdirSync(notifyQueueDir(home));
+    expect(files).toHaveLength(1);
+    return readFileSync(join(notifyQueueDir(home), files[0]), 'utf-8');
+  };
+  const LINK = 'dreamcontext://project/Kitap%20A%C4%9Fac%C4%B1/automation/daily?file=automations%2Fd.md';
+
+  it('writes payload v2 (link on line 3, fallback on line 4) to a CURRENT applet', () => {
+    fakeCurrentBundle();
+    expect(notifierScriptCurrent(home)).toBe(true);
+    notifyViaBundle('Daily', 'All good.\nSecond line', home, {
+      sound: 'Glass', openImpl: noOpen, openTarget: '/tmp/out/d.md', link: LINK,
+    });
+    const lines = onlyPayload().split('\n');
+    expect(lines.slice(0, 4)).toEqual(['Daily', 'Glass', LINK, '/tmp/out/d.md']);
+    expect(lines.slice(4).join('\n')).toBe('All good.\nSecond line');
+  });
+
+  it('writes the LEGACY payload with the fallback path to a stale applet, even when a link exists', () => {
+    // A not-yet-rebuilt applet reads line 3 as its only target. Handing it v2
+    // would open the link where it expects a file and eat the first body line.
+    mkdirSync(notifierAppPath(home), { recursive: true });
+    expect(notifierScriptCurrent(home)).toBe(false);
+    notifyViaBundle('Daily', 'All good.', home, { openImpl: noOpen, openTarget: '/tmp/out/d.md', link: LINK });
+    expect(onlyPayload().split('\n')).toEqual(['Daily', '', '/tmp/out/d.md', 'All good.']);
+  });
+
+  it('keeps both v2 fixed lines even when unused', () => {
+    fakeCurrentBundle();
+    notifyViaBundle('t', 'body', home, { openImpl: noOpen });
+    expect(onlyPayload().split('\n')).toEqual(['t', '', '', '', 'body']);
+  });
+
+  it('records every posted banner in the notification history, and nothing when it was not posted', () => {
+    expect(notifyViaBundle('absent', 'b', home, { openImpl: noOpen })).toBe(false);
+    expect(readNotifications(50, home)).toEqual([]);
+    fakeCurrentBundle();
+    notifyViaBundle('Daily\nTitle', 'All good.', home, { openImpl: noOpen, openTarget: '/tmp/out/d.md', link: LINK });
+    const [entry] = readNotifications(50, home);
+    expect(entry).toMatchObject({ title: 'Daily Title', body: 'All good.', link: LINK, file: '/tmp/out/d.md' });
+    expect(entry.id).toMatch(/^n_/);
+    expect(Number.isNaN(Date.parse(entry.at))).toBe(false);
+  });
+
   it('gives concurrent notifications distinct files — one must not overwrite the other', () => {
     // Two automations finishing in the same tick is ordinary, not exotic: the
     // dispatcher runs every due slug in one pass.
@@ -253,6 +342,14 @@ describe.skipIf(process.platform !== 'darwin')('notifyViaBundle', () => {
     notifyViaBundle('a', 'first', home, { openImpl: noOpen });
     notifyViaBundle('b', 'second', home, { openImpl: noOpen });
     expect(readdirSync(notifyQueueDir(home))).toHaveLength(2);
+  });
+});
+
+describe('renderNotifyPayload', () => {
+  it('v2 and legacy differ only in the fixed lines, and every fixed line is flattened', () => {
+    const fields = { title: 'a\nb', body: 'x\ny', sound: 'Gl\nass', link: 'dreamcontext://inbox', fallback: '/p\nq' };
+    expect(renderNotifyPayload(fields, true)).toBe('a b\nGl ass\ndreamcontext://inbox\n/p q\nx\ny');
+    expect(renderNotifyPayload(fields, false)).toBe('a b\nGl ass\n/p q\nx\ny');
   });
 });
 
@@ -337,5 +434,14 @@ describe.skipIf(process.platform !== 'darwin')('buildNotifierApp (real osacompil
     buildNotifierApp(home, { register: false });
     expect(notifyViaBundle('dreamcontext', 'queued', home, { openImpl: noOpen })).toBe(true);
     expect(inspectNotifier(home).queuedPayloads).toBe(1);
+  });
+
+  it('a freshly built applet is CURRENT, so it is handed payload v2 (the real sha round-trip)', () => {
+    buildNotifierApp(home, { register: false });
+    expect(notifierScriptCurrent(home)).toBe(true);
+    expect(inspectNotifier(home).scriptCurrent).toBe(true);
+    notifyViaBundle('t', 'b', home, { openImpl: noOpen, link: 'dreamcontext://inbox', openTarget: '/tmp/x.md' });
+    const [file] = readdirSync(notifyQueueDir(home));
+    expect(readFileSync(join(notifyQueueDir(home), file), 'utf-8').split('\n')).toEqual(['t', '', 'dreamcontext://inbox', '/tmp/x.md', 'b']);
   });
 });

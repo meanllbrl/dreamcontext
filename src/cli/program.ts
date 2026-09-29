@@ -43,6 +43,7 @@ import { registerMigrationsCommand } from './commands/migrations.js';
 import { registerBrainCommand } from './commands/brain.js';
 import { registerLinkCommand } from './commands/link.js';
 import { registerPatternsCommand } from './commands/patterns.js';
+import { registerNotifyCommand } from './commands/notify.js';
 
 /**
  * The command TREE, with no entrypoint attached.
@@ -87,6 +88,7 @@ ${chalk.bold('System')}
   ${chalk.magentaBright('transcript')}        Process session transcripts
   ${chalk.magentaBright('doctor')}            Validate _dream_context/ structure and report issues
   ${chalk.magentaBright('feedback')}          File a gap/bug as a GitHub issue to the dreamcontext project
+  ${chalk.magentaBright('notify')}            Post a macOS banner whose click opens the exact chat or page
 
 ${chalk.bold('Dashboard')}
   ${chalk.magentaBright('dashboard')}         Open the web dashboard in your browser
@@ -171,6 +173,7 @@ export function createProgram(): Command {
   registerMigrationsCommand(program);
   registerBrainCommand(program);
   registerLinkCommand(program);
+  registerNotifyCommand(program);
 
   return program;
 }

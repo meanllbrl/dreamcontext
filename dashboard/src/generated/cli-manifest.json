@@ -2073,6 +2073,22 @@
       ]
     },
     {
+      "path": "notify",
+      "desc": "Post a macOS banner whose click opens the exact place in the dreamcontext app",
+      "args": [
+        "<title>",
+        "[body]"
+      ],
+      "valueFlags": [
+        "--vault",
+        "--session",
+        "--automation",
+        "--file",
+        "--link",
+        "--sound"
+      ]
+    },
+    {
       "path": "patterns",
       "desc": "Browse project patterns, sync their \"/\" entries, and test what a prompt triggers",
       "args": [],

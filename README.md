@@ -347,6 +347,8 @@ Here the agent also knows it isn't in a terminal, so it can hand you the thing i
 
 **Or just talk to it.** Voice lives in the **dreamcontext Assistant** (below): hold its hotkey from any app, say what you want, let go. Turn on the speaker beside the mic and the answer comes back as speech, sentence by sentence, starting before it has finished writing (read-aloud is off until you switch it on, and the choice is remembered on that machine) — and because reading a table aloud helps nobody, its briefing tells it to say one sentence and put the structure **on the screen** as a drawn block instead. Hush cuts it off mid-word, and whatever music was playing is paused for it and handed back. Project words a transcriber has never heard — your own brain's vocabulary and every project's name — get repaired, and anything it *changes* waits in the composer with the change marked until you press send: a machine-altered sentence is never spoken on your behalf. Desktop only, one OpenRouter key, kept on your machine.
 
+**A notification lands you in the exact place.** The app registers a `dreamcontext://` URL scheme, so clicking a banner does more than raise the window: an automation's banner opens that agent's thread and its document in a small viewer window (formatted markdown, images included), a "Claude is asking" banner opens that exact chat tab, a background sleep opens Sleep, and anything else opens a Notifications window listing recent banners. The project's existing window comes forward rather than a new one. Wire it into any hook with `dreamcontext notify "Claude finished" --session-stdin`; without the app installed the click simply opens the file, as it always did.
+
 **Federation, drawn.** The launcher renders your projects as an interactive board where you wire a **reads** relationship by clicking source → target — a violet wire means one project reads another's canonical memory live during recall (a reference, never a copy), gated by the target being Readable. An always-on Connections list spells out who reads whom in plain language.
 
 **Cloud sync without git knowledge.** GitHub device-flow login (PAT fallback), a Settings toggle for whole-project sync, a team-updates badge when teammates push, one-click **"Resolve with AI"** for deferred prose merges — and if the project has no `origin`, the panel creates a private repo (or connects an existing one) and does the first push for you.
@@ -815,6 +817,8 @@ dreamcontext setup [--platforms claude --defaults]       # One-shot project setu
 dreamcontext install-skill [--platforms claude] [--packs …] [--skill <name>] [--list]
 dreamcontext install-instructions --platforms claude     # Managed root instruction blocks only
 dreamcontext upgrade [--check] / update  # CLI upgrade / refresh installed project files
+dreamcontext notify <title> [body] [--session <id> | --session-stdin | --automation <slug>] [--file <path>] [--vault <name>] [--link <url>]
+                                         # A macOS banner whose click opens the exact chat, thread or page
 ```
 
 ## Design Principles

@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
+import { recordNotification } from '../notification-log.js';
+import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
@@ -660,9 +662,14 @@ function escapeForAppleScript(s: string): string {
  * the wrong thing about who sent it still beats no notification at all. See
  * `notifier.ts` for why the bundle is needed to get an icon in the first place.
  */
-function defaultNotify(title: string, body: string, home?: string, sound?: string, openTarget?: string | null): void {
+function defaultNotify(
+  title: string, body: string, home?: string, sound?: string, openTarget?: string | null, link?: string | null,
+): void {
   if (process.platform !== 'darwin') return;
-  if (notifyViaBundle(title, body, home ?? homedir(), { sound, openTarget })) return;
+  if (notifyViaBundle(title, body, home ?? homedir(), { sound, openTarget, link })) return;
+  // The osascript banner is still a banner the user saw, so it joins the history the
+  // Notifications window lists, where its link stays clickable even though this one is not.
+  recordNotification({ title, body, link: link ?? null, file: openTarget ?? null }, home ?? homedir());
   try {
     // `sound name` must be OMITTED rather than passed empty — an empty sound
     // name is invalid, not silent, and would fail the whole notification.
@@ -672,6 +679,16 @@ function defaultNotify(title: string, body: string, home?: string, sound?: strin
   } catch {
     /* best-effort */
   }
+}
+
+/**
+ * The banner's `dreamcontext://` link: this agent's thread, plus the document when it lives
+ * inside the brain (a custom output dir outside it cannot ride `?file=`, so the thread alone is
+ * the target and the absolute path stays the fallback). Null for an unregistered project.
+ */
+function automationLink(contextRoot: string, slug: string, file: string | null, home?: string): string | null {
+  const rel = file ? brainRelativePath(contextRoot, file) : null;
+  return appLinkForContextRoot(contextRoot, { kind: 'automation', slug, file: rel }, home);
 }
 
 // ─── Output collection + timeout/kill matrix ────────────────────────────────
@@ -977,7 +994,9 @@ interface RunOptionsBase {
   fireAt?: Date;
   killImpl?: KillImpl;
   log?: (line: string) => void;
-  notify?: (title: string, body: string, sound?: string, openTarget?: string | null) => void;
+  /** `openTarget` is the fallback file; `link` the `dreamcontext://` link the click opens
+   *  first (null when this project is not a registered vault). */
+  notify?: (title: string, body: string, sound?: string, openTarget?: string | null, link?: string | null) => void;
   /** Injectable so NO test in this repo can reach api.telegram.org (the same
    *  contract `tick.ts` holds for polling). Defaults to the real per-slug
    *  sender, which is a no-op when the automation has no bot configured. */
@@ -1050,7 +1069,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // still cannot reach into the developer's real ~/.dreamcontext.
   const notifyFn =
     opts.notify ??
-    ((t: string, b: string, s?: string, target?: string | null) => defaultNotify(t, b, opts.home, s, target));
+    ((t: string, b: string, s?: string, target?: string | null, link?: string | null) =>
+      defaultNotify(t, b, opts.home, s, target, link));
   const fireAt = opts.fireAt ?? nowFn();
   const home = opts.home;
   /** Where the account register and the recorded refusals live. */
@@ -1230,18 +1250,20 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // The click opens the STAGED proposal when there is one, because a
         // macOS `display notification` cannot carry buttons: reading is the
         // only thing a banner can offer, and the proposal is the thing to read.
-        // For an `agent` card there is no staged file, so there is nothing to
-        // open — the queue and Telegram are where that one gets answered.
+        // For an `agent` card there is no staged file; its link still lands on
+        // the thread, which is where that one gets answered (or Telegram).
         //
-        // KNOWN GAP: clicking cannot open the CARD itself. That needs a URL
-        // scheme on the Tauri side, which does not exist yet; noted rather than
-        // faked with a localhost URL that fails whenever the app is closed —
-        // which is exactly when automations fire.
+        // The click opens the app first: `dreamcontext://…/automation/<slug>` lands
+        // on this agent's thread (where the card is answered) and names the same
+        // file for the viewer. The absolute path stays the fallback, so a machine
+        // without the desktop app still opens the document as before.
+        const clickFile = params.reviewCardId ? params.reviewStagedPath ?? null : params.outputPath;
         notifyFn(
           params.reviewCardId ? `${manifest.title} — needs your verdict` : manifest.title,
           summary,
           NOTIFY_SOUND_OK,
-          params.reviewCardId ? params.reviewStagedPath ?? null : params.outputPath,
+          clickFile,
+          automationLink(contextRoot, slug, clickFile, home),
         );
       } else {
         // Capped like the success body. `error` can carry a STDERR_TAIL_BYTES
@@ -1255,6 +1277,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
             : `${reason.slice(0, NOTIFY_BODY_MAX_CHARS - 1).trimEnd()}…`,
           NOTIFY_SOUND_FAILED,
           params.outputPath,
+          automationLink(contextRoot, slug, params.outputPath, home),
         );
       }
     }

@@ -7,6 +7,7 @@ import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK } from './notifier.js';
+import { appLinkForContextRoot } from '../app-link.js';
 import {
   AutomationError,
   NOTIFY_BODY_MAX_CHARS,
@@ -766,7 +767,9 @@ export function announceTurn(
       title,
       body.length <= NOTIFY_BODY_MAX_CHARS ? body : `${body.slice(0, NOTIFY_BODY_MAX_CHARS - 1).trimEnd()}…`,
       home,
-      { sound: NOTIFY_SOUND_OK },
+      // Lands on this agent's thread, where the reply it announces lives. No fallback
+      // file: a resumed turn wrote no document of its own.
+      { sound: NOTIFY_SOUND_OK, link: appLinkForContextRoot(contextRoot, { kind: 'automation', slug }, home) },
     );
   } catch {
     return false;
