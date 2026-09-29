@@ -919,6 +919,18 @@ const translations: Record<string, Record<string, string>> = {
     'assistant.wake.awake': '{name} is awake at the top of your screen.',
     'assistant.wake.failed': 'It could not wake up: {error}',
     'assistant.wake.desktopOnly': 'The assistant lives in the desktop app. Open dreamcontext there to wake it.',
+    'viewer.back': 'Back',
+    'viewer.loading': 'Loading…',
+    'viewer.failed': 'Could not load this file.',
+    'viewer.invalid': 'This window was opened without a file it can show.',
+    'viewer.folder': 'Folder',
+    'viewer.file': 'File',
+    'viewer.emptyFolder': 'This folder is empty.',
+    'inbox.title': 'Notifications',
+    'inbox.refresh': 'Refresh',
+    'inbox.empty': 'No notifications yet.',
+    'inbox.failed': 'Could not load notifications.',
+    'inbox.open': 'Open where this notification points',
   },
 };
 

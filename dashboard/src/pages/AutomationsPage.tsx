@@ -106,13 +106,31 @@ function AgentsFiles({ onOpenFile }: { onOpenFile: (path: string) => void }) {
   );
 }
 
-export function AutomationsPage() {
+/** "Open this agent's thread": set by a landed `dreamcontext://…/automation/<slug>` link.
+ *  `nonce` makes a second click on the same agent a second request. */
+export interface AutomationsFocus {
+  slug: string;
+  nonce: number;
+}
+
+export function AutomationsPage({
+  focus = null,
+  onFocusDone,
+}: {
+  focus?: AutomationsFocus | null;
+  /** The feed opened the thread (or found nothing to open): the request is spent. */
+  onFocusDone?: () => void;
+} = {}) {
   const { t } = useI18n();
   const { vault } = useVault();
   // The server's own desktop gate, the one `AgentFiles` reads to decide whether a board
   // draws: the route an `.svg` opens through is desktop-only, so off desktop it stays a card.
   const desktop = useAgentCapabilities().data?.desktop === true;
   const [view, setView] = useState<AgentsView>('messages');
+  // A thread lives in the messages view, so a focus request lands there whatever view was up.
+  useEffect(() => {
+    if (focus) setView('messages');
+  }, [focus]);
 
   /**
    * The channel's staged chips die with the CHANNEL — which is this page, not the feed.
@@ -313,6 +331,8 @@ export function AutomationsPage() {
             fileOpen={openFile !== null}
             onOpenFile={setOpenFile}
             onOpenAgent={() => setView('agents')}
+            focus={focus}
+            onFocusDone={onFocusDone}
           />
         </div>
       ) : view === 'files' ? (

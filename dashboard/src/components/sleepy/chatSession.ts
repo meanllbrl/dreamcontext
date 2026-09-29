@@ -897,7 +897,8 @@ export function createChatSession(
       // arrives as structured JSON, so what the notification shows is what the card shows.
       // `source` is this session's own VAULT: it is what the chip strip keys a background
       // project's alarm off, so a title here would silence the wrong project's chip.
-      raiseAskAttention({ source: vault, detail: askSummary(entry) });
+      // `sessionId` makes the banner a link to THIS chat tab.
+      raiseAskAttention({ source: vault, detail: askSummary(entry), sessionId: session.claudeId });
     }
   }
 

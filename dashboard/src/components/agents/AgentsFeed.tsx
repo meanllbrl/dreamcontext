@@ -105,12 +105,17 @@ export function AgentsFeed({
   onOpenFile,
   onOpenAgent,
   fileOpen,
+  focus = null,
+  onFocusDone,
 }: {
   onOpenFile: (path: string) => void;
   onOpenAgent: (slug: string) => void;
   /** A document viewer is open over the page. It owns Esc while it is, so the thread does not
    *  close underneath it. */
   fileOpen: boolean;
+  /** Open this agent's NEWEST thread (a clicked banner for that agent), once per nonce. */
+  focus?: { slug: string; nonce: number } | null;
+  onFocusDone?: () => void;
 }) {
   const { t } = useI18n();
   // The agents running right now, one slot per agent, as the feed itself reports them
@@ -340,6 +345,21 @@ export function AgentsFeed({
     setOpenThread({ message: m, opener: null, focus: false });
     setPendingOpen(null);
   }, [pendingOpen, messages]);
+
+  /**
+   * A clicked banner asked for this agent: open its newest message's thread. Waits for the
+   * feed's first load (a link can land before it), then spends the request either way, so a
+   * later remount of the page does not reopen a thread the reader has since closed.
+   */
+  const focusedNonce = useRef(0);
+  useEffect(() => {
+    if (!focus || focus.nonce === focusedNonce.current || isLoading) return;
+    focusedNonce.current = focus.nonce;
+    let newest: FeedMessage | undefined;
+    for (const m of messages) if (m.slug === focus.slug) newest = m;
+    if (newest) setOpenThread({ message: newest, opener: null, focus: true });
+    onFocusDone?.();
+  }, [focus, isLoading, messages, onFocusDone]);
 
   const slashCommands = useProjectSlashCommands().data?.commands;
   const { host, note, setNote, focusComposer, restoreLastSent } = useAgentsChannelHost(

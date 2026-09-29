@@ -427,8 +427,13 @@ export function vaultWindowLabel(name: string): string {
 export async function openVaultWindow(
   name: string,
   at?: { x: number; y: number; width: number; height: number },
-): Promise<void> {
-  const url = `/?vault=${encodeURIComponent(name)}`;
+  opts: { open?: string } = {},
+): Promise<'focused' | 'created' | 'browser'> {
+  // `open` is a `dreamcontext://` link the NEW window routes once its project is up (App.tsx
+  // reads it back off the URL). An already-open window never sees it — the caller learns that
+  // from the `'focused'` answer and hands the link over by event instead.
+  const openParam = opts.open ? `&open=${encodeURIComponent(opts.open)}` : '';
+  const url = `/?vault=${encodeURIComponent(name)}${openParam}`;
   if (isDesktop()) {
     // Use the BUILT-IN WebviewWindow API (governed by the granted
     // `core:webview:allow-create-webview-window` permission) rather than a custom
@@ -440,7 +445,7 @@ export async function openVaultWindow(
     if (existing) {
       // Already open — surface the existing window instead of opening another.
       await existing.setFocus();
-      return;
+      return 'focused';
     }
     // Use an ABSOLUTE URL on the same origin (the Node dashboard server). A
     // relative URL would resolve against Tauri's bundled frontendDist
@@ -459,9 +464,10 @@ export async function openVaultWindow(
       dragDropEnabled: false,
     });
     await awaitWindowCreated(win, `vault "${name}"`);
-    return;
+    return 'created';
   }
   window.open(url, '_blank');
+  return 'browser';
 }
 
 /**
@@ -485,6 +491,25 @@ export async function focusWindow(label: string): Promise<boolean> {
     return true;
   } catch {
     return false; // ACL / window died between the lookup and the focus
+  }
+}
+
+/**
+ * Bring THIS window to the front: un-minimise it, show it, focus it. What a window does when a
+ * clicked link lands in it — the owner asked for "the window I already have", and a minimised
+ * one is still the one they have. Each step is best-effort: a step the ACL refuses must not stop
+ * the next one, and none of them is worth failing the landing over.
+ */
+export async function focusThisWindow(): Promise<void> {
+  if (!isDesktop()) return;
+  try {
+    const { getCurrentWindow } = await windowApi();
+    const win = getCurrentWindow();
+    await win.unminimize().catch(() => { /* not minimised / ACL */ });
+    await win.show().catch(() => { /* already visible / ACL */ });
+    await win.setFocus();
+  } catch (err) {
+    console.warn('[desktop] could not bring this window forward:', err);
   }
 }
 
@@ -528,6 +553,94 @@ export async function openChecklistWindow(id: string, vault: string): Promise<vo
     return;
   }
   window.open(`/?checklist=${encodeURIComponent(id)}&vault=${encodeURIComponent(vault)}`, '_blank');
+}
+
+/**
+ * The label of the viewer window for one document: `viewer-<hash>`, stable for the same vault and
+ * path, so a second click on the same banner focuses the window it already opened instead of
+ * stacking a twin. Hashed rather than sanitised because a path is long and a Tauri label only
+ * takes `[a-zA-Z0-9-/:_]`; FNV-1a is plenty for telling a handful of open documents apart.
+ */
+export function viewerWindowLabel(vault: string, projectPath: string): string {
+  let hash = 0x811c9dc5;
+  const input = `${vault}\n${projectPath}`;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `viewer-${hash.toString(16).padStart(8, '0')}`;
+}
+
+/**
+ * Open one document in a small dreamcontext window, rendered formatted (markdown with its
+ * images, a picture, a PDF) — the answer to "a banner opened the report in VS Code and I could not
+ * see the charts". Mirrors {@link openChecklistWindow}: focus the window this document already
+ * has, otherwise build one at the dashboard's origin.
+ *
+ * Runs under the narrow `viewer-*` capability (drag, close, focus, nothing else): it renders
+ * agent-authored markdown, so it may not emit events, build windows or call custom commands.
+ * `projectPath` is PROJECT-relative (`_dream_context/automations/…`), the same spelling the
+ * file route reads.
+ */
+export async function openViewerWindow(vault: string, projectPath: string): Promise<void> {
+  const query = `/?viewer=${encodeURIComponent(projectPath)}&vault=${encodeURIComponent(vault)}`;
+  if (isDesktop()) {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const label = viewerWindowLabel(vault, projectPath);
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await existing.setFocus();
+      return;
+    }
+    const win = new WebviewWindow(label, {
+      url: `${window.location.origin}${query}`,
+      title: `dreamcontext — ${projectPath.split('/').pop() || projectPath}`,
+      width: 760,
+      height: 860,
+      minWidth: 420,
+      minHeight: 320,
+      resizable: true,
+      titleBarStyle: 'overlay',
+      hiddenTitle: true,
+      dragDropEnabled: false,
+    });
+    await awaitWindowCreated(win, `viewer "${projectPath}"`);
+    return;
+  }
+  window.open(query, '_blank');
+}
+
+/** The Notifications window's one label: there is only ever one inbox. */
+export const INBOX_WINDOW_LABEL = 'inbox';
+
+/**
+ * Open the small Notifications window — where a banner with no in-app place of its own lands,
+ * listing the recent banners so each one can still be followed. Focuses the one that is open.
+ */
+export async function openInboxWindow(): Promise<void> {
+  if (isDesktop()) {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const existing = await WebviewWindow.getByLabel(INBOX_WINDOW_LABEL);
+    if (existing) {
+      await existing.setFocus();
+      return;
+    }
+    const win = new WebviewWindow(INBOX_WINDOW_LABEL, {
+      url: `${window.location.origin}/?inbox=1`,
+      title: 'dreamcontext — notifications',
+      width: 420,
+      height: 640,
+      minWidth: 320,
+      minHeight: 280,
+      resizable: true,
+      titleBarStyle: 'overlay',
+      hiddenTitle: true,
+      dragDropEnabled: false,
+    });
+    await awaitWindowCreated(win, 'notifications');
+    return;
+  }
+  window.open('/?inbox=1', '_blank');
 }
 
 /**

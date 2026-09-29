@@ -35,6 +35,7 @@ import {
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
+import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
@@ -312,6 +313,11 @@ function removeFromPane(p: PaneState, sid: string): PaneState {
 function carryDraftInto(next: ChatSession, draft: string): void {
   if (draft) next.sendText(draft);
 }
+
+/** How long a chat link waits for the surface's capabilities, settings and saved roster
+ *  before acting on what it has, and how often it looks. */
+const LINKED_SESSION_WAIT_MS = 8_000;
+const LINKED_SESSION_POLL_MS = 150;
 
 // ── The persistent surface ─────────────────────────────────────────────────────
 
@@ -2052,6 +2058,43 @@ export function AgentSurface() {
   useInstanceEvent<AutomationRunChatDetail>(AUTOMATION_RUN_CHAT_EVENT, (detail) => {
     if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
   });
+
+  // ── Open one chat from a clicked link ("Claude is asking" banner) ─────────────────
+  //
+  // `dreamcontext://project/<vault>/session/<claudeId>` lands here (`ProjectInstance`'s
+  // AppLinkBridge). It walks `resumePastSession`: a tab that holds the conversation comes
+  // forward (restored from the dock, resumed if dormant), and only a conversation with no tab
+  // is `--resume`d into a new one — never two live CLIs on one transcript.
+  //
+  // TAKEN AT ONCE, ACTED ON WHEN READY. A window built for this very link mounts the surface a
+  // moment before its capabilities, its settings and the saved roster have loaded. Resuming
+  // before the roster lands would open the conversation a second time beside the tab the
+  // roster is about to restore, so a request that has no live tab yet waits (bounded) for all
+  // three. The ACK is set on receipt so the sender stops asking.
+  const [linkedSession, setLinkedSession] = useState<{ claudeId: string; since: number } | null>(null);
+  const [, bumpLinkWait] = useReducer((x: number) => x + 1, 0);
+  useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT, (detail) => {
+    if (!detail?.claudeId) return;
+    setLinkedSession({ claudeId: detail.claudeId, since: Date.now() });
+    detail.accepted = true;
+  });
+  useEffect(() => {
+    if (!linkedSession) return undefined;
+    const { claudeId, since } = linkedSession;
+    const existing = sessionList.find((m) => m.claudeId === claudeId);
+    const ready = caps !== null && settingsReady && hydratedRef.current;
+    if (!(existing && !existing.dormant) && !ready && Date.now() - since < LINKED_SESSION_WAIT_MS) {
+      const timer = window.setTimeout(bumpLinkWait, LINKED_SESSION_POLL_MS);
+      return () => window.clearTimeout(timer);
+    }
+    setLinkedSession(null);
+    if (!existing && !(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled)) {
+      console.warn('[app-link] cannot open chat', claudeId, 'here: the agent surface is unavailable');
+      return undefined;
+    }
+    resumePastSession({ id: claudeId, title: '', preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' });
+    return undefined;
+  }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession]);
 
   // ── Train an automated agent (the Train button on its detail panel) ───────────────
   //

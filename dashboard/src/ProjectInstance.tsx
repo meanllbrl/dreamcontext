@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
-import { VaultProvider, useInstanceEvent } from './context/VaultContext';
+import { VaultProvider, emitInstance, useInstanceEvent, useVault } from './context/VaultContext';
 import { ProjectProvider } from './context/ProjectContext';
 import { I18nProvider } from './context/I18nContext';
 import { createInstanceQueryClient, setInstanceActive } from './lib/instanceQueryClient';
@@ -12,7 +12,7 @@ import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
-import { AutomationsPage } from './pages/AutomationsPage';
+import { AutomationsPage, type AutomationsFocus } from './pages/AutomationsPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
@@ -24,6 +24,8 @@ import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import type { Page } from './components/layout/Sidebar';
+import { parseAppLink } from './lib/appLink';
+import { OPEN_SESSION_EVENT, type OpenSessionDetail } from './lib/openSession';
 import './ProjectInstance.css';
 
 /**
@@ -91,7 +93,83 @@ function RollupBridge({
   return null;
 }
 
-function PageRouter({ nav }: { nav: ShellNavigation }) {
+/** A `dreamcontext://` link waiting to land in this project; `nonce` tells two clicks apart. */
+export interface PendingAppLink {
+  raw: string;
+  nonce: number;
+}
+
+/** How long a session link keeps asking for a surface to take it (a fresh window's surface
+ *  subscribes a moment after this bridge fires). */
+const OPEN_SESSION_RETRY_MS = 250;
+const OPEN_SESSION_ATTEMPTS = 40;
+
+/**
+ * The landing half of a `dreamcontext://` link (`lib/appLink.ts` routes it to this window,
+ * `WindowChrome` brings this project's chip forward and hands it down). Re-parsed here and
+ * checked against THIS instance's vault — a link for another project is not ours to land.
+ *
+ *  - `page`       → that page, and the item when the link names one;
+ *  - `automation` → the Agents page, with that agent's newest thread open;
+ *  - `session`    → the chat tab, through the agent surface (brought forward, or resumed);
+ *  - `project`    → nothing more: the chip coming forward was the whole landing.
+ *
+ * Rendered inside Shell's children, like `AgentPageNavBridge`, for `nav` and the bus.
+ */
+function AppLinkBridge({
+  nav, link, onConsumed, onAutomationFocus,
+}: {
+  nav: ShellNavigation;
+  link: PendingAppLink | null;
+  onConsumed: (nonce: number) => void;
+  onAutomationFocus: (slug: string) => void;
+}) {
+  const { vault, bus } = useVault();
+  const landed = useRef(0);
+  const retry = useRef<number | null>(null);
+  useEffect(() => () => { if (retry.current !== null) window.clearTimeout(retry.current); }, []);
+
+  useEffect(() => {
+    if (!link || link.nonce === landed.current) return;
+    landed.current = link.nonce;
+    onConsumed(link.nonce);
+    const parsed = parseAppLink(link.raw);
+    if (!parsed || parsed.kind === 'inbox' || parsed.kind === 'view' || parsed.vault !== vault) return;
+    if (parsed.kind === 'page') {
+      nav.navigate(parsed.page, parsed.id);
+    } else if (parsed.kind === 'automation') {
+      nav.navigate('automations', null);
+      onAutomationFocus(parsed.slug);
+    } else if (parsed.kind === 'session') {
+      // ACKed like every bus bridge into the surface: on a window built for this link the surface
+      // subscribes a beat after this effect runs, so ask again until someone says it took it.
+      if (retry.current !== null) window.clearTimeout(retry.current);
+      let attempts = 0;
+      const ask = () => {
+        retry.current = null;
+        const detail: OpenSessionDetail = { claudeId: parsed.claudeId };
+        emitInstance(bus, OPEN_SESSION_EVENT, detail);
+        attempts += 1;
+        if (detail.accepted) return;
+        if (attempts >= OPEN_SESSION_ATTEMPTS) {
+          console.warn('[app-link] no agent surface took the session link', parsed.claudeId);
+          return;
+        }
+        retry.current = window.setTimeout(ask, OPEN_SESSION_RETRY_MS);
+      };
+      ask();
+    }
+  }, [link, vault, bus, nav, onConsumed, onAutomationFocus]);
+  return null;
+}
+
+function PageRouter({
+  nav, automationFocus, onAutomationFocusDone,
+}: {
+  nav: ShellNavigation;
+  automationFocus: AutomationsFocus | null;
+  onAutomationFocusDone: () => void;
+}) {
   const handleBrainNavigate = (target: BrainNavigatePage, nodeId: string) => {
     const pageMap: Record<BrainNavigatePage, Page> = {
       tasks: 'tasks',
@@ -119,7 +197,7 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
     case 'lab':
       return <LabPage focus={focus} />;
     case 'automations':
-      return <AutomationsPage />;
+      return <AutomationsPage focus={automationFocus} onFocusDone={onAutomationFocusDone} />;
     case 'sleep':
       return <SleepPage />;
     case 'core':
@@ -162,10 +240,14 @@ export interface ProjectInstanceProps {
    * because an instance is perfectly valid without a strip above it — it simply goes unheard.
    */
   onRollup?: (vault: string, rollup: ProjectRollup) => void;
+  /** A clicked `dreamcontext://` link to land in this project, or null. */
+  pendingLink?: PendingAppLink | null;
+  /** Reports a pending link landed, so the chrome stops holding it. */
+  onLinkConsumed?: (vault: string, nonce: number) => void;
 }
 
 export function ProjectInstance({
-  vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup,
+  vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
 }: ProjectInstanceProps) {
   /*
    * Both of these are per-instance identities that must survive every re-render: a new
@@ -181,6 +263,17 @@ export function ProjectInstance({
   const busRef = useRef<EventTarget | null>(null);
   if (busRef.current === null) busRef.current = new EventTarget();
   const bus = busRef.current;
+
+  // Which agent's thread a landed link asked the Agents page to open. Held here, above the page
+  // router, because the page mounts only once the navigation it triggers has happened.
+  const [automationFocus, setAutomationFocus] = useState<AutomationsFocus | null>(null);
+  const focusSeq = useRef(0);
+  const focusAutomation = useCallback((slug: string) => {
+    focusSeq.current += 1;
+    setAutomationFocus({ slug, nonce: focusSeq.current });
+  }, []);
+  const clearAutomationFocus = useCallback(() => setAutomationFocus(null), []);
+  const consumeLink = useCallback((nonce: number) => onLinkConsumed?.(vault, nonce), [onLinkConsumed, vault]);
 
   // Page-data polling follows visibility. Nothing else does — see this file's header.
   useEffect(() => {
@@ -207,8 +300,18 @@ export function ProjectInstance({
               <Shell sidebarCollapsed={sidebarCollapsed} onToggleSidebar={onToggleSidebar}>
                 {(nav) => (
                   <>
-                    <PageRouter nav={nav} />
+                    <PageRouter
+                      nav={nav}
+                      automationFocus={automationFocus}
+                      onAutomationFocusDone={clearAutomationFocus}
+                    />
                     <AgentPageNavBridge nav={nav} />
+                    <AppLinkBridge
+                      nav={nav}
+                      link={pendingLink}
+                      onConsumed={consumeLink}
+                      onAutomationFocus={focusAutomation}
+                    />
                     <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
                   </>
                 )}

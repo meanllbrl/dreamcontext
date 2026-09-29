@@ -23,7 +23,7 @@
  */
 import type { AssistantCommandHandler } from '../sleepy/chatSession';
 import { openVaultWindow, sendDesktopNotification, vaultWindowLabel } from '../../lib/desktop';
-import { resolveLiveWindowForVault } from '../../lib/windowRegistry';
+import { findOpenProject } from '../../lib/openProject';
 import { ASSISTANT_COMMAND_EVENT, ASSISTANT_WAKE_EVENT } from '../../lib/assistantBridge';
 import { tileWindows, type TileLayout } from './tile';
 
@@ -50,44 +50,8 @@ async function bind(id: string, vault: string, label: string, withinMs: number):
   }
 }
 
-/** Labels of the windows alive right now, or null when they cannot be listed. */
-async function liveLabels(): Promise<Set<string> | null> {
-  try {
-    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    return new Set((await WebviewWindow.getAll()).map((w) => w.label));
-  } catch {
-    return null;
-  }
-}
-
-/** The server's answer to "which windows hold a live instance of `vault`?", newest first. */
-async function serverLabels(vault: string): Promise<string[]> {
-  try {
-    const res = await fetch(`/api/assistant/windows?vault=${encodeURIComponent(vault)}`);
-    if (!res.ok) return [];
-    const { labels } = await res.json() as { labels?: unknown };
-    return Array.isArray(labels) ? labels.filter((l): l is string => typeof l === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Where `vault` already is: windows with a live instance of it (server, then the browser
- * registry), and — separately — a window that lists it as a tab without a live instance
- * (a cold chip), which can be woken in place. Only windows that are alive right now count.
- */
-export async function findOpenProject(vault: string): Promise<{ live: string[]; cold: string | null }> {
-  const [fromServer, fromRegistry, alive] = await Promise.all([
-    serverLabels(vault), resolveLiveWindowForVault(vault), liveLabels(),
-  ]);
-  const isAlive = (l: string) => l !== 'assistant' && (alive ? alive.has(l) : true);
-  const live = fromServer.filter(isAlive);
-  // The registry knows the tabs a window HOLDS, cold ones included; the server only knows
-  // mounted instances. A registry window the server does not list is holding it cold.
-  const cold = fromRegistry && !live.includes(fromRegistry) && isAlive(fromRegistry) ? fromRegistry : null;
-  return { live, cold };
-}
+/** Re-exported: callers that already import it from here keep working. */
+export { findOpenProject };
 
 async function emitDoorbell(id: string, vault: string, label: string): Promise<Out> {
   try {

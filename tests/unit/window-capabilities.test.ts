@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { vaultWindowLabel } from '../../dashboard/src/lib/desktop.js';
+import { INBOX_WINDOW_LABEL, vaultWindowLabel, viewerWindowLabel } from '../../dashboard/src/lib/desktop.js';
 import { checklistWindowLabel } from '../../dashboard/src/lib/checklistStore.js';
 
 /**
@@ -34,6 +34,10 @@ const LABELS: Record<string, string> = {
   // A vault name that needs sanitising still has to land inside `vault-*`.
   'vault (sanitised)': vaultWindowLabel('weird name.with/chars'),
   checklist: checklistWindowLabel('acme-storefront', 'asc-key'),
+  // A document opened from a clicked banner (narrow `viewer.json` capability).
+  viewer: viewerWindowLabel('Öğrenim', '_dream_context/automations/output/brief/r.md'),
+  // The Notifications window a banner with no in-app place opens.
+  inbox: INBOX_WINDOW_LABEL,
   // NOTE: `sleepy` and `sleepy-perch` were removed in 0.27.0 along with the Lab notch
   // capture feature. Their grants came out of the default capability in the same
   // commit — a window label left here after its window is gone asserts nothing, and a
@@ -100,7 +104,7 @@ describe('tauri window capabilities', () => {
       created,
       'desktop.ts creates a different number of window kinds than this test knows about — ' +
         'add the new label to LABELS above and give it a capability in desktop/src-tauri/capabilities/',
-    ).toBe(3); // vault, checklist, main(re-open)
+    ).toBe(5); // vault, viewer, inbox, checklist, main(re-open)
   });
 
   it.each(Object.entries(LABELS))(

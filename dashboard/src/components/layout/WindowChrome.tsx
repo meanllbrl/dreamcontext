@@ -5,6 +5,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
 import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
+  focusThisWindow,
   focusWindow,
   isDesktop,
   openVaultWindow,
@@ -14,8 +15,9 @@ import {
 } from '../../lib/desktop';
 import { HEARTBEAT_MS, findWindowForVault, publishOpenVaults, releaseWindow } from '../../lib/windowRegistry';
 import { ASSISTANT_WAKE_EVENT } from '../../lib/assistantBridge';
+import { APP_LINK_OPEN_EVENT, isProjectAppLink, parseAppLink } from '../../lib/appLink';
 import type { ProjectRollup } from '../sleepy/agentStatus';
-import { ProjectInstance } from '../../ProjectInstance';
+import { ProjectInstance, type PendingAppLink } from '../../ProjectInstance';
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
 import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
@@ -207,7 +209,21 @@ function sameRollup(a: ProjectRollup, b: ProjectRollup): boolean {
 
 /* ──────────────────────────────────── the component ──────────────────────────────────── */
 
-export function WindowChrome({ initialVault }: { initialVault: string }) {
+/**
+ * The link a window was OPENED to land (`&open=`, see `openVaultWindow`), as the first chip's
+ * pending link — or nothing, when it names another project or is not a project link at all.
+ */
+function seedPendingLinks(initialVault: string, initialLink: string | null | undefined): Record<string, PendingAppLink> {
+  const link = initialLink ? parseAppLink(initialLink) : null;
+  if (!link || !isProjectAppLink(link) || link.vault !== initialVault) return {};
+  return { [initialVault]: { raw: initialLink as string, nonce: 1 } };
+}
+
+export function WindowChrome({ initialVault, initialLink }: {
+  initialVault: string;
+  /** A `dreamcontext://` link this window was built to land (the `?open=` param). */
+  initialLink?: string | null;
+}) {
   const { theme, setTheme, resolved } = useTheme();
   const [zoom, setZoom] = useState(getStoredZoom);
   const [notice, setNotice] = useState<string | null>(null);
@@ -299,6 +315,26 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
     updated[index] = { ...tab, rollup: next };
     setOpen(updated);
   }, [setOpen]);
+
+  /**
+   * Links waiting to land, one per project: handed to that project's instance, which acts on it
+   * and reports it consumed. Held HERE rather than fired at the instance, because the instance
+   * may not exist yet — a cold chip is rebuilt by the landing itself, and a fresh window's first
+   * instance mounts in the same commit the link is seeded in. Cleared on consumption so a chip
+   * that is later chilled and revived does not land the same link twice.
+   */
+  const [pendingLinks, setPendingLinks] = useState<Record<string, PendingAppLink>>(
+    () => seedPendingLinks(initialVault, initialLink),
+  );
+  const linkSeqRef = useRef(1);
+  const consumeLink = useCallback((vault: string, nonce: number) => {
+    setPendingLinks((prev) => {
+      if (prev[vault]?.nonce !== nonce) return prev;
+      const next = { ...prev };
+      delete next[vault];
+      return next;
+    });
+  }, []);
 
   const noticeTimer = useRef<number | null>(null);
   const notify = useCallback((message: string) => {
@@ -642,6 +678,60 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
   }, [activate]);
 
   /**
+   * A clicked `dreamcontext://` link landing in THIS window (`lib/appLink.ts` routes it here
+   * because this window holds the project). Re-parsed, never trusted: the event is an `emitTo`
+   * any window may send. The project's chip comes forward — a cold one is woken in place — the
+   * window itself comes forward, and the link goes to that project's instance to finish.
+   *
+   * A project this window does not hold arrives only when the lookup was stale; it is added as
+   * a chip if `addTab` agrees (it may instead focus the other window that has it, or refuse at
+   * the ceiling with its own notice), and never forwarded on — two windows each believing the
+   * other has it must not bounce a link between them.
+   */
+  const landLink = useCallback(async (raw: string) => {
+    const link = parseAppLink(raw);
+    if (!link || !isProjectAppLink(link)) return;
+    const { vault } = link;
+    if (openRef.current.some((p) => p.vault === vault)) {
+      activate(vault);
+    } else {
+      const result = await addTab(vault);
+      if (result !== 'added' && result !== 'focused-tab') return;
+    }
+    // `activate` refuses a cold chip at the ceiling (and says why); a link cannot land in a
+    // project that is not mounted.
+    const tab = openRef.current.find((p) => p.vault === vault);
+    if (!tab || tab.cold) return;
+    void focusThisWindow();
+    linkSeqRef.current += 1;
+    const nonce = linkSeqRef.current;
+    setPendingLinks((prev) => ({ ...prev, [vault]: { raw, nonce } }));
+  }, [activate, addTab]);
+  const landLinkRef = useRef(landLink);
+  landLinkRef.current = landLink;
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let off: (() => void) | null = null;
+    let gone = false;
+    void (async () => {
+      try {
+        // THIS webview's listener, not the global one: a global `listen` hears every emit in
+        // the app, whatever window it was addressed to, and every project window would land it.
+        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+        const fn = await getCurrentWebviewWindow().listen<{ link?: unknown }>(APP_LINK_OPEN_EVENT, (e) => {
+          const raw = typeof e.payload?.link === 'string' ? e.payload.link : '';
+          if (raw) void landLinkRef.current(raw);
+        });
+        if (gone) fn(); else off = fn;
+      } catch (err) {
+        console.warn('[app-link] this window cannot receive links:', err);
+      }
+    })();
+    return () => { gone = true; off?.(); };
+  }, []);
+
+  /**
    * Publish this window's chips to the cross-window registry, on every change and on a
    * heartbeat.
    *
@@ -805,6 +895,8 @@ export function WindowChrome({ initialVault }: { initialVault: string }) {
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={toggleSidebar}
               onRollup={handleRollup}
+              pendingLink={pendingLinks[p.vault] ?? null}
+              onLinkConsumed={consumeLink}
             />
           ))}
         </div>

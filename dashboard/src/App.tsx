@@ -10,6 +10,8 @@ import { WindowChrome } from './components/layout/WindowChrome';
 import { ChecklistWindow } from './components/checklist/ChecklistWindow';
 import { Notch, ASSISTANT_VAULT } from './components/assistant/Notch';
 import { VaultProvider } from './context/VaultContext';
+import { ViewerWindow } from './components/appLink/ViewerWindow';
+import { InboxWindow } from './components/appLink/InboxWindow';
 import './styles/global.css';
 
 /**
@@ -62,6 +64,26 @@ const params = new URLSearchParams(window.location.search);
 const initialVault = params.get('vault');
 const checklistId = params.get('checklist');
 const assistantMode = params.get('assistant') === '1';
+/** `?viewer=<project-relative path>&vault=<v>`: the small document window (`openViewerWindow`). */
+const viewerPath = params.get('viewer');
+/** `?inbox=1`: the Notifications window (`openInboxWindow`). */
+const inboxMode = params.get('inbox') === '1';
+/**
+ * `&open=<dreamcontext:// link>`: the link this project window was built to land. Read once and
+ * then taken OFF the URL, so a reload of the window does not land the same link again.
+ */
+const initialLink = params.get('open');
+if (initialLink !== null) {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('open');
+    window.history.replaceState(window.history.state, '', url.toString());
+  } catch (err) {
+    console.warn('[app-link] could not clear the landed link from the URL:', err);
+  }
+}
+/** The viewer's own bus: a lone window with no chips and no siblings. */
+const viewerBus = new EventTarget();
 /** The notch's one project instance has no chip strip and no siblings — its bus is its own. */
 const assistantBus = new EventTarget();
 
@@ -106,6 +128,43 @@ export function App() {
     );
   }
 
+  /*
+   * The document viewer (`?viewer=`, window label `viewer-<hash>`): one file, formatted. Under a
+   * `VaultProvider` for its vault because the file routes it reads are vault-scoped. Runs under
+   * the narrow `viewer-*` capability, so nothing in it may emit events or build windows.
+   */
+  if (viewerPath !== null) {
+    const vault = params.get('vault') ?? '';
+    return (
+      <ErrorBoundary>
+        <ThemeProvider>
+          <QueryClientProvider client={windowQueryClient}>
+            <I18nProvider>
+              <VaultProvider vault={vault} instanceId="viewer" isActive bus={viewerBus}>
+                <ViewerWindow path={viewerPath} />
+              </VaultProvider>
+            </I18nProvider>
+          </QueryClientProvider>
+        </ThemeProvider>
+      </ErrorBoundary>
+    );
+  }
+
+  // The Notifications window (`?inbox=1`): recent banners, each one routed like its banner.
+  if (inboxMode) {
+    return (
+      <ErrorBoundary>
+        <ThemeProvider>
+          <QueryClientProvider client={windowQueryClient}>
+            <I18nProvider>
+              <InboxWindow />
+            </I18nProvider>
+          </QueryClientProvider>
+        </ThemeProvider>
+      </ErrorBoundary>
+    );
+  }
+
   // No vault pinned → this is the Launcher window (list of all projects).
   if (!initialVault) {
     return (
@@ -138,7 +197,7 @@ export function App() {
       <ThemeProvider>
         <QueryClientProvider client={windowQueryClient}>
           <I18nProvider>
-            <WindowChrome initialVault={initialVault} />
+            <WindowChrome initialVault={initialVault} initialLink={initialLink} />
           </I18nProvider>
         </QueryClientProvider>
       </ThemeProvider>
