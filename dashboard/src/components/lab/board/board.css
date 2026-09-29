@@ -1,0 +1,491 @@
+/*
+ * Insights boards: the page bar (board tabs + actions), the 12-column grid, and the card shell.
+ *
+ * Automations Elevated rules: tokens only (tests/unit/lab-board-tokens.test.ts reads every
+ * declaration), a two-step type ladder (12 / 14: --font-size-xs / --font-size-sm), two weights
+ * (400 / 600), and ONE accent: the snap preview while a card is being placed. A selected tab is
+ * the neutral-selected recipe (surface, ink border, semibold), never the accent.
+ *
+ * Geometry (left/top/width/height of every cell) is inline from BoardGrid: the grid math owns it,
+ * the stylesheet only draws.
+ */
+
+/* ─── Page ──────────────────────────────────────────────────────────────── */
+
+.board-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.board-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.board-bar-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.board-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.board-canvas {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
+.board-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-5);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+}
+
+.board-canvas > .board-note {
+  padding: 0;
+}
+
+.board-note--error,
+.board-status--error {
+  color: var(--color-error-ink);
+}
+
+.board-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/* ─── Buttons ───────────────────────────────────────────────────────────── */
+
+.board-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.board-btn:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+}
+
+.board-btn:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.board-btn:focus-visible,
+.board-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.board-btn--on {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.board-btn--quiet {
+  height: auto;
+  padding: 0;
+  border: none;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+}
+
+/* ─── Board tabs (+N overflow, the Automations filter row's recipe) ─────── */
+
+.board-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+}
+
+.board-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.board-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.board-tab:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.board-tab--on {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-text);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: var(--shadow-sm);
+}
+
+.board-tab--error {
+  color: var(--color-error-ink);
+}
+
+.board-tab--more {
+  border-color: var(--color-border);
+}
+
+.board-tab-label {
+  max-width: var(--space-28);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-tabs-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: var(--space-28);
+  padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+.board-tabs-menu button {
+  display: flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-tabs-menu button:hover,
+.board-tabs-menu button:focus-visible {
+  outline: none;
+  background: var(--color-bg-tertiary);
+}
+
+.board-tabs-menu button[aria-checked='true'] {
+  font-weight: var(--font-weight-semibold);
+}
+
+.board-tabs-menu-label {
+  flex: 1;
+  min-width: 0;
+  max-width: var(--space-28);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Grid ──────────────────────────────────────────────────────────────── */
+
+.board-grid {
+  position: relative;
+  width: 100%;
+}
+
+.board-grid--narrow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.board-cell {
+  position: absolute;
+  min-width: 0;
+  min-height: 0;
+}
+
+.board-cell--narrow {
+  position: relative;
+}
+
+.board-cell--active {
+  z-index: 4;
+  opacity: 0.9;
+}
+
+.board-grid--dragging {
+  user-select: none;
+}
+
+/* The one accent on the page: where the card will land. */
+.board-preview {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  border: 1px dashed var(--color-accent);
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-soft);
+  pointer-events: none;
+}
+
+.board-drag-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: transparent;
+  cursor: grabbing;
+}
+
+.board-cell-handle {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--radius-lg);
+  cursor: grab;
+  touch-action: none;
+}
+
+.board-grid--dragging .board-cell-handle {
+  cursor: grabbing;
+}
+
+.board-grid--editing .board-card {
+  border-style: dashed;
+}
+
+.board-cell-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-right: 2px solid var(--color-text-tertiary);
+  border-bottom: 2px solid var(--color-text-tertiary);
+  border-bottom-right-radius: var(--radius-lg);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+/* ─── Card ──────────────────────────────────────────────────────────────── */
+
+.board-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}
+
+.board-card-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.board-card-title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-card-fresh {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+}
+
+.board-card-fresh--failed {
+  color: var(--color-error-ink);
+}
+
+.board-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+}
+
+.board-card-block {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.board-block-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.board-card--missing {
+  border-style: dashed;
+}
+
+.board-card-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.board-card-missing p {
+  margin: 0;
+}
+
+/* ─── Error board ───────────────────────────────────────────────────────── */
+
+.board-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 720px;
+}
+
+.board-error-title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.board-error-kind {
+  margin: 0;
+  color: var(--color-error-ink);
+  font-size: var(--font-size-sm);
+}
+
+.board-error-message {
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+}
+
+.board-error-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ─── Slots (inspector, add-card menu) ──────────────────────────────────── */
+
+.board-slot {
+  flex: none;
+  width: calc(var(--space-28) * 2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  overflow-y: auto;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.board-slot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.board-slot-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-slot-note {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-btn,
+  .board-tab {
+    transition: none;
+  }
+}
