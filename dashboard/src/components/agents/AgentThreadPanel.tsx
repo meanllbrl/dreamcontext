@@ -129,14 +129,33 @@ function AuthoredRow({
  * turn are counted. Drawn from the agent's run lock, so a scheduled run, a reply turn and a
  * run started elsewhere all show.
  */
-function LiveRow({ activity, waiting }: { activity: AgentActivity; waiting: number }) {
+function LiveRow({
+  activity,
+  waiting,
+  elsewhere = false,
+  onOpen,
+}: {
+  activity: AgentActivity;
+  waiting: number;
+  /** The turn writes into ANOTHER run's thread (a newer run started while this one was open). */
+  elsewhere?: boolean;
+  /** Open the thread the turn writes into. */
+  onOpen?: () => void;
+}) {
   const { t } = useI18n();
   const now = useNow(true);
   const time = runDuration(now - activity.since) ?? '';
   return (
     <div className="agent-thread-live" role="status" aria-live="polite">
       <span className="agent-msg-live-dot" aria-hidden="true" />
-      <span className="agent-thread-live-text agent-msg-elapsed">{t('agents.thread.live').replace('{time}', time)}</span>
+      <span className="agent-thread-live-text agent-msg-elapsed">
+        {t(elsewhere ? 'agents.thread.liveElsewhere' : 'agents.thread.live').replace('{time}', time)}
+      </span>
+      {elsewhere && onOpen && (
+        <button type="button" className="agent-thread-live-open" onClick={onOpen}>
+          {t('agents.thread.liveOpen')}
+        </button>
+      )}
       {waiting > 0 && (
         <span className="agent-thread-live-queue">
           {waiting === 1
@@ -251,6 +270,7 @@ export function AgentThreadPanel({
   onClose,
   onOpenFile,
   onOpenAgent,
+  onOpenRun,
   onToast,
   busyWith,
   working: feedWorking = null,
@@ -264,6 +284,8 @@ export function AgentThreadPanel({
   onClose: () => void;
   onOpenFile: (path: string) => void;
   onOpenAgent: (slug: string) => void;
+  /** Open another run's thread of this agent, by run id — where a turn in flight is writing. */
+  onOpenRun?: (runId: string) => void;
   /** Where an answer that could not be recorded is reported — the inline
    *  question block needs one, and the panel has no toast surface of its own. */
   onToast?: (msg: string) => void;
@@ -321,6 +343,10 @@ export function AgentThreadPanel({
     [activity, message.runId],
   );
   const liveHere = !!activity && (activity.runId === message.runId || queuedHere.size > 0);
+  // The agent is working, but on ANOTHER run (a newer one started while this thread was
+  // open). The thread still says so, where the reader is looking, and offers the way there;
+  // a status that only showed in the channel row read as "this thread is dead".
+  const liveElsewhere = !!activity && !liveHere;
 
   // ── Replying ──────────────────────────────────────────────────────────────
   //
@@ -552,7 +578,7 @@ export function AgentThreadPanel({
         </div>
 
         {isLoading && entries.length === 0 && <p className="agent-thread-empty">Reading the thread…</p>}
-        {!isLoading && entries.length === 0 && !answer && !liveHere && (
+        {!isLoading && entries.length === 0 && !answer && !activity && (
           <p className="agent-thread-empty">This run left nothing in its thread.</p>
         )}
 
@@ -569,6 +595,14 @@ export function AgentThreadPanel({
           <AnswerRow answer={answer} message={message} onOpenFile={onOpenFile} />
         )}
         {liveHere && activity && <LiveRow activity={activity} waiting={queuedHere.size} />}
+        {liveElsewhere && activity && (
+          <LiveRow
+            activity={activity}
+            waiting={0}
+            elsewhere={activity.runId !== null}
+            onOpen={activity.runId && onOpenRun ? () => onOpenRun(activity.runId as string) : undefined}
+          />
+        )}
       </div>
 
       <footer className="agent-thread-foot" ref={footRef}>

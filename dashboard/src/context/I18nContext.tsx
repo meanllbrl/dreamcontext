@@ -60,6 +60,8 @@ const translations: Record<string, Record<string, string>> = {
     'agents.thread.liveQueued.one': '1 message waits for this turn to end',
     'agents.thread.liveQueued.other': '{n} messages wait for this turn to end',
     'agents.thread.queued': 'Queued',
+    'agents.thread.liveElsewhere': 'Working on a newer run · {time}',
+    'agents.thread.liveOpen': 'Open that thread',
     'agents.thread.finished': 'Reply delivered',
     'agents.thread.stale': 'This conversation moved on. Reply on the newest run.',
     'agents.thread.unknown': 'Delivery unknown: the server restarted while this reply was running.',

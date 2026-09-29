@@ -599,6 +599,12 @@ export function AgentsFeed({
           onClose={closeThread}
           onOpenFile={onOpenFile}
           onOpenAgent={onOpenAgent}
+          onOpenRun={(runId) => {
+            const slug = openThread.message.slug;
+            const m = messages.find((x) => x.slug === slug && x.runId === runId);
+            if (m) setOpenThread({ message: m, opener: null, focus: false });
+            else setPendingOpen({ slug, runId });
+          }}
           onToast={setToast}
           // Only THIS thread's agent can hold its composer down; another agent's run does not.
           busyWith={busyTitle(openThread.message.slug)}

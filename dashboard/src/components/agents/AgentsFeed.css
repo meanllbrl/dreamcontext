@@ -855,6 +855,18 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   margin-right: var(--space-2);
 }
 
+/* The way to the thread a newer run writes into: a link-weight action, not a filled button. */
+.agent-thread-live-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-accent-strong);
+  cursor: pointer;
+}
+
+.agent-thread-live-open:hover { text-decoration: underline; }
+
 /* Your message, still waiting for the turn ahead of it. A word, not a colour. */
 .agent-thread-post-queued {
   font-size: var(--font-size-xs);

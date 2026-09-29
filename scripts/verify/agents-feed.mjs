@@ -1188,6 +1188,30 @@ async function main() {
         'slow msgs:', JSON.stringify((feed.messages ?? []).filter((m) => m.slug === 'slowpoke').map((m) => [m.runId, m.status])));
     }
     await page.waitForTimeout(1500);
+    // [Q4] The OLDER run's thread, open while this newer run works: it says the agent is
+    // working on a newer run and takes you there (owner, 2026-09-29: the status stayed outside,
+    // in the channel row, while the open thread read as idle).
+    const slowRows = page.locator('article.agent-msg', { has: page.locator('.agent-msg-name', { hasText: 'Slow crawler' }) });
+    const doneRow = slowRows.filter({ hasNot: page.locator('.agent-msg-status--running') }).first();
+    let elsewhereText = '';
+    let jumped = false;
+    if (await doneRow.locator('.agent-thread-bar').count()) {
+      await doneRow.locator('.agent-thread-bar').first().click();
+      const liveOld = page.locator('.agent-thread .agent-thread-live');
+      await until(async () => (await liveOld.count()) > 0 && /newer run/.test(await liveOld.innerText()), 8000);
+      elsewhereText = (await liveOld.count()) ? (await liveOld.innerText()).trim() : '';
+      const go = page.locator('.agent-thread .agent-thread-live-open');
+      if (await go.count()) {
+        await go.click();
+        jumped = await until(async () => (await page.locator('.agent-thread .agent-msg-status--running').count()) > 0
+          && (await page.locator('.agent-thread .agent-thread-live').count()) > 0
+          && !/newer run/.test(await page.locator('.agent-thread .agent-thread-live').innerText()), 8000);
+      }
+      await page.screenshot({ path: join(SHOTS, '12c-newer-run-thread.png') });
+      await closeThread();
+    }
+    check('[Q4] an older thread open while a newer run works says "Working on a newer run" and opens that thread',
+      /Working on a newer run · \d+/.test(elsewhereText) && jumped, `text="${elsewhereText}" jumped=${jumped}`);
     const dot = liveRow.locator('.agent-msg-live-dot');
     const dotState = (await dot.count()) ? await dot.first().evaluate((el) => ({
       name: getComputedStyle(el).animationName, duration: getComputedStyle(el).animationDuration,
