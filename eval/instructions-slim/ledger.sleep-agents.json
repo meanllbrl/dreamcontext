@@ -130,11 +130,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 2. Map sessions → tasks."
   },
   {
-    "match": "(renaming the slug/name: is usually unnecessary and breaks links - only do it if the scope fundamentally chang",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 2. Map sessions → tasks."
-  },
-  {
     "match": "do not spawn a child task for a slice that fits as a user story or acceptance criterion in the parent",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 2. Map sessions → tasks."
@@ -150,29 +145,9 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § The filing bar — clear ALL of it, or do not file."
   },
   {
-    "match": "never re-file it - the cli refuses anyway",
-    "disposition": "deleted",
-    "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § The filing bar — clear ALL of it, or do not file."
-  },
-  {
-    "match": "a topic on the declined list is one a human said no to while awake; it never became a task, so there is nothin",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
-  },
-  {
     "match": "report it; lifting is an awake decision",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § The filing bar — clear ALL of it, or do not file."
-  },
-  {
-    "match": "it resembles a declined idea - the message prints that idea's topic, date and reason",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
-  },
-  {
-    "match": "if the cli prints neighbor check skipped, the semantic floor is off this run (no embedding index, no model, or",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
   },
   {
     "match": "nothing was verified for you: your board map, your recall and dreamcontext tasks declined are the only dedup o",
@@ -192,22 +167,17 @@
   {
     "match": "the key must be stable across cycles - slugify the topic the same way every time, or the repetition that is su",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
-  },
-  {
-    "match": "sleep done persists it, never escalates it (there is no task to escalate), and prints one deferred task candid",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
+    "reason": "Equivalent: sleep-specialists.md § sleep-tasks › The filing bar says \"the key must be stable across cycles or the repetition that is supposed to build confidence never registers\"; agents/sleep-tasks.md says \"Slugify the key identically every cycle\"."
   },
   {
     "match": "never drop one silently; the next cycle (or the owner) should be able to pick it up",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
+    "reason": "Equivalent: agents/sleep-tasks.md § The filing bar says \"Never drop one silently\"; sleep-specialists.md says \"The next cycle, or the owner, should be able to pick up whatever you did not file.\""
   },
   {
     "match": "# ensure an active planning version exists (orchestrator should have done this; verify)",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
+    "reason": "Equivalent: sleep-specialists.md § sleep-tasks › The filing bar says \"The orchestrator should already have ensured an active planning version; verify it.\""
   },
   {
     "match": "# create the task - auto-attaches to the active planning version",
@@ -222,7 +192,7 @@
   {
     "match": "# slug derives from the name). -w is mandatory: create refuses an empty why",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
+    "reason": "Equivalent: agents/sleep-tasks.md create block says \"-w is MANDATORY (40+ chars)\"; sleep-specialists.md says \"The file slug derives from the task name.\""
   },
   {
     "match": "-w must clear 40 characters and should",
@@ -242,7 +212,7 @@
   {
     "match": "do not retry with padding to get over the character floor: that produces exactly the unreadable task the bar e",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › The filing bar — clear ALL of it, or do not file."
+    "reason": "Equivalent: sleep-specialists.md § The filing bar says \"padding to get over it produces exactly the unreadable task the bar exists to prevent\"; agents/sleep-tasks.md says \"never pad the `-w`\"."
   },
   {
     "match": "new tasks scaffold lean - only ## why and ## changelog exist at birth",
@@ -258,11 +228,6 @@
     "match": "when the roster in _dream_context/people/people.json has >1 entry (since 0.23.0 - the retired .config.json peo",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 2.5. Person attribution (multi-person projects only)."
-  },
-  {
-    "match": "determine attribution from the same signals sleep-state uses for pass b.5 (git %an on the commits, self-identi",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 2.5. Person attribution (multi-person projects only)."
   },
   {
     "match": "when the person is already tagged on the task, no action is needed - the tag is additive",
@@ -300,16 +265,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 3. Log progress AND reconcile the body — both required."
   },
   {
-    "match": "the override may declare extra statuses (statuses: frontmatter - your briefing lists each with its kind and th",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 3. Log progress AND reconcile the body — both required."
-  },
-  {
-    "match": "there is no user in a sleep cycle, so leave an unset ask field unset and name it in your report so the user fi",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 3. Log progress AND reconcile the body — both required."
-  },
-  {
     "match": "the task body (why, user stories, acceptance criteria, constraints & decisions, technical details, notes) is c",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 3. Log progress AND reconcile the body — both required."
@@ -330,24 +285,9 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 3. Log progress AND reconcile the body — both required."
   },
   {
-    "match": "tasks carry a start_date/due_date range in frontmatter (both yyyy-mm-dd|null)",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 3. Log progress AND reconcile the body — both required."
-  },
-  {
     "match": "the first transition to in_progress auto-stamps start_date with today if it was unset, and reaching completed ",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 3. Log progress AND reconcile the body — both required."
-  },
-  {
-    "match": "a task tagged backlog must have no dates, and a dated task must not be backlog (mutual exclusion) - don't set ",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 3. Log progress AND reconcile the body — both required."
-  },
-  {
-    "match": "if you're unsure whether a decision observed this session was already captured elsewhere (memory entry, siblin",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 3. Log progress AND reconcile the body — both required."
   },
   {
     "match": "after bumping statuses, check if the active planning version is now release-ready",
@@ -400,11 +340,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 6. Backlog grooming — the active list must stay honest."
   },
   {
-    "match": "reconcile it now (steps 3-4) - that's a capture failure, fix it",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 6. Backlog grooming — the active list must stay honest."
-  },
-  {
     "match": "if it's done + validated, completed; if it needs eyes, in_review",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 6. Backlog grooming — the active list must stay honest."
@@ -450,11 +385,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 6. Backlog grooming — the active list must stay honest."
   },
   {
-    "match": "objectives are the po's okr roadmap items; tasks link to them many-to-many via the objectives: frontmatter lis",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 6. Backlog grooming — the active list must stay honest."
-  },
-  {
     "match": "for each task you touched (or created) whose objectives: is absent or empty, judge which objective(s) the work",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 6. Backlog grooming — the active list must stay honest."
@@ -485,19 +415,9 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 6. Backlog grooming — the active list must stay honest."
   },
   {
-    "match": "at 3 consecutive cycles on the same key, sleep done itself surfaces the escalation ask and bumps the linked ta",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 6. Backlog grooming — the active list must stay honest."
-  },
-  {
     "match": "deferred task candidates ride the same store - and they are how an indirect candidate becomes a real task",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 6. Backlog grooming — the active list must stay honest."
-  },
-  {
-    "match": "a task-candidate:<key> flag carries no task slug and never escalates (there is no task to bump, and nobody to ",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 6. Backlog grooming — the active list must stay honest."
   },
   {
     "match": "each cycle, read _dream_context/state/.sleep-flags.json and reconcile them",
@@ -548,21 +468,6 @@
     "match": "before any metric write, check for a feeder: dreamcontext lab list --json and look for a manifest whose bindin",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-tasks.md § 6. Backlog grooming — the active list must stay honest."
-  },
-  {
-    "match": "if the feeding insight's cache looks stale or errored (dreamcontext lab show <slug> → old fetchedat / error se",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 6. Backlog grooming — the active list must stay honest."
-  },
-  {
-    "match": "sleep never runs lab sync - that's a standing decision (credential exposure, latency, non-determinism); refres",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 6. Backlog grooming — the active list must stay honest."
-  },
-  {
-    "match": "never silently delete a task, and never completed a task that was never actually done - for superseded/abandon",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-tasks › 6. Backlog grooming — the active list must stay honest."
   },
   {
     "match": "- updated: <slug> (in_progress → completed, \"<done, validated, no review needed>\"), <slug> (in_progress → in_r",
@@ -785,16 +690,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § Your domain."
   },
   {
-    "match": "after any create/rename/retire, run dreamcontext patterns sync so the generated /pattern- entries match the va",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Your domain."
-  },
-  {
-    "match": "naming: a pattern's own filename and h1 are its triggers, so name it after the thing a user would say, not aft",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Your domain."
-  },
-  {
     "match": "knowledge/roadmap/board.md (auto-generated by dreamcontext roadmap - never hand-edit; the orchestrator regener",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § Your domain."
@@ -912,7 +807,7 @@
   {
     "match": "required sections (look at existing prds for shape)",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › A4. Create a new PRD from scratch."
+    "reason": "Equivalent: sleep-specialists.md § sleep-product › A4 says \"Look at existing PRDs for shape.\"; the required sections are listed in agents/sleep-product.md § A4."
   },
   {
     "match": "optional frontmatter product: <name> - see \"multi-product awareness\" below",
@@ -937,22 +832,12 @@
   {
     "match": "the next session will fill it in",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › A4. Create a new PRD from scratch."
-  },
-  {
-    "match": "if acceptance criteria aren't grounded in the session, leave the placeholder line above - never hallucinate cr",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › A4. Create a new PRD from scratch."
+    "reason": "Equivalent: sleep-specialists.md § sleep-product › A4 says \"the next session fills it in.\""
   },
   {
     "match": "if the relevant task has product: x in frontmatter, the prd may be product-scoped",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § A5. Multi-product awareness."
-  },
-  {
-    "match": "write the prd to knowledge/features/<slug>.md (single flat directory, typed knowledge) but include product: x ",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › A5. Multi-product awareness."
   },
   {
     "match": "any knowledge updates that emerge from this feature go to _dream_context/knowledge/products/x.md (create if mi",
@@ -965,11 +850,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
   },
   {
-    "match": "knowledge//.md is indexed recursively (buildknowledgeindex globs /.md), so subfolders are fully recall-safe - ",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
-  },
-  {
     "match": "diagrams → co-located in their context folder (promoted layout)",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
@@ -980,19 +860,9 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
   },
   {
-    "match": "diagrams are not a segregated top-level dump; they live with the context they illustrate",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
-  },
-  {
     "match": "dreamcontext migrations apply-diagrams # legacy/structural: folds flat boards under knowledge/diagrams/ into p",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
-  },
-  {
-    "match": "apply-diagrams is the legacy mechanism for boards still under a top-level knowledge/diagrams/ tree (it does fl",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
   },
   {
     "match": "run it each cycle to keep legacy boards tidy; it's safe and idempotent",
@@ -1005,16 +875,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
   },
   {
-    "match": "placement judgment first: only canonical boards (architecture, flows, roadmaps a future session should recall)",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
-  },
-  {
-    "match": "scratch/exploratory/in-progress boards belong in inbox/ or workspace/ (dark by location - not indexed) - leave",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
-  },
-  {
     "match": "never hand-edit board scene json or wikilinks - the command owns both",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
@@ -1023,16 +883,6 @@
     "match": "knowledge → logical subfolders (grouping; moves are deep-only)",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
-  },
-  {
-    "match": "when ≥3 top-level knowledge/.md files form a clear topical cluster a future session would browse together (mir",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
-  },
-  {
-    "match": "moving files + rewriting links is a structural op - gate it exactly like merge-with-delete (b1.5)",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
   },
   {
     "match": "flag the cluster in your report (group candidate: <group>/ ← a.md, b.md, c.md) for the next deep cycle",
@@ -1053,11 +903,6 @@
     "match": "verify every file still lists: dreamcontext knowledge index --plain",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B0. Organize — folders, grouping, and placement."
-  },
-  {
-    "match": "don't fragment (one folder per file) and don't over-nest",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B0. Organize — folders, grouping, and placement."
   },
   {
     "match": "after any group/move, re-check the moved files' tags in pass c so the folder and the tags tell the same story",
@@ -1102,7 +947,7 @@
   {
     "match": "capture inline (no need to flag - you own both domains this cycle)",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B1. Decide: create, update, archive, or pin."
+    "reason": "Equivalent: sleep-specialists.md § sleep-product › Protocol says \"A cross-cutting finding from your own features pass is captured inline: you own both domains this cycle.\""
   },
   {
     "match": "at light/standard: if you spot a merge or deletion candidate, do not act on it - flag it in your report (\"merg",
@@ -1118,26 +963,6 @@
     "match": "archive-before-delete safety net (deep only, mandatory): before any deep-tier merge-with-delete or summarize-a",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B1.5. Depth gating — what you may actually DO this cycle."
-  },
-  {
-    "match": "aim for the fewest files that keep each topic cleanly findable",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B2. Create vs. extend — the consolidation rubric."
-  },
-  {
-    "match": "dreamcontext embed dedup embeds the candidate and returns its closest existing docs by meaning - the guesswork",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B2. Create vs. extend — the consolidation rubric."
-  },
-  {
-    "match": "it prints the nearest knowledge+feature docs with cosine similarity and a verdict",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B2. Create vs. extend — the consolidation rubric."
-  },
-  {
-    "match": "a near-verbatim twin already exists (cosine ≥ 0.97, decisively closer than the runner-up)",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B2. Create vs. extend — the consolidation rubric."
   },
   {
     "match": "same-topic candidate in the 0.91-0.97 band",
@@ -1160,11 +985,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B2. Create vs. extend — the consolidation rubric."
   },
   {
-    "match": "semantic dedup is an assist, not a replacement - also recall by the topic and its family (vertical / brand / p",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B2. Create vs. extend — the consolidation rubric."
-  },
-  {
     "match": "then decide - default to extending an existing file",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B2. Create vs. extend — the consolidation rubric."
@@ -1180,11 +1000,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B2. Create vs. extend — the consolidation rubric."
   },
   {
-    "match": "don't fork a near-duplicate slug",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B2. Create vs. extend — the consolidation rubric."
-  },
-  {
     "match": "a genuinely separate topic / domain / concern a future session would expect to find standing alone, where its ",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B2. Create vs. extend — the consolidation rubric."
@@ -1193,11 +1008,6 @@
     "match": "if splitting wouldn't sharpen the tags, extend",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B2. Create vs. extend — the consolidation rubric."
-  },
-  {
-    "match": "it's the soft distinctions (same family, narrower slice, incremental finding) that fold into an existing file",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B2. Create vs. extend — the consolidation rubric."
   },
   {
     "match": "for surgical frontmatter or body edits to an existing knowledge file, dreamcontext memory update <slug> [--des",
@@ -1230,11 +1040,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B2. Create vs. extend — the consolidation rubric."
   },
   {
-    "match": "don't invent tags freely; new tags fragment search",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B3. Tags — use the taxonomy vocabulary."
-  },
-  {
     "match": "after your edits, the index should reflect what changed",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B4. Index sanity check."
@@ -1260,11 +1065,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B6. Data structures (schemas / models / API contracts)."
   },
   {
-    "match": "unlike most knowledge (which waits for repetition), a schema/data-model change is reflected in the same cycle ",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B6. Data structures (schemas / models / API contracts)."
-  },
-  {
     "match": "if sleep-state flagged a schema/table/model change, or the diff shows one, write it now",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B6. Data structures (schemas / models / API contracts)."
@@ -1273,11 +1073,6 @@
     "match": "active task has product: x → knowledge/data-structures/x.md (create if missing)",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B6. Data structures (schemas / models / API contracts)."
-  },
-  {
-    "match": "migration of the old locations (idempotent; the dir move runs automatically on dreamcontext sleep start, but c",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B6. Data structures (schemas / models / API contracts)."
   },
   {
     "match": "if core/data-structures/.md still exists and the knowledge copy is absent, it was (or should be) moved to know",
@@ -1350,11 +1145,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B7. Automation output consumption."
   },
   {
-    "match": "an automation's shared: false (the default) keeps its manifest and output off the team's remote; it does not s",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B7. Automation output consumption."
-  },
-  {
     "match": "when that happens, you must write the private-derivation marker before finishing this pass, so sleep done can ",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B7. Automation output consumption."
@@ -1368,11 +1158,6 @@
     "match": "list every private automation you derived from and every knowledge path it touched, even if one knowledge file",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § B7. Automation output consumption."
-  },
-  {
-    "match": "if nothing this cycle came from a shared: false output, write nothing - an absent marker means sleep done proc",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › B7. Automation output consumption."
   },
   {
     "match": "run this pass every cycle to keep tags healthy",
@@ -1400,16 +1185,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § Pass C — Taxonomy maintenance."
   },
   {
-    "match": "audit --fix is the safe bulk path - it rewrites only tags whose normalizetag → resolvealias yields a different",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Pass C — Taxonomy maintenance."
-  },
-  {
-    "match": "it never touches already-canonical tags (so decisions is not churned to decision) and never guesses an orphan ",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Pass C — Taxonomy maintenance."
-  },
-  {
     "match": "then act on the buckets --fix deliberately doesn't auto-resolve",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § Pass C — Taxonomy maintenance."
@@ -1420,11 +1195,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § Pass C — Taxonomy maintenance."
   },
   {
-    "match": "don't hand-edit these file by file anymore",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Pass C — Taxonomy maintenance."
-  },
-  {
     "match": "alias-then-fix: dreamcontext taxonomy alias <orphan> <canonical> (or taxonomy add <facet:value> if it's a bran",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § Pass C — Taxonomy maintenance."
@@ -1433,11 +1203,6 @@
     "match": "if two vocab entries are near-duplicates by accident, remove the weaker one by hand-editing core/taxonomy.json",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-product.md § Pass C — Taxonomy maintenance."
-  },
-  {
-    "match": "the only bulk rewrite you may run is taxonomy audit --fix (it is verified-by-construction against the vocabula",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Pass C — Taxonomy maintenance."
   },
   {
     "match": "any other tag edit stays surgical and confirmed against the audit output",
@@ -1542,7 +1307,7 @@
   {
     "match": "read the task, the code, the existing prd",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Rules."
+    "reason": "Equivalent: agents/sleep-product.md § A2 runs `cat` on the related task and the existing PRD and greps the code; Rule 1 says \"Research before writing PRDs\"."
   },
   {
     "match": "code shipped + tests pass, or user confirmed in session",
@@ -1557,7 +1322,7 @@
   {
     "match": "create prds for buildable concepts that don't have one - they will be lost otherwise",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-product › Rules."
+    "reason": "Equivalent: sleep-specialists.md § sleep-product › Rules says \"PRDs for buildable concepts are created because they will be lost otherwise.\""
   },
   {
     "match": "a feature prd documents what a capability is (user stories, acceptance criteria); knowledge holds research/dec",
@@ -1627,12 +1392,12 @@
   {
     "match": "a refactor that touches many files but has one purpose → one refactor entry",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A1. Group changes into logical entries."
+    "reason": "Equivalent: sleep-specialists.md § sleep-state › A1 says \"a many-file refactor with one purpose gets one `refactor` entry.\""
   },
   {
     "match": "docs changes coherent enough to describe → one docs entry",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A1. Group changes into logical entries."
+    "reason": "Equivalent: sleep-specialists.md § sleep-state › A1 says \"Coherent docs changes get one `docs` entry\"."
   },
   {
     "match": "lab & roadmap signals are diary-worthy too: a new insight created (lab create), a key-result binding set or ch",
@@ -1655,29 +1420,14 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A2. Add entries via CLI."
   },
   {
-    "match": "use freely - they help future recall queries follow the trail",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A2. Add entries via CLI."
-  },
-  {
     "match": "common shapes: commit:abc1234, file:src/lib/recall.ts, knowledge:decision-mem0-vs-bm25-recall, feature:memory-",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A2. Add entries via CLI."
   },
   {
-    "match": "no note: prefix - free-form goes in description",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A2. Add entries via CLI."
-  },
-  {
     "match": "auto-populate commit refs from git log --oneline --since=<sleep-epoch> when you can identify the commit(s) the",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A2. Add entries via CLI."
-  },
-  {
-    "match": "since 0.23.0 the cli resolves the author itself: when people/people.json exists it stamps the machine's active",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A2. Add entries via CLI."
   },
   {
     "match": "your default is to omit --authors entirely",
@@ -1695,11 +1445,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A2. Add entries via CLI."
   },
   {
-    "match": "on a vault with no people/people.json the key is omitted, never written empty - that is what keeps un-migrated",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A2. Add entries via CLI."
-  },
-  {
     "match": "if every task linked to the active planning version is completed (or only in_review remains and the user has b",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A3. Releases — surface readiness, never auto-release."
@@ -1715,11 +1460,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A3. Releases — surface readiness, never auto-release."
   },
   {
-    "match": "the feed holds exactly one announcement per version, so a released version with no entry is a hole in the rele",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A3. Releases — surface readiness, never auto-release."
-  },
-  {
     "match": "check the manifest (in this repo, dashboard/public/announcements.json) for the version you are calling ready, ",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A3. Releases — surface readiness, never auto-release."
@@ -1728,11 +1468,6 @@
     "match": "if no active planning version exists, create one before adding entries (otherwise entries float unattached)",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § A3. Releases — surface readiness, never auto-release."
-  },
-  {
-    "match": "set or switch it with dreamcontext core releases active <version>, clear with --clear, print with no argument",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › A3. Releases — surface readiness, never auto-release."
   },
   {
     "match": "after creating a new planning version, set it active so sleep-tasks' auto-attach lands the cycle's new work on",
@@ -1773,11 +1508,6 @@
     "match": "before appending to technical decisions in 2.memory.md or a preference in people/<slug>.md, run dreamcontext m",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § B0a. Two-observation gate (preferences & decisions)."
-  },
-  {
-    "match": "(recall will never surface a person constitution - people/.md are deliberately not indexed - so for those, rea",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › B0a. Two-observation gate (preferences & decisions)."
   },
   {
     "match": "(schema/data-model changes are the same kind of single-observation signal, but they now live in knowledge/data",
@@ -1837,22 +1567,12 @@
   {
     "match": "write it to the person it is actually true of - a constitution is one human's document, and a preference guess",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › B1. Signal → file routing."
-  },
-  {
-    "match": "when you have corroborated evidence that more than one human works in this project, record them on the roster ",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Pass B.5 — People detection (multi-person awareness)."
+    "reason": "Equivalent: agents/sleep-state.md § B1 says \"Write it to the person it is actually true of\"; sleep-specialists.md § B1 says \"A constitution is one human's document, and a preference guessed onto the wrong teammate is worse than an unrecorded one.\""
   },
   {
     "match": "this is ai-driven detection - there is no manual toggle and no persisted multiperson flag (multi-person status",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Pass B.5 — People detection (multi-person awareness)."
-  },
-  {
-    "match": "detection gate - require ≥2 corroborated signals before flipping a project to multi-person (this gate prevents",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Pass B.5 — People detection (multi-person awareness)."
   },
   {
     "match": "self-identification in user turns - a person names themselves or another teammate (\"this is ada\", \"kerem asked",
@@ -1861,11 +1581,6 @@
   },
   {
     "match": "distinct git authors since the epoch - git log --since=\"$cutoff\" --format='%an <%ae>' | sort -u returns more t",
-    "disposition": "deleted",
-    "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Pass B.5 — People detection (multi-person awareness)."
-  },
-  {
-    "match": "apply the shared bot-filter (drop any author whose kebab-case slug contains github-actions or dependabot) - th",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Pass B.5 — People detection (multi-person awareness)."
   },
@@ -1893,21 +1608,6 @@
     "match": "a previously recorded person is never dropped because they were quiet this cycle",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Pass B.5 — People detection (multi-person awareness)."
-  },
-  {
-    "match": "dreamcontext people add \"ada\" --email ada@example.com # email = how ada's machine resolves to her",
-    "disposition": "deleted",
-    "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Pass B.5 — People detection (multi-person awareness)."
-  },
-  {
-    "match": "never hand-edit people/people.json (it is lock-protected and schema-validated), and never add a multiperson ke",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Pass B.5 — People detection (multi-person awareness)."
-  },
-  {
-    "match": "an email is what makes the git-email rung work on a teammate's machine, so record one whenever you actually kn",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Pass B.5 — People detection (multi-person awareness)."
   },
   {
     "match": "every roster slug must have a constitution file, and every constitution file should have a roster entry",
@@ -1950,11 +1650,6 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Pass B.5 — People detection (multi-person awareness)."
   },
   {
-    "match": "a solo project's people/people.json, its one people/<slug>.md, and its changelog output must stay byte-identic",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Pass B.5 — People detection (multi-person awareness)."
-  },
-  {
     "match": "people/.md are audited on the same ceilings as core files, and for the same reason: the active person's consti",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § C1. Anti-bloat sweep — ~4,000 char AND ~150 line ceiling per core file *and* per person constitution."
@@ -1968,11 +1663,6 @@
     "match": "if it reports the snapshot at or over the limit (or past the 18,000-char ladder target), treat it as a c1 trig",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § C1. Anti-bloat sweep — ~4,000 char AND ~150 line ceiling per core file *and* per person constitution."
-  },
-  {
-    "match": "if doctor reports the never-evict tier alone over the limit, that is an error no ladder rung can fix - and the",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › C1. Anti-bloat sweep — ~4,000 char AND ~150 line ceiling per core file *and* per person constitution."
   },
   {
     "match": "extraction is then the whole fix, and the only one",
@@ -1992,7 +1682,7 @@
   {
     "match": "normally the ceiling extraction above and a two-observation-gated promotion (b0a) are independent",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › C1. Anti-bloat sweep — ~4,000 char AND ~150 line ceiling per core file *and* per person constitution."
+    "reason": "Equivalent: sleep-specialists.md § sleep-state › C1 says \"Normally ceiling extraction and a gated promotion are independent.\""
   },
   {
     "match": "but when a promotion the gate genuinely warrants is blocked because the target file is already at its ceiling ",
@@ -2031,11 +1721,6 @@
   },
   {
     "match": "sleep done --flag <key>::<label>[::<task-slug>] is repeatable - the orchestrator passes one --flag per flag it",
-    "disposition": "deleted",
-    "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § C3. Recidivism flags — recurring problems for `sleep done --flag`."
-  },
-  {
-    "match": "you report the observation honestly each cycle; sleep done itself tracks the streak and, at 3 consecutive cycl",
     "disposition": "deleted",
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § C3. Recidivism flags — recurring problems for `sleep done --flag`."
   },
@@ -2152,12 +1837,7 @@
   {
     "match": "don't write a preference or decision from a single mention",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Rules."
-  },
-  {
-    "match": "the roster is the human's to prune (dreamcontext people rm), and even that keeps the file",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Rules."
+    "reason": "Equivalent: agents/sleep-state.md § B0a says \"One observation is data; two is a pattern.\" and Rule 2 names the two-observation gate."
   },
   {
     "match": "a diff that adds a dependency, route, or design primitive must be reflected in the same cycle",
@@ -2180,14 +1860,9 @@
     "reason": "Restated an agent rule; the substance lives in agents/sleep-state.md § Rules."
   },
   {
-    "match": "hitting ~4,000 chars or ~150 lines means extract, not append - and chars are the one that actually binds, beca",
-    "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Rules."
-  },
-  {
     "match": "archived content stays discoverable via dreamcontext memory recall",
     "disposition": "deleted",
-    "reason": "Verbatim wording dropped; the reasoning is kept reworded in sleep-specialists.md § sleep-state › Rules."
+    "reason": "Equivalent: sleep-specialists.md § sleep-state › C1 says older context \"stays findable via recall\"; agents/sleep-state.md § C1 says aggressive pruning beats generous retention."
   },
   {
     "match": "flag staleness, don't write knowledge",
