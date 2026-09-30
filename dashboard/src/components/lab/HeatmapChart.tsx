@@ -32,9 +32,12 @@ export function toHeatScale(v: unknown): HeatScale {
   return v === 'diverging' ? 'diverging' : 'sequential';
 }
 
-/** Largest a cell grows (a sparse grid in a wide card stays a grid, not a row of slabs). */
-const CELL_MAX_W = 72;
-const CELL_MAX_H = 40;
+/**
+ * Largest a cell grows. Cells grow to fill the card (a 4x4 grid spans a large
+ * cell), up to these, so a one-cell grid never becomes one giant slab.
+ */
+const CELL_MAX_W = 240;
+const CELL_MAX_H = 120;
 /** Surface between cells. */
 const CELL_GAP = 2;
 const DAY = 86_400_000;

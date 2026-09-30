@@ -17,6 +17,19 @@
   overflow: hidden;
 }
 
+/* ── pivot ──────────────────────────────────────────────────────────── */
+
+/* The cell holds the pivot's own column (BreakdownPivot.css .lab-pivot--fit): chips and
+   total outside the scrolling area, the table wrapper the only scroll box. */
+.lab-block-pivot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* ── funnel ─────────────────────────────────────────────────────────── */
 
 .lab-block-funnel--fit {

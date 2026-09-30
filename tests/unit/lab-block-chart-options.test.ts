@@ -475,6 +475,7 @@ const BLOCK_CSS = [
   'NumberCard.css',
   'chartBody.css',
   'funnel/FunnelBars.css',
+  'BreakdownPivot.css',
 ];
 
 describe.each(BLOCK_CSS)('%s speaks only in tokens', (file) => {

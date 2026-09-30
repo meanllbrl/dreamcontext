@@ -33,6 +33,27 @@ export function toPieLabels(v: unknown): PieLabels {
   return (PIE_LABELS as readonly unknown[]).includes(v) ? (v as PieLabels) : 'legend';
 }
 
+/** The id of the legend's "+N" overflow entry (never a slice). */
+export const LEGEND_MORE_ID = '\u0000more';
+
+/**
+ * How many legend rows a beside-the-pie legend column of `height` px holds: one
+ * key row is ~1.5 font heights, 4px (--space-1) between rows. A legend with more
+ * slices than this shows the first ones and a "+N" row, so it never overflows
+ * the card; the hidden slices still read out on hover.
+ */
+export function pieLegendCapacity(height: number, fontPx: number): number {
+  const pitch = Math.ceil(fontPx * 1.5) + 4;
+  return Math.max(1, Math.floor((height + 4) / pitch));
+}
+
+/** Legend items for `count` slices in a column that holds `capacity` rows: all, or the first ones plus "+N". */
+export function fitLegend<T>(items: readonly T[], capacity: number): { shown: T[]; more: number } {
+  if (items.length <= capacity) return { shown: [...items], more: 0 };
+  const keep = Math.max(1, capacity - 1);
+  return { shown: items.slice(0, keep), more: items.length - keep };
+}
+
 /** Inner radius of a donut, as a share of the outer one. */
 export const DONUT_HOLE = 0.6;
 /** How far a hovered slice lifts out along its bisector. */
@@ -321,15 +342,22 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
   const legendPos = box.ready && box.width < box.height * 1.15 && box.height >= 220 ? 'bottom' as const : 'right' as const;
   // A narrow beside-legend keeps the names and leaves the shares to the tooltip.
   const legendShares = !box.ready || legendPos === 'bottom' || box.width >= 300;
+  const legendItems = geo ? slices.map((s) => {
+    const arc = geo.arcs.find((a) => a.id === s.id);
+    return { id: s.id, label: arc && legendShares ? `${s.label} ${shareText(arc.share, locale)}` : s.label, color: colors.color(s.id), shape: 'rect' as const };
+  }) : [];
+  // A column beside the pie holds only so many rows: the rest become "+N" (the pie's hover still reads them).
+  const fitted = legendPos === 'right' && box.ready
+    ? fitLegend(legendItems, pieLegendCapacity(box.height, size.fontPx))
+    : { shown: legendItems, more: 0 };
   const legend = labels === 'legend' && geo
     ? {
         position: legendPos,
-        items: slices.map((s) => {
-          const arc = geo.arcs.find((a) => a.id === s.id);
-          return { id: s.id, label: arc && legendShares ? `${s.label} ${shareText(arc.share, locale)}` : s.label, color: colors.color(s.id), shape: 'rect' as const };
-        }),
+        items: fitted.more > 0
+          ? [...fitted.shown, { id: LEGEND_MORE_ID, label: `+${fitted.more}`, color: 'transparent', shape: 'rect' as const }]
+          : fitted.shown,
         hidden: toggle.hidden,
-        onToggle: toggle.toggle,
+        onToggle: (id: string) => { if (id !== LEGEND_MORE_ID) toggle.toggle(id); },
       }
     : null;
 

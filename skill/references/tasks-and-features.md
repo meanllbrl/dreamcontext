@@ -402,24 +402,94 @@ cards:
       - line: {data: daily-signups, area: true, color: 2}
 ```
 
-A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` key). **The block catalog** (`dreamcontext lab block list [--json]` prints every type, the frames it accepts and its options):
+A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` key). **The block catalog** (`dreamcontext lab block list [--json]` prints every type, the frames it accepts and its options). Every option lives in ONE place, the engine catalog in `src/lib/lab/blocks.ts` (EN and TR labels); the dashboard inspector is generated from it, `lab board set` validates against it, and the table below is generated from it too (a lockstep test fails when they drift). An unset option takes its default:
 
-| block | draws | options |
-|---|---|---|
-| `stat` | one figure | `delta: none\|prev`, `spark`, `unit`, `format: number\|compact\|percent\|currency`, `series` |
-| `line` | series over time | `area`, `color` (1-8), `series`, `limit` |
-| `bar` | values side by side | `orientation: h\|v`, `color`, `comparePrev`, `where`, `sort`, `limit`, `series` |
-| `stacked` | parts of a whole over time | `color`, `where`, `series`, `limit` |
-| `pie` | shares (7+ slices draw as bars) | `donut`, `where`, `sort`, `limit` |
-| `table` | rows of numbers with a filtered total | `columns`, `where`, `sort`, `limit` |
-| `heatmap` | intensity across two axes | `color`, `where` |
-| `funnel` | step conversion | `compact` |
-| `pivot` | one dim down, another across | `rows`, `cols`, `where` |
-| `text` / `callout` | markdown (sanitized, remote images stripped) | `markdown`; callout `tone: info\|success\|warning\|danger` |
-| `tabs` | panels of blocks, one visible at a time (ONE level, tabs never nest) | `tabs: [{label, blocks: [...]}]` |
-| `filter` | a chip row over one dim | `dim`: narrows every sibling block bound to the same dataset, client-side, with zero sync requests |
-| `html` | your own markup in the sandbox | `html` inline or `ref: <library slug>`, `inputs: {name: <binding>}` |
-| `insight` | the whole insight exactly as its render draws it | none (the migration path; html/v1 and app/v1 bodies keep the `lk-` kit here) |
+<!-- block-catalog:start (generated from dashboard/src/generated/block-catalog.json; see tests/unit/lab-block-catalog-doc.test.ts) -->
+| block | option | what it sets | values | default |
+|---|---|---|---|---|
+| `stat`: One number with its change and a sparkline. | `delta` | Change | `none`, `prev` | `none` |
+|  | `spark` | Sparkline | `true`, `false` | `false` |
+|  | `unit` | Unit | text | unset |
+|  | `format` | Format | `number`, `compact`, `percent`, `currency` | `number` |
+|  | `series` | Series | list of names | unset |
+|  | `size` | Size | `sm`, `md`, `lg` | `md` |
+|  | `goal` | Goal | number | unset |
+| `line`: Series over time. | `area` | Fill area | `true`, `false` | `false` |
+|  | `color` | Color | number 1 to 8 | `1` |
+|  | `series` | Series | list of names | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `curve` | Curve | `linear`, `smooth`, `step` | `linear` |
+|  | `points` | Points | `auto`, `always`, `never` | `auto` |
+|  | `yMin` | Y axis starts at | `auto`, `zero` | `auto` |
+|  | `reference` | Reference line | number | unset |
+|  | `referenceLabel` | Reference label | text | unset |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `bar`: Values side by side. | `orientation` | Orientation | `h`, `v` | `h` |
+|  | `color` | Color | number 1 to 8 | `1` |
+|  | `comparePrev` | Compare with previous period | `true`, `false` | `false` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `series` | Series | list of names | unset |
+|  | `valueLabels` | Value labels | `true`, `false` | `true` |
+|  | `topN` | Top N, rest as Other | number 1 to 50 | unset |
+|  | `group` | Several series | `grouped`, `stacked` | `grouped` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+| `stacked`: Parts of a whole over time. | `color` | Color | number 1 to 8 | `1` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `series` | Series | list of names | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `mode` | Shape | `bar`, `area` | `bar` |
+|  | `normalize` | Show as 100% | `true`, `false` | `false` |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+| `pie`: Shares of a total. Seven or more slices draw as bars. | `donut` | Donut | `true`, `false` | `false` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `centerTotal` | Total in the center | `true`, `false` | `false` |
+|  | `labels` | Slice labels | `legend`, `outside`, `inside`, `none` | `legend` |
+|  | `topN` | Top N, rest as Other | number 1 to 50 | unset |
+|  | `color` | Color | number 1 to 8 | `1` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `table`: Rows and columns of numbers. | `columns` | Columns | list of names | unset |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `density` | Density | `compact`, `comfortable` | `compact` |
+|  | `bars` | Data bars | `true`, `false` | `false` |
+|  | `deltaColor` | Color the change | `true`, `false` | `true` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `heatmap`: Intensity across two axes. | `color` | Color | number 1 to 8 | `1` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `scale` | Color scale | `sequential`, `diverging` | `sequential` |
+|  | `cellLabels` | Values in cells | `true`, `false` | `false` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `funnel`: Step by step conversion. | `compact` | Compact | `true`, `false` | `false` |
+|  | `showConversion` | Conversion rates | `true`, `false` | `true` |
+| `pivot`: One dimension down, another across. | `rows` | Rows | text | unset |
+|  | `cols` | Columns | text | unset |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+| `text`: Markdown notes and headings. | `markdown` | Text | markdown | unset |
+| `callout`: A highlighted note. | `tone` | Tone | `info`, `success`, `warning`, `danger` | `info` |
+|  | `markdown` | Text | markdown | unset |
+| `tabs`: Panels of blocks, one visible at a time. Tabs do not nest. | `tabs` | Tabs | `[{label, blocks: [...]}]` | unset |
+| `filter`: Chips that filter the blocks bound to the same dataset. | `dim` | Dimension | text | unset |
+| `html`: Your own markup in a sandbox, fed only the inputs it declares. | `html` | HTML | inline HTML | unset |
+|  | `ref` | Library block | text | unset |
+|  | `inputs` | Inputs | `{name: <binding>}` | unset |
+| `insight`: The insight exactly as it renders on its own. | none | | | |
+<!-- block-catalog:end -->
+
+How the chart options read. `format`: `auto` groups digits below 10,000 and turns compact above (12.4K), `percent` expects a fraction (0.25 shows 25%), `currency` uses the unit when it is a 3-letter code. `color` is the first palette slot (1 to 8); colours follow the entity, never its rank, so a filter, a legend toggle or a series pick never repaints a survivor, and a 9th series or an Other bucket is grey. `topN` keeps the N largest and folds the rest into one Other row (grey, always last); `normalize` shows each x as 100%; `sort`, `topN` and `normalize` change the VALUES, so `lab board show` prints them too. `legend` places the series legend (a single series never gets one); clicking a legend item hides that series. `axes` and `grid` only change chrome. A pie with 7 or more slices kept draws as bars. `filter` narrows every sibling block bound to the same dataset, client-side, with zero sync requests; `tabs` never nest; `text` and `callout` markdown is sanitized with remote images stripped; `insight` is the whole insight exactly as its render draws it (the migration path; html/v1 and app/v1 bodies keep the `lk-` kit there).
 
 Static options run in ONE fixed order, `where` → interactive filter → `sort` → `limit`, and a table's total is computed after filtering and before the limit, so a filtered board never shows the total of a pre-cut list. `lab board show` and the dashboard run the same code and print the same values.
 

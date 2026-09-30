@@ -139,8 +139,21 @@ describe('heat data', () => {
     const d = tableHeatData(t.dims, t.rows);
     if (!d) throw new Error('no data');
     const g = layoutHeat({ data: d, width: 1600, height: 900, fontPx: 12, measure: (s: string) => estimateTextWidth(s, 12) });
-    expect(g.cellW).toBeLessThanOrEqual(72);
-    expect(g.cellH).toBeLessThanOrEqual(40);
+    expect(g.cellW).toBeLessThanOrEqual(240);
+    expect(g.cellH).toBeLessThanOrEqual(120);
+  });
+
+  it('cells grow to fill a large cell: a 4x4 grid spans >= 85% of one axis and >= 60% of the other', () => {
+    const regions = ['north', 'south', 'east', 'west'];
+    const rows = regions.flatMap((region, r) => ['Q1', 'Q2', 'Q3', 'Q4'].map((quarter, q) => ({ d: { region, quarter }, v: 1000 + r * 1700 + q * 600 })));
+    const d = tableHeatData([{ key: 'region', label: 'Region' }, { key: 'quarter', label: 'Quarter' }], rows);
+    if (!d) throw new Error('no data');
+    const [W, H] = [780, 400];
+    const g = layoutHeat({ data: d, width: W, height: H, fontPx: 12, measure: (s: string) => estimateTextWidth(s, 12) });
+    const spanW = (g.layout.plot.left + g.gridW) / W;
+    const spanH = (g.legendY + 12) / H;
+    expect(Math.max(spanW, spanH)).toBeGreaterThanOrEqual(0.85);
+    expect(Math.min(spanW, spanH)).toBeGreaterThanOrEqual(0.6);
   });
 });
 

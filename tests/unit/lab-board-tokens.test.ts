@@ -28,6 +28,7 @@ const FILES = [
   'components/lab/NumberCard.css',
   'components/lab/chartBody.css',
   'components/lab/blocks/dataBlocks.css',
+  'components/lab/BreakdownPivot.css',
 ];
 
 interface Decl { file: string; line: number; prop: string; value: string }

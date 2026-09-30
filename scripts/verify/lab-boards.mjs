@@ -53,10 +53,35 @@
  *      activeBoard; NO `data-lab-placeholder` element and no stand-in slot
  *      text anywhere, in view mode, edit mode, inspector and add-card menu.
  *
+ * The chart standard (task "blocks reach a polished, fully customizable chart
+ * standard"), on boards of their own built from dedicated chart fixtures:
+ *
+ *  11. EVERY OPTION VALUE: one board per block type (`opt-<type>`) holds a
+ *      card for every catalog option, and for an enum every non-default
+ *      value, each compared with its baseline + twin by the same signature
+ *      (a value visible only in the tooltip, e.g. a pie's format, is compared
+ *      by hovering the same mark on both). The coverage guard is per value.
+ *  12. FIT: line, stacked, bar, pie, heatmap, stat and funnel at a small and a
+ *      large cell: no inner scroll (scrollHeight <= clientHeight and
+ *      scrollWidth <= clientWidth on every box from the card down to the
+ *      plot), axis tick label boxes never overlap, every label stays inside
+ *      the card. Table and pivot scroll with a header that stays on top.
+ *  13. HOVER TRUTH: the real pointer goes to 3 dates of a line and 3
+ *      categories of a bar, each at 2 widths, positioned from the fixture and
+ *      the RENDERED axis labels (never the hover code's own maths); the
+ *      tooltip must show exactly that datum's value. A pie slice's tooltip
+ *      shows its value and share.
+ *  14. DEFECTS: every derived h-* heading card shows visible heading text;
+ *      every tab label's text box lies inside its button and the tab bar.
+ *  15. COLOR FOLLOWS THE ENTITY: a legend toggle, a series pick and a filter
+ *      chip never repaint a surviving series or slice.
+ *
  * Same harness contract as the other verify scripts: real server, isolated
  * fake HOME, COLLECT-DON'T-FAIL-FAST (every section runs and reports; a
  * thrown section is one FAIL line, not an abort). Screenshots, both themes,
- * land in <scratch>/shots.
+ * land in <scratch>/shots, and also in `--shots=<dir>` when given (never on a
+ * mutation run): every board light and dark, plus hover states of a line, a
+ * bar and a pie.
  *
  * ── MUTATIONS (pattern: mutation-test your assertions) ─────────────────────
  * Each key assertion names the mutation that must turn it red. Run one with
@@ -83,6 +108,27 @@
  *   placeholder-slot  bundle: the inspector root carries data-lab-placeholder
  *                     (a stand-in slot). Must fail: "no data-lab-placeholder
  *                     element (inspector open)".
+ *   chart-overflow    stylesheet: every chart plot is forced 48px taller and
+ *                     wider than its frame. Must fail: the "fits its cell, no
+ *                     inner scroll" checks of line / bar / pie (both sizes).
+ *   hover-offset      bundle: the pointer-to-datum mapping answers the NEXT
+ *                     index (an off-by-one). Must fail: every line and bar
+ *                     "hover truth" datum check.
+ *   repaint-by-rank   bundle: colours key on the drawn entities only (the
+ *                     unfiltered domain is dropped), so survivors re-rank.
+ *                     Must fail: "color follows the entity: a filter chip keeps
+ *                     the surviving slice's color", "... a series pick keeps
+ *                     ios's stroke".
+ *   heading-hidden    stylesheet: a heading card's text is visibility:hidden.
+ *                     Must fail: "every h-* heading card shows its heading text".
+ *   tab-clip          stylesheet: tab buttons squeezed to 10px with overflow
+ *                     hidden. Must fail: "tabs: every tab label lies inside its
+ *                     button and the tab bar (m-tabs)" (and c-tabs).
+ *   ticks-overlap     stylesheet: tick labels at 40px. Must fail: "axis tick
+ *                     labels never overlap: line (large)".
+ *   sticky-lost       stylesheet: the table header cells are position:static.
+ *                     Must fail: "table: the sticky header stays at the top
+ *                     after scrolling".
  */
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -115,6 +161,8 @@ const PREFS = join(DC, 'state', '.lab-prefs.json');
 const LEAK = 987654;
 
 const MUTATION = (process.argv.find((a) => a.startsWith('--mutation=')) ?? '').slice('--mutation='.length) || null;
+/** A second home for the screenshots (the owner's review folder). A mutation run never writes there. */
+const SHOTS_OUT = MUTATION ? null : ((process.argv.find((a) => a.startsWith('--shots=')) ?? '').slice('--shots='.length) || null);
 
 /** name -> the assertion names that MUST fail under it. */
 const MUTATIONS = {
@@ -123,6 +171,19 @@ const MUTATIONS = {
   'symlink-follow': ['board GET: symlinked cache yields no data', 'board GET: the symlinked html input is an empty frame', 'lab board show: symlinked cache yields no data', 'html block: symlinked input yields no data'],
   'filter-syncs': ['filter clicks send ZERO sync requests'],
   'placeholder-slot': ['no data-lab-placeholder element (inspector open)'],
+  'chart-overflow': ['line (small) fits its cell, no inner scroll', 'line (large) fits its cell, no inner scroll',
+    'bar (small) fits its cell, no inner scroll', 'bar (large) fits its cell, no inner scroll',
+    'pie (small) fits its cell, no inner scroll', 'pie (large) fits its cell, no inner scroll'],
+  'hover-offset': ['hover truth: line (narrow) 2026-09-19', 'hover truth: line (narrow) 2026-09-22', 'hover truth: line (narrow) 2026-09-26',
+    'hover truth: line (wide) 2026-09-19', 'hover truth: line (wide) 2026-09-22', 'hover truth: line (wide) 2026-09-26',
+    'hover truth: bar (narrow) south', 'hover truth: bar (narrow) east', 'hover truth: bar (narrow) west',
+    'hover truth: bar (wide) south', 'hover truth: bar (wide) east', 'hover truth: bar (wide) west'],
+  'repaint-by-rank': ["color follows the entity: a filter chip keeps the surviving slice's color",
+    "color follows the entity: a series pick keeps ios's stroke"],
+  'heading-hidden': ['every h-* heading card shows its heading text'],
+  'tab-clip': ['tabs: every tab label lies inside its button and the tab bar (m-tabs)'],
+  'ticks-overlap': ['axis tick labels never overlap: line (large)'],
+  'sticky-lost': ['table: the sticky header stays at the top after scrolling'],
 };
 if (MUTATION && !MUTATIONS[MUTATION]) {
   console.error(`unknown mutation "${MUTATION}"; known: ${Object.keys(MUTATIONS).join(', ')}`);
@@ -388,6 +449,19 @@ const BUNDLE_MUTATIONS = {
   'sidebar-alpha': [/(labelKey:"nav\.labpage",maturity:)"beta"/, '$1"alpha"'],
   'filter-syncs': [/(className:"lab-block-chip",)/g, '$1onMouseDown:()=>fetch("/api/lab/sync-jobs",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}),'],
   'placeholder-slot': [/("data-lab-inspector":!0)/, '$1,"data-lab-placeholder":!0'],
+  // hover.ts nearestIndex: `return x - positions[lo] <= positions[hi] - x ? lo : hi` answers one index later.
+  'hover-offset': [/return (\w+)-(\w+)\[(\w+)\]<=\2\[(\w+)\]-\1\?\3:\4\}/, 'return Math.min($2.length-1,($1-$2[$3]<=$2[$4]-$1?$3:$4)+1)}'],
+  // LineChart.tsx entityDomain(domain, names): the unfiltered domain is ignored, colours follow the drawn rank.
+  'repaint-by-rank': [/function (\w+)\((\w+),(\w+)\)\{if\(!\2\|\|\2\.length===0\)return\[\.\.\.\3\];/, 'function $1($2,$3){return[...$3];'],
+};
+
+/** Stylesheet mutations: a rule appended to the served CSS bundle. */
+const CSS_MUTATIONS = {
+  'chart-overflow': '.lab-chart-plot{flex:none!important;min-height:calc(100% + 48px)!important;min-width:calc(100% + 48px)!important}',
+  'heading-hidden': '.board-card--heading .board-card-block{visibility:hidden!important}',
+  'tab-clip': '.lab-block-tab{height:10px!important;min-height:0!important;padding-top:0!important;padding-bottom:0!important;overflow:hidden!important}',
+  'ticks-overlap': '.lab-chart-tick{font-size:40px!important}',
+  'sticky-lost': '.lab-table-head th{position:static!important}',
 };
 
 /** Server mutation: a scratch copy of dist/ with the store's containment removed. */
@@ -572,6 +646,422 @@ function catalogBoardSpec() {
   return { spec: { title: 'Catalog', order: 90, cards }, baseList, variants };
 }
 
+// ─── Chart fixtures (sections 11-15) ─────────────────────────────────────────
+
+/** 12 days, two series, every value distinct from its neighbours (an off-by-one hover reads a different number). */
+const TREND_DAYS = Array.from({ length: 12 }, (_, i) => `2026-09-${String(17 + i).padStart(2, '0')}`);
+const TREND = {
+  alpha: [1200, 1350, 1280, 1500, 1620, 1490, 1710, 1800, 1760, 1950, 2040, 1990],
+  beta: [600, 720, 650, 800, 770, 910, 880, 950, 1020, 990, 1100, 1180],
+};
+/** The dates the pointer visits (interior: an edge-clamped axis label never positions it). */
+const HOVER_DATES = ['2026-09-19', '2026-09-22', '2026-09-26'];
+/** One dim, mid values (450..4200: `compact` differs from `auto` here). [region, v, prev]. */
+const REGIONS = [['north', 4200, 3900], ['south', 2600, 2800], ['east', 3400, 3100], ['west', 1500, 1600], ['central', 900, 850], ['islands', 450, 500]];
+const REGIONS_TOTAL = REGIONS.reduce((s, r) => s + r[1], 0);
+/** The bars the pointer visits (never the first or last category). */
+const HOVER_BARS = ['south', 'east', 'west'];
+/** One dim, big values (>= 10,000: `number` differs from `auto` here). */
+const ACCOUNTS = [['enterprise', 86000, 80000], ['mid-market', 54000, 56000], ['smb', 31000, 29000], ['startup', 18000, 15000], ['nonprofit', 12000, 12500]];
+
+const tableScript = (dims, rows) => `export default async function () {
+  const rows = ${JSON.stringify(rows)};
+  const v = rows.reduce((s, r) => s + r.v, 0);
+  return { kind: 'dataset/v1', primary: 'main', datasets: [{ key: 'main', dims: ${JSON.stringify(dims)}, rows,
+    total: { v, n: rows.length, prev: rows.reduce((s, r) => s + (r.prev ?? 0), 0) } }] };
+}`;
+const CHART_INSIGHTS = [
+  {
+    slug: 'trend', title: 'Trend', render: 'line',
+    script: `export default async function () {
+  return ${JSON.stringify(Object.entries(TREND).map(([name, vs]) => ({ name, points: vs.map((v, i) => ({ t: TREND_DAYS[i], v })) })))};
+}`,
+  },
+  {
+    slug: 'big-trend', title: 'Big trend', render: 'line',
+    script: `${DAYS_HELPER}
+export default async function () {
+  return [
+    { name: 'enterprise', points: days(14).map((t, i) => ({ t, v: 42000 + i * 3500 + (i % 3) * 1200 })) },
+    { name: 'smb', points: days(14).map((t, i) => ({ t, v: 12000 + i * 900 })) },
+  ];
+}`,
+  },
+  {
+    slug: 'regions', title: 'Regions', render: 'table',
+    script: tableScript([{ key: 'region', label: 'Region' }], REGIONS.map(([region, v, prev]) => ({ d: { region }, v, prev }))),
+  },
+  {
+    slug: 'accounts', title: 'Accounts', render: 'table',
+    script: tableScript([{ key: 'segment', label: 'Segment' }], ACCOUNTS.map(([segment, v, prev]) => ({ d: { segment }, v, prev }))),
+  },
+  {
+    // Two dims, each (region, quarter) pair once: grouped / stacked bars and a heat matrix.
+    slug: 'grid2', title: 'Region by quarter', render: 'table',
+    script: tableScript([{ key: 'region', label: 'Region' }, { key: 'quarter', label: 'Quarter' }],
+      ['north', 'south', 'east', 'west'].flatMap((region, r) => ['Q1', 'Q2', 'Q3', 'Q4'].map((quarter, q) => {
+        const v = 1000 + r * 1700 + q * 600 + ((r * q) % 3) * 250;
+        return { d: { region, quarter }, v, prev: v - 150 };
+      }))),
+  },
+];
+
+/**
+ * [type, base options (incl. data), variant options, { hover }]: one case per
+ * catalog option VALUE the older OPTION_CASES does not cover (every non-default
+ * enum value, every boolean flipped, one value per number/string). `hover`: the
+ * value only shows in the tooltip, so both cards are also compared hovered.
+ * A `format` case sits on data where that format differs from `auto` (auto =
+ * grouped below 10,000, compact above): `number` on big values, the others on mid.
+ */
+const OPTION_VALUE_CASES = [
+  ['stat', { data: 'signups' }, { size: 'sm' }],
+  ['stat', { data: 'signups' }, { size: 'lg' }],
+  ['stat', { data: 'signups' }, { goal: 500 }],
+  ['stat', { data: 'big-trend', series: ['enterprise'] }, { format: 'compact' }],
+  ['stat', { data: 'big-trend', series: ['enterprise'] }, { format: 'currency' }],
+
+  ['line', { data: 'sessions' }, { curve: 'smooth' }],
+  ['line', { data: 'sessions' }, { curve: 'step' }],
+  ['line', { data: 'sessions' }, { points: 'always' }],
+  ['line', { data: 'trend' }, { points: 'never' }],
+  ['line', { data: 'sessions' }, { yMin: 'zero' }],
+  ['line', { data: 'sessions' }, { reference: 100 }],
+  ['line', { data: 'sessions', reference: 100 }, { referenceLabel: 'Target' }],
+  ['line', { data: 'sessions' }, { legend: 'top' }],
+  ['line', { data: 'sessions' }, { legend: 'right' }],
+  ['line', { data: 'sessions' }, { legend: 'none' }],
+  ['line', { data: 'sessions' }, { axes: 'x' }],
+  ['line', { data: 'sessions' }, { axes: 'y' }],
+  ['line', { data: 'sessions' }, { axes: 'none' }],
+  ['line', { data: 'sessions' }, { grid: false }],
+  ['line', { data: 'big-trend' }, { format: 'number' }],
+  ['line', { data: 'trend' }, { format: 'compact' }],
+  ['line', { data: 'trend' }, { format: 'percent' }],
+  ['line', { data: 'trend' }, { format: 'currency' }],
+
+  ['bar', { data: 'regions', orientation: 'v' }, { valueLabels: false }],
+  ['bar', { data: 'regions' }, { topN: 3 }],
+  // `sort` shorthands: unset ranks by value (= desc), so desc is compared against asc.
+  ['bar', { data: 'regions' }, { sort: 'asc' }],
+  ['bar', { data: 'regions' }, { sort: 'none' }],
+  ['bar', { data: 'regions', sort: 'asc' }, { sort: 'desc' }],
+  ['bar', { data: 'grid2', orientation: 'v' }, { group: 'stacked' }],
+  ['bar', { data: 'accounts' }, { format: 'number' }],
+  ['bar', { data: 'regions' }, { format: 'compact' }],
+  ['bar', { data: 'regions' }, { format: 'percent' }],
+  ['bar', { data: 'regions' }, { format: 'currency' }],
+  ['bar', { data: 'regions', orientation: 'v' }, { axes: 'x' }],
+  ['bar', { data: 'regions', orientation: 'v' }, { axes: 'y' }],
+  ['bar', { data: 'regions', orientation: 'v' }, { axes: 'none' }],
+  ['bar', { data: 'regions', orientation: 'v' }, { grid: false }],
+  ['bar', { data: 'grid2', orientation: 'v' }, { legend: 'top' }],
+  ['bar', { data: 'grid2', orientation: 'v' }, { legend: 'right' }],
+  ['bar', { data: 'grid2', orientation: 'v' }, { legend: 'none' }],
+
+  ['stacked', { data: 'sessions' }, { mode: 'area' }],
+  ['stacked', { data: 'sessions' }, { normalize: true }],
+  ['stacked', { data: 'sessions' }, { legend: 'top' }],
+  ['stacked', { data: 'sessions' }, { legend: 'right' }],
+  ['stacked', { data: 'sessions' }, { legend: 'none' }],
+  ['stacked', { data: 'big-trend' }, { format: 'number' }],
+  ['stacked', { data: 'trend' }, { format: 'compact' }],
+  ['stacked', { data: 'trend' }, { format: 'percent' }],
+  ['stacked', { data: 'trend' }, { format: 'currency' }],
+  ['stacked', { data: 'sessions' }, { axes: 'x' }],
+  ['stacked', { data: 'sessions' }, { axes: 'y' }],
+  ['stacked', { data: 'sessions' }, { axes: 'none' }],
+  ['stacked', { data: 'sessions' }, { grid: false }],
+
+  ['pie', { data: 'regions' }, { centerTotal: true }],
+  ['pie', { data: 'regions' }, { labels: 'outside' }],
+  ['pie', { data: 'regions' }, { labels: 'inside' }],
+  ['pie', { data: 'regions' }, { labels: 'none' }],
+  ['pie', { data: 'regions' }, { topN: 3 }],
+  ['pie', { data: 'regions' }, { color: 3 }],
+  ['pie', { data: 'regions' }, { sort: 'none' }],
+  ['pie', { data: 'regions' }, { sort: 'asc' }],
+  ['pie', { data: 'accounts' }, { format: 'number' }, { hover: true }],
+  ['pie', { data: 'regions' }, { format: 'compact' }, { hover: true }],
+  ['pie', { data: 'regions' }, { format: 'percent' }, { hover: true }],
+  ['pie', { data: 'regions' }, { format: 'currency' }, { hover: true }],
+
+  ['table', { data: 'regions' }, { density: 'comfortable' }],
+  ['table', { data: 'regions' }, { bars: true }],
+  ['table', { data: 'regions' }, { deltaColor: false }],
+  ['table', { data: 'accounts' }, { format: 'number' }],
+  ['table', { data: 'regions' }, { format: 'compact' }],
+  ['table', { data: 'regions' }, { format: 'percent' }],
+  ['table', { data: 'regions' }, { format: 'currency' }],
+
+  ['heatmap', { data: 'grid2' }, { scale: 'diverging' }],
+  ['heatmap', { data: 'grid2' }, { cellLabels: true }],
+  ['heatmap', { data: 'big-trend' }, { format: 'number' }, { hover: true }],
+  ['heatmap', { data: 'trend' }, { format: 'compact' }, { hover: true }],
+  ['heatmap', { data: 'trend' }, { format: 'percent' }, { hover: true }],
+  ['heatmap', { data: 'trend' }, { format: 'currency' }, { hover: true }],
+
+  ['funnel', { data: 'funnels' }, { showConversion: false }],
+  ['callout', { markdown: 'Heads up' }, { tone: 'success' }],
+  ['callout', { markdown: 'Heads up' }, { tone: 'warning' }],
+];
+
+/** One board per block type: every baseline beside its twin, then one card per option value. */
+function optionBoardSpecs() {
+  const types = [...new Set(OPTION_VALUE_CASES.map((c) => c[0]))];
+  return types.map((type, ti) => {
+    const cases = OPTION_VALUE_CASES.filter((c) => c[0] === type);
+    const cards = [];
+    let y = 0;
+    const place = (id, opts, title) => {
+      const { data, ...rest } = opts;
+      cards.push({ id, title, at: { x: cards.length % 2 === 0 ? 0 : 6, y, ...CATALOG_SIZE }, blocks: [{ [type]: { ...(data ? { data } : {}), ...rest } }] });
+      if (cards.length % 2 === 0) y += CATALOG_SIZE.h;
+    };
+    const bases = [];
+    const baseOf = (base) => {
+      const key = JSON.stringify(base);
+      let b = bases.find((x) => x.key === key);
+      if (!b) { b = { key, id: `ob-${type}-${bases.length}`, type, base, hover: false }; bases.push(b); }
+      return b;
+    };
+    for (const [, base, , flags] of cases) if (flags?.hover) baseOf(base).hover = true; else baseOf(base);
+    for (const b of bases) {
+      place(b.id, b.base, `${type} baseline ${bases.indexOf(b) + 1}`);
+      place(`${b.id}-twin`, b.base, `${type} baseline ${bases.indexOf(b) + 1} (twin)`);
+    }
+    const variants = cases.map(([, base, variant, flags], i) => {
+      const [option, value] = Object.entries(variant)[0];
+      const id = `ov-${type}-${i}-${option}-${String(value)}`.toLowerCase().replace(/[^a-z0-9-]/g, '');
+      place(id, { ...base, ...variant }, `${option}: ${String(value)} (vs baseline ${bases.indexOf(baseOf(base)) + 1})`);
+      return { id, type, option, value, base: baseOf(base).id, hover: !!flags?.hover };
+    });
+    return { slug: `opt-${type}`, spec: { title: `Options: ${type}`, order: 100 + ti, cards }, bases, variants };
+  });
+}
+
+/** The chart types that must fit their cell, each at a large and a small size: [type, block options]. */
+const FIT_CASES = [
+  ['line', { data: 'trend' }],
+  ['stacked', { data: 'trend' }],
+  ['bar', { data: 'regions', orientation: 'v' }],
+  ['pie', { data: 'regions' }],
+  ['heatmap', { data: 'grid2', cellLabels: true }],
+  ['stat', { data: 'big-trend', series: ['enterprise'], spark: true, delta: 'prev', goal: 150000 }],
+  ['funnel', { data: 'funnels' }],
+];
+const FIT_SIZES = { large: { w: 8, h: 6 }, small: { w: 3, h: 3 } };
+
+function fitBoardSpec() {
+  const cards = [];
+  let y = 0;
+  for (const [type, opts] of FIT_CASES) {
+    const { data, ...rest } = opts;
+    const block = { [type]: { data, ...rest } };
+    cards.push({ id: `m-${type}-large`, title: `${type} large`, at: { x: 0, y, ...FIT_SIZES.large }, blocks: [block] });
+    cards.push({ id: `m-${type}-small`, title: `${type} small`, at: { x: 8, y, ...FIT_SIZES.small }, blocks: [block] });
+    y += FIT_SIZES.large.h;
+  }
+  // Scrolling blocks: a short cell so they must scroll, and the header must stay on top.
+  cards.push({ id: 'm-table', title: 'Table scroll', at: { x: 0, y, w: 6, h: 3 }, blocks: [{ table: { data: 'plans' } }] });
+  cards.push({ id: 'm-pivot', title: 'Pivot scroll', at: { x: 6, y, w: 6, h: 2 }, blocks: [{ pivot: { data: 'plans', rows: 'plan', cols: 'country' } }] });
+  y += 3;
+  cards.push({ id: 'm-tabs', title: 'Tabs', at: { x: 0, y, w: 4, h: 5 }, blocks: [{ tabs: { tabs: [
+    { label: 'Weekly trend', blocks: [{ line: { data: 'trend' } }] },
+    { label: 'Regional split', blocks: [{ pie: { data: 'regions' } }] },
+    { label: 'Accounts', blocks: [{ table: { data: 'accounts' } }] },
+  ] } }] });
+  return { title: 'Fit and scroll', order: 120, cards };
+}
+
+function hoverBoardSpec() {
+  return {
+    title: 'Hover and color', order: 121, cards: [
+      { id: 'hv-line-narrow', title: 'Line narrow', at: { x: 0, y: 0, w: 4, h: 5 }, blocks: [{ line: { data: 'trend' } }] },
+      { id: 'hv-line-wide', title: 'Line wide', at: { x: 4, y: 0, w: 8, h: 5 }, blocks: [{ line: { data: 'trend' } }] },
+      { id: 'hv-bar-narrow', title: 'Bar narrow', at: { x: 0, y: 5, w: 4, h: 5 }, blocks: [{ bar: { data: 'regions', orientation: 'v' } }] },
+      { id: 'hv-bar-wide', title: 'Bar wide', at: { x: 4, y: 5, w: 8, h: 5 }, blocks: [{ bar: { data: 'regions', orientation: 'v' } }] },
+      { id: 'hv-pie', title: 'Pie', at: { x: 0, y: 10, w: 6, h: 5 }, blocks: [{ pie: { data: 'regions' } }] },
+      { id: 'cl-pie-filter', title: 'Filter and pie', at: { x: 6, y: 10, w: 6, h: 6 }, blocks: [{ filter: { data: 'regions', dim: 'region' } }, { pie: { data: 'regions' } }] },
+      { id: 'cl-line', title: 'Line legend', at: { x: 0, y: 16, w: 6, h: 5 }, blocks: [{ line: { data: 'sessions' } }] },
+      { id: 'cl-line-pick', title: 'Line pick', at: { x: 6, y: 16, w: 6, h: 5 }, blocks: [{ line: { data: 'sessions', series: ['ios', 'android'] } }] },
+      { id: 'cl-stacked', title: 'Stacked legend', at: { x: 0, y: 21, w: 6, h: 5 }, blocks: [{ stacked: { data: 'sessions' } }] },
+    ],
+  };
+}
+
+// ─── In-page measurement (run inside the page; no closures over this module) ──
+
+/** A point where the mark is really under the pointer (elementFromPoint), scanning its box; else its centre. */
+function markPointInPage(root, selectors) {
+  for (const sel of selectors) {
+    const el = root.querySelector(sel);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) continue;
+    for (let gy = 1; gy < 8; gy++) {
+      for (let gx = 1; gx < 8; gx++) {
+        const x = r.x + (r.width * gx) / 8;
+        const y = r.y + (r.height * gy) / 8;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && (hit === el || el.contains(hit))) return { x, y };
+      }
+    }
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }
+  return null;
+}
+
+/**
+ * Fit + label geometry of one card: every box from the card down to the plot
+ * (and any scrollable element inside the block) must not scroll; axis tick
+ * boxes must not overlap (rotated labels: perpendicular spacing >= glyph
+ * height); every chart label must lie inside the card.
+ */
+function measureCardInPage(cardEl) {
+  const c = cardEl.getBoundingClientRect();
+  const name = (el) => `${el.tagName.toLowerCase()}.${String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className).split(' ')[0]}`;
+  const boxes = new Set([cardEl, ...cardEl.querySelectorAll('.board-card-body, .board-card-block, .board-card-block > *, .lab-chart, .lab-chart-plot')]);
+  for (const el of cardEl.querySelectorAll('.board-card-block *')) {
+    const cs = getComputedStyle(el);
+    if (/(auto|scroll)/.test(`${cs.overflowX} ${cs.overflowY}`)) boxes.add(el);
+  }
+  const scroll = [];
+  for (const el of boxes) {
+    if (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) {
+      scroll.push(`${name(el)} ${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight}`);
+    }
+  }
+  const overlaps = [];
+  for (const svg of cardEl.querySelectorAll('svg')) {
+    const ticks = [...svg.querySelectorAll('[data-axis] .lab-chart-tick')].map((t) => ({
+      text: t.textContent, r: t.getBoundingClientRect(), rotated: t.closest('[data-axis]').getAttribute('data-rotated') === 'true',
+      axis: t.closest('[data-axis]').getAttribute('data-axis'), x: Number(t.getAttribute('x')), h: t.getBBox().height,
+    }));
+    for (let i = 0; i < ticks.length; i++) {
+      for (let j = i + 1; j < ticks.length; j++) {
+        const a = ticks[i];
+        const b = ticks[j];
+        if (a.rotated && b.rotated) {
+          // Parallel -45deg strips: they clear when the anchors are a glyph height apart across the strip.
+          if (Math.abs(a.x - b.x) * Math.SQRT1_2 < Math.min(a.h, b.h) * 0.8) overlaps.push(`${a.text} / ${b.text} (rotated)`);
+          continue;
+        }
+        const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+        const h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+        if (w > 1 && h > 1) overlaps.push(`${a.axis}:${a.text} / ${b.axis}:${b.text}`);
+      }
+    }
+  }
+  const outside = [];
+  const labels = cardEl.querySelectorAll('.lab-chart-tick, [data-value-label], [data-pie-label], [data-cell-label], .lab-chart-legend-item, [data-center-total] text');
+  for (const l of labels) {
+    const r = l.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+    if (r.left < c.left - 1 || r.right > c.right + 1 || r.top < c.top - 1 || r.bottom > c.bottom + 1) {
+      outside.push(`${name(l)} "${(l.textContent || '').slice(0, 24)}" ${Math.round(r.left - c.left)},${Math.round(r.top - c.top)} ${Math.round(r.width)}x${Math.round(r.height)} in ${Math.round(c.width)}x${Math.round(c.height)}`);
+    }
+  }
+  // How much of its block the drawing uses: the union of every painted leaf (marks, labels, legend).
+  const blk = cardEl.querySelector('.board-card-block');
+  let fill = null;
+  if (blk) {
+    const br = blk.getBoundingClientRect();
+    const u = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity };
+    for (const el of blk.querySelectorAll('*')) {
+      if (el.children.length > 0 || el.matches('[data-chart-hit], svg, .lab-chart, .lab-chart-plot')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      u.l = Math.min(u.l, r.left); u.t = Math.min(u.t, r.top); u.r = Math.max(u.r, r.right); u.b = Math.max(u.b, r.bottom);
+    }
+    fill = u.r > u.l ? { w: (u.r - u.l) / br.width, h: (u.b - u.t) / br.height } : { w: 0, h: 0 };
+  }
+  return { scroll, overlaps, outside, fill, ticks: cardEl.querySelectorAll('[data-axis] .lab-chart-tick').length, size: [Math.round(c.width), Math.round(c.height)] };
+}
+
+/** Scroll a card's scrolling block to its end; the header cell must still sit at the scroller's top, on top. */
+async function stickyInPage(cardEl) {
+  const sc = [...cardEl.querySelectorAll('.board-card-block *')].find((e) => {
+    const cs = getComputedStyle(e);
+    return /(auto|scroll)/.test(cs.overflowY) && e.scrollHeight > e.clientHeight + 1;
+  });
+  if (!sc) return { scrolls: false };
+  const th = sc.querySelector('thead th, [role="columnheader"]');
+  if (!th) return { scrolls: true, header: false };
+  const before = th.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+  sc.scrollTop = sc.scrollHeight;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const a = sc.getBoundingClientRect();
+  const b = th.getBoundingClientRect();
+  const hit = document.elementFromPoint(b.x + Math.min(8, b.width / 2), b.y + b.height / 2);
+  const out = { scrolls: true, header: true, scrolled: sc.scrollTop, before: Math.round(before), after: Math.round(b.top - a.top), onTop: !!hit && (hit === th || th.contains(hit)) };
+  sc.scrollTop = 0;
+  return out;
+}
+
+/**
+ * Every heading card: the text it PAINTS inside the card, outside its menu (the menu's glyph is
+ * not a heading). A text node counts when its box is non-empty, inside the card and no ancestor
+ * hides it (visibility, display, opacity 0, transparent ink).
+ */
+function headingsInPage(root) {
+  return [...root.querySelectorAll('[data-lab-card^="h-"]')].map((cardEl) => {
+    const c = cardEl.getBoundingClientRect();
+    const painted = [];
+    const walker = document.createTreeWalker(cardEl, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.textContent.trim() || n.parentElement.closest('[data-lab-card-menu], .board-card-heading-menu, .board-card-menu')) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const r = range.getBoundingClientRect();
+      let shown = r.width > 0 && r.height > 0 && r.top >= c.top - 1 && r.bottom <= c.bottom + 1;
+      for (let el = n.parentElement; shown && el && el !== cardEl.parentElement; el = el.parentElement) {
+        const cs = getComputedStyle(el);
+        if (cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) === 0 || cs.color === 'rgba(0, 0, 0, 0)') shown = false;
+      }
+      if (shown) painted.push(n.textContent.trim());
+    }
+    return { id: cardEl.getAttribute('data-lab-card'), text: painted.join(' ').slice(0, 60) };
+  });
+}
+
+/** Every tab label's text box against its button and the tab bar; a clipped button (scroll > client) counts too. */
+function tabsInPage(cardEl) {
+  const bar = cardEl.querySelector('.lab-block-tabs-bar, [role="tablist"]');
+  if (!bar) return null;
+  const br = bar.getBoundingClientRect();
+  const inside = (o, i) => i.left >= o.left - 0.5 && i.right <= o.right + 0.5 && i.top >= o.top - 0.5 && i.bottom <= o.bottom + 0.5;
+  return [...bar.querySelectorAll('[role="tab"]')].map((b) => {
+    const range = document.createRange();
+    range.selectNodeContents(b);
+    const r = range.getBoundingClientRect();
+    const bb = b.getBoundingClientRect();
+    return {
+      label: b.textContent, inBar: inside(br, r), inButton: inside(bb, r),
+      clipped: b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1,
+      text: [Math.round(r.top), Math.round(r.bottom)], button: [Math.round(bb.top), Math.round(bb.bottom)],
+    };
+  });
+}
+
+/** The first number in a formatted value ("1,710", "4.2K", "$2,600", "34.5%"); K/M/B expand. */
+function parseShown(s) {
+  const m = /(-?[\d.,]+)\s*([KMB])?/i.exec(String(s ?? '').replace(/ /g, ' '));
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ''));
+  const k = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] ?? '').toUpperCase()] ?? 1;
+  return Number.isFinite(n) ? n * k : null;
+}
+
+/** "Sep 20" (the day axis) as its YYYY-MM-DD in the fixture's year; anything else is null. */
+function parseDayTick(text) {
+  const m = /^([A-Z][a-z]{2})\s+(\d{1,2})$/.exec(String(text).trim());
+  if (!m) return null;
+  const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(m[1]);
+  return month < 0 ? null : `2026-${String(month + 1).padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+}
+const dayMs = (key) => Date.parse(`${key}T00:00:00Z`);
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -615,6 +1105,14 @@ async function main() {
         await route.fulfill({ response: res, body: next });
       });
     }
+    const cssMutation = CSS_MUTATIONS[MUTATION];
+    if (cssMutation) {
+      await page.route(/\/assets\/.*\.css(\?.*)?$/, async (route) => {
+        const res = await route.fetch();
+        bundlePatched += 1;
+        await route.fulfill({ response: res, body: `${await res.text()}\n${cssMutation}\n` });
+      });
+    }
     if (MUTATION === 'put-lies') {
       await page.route(/\/api\/lab\/boards\/[^/?]+$/, async (route) => {
         if (route.request().method() !== 'PUT') return route.continue();
@@ -636,12 +1134,38 @@ async function main() {
       await page.evaluate((x) => document.documentElement.setAttribute('data-theme', x), t);
       await sleep(250);
     };
+    if (SHOTS_OUT) mkdirSync(SHOTS_OUT, { recursive: true });
+    /** Save to the scratch shots dir, and to --shots when given. */
+    const saveShot = async (name, take) => {
+      await take(join(SHOTS, name));
+      if (SHOTS_OUT) cpSync(join(SHOTS, name), join(SHOTS_OUT, name));
+    };
+    /**
+     * Both themes. The board scrolls inside the app shell (a fullPage shot is just
+     * the viewport), so the viewport grows to the board's height for the shot.
+     */
     const shoot = async (name) => {
+      // The page's main scroller: the tallest scrolling box around or inside the board (a table's own scroller is small).
+      const need = await page.evaluate(() => {
+        const b = document.querySelector('[data-lab-board]');
+        if (!b) return 0;
+        const around = [];
+        for (let el = b; el; el = el.parentElement) around.push(el);
+        const scrollers = [...around, ...b.querySelectorAll('*')].filter((el) => el.clientHeight > 300
+          && /(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 1);
+        const main = scrollers.sort((p, q) => q.clientHeight - p.clientHeight)[0];
+        if (!main) return 0;
+        main.scrollTop = 0;
+        return main.scrollHeight - main.clientHeight;
+      });
+      const tall = Math.min(16000, 1000 + Math.max(0, need));
+      if (tall > 1000) { await page.setViewportSize({ width: 1600, height: tall }); await sleep(500); }
       for (const theme of ['light', 'dark']) {
         await setTheme(theme);
-        await page.screenshot({ path: join(SHOTS, `${name}-${theme}.png`), fullPage: true });
+        await saveShot(`${name}-${theme}.png`, (path) => page.screenshot({ path }));
       }
       await setTheme('light');
+      if (tall > 1000) { await page.setViewportSize({ width: 1600, height: 1000 }); await sleep(300); }
     };
     const placeholders = async () => page.evaluate(() => {
       const els = document.querySelectorAll('[data-lab-placeholder], .board-slot, .board-slot-note, .board-block-placeholder').length;
@@ -953,11 +1477,18 @@ async function main() {
         const s = await sigOf(v.id);
         ok(`option ${v.type}.${v.option} visibly changes the render`, s !== baseSig[v.base], `${v.id} rendered identically to ${v.base}`);
       }
-      // Coverage: every catalog option has a case (or a dedicated section).
+      // Coverage: every catalog option has a case (or a dedicated section), and every
+      // non-default value of an enum option has its own case (section 11 runs them).
+      const allCases = [...OPTION_CASES, ...OPTION_VALUE_CASES];
       for (const entry of catalog) {
         for (const o of entry.options) {
-          const covered = OPTION_CASES.some(([ty, , variant]) => ty === entry.type && o.key in variant) || (COVERED_ELSEWHERE[entry.type] ?? []).includes(o.key);
+          const covered = allCases.some(([ty, , variant]) => ty === entry.type && o.key in variant) || (COVERED_ELSEWHERE[entry.type] ?? []).includes(o.key);
           ok(`catalog option ${entry.type}.${o.key} has a verify case`, covered);
+          if (o.type !== 'enum') continue;
+          for (const value of o.enum.filter((v) => v !== o.default)) {
+            ok(`catalog option ${entry.type}.${o.key}=${value} has a verify case`,
+              allCases.some(([ty, , variant]) => ty === entry.type && variant[o.key] === value));
+          }
         }
       }
     });
@@ -1161,6 +1692,315 @@ async function main() {
         await add.locator('[data-lab-add-insight]').count() > 0 && await add.locator('[data-lab-add-type]').count() > 0 && await add.locator('[data-lab-add-html]').count() > 0);
       await page.keyboard.press('Escape');
       await editMode(false);
+    });
+
+    // ── 11-15. The chart standard: fixtures and boards via the CLI ────────────
+    const optionBoards = optionBoardSpecs();
+    let chartBoardsReady = false;
+    await section('chart fixtures via CLI', async () => {
+      for (const ins of CHART_INSIGHTS) {
+        dc(['lab', 'create', ins.slug, '--title', ins.title, '--render', ins.render, '--adapter', 'script']);
+        writeFileSync(join(LAB, 'scripts', `${ins.slug}.mjs`), `${ins.script}\n`, 'utf-8');
+        dc(['lab', 'sync', ins.slug, '--force'], { allowFail: true });
+        ok(`chart fixture ${ins.slug} synced`, existsSync(join(LAB, 'cache', `${ins.slug}.json`)));
+      }
+      const boards = [...optionBoards.map((b) => [b.slug, b.spec]), ['fit', fitBoardSpec()], ['hover', hoverBoardSpec()]];
+      for (const [slug, spec] of boards) {
+        dc(['lab', 'board', 'create', slug, '--title', spec.title]);
+        const file = join(SCRATCH, `${slug}.json`);
+        writeFileSync(file, JSON.stringify(spec));
+        const out = dc(['lab', 'board', 'set', slug, '--file', file], { allowFail: true });
+        ok(`lab board set accepts the ${slug} fixture`, /Board saved/.test(out), out.slice(0, 600));
+      }
+      chartBoardsReady = true;
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('[data-lab-board]').first().waitFor({ timeout: 20000 });
+    });
+
+    /** The tooltip text a card shows with the pointer on its first mark ('' = none). */
+    const hoverTip = async (id) => {
+      const blk = card(id).locator('[data-lab-block]').first();
+      await blk.scrollIntoViewIfNeeded();
+      const pt = await blk.evaluate(markPointInPage, ['[data-slice]', '[data-heat-cell]', '[data-bar]', '[data-chart-hit]']);
+      if (!pt) return '';
+      await page.mouse.move(pt.x, pt.y, { steps: 3 });
+      const tip = await until(() => blk.evaluate((el) => el.querySelector('[data-chart-tooltip]')?.innerText ?? ''), 1500);
+      await page.mouse.move(1, 1);
+      await sleep(150);
+      return tip ?? '';
+    };
+    const sigOf = async (id) => card(id).locator('[data-lab-block]').first().evaluate(signatureInPage);
+
+    // ── 11. Every option value visibly changes the render ─────────────────────
+    await section('option values', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      for (const b of optionBoards) {
+        await openBoard(b.slug);
+        await sleep(1200);
+        const baseSig = {};
+        const baseTip = {};
+        for (const base of b.bases) {
+          await card(base.id).scrollIntoViewIfNeeded();
+          const empty = await card(base.id).locator('[data-lab-block]').first().evaluate((el) => !!el.querySelector('.lab-block-empty, [data-empty-reason]'));
+          ok(`${base.id} (${b.slug}) renders its baseline`, !empty, JSON.stringify(base.base));
+          baseSig[base.id] = await sigOf(base.id);
+          ok(`control: ${base.id} and its twin render identically`, (await sigOf(`${base.id}-twin`)) === baseSig[base.id], 'signature is unstable');
+          if (base.hover) {
+            baseTip[base.id] = await hoverTip(base.id);
+            const twinTip = await hoverTip(`${base.id}-twin`);
+            ok(`control: ${base.id} shows a tooltip, the same as its twin's`, baseTip[base.id] !== '' && twinTip === baseTip[base.id], `${JSON.stringify(baseTip[base.id])} vs ${JSON.stringify(twinTip)}`);
+          }
+        }
+        for (const v of b.variants) {
+          await card(v.id).scrollIntoViewIfNeeded();
+          const s = await sigOf(v.id);
+          let differs = s !== baseSig[v.base];
+          let detail = `${v.id} rendered identically to ${v.base}`;
+          if (!differs && v.hover) {
+            const tip = await hoverTip(v.id);
+            differs = tip !== '' && tip !== baseTip[v.base];
+            detail = `tooltip ${JSON.stringify(tip)} vs baseline ${JSON.stringify(baseTip[v.base])}`;
+          }
+          ok(`option ${v.type}.${v.option}=${JSON.stringify(v.value)} visibly changes the render${v.hover ? ' (hovered)' : ''}`, differs, detail);
+        }
+        await shoot(`board-${b.slug}`);
+      }
+    });
+
+    // ── 12. Fit: no inner scroll, no tick overlap, labels inside; sticky headers ─
+    await section('fit and scroll', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      await openBoard('fit');
+      await sleep(1500);
+      for (const [type] of FIT_CASES) {
+        for (const size of Object.keys(FIT_SIZES)) {
+          const id = `m-${type}-${size}`;
+          await card(id).scrollIntoViewIfNeeded();
+          await sleep(150);
+          const m = await card(id).evaluate(measureCardInPage);
+          ok(`${type} (${size}) fits its cell, no inner scroll`, m.scroll.length === 0, `${m.size.join('x')}: ${m.scroll.join(' | ')}`);
+          ok(`axis tick labels never overlap: ${type} (${size})`, m.overlaps.length === 0, m.overlaps.join(' | '));
+          ok(`chart labels stay inside the card: ${type} (${size})`, m.outside.length === 0, m.outside.slice(0, 6).join(' | '));
+          if (['line', 'stacked', 'bar', 'pie', 'heatmap'].includes(type)) {
+            // A chart fills its cell: its drawing spans >= 85% of the block on one axis and >= 60% on the other
+            // (a pie is round, so a wide cell leaves it width to spare).
+            const f = m.fill ?? { w: 0, h: 0 };
+            ok(`${type} (${size}) fills its cell`, Math.max(f.w, f.h) >= 0.85 && Math.min(f.w, f.h) >= 0.6,
+              `drawing spans ${Math.round(f.w * 100)}% x ${Math.round(f.h * 100)}% of its block`);
+          }
+          if (['line', 'stacked', 'bar'].includes(type) && size === 'large') {
+            ok(`${type} (large) draws x and y axis labels`, m.ticks >= 4, `${m.ticks} ticks`);
+          }
+        }
+      }
+      for (const [id, label] of [['m-table', 'table'], ['m-pivot', 'pivot']]) {
+        await card(id).scrollIntoViewIfNeeded();
+        await sleep(200);
+        const s = await card(id).evaluate(stickyInPage);
+        ok(`${label}: scrolls inside its own block`, s.scrolls, JSON.stringify(s));
+        ok(`${label}: the sticky header stays at the top after scrolling`, s.scrolls && s.header && s.scrolled > 0 && Math.abs(s.after - s.before) <= 1 && s.onTop, JSON.stringify(s));
+      }
+      await shoot('board-fit');
+    });
+
+    // ── 13. Hover truth: the tooltip shows the datum under the real pointer ────
+    /** The tooltip's value for `series` (or its first row), after the pointer moved to (x, y). */
+    const tooltipAt = async (id, x, y, series) => {
+      await page.mouse.move(x, y, { steps: 4 });
+      return until(() => card(id).evaluate((el, s) => {
+        const tip = el.querySelector('[data-chart-tooltip]');
+        if (!tip || getComputedStyle(tip).visibility === 'hidden') return null;
+        const row = s ? tip.querySelector(`[data-series="${s}"]`) : tip.querySelector('[data-series]');
+        return {
+          value: row?.querySelector('[data-value]')?.textContent ?? null,
+          label: row?.querySelector('.lab-chart-tooltip-label')?.textContent ?? '',
+          title: tip.querySelector('.lab-chart-tooltip-title')?.textContent ?? '',
+          text: tip.innerText,
+        };
+      }, series), 2000);
+    };
+    await section('hover truth', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      await openBoard('hover');
+      await sleep(1500);
+      for (const width of ['narrow', 'wide']) {
+        const id = `hv-line-${width}`;
+        await card(id).scrollIntoViewIfNeeded();
+        await sleep(200);
+        // The x of a date, from the RENDERED day labels: two labelled days fix the linear time axis.
+        const axis = await card(id).evaluate((el) => {
+          const svg = el.querySelector('[data-chart="line"] svg');
+          const hit = el.querySelector('[data-chart-hit]');
+          if (!svg || !hit) return null;
+          const s = svg.getBoundingClientRect();
+          const h = hit.getBoundingClientRect();
+          return {
+            ticks: [...svg.querySelectorAll('[data-axis="x"] .lab-chart-tick')].map((t) => ({ text: t.textContent, x: s.left + Number(t.getAttribute('x')) })),
+            midY: h.top + h.height / 2,
+          };
+        });
+        const known = (axis?.ticks ?? []).map((t) => ({ ...t, key: parseDayTick(t.text) })).filter((t) => t.key);
+        // Edge labels may be clamped inside the cell: position from the interior ones when there are enough.
+        const inner = known.length >= 4 ? known.slice(1, -1) : known;
+        ok(`hover truth: line (${width}) has at least 2 dated x labels to position from`, inner.length >= 2, JSON.stringify(axis?.ticks));
+        if (inner.length < 2) continue;
+        const [a, b] = [inner[0], inner[inner.length - 1]];
+        const xOf = (key) => a.x + ((dayMs(key) - dayMs(a.key)) / (dayMs(b.key) - dayMs(a.key))) * (b.x - a.x);
+        for (const key of HOVER_DATES) {
+          const i = TREND_DAYS.indexOf(key);
+          const alpha = await tooltipAt(id, xOf(key), axis.midY, 'alpha');
+          const beta = await tooltipAt(id, xOf(key), axis.midY, 'beta');
+          ok(`hover truth: line (${width}) ${key}`, parseShown(alpha?.value) === TREND.alpha[i] && parseShown(beta?.value) === TREND.beta[i],
+            `pointer x ${Math.round(xOf(key))}: tooltip ${JSON.stringify([alpha?.title, alpha?.value, beta?.value])}, fixture ${TREND.alpha[i]} / ${TREND.beta[i]}`);
+          if (width === 'wide' && key === HOVER_DATES[1]) {
+            for (const theme of ['light', 'dark']) {
+              await setTheme(theme);
+              await page.mouse.move(xOf(key), axis.midY);
+              await sleep(250);
+              await saveShot(`hover-line-${theme}.png`, (path) => card(id).screenshot({ path }));
+            }
+            await setTheme('light');
+          }
+        }
+        await page.mouse.move(1, 1);
+      }
+      for (const width of ['narrow', 'wide']) {
+        const id = `hv-bar-${width}`;
+        await card(id).scrollIntoViewIfNeeded();
+        await sleep(200);
+        // The x of a category, from its RENDERED axis label (its anchor is the band centre).
+        const axis = await card(id).evaluate((el) => {
+          const svg = el.querySelector('[data-chart="bar"] svg');
+          const hit = el.querySelector('[data-chart-hit]');
+          if (!svg || !hit) return null;
+          const s = svg.getBoundingClientRect();
+          const h = hit.getBoundingClientRect();
+          return {
+            ticks: [...svg.querySelectorAll('[data-axis="x"] .lab-chart-tick')].map((t) => ({ text: t.textContent, x: s.left + Number(t.getAttribute('x')) })),
+            midY: h.top + h.height * 0.5,
+          };
+        });
+        for (const name of HOVER_BARS) {
+          const tick = axis?.ticks.find((t) => t.text === name) ?? axis?.ticks.find((t) => t.text.replace(/…$/, '') && name.startsWith(t.text.replace(/…$/, '')));
+          const want = REGIONS.find((r) => r[0] === name)[1];
+          if (!tick) { ok(`hover truth: bar (${width}) ${name}`, false, `no x label for ${name}: ${JSON.stringify(axis?.ticks)}`); continue; }
+          const tip = await tooltipAt(id, tick.x, axis.midY, null);
+          ok(`hover truth: bar (${width}) ${name}`, parseShown(tip?.value) === want && (tip?.title ?? '').includes(name),
+            `pointer x ${Math.round(tick.x)}: tooltip ${JSON.stringify([tip?.title, tip?.value])}, fixture ${name} = ${want}`);
+          if (width === 'wide' && name === 'east') {
+            for (const theme of ['light', 'dark']) {
+              await setTheme(theme);
+              await page.mouse.move(tick.x, axis.midY);
+              await sleep(250);
+              await saveShot(`hover-bar-${theme}.png`, (path) => card(id).screenshot({ path }));
+            }
+            await setTheme('light');
+          }
+        }
+        await page.mouse.move(1, 1);
+      }
+      // Pie: the pointer on a slice (where the slice really is under it) shows its value and share.
+      await card('hv-pie').scrollIntoViewIfNeeded();
+      await sleep(200);
+      for (const name of ['east', 'west']) {
+        const pt = await card('hv-pie').evaluate(markPointInPage, [`[data-slice="${name}"]`]);
+        const want = REGIONS.find((r) => r[0] === name)[1];
+        const tip = pt ? await tooltipAt('hv-pie', pt.x, pt.y, null) : null;
+        const share = /([\d.,]+)\s*%/.exec(tip?.label ?? '')?.[1];
+        const shown = share === undefined ? null : Number(share.replace(',', '.'));
+        const decimals = share?.split(/[.,]/)[1]?.length ?? 0;
+        const expected = Number(((want / REGIONS_TOTAL) * 100).toFixed(decimals));
+        ok(`hover truth: pie slice ${name} shows its value and share`, (tip?.title ?? '') === name && parseShown(tip?.value) === want && shown === expected,
+          `tooltip ${JSON.stringify(tip)}, fixture ${want} = ${expected}%`);
+        if (name === 'east' && pt) {
+          for (const theme of ['light', 'dark']) {
+            await setTheme(theme);
+            await page.mouse.move(pt.x, pt.y);
+            await sleep(250);
+            await saveShot(`hover-pie-${theme}.png`, (path) => card('hv-pie').screenshot({ path }));
+          }
+          await setTheme('light');
+        }
+        await page.mouse.move(1, 1);
+      }
+    });
+
+    // ── 15. Color follows the entity ───────────────────────────────────────────
+    await section('color follows the entity', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      await openBoard('hover');
+      await sleep(800);
+      /** series id -> its mark's paint (line stroke, stacked/pie fill), first mark wins. */
+      const paints = async (id, sel, attr) => card(id).evaluate((el, [s, a]) => {
+        const out = {};
+        for (const m of el.querySelectorAll(s)) {
+          const k = m.getAttribute(a.key);
+          if (k && !(k in out)) out[k] = getComputedStyle(m)[a.paint];
+        }
+        return out;
+      }, [sel, attr]);
+      const kept = (before, after, skip) => Object.keys(after).length > 0
+        && Object.entries(after).every(([k, v]) => k === skip || before[k] === v);
+
+      const LINE = ['svg path[data-series]:not([data-area])', { key: 'data-series', paint: 'stroke' }];
+      await card('cl-line').scrollIntoViewIfNeeded();
+      const l0 = await paints('cl-line', ...LINE);
+      await card('cl-line').locator('.lab-chart-legend-item[data-series="web"]').click();
+      await sleep(400);
+      const l1 = await paints('cl-line', ...LINE);
+      ok('color follows the entity: hiding a line series in the legend keeps the others\' strokes',
+        !('web' in l1) && kept(l0, l1) && Object.keys(l1).length === 2, `${JSON.stringify(l0)} -> ${JSON.stringify(l1)}`);
+      await card('cl-line').locator('.lab-chart-legend-item[data-series="web"]').click();
+
+      const pick = await paints('cl-line-pick', ...LINE);
+      ok("color follows the entity: a series pick keeps ios's stroke", !!pick.ios && pick.ios === l0.ios && pick.android === l0.android,
+        `all series ${JSON.stringify(l0)} vs pick ${JSON.stringify(pick)}`);
+
+      const STACK = ['[data-series]:is(path, rect, g)', { key: 'data-series', paint: 'fill' }];
+      await card('cl-stacked').scrollIntoViewIfNeeded();
+      const s0 = await paints('cl-stacked', ...STACK);
+      await card('cl-stacked').locator('.lab-chart-legend-item[data-series="web"]').click();
+      await sleep(400);
+      const s1 = await paints('cl-stacked', ...STACK);
+      ok('color follows the entity: hiding a stacked series keeps the others\' fills', !('web' in s1) && kept(s0, s1), `${JSON.stringify(s0)} -> ${JSON.stringify(s1)}`);
+
+      const SLICE = ['[data-slice]', { key: 'data-slice', paint: 'fill' }];
+      await card('cl-pie-filter').scrollIntoViewIfNeeded();
+      const p0 = await paints('cl-pie-filter', ...SLICE);
+      await card('cl-pie-filter').locator('.lab-chart-legend-item[data-series="north"]').click();
+      await sleep(400);
+      const p1 = await paints('cl-pie-filter', ...SLICE);
+      ok('color follows the entity: hiding a slice in the legend keeps the others\' fills', kept(p0, p1, 'north'), `${JSON.stringify(p0)} -> ${JSON.stringify(p1)}`);
+      await card('cl-pie-filter').locator('.lab-chart-legend-item[data-series="north"]').click();
+      await sleep(300);
+      await card('cl-pie-filter').locator('[data-lab-filter-chip="east"]').click();
+      await sleep(600);
+      const p2 = await paints('cl-pie-filter', ...SLICE);
+      ok("color follows the entity: a filter chip keeps the surviving slice's color", !!p2.east && p2.east === p0.east && Object.keys(p2).length === 1,
+        `${JSON.stringify(p0)} -> ${JSON.stringify(p2)}`);
+      await card('cl-pie-filter').locator('[data-lab-filter-chip="east"]').click();
+      await sleep(300);
+      await shoot('board-hover');
+    });
+
+    // ── 14. Defects: heading text, tab labels ─────────────────────────────────
+    await section('defects: headings + tabs', async () => {
+      const found = [];
+      for (const b of derivedList?.boards ?? []) {
+        await openBoard(b.slug);
+        found.push(...(await page.locator('[data-lab-board]').first().evaluate(headingsInPage)).map((h) => ({ ...h, board: b.slug })));
+      }
+      const bad = found.filter((h) => !h.text);
+      ok('every h-* heading card shows its heading text', found.length >= 4 && bad.length === 0,
+        `${found.length} heading cards; blank or unpainted: ${JSON.stringify(bad)}`);
+      for (const [board, id] of [['fit', 'm-tabs'], ['catalog', 'c-tabs']]) {
+        await openBoard(board);
+        await card(id).scrollIntoViewIfNeeded();
+        await sleep(300);
+        const tabs = await card(id).evaluate(tabsInPage);
+        const wrong = (tabs ?? []).filter((x) => !x.inBar || !x.inButton || x.clipped);
+        ok(`tabs: every tab label lies inside its button and the tab bar (${id})`, tabs && tabs.length >= 2 && wrong.length === 0, JSON.stringify(wrong.length ? wrong : tabs));
+      }
     });
 
     // ── 10. Sidebar + prefs ────────────────────────────────────────────────────

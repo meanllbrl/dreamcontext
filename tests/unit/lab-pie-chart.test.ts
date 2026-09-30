@@ -46,7 +46,7 @@ vi.mock('../../dashboard/src/components/lab/chart/useChartHover.js', async (orig
   };
 });
 
-const { PieChart, PieBody, pieGeometry, slicePath, shareText } = await import('../../dashboard/src/components/lab/PieChart.js');
+const { PieChart, PieBody, pieGeometry, slicePath, shareText, pieLegendCapacity, fitLegend } = await import('../../dashboard/src/components/lab/PieChart.js');
 const { PieBlock, pieRowsFromFrame } = await import('../../dashboard/src/components/lab/blocks/PieBlock.js');
 const { estimateTextWidth } = await import('../../dashboard/src/components/lab/chart/layout.js');
 
@@ -130,6 +130,22 @@ describe('pie geometry', () => {
     expect(g.inside.map((l) => l.id)).toEqual(['big']);
     expect(shareText(0.049, 'en')).toBe('4.9%');
     expect(shareText(0.49, 'en')).toBe('49%');
+  });
+});
+
+describe('the legend always fits beside the pie', () => {
+  it('a short column holds fewer rows: the first slices show, the rest become "+N"', () => {
+    // A 3x3 board cell leaves ~110px: five 22px rows.
+    expect(pieLegendCapacity(110, 12)).toBe(5);
+    expect(pieLegendCapacity(240, 12)).toBe(11);
+    const six = ['north', 'south', 'east', 'west', 'central', 'islands'];
+    expect(fitLegend(six, 5)).toEqual({ shown: ['north', 'south', 'east', 'west'], more: 2 });
+    expect(fitLegend(six, 6)).toEqual({ shown: six, more: 0 });
+    // Every row it draws fits: shown + the "+N" row never exceed the capacity.
+    for (let cap = 1; cap <= 8; cap++) {
+      const f = fitLegend(six, cap);
+      expect(f.shown.length + (f.more > 0 ? 1 : 0)).toBeLessThanOrEqual(Math.max(cap, 2));
+    }
   });
 });
 
