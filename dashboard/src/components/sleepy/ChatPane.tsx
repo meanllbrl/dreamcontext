@@ -570,8 +570,10 @@ export function ChatPane({
   onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core', id: string, vault?: string) => void;
   /** Open a terminal pane that runs the sign-in command — the only surface the flow exists on
    *  (this engine is headless; it answers `/login` with "isn't available in this environment").
-   *  Fires from the SignInBanner and from typing `/login` into the composer. */
-  onSignIn: () => void;
+   *  Fires from the SignInBanner and from typing `/login` into the composer. A conversation on
+   *  a connected second account signs THAT account in again instead (AgentSurface's
+   *  `signInChatAccount`), so it resolves when done and rejects with the reason it could not. */
+  onSignIn: () => Promise<void>;
   /** Whether that pane can actually open here (node-pty + the CLI). False → the banner prints
    *  the command to copy instead of a button that would open a pane that can't start. */
   canSignInInApp: boolean;
@@ -668,6 +670,13 @@ export function ChatPane({
 
   /** In-flight re-assert frame, so a burst of pins during a stream schedules ONE. */
   const repinFrameRef = useRef(0);
+
+  // `/login` in the composer and the peer panel's chrome fire and forget. A failure there is
+  // not lost: the session is still signed out, so the sign-in banner stays up with its own
+  // button, and that one reports the reason.
+  const fireSignIn = useCallback(() => {
+    onSignIn().catch(() => { /* see above */ });
+  }, [onSignIn]);
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -1953,7 +1962,7 @@ export function ChatPane({
           // The peer's panel mounts the REAL Composer, so it needs the same model/effort
           // wiring this pane's own composer has. Passed as one object rather than six props
           // because it is one thing: the chrome a chat needs to be a chat.
-          chrome={{ modelConfig, model, effort, onModelChange, onEffortChange, onSignIn }}
+          chrome={{ modelConfig, model, effort, onModelChange, onEffortChange, onSignIn: fireSignIn }}
           onClose={() => setPeerSessions((list) => list.filter((x) => x.key !== p.key))}
         />
       ))}
@@ -1973,6 +1982,7 @@ export function ChatPane({
         <SignInBanner
           canSignInInApp={canSignInInApp}
           command={signInCommand}
+          accountId={session.accountId}
           onSignIn={onSignIn}
           onRetry={onResume}
         />
@@ -2025,7 +2035,7 @@ export function ChatPane({
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
-          onSignIn={onSignIn}
+          onSignIn={fireSignIn}
           // `/mcp` opens the panel instead of being sent. The engine DOES answer that command
           // — with a sentence telling the user to go and use a terminal — so forwarding it
           // spends a turn to deliver a dead end. See `isMcpCommand`.

@@ -305,6 +305,41 @@ export function upsertClaudeAccount(account: ClaudeAccount, home?: string): Clau
   return account;
 }
 
+/**
+ * Refresh what the CLI reported about an EXISTING account after it signs in again, IN PLACE.
+ *
+ * Not `upsertClaudeAccount`: that one removes the row and pushes it to the end, and the list
+ * order is the priority (position 0 is where new sessions start). A re-login must not quietly
+ * demote the account the user dragged to the top. `id`, `configDir` and `preferred` are never
+ * touched here. Unknown id ⇒ throws.
+ */
+export function updateClaudeAccountIdentity(
+  id: string,
+  patch: Partial<Pick<ClaudeAccount, 'email' | 'organizationUuid' | 'organizationName' | 'tier'>>,
+  home?: string,
+): ClaudeAccount {
+  const accounts = listClaudeAccounts(home);
+  const index = accounts.findIndex((a) => a.id === id);
+  if (index === -1) throw new ClaudeAccountError(`No such account: ${id}`);
+  const kept = Object.fromEntries(Object.entries(patch).filter(([, v]) => typeof v === 'string' && v !== ''));
+  const next = { ...accounts[index], ...kept };
+  accounts[index] = next;
+  writeClaudeAccounts(accounts, home ?? homedir());
+  return next;
+}
+
+/**
+ * Did a re-login land on the account the row is about?
+ *
+ * The browser decides which account signs in, not us, so a user with two Claude accounts can
+ * easily pick the wrong one. An email the CLI did not report is not a mismatch (older CLIs and
+ * Console logins can omit it); a different one is.
+ */
+export function reloginLandedOnOtherAccount(expectedEmail: string, reportedEmail: string | undefined): boolean {
+  if (!reportedEmail || !expectedEmail) return false;
+  return reportedEmail.trim().toLowerCase() !== expectedEmail.trim().toLowerCase();
+}
+
 /** Mark `id` preferred and clear every sibling. Unknown id ⇒ throws (never a silent no-op). */
 export function setPreferredClaudeAccount(id: string, home?: string): void {
   const accounts = listClaudeAccounts(home);

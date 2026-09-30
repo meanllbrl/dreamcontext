@@ -160,7 +160,7 @@ import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
   handleAgentAccountsSwitchPolicy, handleAgentAccountsList,
-  handleAgentAccountsLogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
+  handleAgentAccountsLogin, handleAgentAccountsRelogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
 import {
@@ -439,6 +439,7 @@ export function buildRouter(): Router {
   router.get('/api/agent/accounts', handleAgentAccountsList);
   router.post('/api/agent/accounts/adopt', handleAgentAccountsAdopt);
   router.post('/api/agent/accounts/login', handleAgentAccountsLogin);
+  router.post('/api/agent/accounts/relogin', handleAgentAccountsRelogin);
   router.post('/api/agent/accounts/preferred', handleAgentAccountsPreferred);
   router.post('/api/agent/accounts/reorder', handleAgentAccountsReorder);
   router.post('/api/agent/accounts/refresh', handleAgentAccountsRefresh);

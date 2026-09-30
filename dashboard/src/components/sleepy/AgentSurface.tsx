@@ -4,7 +4,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
-import { api } from '../../api/client';
+import { api, RequestError } from '../../api/client';
 import { useVault, useApi, useInstanceEvent, emitInstance } from '../../context/VaultContext';
 import { uploadAgentFile } from '../../lib/agentDrop';
 import {
@@ -1552,6 +1552,28 @@ export function AgentSurface() {
     cs.setPermissionMode(mode, () => resumeChatSession(cs, mode === 'bypass'));
   }, [bus, vault, resumeChatSession]);
 
+  // The chat banner's "Sign in", for the ACCOUNT this conversation runs on.
+  //
+  // `signInToClaude` above opens a plain shell, and a plain shell has no `CLAUDE_CONFIG_DIR`:
+  // its `claude auth login` signs in the machine's own `~/.claude`. For a chat running on a
+  // connected second account that is the wrong credential store, so the banner came straight
+  // back however many times the user signed in (Faruk, Slack 2026-09-30). A connected account
+  // signs in again through its own sandbox instead (`/agent/accounts/relogin`, browser OAuth,
+  // no terminal needed), and the conversation resumes on it. The server answers
+  // `primary_account` for the machine's own account, which keeps the terminal flow.
+  const signInChatAccount = useCallback(async (cs?: ChatSession) => {
+    if (cs) {
+      try {
+        await api.post('/agent/accounts/relogin', cs.accountId ? { id: cs.accountId } : {});
+        resumeChatSession(cs);
+        return;
+      } catch (err) {
+        if (!(err instanceof RequestError) || err.code !== 'primary_account') throw err;
+      }
+    }
+    if (canSignInInApp) signInToClaude();
+  }, [resumeChatSession, canSignInInApp, signInToClaude]);
+
   /**
    * Plan → Develop: the hand-off behind a plan agent's "Go to development" button.
    *
@@ -2534,7 +2556,7 @@ export function AgentSurface() {
     changeAccount: changeChatAccountFor,
     handoffToDevelop,
     openAppPage: onOpenAppPage,
-    signIn: signInToClaude,
+    signIn: signInChatAccount,
   };
   const chatActionsRef = useRef(chatActionsImpl);
   useEffect(() => { chatActionsRef.current = chatActionsImpl; });
@@ -2548,7 +2570,7 @@ export function AgentSurface() {
     changeAccount: (sid, accountId) => chatActionsRef.current.changeAccount(sid, accountId),
     handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),
-    signIn: () => chatActionsRef.current.signIn(),
+    signIn: (cs) => chatActionsRef.current.signIn(cs),
   }), []);
 
   const handleTabDragStart = useCallback((sid: string) => {

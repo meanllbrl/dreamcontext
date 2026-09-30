@@ -494,6 +494,22 @@ export function ClaudeAccounts() {
                         onClick={() => nudge(a.id, 1)}
                       >↓</button>
                     </div>
+                    {/* A connected account whose credential expired has to be able to come
+                        back without being removed and re-added. The machine's own account
+                        signs in from the System doctor's terminal flow instead. */}
+                    {!a.isPrimary && (
+                      <button
+                        type="button"
+                        className={`btn btn--sm ${stale || probeNotes[a.id] === 'needs-relogin' ? 'btn--primary' : 'btn--secondary'}`}
+                        disabled={busy !== ''}
+                        onClick={() => void run(`relogin-${a.id}`, async () => {
+                          await api.post('/agent/accounts/relogin', { id: a.id });
+                          setProbeNotes(({ [a.id]: _dropped, ...rest }) => rest);
+                        })}
+                      >
+                        {busy === `relogin-${a.id}` ? 'Waiting for the browser…' : 'Sign in again'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn btn--danger-ghost btn--sm"

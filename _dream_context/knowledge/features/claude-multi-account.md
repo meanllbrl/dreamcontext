@@ -85,6 +85,15 @@ and moving before the limit lands did not exist at all.
       code. All three legs are tested.
 - [x] An account whose identity has lapsed (expired, revoked, hand-logged-out) says "needs
       re-login" in the UI rather than showing an ambiguous "unknown" row.
+- [x] A connected account signs in AGAIN without being removed (2026-09-30, Faruk's report:
+      ten sign-ins and the second account stayed signed out). `POST /api/agent/accounts/relogin`
+      runs `claude auth login` into THAT account's sandbox, refuses the machine's own account
+      (`primary_account`, which keeps the terminal flow), refuses a browser sign-in that landed
+      on a different email (`wrong_account`), and updates the row in place so the list order
+      survives. Settings draws "Sign in again" on every connected row; Chat's sign-in banner
+      names the signed-out account and signs it in through the same route, then resumes the
+      conversation. Before this, the banner ran `claude auth login` in a plain shell, which
+      signs in the real `~/.claude` and never the sandbox the chat was running on.
 - [x] With no second account connected, behaviour is bit-for-bit what it was: no sandbox is
       built, no symlink is laid, and no ordinary spawn is rejected.
 - [x] A sandbox's `.claude.json` carries NO MCP configuration at any depth
@@ -363,7 +372,7 @@ readers over the refusal frame — structural first, the synthetic assistant TEX
 account), `src/lib/claude-limit-rejections.ts` (`readAccountRejections` /
 `recordAccountRejection` / `clearAccountRejection`, `DEFAULT_COOLDOWN_MS = 20m`),
 `src/lib/claude-usage-probe.ts` (`probeAccountUsage`, incl. the `healthy-unmeasured` outcome),
-`src/server/routes/agent-accounts.ts` (list / login / reorder / refresh, wired at
+`src/server/routes/agent-accounts.ts` (list / login / relogin / reorder / refresh, wired at
 `src/server/index.ts:385-388`), the account-switch block of `src/server/routes/agent-chat.ts`
 (`shouldProbe` / `shouldSwitchAway` / `SWITCH_THRESHOLD_PERCENT`, passing the live `accounts` array
 as `orderedIds`), and the one-line `...accountEnv`

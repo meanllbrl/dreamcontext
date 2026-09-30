@@ -612,7 +612,7 @@ export function Notch() {
         body: JSON.stringify({ vault, page: `${page}/${id}` }),
       }).catch(() => { /* the button stays; the next click retries */ });
     },
-    signIn: () => { /* sign in from a project window */ },
+    signIn: async () => { /* sign in from a project window */ },
   }), [startSession]);
 
   const name = status?.config?.name ?? 'Assistant';

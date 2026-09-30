@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BotMark } from '../AgentSetup';
 import { AlertIcon } from './atoms';
+import { useClaudeAccounts } from '../../../hooks/useAgentCapabilities';
 
 /** The banner states one sentence: what broke, then the reassurance. Keeps the CLI's own
  *  wording, adds the period it usually lacks. */
@@ -225,32 +226,57 @@ export function ReconnectingChip() {
  * CLI stayed alive after the failed turn or exited — a signed-in respawn picks the transcript
  * up where it stopped.
  */
-export function SignInBanner({ canSignInInApp, command, onSignIn, onRetry }: {
+export function SignInBanner({ canSignInInApp, command, accountId, onSignIn, onRetry }: {
   canSignInInApp: boolean;
   /** The sign-in command the INSTALLED CLI actually has (`claude auth login` on 2.1.x; plain
    *  `claude` on one too old for the subcommand). Server-probed rather than hardcoded, so this
    *  text can never name a command this machine doesn't have. */
   command: string;
-  onSignIn: () => void;
+  /** The account this conversation runs on (`''` = the one new sessions start on). A connected
+   *  second account signs in again in the browser, into ITS OWN sandbox; a terminal running
+   *  `claude auth login` would sign in the machine's own account instead and leave this one
+   *  signed out. */
+  accountId: string;
+  /** Resolves once the terminal is open, or the account is signed in and the chat resumed. */
+  onSignIn: () => Promise<void>;
   onRetry: () => void;
 }) {
+  const accounts = useClaudeAccounts(true).data?.accounts ?? [];
+  const account = accountId ? accounts.find((a) => a.id === accountId) : (accounts.find((a) => a.preferred) ?? accounts[0]);
+  const connected = account && !account.isPrimary ? account : null;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const signIn = () => {
+    setBusy(true);
+    setError('');
+    onSignIn()
+      .catch((e: unknown) => setError((e as Error)?.message || 'The sign-in did not complete.'))
+      .finally(() => setBusy(false));
+  };
   return (
     <div className="chat-banner-signin" role="alert">
       <div className="chat-banner-signin-head">
         <AlertIcon />
-        <span className="chat-banner-signin-title">Not signed in to Claude</span>
+        <span className="chat-banner-signin-title">
+          {connected ? `${connected.email || connected.id} is signed out` : 'Not signed in to Claude'}
+        </span>
       </div>
       <p className="chat-banner-signin-sub">
-        {canSignInInApp
-          ? `Chat runs Claude headlessly, and the sign-in flow needs a real terminal. Opening one here runs ${command} — Claude Code takes it from there.`
-          : 'The in-app terminal isn’t available on this machine, so sign in from a real terminal:'}
+        {connected
+          ? 'This chat runs on that account. Sign in again opens Claude’s sign-in in your browser, then the chat picks up where it stopped.'
+          : canSignInInApp
+            ? `Chat runs Claude headlessly, and the sign-in flow needs a real terminal. Opening one here runs ${command} — Claude Code takes it from there.`
+            : 'The in-app terminal isn’t available on this machine, so sign in from a real terminal:'}
       </p>
-      {!canSignInInApp && <code className="chat-banner-signin-cmd">{command}</code>}
+      {!connected && !canSignInInApp && <code className="chat-banner-signin-cmd">{command}</code>}
+      {error && <p className="chat-banner-signin-sub">{error}</p>}
       <div className="chat-card-actions">
-        {canSignInInApp && (
-          <button type="button" className="chat-btn primary" onClick={onSignIn}>Sign in in Terminal</button>
+        {(connected || canSignInInApp) && (
+          <button type="button" className="chat-btn primary" disabled={busy} onClick={signIn}>
+            {connected ? (busy ? 'Waiting for the browser…' : 'Sign in again') : 'Sign in in Terminal'}
+          </button>
         )}
-        <button type="button" className="chat-btn pill" onClick={onRetry}>Signed in — retry</button>
+        <button type="button" className="chat-btn pill" disabled={busy} onClick={onRetry}>Signed in — retry</button>
       </div>
     </div>
   );
