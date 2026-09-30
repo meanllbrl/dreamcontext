@@ -1922,13 +1922,21 @@ export function registerAutomationsCommand(program: Command): void {
         for (const key of APPROVAL_DIFF_FIELDS) {
           const value = fields[key];
           console.log(chalk.dim(`  ${key}:`));
-          console.log(`    ${value === null || value === '' ? chalk.dim('(none)') : String(value)}`);
+          // An object field (the `## Flow` graph) is printed as JSON: `String()` gave the
+          // reviewer "[object Object]" for a field the hash covers, i.e. nothing to review.
+          const shown = value === null || value === ''
+            ? chalk.dim('(none)')
+            : typeof value === 'object' ? JSON.stringify(value, null, 2).replace(/\n/g, '\n    ') : String(value);
+          console.log(`    ${shown}`);
         }
 
         // The duplicate-run warning. Approval is machine-local and shared
         // automations have no cross-machine coordination, so approving one that
         // already runs on a teammate's machine runs it HERE TOO. Advisory only
         // — duplication may be wanted — but it must never happen unwittingly.
+        const mismatch = reviewMismatch(manifest);
+        if (mismatch) warn(mismatch);
+
         const foreign = foreignRunEvidence(root, manifest);
         if (foreign && foreign.count > 0) {
           warn(
