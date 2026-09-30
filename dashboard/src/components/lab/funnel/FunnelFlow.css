@@ -1,0 +1,240 @@
+/* ── Funnel explorer chrome (FunnelBlock explorer mode) ──────────────── */
+
+.lab-block-funnel.funnel-explorer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.funnel-explorer-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* One-line notes (unknown funnel, low sample, the biggest drop): never wrap, the tooltip has the rest. */
+.funnel-explorer-note {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  color: var(--color-text-secondary);
+}
+
+.funnel-explorer-note[data-tone='caution'] {
+  color: var(--color-warning-ink);
+}
+
+.funnel-explorer-worst {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex: none;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.funnel-explorer-worst-tag {
+  flex: none;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-error-ink);
+}
+
+.funnel-explorer-worst-step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text);
+}
+
+.funnel-explorer-worst-pct {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-error-ink);
+}
+
+/* Not measured is not zero: a sentence where the drawing would be, never a 0. */
+.funnel-explorer-unmeasured {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  text-align: center;
+  overflow: hidden;
+}
+
+/* ── Flow layout ──────────────────────────────────────────────────────── */
+
+.funnel-flow {
+  display: grid;
+  grid-template-columns: minmax(64px, 26%) minmax(0, 1fr) auto;
+  column-gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.funnel-flow-stage,
+.funnel-flow-link {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.funnel-flow-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* The stage shape is centred in its track, so the stages read as one tapering funnel. */
+.funnel-flow-track {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.funnel-flow-shape {
+  display: block;
+  height: 100%;
+  max-height: var(--space-8);
+  min-height: var(--space-1);
+  min-width: 2px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 78%, var(--color-bg)));
+  box-shadow: var(--shadow-sm);
+}
+
+.funnel-flow-value {
+  justify-self: end;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.funnel-flow-pct {
+  color: var(--color-text-tertiary);
+}
+
+/* The link between two stages: a thin rail through the track and the drop badge on it. */
+.funnel-flow-link {
+  position: relative;
+  padding: var(--space-1) 0;
+  border-radius: var(--radius-sm);
+}
+
+.funnel-flow-link-rail {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: center;
+  align-self: stretch;
+  width: 1px;
+  margin: calc(-1 * var(--space-1)) 0;
+  background: var(--color-border);
+}
+
+.funnel-flow-badge {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: center;
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.funnel-flow-badge-pct {
+  color: var(--color-text-secondary);
+}
+
+.funnel-flow-link[data-severity='mid'] .funnel-flow-badge-pct {
+  color: var(--color-warning-ink);
+}
+
+.funnel-flow-link[data-severity='high'] .funnel-flow-badge-pct {
+  color: var(--color-error-ink);
+}
+
+.funnel-flow-badge-lost {
+  color: var(--color-text-tertiary);
+}
+
+.funnel-flow-worst {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-error-ink);
+}
+
+/* The worst drop: a tinted wash across the whole link row, the badge outlined in the same tone. */
+.funnel-flow-link[data-lab-worst] {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.funnel-flow-link[data-lab-worst] .funnel-flow-badge {
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));
+}
+
+.funnel-flow-link[data-lab-worst] .funnel-flow-badge-pct {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-error-ink);
+}
+
+/* A short cell: links give up their padding, stage shapes their minimum. */
+.funnel-flow[data-dense] .funnel-flow-link {
+  padding: 0;
+}
+
+.funnel-flow[data-dense] .funnel-flow-shape {
+  min-height: 0;
+}

@@ -1,0 +1,379 @@
+/*
+ * Funnel explorer: the breakdown chip bar, its lane box, the trend block's
+ * metric switch and the notes both blocks share. Tokens only (light and dark
+ * render one layout); the type ladder is 12 / 14 at 400 / 600.
+ */
+
+/* ─── Shared explorer notes ──────────────────────────────────────────────── */
+
+.lab-explorer-note {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lab-explorer-state {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 0;
+  padding: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.lab-explorer-state-title {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ─── Breakdown chips ────────────────────────────────────────────────────── */
+
+.lab-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.lab-breakdown-axes {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  min-width: 0;
+}
+
+.lab-breakdown-all-row {
+  grid-column: 1 / -1;
+  display: flex;
+}
+
+.lab-breakdown-dim {
+  display: contents;
+}
+
+.lab-breakdown-dim-label {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.lab-breakdown-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.lab-breakdown-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.lab-breakdown-chip-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-breakdown-chip-count {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-breakdown-chip:hover {
+  border-color: var(--color-border-hover);
+  background: var(--color-bg-secondary);
+}
+
+.lab-breakdown-chip:focus-visible,
+.lab-breakdown-pin:focus-visible,
+.lab-breakdown-clear:focus-visible,
+.lab-breakdown-lane-remove:focus-visible,
+.lab-trend-switch-option:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.lab-breakdown-chip[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-breakdown-chip[aria-pressed='true'] .lab-breakdown-chip-count {
+  color: var(--color-accent-text);
+}
+
+/* Not measured is not zero: a dashed, quiet chip that still takes focus (its reason shows). */
+.lab-breakdown-chip[aria-disabled='true'] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.lab-breakdown-chip[aria-disabled='true']:hover {
+  border-color: var(--color-border);
+  background: transparent;
+}
+
+.lab-breakdown-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.lab-breakdown-tip {
+  max-width: calc(var(--space-20) * 3);
+}
+
+.lab-breakdown-tip-text {
+  color: var(--color-text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* ─── Lanes ──────────────────────────────────────────────────────────────── */
+
+.lab-breakdown-lanes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  min-width: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.lab-breakdown-lane-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.lab-breakdown-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+}
+
+.lab-breakdown-lane-num {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.lab-breakdown-lane-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-breakdown-lane-remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.lab-breakdown-lane-remove:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.lab-breakdown-pin,
+.lab-breakdown-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--color-border-hover);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lab-breakdown-pin span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-breakdown-pin:hover:not(:disabled),
+.lab-breakdown-clear:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.lab-breakdown-clear {
+  border-style: solid;
+  border-color: transparent;
+}
+
+.lab-breakdown-pin:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lab-breakdown-hint {
+  min-width: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+/* A narrow cell stacks each dimension's label over its chips. */
+@container (max-width: 420px) {
+  .lab-breakdown-axes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lab-breakdown-dim-label {
+    margin-top: var(--space-1);
+  }
+
+  .lab-breakdown-hint {
+    display: none;
+  }
+}
+
+/* ─── Trend ──────────────────────────────────────────────────────────────── */
+
+.lab-trend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-trend-switch {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: var(--space-1);
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+
+.lab-trend-switch-option {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.lab-trend-switch-option:hover {
+  color: var(--color-text);
+}
+
+.lab-trend-switch-option[aria-checked='true'] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: var(--shadow-sm);
+}
+
+.lab-trend-switch-option[data-measured='false'] {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through dotted;
+}
+
+.lab-trend-chart {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}

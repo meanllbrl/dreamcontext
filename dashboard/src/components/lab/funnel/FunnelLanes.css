@@ -1,0 +1,149 @@
+/* Pinned lanes side by side on one step spine (FunnelLanes). Columns and rows are set
+   inline (label column + one per lane; header, then a step row and a drop row per step):
+   every row may shrink to nothing before the block would scroll. */
+
+.funnel-lanes {
+  display: grid;
+  column-gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+}
+
+.funnel-lanes > * {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.funnel-lanes-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: var(--space-2);
+  align-items: center;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-1);
+}
+
+.funnel-lanes-num {
+  grid-row: 1 / 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-lanes-name,
+.funnel-lanes-users,
+.funnel-lanes-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.funnel-lanes-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.funnel-lanes-users {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-lanes-head[data-lab-lane-unmeasured] .funnel-lanes-num {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+}
+
+.funnel-lanes-head[data-lab-lane-unmeasured] .funnel-lanes-users {
+  color: var(--color-warning-ink);
+}
+
+.funnel-lanes-step {
+  align-self: center;
+  color: var(--color-text-secondary);
+}
+
+.funnel-lanes-cell {
+  display: grid;
+  grid-template-columns: minmax(var(--space-4), 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+}
+
+.funnel-lanes-track {
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+
+.funnel-lanes-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+
+.funnel-lanes-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.funnel-lanes-pct {
+  color: var(--color-text-tertiary);
+}
+
+/* A step this lane does not carry: a dash, never a zero bar. */
+.funnel-lanes-cell--missing {
+  align-self: center;
+  color: var(--color-text-tertiary);
+}
+
+.funnel-lanes-drop {
+  align-self: center;
+  justify-self: start;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  line-height: var(--line-height-snug);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.funnel-lanes-drop[data-severity='mid'] {
+  color: var(--color-warning-ink);
+}
+
+.funnel-lanes-drop[data-severity='high'] {
+  color: var(--color-error-ink);
+}
+
+/* The lane's own biggest drop: the tinted wash the flow layout uses. */
+.funnel-lanes-drop[data-lab-worst] {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.funnel-lanes[data-dense] .funnel-lanes-head {
+  padding-bottom: var(--space-1);
+  margin-bottom: 0;
+}
+
+.funnel-lanes[data-dense] .funnel-lanes-track {
+  height: var(--space-1);
+}
