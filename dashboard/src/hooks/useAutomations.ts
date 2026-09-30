@@ -334,13 +334,16 @@ export function useAutomations() {
 }
 
 /** Full manifest (every hashed field for review) + approval state + cache/history. */
-export function useAutomation(slug: string | null) {
+export function useAutomation(slug: string | null, opts: { fresh?: boolean } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: ['automations', slug],
     queryFn: () => api.get<AutomationDetail>(`/automations/${slug}`),
     enabled: !!slug,
     retry: 0,
+    // `fresh`: re-read on every mount even inside the client's 5s staleTime, for a reader
+    // that WRITES what it read back (the edit dialog) and so must never start from a copy.
+    ...(opts.fresh ? { refetchOnMount: 'always' as const } : {}),
   });
 }
 

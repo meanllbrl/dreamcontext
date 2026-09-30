@@ -886,6 +886,13 @@ export async function handleAutomationsDisable(
  *  whole thing, this is the preview. */
 const DESCRIPTION_MAX_CHARS = 600;
 
+/** True when `incoming` is exactly the list preview of a LONGER `current` prompt — see the
+ *  update route. Exported for its unit test. */
+export function isPreviewTruncation(incoming: string, current: string): boolean {
+  const full = current.trim();
+  return full.length > DESCRIPTION_MAX_CHARS && incoming.trim() === full.slice(0, DESCRIPTION_MAX_CHARS).trim();
+}
+
 /** An agent photo is a small square rendered at 56px at its largest. 4 MB is
  *  already absurdly generous for that and bounds what one manifest can pin
  *  into the brain directory. */
@@ -1063,8 +1070,20 @@ export async function handleAutomationsUpdate(
     return;
   }
   try {
-    if (!isSafeAutomationSlug(params.slug) || !getAutomation(contextRoot, params.slug)) {
+    const current = params.slug && isSafeAutomationSlug(params.slug) ? getAutomation(contextRoot, params.slug) : null;
+    if (!current) {
       sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+      return;
+    }
+    // The list's `description` IS the prompt cut to DESCRIPTION_MAX_CHARS, and an edit dialog
+    // that seeded its field from it saved that preview back as the prompt and re-approved it
+    // (2026-09-30: a 6,700-character manifest cut mid-word). Any client still built that way
+    // is refused here, before a byte is written: a prompt that is exactly the preview of a
+    // longer one is a truncation, never an edit.
+    const incoming = str(body.prompt);
+    if (incoming !== undefined && isPreviewTruncation(incoming, current.prompt)) {
+      sendError(res, 409, 'prompt_truncated',
+        'This save would replace the prompt with its first 600 characters. Reopen the agent so the full prompt loads, then save again.');
       return;
     }
     const manifest = updateAutomation(contextRoot, params.slug, {

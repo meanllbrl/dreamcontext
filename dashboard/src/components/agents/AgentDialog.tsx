@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentDraft, AutomationMode, AutomationSummary, Weekday } from '../../hooks/useAutomations';
 import {
+  useAutomation,
   useCreateAgent,
   useDeleteAgent,
   useUpdateAgent,
@@ -229,7 +230,23 @@ export function AgentDialog({
   const start = editing ? undefined : initial;
 
   const [title, setTitle] = useState(agent?.title ?? start?.title ?? '');
-  const [prompt, setPrompt] = useState(agent?.description ?? start?.description ?? '');
+  // NEVER seeded from `agent.description` on an edit. That field is the list's 600-character
+  // PREVIEW of the prompt, and seeding the field with it made "Save and re-approve" write the
+  // preview back as the prompt: a 7,000-character manifest cut mid-word and approved as such
+  // (2026-09-30, `tarif-korpus-haftalik`). An edit reads the manifest's full prompt from the
+  // detail route and cannot be saved until it has.
+  const [prompt, setPrompt] = useState(editing ? '' : start?.description ?? '');
+  const detail = useAutomation(editing ? agent.slug : null, { fresh: true });
+  // Fetched after THIS dialog mounted, never a cached copy: a manifest edited on disk since the
+  // last read would otherwise be overwritten with the older prompt on save.
+  const fullPrompt = detail.isFetchedAfterMount ? detail.data?.automation.prompt : undefined;
+  const promptSeeded = useRef(!editing);
+  useEffect(() => {
+    if (promptSeeded.current || fullPrompt === undefined) return;
+    promptSeeded.current = true;
+    setPrompt(fullPrompt);
+  }, [fullPrompt]);
+  const promptReady = !editing || promptSeeded.current || fullPrompt !== undefined;
   const [mode, setMode] = useState<AutomationMode>(agent?.mode ?? start?.mode ?? 'sched');
   const [rows, setRows] = useState<SlotRow[]>(() =>
     initialSlotRows(agent?.schedule?.slots, agent ? undefined : start, new Date()));
@@ -354,7 +371,8 @@ export function AgentDialog({
     );
   }, [mode, parsedSlots, model, effort, title]);
 
-  const canSave = title.trim().length > 0
+  const canSave = promptReady
+    && title.trim().length > 0
     && prompt.trim().length > 0
     && (mode === 'call' || !('error' in parsedSlots));
 
@@ -469,7 +487,10 @@ export function AgentDialog({
             className="agent-textarea"
             value={prompt}
             onChange={(e) => handleDescription(e.target.value)}
-            placeholder="Her sabah 09:00'da dünkü PostHog insight'larını oku, 3 maddelik özet çıkar; düşüş varsa nedenini araştır."
+            readOnly={!promptReady}
+            placeholder={promptReady
+              ? "Her sabah 09:00'da dünkü PostHog insight'larını oku, 3 maddelik özet çıkar; düşüş varsa nedenini araştır."
+              : detail.isError ? 'The prompt could not be read, so this agent cannot be saved from here.' : 'Reading the prompt…'}
             autoFocus={!editing}
           />
           <span className="agent-note">This becomes the prompt the run actually sends.</span>

@@ -34,7 +34,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -433,6 +433,28 @@ async function main() {
     const approvedAfter = approvalFor('researcher');
     check('…and the changed manifest was re-approved here', reApproved,
       `before=${approvedBefore?.manifestSha256?.slice(0, 12)} after=${approvedAfter?.manifestSha256?.slice(0, 12)}`);
+
+    // ── 5a: a long prompt survives an edit ────────────────────────────────
+    // 2026-09-30: the dialog seeded its field from the list's 600-character preview, so a
+    // "Save and re-approve" cut a 6,700-character prompt mid-word and approved the stump.
+    console.log('\n═══ 5a. A long prompt survives an edit ═══');
+    const LONG = `Uzun görev. ${'Her adım ayrı bir satırda anlatılır ve hiçbiri kaybolmaz. '.repeat(25)}SON SATIR BURADA.`;
+    const researcherPath = join(AUTOMATIONS_DIR, 'researcher.md');
+    writeFileSync(researcherPath, readFileSync(researcherPath, 'utf-8')
+      .replace('Yeni görev: rakipleri tara ve kaynaklı brief yaz.', LONG));
+    check('[setup] the manifest now holds a prompt longer than the 600-character preview',
+      manifestText('researcher').includes('SON SATIR BURADA.') && LONG.length > 600);
+    await showRoster();
+    await page.locator('.agent-card:not(.agent-card--new)', { hasText: 'Researcher' }).first()
+      .locator('.agent-card-btn', { hasText: 'Edit' }).click();
+    const fullLoaded = await until(async () =>
+      (await page.locator('.agent-modal .agent-textarea').inputValue()).includes('SON SATIR BURADA.'), 10000);
+    check('the Edit dialog loads the FULL prompt, not the preview (was cut at 600 characters)', fullLoaded,
+      `len=${(await page.locator('.agent-modal .agent-textarea').inputValue()).length} placeholder=${await page.locator('.agent-modal .agent-textarea').getAttribute('placeholder')} modal=${await page.locator('.agent-modal').count()}`);
+    await page.locator('.agent-btn--primary').click();
+    await until(async () => (await page.locator('.agent-modal').count()) === 0, 10000);
+    check('…and saving it unchanged keeps the whole prompt on disk',
+      manifestText('researcher').includes('SON SATIR BURADA.'), manifestText('researcher').slice(-300));
 
     // ── 5b: the details screen ────────────────────────────────────────────
     console.log('\n═══ 5b. Details screen ═══');
