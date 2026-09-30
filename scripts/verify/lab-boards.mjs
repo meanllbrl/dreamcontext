@@ -76,6 +76,30 @@
  *  15. COLOR FOLLOWS THE ENTITY: a legend toggle, a series pick and a filter
  *      chip never repaint a surviving series or slice.
  *
+ * The owner's demo findings (Acceptance Criteria "Demo finding 1..5"), on a
+ * board of their own ("Quarterly revenue review", slug `findings`):
+ *
+ *  16. FINDING 1: a library html block added by ref through the add-card menu,
+ *      bound to another insight, shows that insight's rows in the SAME page
+ *      load; rebinding its input in the inspector shows the new rows, still
+ *      without a reload.
+ *  17. FINDING 2: line, stacked, bar (h and v), pie and heatmap at 3x3, 9x2 and
+ *      12x2: the expected size class, a drawn plot of non-trivial size, every
+ *      text box inside the card, no inner scroll, a y axis of 0 or >= 2 labels;
+ *      a compact line at 9x2 answers the pointer in its floating tooltip with
+ *      the datum under it.
+ *  18. FINDING 3: the demo's 4x4 table has no horizontal scroll and no cut
+ *      cell, >= 4 full rows between the sticky header and total, what it
+ *      dropped in each row's tooltip, the word unit once in the header; a
+ *      12-wide copy keeps every column.
+ *  19. FINDING 4: inside a board cell a single root dc-card dissolves into the
+ *      chrome (0 padding, 0 border) while the kit still styles everything in
+ *      it; two root cards keep their own boxes; an untitled card has no header
+ *      row and its menu is reachable by keyboard.
+ *  20. FINDING 5: a ~24-character board name reads whole on its tab (or the
+ *      tab carries it in title + aria-label); the detail panel never shows the
+ *      scaffold's "(What does this number MEAN? ...)" placeholder.
+ *
  * Same harness contract as the other verify scripts: real server, isolated
  * fake HOME, COLLECT-DON'T-FAIL-FAST (every section runs and reports; a
  * thrown section is one FAIL line, not an abort). Screenshots, both themes,
@@ -113,7 +137,7 @@
  *                     inner scroll" checks of line / bar / pie (both sizes).
  *   hover-offset      bundle: the pointer-to-datum mapping answers the NEXT
  *                     index (an off-by-one). Must fail: every line and bar
- *                     "hover truth" datum check.
+ *                     "hover truth" datum check, the compact line's included.
  *   repaint-by-rank   bundle: colours key on the drawn entities only (the
  *                     unfiltered domain is dropped), so survivors re-rank.
  *                     Must fail: "color follows the entity: a filter chip keeps
@@ -129,6 +153,28 @@
  *   sticky-lost       stylesheet: the table header cells are position:static.
  *                     Must fail: "table: the sticky header stays at the top
  *                     after scrolling".
+ *   html-no-wait      bundle: the html block mounts its frame at once with whatever
+ *                     inputs it holds (no wait for the current binding's frames,
+ *                     no remount when they land): the pre-fix behaviour. Must
+ *                     fail: the two "finding 1" data checks.
+ *   compact-off       bundle: the size policy never answers "compact" (a 2-row
+ *                     chart stays regular). Must fail: the "finding 2" checks of
+ *                     the 2-row line / stacked / bar cards (see MUTATIONS).
+ *   table-cell-units  bundle: the word unit is no longer lifted into the header
+ *                     (every figure carries "users"). Must fail: "finding 3: the
+ *                     header carries the unit once, no body cell repeats it".
+ *   table-padding     stylesheet: the pre-fix cell padding and line height. Must
+ *                     fail: "finding 3: the 4x4 table shows >= 4 full rows between
+ *                     header and total".
+ *   table-prefix      bundle + stylesheet: the pre-fix table (the fit ladder is empty,
+ *                     so nothing gives way, and the text column is squeezed and
+ *                     ellipsized). Must fail: "finding 3: no table cell cuts its
+ *                     text (4x4)", "... has no horizontal scroll".
+ *   card-in-card      bundle: the html cell's root-card rule is dropped. Must
+ *                     fail: "finding 4: a single root dc-card dissolves into the
+ *                     cell (0 padding, 0 border)".
+ *
+ * A mutation run uses its own port and scratch dir, so several can run at once.
  */
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -143,12 +189,14 @@ import matter from 'gray-matter';
 import { webkit } from 'playwright';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SCRATCH = join(tmpdir(), 'dreamcontext-verify-lab-boards');
+const MUTATION = (process.argv.find((a) => a.startsWith('--mutation=')) ?? '').slice('--mutation='.length) || null;
+const SCRATCH = join(tmpdir(), `dreamcontext-verify-lab-boards${MUTATION ? `-${MUTATION}` : ''}`);
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
 const EMPTY = join(SCRATCH, 'empty');
 const SHOTS = join(SCRATCH, 'shots');
-const PORT = 45817;
+/** A small stable offset per mutation name: parallel mutation runs never share a server. */
+const PORT = 45817 + (MUTATION ? 1 + ([...MUTATION].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % 400) : 0);
 const BASE = `http://127.0.0.1:${PORT}`;
 const CLI = join(REPO, 'dist', 'index.js');
 /** The entry the server AND every CLI call run: dist/, or its mutated copy under a server mutation. */
@@ -160,7 +208,6 @@ const PREFS = join(DC, 'state', '.lab-prefs.json');
 /** A number that exists ONLY in the file a symlinked cache points at: seeing it anywhere is a leak. */
 const LEAK = 987654;
 
-const MUTATION = (process.argv.find((a) => a.startsWith('--mutation=')) ?? '').slice('--mutation='.length) || null;
 /** A second home for the screenshots (the owner's review folder). A mutation run never writes there. */
 const SHOTS_OUT = MUTATION ? null : ((process.argv.find((a) => a.startsWith('--shots=')) ?? '').slice('--shots='.length) || null);
 
@@ -174,7 +221,8 @@ const MUTATIONS = {
   'chart-overflow': ['line (small) fits its cell, no inner scroll', 'line (large) fits its cell, no inner scroll',
     'bar (small) fits its cell, no inner scroll', 'bar (large) fits its cell, no inner scroll',
     'pie (small) fits its cell, no inner scroll', 'pie (large) fits its cell, no inner scroll'],
-  'hover-offset': ['hover truth: line (narrow) 2026-09-19', 'hover truth: line (narrow) 2026-09-22', 'hover truth: line (narrow) 2026-09-26',
+  'hover-offset': ['finding 2: hover truth: compact line (9x2) 2026-09-19', 'finding 2: hover truth: compact line (9x2) 2026-09-22',
+    'finding 2: hover truth: compact line (9x2) 2026-09-26', 'hover truth: line (narrow) 2026-09-19', 'hover truth: line (narrow) 2026-09-22', 'hover truth: line (narrow) 2026-09-26',
     'hover truth: line (wide) 2026-09-19', 'hover truth: line (wide) 2026-09-22', 'hover truth: line (wide) 2026-09-26',
     'hover truth: bar (narrow) south', 'hover truth: bar (narrow) east', 'hover truth: bar (narrow) west',
     'hover truth: bar (wide) south', 'hover truth: bar (wide) east', 'hover truth: bar (wide) west'],
@@ -184,6 +232,15 @@ const MUTATIONS = {
   'tab-clip': ['tabs: every tab label lies inside its button and the tab bar (m-tabs)'],
   'ticks-overlap': ['axis tick labels never overlap: line (large)'],
   'sticky-lost': ['table: the sticky header stays at the top after scrolling'],
+  'html-no-wait': ["finding 1: a library block added by ref through the UI shows its bound insight's rows without a reload",
+    'finding 1: rebinding the html input in the inspector shows the new rows without a reload'],
+  'compact-off': ['finding 2: line 9x2 is compact size', 'finding 2: line 9x2 draws a plot of non-trivial size', 'finding 2: line 12x2 draws a plot of non-trivial size',
+    'finding 2: stacked 9x2 draws a plot of non-trivial size', 'finding 2: bar-v 9x2 draws a plot of non-trivial size',
+    "finding 2: the compact line's tooltip floats outside the card"],
+  'table-cell-units': ['finding 3: the header carries the unit once, no body cell repeats it'],
+  'table-padding': ['finding 3: the 4x4 table shows >= 4 full rows between header and total'],
+  'table-prefix': ['finding 3: no table cell cuts its text (4x4)', 'finding 3: the 4x4 table has no horizontal scroll'],
+  'card-in-card': ['finding 4: a single root dc-card dissolves into the cell (0 padding, 0 border)'],
 };
 if (MUTATION && !MUTATIONS[MUTATION]) {
   console.error(`unknown mutation "${MUTATION}"; known: ${Object.keys(MUTATIONS).join(', ')}`);
@@ -361,7 +418,7 @@ lab.data('rows').then(function (f) { document.getElementById('lib-rows').textCon
 </script>`;
 
 /** The inline html block: kit probe, one declared input, one undeclared name. */
-const INLINE_HTML = `<div class="dc-card" id="kit"><div class="dc-card-title">Plans by kit</div><span class="dc-chip" id="chip">kit</span></div>
+const INLINE_HTML = `<div class="dc-card" id="kit"><div class="dc-card-title" id="kit-title">Plans by kit</div><span class="dc-chip" id="chip">kit</span></div>
 <div id="plain">plain</div>
 <pre id="ok">pending</pre><pre id="refused">pending</pre><pre id="inputs">pending</pre>
 <script>
@@ -453,6 +510,19 @@ const BUNDLE_MUTATIONS = {
   'hover-offset': [/return (\w+)-(\w+)\[(\w+)\]<=\2\[(\w+)\]-\1\?\3:\4\}/, 'return Math.min($2.length-1,($1-$2[$3]<=$2[$4]-$1?$3:$4)+1)}'],
   // LineChart.tsx entityDomain(domain, names): the unfiltered domain is ignored, colours follow the drawn rank.
   'repaint-by-rank': [/function (\w+)\((\w+),(\w+)\)\{if\(!\2\|\|\2\.length===0\)return\[\.\.\.\3\];/, 'function $1($2,$3){return[...$3];'],
+  // HtmlBlock.tsx HtmlBlockBody: `!current && !gaveUp ? <waiting/> : <HtmlBlockFrame key={fingerprint} inputs={currentInputs}/>`
+  // becomes `<HtmlBlockFrame {...frame}/>`: mounted at once, raw inputs, never remounted when the frames land.
+  'html-no-wait': [/return!([\w$]+)&&!([\w$]+)\?([\w$]+)\.jsx\("div",\{className:"lab-block-empty","data-lab-html-waiting":!0,children:[\w$]+\}\):\3\.jsx\(([\w$]+),\{\.\.\.([\w$]+),inputs:[\w$]+\},[\w$]+\(\5\.declared,[\w$]+\)\)/,
+    'return $3.jsx($4,{...$5})'],
+  // fit.ts chartSizeClass: `height < f*COMPACT_HEIGHT || width < f*COMPACT_WIDTH ? 'compact' : ...` never holds.
+  'compact-off': [/(return )([\w$]+)<([\w$]+)\*[\w$]+\|\|([\w$]+)<\3\*[\w$]+\?"compact":(\2<\3\*[\w$]+\|\|\4<\3\*[\w$]+\?"small")/, '$1!1?"compact":$5'],
+  // MetricTable.tsx wordUnit(): no word unit is lifted into the header, so every figure carries it.
+  'table-cell-units': [/(function [\w$]+\([\w$]+,[\w$]+\)\{const ([\w$]+)=[\w$]+\([\w$]+,[\w$]+\);return )\2\.startsWith\(" "\)\?\2\.trim\(\):null\}/, '$1null}'],
+  // MetricTable.tsx frameLadder(): nothing ever gives way, every column stays at any width. With the
+  // stylesheet half below: the pre-fix table.
+  'table-prefix': [/(function [\w$]+\([\w$]+\)\{const [\w$]+=[\w$]+=>[\w$]+\.includes\([\w$]+\),[\w$]+=[\w$]+\.filter\([\w$]+=>![\w$]+\([\w$]+\)\);return)\[\{drop:"n"\},\{compact:!0\},\{drop:"prev"\},\{noBar:!0\},\{drop:"delta"\},\.\.\.[\w$]+\.slice\(1\)\.reverse\(\)\.map\([\w$]+=>\(\{drop:[\w$]+\}\)\)\]\}/, '$1[]}'],
+  // htmlBlockBridge.ts HTML_BLOCK_CELL_CSS: the single root dc-card keeps its own box inside the cell.
+  'card-in-card': [/body:not\(:has\(> \.dc-card ~ \.dc-card\)\) > \.dc-card \{/, '.verify-card-in-card {'],
 };
 
 /** Stylesheet mutations: a rule appended to the served CSS bundle. */
@@ -462,6 +532,10 @@ const CSS_MUTATIONS = {
   'tab-clip': '.lab-block-tab{height:10px!important;min-height:0!important;padding-top:0!important;padding-bottom:0!important;overflow:hidden!important}',
   'ticks-overlap': '.lab-chart-tick{font-size:40px!important}',
   'sticky-lost': '.lab-table-head th{position:static!important}',
+  // MetricTable.css before finding 3: a 4px cell inset and the normal line height.
+  // MetricTable.css before finding 3: the text column squeezed and ellipsized (with the bundle half above).
+  'table-prefix': '.lab-table-text{max-width:0!important;min-width:var(--space-16)!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}',
+  'table-padding': '.lab-table th,.lab-table td,.lab-table-sort,.lab-table-static{padding:var(--space-1) var(--space-2)!important}.lab-table{line-height:var(--line-height-normal)!important}',
 };
 
 /** Server mutation: a scratch copy of dist/ with the store's containment removed. */
@@ -663,6 +737,12 @@ const REGIONS_TOTAL = REGIONS.reduce((s, r) => s + r[1], 0);
 const HOVER_BARS = ['south', 'east', 'west'];
 /** One dim, big values (>= 10,000: `number` differs from `auto` here). */
 const ACCOUNTS = [['enterprise', 86000, 80000], ['mid-market', 54000, 56000], ['smb', 31000, 29000], ['startup', 18000, 15000], ['nonprofit', 12000, 12500]];
+/** The demo's country table, verbatim: [country, v, prev, n]. */
+const COUNTRIES = [
+  ['United States', 12400, 11800, 88100], ['Germany', 5200, 4900, 35600], ['United Kingdom', 4700, 4650, 31900],
+  ['Brazil', 3900, 3350, 24800], ['Japan', 3300, 3400, 26100], ['India', 2900, 2400, 17200],
+  ['France', 2600, 2500, 17800], ['Canada', 2100, 2050, 14900], ['Netherlands', 1400, 1290, 9800], ['Spain', 1300, 1210, 8700],
+];
 
 const tableScript = (dims, rows) => `export default async function () {
   const rows = ${JSON.stringify(rows)};
@@ -703,6 +783,15 @@ export default async function () {
         const v = 1000 + r * 1700 + q * 600 + ((r * q) % 3) * 250;
         return { d: { region, quarter }, v, prev: v - 150 };
       }))),
+  },
+  {
+    // Finding 3: the demo's "Top countries" table (a word unit, v / prev / n, long names).
+    slug: 'countries', title: 'Top countries by active users', render: 'table', unit: 'users',
+    script: `export default async function () {
+  const rows = ${JSON.stringify(COUNTRIES.map(([country, v, prev, n]) => ({ d: { country }, v, prev, n })))};
+  return { kind: 'dataset/v1', primary: 'main', datasets: [{ key: 'main', dims: [{ key: 'country', label: 'Country' }], rows,
+    total: { v: rows.reduce((s, r) => s + r.v, 0), prev: rows.reduce((s, r) => s + r.prev, 0) } }] };
+}`,
   },
 ];
 
@@ -887,6 +976,203 @@ function hoverBoardSpec() {
       { id: 'cl-line-pick', title: 'Line pick', at: { x: 6, y: 16, w: 6, h: 5 }, blocks: [{ line: { data: 'sessions', series: ['ios', 'android'] } }] },
       { id: 'cl-stacked', title: 'Stacked legend', at: { x: 0, y: 21, w: 6, h: 5 }, blocks: [{ stacked: { data: 'sessions' } }] },
     ],
+  };
+}
+
+// ─── Demo findings fixtures (sections 16-20) ─────────────────────────────────
+
+/** Finding 5: a board name of ~24 characters (the demo's "Northwind Notes: growth" is 23). */
+const FINDINGS_TITLE = 'Quarterly revenue review';
+/** Finding 2: [key, block]: each drawn at every COMPACT_SIZES size. */
+const COMPACT_CASES = [
+  ['line', { line: { data: 'trend' } }],
+  ['stacked', { stacked: { data: 'trend' } }],
+  ['bar-h', { bar: { data: 'regions', orientation: 'h' } }],
+  ['bar-v', { bar: { data: 'regions', orientation: 'v' } }],
+  ['pie', { pie: { data: 'regions' } }],
+  ['heatmap', { heatmap: { data: 'grid2' } }],
+];
+/**
+ * The grid's extreme sizes and the size class each must draw in (fit.ts): a 2-row
+ * cell leaves no room for axes (compact: a sparkline-style mark with end labels),
+ * a 3x3 cell keeps its axes and yields the legend first (small).
+ */
+const COMPACT_SIZES = { '3x3': { w: 3, h: 3, size: 'small' }, '9x2': { w: 9, h: 2, size: 'compact' }, '12x2': { w: 12, h: 2, size: 'compact' } };
+/** In compact mode the drawn plot is at least this share of its block's content box. */
+const COMPACT_PLOT_MIN = 0.4;
+
+/** Finding 4: the kit on INNER elements, inside one root card (which dissolves into the cell). */
+const KIT_HTML = `<div class="dc-card" id="kit"><div class="dc-card-title" id="kit-title">Plans by kit</div>
+<span class="dc-chip" id="chip">kit</span> <button class="dc-btn" id="btn">Now</button>
+<div class="dc-tabs"><div class="dc-tablist"><button class="dc-tab dc-tab--on" id="tab-on">One</button><button class="dc-tab" id="tab-off">Two</button></div></div></div>`;
+/** Finding 4: two root cards are a deliberate grid of boxes: each keeps its box. */
+const TWO_CARDS_HTML = `<div class="dc-card" id="card-a"><div class="dc-card-title">A</div></div>
+<div class="dc-card" id="card-b"><div class="dc-card-title">B</div></div>`;
+
+/** Inside an html block's frame: the kit's computed styles on its inner elements, and every root dc-card's box. */
+function kitInPage() {
+  const cs = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const s = getComputedStyle(el);
+    return {
+      pad: `${s.paddingTop} ${s.paddingRight}`, radius: s.borderTopLeftRadius, weight: s.fontWeight, bg: s.backgroundColor,
+      border: s.borderTopWidth, borderBottom: `${s.borderBottomWidth} ${s.borderBottomStyle}`, color: s.color, display: s.display,
+    };
+  };
+  const cards = {};
+  for (const el of document.querySelectorAll('body > .dc-card')) {
+    const s = getComputedStyle(el);
+    cards[el.id || `card${Object.keys(cards).length}`] = { pad: `${s.paddingTop} ${s.paddingLeft}`, border: s.borderTopWidth, bg: s.backgroundColor };
+  }
+  return {
+    title: cs('kit-title') ?? cs('title'), chip: cs('chip'), btn: cs('btn'), tabOn: cs('tab-on'), tabOff: cs('tab-off'),
+    plain: cs('plain'), cards,
+  };
+}
+const transparent = (c) => !c || c === 'transparent' || /rgba\(0, 0, 0, 0\)/.test(c);
+/** The kit's own values (chatHtmlKit.ts): chip 3px 9px pill, title 650, button 5px 12px bordered, tab 6px 12px with an accent rule. */
+function kitApplies(k, { buttons = true } = {}) {
+  if (!k || !k.chip || !k.title) return false;
+  const chip = k.chip.pad === '3px 9px' && parseFloat(k.chip.radius) >= 100 && Number(k.chip.weight) >= 600 && !transparent(k.chip.bg) && k.chip.display === 'inline-flex';
+  const title = Number(k.title.weight) >= 650;
+  const plain = !k.plain || k.plain.pad === '0px 0px';
+  if (!buttons) return chip && title && plain;
+  const btn = !!k.btn && k.btn.pad === '5px 12px' && k.btn.border === '1px' && !transparent(k.btn.bg);
+  const tabs = !!k.tabOn && !!k.tabOff && k.tabOn.pad === '6px 12px' && k.tabOn.borderBottom === '2px solid' && k.tabOn.color !== k.tabOff.color;
+  return chip && title && plain && btn && tabs;
+}
+const rootDissolved = (k, id) => !!k?.cards?.[id] && k.cards[id].pad === '0px 0px' && k.cards[id].border === '0px' && transparent(k.cards[id].bg);
+const rootKept = (k, id) => !!k?.cards?.[id] && k.cards[id].pad === '14px 16px' && k.cards[id].border === '1px' && !transparent(k.cards[id].bg);
+
+function findingsBoardSpec() {
+  const cards = [];
+  let y = 0;
+  for (const [key, block] of COMPACT_CASES) {
+    cards.push({ id: `f-${key}-9x2`, title: `${key} 9x2`, at: { x: 0, y, w: 9, h: 2 }, blocks: [block] });
+    cards.push({ id: `f-${key}-3x3`, title: `${key} 3x3`, at: { x: 9, y, w: 3, h: 3 }, blocks: [block] });
+    cards.push({ id: `f-${key}-12x2`, title: `${key} 12x2`, at: { x: 0, y: y + 3, w: 12, h: 2 }, blocks: [block] });
+    y += 5;
+  }
+  // The demo's table exactly as the demo placed it (4x4, bound, bars on), and a 12-wide copy.
+  cards.push({ id: 'f-table', title: 'Top countries', insight: 'countries', at: { x: 0, y, w: 4, h: 4 }, blocks: [{ table: { data: 'countries', bars: true } }] });
+  // No title and no insight: no header row (finding 4). One root dc-card.
+  cards.push({ id: 'f-untitled', at: { x: 4, y, w: 4, h: 4 }, blocks: [{ html: { html: KIT_HTML } }] });
+  cards.push({ id: 'f-two-cards', title: 'Two cards', at: { x: 8, y, w: 4, h: 4 }, blocks: [{ html: { html: TWO_CARDS_HTML } }] });
+  y += 4;
+  cards.push({ id: 'f-table-wide', title: 'Top countries (wide)', insight: 'countries', at: { x: 0, y, w: 12, h: 4 }, blocks: [{ table: { data: 'countries', bars: true } }] });
+  return { title: FINDINGS_TITLE, order: 0, cards };
+}
+
+/**
+ * Finding 2, one card: its size class, the drawn plot against the block's content
+ * box, every text box against the card, the y labels. The plot is the union of the
+ * data marks (a line, an area, bars, slices, cells) and the plot rectangle they are
+ * drawn in (gridlines, the axis rule, the hover area), never the frame, the axis
+ * labels or the legend around them.
+ */
+function compactInPage(cardEl) {
+  const c = cardEl.getBoundingClientRect();
+  const chart = cardEl.querySelector('.lab-chart');
+  const blk = cardEl.querySelector('.board-card-block');
+  const bs = getComputedStyle(blk);
+  const br = blk.getBoundingClientRect();
+  const content = {
+    w: br.width - parseFloat(bs.paddingLeft) - parseFloat(bs.paddingRight),
+    h: br.height - parseFloat(bs.paddingTop) - parseFloat(bs.paddingBottom),
+  };
+  const u = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity };
+  let marks = 0;
+  for (const el of blk.querySelectorAll('path[data-series], rect[data-series], [data-bar], [data-slice], [data-heat-cell], [data-area], .lab-chart-grid line, .lab-chart-axis-line, [data-chart-hit]')) {
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 && r.height <= 0) continue;
+    if (el.matches('path[data-series], rect[data-series], [data-bar], [data-slice], [data-heat-cell], [data-area]')) marks += 1;
+    u.l = Math.min(u.l, r.left); u.t = Math.min(u.t, r.top); u.r = Math.max(u.r, r.right); u.b = Math.max(u.b, r.bottom);
+  }
+  const plot = marks ? { w: (u.r - u.l) / content.w, h: (u.b - u.t) / content.h, px: [Math.round(u.r - u.l), Math.round(u.b - u.t)] } : { w: 0, h: 0, px: [0, 0] };
+  // Every painted text: HTML text nodes by their range, SVG text by its box.
+  const outside = [];
+  const hidden = (el) => {
+    for (let e = el; e && e !== cardEl.parentElement; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return true;
+      if (/inset\(50%\)/.test(cs.clipPath) || (cs.position === 'absolute' && e.clientWidth <= 1 && e.clientHeight <= 1)) return true;
+    }
+    return false;
+  };
+  const walker = document.createTreeWalker(cardEl, NodeFilter.SHOW_TEXT);
+  let texts = 0;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (!n.textContent.trim() || hidden(n.parentElement)) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const r = n.parentElement.closest('svg') ? n.parentElement.getBoundingClientRect() : range.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+    texts += 1;
+    if (r.left < c.left - 1 || r.right > c.right + 1 || r.top < c.top - 1 || r.bottom > c.bottom + 1) {
+      outside.push(`"${n.textContent.trim().slice(0, 24)}" ${Math.round(r.left - c.left)},${Math.round(r.top - c.top)} ${Math.round(r.width)}x${Math.round(r.height)} in ${Math.round(c.width)}x${Math.round(c.height)}`);
+    }
+  }
+  return {
+    size: chart?.getAttribute('data-size') ?? null,
+    form: chart?.getAttribute('data-pie-form') ?? chart?.getAttribute('data-heat-form') ?? null,
+    marks,
+    plot,
+    area: plot.w * plot.h,
+    outside,
+    texts,
+    yTicks: cardEl.querySelectorAll('[data-axis="y"] .lab-chart-tick').length,
+    xTicks: cardEl.querySelectorAll('[data-axis="x"] .lab-chart-tick').length,
+    endLabels: cardEl.querySelectorAll('[data-end-label]').length,
+    legend: cardEl.querySelectorAll('.lab-chart-legend-item').length,
+    card: [Math.round(c.width), Math.round(c.height)],
+    content: [Math.round(content.w), Math.round(content.h)],
+  };
+}
+
+/**
+ * Finding 3, one table card: horizontal scroll, cut cells, the rows that sit
+ * wholly between the header and the total (cell rects: WebKit does not move a
+ * row group's rect with sticky), the row tooltips and where the unit is written.
+ */
+function tableFitInPage(cardEl) {
+  const wrap = cardEl.querySelector('.lab-table-wrap');
+  const table = cardEl.querySelector('table');
+  if (!wrap || !table) return null;
+  const cut = [...table.querySelectorAll('td, th')].filter((el) => el.scrollWidth > el.clientWidth + 1)
+    .map((el) => `${el.tagName.toLowerCase()} "${el.textContent.trim().slice(0, 20)}" ${el.scrollWidth}>${el.clientWidth}`);
+  const hScroll = [];
+  for (let el = wrap; el && el !== cardEl.parentElement; el = el.parentElement) {
+    if (el.scrollWidth > el.clientWidth + 1) hScroll.push(`${el.className || el.tagName} ${el.scrollWidth}>${el.clientWidth}`);
+  }
+  const heads = [...table.querySelectorAll('thead th')];
+  const foots = [...table.querySelectorAll('tfoot td')];
+  const headBottom = Math.max(...heads.map((th) => th.getBoundingClientRect().bottom));
+  const w = wrap.getBoundingClientRect();
+  const footTop = foots.length ? Math.min(...foots.map((td) => td.getBoundingClientRect().top)) : Infinity;
+  const limit = Math.min(footTop, w.bottom);
+  const rows = [...table.querySelectorAll('tbody tr')];
+  const full = rows.filter((tr) => {
+    const r = tr.querySelector('td').getBoundingClientRect();
+    return r.top >= headBottom - 0.5 && r.bottom <= limit + 0.5;
+  }).length;
+  return {
+    hScroll, cut, full, rows: rows.length,
+    headBottom: Math.round(headBottom - w.top), footTop: Math.round(limit - w.top),
+    columns: (table.getAttribute('data-columns') ?? '').split(',').filter(Boolean),
+    dropped: (table.getAttribute('data-dropped') ?? '').split(',').filter(Boolean),
+    headers: heads.map((th) => th.textContent.trim()),
+    titles: rows.map((tr) => tr.getAttribute('title') ?? ''),
+    // Each row: its label, whether it is the "Other" fold, its title and its cells keyed by column.
+    byRow: rows.map((tr) => {
+      const cols = (table.getAttribute('data-columns') ?? '').split(',');
+      const tds = [...tr.querySelectorAll('td')];
+      return {
+        label: tds[0]?.textContent.trim() ?? '', other: tr.hasAttribute('data-other'), title: tr.getAttribute('title') ?? '',
+        cells: Object.fromEntries(cols.map((c, i) => [c, tds[i]?.textContent.trim() ?? ''])),
+      };
+    }),
+    bodyTexts: rows.flatMap((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())),
   };
 }
 
@@ -1551,12 +1837,11 @@ async function main() {
       await card('c-html-short').scrollIntoViewIfNeeded();
       ok('html block uses the data-lab-html-block iframe', await card('c-html-short').locator('iframe[data-lab-html-block]').count() === 1);
       const frame = await frameOf('c-html-short');
-      const kit = frame && await frame.evaluate(() => {
-        const k = getComputedStyle(document.getElementById('kit'));
-        const p = getComputedStyle(document.getElementById('plain'));
-        return { kitPad: k.paddingTop, kitBorder: k.borderTopWidth, plainPad: p.paddingTop, chipBg: getComputedStyle(document.getElementById('chip')).backgroundColor };
-      });
-      ok('the dc- kit applies inside the html block', kit && kit.kitPad === '14px' && kit.kitBorder === '1px' && kit.plainPad === '0px', JSON.stringify(kit));
+      // The kit is proven on INNER elements (a board cell dissolves a single root dc-card into its
+      // chrome, finding 4, so the root card's own box is no longer the kit's witness).
+      const kit = frame && await frame.evaluate(kitInPage);
+      ok('the dc- kit applies inside the html block (inner elements)', kitApplies(kit, { buttons: false }), JSON.stringify(kit));
+      ok('finding 4: a single root dc-card dissolves into the cell (0 padding, 0 border)', rootDissolved(kit, 'kit'), JSON.stringify(kit?.cards));
       ok('a declared input answers with its frame', (await frameText('c-html-short', '#ok')) === 'rows=12;kind=table', await frameText('c-html-short', '#ok'));
       const refused = await frameText('c-html-short', '#refused');
       ok('an undeclared lab.data() name is refused', typeof refused === 'string' && refused.startsWith('refused:'), refused);
@@ -1699,12 +1984,12 @@ async function main() {
     let chartBoardsReady = false;
     await section('chart fixtures via CLI', async () => {
       for (const ins of CHART_INSIGHTS) {
-        dc(['lab', 'create', ins.slug, '--title', ins.title, '--render', ins.render, '--adapter', 'script']);
+        dc(['lab', 'create', ins.slug, '--title', ins.title, '--render', ins.render, '--adapter', 'script', ...(ins.unit ? ['--unit', ins.unit] : [])]);
         writeFileSync(join(LAB, 'scripts', `${ins.slug}.mjs`), `${ins.script}\n`, 'utf-8');
         dc(['lab', 'sync', ins.slug, '--force'], { allowFail: true });
         ok(`chart fixture ${ins.slug} synced`, existsSync(join(LAB, 'cache', `${ins.slug}.json`)));
       }
-      const boards = [...optionBoards.map((b) => [b.slug, b.spec]), ['fit', fitBoardSpec()], ['hover', hoverBoardSpec()]];
+      const boards = [...optionBoards.map((b) => [b.slug, b.spec]), ['fit', fitBoardSpec()], ['hover', hoverBoardSpec()], ['findings', findingsBoardSpec()]];
       for (const [slug, spec] of boards) {
         dc(['lab', 'board', 'create', slug, '--title', spec.title]);
         const file = join(SCRATCH, `${slug}.json`);
@@ -1981,6 +2266,294 @@ async function main() {
       await card('cl-pie-filter').locator('[data-lab-filter-chip="east"]').click();
       await sleep(300);
       await shoot('board-hover');
+    });
+
+    // ── 17. Finding 2: charts stay legible at the grid's extreme sizes ─────────
+    await section('finding 2: extreme sizes', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      await openBoard('findings');
+      await sleep(1500);
+      const table = [];
+      for (const [key] of COMPACT_CASES) {
+        for (const [label, sz] of Object.entries(COMPACT_SIZES)) {
+          const id = `f-${key}-${label}`;
+          await card(id).scrollIntoViewIfNeeded();
+          await sleep(150);
+          const m = await card(id).evaluate(compactInPage);
+          const fit = await card(id).evaluate(measureCardInPage);
+          const name = `${key} ${label}`;
+          table.push(`${name.padEnd(14)} size=${m.size} form=${m.form ?? '-'} plot=${m.plot.px.join('x')}px ${Math.round(m.plot.w * 100)}%x${Math.round(m.plot.h * 100)}% (${Math.round(m.area * 100)}%) marks=${m.marks} y=${m.yTicks} x=${m.xTicks} end=${m.endLabels} legend=${m.legend} content=${m.content.join('x')}`);
+          ok(`finding 2: ${name} is ${sz.size} size`, m.size === sz.size, `data-size=${m.size}`);
+          // A plot that is really drawn: marks exist, the plot is at least 40% of the block's height
+          // (axis labels and a legend never eat the rest) and 40% of its shorter side wide (a pie is
+          // round); in compact mode (no axes to spend room on) it covers COMPACT_PLOT_MIN of the box.
+          const tall = m.plot.px[1] >= 0.4 * m.content[1];
+          const wide = m.plot.px[0] >= 0.4 * Math.min(...m.content);
+          const covers = sz.size !== 'compact' || m.area >= COMPACT_PLOT_MIN;
+          ok(`finding 2: ${name} draws a plot of non-trivial size`, m.marks > 0 && tall && wide && covers,
+            `${m.marks} marks; plot ${m.plot.px.join('x')}px = ${Math.round(m.plot.w * 100)}% x ${Math.round(m.plot.h * 100)}% (${Math.round(m.area * 100)}% of the area) of a ${m.content.join('x')} block`);
+          ok(`finding 2: ${name} keeps every text inside the card`, m.texts > 0 && m.outside.length === 0, `${m.texts} texts; outside: ${m.outside.slice(0, 5).join(' | ')}`);
+          ok(`finding 2: ${name} has no inner scroll`, fit.scroll.length === 0, fit.scroll.join(' | '));
+          ok(`finding 2: ${name} y axis shows 0 or >= 2 labels`, m.yTicks !== 1, `${m.yTicks} y labels`);
+        }
+      }
+      console.log(`finding 2 measurements:\n  ${table.join('\n  ')}`);
+
+      // Hover truth on the compact line: no axis to position from, so the pointer goes to the
+      // RENDERED line's vertices (the mark the reader points at), and the floating tooltip must
+      // name exactly that datum.
+      const id = 'f-line-9x2';
+      await card(id).scrollIntoViewIfNeeded();
+      await sleep(200);
+      const geo = await card(id).evaluate((el) => {
+        const path = el.querySelector('svg path[data-series="alpha"]:not([data-area])');
+        const hit = el.querySelector('[data-chart-hit]');
+        if (!path || !hit) return null;
+        const nums = (path.getAttribute('d') ?? '').match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) ?? [];
+        const m = path.getScreenCTM();
+        const pts = [];
+        for (let i = 0; i + 1 < nums.length; i += 2) {
+          const p = new DOMPoint(nums[i], nums[i + 1]).matrixTransform(m);
+          pts.push(p.x);
+        }
+        const h = hit.getBoundingClientRect();
+        return { xs: pts, midY: h.top + h.height / 2, d: (path.getAttribute('d') ?? '').slice(0, 60) };
+      });
+      ok('finding 2: the compact line draws one vertex per datum', geo && geo.xs.length === TREND_DAYS.length, JSON.stringify(geo));
+      if (geo && geo.xs.length === TREND_DAYS.length) {
+        const floatTip = async (x, series) => {
+          await page.mouse.move(x, geo.midY, { steps: 4 });
+          return until(() => page.evaluate(([cid, s]) => {
+            const tip = [...document.querySelectorAll('[data-chart-tooltip]')].find((t) => getComputedStyle(t).visibility !== 'hidden');
+            if (!tip) return null;
+            const row = tip.querySelector(`[data-series="${s}"]`);
+            return {
+              value: row?.querySelector('[data-value]')?.textContent ?? null,
+              floating: tip.getAttribute('data-chart-tooltip') === 'floating',
+              inCard: !!tip.closest(`[data-lab-card="${cid}"]`),
+              title: tip.querySelector('.lab-chart-tooltip-title')?.textContent ?? '',
+            };
+          }, [id, series]), 2000);
+        };
+        let floats = null;
+        for (const key of HOVER_DATES) {
+          const i = TREND_DAYS.indexOf(key);
+          const alpha = await floatTip(geo.xs[i], 'alpha');
+          const beta = await floatTip(geo.xs[i], 'beta');
+          floats = floats ?? alpha;
+          ok(`finding 2: hover truth: compact line (9x2) ${key}`, parseShown(alpha?.value) === TREND.alpha[i] && parseShown(beta?.value) === TREND.beta[i],
+            `pointer x ${Math.round(geo.xs[i])}: tooltip ${JSON.stringify([alpha?.title, alpha?.value, beta?.value])}, fixture ${TREND.alpha[i]} / ${TREND.beta[i]}`);
+          if (key === HOVER_DATES[1]) await saveShot('finding-compact-line-hover.png', (path) => page.screenshot({ path }));
+        }
+        ok("finding 2: the compact line's tooltip floats outside the card", !!floats && floats.floating && !floats.inCard, JSON.stringify(floats));
+        await page.mouse.move(1, 1);
+      }
+      await shoot('board-findings');
+    });
+
+    // ── 18. Finding 3: the demo-size table fits its width ─────────────────────
+    await section('finding 3: table at the demo size', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      // The demo's viewport (1440 wide): its 4x4 card is narrower than this run's 1600.
+      await page.setViewportSize({ width: 1440, height: 900 });
+      try { await tableAtDemoSize(); } finally { await page.setViewportSize({ width: 1600, height: 1000 }); await sleep(300); }
+    });
+    async function tableAtDemoSize() {
+      await openBoard('findings');
+      await card('f-table').scrollIntoViewIfNeeded();
+      await sleep(600);
+      const t = await card('f-table').evaluate(tableFitInPage);
+      console.log(`finding 3 measurements: ${JSON.stringify({ ...t, titles: t?.titles.slice(0, 2), bodyTexts: t?.bodyTexts.slice(0, 6), byRow: t?.byRow.slice(-2) })}`);
+      if (!t) { ok('finding 3: the 4x4 table renders', false, 'no .lab-table-wrap / table'); return; }
+      ok('finding 3: the 4x4 table has no horizontal scroll', t.hScroll.length === 0, t.hScroll.join(' | '));
+      ok('finding 3: no table cell cuts its text (4x4)', t.cut.length === 0, t.cut.slice(0, 6).join(' | '));
+      ok('finding 3: the 4x4 table shows >= 4 full rows between header and total', t.full >= 4,
+        `${t.full} of ${t.rows} rows between header bottom ${t.headBottom} and total top ${t.footTop}`);
+      // What the fit dropped is still readable: each row's tooltip quotes it as the full (12-wide)
+      // table writes that cell.
+      await card('f-table-wide').scrollIntoViewIfNeeded();
+      await sleep(400);
+      const w = await card('f-table-wide').evaluate(tableFitInPage);
+      await card('f-table').scrollIntoViewIfNeeded();
+      const missing = [];
+      const named = t.byRow.filter((r) => !r.other);
+      for (const r of named) {
+        const full = w?.byRow.find((x) => x.label === r.label);
+        if (!full) { missing.push(`no wide row "${r.label}"`); continue; }
+        if (!r.title.startsWith(r.label)) missing.push(`title "${r.title}" does not name ${r.label}`);
+        for (const key of t.dropped) if (!full.cells[key] || !r.title.includes(full.cells[key])) missing.push(`${r.label}: ${key} "${full.cells[key]}" not in "${r.title}"`);
+      }
+      ok("finding 3: each row's tooltip carries what the 4x4 table dropped", t.dropped.length > 0 && named.length >= 8 && missing.length === 0,
+        `dropped ${JSON.stringify(t.dropped)}; ${named.length} named rows; ${missing.slice(0, 4).join(' | ')}`);
+      const unitHeads = t.headers.filter((h) => /\busers\b/.test(h));
+      const unitCells = t.bodyTexts.filter((x) => /\busers\b/.test(x));
+      ok('finding 3: the header carries the unit once, no body cell repeats it', unitHeads.length === 1 && unitCells.length === 0,
+        `headers ${JSON.stringify(t.headers)}; cells with the unit: ${JSON.stringify(unitCells.slice(0, 4))}`);
+      await saveShot('finding-table-4x4.png', (path) => card('f-table').screenshot({ path }));
+
+      const all = ['country', 'v', 'prev', 'n'];
+      ok('finding 3: a 12-wide copy keeps every column', !!w && w.dropped.length === 0 && all.every((c) => w.columns.includes(c))
+        && [...t.columns, ...t.dropped].every((c) => w.columns.includes(c)) && w.hScroll.length === 0 && w.cut.length === 0,
+        JSON.stringify({ wide: w?.columns, dropped: w?.dropped, narrow: t.columns, narrowDropped: t.dropped, hScroll: w?.hScroll, cut: w?.cut }));
+    }
+
+    // ── 19. Finding 4: no card in a card; an untitled card has no header ──────
+    await section('finding 4: html cell + untitled card', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      await openBoard('findings');
+      await card('f-untitled').scrollIntoViewIfNeeded();
+      await sleep(600);
+      const inFrame = async (id) => {
+        const h = await card(id).locator('iframe').first().elementHandle({ timeout: 10000 });
+        const f = h && await h.contentFrame();
+        return f ? until(() => f.evaluate(kitInPage).then((k) => (Object.keys(k.cards).length ? k : null)), 6000) : null;
+      };
+      const one = await inFrame('f-untitled');
+      ok('the dc- kit applies inside the html block (inner elements)', kitApplies(one), JSON.stringify(one));
+      ok('finding 4: a single root dc-card dissolves into the cell (0 padding, 0 border)', rootDissolved(one, 'kit'), JSON.stringify(one?.cards));
+      const two = await inFrame('f-two-cards');
+      ok('finding 4: two root dc-cards keep their own boxes', rootKept(two, 'card-a') && rootKept(two, 'card-b'), JSON.stringify(two?.cards));
+
+      const head = await card('f-untitled').evaluate((el) => {
+        const art = el.querySelector('article') ?? el;
+        const h = art.querySelector('.board-card-head');
+        const blk = art.querySelector('.board-card-block');
+        const a = art.getBoundingClientRect();
+        return {
+          head: h ? Math.round(h.getBoundingClientRect().height) : 0,
+          titleRows: art.querySelectorAll('.board-card-title').length,
+          gap: blk ? Math.round(blk.getBoundingClientRect().top - a.top) : null,
+          pad: parseFloat(getComputedStyle(art.querySelector('.board-card-body') ?? art).paddingTop),
+        };
+      });
+      const titled = await card('f-two-cards').evaluate((el) => {
+        const art = el.querySelector('article') ?? el;
+        const blk = art.querySelector('.board-card-block');
+        return blk ? Math.round(blk.getBoundingClientRect().top - art.getBoundingClientRect().top) : null;
+      });
+      ok('finding 4: an untitled card has no header row', head.head === 0 && head.titleRows === 0 && head.gap !== null && titled !== null && head.gap < titled,
+        JSON.stringify({ ...head, titledGap: titled }));
+
+      // Keyboard: Tab from the element before it lands on the (floating) menu, which shows and opens.
+      const kb = await card('f-untitled').evaluate((el) => {
+        const btn = el.querySelector('[data-lab-card-menu]');
+        if (!btn) return { btn: false };
+        const tabbable = [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+          .filter((e) => e.tabIndex >= 0 && !e.disabled && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0);
+        const i = tabbable.indexOf(btn);
+        if (i <= 0) return { btn: true, index: i };
+        tabbable[i - 1].setAttribute('data-verify-before-menu', '');
+        return { btn: true, index: i };
+      });
+      let reach = { ...kb };
+      if (kb.btn && kb.index > 0) {
+        await page.locator('[data-verify-before-menu]').first().focus();
+        // Option+Tab: WebKit's plain Tab skips buttons unless "Press Tab to highlight each item" is
+        // on (Safari's default is off); Option+Tab is the keyboard path to every control there.
+        await page.keyboard.press('Alt+Tab');
+        await sleep(300);
+        reach = await card('f-untitled').evaluate((el) => {
+          const btn = el.querySelector('[data-lab-card-menu]');
+          const float = btn.closest('.board-card-float-menu');
+          return { focused: document.activeElement === btn, opacity: float ? getComputedStyle(float).opacity : null };
+        });
+        await page.keyboard.press('Enter');
+        await sleep(300);
+        reach.opened = await page.locator('[data-lab-menu-item]').evaluateAll((els) => els.filter((e) => e.getClientRects().length > 0).length);
+        await page.keyboard.press('Escape');
+        await page.evaluate(() => document.querySelector('[data-verify-before-menu]')?.removeAttribute('data-verify-before-menu'));
+      }
+      ok("finding 4: an untitled card's menu is reachable by keyboard", reach.focused === true && reach.opacity === '1' && reach.opened > 0, JSON.stringify(reach));
+      await saveShot('finding-untitled-and-two-cards.png', (path) => page.screenshot({ path }));
+    });
+
+    // ── 20. Finding 5: readable board tab, no placeholder meaning ─────────────
+    await section('finding 5: tab name + meaning', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      await openBoard('findings');
+      const tab = await page.locator('[data-lab-board-tab="findings"]').first().evaluate((b) => {
+        const l = b.querySelector('.board-tab-label') ?? b;
+        const range = document.createRange();
+        range.selectNodeContents(l);
+        const r = range.getBoundingClientRect();
+        const lr = l.getBoundingClientRect();
+        return {
+          text: l.textContent, whole: l.scrollWidth <= l.clientWidth + 1 && r.right <= lr.right + 1,
+          title: b.getAttribute('title'), aria: b.getAttribute('aria-label'), visible: b.getClientRects().length > 0,
+        };
+      }).catch((e) => ({ error: String(e).slice(0, 120) }));
+      ok('finding 5: a 24-character board name reads whole on its tab, or the tab carries it',
+        tab.visible && tab.text === FINDINGS_TITLE && (tab.whole || (tab.title === FINDINGS_TITLE && tab.aria === FINDINGS_TITLE)), JSON.stringify(tab));
+
+      const manifest = readFileSync(join(LAB, 'insights', 'countries.md'), 'utf-8');
+      ok('finding 5: precondition: the insight still carries the scaffold Meaning placeholder', /What does this number MEAN\?/.test(manifest), manifest.slice(0, 300));
+      await card('f-table').scrollIntoViewIfNeeded();
+      await card('f-table').hover();
+      await card('f-table').locator('[data-lab-card-menu]').first().click();
+      await page.locator('[data-lab-menu-item="open-detail"]').first().click();
+      const panel = page.locator('.idp-panel').first();
+      await panel.waitFor({ timeout: 8000 });
+      await sleep(1200);
+      const text = await panel.innerText();
+      ok('finding 5: the detail panel never shows the Meaning placeholder', text.length > 0 && !/What does this number MEAN/i.test(text), text.slice(0, 400));
+      await saveShot('finding-detail-panel.png', (path) => page.screenshot({ path }));
+      await page.keyboard.press('Escape');
+      await sleep(400);
+      if (await panel.count()) await page.goBack().catch(() => {});
+    });
+
+    // ── 16. Finding 1: a library block by ref / a rebind gets its data now ────
+    await section('finding 1: library add + rebind, no reload', async () => {
+      if (!chartBoardsReady) throw new Error('chart boards were not created');
+      await openBoard('findings');
+      await page.evaluate(() => { window.__verifyNoReload = 'same-load'; });
+      const sameLoad = () => page.evaluate(() => window.__verifyNoReload === 'same-load');
+      /** What the library block prints, polled (a remount is a new frame: re-found each time) until it reads `want`. */
+      const libRows = async (id, want) => {
+        let last = null;
+        await until(async () => {
+          if (!(await card(id).locator('iframe').count())) return false;
+          const h = await card(id).locator('iframe').first().elementHandle({ timeout: 2000 });
+          const f = h && await h.contentFrame();
+          last = f ? await f.evaluate(() => document.getElementById('lib-rows')?.textContent ?? null) : null;
+          return last === want;
+        }, 15000, 250);
+        return last;
+      };
+
+      await editMode(true);
+      const before = await page.locator('[data-lab-card]').evaluateAll((els) => els.map((e) => e.getAttribute('data-lab-card')));
+      await page.locator('[data-lab-add-card-open]').first().click();
+      const menu = page.locator('[data-lab-add-card]').first();
+      await menu.waitFor();
+      await menu.locator('[data-lab-field="bind-to"]').selectOption('regions');
+      await menu.locator('[data-lab-add-html="kpi-tile"]').first().click();
+      const id = await until(async () => (await page.locator('[data-lab-card]').evaluateAll((els) => els.map((e) => e.getAttribute('data-lab-card')))).find((x) => !before.includes(x)), 10000);
+      const saved = !!id && await until(() => fileCard('findings', id)?.blocks?.[0]?.html?.ref === 'kpi-tile', 10000);
+      ok('finding 1: the add-card menu adds the library block by ref', saved, JSON.stringify(id && fileCard('findings', id)));
+      if (!id) return;
+      await card(id).scrollIntoViewIfNeeded();
+      const added = await libRows(id, `lib-rows=${REGIONS.length}`);
+      ok("finding 1: a library block added by ref through the UI shows its bound insight's rows without a reload",
+        added === `lib-rows=${REGIONS.length}` && await sameLoad(), `block says ${JSON.stringify(added)}; binding ${JSON.stringify(fileCard('findings', id)?.blocks?.[0]?.html?.inputs)}`);
+      await saveShot('finding-library-added.png', (path) => card(id).screenshot({ path }));
+
+      await card(id).hover();
+      await card(id).locator('[data-lab-card-menu]').first().click();
+      await page.locator('[data-lab-menu-item="edit-blocks"]').first().click();
+      const insp = page.locator('[data-lab-inspector]').first();
+      await insp.waitFor({ timeout: 8000 });
+      if (await insp.locator('[data-lab-inspector-block="0"]').count()) await insp.locator('[data-lab-inspector-block="0"]').first().click();
+      const bind = insp.locator('[data-lab-field="input-0-binding"]').first();
+      await bind.fill('accounts');
+      await bind.press('Enter');
+      await bind.evaluate((e) => e.blur());
+      await until(() => fileCard('findings', id)?.blocks?.[0]?.html?.inputs?.rows === 'accounts', 5000);
+      const rebound = await libRows(id, `lib-rows=${ACCOUNTS.length}`);
+      ok('finding 1: rebinding the html input in the inspector shows the new rows without a reload',
+        rebound === `lib-rows=${ACCOUNTS.length}` && await sameLoad(), `block says ${JSON.stringify(rebound)}; file binding ${JSON.stringify(fileCard('findings', id)?.blocks?.[0]?.html?.inputs)}`);
+      await page.keyboard.press('Escape');
+      await editMode(false);
     });
 
     // ── 14. Defects: heading text, tab labels ─────────────────────────────────
