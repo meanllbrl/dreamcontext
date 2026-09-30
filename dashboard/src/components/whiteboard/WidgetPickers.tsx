@@ -4,7 +4,7 @@ import { useKnowledgeList } from '../../hooks/useKnowledge';
 import { useTasks } from '../../hooks/useTasks';
 import type { WidgetPayload } from '../../lib/whiteboardWidgets';
 import { WEB_URL_REASON_TEXT, validateWebUrl } from './webUrl';
-import { isValidWidgetRef } from './widgetModel';
+import { isValidWidgetRef, knowledgeTitle, taskTitle } from './widgetModel';
 import { useWbText } from './whiteboardHost';
 
 /** One pickable row: a slug and what to show for it. */
@@ -80,7 +80,7 @@ export function InsightPicker({ onPick }: { onPick: Pick }) {
 export function KnowledgePicker({ onPick }: { onPick: Pick }) {
   const tx = useWbText();
   const { data, isLoading, isError } = useKnowledgeList();
-  const rows = useMemo(() => data?.map((k) => ({ slug: k.slug, title: k.name || k.slug, meta: k.slug })), [data]);
+  const rows = useMemo(() => data?.map((k) => ({ slug: k.slug, title: knowledgeTitle(k), meta: k.slug })), [data]);
   return (
     <PickList
       rows={rows}
@@ -95,7 +95,7 @@ export function KnowledgePicker({ onPick }: { onPick: Pick }) {
 export function TaskPicker({ onPick }: { onPick: Pick }) {
   const tx = useWbText();
   const { data, isLoading, isError } = useTasks();
-  const rows = useMemo(() => data?.map((t) => ({ slug: t.slug, title: t.name, meta: t.status })), [data]);
+  const rows = useMemo(() => data?.map((t) => ({ slug: t.slug, title: taskTitle(t), meta: t.status })), [data]);
   return (
     <PickList
       rows={rows}

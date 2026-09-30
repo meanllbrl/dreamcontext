@@ -5,7 +5,7 @@
  * it. Chat's srcdoc also injects `REACH_BRIDGE`, and its host replays posted chords and presses
  * as real DOM events. On a board, a hostile block could post ⌘A then Backspace, Excalidraw
  * would hear them, and the autosave would write the deletion. So this srcdoc is built from the
- * shared primitives directly: `buildSandboxSrcdoc` + the kit CSS + `HEIGHT_BRIDGE`, nothing else.
+ * shared primitives directly: `buildSandboxSrcdoc` + the kit CSS (plus the board's frame reset) + `HEIGHT_BRIDGE`, nothing else.
  * No `KIT_BEHAVIOUR` either, so the kit's `dc-tabs` do not switch here; an author who wants
  * tabs writes their own inline script.
  *
@@ -24,6 +24,23 @@ export const BOARD_HTML_SANDBOX = 'allow-scripts';
 /** A board block may grow to this and no further. */
 export const BOARD_HTML_MAX_HEIGHT = 4000;
 
+/**
+ * Board-only styling after the kit (A19). The widget is already a card, so a block whose whole
+ * content is one `dc-card` would draw a second frame inside it: that card loses its border,
+ * fill, radius, shadow and padding and its content sits straight on the widget. `!important`
+ * because authors inline `style="padding:…"` on it. Styling only: nothing here reaches the CSP,
+ * the sandbox or the bridge.
+ */
+export const BOARD_HTML_CSS = `
+body > .dc-card:only-child {
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+`;
+
 export function buildBoardHtmlSrcdoc(input: {
   html: string;
   tokens: Record<string, string>;
@@ -31,7 +48,7 @@ export function buildBoardHtmlSrcdoc(input: {
 }): string {
   return buildSandboxSrcdoc({
     html: input.html,
-    css: CHAT_HTML_KIT_CSS,
+    css: CHAT_HTML_KIT_CSS + BOARD_HTML_CSS,
     tokens: input.tokens,
     scheme: input.scheme,
     headScript: HEIGHT_BRIDGE,

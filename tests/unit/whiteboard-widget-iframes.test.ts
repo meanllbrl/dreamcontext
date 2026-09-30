@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  BOARD_HTML_SANDBOX, BOARD_HTML_MAX_HEIGHT, buildBoardHtmlSrcdoc, readBoardFrameMessage,
+  BOARD_HTML_CSS, BOARD_HTML_SANDBOX, BOARD_HTML_MAX_HEIGHT, buildBoardHtmlSrcdoc, readBoardFrameMessage,
 } from '../../dashboard/src/components/whiteboard/htmlWidgetFrame.js';
 import {
   HEIGHT_BRIDGE, REACH_BRIDGE, KIT_BEHAVIOUR, HEIGHT_MESSAGE_KEY, PRESS_MESSAGE_KEY, CHORD_MESSAGE_KEY,
@@ -70,6 +70,17 @@ describe('HtmlWidget — the board HTML block (D6)', () => {
     expect(doc).not.toContain(REACH_BRIDGE);
     expect(doc).not.toContain(KIT_BEHAVIOUR);
     expect(doc).toContain('color-scheme: dark');
+  });
+
+  it('A19: resets a lone dc-card frame with styling only, after the kit and before the markup', () => {
+    const doc = buildBoardHtmlSrcdoc({ html: '<div class="dc-card">x</div>', tokens: {}, scheme: 'light' });
+    expect(doc).toContain(BOARD_HTML_CSS);
+    expect(BOARD_HTML_CSS).toMatch(/body > \.dc-card:only-child/);
+    expect(BOARD_HTML_CSS).toMatch(/border:\s*none/);
+    // Pure CSS: no url(), no @import, no script.
+    expect(BOARD_HTML_CSS).not.toMatch(/url\(|@import|<script/i);
+    expect(doc.indexOf(SANDBOX_CSP)).toBeLessThan(doc.indexOf(BOARD_HTML_CSS));
+    expect(doc.indexOf(BOARD_HTML_CSS)).toBeLessThan(doc.indexOf('<div class="dc-card">x</div>'));
   });
 
   it('tears the frame down on a second load, with the card the plan names', () => {

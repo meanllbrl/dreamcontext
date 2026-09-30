@@ -1246,6 +1246,24 @@ async function main() {
     ok('A17 …and no chart', await ins('s').locator('.wb-widget-body svg, .wb-widget-body canvas').count() === 0);
     ok('A17 an L insight shows a chart', await ins('l').locator('.wb-widget-body svg, .wb-widget-body canvas').count() > 0);
     ok('A17 an XL insight shows a chart', await ins('xl').locator('.wb-widget-body svg, .wb-widget-body canvas').count() > 0);
+    // A19: L and XL draw exactly ONE chart (no sparkline beside it), spanning the card body.
+    const chartSpan = (size) => ins(size).locator('.wb-widget-body').evaluate((body) => {
+      const svgs = [...body.querySelectorAll('svg, canvas')];
+      const cs = getComputedStyle(body);
+      const b = body.getBoundingClientRect();
+      // Rendered content width: the bounding rect carries the board's zoom, so scale the padding with it.
+      const k = body.clientWidth ? b.width / body.clientWidth : 1;
+      const content = b.width - (parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)) * k;
+      const w = svgs[0] ? svgs[0].getBoundingClientRect().width : 0;
+      return { count: svgs.length, ratio: content > 0 ? w / content : 0 };
+    }).catch((e) => ({ count: -1, ratio: 0, err: String(e) }));
+    for (const size of ['l', 'xl']) {
+      const span = await chartSpan(size);
+      ok(`A19 an ${size.toUpperCase()} insight draws exactly one chart`, span.count === 1, JSON.stringify(span));
+      ok(`A19 …and it spans ≥90% of the card body's width`, span.ratio >= 0.9, JSON.stringify(span));
+    }
+    const lText = await ins('l').textContent().catch(() => '');
+    ok('A19 an L insight keeps the headline number and its change', /4,?210/.test(lText) && /305/.test(lText), lText.slice(0, 80));
     await parkPointer();
     await shoot('sizes');
 
@@ -1278,6 +1296,25 @@ async function main() {
     await page.waitForTimeout(2500);
     await parkPointer();
     await shoot('control-panel');
+    // A19: the knowledge card shows the file's title, not its slug.
+    const kText = await page.locator('.wb-widget[data-widget-kind="knowledge"]').first().textContent().catch(() => '');
+    ok('A19 the knowledge widget shows the knowledge title, not the slug', kText.includes(KNOWLEDGE.title) && !kText.includes(KNOWLEDGE.name), kText.slice(0, 80));
+    // A19: the HTML block's content sits on the card; no second bordered frame inside it.
+    const cpHtml = page.locator('.wb-widget[data-widget-kind="html"]', { hasText: 'Readiness' }).first();
+    const hostFrames = await cpHtml.locator('.wb-widget-body').evaluate((body) => [body, ...body.querySelectorAll('*')]
+      .filter((el) => el !== body)
+      .map((el) => getComputedStyle(el))
+      .filter((cs) => ['Top', 'Right', 'Bottom', 'Left'].some((side) => parseFloat(cs[`border${side}Width`]) > 0 && cs[`border${side}Style`] !== 'none'))
+      .length).catch(() => -1);
+    const innerFrame = await cpHtml.locator('iframe.wb-html-frame').contentFrame().locator('body > *').first()
+      .evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { border: cs.borderTopWidth, style: cs.borderTopStyle, radius: cs.borderTopLeftRadius, bg: cs.backgroundColor };
+      }).catch((e) => ({ err: String(e) }));
+    ok('A19 the HTML widget body has no inner bordered frame',
+      hostFrames === 0 && !innerFrame.err && (parseFloat(innerFrame.border) === 0 || innerFrame.style === 'none')
+        && /rgba\(0, 0, 0, 0\)|transparent/.test(innerFrame.bg),
+      JSON.stringify({ hostFrames, innerFrame }));
     // The size picker on a filled board, at the zoom the owner works at.
     s = await scene();
     const cpNote = live(s).find((e) => e.kind === 'note');

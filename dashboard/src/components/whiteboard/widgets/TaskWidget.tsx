@@ -1,6 +1,6 @@
 import { useTasks } from '../../../hooks/useTasks';
 import { emitInstance, useVault } from '../../../context/VaultContext';
-import { isValidWidgetRef } from '../widgetModel';
+import { isValidWidgetRef, taskTitle } from '../widgetModel';
 import { useWbText } from '../whiteboardHost';
 import { WidgetButton, WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
@@ -15,7 +15,9 @@ export function TaskWidget({ payload, active, size }: WidgetProps) {
   const ref = isValidWidgetRef(payload.ref) ? payload.ref : null;
   const { data, isLoading, isError } = useTasks();
   const task = ref ? data?.find((t) => t.slug === ref) : undefined;
-  const title = payload.title || task?.name || ref || tx('whiteboard.kind.task', 'Task');
+  // A title stamped as the bare slug (older pickers did) reads as no title.
+  const stamped = payload.title && payload.title !== ref ? payload.title : '';
+  const title = stamped || (task ? taskTitle(task) : ref) || tx('whiteboard.kind.task', 'Task');
 
   let body;
   if (!ref) {

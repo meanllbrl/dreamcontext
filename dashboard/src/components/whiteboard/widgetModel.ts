@@ -122,3 +122,35 @@ export function selectionIsOnlyWidgets(
   }
   return any;
 }
+
+/** A slug read aloud: last path segment, hyphens to spaces, first letter capitalised. */
+export function humaniseSlug(slug: string): string {
+  const leaf = slug.split('/').filter(Boolean).pop() ?? slug;
+  const words = leaf.replace(/[-_]+/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : slug;
+}
+
+/** A name that is really a slug: the CLI writes the slug into `name:` when no name was given. */
+function isSlugLike(name: string, slug: string): boolean {
+  return name === slug || name === slug.split('/').pop() || /^[a-z0-9]+(?:[-_/][a-z0-9]+)+$/.test(name);
+}
+
+/**
+ * The title a knowledge card shows (A19): a frontmatter `title` if the API ever sends one, the
+ * `name` when it is a real name, the file's first `# ` heading, else the slug humanised. Never
+ * the raw slug.
+ */
+export function knowledgeTitle(entry: { slug: string; name?: string; content?: string; title?: unknown }): string {
+  if (typeof entry.title === 'string' && entry.title.trim()) return entry.title.trim();
+  const name = entry.name?.trim() ?? '';
+  if (name && !isSlugLike(name, entry.slug)) return name;
+  const h1 = /^#[ \t]+(.+?)[ \t#]*$/m.exec(entry.content ?? '')?.[1]?.trim();
+  if (h1) return h1;
+  return humaniseSlug(entry.slug);
+}
+
+/** A task's display name: its `name`, unless that is only its slug, then the slug humanised. */
+export function taskTitle(task: { slug: string; name?: string }): string {
+  const name = task.name?.trim() ?? '';
+  return name && !isSlugLike(name, task.slug) ? name : humaniseSlug(task.slug);
+}

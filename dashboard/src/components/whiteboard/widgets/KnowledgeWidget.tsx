@@ -1,12 +1,12 @@
 import { useKnowledgeList } from '../../../hooks/useKnowledge';
 import { emitInstance, useVault } from '../../../context/VaultContext';
-import { isValidWidgetRef } from '../widgetModel';
+import { isValidWidgetRef, knowledgeTitle } from '../widgetModel';
 import { useWbText } from '../whiteboardHost';
 import { WidgetButton, WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
 
 /**
- * A knowledge file on the board: its title and meta, and an Open button that lands on it in
+ * A knowledge file on the board: its title (never the bare slug, A19) and meta, and an Open button that lands on it in
  * the Knowledge page through the app's existing open-page event (on this project's bus only).
  *
  * Read from the list query rather than the per-slug one: the list is already cached and
@@ -18,7 +18,9 @@ export function KnowledgeWidget({ payload, active, size }: WidgetProps) {
   const ref = isValidWidgetRef(payload.ref) ? payload.ref : null;
   const { data, isLoading, isError } = useKnowledgeList();
   const entry = ref ? data?.find((e) => e.slug === ref) : undefined;
-  const title = payload.title || entry?.name || ref || tx('whiteboard.kind.knowledge', 'Knowledge');
+  // A title stamped as the bare slug (older pickers did) reads as no title.
+  const stamped = payload.title && payload.title !== ref ? payload.title : '';
+  const title = stamped || (entry ? knowledgeTitle(entry) : ref) || tx('whiteboard.kind.knowledge', 'Knowledge');
 
   let body;
   if (!ref) {
