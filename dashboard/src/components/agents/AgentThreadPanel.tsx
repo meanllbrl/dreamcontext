@@ -8,7 +8,8 @@ import {
   type AgentActivity, type FeedMessage, type RunAnswer, type ThreadEntry,
 } from '../../hooks/useAutomations';
 import { AgentAvatar } from './AgentAvatar';
-import { AgentFiles, AgentMessage, AgentProse } from './AgentMessage';
+import { AgentFiles, AgentMessage, AgentProse, THREAD_REPLY_MAX_CHARS } from './AgentMessage';
+import { fitRunReport } from '../sleepy/chat/runReport';
 import { runDuration, trimFailureEcho, useNow } from './agentRunState';
 // The answer is drawn with the chat's own card (`.chat-msg-assistant-body`), whose rules
 // live here — imported by the panel that uses them rather than borrowed from whichever
@@ -85,10 +86,14 @@ function AuthoredRow({
   message,
   onOpenFile,
   queued = false,
+  report,
 }: {
   entry: ThreadEntry;
   message: FeedMessage;
   onOpenFile: (path: string) => void;
+  /** Where a card in the agent's post hands back — this thread's own reply, so a finished
+   *  command resumes the agent exactly as a typed reply would. */
+  report?: (text: string) => void;
   /** Your message, still waiting for the turn ahead of it to end. */
   queued?: boolean;
 }) {
@@ -102,7 +107,9 @@ function AuthoredRow({
         <span className="agent-thread-post-time">{hhmm(entry.at)}</span>
         {queued && <span className="agent-thread-post-queued">{t('agents.thread.queued')}</span>}
       </div>
-      <AgentProse text={entry.text} className="agent-thread-post-text" />
+      {entry.kind === 'user'
+        ? <AgentProse text={entry.text} className="agent-thread-post-text" />
+        : <AgentProse text={entry.text} className="agent-thread-post-text" blocks report={report} />}
       {entry.summary && entry.summary.length > 0 && <AgentSummaryBlock rows={entry.summary} />}
       {/* The SAME renderer the feed uses, on purpose: a board that draws itself
           in the message and turns into a dead filename in the thread would make
@@ -409,6 +416,20 @@ export function AgentThreadPanel({
     });
   }, [reply, message.slug, message.runId, t]);
 
+  // A card's hand-back (a finished command, a secret's receipt) is a reply like a typed one,
+  // but it was never in the composer: a refusal is told in the note and does NOT restore the
+  // field, which would put back the last thing the human typed instead.
+  const onReport = useCallback((text: string) => {
+    setRefusal(null);
+    reply.mutate({ slug: message.slug, runId: message.runId, text: fitRunReport(text, THREAD_REPLY_MAX_CHARS) }, {
+      onError: (err) => {
+        const text2 = (err as { code?: string }).code === 'stale_run' ? t('agents.thread.stale') : (err as Error).message;
+        setRefusal(text2);
+        noteRef.current({ kind: 'error', text: text2 });
+      },
+    });
+  }, [reply, message.slug, message.runId, t]);
+
   const slashCommands = useProjectSlashCommands().data?.commands;
   const { host, note, setNote, restoreLastSent } = useAgentThreadHost(
     { slug: message.slug, title: message.title, runId: message.runId },
@@ -588,7 +609,7 @@ export function AgentThreadPanel({
             {e.kind === 'system'
               // An ask's root is the reader's question, not the reason, so nothing is trimmed.
               ? <SystemRow entry={e} rootText={message.ask ? null : message.text} />
-              : <AuthoredRow entry={e} message={message} onOpenFile={onOpenFile} queued={queuedHere.has(e.id)} />}
+              : <AuthoredRow entry={e} message={message} onOpenFile={onOpenFile} queued={queuedHere.has(e.id)} report={onReport} />}
           </Fragment>
         ))}
         {answer && answerAt === entries.length && (

@@ -47,6 +47,7 @@ import {
   scheduleFromInput,
   updateAutomation,
   writeFlowSection,
+  reviewMismatch,
   type ShareState,
 } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest, toolCallLabel } from '../../lib/automations/session.js';
@@ -914,6 +915,8 @@ export function registerAutomationsCommand(program: Command): void {
               ? 'output — every document waits for your verdict'
               : 'agent — the run decides when to stop and ask'}`,
         );
+        const mismatch = reviewMismatch(manifest);
+        if (mismatch) warn(`  ${mismatch}`);
         // Rendered right under the mode, not buried in the history: this is the
         // reason the automation is not running, and a `show` that made you infer
         // that from an `awaiting-review` history entry would be hiding the lede.

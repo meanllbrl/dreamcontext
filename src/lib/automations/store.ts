@@ -1063,6 +1063,18 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
 }
 
 /**
+ * A prompt that tells its run to ask with `automations propose` under `review: off` describes
+ * a gate the CLI will refuse at runtime: the run proposes, is told no, and the human gets the
+ * decision as plain text with nothing to press (observed 2026-09-30). Advisory, not a write
+ * error — the prompt may only MENTION the verb — so `show` and `approve` say it out loud and
+ * name the fix while the owner is looking at the manifest.
+ */
+export function reviewMismatch(m: Pick<AutomationManifest, 'review' | 'prompt'>): string | null {
+  if (m.review !== 'off' || !/\bpropose\b/i.test(m.prompt)) return null;
+  return 'The prompt asks the run to `propose`, but review is off, so `propose` will refuse: set `review: agent` for it to ask with buttons.';
+}
+
+/**
  * The ONE schedule validator every write path goes through — create, update,
  * the CLI's `--slot`/`--days --at`, and the dashboard's slots. A slot that
  * arrives typed is still re-parsed from its serialized form, so a slot built

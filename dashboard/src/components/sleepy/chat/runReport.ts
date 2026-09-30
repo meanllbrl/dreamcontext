@@ -80,3 +80,26 @@ export function buildRunReport(
   return lines.join('\n');
 }
 
+
+/**
+ * Fit a run report into a host with a hard length cap — an agent thread's reply is at most
+ * 2,000 characters (`THREAD_TEXT_MAX_CHARS`, server-enforced) where the chat's is not capped,
+ * and a refused report is a command that ran and never said so. The OUTPUT TAIL gives way,
+ * from its oldest lines, because the head (the command, the exit code) is what the agent
+ * cannot work without and the newest output is where an error is. Anything that is not a
+ * report with an output block is cut hard at the cap.
+ */
+export function fitRunReport(report: string, maxChars: number): string {
+  if (report.length <= maxChars) return report;
+  const open = '\nOutput (tail):\n```\n';
+  const at = report.indexOf(open);
+  const close = '\n```';
+  if (at >= 0 && report.endsWith(close)) {
+    const head = report.slice(0, at + open.length);
+    const tail = report.slice(at + open.length, report.length - close.length);
+    const marker = '…\n';
+    const room = maxChars - head.length - close.length - marker.length;
+    if (room > 0) return head + marker + tail.slice(-room) + close;
+  }
+  return report.slice(0, maxChars);
+}

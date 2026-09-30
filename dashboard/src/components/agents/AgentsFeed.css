@@ -1053,6 +1053,14 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   overflow-wrap: anywhere;
 }
 
+/* A post that carries the Chat's blocks: prose runs and cards are siblings in written order,
+   spaced like the chat's own answer row. */
+.agent-msg-md--blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 .agent-msg-md .md-preview {
   padding: 0;
   border: none;

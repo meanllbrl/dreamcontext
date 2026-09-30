@@ -3,6 +3,7 @@ import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
 import type { ChatSession } from '../chatSession';
+import { postToSession } from './postToSession';
 import type { ChatSegment } from './chatActions';
 import { SecretCard } from './SecretCard';
 import { RunCard } from './RunCard';
@@ -30,7 +31,7 @@ import './ChatViews.css';
  * Nothing here throws: every block arrived pre-validated from `lib/chatViewSpec.ts` (views)
  * or capped by byte size (html).
  */
-export function ChatBlockSegment({ segment, conversationId, session }: {
+export function ChatBlockSegment({ segment, conversationId, session, report }: {
   segment: Exclude<ChatSegment, { kind: 'prose' }>;
   /**
    * OPTIONAL because two of the three segment kinds have no use for it: `html` is a sandboxed
@@ -48,14 +49,23 @@ export function ChatBlockSegment({ segment, conversationId, session }: {
    * (there is no turn to continue).
    */
   session?: ChatSession;
+  /**
+   * A host with no chat session that can still continue the work — an agent's thread, where
+   * a finished command's report becomes the human's reply and resumes the run. A `session`
+   * wins when both are given. A host with EITHER draws views; a checklist alone also needs
+   * the `conversationId` its Submit lands in.
+   */
+  report?: (text: string) => void;
 }) {
   switch (segment.kind) {
     case 'html':
       return <HtmlView html={segment.html} />;
-    case 'view':
-      return conversationId
-        ? <ChatViewItem view={segment.view} conversationId={conversationId} session={session} />
+    case 'view': {
+      const sink = session ? (text: string) => postToSession(session, text) : report;
+      return conversationId || sink
+        ? <ChatViewItem view={segment.view} conversationId={conversationId} report={sink} />
         : null;
+    }
     // A `dream-html` gets the block-sized slot it is about to fill; a `dream-view` keeps the
     // pill, because what IT resolves into is a small card and a card-sized skeleton would
     // promise more than arrives. Proportion, not inconsistency.
@@ -81,23 +91,25 @@ export function ChatViewNotices({ notices }: { notices: string[] }) {
   );
 }
 
-function ChatViewItem({ view, conversationId, session }: {
+function ChatViewItem({ view, conversationId, report }: {
   view: ChatViewSpec;
-  conversationId: string;
-  session?: ChatSession;
+  conversationId?: string;
+  report?: (text: string) => void;
 }) {
   switch (view.type) {
     case 'insight':
       return <InsightView spec={view} />;
     case 'checklist':
-      return <ChecklistCard spec={view} conversationId={conversationId} />;
+      return conversationId
+        ? <ChecklistCard spec={view} conversationId={conversationId} />
+        : <p className="chat-view-notice">A checklist was written here but not drawn: its Submit needs a chat conversation.</p>;
     // The two cards drawn IN the transcript that act on the machine rather than describe
     // it: one writes a file the agent never reads, the other runs a process the user types
-    // into. Both hand a short report back to `session` when they are done.
+    // into. Both hand a short report back to the host when they are done.
     case 'secret':
-      return <SecretCard spec={view} session={session} />;
+      return <SecretCard spec={view} report={report} />;
     case 'run':
-      return <RunCard spec={view} session={session} />;
+      return <RunCard spec={view} report={report} />;
     // DERIVED FROM DISK, like `insight` above: the agent names its own channel and the app
     // draws the thread, so a retyped exchange cannot fork the file the Agents page reads.
     // It takes no `session` — a reply here goes to the AGENT's session over HTTP, not back

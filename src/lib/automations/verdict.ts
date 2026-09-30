@@ -58,6 +58,8 @@ import {
   extractNotificationSummary,
   sanitizeAutomationPrompt,
   SKIMMABLE_MARKDOWN,
+  THREAD_BLOCKS,
+  askClause,
   type ClaudeExecution,
   type SpawnImpl,
 } from './runner.js';
@@ -750,7 +752,12 @@ function buildMessagePreamble(message: string): string {
  * Exported so the lockstep test can assert both halves: that it names `automations post`,
  * and that it does NOT promise phone delivery.
  */
-export function buildThreadMessagePreamble(message: string): string {
+export function buildThreadMessagePreamble(
+  message: string,
+  /** Optional so callers written before the ask clause existed keep working; absent reads
+   *  as `review: off`, the answer that never names a verb the CLI would refuse. */
+  m?: Pick<AutomationManifest, 'slug' | 'review'>,
+): string {
   return [
     'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT',
     'replied in its thread.',
@@ -765,6 +772,10 @@ export function buildThreadMessagePreamble(message: string): string {
     'slug and run are already in your environment. Your final message is NOT published anywhere —',
     'if you do not post, nothing reaches them.',
     SKIMMABLE_MARKDOWN.trim(),
+    // A reply is where "go ahead" arrives, so it is where a command the human must run, or a
+    // decision to put to them, is most often the answer: brief it the way the run was briefed.
+    THREAD_BLOCKS.trim(),
+    askClause(m ?? { slug: '<slug>', review: 'off' }).trim(),
   ].join('\n');
 }
 
@@ -849,7 +860,7 @@ export async function resumeWithMessage(
       nowFn().toISOString(),
       liveSessionId,
       (opts.surface ?? 'telegram') === 'thread'
-        ? buildThreadMessagePreamble(text)
+        ? buildThreadMessagePreamble(text, manifest)
         : buildMessagePreamble(text),
       opts,
     );

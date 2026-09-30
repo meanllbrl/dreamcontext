@@ -11,7 +11,7 @@ pinned: false
 date: '2026-07-26'
 status: active
 created: '2026-07-26'
-updated: '2026-09-29'
+updated: '2026-09-30'
 released_version: v0.22.0
 tags:
   - 'topic:agents'
@@ -66,6 +66,7 @@ related_tasks:
     an-agent-answering-an-question-never-asks-to-approve-a-document-and-a-run-never-opens-a-chat-tab-by-itself
   - >-
     bir-ajan-calisirken-thread-i-bunu-gosterir-ve-ona-yazilan-mesaj-o-thread-e-kuyruga-girer
+  - ajan-thread-i-chat-in-bloklarini-cizer-run-karti-secret-dream-html
 ---
 
 ## Why

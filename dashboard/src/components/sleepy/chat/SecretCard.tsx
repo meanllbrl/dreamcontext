@@ -3,8 +3,6 @@ import { useApi } from '../../../context/VaultContext';
 import { MaskedSecretInput } from '../../core/MaskedSecretInput';
 import { CardHeader } from './molecules';
 import type { SecretViewSpec } from '../../../lib/chatViewSpec';
-import type { ChatSession } from '../chatSession';
-import { postToSession } from './postToSession';
 
 /**
  * ORGANISM — the `dream-view` SECRET card. A masked field in the transcript whose value
@@ -43,7 +41,11 @@ interface SecretResponse {
 
 type Phase = 'idle' | 'saving' | 'saved' | 'failed';
 
-export function SecretCard({ spec, session }: { spec: SecretViewSpec; session?: ChatSession }) {
+export function SecretCard({ spec, report }: {
+  spec: SecretViewSpec;
+  /** Where the receipt goes: the chat's session, or an agent thread's reply. */
+  report?: (text: string) => void;
+}) {
   const api = useApi();
   const [values, setValues] = useState<Record<string, string>>({});
   const [phase, setPhase] = useState<Phase>('idle');
@@ -73,12 +75,12 @@ export function SecretCard({ spec, session }: { spec: SecretViewSpec; session?: 
       setValues({});
       setResult(res);
       setPhase('saved');
-      if (session && res.receipt) postToSession(session, res.receipt);
+      if (res.receipt) report?.(res.receipt);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The secret could not be written.');
       setPhase('failed');
     }
-  }, [api, filled, phase, session, spec.fields, spec.file, spec.title, values]);
+  }, [api, filled, phase, report, spec.fields, spec.file, spec.title, values]);
 
   if (phase === 'saved' && result) {
     return (

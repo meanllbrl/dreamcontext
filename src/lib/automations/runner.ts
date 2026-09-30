@@ -96,6 +96,44 @@ export const SKIMMABLE_MARKDOWN =
   'line the eye should land on (**$54 CPA**, **bugün**), never whole sentences; short paragraphs.'
 
 /**
+ * The Chat's blocks, as a post can carry them — told to every brief that posts (the run
+ * preamble, an ask, a thread reply).
+ *
+ * The thread renders an agent post with the Chat's own segment parser and cards, so a
+ * `dream-view` run card in a post is the same ▶ and real terminal it is in Chat, and its exit
+ * report comes back as the human's reply. Without this clause a run that needs the owner to
+ * run a command writes "run this in your terminal" as prose (observed 2026-09-30, a recipe
+ * corpus run: two `--apply` commands in a bullet list, nothing to press).
+ */
+export const THREAD_BLOCKS =
+  ' A POST DRAWS THE CHAT\'S BLOCKS: a command only the human can run (a login, an OTP, an ' +
+  '`--apply` they must approve by doing it) is a fenced ```dream-view block ' +
+  '{"type":"run","id":"apply","command":"<one line>","why":"<what makes it theirs>"}, drawn as the ' +
+  'command with a ▶ that opens a real terminal; when it exits, its exit code and output come back ' +
+  'to you as their reply. cwd, if given, is project-relative; for a directory outside the project ' +
+  'write `cd <dir> && …` in the command. Several commands that must run in order are ONE card ' +
+  'joined with `&&`. A credential you need is {"type":"secret","id":"key","title":"<what it is>","fields":' +
+  '[{"key":"NAME"}]}: a masked field the app writes to .env, you get a receipt, never the value. ' +
+  'A diagram is a ```dream-html block. Never write "run this in your terminal" as text.';
+
+/**
+ * How a brief tells its agent to ask for a decision — `review`-aware, because `propose`
+ * refuses under `review: off` and a brief that names a verb the CLI will refuse spends the
+ * run's turn discovering that (observed 2026-09-30: the run proposed, was refused, and fell
+ * back to a plain-text question with nothing to press).
+ */
+export function askClause(m: Pick<AutomationManifest, 'slug' | 'review'>): string {
+  return m.review !== 'off'
+    ? ' To ask for a decision, ask with buttons: ' +
+      `\`dreamcontext automations propose ${m.slug} --title … --body … --choice "A" --choice "B"\` ` +
+      '(≤4, ≤64 chars each), then stop; the answer resumes you. Never post a question as plain ' +
+      'text: it has nothing to press.'
+    : ' This automation cannot stop to ask (review is off, so `propose` refuses): do not call it. ' +
+      'When something needs the human, post what it is and what you recommend; they reply in the ' +
+      'thread, and a command they must run goes in a run card.';
+}
+
+/**
  * Which slot this fire belongs to, recomputed from the manifest and the fire
  * moment itself — never carried alongside the fire. That is what keeps it
  * right through the queue (a parked fire keeps its ORIGINAL `fireAt`) and a
@@ -184,10 +222,9 @@ export function buildPreamble(
     'opens in the viewer, markdown in a reader. Save anything you attach NEXT TO your document ' +
     `(${attachmentDirHint(outputPath)}, ` +
     'brain-relative). Also up to 6 key=value rows with --kv — --kv ' +
-    'is for numbers, not prose. To ask with buttons: ' +
-    `\`dreamcontext automations propose ${m.slug} --title … --body … --choice "A" --choice ` +
-    '"B"` (≤4, ≤64 chars each; needs review on). Never post a question as plain text — it ' +
-    'has nothing to press.' +
+    'is for numbers, not prose.' +
+    THREAD_BLOCKS +
+    askClause(m) +
     // Without this line, a run (or its resumed chat) that gets asked "why
     // didn't this reach my Telegram?" concludes — correctly, from its own
     // view — that no Telegram connection exists, and starts recommending the
@@ -458,6 +495,7 @@ export function buildAskBlock(ask: string, m?: Pick<AutomationManifest, 'slug' |
         'and stop. That is drawn as buttons; a question written as plain text has nothing to press.',
       ]
       : ['If something needs their go-ahead before it happens, do not do it: say so in your post and stop.']),
+    THREAD_BLOCKS.trim(),
     // The channel's `/` menu offers this project's skills and commands, so a `/name`
     // in the ask is a PICK from that menu, not punctuation. Inside a `-p` brief the
     // CLI will not expand it on its own; without this line the run reads "/whatsapp"
