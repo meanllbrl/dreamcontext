@@ -133,6 +133,7 @@ function HtmlBlockFrame({ html, declared, inputs, lang, title, stoppedText }: {
     <iframe
       ref={frameRef}
       className="lab-block-html-frame"
+      data-lab-html-block
       title={title}
       sandbox={SANDBOX_GRANT}
       allow={SANDBOX_ALLOW}

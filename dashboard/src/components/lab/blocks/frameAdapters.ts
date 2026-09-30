@@ -123,3 +123,21 @@ export function frameToStat(frame: Frame | null): StatValue | null {
   }
   return null;
 }
+
+/**
+ * A stat over the first series of `pick` the insight has (the `series`
+ * option): its latest point, the point before, and its values as the spark.
+ * Null when none of the named series exists, so the caller keeps the default.
+ */
+export function statFromSeries(series: readonly Series[], pick: readonly string[], unit: string | null): StatValue | null {
+  const byName = new Map(series.map((s) => [s.name, s] as [string, Series]));
+  const hit = pick.map((name) => byName.get(name)).find((s): s is Series => s !== undefined);
+  if (!hit) return null;
+  const values = hit.points.map((p) => p.v).filter((v) => Number.isFinite(v));
+  return {
+    value: values.length > 0 ? values[values.length - 1] : null,
+    prev: values.length >= 2 ? values[values.length - 2] : null,
+    spark: values,
+    unit,
+  };
+}

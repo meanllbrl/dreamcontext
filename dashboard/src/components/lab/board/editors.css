@@ -1,0 +1,444 @@
+/*
+ * Insights board editors: the block inspector, the add-card menu and the save-to-library dialog.
+ * Both panels sit beside the canvas in the board's side slot.
+ *
+ * Automations Elevated rules, as board.css: tokens only, the 12 / 14 type ladder
+ * (--font-size-xs / --font-size-sm), weights 400 / 600, and no accent fill: a selected block is
+ * the neutral-selected recipe (surface, ink border, semibold). The accent appears only as the
+ * focus ring. Buttons reuse board.css's .board-btn.
+ */
+
+/* ─── Panel ─────────────────────────────────────────────────────────────── */
+
+.lab-editor {
+  flex: none;
+  width: calc(var(--space-28) * 2.5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  overflow-y: auto;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.lab-editor-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.lab-editor-heading {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-editor-hint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.lab-editor-problem {
+  margin: 0;
+  color: var(--color-error-ink);
+  font-size: var(--font-size-xs);
+}
+
+.lab-editor-detail {
+  display: block;
+  white-space: pre-wrap;
+  color: var(--color-text-secondary);
+}
+
+/* ─── Fields ────────────────────────────────────────────────────────────── */
+
+.lab-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.lab-editor-label {
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-editor-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  height: var(--space-7);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  transition: border-color var(--transition-fast);
+}
+
+.lab-editor-input:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+}
+
+.lab-editor-input:focus-visible {
+  outline: none;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+.lab-editor-input:disabled {
+  color: var(--color-text-tertiary);
+}
+
+.lab-editor-input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.lab-editor-input--mono {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.lab-editor-textarea {
+  height: auto;
+  padding: var(--space-2);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.lab-editor-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.lab-editor-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.lab-editor-row > .lab-editor-input {
+  flex: 1;
+}
+
+.lab-editor-row > select.lab-editor-input {
+  flex: none;
+  width: auto;
+}
+
+.lab-editor-inputname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+}
+
+.lab-editor-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.lab-editor-icon:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.lab-editor-icon:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+  opacity: 0.4;
+}
+
+.lab-editor-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.lab-editor-link:hover {
+  color: var(--color-text);
+}
+
+.lab-editor-icon:focus-visible,
+.lab-editor-link:focus-visible,
+.lab-editor-block-name:focus-visible,
+.lab-editor-item:focus-visible,
+.lab-editor-tile:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.lab-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ─── Block outline ─────────────────────────────────────────────────────── */
+
+.lab-editor-outline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lab-editor-outline--nested {
+  margin-top: var(--space-1);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--color-border);
+}
+
+.lab-editor-outline--nested > li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.lab-editor-tabname {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-editor-block {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+
+.lab-editor-block--on {
+  border-color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.lab-editor-block-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lab-editor-block--on .lab-editor-block-type {
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-editor-block-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-editor-dot {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-error);
+}
+
+/* ─── Add-card menu ─────────────────────────────────────────────────────── */
+
+.lab-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lab-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lab-editor-item,
+.lab-editor-tile {
+  width: 100%;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.lab-editor-item {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lab-editor-tile {
+  height: 100%;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.lab-editor-item:hover:not(:disabled),
+.lab-editor-tile:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+  background: var(--color-bg-tertiary);
+}
+
+.lab-editor-tile:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.lab-editor-item-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-editor-item-detail {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.lab-editor-item > .lab-editor-item-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-editor-badge {
+  flex: none;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/* ─── Save-to-library dialog ────────────────────────────────────────────── */
+
+/* Portalled to <body>: the board popovers' layer (board.css, 60), above the agent button (18). */
+.lab-editor-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: var(--color-bg-tertiary);
+  background: color-mix(in srgb, var(--color-bg-tertiary) 70%, transparent);
+}
+
+.lab-editor-dialog {
+  width: calc(var(--space-28) * 3);
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-text);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+}
+
+.lab-editor-dialog-head {
+  display: flex;
+  align-items: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lab-editor-input,
+  .lab-editor-icon,
+  .lab-editor-item,
+  .lab-editor-tile {
+    transition: none;
+  }
+}

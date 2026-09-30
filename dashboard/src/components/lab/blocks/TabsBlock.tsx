@@ -27,6 +27,7 @@ export function TabsBlock({ block, renderChild }: BlockViewProps) {
             key={i}
             type="button"
             role="tab"
+            data-lab-tab={i}
             className="lab-block-tab"
             aria-selected={i === current}
             onClick={() => setActive(i)}
