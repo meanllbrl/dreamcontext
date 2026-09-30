@@ -514,6 +514,26 @@ export async function focusThisWindow(): Promise<void> {
 }
 
 /**
+ * Pin (or unpin) the CURRENT window above every app. Always-on-top alone only floats a window
+ * on the macOS Space it was opened on, so a pinned checklist vanished the moment the user
+ * switched desktop or went into a full-screen app; the shell's `set_pinned` also makes it join
+ * every Space and sit beside full-screen apps. An older `.app` has no such command — it falls
+ * back to plain always-on-top there, the old behaviour, rather than not pinning at all.
+ */
+export async function pinCurrentWindow(pinned: boolean): Promise<void> {
+  if (!isDesktop()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('set_pinned', { pinned });
+    return;
+  } catch { /* older shell: no set_pinned — fall through */ }
+  try {
+    const { getCurrentWindow } = await windowApi();
+    await getCurrentWindow().setAlwaysOnTop(pinned);
+  } catch { /* ACL / non-desktop — the toggle still flips visually */ }
+}
+
+/**
  * Open the pinned checklist window for one project's checklist `id`. Mirrors
  * `openVaultWindow` exactly: focus an already-open window instead of spawning a
  * duplicate, otherwise build a new always-on-top window at the same dashboard
@@ -544,6 +564,7 @@ export async function openChecklistWindow(id: string, vault: string): Promise<vo
       minWidth: 300,
       minHeight: 260,
       alwaysOnTop: true,
+      visibleOnAllWorkspaces: true,
       resizable: true,
       titleBarStyle: 'overlay',
       hiddenTitle: true,

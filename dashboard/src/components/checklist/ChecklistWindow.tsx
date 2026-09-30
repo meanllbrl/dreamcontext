@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { closeCurrentWindow, isDesktop, startTitleBarDrag } from '../../lib/desktop';
+import { closeCurrentWindow, pinCurrentWindow, startTitleBarDrag } from '../../lib/desktop';
 import {
   readEnvelope, writeState, readState, clearChecklist, checklistEnvelopeKey,
   type ChecklistEnvelope,
@@ -155,14 +155,13 @@ export function ChecklistWindow({ id, vault }: Props) {
     return () => window.removeEventListener('storage', onStorage);
   }, [id, vault]);
 
+  // The window opens pinned; this lifts it onto every Space too (see pinCurrentWindow).
+  useEffect(() => { void pinCurrentWindow(true); }, []);
+
   const togglePin = useCallback(async () => {
     const next = !pinned;
     setPinned(next);
-    if (!isDesktop()) return;
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow().setAlwaysOnTop(next);
-    } catch { /* ACL / non-desktop — the toggle still flips visually, matches desktop.ts's own discipline */ }
+    await pinCurrentWindow(next);
   }, [pinned]);
 
   const handleSubmit = useCallback(async () => {

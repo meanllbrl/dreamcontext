@@ -1,0 +1,8 @@
+"$schema" = "schemas/schema.json"
+
+# Pin the calling window above every app and on every Space (always-on-top alone
+# only floats it on the Space it was opened on). See `set_pinned` in src/lib.rs.
+[[permission]]
+identifier = "allow-set-pinned"
+description = "Pin or unpin the calling window above all apps, on every Space and beside full-screen apps."
+commands.allow = ["set_pinned"]

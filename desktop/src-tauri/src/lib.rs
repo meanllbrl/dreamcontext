@@ -68,6 +68,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pick_paths,
             confirm_dialog,
+            set_pinned,
             assistant::assistant_geometry,
             assistant::assistant_apply_hotkey,
             assistant::assistant_set_autostart,
@@ -280,6 +281,35 @@ async fn pick_paths(
     rx.recv()
         .await
         .unwrap_or_else(|| Err("The file picker closed without an answer.".to_string()))
+}
+
+/// Pin or unpin the calling window above EVERY app, on every Space.
+///
+/// WHY THIS EXISTS: Tauri's `setAlwaysOnTop` only raises the window level to
+/// `NSFloatingWindowLevel`. The window still belongs to the Space it was opened
+/// on, so the moment the user switches desktop or goes into a full-screen app —
+/// exactly the "tick this while you work in App Store Connect" case the pinned
+/// checklist is for — it is left behind with the dreamcontext window. A pinned
+/// window also has to join all Spaces (`CanJoinAllSpaces`) and be allowed next to
+/// a full-screen window (`FullScreenAuxiliary`); unpinning clears both again.
+#[tauri::command]
+fn set_pinned(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
+    use objc2_app_kit::NSWindowCollectionBehavior as B;
+    window.set_always_on_top(pinned).map_err(|e| e.to_string())?;
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || {
+            // SAFETY: on the main thread, and `ns_window` is this window's live NSWindow.
+            let Ok(ptr) = target.ns_window() else { return };
+            if ptr.is_null() {
+                return;
+            }
+            let ns: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+            let everywhere = B::CanJoinAllSpaces | B::FullScreenAuxiliary;
+            let current = ns.collectionBehavior();
+            ns.setCollectionBehavior(if pinned { current | everywhere } else { current & !everywhere });
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Present a native confirmation sheet and resolve to what the user chose.
