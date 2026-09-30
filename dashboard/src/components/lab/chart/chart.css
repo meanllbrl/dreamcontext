@@ -1,0 +1,331 @@
+/* The chart foundation's stylesheet (dashboard/src/components/lab/chart/).
+ *
+ * TOKENS ONLY, like the board: every colour below comes from tokens.css or from the
+ * `--viz-*` palette declared at the top of this file. The palette is the ONE place a
+ * hex may appear, and every value in it was run through the dataviz validator
+ * (validate_palette.js) against the app's real surfaces: light `--color-bg-secondary`
+ * (#ffffff) and dark `--color-bg-secondary` (#1c1f2a). Dark is SELECTED (its own
+ * steps, validated against the dark surface), never flipped.
+ *
+ *   categorical  8 hues in a FIXED order (violet, orange, aqua, yellow, magenta, green,
+ *                blue, red). Slot 1 light is the app accent (--chart-1, #7b68ee). The
+ *                order is the CVD-safety mechanism: adjacent CVD dE >= 8.4, adjacent
+ *                normal-vision dE >= 19.3 in both modes; the slot-8 -> slot-1 wrap a
+ *                colour start > 1 creates clears 19.5. Light aqua, yellow and magenta sit
+ *                under 3:1 on white: the relief rule applies (tooltip + table view).
+ *   other        the de-emphasis grey a folded tail ("Other") and muted series wear.
+ *   sequential   one blue hue, 7 steps; light runs light -> dark, dark flips the anchor
+ *                so "near zero" recedes toward the dark surface.
+ *   diverging    red <- neutral grey -> blue, 3 equal-lightness steps per arm.
+ *   *-ink-N      the text colour for a label set INSIDE that fill (white or ink by the
+ *                fill's luminance); the only place text may sit on a data colour.
+ */
+
+:root {
+  --viz-cat-1: #7b68ee;
+  --viz-cat-2: #eb6834;
+  --viz-cat-3: #1baf7a;
+  --viz-cat-4: #eda100;
+  --viz-cat-5: #e87ba4;
+  --viz-cat-6: #008300;
+  --viz-cat-7: #2a78d6;
+  --viz-cat-8: #e34948;
+  --viz-other: #a3a8b5;
+
+  --viz-seq-1: #cde2fb;
+  --viz-seq-2: #9ec5f4;
+  --viz-seq-3: #6da7ec;
+  --viz-seq-4: #3987e5;
+  --viz-seq-5: #256abf;
+  --viz-seq-6: #184f95;
+  --viz-seq-7: #0d366b;
+  --viz-seq-ink-1: var(--color-ink);
+  --viz-seq-ink-2: var(--color-ink);
+  --viz-seq-ink-3: var(--color-ink);
+  --viz-seq-ink-4: var(--color-snow);
+  --viz-seq-ink-5: var(--color-snow);
+  --viz-seq-ink-6: var(--color-snow);
+  --viz-seq-ink-7: var(--color-snow);
+
+  --viz-div-1: #902123;
+  --viz-div-2: #e14c4a;
+  --viz-div-3: #f7aba4;
+  --viz-div-4: #f0efec;
+  --viz-div-5: #9ec5f4;
+  --viz-div-6: #3987e5;
+  --viz-div-7: #184f95;
+  --viz-div-ink-1: var(--color-snow);
+  --viz-div-ink-2: var(--color-snow);
+  --viz-div-ink-3: var(--color-ink);
+  --viz-div-ink-4: var(--color-ink);
+  --viz-div-ink-5: var(--color-ink);
+  --viz-div-ink-6: var(--color-snow);
+  --viz-div-ink-7: var(--color-snow);
+
+  /* Chart chrome: recessive, one step off the surface, solid hairlines. */
+  --viz-surface: var(--color-bg-secondary);
+  --viz-grid: var(--color-border);
+  --viz-axis: var(--color-border-hover);
+  --viz-tick: var(--color-text-secondary);
+  --viz-crosshair: var(--color-text-tertiary);
+}
+
+[data-theme='dark'],
+.surface-night {
+  --viz-cat-1: #9085e9;
+  --viz-cat-2: #d95926;
+  --viz-cat-3: #199e70;
+  --viz-cat-4: #c98500;
+  --viz-cat-5: #d55181;
+  --viz-cat-6: #008300;
+  --viz-cat-7: #3987e5;
+  --viz-cat-8: #e66767;
+  --viz-other: #5d6377;
+
+  --viz-seq-1: #0d366b;
+  --viz-seq-2: #184f95;
+  --viz-seq-3: #256abf;
+  --viz-seq-4: #3987e5;
+  --viz-seq-5: #6da7ec;
+  --viz-seq-6: #9ec5f4;
+  --viz-seq-7: #cde2fb;
+  --viz-seq-ink-1: var(--color-snow);
+  --viz-seq-ink-2: var(--color-snow);
+  --viz-seq-ink-3: var(--color-snow);
+  --viz-seq-ink-4: var(--color-snow);
+  --viz-seq-ink-5: var(--color-ink);
+  --viz-seq-ink-6: var(--color-ink);
+  --viz-seq-ink-7: var(--color-ink);
+
+  --viz-div-1: #f7aba4;
+  --viz-div-2: #e14c4a;
+  --viz-div-3: #9a2a2a;
+  --viz-div-4: #3a3d47;
+  --viz-div-5: #184f95;
+  --viz-div-6: #3987e5;
+  --viz-div-7: #9ec5f4;
+  --viz-div-ink-1: var(--color-ink);
+  --viz-div-ink-2: var(--color-snow);
+  --viz-div-ink-3: var(--color-snow);
+  --viz-div-ink-4: var(--color-snow);
+  --viz-div-ink-5: var(--color-snow);
+  --viz-div-ink-6: var(--color-snow);
+  --viz-div-ink-7: var(--color-ink);
+}
+
+/* ── Frame: fills the cell, never scrolls. The plot is a flex child whose SVG is
+   absolutely positioned, so the drawing never feeds back into the measured size. */
+.lab-chart {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.lab-chart[data-legend='right'] {
+  flex-direction: row;
+}
+
+.lab-chart-plot {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lab-chart-svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.lab-chart-svg:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  /* Inset: the frame clips overflow, so an outset ring would be cut to one edge. */
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Axis + grid ── */
+.lab-chart-tick {
+  fill: var(--viz-tick);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-chart-grid line {
+  stroke: var(--viz-grid);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.lab-chart-axis-line {
+  stroke: var(--viz-axis);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.lab-chart-crosshair {
+  stroke: var(--viz-crosshair);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+  pointer-events: none;
+}
+
+.lab-chart-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+/* ── Tooltip: text tokens, a coloured key beside each row, never text in a series colour. */
+.lab-chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  min-width: calc(var(--space-20) + var(--space-2));
+  max-width: calc(100% - var(--space-2));
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  color: var(--color-text-secondary);
+}
+
+.lab-chart-tooltip-title {
+  margin-bottom: var(--space-1);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lab-chart-tooltip-row[data-dim='true'] {
+  opacity: 0.55;
+}
+
+.lab-chart-tooltip-value {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-chart-tooltip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-chart-tooltip-foot {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ── Keys: a short stroke for lines, a rounded square for fills, a dot for points. */
+.lab-chart-key {
+  flex: none;
+  display: inline-block;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.lab-chart-key[data-shape='line'] {
+  width: var(--space-3);
+  height: 2px;
+  border-radius: 1px;
+}
+
+.lab-chart-key[data-shape='dot'] {
+  border-radius: var(--radius-full);
+}
+
+/* ── Legend: buttons, so click and Enter/Space toggle a series; aria-pressed carries state. */
+.lab-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  max-height: calc(var(--font-size-xs) * 3.4);
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lab-chart[data-legend='right'] .lab-chart-legend {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  justify-content: center;
+  max-width: 34%;
+  max-height: none;
+}
+
+.lab-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.lab-chart-legend-item:hover {
+  color: var(--color-text);
+}
+
+.lab-chart-legend-item:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.lab-chart-legend-item[aria-pressed='false'] {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+}
+
+.lab-chart-legend-item[aria-pressed='false'] .lab-chart-key {
+  opacity: 0.35;
+}
+
+.lab-chart-legend-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-chart-legend-item:disabled {
+  cursor: default;
+}
