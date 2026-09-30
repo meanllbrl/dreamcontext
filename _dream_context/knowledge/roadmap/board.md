@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-09-29'
+date: '2026-09-30'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-09-29 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-09-30 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 4/5 done (80%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -59,7 +59,7 @@ date: '2026-09-29'
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
   - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · BACKLOG
 
-### 🟡 **simplified-ux** — Simplified UX · 51/62 done (82%) · target 2026-07-31 · forecast 2026-09-11 🔴 SLIPPING
+### 🟡 **simplified-ux** — Simplified UX · 53/66 done (80%) · target 2026-07-31 · forecast 2026-09-22 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-claude-account-switch-reaches-the-sessions-already-open (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - a-finished-sub-agent-s-report-becomes-a-collapsed-card-in-the-transcript-instead-of-a-wall-the-main-agent-re-types (completed) · 0.27.0 · 2026-09-02 → 2026-09-02
@@ -72,9 +72,12 @@ date: '2026-09-29'
   - an-agent-can-drop-a-pin-whose-fact-stopped-being-true (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
+  - app-status-always-reports-running-no-macos-pgrep-truncates-the-command-line-at-66-chars (completed) · 0.28.0 · 2026-09-21 → 2026-09-21
   - approve-time-duplicate-run-warning-for-shared-automations (completed) · 2026-08-13 → 2026-08-13
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
   - auto-switch-iki-mod-agirlikli-puan-ve-sirayla-tuketme (completed) · 0.28.0 · 2026-09-10 → 2026-09-11
+  - automations-must-not-publish-a-usage-limit-reply-as-their-document (completed) · 0.28.0 · 2026-09-22 → 2026-09-22
+  - automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands (in_review) · 0.28.0
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
   - chat-answers-become-agent-written-html-typed-chart-page-retire-dream-html-renders-in-a-themed-sandbox (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window (completed) · 0.21.0 · 2026-07-26 → …
@@ -114,6 +117,7 @@ date: '2026-09-29'
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point (completed) · 0.17.2
   - script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
+  - sesli-asistan-ekrani-gorur-ve-acik-sekmedeki-projeye-baglanir (in_review) · 0.28.0
   - survey-questions-page-horizontally-one-question-per-view (completed) · 0.21.0
   - task-creation-scaffolds-lean-and-every-task-says-why-it-exists (completed) · 0.21.0
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance (completed) · 2026-07-08 → …
@@ -125,9 +129,9 @@ date: '2026-09-29'
   - upgrade-never-runs-migrations-and-maybeupdateallprojects-has-4-silent-skip-holes (todo) · BACKLOG
   - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim (todo) · 0.28.0
 
-### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-10-09 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
+### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-10-20 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
   Unblocks: hello-world-pr
   - feat-web-hosted-dreamcontext-com-github-oauth-collaboration-layer-over-the-brain (todo) · BACKLOG
   - feat-web-read-only-public-surface-safely-share-a-single-knowledge-file-excalidraw-board-via-tunnel (todo) · BACKLOG
 
-### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-11-06 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business
+### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-11-17 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business

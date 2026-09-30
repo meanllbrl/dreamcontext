@@ -14,6 +14,7 @@ created: '2026-07-26'
 updated: '2026-09-30'
 released_version: v0.22.0
 tags:
+  - 'topic:automations'
   - 'topic:agents'
   - 'layer:backend'
   - 'domain:security'
@@ -67,6 +68,8 @@ related_tasks:
   - >-
     bir-ajan-calisirken-thread-i-bunu-gosterir-ve-ona-yazilan-mesaj-o-thread-e-kuyruga-girer
   - ajan-thread-i-chat-in-bloklarini-cizer-run-karti-secret-dream-html
+  - >-
+    the-agent-thread-question-card-grows-an-extra-other-option-so-verify-agent-threads-fails-three-checks-on-main
 ---
 
 ## Why
@@ -103,6 +106,11 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 
 - [x] Manifest entity at `_dream_context/automations/<slug>.md` with frontmatter (id, title, enabled, `schedule: {days, at}`, model, effort, timeout_minutes, catchup_hours, output.dir, shared) and `## Prompt` / `## Output instructions` / `## Changelog` body. Lenient reads, strict writes.
 - [x] Structured schedule (`days: daily | [mon, wed]`, `at: "HH:MM"` local) with pure `mostRecentFire` + `isDue` predicates—injected `now`, unit-tested including midnight/week wrap and DST.
+- [x] **[2026-09-30] An agent's thread draws the Chat's blocks** (`37c3118f`): agent posts in the thread and the feed go through the Chat's own `parseChatActions` + `ChatBlockSegment`, in written order. A `dream-view` run card is the same ▶ and real terminal, and its exit report becomes the human's thread reply, which resumes the run; `fitRunReport` trims the output from its oldest lines to fit the 2,000-char reply cap. `secret` and `dream-html` render as in Chat. `checklist` and `dream-actions` are not drawn in a thread, and the notice strip says so. A human's reply is never parsed for blocks.
+- [x] **[2026-09-30] Every brief that posts names those blocks, and never asks a run to do what it can't** (`37c3118f`, `6bff5b5c`): `THREAD_BLOCKS` is in the run preamble, the @mention ask block and the thread-reply preamble, and a test runs its examples through the dashboard's real view parser. `askClause` follows `review`, so a `review: off` run is never told to propose. `automations show` and `approve` both flag a prompt that says propose while review is off (`reviewMismatch`).
+- [x] **[2026-09-30] Editing an agent never saves the list preview as its prompt** (`36bf226a`, a real data-loss incident: the `tarif-korpus-haftalik` prompt was cut to 600 chars mid-word and re-approved). The Edit dialog reads the full prompt fresh from the detail route on every open, with the field read-only and Save disabled until it arrives. The update route refuses a prompt that is exactly the preview of a longer one with `409 prompt_truncated`, so an old bundle cannot do it either.
+- [x] **[2026-09-30] A clicked agent banner lands on its thread** (`7a4a13b3`, `797970d8`, `0108e68e`): completion, verdict, failure and resumed-turn banners carry a `dreamcontext://` link; the click brings the project's existing window forward on Agents with that agent's newest thread open, and opens the run's document in a small viewer window. Without the desktop app the click opens the file as before.
+- [x] **[2026-09-30] `automations approve` shows the Flow graph as JSON** (`6bff5b5c`): object fields print as indented JSON instead of `[object Object]`, so a reviewer can read the hashed graph they are consenting to.
 - [x] **[2026-09-28] Several fire times per agent, richer cadences** (`786e781a`). `schedule.slots: [...]`, each slot one of: weekly days (+ `every_weeks` with an `anchor` date), `monthdays` (-1 = last), `nth` weekday of the month (-1 = last), or a 5-field local `cron`. `mostRecentFire` = latest across slots, `nextFire` = earliest; two missed slots collapse into the most recent one; day matching on local noon and weeks counted in whole days, so DST cannot move a fire or flip biweekly parity. Legacy `{days, at}` parses as one slot and is written back in that shape; the schedule stays out of the approval hash; a malformed slot fails the whole schedule with a named reason. The run learns its slot (`DREAMCONTEXT_AUTOMATION_SLOT`, `manual` for Run now). CLI `create --slot` (repeatable: `month:1,15,last@09:00`, `2w:mon@10:00`, `month:1st-mon@09:30`, `cron:30 9 * * 1`) and `automations schedule <slug> [--add|--remove]`; the dashboard dialog has one row per time validated by the same `parseSlot`.
 - [x] **[2026-09-28] A run uses every signed-in Claude account** (`f73326c4`): it picks its account with the chat's auto-switch rule before spawning, and a run the API refuses at a limit records the refusal and continues on the next account (resuming its session if it had done work), one attempt per account inside the single timeout. Answer and message resumes pick the same way.
 - [x] **[2026-09-28] Only the run's own process tree may `propose`** (`f6862718`, `bd7c4b34`, security): admitted iff the run's child pid is an ancestor of the caller; a run's own Bash-tool calls pass, a human shell, another run's descendant and a reparented daemon are refused, an unverifiable caller fails closed. Real-process tests; the daemon case fails against the interim guard.
@@ -547,6 +555,9 @@ The review-queue model (shipped 2026-08-04 under `f9ffba0`) was **retired and de
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-30 - Threads draw the Chat's blocks; the edit dialog stops truncating prompts (sleep reconcile)
+- Four criteria added from `37c3118f`, `36bf226a`, `6bff5b5c`. Trigger: the recipe-corpus run could only list two `--apply` commands as prose, and the Edit dialog had re-approved a 600-char preview as the prompt.
 
 ### 2026-09-29 - Multi-slot schedules, every account, ancestry-only propose guard (sleep reconcile)
 - Five criteria added from `786e781a`, `f73326c4`, `f6862718`/`bd7c4b34`, `a0b0140e`, `454026e6`. The process-group probe decision is superseded by the ancestry guard; the v1 "no cron" decision and the Future `cron:` item are superseded by slot schedules.

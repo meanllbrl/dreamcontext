@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-09-28'
+updated: '2026-09-30'
 released_version: 0.27.0
 product: desktop
 tags:

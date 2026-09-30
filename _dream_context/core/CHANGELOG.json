@@ -1,5 +1,107 @@
 [
   {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "cli",
+    "description": "Fix the approve screen printing [object Object] for the Flow graph; it now renders the graph as JSON and warns when the approved prompt's propose calls would be refused.",
+    "breaking": false,
+    "summary": "automations approve prints the Flow graph as JSON and says when a prompt's propose will be refused",
+    "references": [
+      "commit:6bff5b5c"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Add Chat block rendering to agent thread posts: a dream-view run card opens a real terminal whose exit report resumes the agent as a thread reply, plus secret and dream-html blocks. THREAD_BLOCKS and a review-aware askClause join the run, ask and thread-reply briefs, and a reviewMismatch warning flags a prompt whose review stance contradicts its flow.",
+    "breaking": false,
+    "summary": "An agent's thread draws the Chat's blocks, so a run can hand you a run card whose exit report resumes the agent",
+    "references": [
+      "commit:37c3118f"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Fix the Edit agent dialog seeding its prompt from the list's 600-char description preview, so Save and re-approve truncated and approved a 6,700-char prompt (tarif-korpus-haftalik in h-f_dreamcontext, restored from a run transcript). The dialog now reads the full prompt fresh on every open (refetchOnMount always) with Save gated until loaded, and the server rejects a write that looks like a preview truncation with 409 prompt_truncated.",
+    "breaking": false,
+    "summary": "Editing an agent never saves the list's 600-char preview as its prompt; the server refuses a preview-truncation with 409 prompt_truncated",
+    "references": [
+      "commit:36bf226a",
+      "knowledge:presentation-field-must-not-double-as-safety-predicate"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "accounts",
+    "description": "Fix re-sign-in for a connected Claude account that had signed out: the login now runs inside that account's own sandbox config dir instead of failing or landing in another account.",
+    "breaking": false,
+    "summary": "A signed-out connected account signs in again, into its own sandbox",
+    "references": [
+      "commit:c6524429"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "voice",
+    "description": "Revert the Assistant's mic capture to the processed chain; the raw chain delivered silence.",
+    "breaking": false,
+    "summary": "The microphone is asked for the processed audio chain again, because the raw one is silent",
+    "references": [
+      "commit:6189c2b3"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Show live agent activity in its thread and queue a message sent while it works; an older run's thread now points at the newer run the agent is working on instead of looking idle.",
+    "breaking": false,
+    "summary": "A working agent shows in its thread, a message to it queues there, and an older thread says when its agent works on a newer run",
+    "references": [
+      "commit:55fe871b",
+      "commit:ab0a5bb7"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "feat",
+    "scope": "notify",
+    "description": "Add a dreamcontext:// URL handler to the desktop app, stamp every banner (automation, Claude-is-asking, sleep, dreamcontext notify) with a link to where it belongs, and route a click to that agent thread, chat tab or page; banners with no in-app place open a Notifications window. No app installed keeps the old open-the-file behaviour.",
+    "breaking": false,
+    "summary": "Routable notifications: the app answers dreamcontext:// links, every banner carries one, and a clicked banner lands in its window, tab and place",
+    "references": [
+      "commit:0108e68e",
+      "commit:7a4a13b3",
+      "commit:797970d8"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-29",
     "type": "feat",
     "scope": "desktop",
