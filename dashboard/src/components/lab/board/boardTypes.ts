@@ -33,7 +33,11 @@ export type BlockType =
   | 'tabs'
   | 'filter'
   | 'html'
-  | 'insight';
+  | 'insight'
+  | 'breakdown'
+  | 'trend'
+  | 'benchmark'
+  | 'segments';
 
 // ─── Board spec (mirror of src/lib/lab/boards.ts) ───────────────────────────
 

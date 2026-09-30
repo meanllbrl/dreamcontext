@@ -70,7 +70,12 @@ const LEGACY_KEYS: Record<BlockType, Record<string, string>> = {
   tabs: { tabs: 'tabs' },
   filter: { dim: 'string' },
   html: { html: 'html', ref: 'string', inputs: 'inputs' },
-  insight: {},
+  insight: { page: 'pick', nav: 'boolean' },
+  // Funnel explorer blocks (their first options; kept from here on like the rest).
+  breakdown: { funnel: 'pick', dims: 'pick', counts: 'boolean', lanes: 'boolean' },
+  trend: { funnel: 'pick', metrics: 'pick', chart: 'enum', switch: 'boolean', legend: 'enum', axes: 'enum', grid: 'boolean', format: 'enum' },
+  benchmark: { funnel: 'pick', metrics: 'pick', comparePrev: 'boolean', sources: 'boolean' },
+  segments: { funnel: 'pick', by: 'pick', metrics: 'pick', bands: 'boolean', sort: 'sort', limit: 'number', density: 'enum' },
 };
 
 /** The legacy defaults / enums / bounds, which must not move (today's look). */
@@ -86,7 +91,9 @@ const LEGACY_VALUES: Partial<Record<BlockType, Record<string, Partial<BlockOptio
   pie: { donut: { default: false }, limit: { min: 1, max: 400 } },
   table: { limit: { min: 1, max: 400 } },
   heatmap: { color: { default: 1, min: 1, max: 8 } },
-  funnel: { compact: { default: false } },
+  // markWorst off and layout bars: a funnel block written before the explorer draws exactly as before.
+  funnel: { compact: { default: false }, markWorst: { default: false }, layout: { enum: ['bars', 'flow'], default: 'bars' } },
+  insight: { nav: { default: false } },
   callout: { tone: { enum: ['info', 'success', 'warning', 'danger'], default: 'info' } },
 };
 

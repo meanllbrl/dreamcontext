@@ -1,7 +1,10 @@
 import { findFreeSlot } from '../../../generated/grid';
-import type { InsightSummary } from '../../../hooks/useLab';
+import {
+  FUNNEL_EXPLORER_SIZE, funnelExplorerBlocks, type PresetDim, type PresetLocale,
+} from '../../../generated/presets';
+import type { InsightCache, InsightSummary } from '../../../hooks/useLab';
 import type {
-  Block, BlockCatalog, BlockCatalogEntry, BlockOptionSchema, BlockTab, BlockType, Board, Card, GridRect,
+  Block, BlockCatalog, BlockCatalogEntry, BlockOptionSchema, BlockTab, BlockType, Board, Card, Frame, GridRect,
   LibraryBlock, LibraryBlockInput,
 } from './boardTypes';
 
@@ -73,7 +76,8 @@ export function entryOf(catalog: BlockCatalog, type: BlockType): BlockCatalogEnt
 // ─── The generated form ─────────────────────────────────────────────────────
 
 export type FieldControl =
-  | 'toggle' | 'select' | 'number' | 'text' | 'textarea' | 'list' | 'where' | 'sort' | 'tabs' | 'inputs' | 'html' | 'library-ref';
+  | 'toggle' | 'select' | 'number' | 'text' | 'textarea' | 'list' | 'where' | 'sort' | 'tabs' | 'inputs' | 'html' | 'library-ref'
+  | 'pick' | 'pick-list';
 
 export interface FieldSpec {
   key: string;
@@ -94,8 +98,8 @@ const CONTROL_OF: Record<BlockOptionSchema['type'], FieldControl> = {
   tabs: 'tabs',
   inputs: 'inputs',
   html: 'html',
-  // A pick edits as plain text (one name) for now; `multi` makes it a list (see fieldsFor).
-  pick: 'text',
+  // A pick is a select over the data's names; `multi` makes it a checklist (see fieldsFor).
+  pick: 'pick',
 };
 
 /** One field per catalog option, in catalog order. An html block's `ref` is the library picker. */
@@ -103,7 +107,7 @@ export function fieldsFor(entry: BlockCatalogEntry): FieldSpec[] {
   return entry.options.map((schema) => ({
     key: schema.key,
     control: entry.type === 'html' && schema.key === 'ref' ? 'library-ref'
-      : schema.type === 'pick' && schema.multi ? 'list'
+      : schema.type === 'pick' && schema.multi ? 'pick-list'
       : CONTROL_OF[schema.type],
     labelKey: schema.labelKey,
     schema,
@@ -113,6 +117,79 @@ export function fieldsFor(entry: BlockCatalogEntry): FieldSpec[] {
 /** The i18n key an enum value's label lives under. */
 export function enumLabelKey(optionKey: string, value: string | number): string {
   return `lab.editor.enum.${optionKey}.${String(value)}`;
+}
+
+// ─── Pick choices ───────────────────────────────────────────────────────────
+
+export interface PickChoice {
+  value: string;
+  label: string;
+}
+
+type PickSource = NonNullable<BlockOptionSchema['from']>;
+
+/**
+ * What a `pick` option offers, read from the block's resolved frame and the
+ * insight's cache: `funnels` id + name, `dims` the client dimensions' key +
+ * label, `metrics` the picked funnel's metric keys + labels (`funnelId` null
+ * or unknown = the first funnel, as the blocks draw), `app-pages` the app's
+ * page id + title. The funnel list reads the cache first: a block's frame is
+ * projected down to its picked funnel, so it would hide the others. Empty =
+ * nothing synced yet (the inspector disables the control and says so).
+ */
+export function pickChoices(
+  from: PickSource,
+  frame: Frame | null | undefined,
+  cache: Pick<InsightCache, 'funnel' | 'app'> | null | undefined,
+  funnelId: string | null,
+): PickChoice[] {
+  const f = frame && frame.kind === 'funnel' ? frame : null;
+  const set = cache?.funnel?.set ?? null;
+  switch (from) {
+    case 'funnels':
+      if (set && set.funnels.length > 0) return set.funnels.map((x) => ({ value: x.id, label: x.name || x.id }));
+      return (f?.funnels ?? []).map((x) => ({ value: x.id, label: x.name || x.id }));
+    case 'dims':
+      if (f?.dimensions && f.dimensions.length > 0) return f.dimensions.map((d) => ({ value: d.key, label: d.label || d.key }));
+      return (set?.dimensions ?? []).filter((d) => d.mode === 'client').map((d) => ({ value: d.key, label: d.label || d.key }));
+    case 'metrics': {
+      const pickOf = <T extends { id: string }>(list: readonly T[]): T | undefined =>
+        (funnelId !== null ? list.find((x) => x.id === funnelId) : undefined) ?? list[0];
+      const fromFrame = f ? pickOf(f.funnels)?.metrics : undefined;
+      if (fromFrame && Object.keys(fromFrame).length > 0) {
+        return Object.entries(fromFrame).map(([k, m]) => ({ value: k, label: m.label || k }));
+      }
+      const fromCache = set ? pickOf(set.funnels)?.metrics : undefined;
+      return Object.entries(fromCache ?? {}).map(([k, m]) => ({ value: k, label: m.label || k }));
+    }
+    case 'app-pages':
+      return (cache?.app?.spec.pages ?? []).map((p) => ({ value: p.id, label: p.title || p.id }));
+  }
+}
+
+export interface PickRow extends PickChoice {
+  /** A saved value the data no longer has: kept (never silently dropped) and labelled as such. */
+  stale: boolean;
+}
+
+/** The control's rows: every choice, then each current value not among them, marked stale. */
+export function pickRows(choices: readonly PickChoice[], current: unknown): PickRow[] {
+  const values = (Array.isArray(current) ? current : [current]).filter((v): v is string => typeof v === 'string' && v !== '');
+  const known = new Set(choices.map((c) => c.value));
+  const stale = [...new Set(values.filter((v) => !known.has(v)))];
+  return [
+    ...choices.map((c) => ({ ...c, stale: false })),
+    ...stale.map((v) => ({ value: v, label: v, stale: true })),
+  ];
+}
+
+/** A checklist tick: `value` on or off, the list kept in the rows' order; empty = unset. */
+export function togglePick(rows: readonly PickRow[], current: unknown, value: string, on: boolean): string[] | undefined {
+  const picked = new Set(Array.isArray(current) ? current.filter((v): v is string => typeof v === 'string') : []);
+  if (on) picked.add(value);
+  else picked.delete(value);
+  const out = rows.map((r) => r.value).filter((v) => picked.has(v));
+  return out.length > 0 ? out : undefined;
 }
 
 // ─── Type change in place ───────────────────────────────────────────────────
@@ -604,6 +681,35 @@ export function cardFromHtml(
   };
   if (ctx.insight && entry && entry.inputs.length > 0) card.insight = ctx.insight;
   return card;
+}
+
+/** The dims the funnel explorer preset splits by: the funnel set's client dimensions, as the frame carries them. */
+export function presetDims(cache: Pick<InsightCache, 'funnel'> | null | undefined): PresetDim[] {
+  return (cache?.funnel?.set.dimensions ?? []).filter((d) => d.mode === 'client').map((d) => ({ key: d.key, label: d.label || d.key }));
+}
+
+/**
+ * "Funnel explorer": ONE card that behaves as an interactive page (breakdown
+ * chips over the Daily, Benchmark, Flow, Steps and Segments tabs), built by the
+ * same `funnelExplorerBlocks` the CLI's `add-card --preset funnel-explorer`
+ * calls, so both write the same blocks. Titled with the insight's title.
+ */
+export function cardFromPreset(
+  board: Pick<Board, 'cards'>,
+  slug: string,
+  title: string,
+  dims: readonly PresetDim[],
+  locale: string,
+): NewCard {
+  const lang: PresetLocale = locale === 'tr' ? 'tr' : 'en';
+  const { w, h } = FUNNEL_EXPLORER_SIZE;
+  return {
+    id: uniqueCardId(board, `c-${slug}-explorer`),
+    title,
+    insight: slug,
+    blocks: funnelExplorerBlocks(slug, dims, lang) as Block[],
+    at: findFreeSlot(board.cards, w, h),
+  };
 }
 
 /**

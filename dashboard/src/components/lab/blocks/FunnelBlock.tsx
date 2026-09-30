@@ -227,7 +227,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
           {worst && worst.dropPct !== null && (
             <div
               className="funnel-explorer-worst"
-              data-lab-worst={worst.key}
+              data-lab-worst-note={worst.key}
               data-drop-pct={worst.dropPct.toFixed(1)}
               title={`${t('lab.blocks.funnel.worst')}: ${prevLabel} → ${worst.label}, ${t('lab.blocks.funnel.drop').replace('{pct}', pctText(worst.dropPct))}`}
             >
@@ -236,7 +236,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
               <span className="funnel-explorer-worst-pct">{t('lab.blocks.funnel.drop').replace('{pct}', pctText(worst.dropPct))}</span>
             </div>
           )}
-          <FunnelBars steps={slice.steps} dense={fit.dense} fill stepLabel={mode === null ? null : stepLabel} stepMode={mode ?? 'full'} />
+          <FunnelBars steps={slice.steps} dense={fit.dense} fill stepLabel={mode === null ? null : stepLabel} stepMode={mode ?? 'full'} worstKey={worst && worst.dropPct !== null ? worst.key : null} />
         </>
       );
     }

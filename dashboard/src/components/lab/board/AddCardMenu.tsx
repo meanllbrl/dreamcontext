@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
+import { PRESET_LABELS } from '../../../generated/presets';
+import { useInsightCache } from '../../../hooks/useBoards';
 import type { AddCardMenuProps } from './boardTypes';
 import {
-  cardFromBlockType, cardFromHtml, cardFromInsight, entryOf, escapeHtml, insightChoices, libraryBlockTypes,
+  cardFromBlockType, cardFromHtml, cardFromInsight, cardFromPreset, entryOf, escapeHtml, insightChoices, libraryBlockTypes,
+  presetDims,
 } from './editorModel';
 import './editors.css';
 
@@ -12,6 +15,8 @@ import './editors.css';
  * - From an insight: the insight as a legacy card, drawn exactly as v1.
  *   Insights on no board come first and say so.
  * - From the library: one catalog block type, bound to the "Bind to" insight.
+ *   When that insight carries a funnel set, the "Funnel explorer" preset
+ *   comes first: the whole explorer as one card (the CLI's `--preset`).
  * - Custom HTML: a vault library entry reused by ref (its declared inputs bound
  *   to the "Bind to" insight), or a blank inline block to write from scratch.
  *
@@ -20,13 +25,15 @@ import './editors.css';
  */
 
 export function AddCardMenu({ board, unplaced, insights, catalog, library, onAdd, onClose }: AddCardMenuProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const choices = useMemo(() => insightChoices(insights, unplaced), [insights, unplaced]);
   const [query, setQuery] = useState('');
   const [bindTo, setBindTo] = useState<string>(() => choices[0]?.slug ?? '');
   useEffect(() => {
     if (!choices.some((c) => c.slug === bindTo)) setBindTo(choices[0]?.slug ?? '');
   }, [choices, bindTo]);
+  const bound = useInsightCache(bindTo || null);
+  const funnelCache = bound.data?.cache?.funnel ? bound.data.cache : null;
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => { searchRef.current?.focus(); }, []);
 
@@ -95,6 +102,19 @@ export function AddCardMenu({ board, unplaced, insights, catalog, library, onAdd
       <section className="lab-editor-section" data-lab-add-section="library">
         <span className="lab-editor-heading">{t('lab.editor.add.fromLibrary')}</span>
         <ul className="lab-editor-grid">
+          {funnelCache && (
+            <li>
+              <button
+                type="button"
+                className="lab-editor-tile"
+                data-lab-add-preset="funnel-explorer"
+                onClick={() => onAdd(cardFromPreset(board, bindTo, summaryOf(bindTo)?.title ?? bindTo, presetDims(funnelCache), locale))}
+              >
+                <span className="lab-editor-item-name">{PRESET_LABELS['funnel-explorer'][locale === 'tr' ? 'tr' : 'en']}</span>
+                <span className="lab-editor-item-detail">{summaryOf(bindTo)?.title ?? bindTo}</span>
+              </button>
+            </li>
+          )}
           {libraryBlockTypes(catalog).map((type) => {
             const entry = entryOf(catalog, type);
             const needsData = entry.data === 'binding';

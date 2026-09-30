@@ -109,6 +109,11 @@ export function benchmarkFit(rowCount: number, height: number, notes: number, so
   return { mode: 'compact', count };
 }
 
+/** A measured cells-mode selection: its steps are a sum of cells, so it carries no rates by design. */
+export function cellsNoRates(frame: FunnelFrame, slice: FunnelSlice): boolean {
+  return frame.segmentMode !== 'lookup' && slice.measured && Object.keys(slice.selection).length > 0;
+}
+
 /** The metric keys a benchmark reads: the option's, else the picked funnel's own (so an unmeasured slice still lists them). */
 function metricKeysFor(frame: FunnelFrame, slice: FunnelSlice, picked: string[] | null): { keys: string[]; unknown: string[]; levels: Record<string, FunnelFrameMetric> } {
   const levels = frame.funnels.find((f) => f.id === slice.funnelId)?.metrics ?? {};
@@ -155,6 +160,16 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
   const fit = benchmarkFit(rows.length, box.height, notes.length + (inherited ? 1 : 0), anySource);
   const shown = rows.slice(0, Math.max(1, fit.count));
   const more = rows.length - shown.length;
+
+  // Cells mode sums step users for a selection; rates cannot be summed, so a selection has none by design.
+  if (cellsNoRates(f, slice)) {
+    return (
+      <div ref={measure} className="lab-bench" data-lab-benchmark="" data-measured="true">
+        {notes.map((n) => <div key={n.key} className="lab-bench-note" {...{ [n.attr]: '' }}>{n.text}</div>)}
+        <div className="lab-bench-note" data-lab-bench-cells-no-rates="" role="note">{t('lab.blocks.benchmark.cellsNoRates')}</div>
+      </div>
+    );
+  }
 
   if (rows.length === 0) {
     return (

@@ -29,6 +29,12 @@ const FILES = [
   'components/lab/chartBody.css',
   'components/lab/blocks/dataBlocks.css',
   'components/lab/BreakdownPivot.css',
+  // Funnel explorer blocks: breakdown chips (+ trend), benchmark ruler, segments table, funnel flow and lanes.
+  'components/lab/blocks/breakdown.css',
+  'components/lab/blocks/benchmark.css',
+  'components/lab/blocks/segments.css',
+  'components/lab/funnel/FunnelFlow.css',
+  'components/lab/funnel/FunnelLanes.css',
 ];
 
 interface Decl { file: string; line: number; prop: string; value: string }

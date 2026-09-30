@@ -36,6 +36,28 @@ import './FunnelDetailPage.css';
 
 const COMPACT_BREAKPOINT = 560;
 
+type SpineStep = { key: string; label: string; users: number };
+
+/**
+ * One breakdown lane's steps on the shared spine. In lookup mode a path that
+ * skips a step has no number there: the step is listed in `missing` and left
+ * out of the drawn lane (not measured, never 0). Cells mode keeps every step.
+ */
+export function laneStepsOf(
+  spine: readonly SpineStep[],
+  users: ReadonlyMap<string, number>,
+  mode: 'cells' | 'lookup',
+): { steps: SpineStep[]; missing: SpineStep[] } {
+  const steps: SpineStep[] = [];
+  const missing: SpineStep[] = [];
+  for (const s of spine) {
+    const v = users.get(s.key);
+    if (v === undefined && mode === 'lookup') missing.push(s);
+    else steps.push({ key: s.key, label: s.label, users: v ?? 0 });
+  }
+  return { steps, missing };
+}
+
 export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToast }: {
   slug: string;
   funnelId: string;
@@ -164,23 +186,31 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     })),
     [lanes],
   );
+  /** A lookup path that skips a step has no number there: it is left out (not measured), never drawn as 0. */
+  const hasStep = (lane: { steps: Map<string, number> }, key: string) => segmentMode !== 'lookup' || lane.steps.has(key);
   const bands = useMemo(() => {
     if (!breakdownDim || lanes.length === 0 || !funnel) return null;
     const map = new Map<string, { value: string; users: number }[]>();
     for (const step of funnel.steps) {
-      map.set(step.key, lanes.filter((lane) => lane.measured !== false).map((lane) => ({ value: lane.value, users: lane.steps.get(step.key) ?? 0 })));
+      map.set(step.key, lanes
+        .filter((lane) => lane.measured !== false && hasStep(lane, step.key))
+        .map((lane) => ({ value: lane.value, users: lane.steps.get(step.key) ?? 0 })));
     }
     return map;
-  }, [breakdownDim, lanes, funnel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [breakdownDim, lanes, funnel, segmentMode]);
 
   const arcDetail = useMemo(() => {
     if (!breakdownDim || lanes.length === 0) return undefined;
-    return (arc: LaneArc) => lanes.filter((lane) => lane.measured !== false).map((lane) => ({
-      value: lane.value,
-      from: lane.steps.get(arc.from) ?? 0,
-      to: lane.steps.get(arc.to) ?? 0,
-    }));
-  }, [breakdownDim, lanes]);
+    return (arc: LaneArc) => lanes
+      .filter((lane) => lane.measured !== false && hasStep(lane, arc.from) && hasStep(lane, arc.to))
+      .map((lane) => ({
+        value: lane.value,
+        from: lane.steps.get(arc.from) ?? 0,
+        to: lane.steps.get(arc.to) ?? 0,
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [breakdownDim, lanes, segmentMode]);
 
   /** True while the lane on screen does not yet answer for the chosen window. */
   const applying = applyTweaks.isPending;
@@ -387,22 +417,26 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
           <FunnelBars steps={laneSteps} />
         ) : breakdownDim && view.breakdownMode === 'lanes' && lanes.length > 0 ? (
           <div className="funnel-det-multiples">
-            {lanes.map((lane, i) => (
-              <div key={lane.value} className="funnel-det-multiple">
-                <div className="funnel-det-multiple-head">
-                  <span className="funnel-det-swatch" style={{ background: legend[i].color }} aria-hidden />
-                  {lane.value}
-                  <span className="funnel-det-multiple-n">
-                    {lane.measured === false ? `Not measured${lane.reason ? `: ${lane.reason}` : ''}` : `${lane.users.toLocaleString('en-US')} users`}
-                  </span>
+            {lanes.map((lane, i) => {
+              const own = laneStepsOf(laneSteps, lane.steps, segmentMode);
+              return (
+                <div key={lane.value} className="funnel-det-multiple">
+                  <div className="funnel-det-multiple-head">
+                    <span className="funnel-det-swatch" style={{ background: legend[i].color }} aria-hidden />
+                    {lane.value}
+                    <span className="funnel-det-multiple-n">
+                      {lane.measured === false ? `Not measured${lane.reason ? `: ${lane.reason}` : ''}` : `${lane.users.toLocaleString('en-US')} users`}
+                    </span>
+                    {lane.measured !== false && own.missing.length > 0 && (
+                      <span className="funnel-det-multiple-n" data-lab-lane-missing={own.missing.map((s) => s.key).join(',')}>
+                        – Not measured at {own.missing.map((s) => s.label).join(', ')}
+                      </span>
+                    )}
+                  </div>
+                  {lane.measured !== false && <FunnelLane compact steps={own.steps} volumeMax={laneMax} />}
                 </div>
-                {lane.measured !== false && <FunnelLane
-                  compact
-                  steps={laneSteps.map((s) => ({ key: s.key, label: s.label, users: lane.steps.get(s.key) ?? 0 }))}
-                  volumeMax={laneMax}
-                />}
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <FunnelLane

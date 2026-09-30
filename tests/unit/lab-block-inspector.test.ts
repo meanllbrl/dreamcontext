@@ -116,7 +116,10 @@ describe('type change in place', () => {
       expect(choices).toContain(from);
       for (const to of catalog.types) expect(choices.includes(to)).toBe(canChangeType(catalog, from, to));
     }
-    expect(typeChoices(catalog, 'funnel')).toEqual(['funnel']);
+    // Every block that draws a funnel frame is a choice for a funnel block (and the explorer blocks among themselves).
+    expect(typeChoices(catalog, 'funnel')).toEqual(['funnel', 'breakdown', 'trend', 'benchmark', 'segments']);
+    for (const t of ['breakdown', 'trend', 'benchmark', 'segments']) expect(typeChoices(catalog, t), t).toContain('funnel');
+    expect(typeChoices(catalog, 'funnel')).not.toContain('line');
   });
 
   it('keeps the binding and the options the new type accepts, drops the rest', () => {

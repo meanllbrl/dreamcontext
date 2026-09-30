@@ -16,6 +16,10 @@ import { TabsBlock } from './TabsBlock';
 import { FilterBlock } from './FilterBlock';
 import { HtmlBlock } from './HtmlBlock';
 import { InsightBlock } from './InsightBlock';
+import { BreakdownBlock } from './BreakdownBlock';
+import { TrendBlock } from './TrendBlock';
+import { BenchmarkBlock } from './BenchmarkBlock';
+import { SegmentsBlock } from './SegmentsBlock';
 import './blocks.css';
 
 export type { BlockViewProps } from './blockCommon';
@@ -45,6 +49,10 @@ export const BLOCK_REGISTRY: Record<BlockType, ComponentType<BlockViewProps>> = 
   filter: FilterBlock,
   html: HtmlBlock,
   insight: InsightBlock,
+  breakdown: BreakdownBlock,
+  trend: TrendBlock,
+  benchmark: BenchmarkBlock,
+  segments: SegmentsBlock,
 };
 
 /**

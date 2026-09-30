@@ -475,6 +475,9 @@ A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` k
 |  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
 | `funnel`: Step by step conversion. | `compact` | Compact | `true`, `false` | `false` |
 |  | `showConversion` | Conversion rates | `true`, `false` | `true` |
+|  | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `layout` | Layout | `bars`, `flow` | `bars` |
+|  | `markWorst` | Mark the biggest drop | `true`, `false` | `false` |
 | `pivot`: One dimension down, another across. | `rows` | Rows | text | unset |
 |  | `cols` | Columns | text | unset |
 |  | `where` | Only rows where | `{dim: [values]}` | unset |
@@ -486,7 +489,31 @@ A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` k
 | `html`: Your own markup in a sandbox, fed only the inputs it declares. | `html` | HTML | inline HTML | unset |
 |  | `ref` | Library block | text | unset |
 |  | `inputs` | Inputs | `{name: <binding>}` | unset |
-| `insight`: The insight exactly as it renders on its own. | none | | | |
+| `insight`: The insight exactly as it renders on its own. | `page` | Page | one name (pick: app-pages) | unset |
+|  | `nav` | Page tabs | `true`, `false` | `false` |
+| `breakdown`: Chips per dimension that select one measured path for the funnel blocks in the card, and pin paths as compare lanes. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `dims` | Breakdowns | list of names (pick: dims) | unset |
+|  | `counts` | User counts | `true`, `false` | `false` |
+|  | `lanes` | Compare lanes | `true`, `false` | `true` |
+| `trend`: The selected path's metrics day by day. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `metrics` | Metrics | list of names (pick: metrics) | unset |
+|  | `chart` | Chart | `line`, `bar` | `line` |
+|  | `switch` | Metric switch | `true`, `false` | `true` |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `benchmark`: Each metric against its floor and target on one ruler. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `metrics` | Metrics | list of names (pick: metrics) | unset |
+|  | `comparePrev` | Compare with previous period | `true`, `false` | `true` |
+|  | `sources` | Band sources | `true`, `false` | `true` |
+| `segments`: One row per value of a dimension, under the current selection. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `by` | Split by | one name (pick: dims) | unset |
+|  | `metrics` | Metrics | list of names (pick: metrics) | unset |
+|  | `bands` | Band colors | `true`, `false` | `true` |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `density` | Density | `compact`, `comfortable` | `compact` |
 <!-- block-catalog:end -->
 
 How the chart options read. `format`: `auto` groups digits below 10,000 and turns compact above (12.4K), `percent` expects a fraction (0.25 shows 25%), `currency` uses the unit when it is a 3-letter code. `color` is the first palette slot (1 to 8); colours follow the entity, never its rank, so a filter, a legend toggle or a series pick never repaints a survivor, and a 9th series or an Other bucket is grey. `topN` keeps the N largest and folds the rest into one Other row (grey, always last); `normalize` shows each x as 100%; `sort`, `topN` and `normalize` change the VALUES, so `lab board show` prints them too. `legend` places the series legend (a single series never gets one); clicking a legend item hides that series. `axes` and `grid` only change chrome. A pie with 7 or more slices kept draws as bars. `filter` narrows every sibling block bound to the same dataset, client-side, with zero sync requests; `tabs` never nest; `text` and `callout` markdown is sanitized with remote images stripped; `insight` is the whole insight exactly as its render draws it (the migration path; html/v1 and app/v1 bodies keep the `lk-` kit there).
@@ -502,6 +529,42 @@ Static options run in ONE fixed order, `where` → interactive filter → `sort`
 **Trust statement (what an HTML block can and cannot see).** Caches already sync with the brain, so a declared input exposes nothing a teammate does not already have. The allow-list separates a library body's author from the card's author: the body can only read the names the card binds. Local-only material (credentials, `state/.secrets*`, anything outside `lab/cache/`) never reaches a frame: every read goes through the hardened cache reader, so a symlinked cache, a `../` or a `%2F` in a binding yields no data. HTML blocks carry no script-hash tripwire (they render the moment a board opens), which is exactly why they only ever get declared, already-synced data. App shortcuts do not reach into a focused HTML block (no shortcut bridge; click outside first).
 
 **Brain sync.** Board files merge semantically (`lab-board` class): cards union by `id`, a card changed on both sides keeps ours, a card deleted on one side and changed on the other is kept and reported, overlaps are resolved on the grid. A board file left with conflict markers opens as an error board (read-only, "Open file") until fixed. Library blocks (`lab/blocks/*.md`) merge as prose. Per-machine state stays local: `state/.lab-prefs.json` (active board, legacy tab order, funnel columns) and `state/.lab-freshness.json` are never synced.
+
+### Funnel explorer (board blocks over a funnel set)
+
+A funnel explorer is ONE synced insight whose pages are board blocks: each page can sit on its own card, or the whole explorer can be one interactive card. Pick-type options (`funnel`, `dims`, `metrics`, `by`, `page`) take names from the synced data; the inspector lists them, and a name that is not in the data renders a visible note, never a silent fallback.
+
+**Contract.** The script returns `{data, app?}` where `data` is a `dataset/v1` bundle that may carry ONE extra member, `funnel: funnel-set/v1`. The sync writes both: the bundle to `cache.datasets` (tables for stat/bar/filter blocks) and the funnel set to `cache.funnel` plus its history. A malformed `funnel` member fails the sync loudly and keeps the prior cache. `funnel-set/v1` gains optional fields (old payloads stay valid):
+
+- `segment_mode`: `cells` (default: disjoint cells the engine may sum) or `lookup` (each segment is its own measured path for an exact selection, one axis or an intersection; looked up, never summed, never folded into Other, no per-dim value cap; 64 segments max, the tail dropped with a notice).
+- Per segment `measured` (default true) and `reason` (up to 200 chars). **Not measured is not zero**: an unmeasured path has no steps, its chip is disabled with the reason on hover and focus, its metrics read "Not measured: reason" and no 0 or 0% is ever drawn. An unmeasured cell never adds to a `cells` sum.
+- Per segment `metrics`, `benchmarks` (absent = the set's band, shown as inherited) and `daily`; per funnel `daily: [{t: 'YYYY-MM-DD', m: {metricKey: number|null}}]` (keys must exist in `metrics`, 92 days max, a null day is a gap).
+- Per metric `measured` / `reason` (a broken denominator). Per benchmark `floor_source`, `target_source` (up to 64 chars, printed under the ruler) and `better: higher|lower` (`lower` flips below/above and improving/worsening).
+- Over 400 KB the engine trims segment daily, then funnel daily, then segments.
+
+In `cells` mode a selection sums the matching measured cells, so it has step users but no rates (rates cannot be summed); the benchmark says so.
+
+**Blocks.** All bind `data: <insight>` and share the card's selection:
+
+| page | block | what it draws |
+|---|---|---|
+| chips | `breakdown` | one chip row per dim, intersections, disabled unmeasured combos with their reason, pin up to 4 selections as compare lanes |
+| daily | `trend` | the selected path's daily metrics as a line or bar chart, a metric switch (one series at a time) |
+| benchmark | `benchmark` | floor, current and target on one ruler, delta vs the previous window, status word, each bound's source |
+| flow / steps | `funnel` with `layout: flow` or `bars`, `markWorst` | the selected path (never summed in lookup mode), drop badges, the worst drop marked, pinned lanes side by side on one step spine (a missing step is a dash) |
+| per dim | `segments` with `by: <dim>` | one row per value of that dim under the selection on the other axes, band tone washes, faded low-sample rows, sortable |
+
+A funnel block with default options draws exactly as before. Loss reasons (payment declines and the like) need no page type: a `stat` and a `bar` on a dataset of the same bundle plus a `filter` on a cohort dim. A second funnel in the set (say "Activation ladder") is drawn by `funnel: <id>`.
+
+**One interactive card (app mode).** `dreamcontext lab board add-card <board> --preset funnel-explorer --insight <slug> [--locale en|tr]` writes a 12x12 card: a `breakdown` block above a `tabs` block with Daily, Benchmark, Flow, Steps and one Segments tab per client dim (first 4). The insight must be synced first (the tabs come from its dims; otherwise the command exits 1 with "sync <slug> first"). `--preset` and `--block` are mutually exclusive. The dashboard's Add card menu offers the same preset for an insight whose cache holds a funnel, and writes the same blocks. Any card opens full screen from its menu (`?card=<id>`, Esc or Back closes) and keeps its selection and active tab.
+
+**Selection is card-scoped.** A chip click narrows every funnel-frame block in the same card (tabs included) and filters same-insight tables by the dims they carry (the total follows); a table without a selected dim says "Not split by X". Chip and tab clicks send zero sync requests. Cards do not share a selection.
+
+**CLI parity.** `dreamcontext lab board show <board> --select "platform=Web,language=EN" [--json]` adds an `explorer` field to every explorer block (and to a funnel block in explorer mode): `{selection, slice, axes | series | rows | drops}`, computed by the same frameOps functions the dashboard blocks call, so the CLI prints the same benchmark rows, step users, worst step and segment rows as the card. Human output prints "Not measured: reason" and marks the biggest drop.
+
+**A v1 app insight on a board.** The `insight` block takes `page` (pin any app page) and `nav: true` (page pills in the card; a pill click and an in-frame `lab.navigate` both switch pages with a fresh frame). `nav: false` keeps the plain card preview.
+
+**Synthetic names only.** Fixtures, presets, docs and screenshots use a fictional vocabulary (e.g. "Acme Storefront", "Quiz checkout (v2)", "Activation ladder"), never a registered vault or real product name.
 
 ### Insight capture (in-session — ASK, never auto-create)
 

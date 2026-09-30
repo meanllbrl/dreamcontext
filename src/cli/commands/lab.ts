@@ -35,8 +35,28 @@ import {
 } from '../../lib/lab/boards.js';
 import { BLOCK_CATALOG, isBlockType, listBlockCatalog } from '../../lib/lab/blocks.js';
 import { getLibraryBlock, listLibraryBlocks, parseSafeFrontmatter, saveLibraryBlock, LIBRARY_INPUT_KINDS, type LibraryBlockInput } from '../../lib/lab/block-library.js';
-import { frameKey, resolveBoardFrames, type Frame } from '../../lib/lab/frames.js';
-import { applyFrameOps, frameOpsFromOptions } from '../../lib/lab/frameOps.js';
+import { frameKey, resolveBoardFrames, resolveFrame, type Frame } from '../../lib/lab/frames.js';
+import {
+  applyFrameOps,
+  benchmarkRows,
+  breakdownAxes,
+  dailySeries,
+  frameOpsFromOptions,
+  funnelSlice,
+  parseSelection,
+  parseSort,
+  segmentRows,
+  stepDrops,
+  type BenchmarkRow,
+  type BreakdownAxis,
+  type FunnelFrame,
+  type FunnelSlice,
+  type SegmentRow,
+  type Selection,
+  type SeriesFrame,
+  type StepDrop,
+} from '../../lib/lab/frameOps.js';
+import { FUNNEL_EXPLORER_SIZE, PRESET_IDS, funnelExplorerBlocks, type PresetLocale } from '../../lib/lab/presets.js';
 import { findFreeSlot, isValidRect, type GridRect } from '../../lib/lab/grid.js';
 import { ProgressBar } from '../../lib/progress.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
@@ -264,6 +284,29 @@ export interface BoardBlockView {
   markdown?: string;
   /** Legacy insight blocks: the cached headline. */
   insight?: { latest: number | null; fetchedAt: string | null; error: string | null } | null;
+  /** Funnel explorer blocks (and a funnel block in explorer mode): what the card draws for `--select`. */
+  explorer?: BoardExplorerView;
+}
+
+/** A slice without the parts the explorer view reports elsewhere (daily = `series`, metrics/bands = `rows`). */
+export type ExplorerSliceView = Omit<FunnelSlice, 'daily' | 'metrics' | 'bands'>;
+
+/**
+ * One explorer block under a selection, computed by the SAME frameOps
+ * functions the dashboard blocks call, so the CLI and the card agree:
+ * breakdown -> axes; trend -> series; benchmark -> rows; segments -> rows
+ * (sorted and limited like the table); funnel -> drops (worst marked).
+ */
+export interface BoardExplorerView {
+  /** The selection the slice honours (undeclared dims are in `slice.ignored`). */
+  selection: Selection;
+  slice?: ExplorerSliceView;
+  axes?: BreakdownAxis[];
+  rows?: BenchmarkRow[] | SegmentRow[];
+  /** Segments: the dim the rows split by. */
+  by?: string;
+  drops?: StepDrop[];
+  series?: SeriesFrame;
 }
 
 export interface BoardCardView {
@@ -286,8 +329,110 @@ function insightHeadline(root: string, slug: string | undefined): BoardBlockView
   return { latest: cache.latest ?? null, fetchedAt: cache.fetchedAt || null, error: cache.error ?? null };
 }
 
-/** Resolve every card's blocks exactly as the dashboard draws them. */
-export function buildBoardView(root: string, board: Board): BoardView {
+const EXPLORER_TYPES = new Set(['breakdown', 'trend', 'benchmark', 'segments']);
+
+function optString(options: Record<string, unknown>, key: string): string | null {
+  const v = options[key];
+  return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+}
+
+function optList(options: Record<string, unknown>, key: string): string[] | null {
+  const v = options[key];
+  if (typeof v === 'string' && v.trim()) return v.split(',').map((x) => x.trim()).filter(Boolean);
+  if (!Array.isArray(v)) return null;
+  const out = v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim());
+  return out.length > 0 ? out : null;
+}
+
+/** A requested key list against what exists, in request order, deduped; null = everything available. */
+function pickKnown(available: readonly string[], requested: readonly string[] | null): string[] {
+  if (!requested) return [...available];
+  return requested.filter((k, i) => available.includes(k) && requested.indexOf(k) === i);
+}
+
+/** Segment rows sorted like the segments table (unmeasured sorts last, ties keep order), then limited. */
+function sortSegmentRows(rows: SegmentRow[], option: unknown, metricKeys: readonly string[], limit: unknown): SegmentRow[] {
+  const s = parseSort(option);
+  let key: string | null = null;
+  if (s) {
+    key = s.by === 'users' || s.by === 'n' ? '#users' : s.by === 'value' || s.by === 'label' ? '#value' : s.by;
+    if (key !== '#users' && key !== '#value' && !metricKeys.includes(key)) key = null;
+  }
+  let out = rows.slice();
+  if (s && key) {
+    const k = key;
+    const valueOf = (r: SegmentRow): number | string | null =>
+      k === '#value' ? r.value : k === '#users' ? (r.measured ? r.users : null) : r.cells[k]?.v ?? null;
+    const sign = s.dir === 'asc' ? 1 : -1;
+    out = out
+      .map((row, i) => ({ row, i, v: valueOf(row) }))
+      .sort((a, b) => {
+        if (a.v === null && b.v === null) return a.i - b.i;
+        if (a.v === null) return 1;
+        if (b.v === null) return -1;
+        const c = typeof a.v === 'number' && typeof b.v === 'number' ? a.v - b.v : String(a.v).localeCompare(String(b.v), undefined, { numeric: true });
+        return c !== 0 ? sign * c : a.i - b.i;
+      })
+      .map((x) => x.row);
+  }
+  if (typeof limit === 'number' && Number.isInteger(limit) && limit >= 1) out = out.slice(0, limit);
+  return out;
+}
+
+/**
+ * What an explorer block (or a funnel block in explorer mode) draws for
+ * `selection`, or null when the block is not one (a funnel block with default
+ * options and no selection keeps today's view: no explorer field).
+ */
+export function explorerBlockView(type: string, frame: FunnelFrame, options: Record<string, unknown>, selection: Selection): BoardExplorerView | null {
+  if (frame.funnels.length === 0) return null;
+  const pick = optString(options, 'funnel');
+  const slice = funnelSlice(frame, pick, selection);
+  if (type === 'funnel') {
+    const inPlay = pick !== null || options.layout === 'flow' || options.markWorst === true || Object.keys(slice.selection).length > 0;
+    if (!inPlay) return null;
+  } else if (!EXPLORER_TYPES.has(type)) {
+    return null;
+  }
+  const { daily: _daily, metrics: _metrics, bands: _bands, ...sliceView } = slice;
+  const out: BoardExplorerView = { selection: slice.selection, slice: sliceView };
+  const levels = frame.funnels.find((f) => f.id === slice.funnelId)?.metrics ?? {};
+  if (type === 'funnel') {
+    out.drops = slice.measured ? stepDrops(slice.steps) : [];
+  } else if (type === 'breakdown') {
+    const axes = breakdownAxes(frame, pick, selection);
+    const dims = optList(options, 'dims');
+    out.axes = dims ? pickKnown(axes.map((a) => a.key), dims).map((k) => axes.find((a) => a.key === k)!) : axes;
+  } else if (type === 'trend') {
+    const available = Object.keys(slice.metrics);
+    for (const day of slice.daily) for (const k of Object.keys(day.m)) if (!available.includes(k)) available.push(k);
+    out.series = dailySeries(slice, pickKnown(available, optList(options, 'metrics')), frame.insight);
+  } else if (type === 'benchmark') {
+    const picked = optList(options, 'metrics');
+    const keys = picked
+      ? picked.filter((k) => k in levels || k in slice.metrics)
+      : Object.keys(levels).length > 0 ? Object.keys(levels) : Object.keys(slice.metrics);
+    out.rows = benchmarkRows(slice, keys).map((r) => (r.label === r.key && levels[r.key]?.label
+      ? { ...r, label: levels[r.key].label as string, format: r.current === null ? levels[r.key].format : r.format }
+      : r));
+  } else {
+    const dims = frame.dimensions ?? [];
+    const byOpt = optString(options, 'by');
+    const by = byOpt ? dims.find((d) => d.key === byOpt)?.key ?? null : dims[0]?.key ?? null;
+    if (by === null) {
+      out.rows = [];
+    } else {
+      const picked = optList(options, 'metrics');
+      const metricKeys = picked ? picked.filter((k) => k in levels) : Object.keys(levels);
+      out.by = by;
+      out.rows = sortSegmentRows(segmentRows(frame, pick, by, selection, metricKeys), options.sort, metricKeys, options.limit);
+    }
+  }
+  return out;
+}
+
+/** Resolve every card's blocks exactly as the dashboard draws them (`selection`: the card state `--select` stands for). */
+export function buildBoardView(root: string, board: Board, selection: Selection = {}): BoardView {
   const frames = resolveBoardFrames(root, board);
   const viewBlock = (card: Card, block: Block, path: number[], tab?: string): BoardBlockView => {
     const out: BoardBlockView = { path: path.join('.'), type: block.type, data: block.data ?? null };
@@ -296,6 +441,10 @@ export function buildBoardView(root: string, board: Board): BoardView {
     if (entry.data === 'binding') {
       const frame = frames[frameKey(card.id, path)];
       if (frame) out.frame = applyFrameOps(frame, frameOpsFromOptions(block.options));
+      if (frame?.kind === 'funnel') {
+        const explorer = explorerBlockView(block.type, frame, block.options, selection);
+        if (explorer) out.explorer = explorer;
+      }
     } else if (entry.data === 'inputs') {
       const prefix = `${frameKey(card.id, path)}#`;
       out.inputs = {};
@@ -361,6 +510,61 @@ function frameLines(frame: Frame): string[] {
   }
 }
 
+function explorerPct(v: number | null): string {
+  return v === null ? 'n/a' : `${Math.round(v * 10) / 10}%`;
+}
+
+function notMeasuredLine(reason: string | null): string {
+  return chalk.yellow(`Not measured${reason ? `: ${reason}` : ''}`);
+}
+
+/** An explorer block in a few terminal lines: the selection, then its rows, drops, axes or series. */
+function explorerLines(x: BoardExplorerView): string[] {
+  const sel = Object.entries(x.selection).map(([k, v]) => `${k}=${v}`).join(', ');
+  const s = x.slice;
+  const lines = [`${s ? `${s.funnelName} · ` : ''}${sel ? `selection ${sel}` : 'all traffic'}${s?.ignored.length ? chalk.dim(` · not split by ${s.ignored.join(', ')}`) : ''}`];
+  if (s && !s.measured) lines.push(notMeasuredLine(s.reason));
+  else if (s?.lowSample) lines.push(chalk.dim(`low sample: ${s.users} users`));
+  if (x.drops) {
+    for (const d of x.drops) {
+      lines.push(`${d.label}: ${d.users}${d.ofPrev !== null ? chalk.dim(` (${explorerPct(d.ofPrev)} of previous)`) : ''}${d.worst ? chalk.red(` ← biggest drop ${explorerPct(d.dropPct)}`) : ''}`);
+    }
+  }
+  if (x.axes) {
+    for (const a of x.axes) {
+      lines.push(`${a.label}: ${a.chips.map((c) => `${c.active ? `[${c.value}]` : c.value}${c.enabled ? '' : chalk.dim(` (off${c.reason ? `: ${c.reason}` : ''})`)}`).join('  ')}`);
+    }
+  }
+  if (x.series) {
+    for (const ser of x.series.series) {
+      const last = ser.points[ser.points.length - 1];
+      lines.push(`${ser.name}: ${last ? `${fmtNum(last.v, x.series.unit)} on ${last.t}` : 'n/a'}${chalk.dim(` · ${ser.points.length} day(s)`)}`);
+    }
+  }
+  if (x.rows) {
+    for (const r of x.rows) {
+      if ('status' in r) {
+        if (r.status === 'unmeasured') {
+          lines.push(`${r.label}: ${notMeasuredLine(r.reason)}`);
+          continue;
+        }
+        const band = r.floor !== null || r.target !== null ? chalk.dim(` · floor ${fmtNum(r.floor)}${r.floorSource ? ` (${r.floorSource})` : ''}, target ${fmtNum(r.target)}${r.targetSource ? ` (${r.targetSource})` : ''}`) : '';
+        const delta = r.delta !== null ? chalk.dim(` · ${r.delta > 0 ? '+' : ''}${fmtNum(r.delta)} vs prev${r.trend ? `, ${r.trend}` : ''}`) : '';
+        lines.push(`${r.label}: ${fmtNum(r.current)} ${r.status}${band}${delta}${r.inherited ? chalk.dim(' · inherited band') : ''}`);
+      } else {
+        const head = `${x.by ?? ''}=${r.value}`;
+        if (!r.measured) {
+          lines.push(`${head}: ${notMeasuredLine(r.reason)}`);
+          continue;
+        }
+        const cells = Object.entries(r.cells).map(([k, c]) => `${k} ${c.v === null ? 'not measured' : fmtNum(c.v)}${c.tone ? chalk.dim(` (${c.tone})`) : ''}`);
+        lines.push(`${head}: ${r.users} users${cells.length ? ` · ${cells.join(', ')}` : ''}${r.lowSample ? chalk.dim(' · low sample') : ''}`);
+      }
+    }
+  }
+  return lines;
+}
+
 function printBoardView(view: BoardView): void {
   const b = view.board;
   console.log(header(`Board: ${b.title} (${b.slug})${b.derived ? ' · derived' : ''}`));
@@ -376,7 +580,10 @@ function printBoardView(view: BoardView): void {
     console.log(`  ${chalk.magentaBright(card.id)}${card.title ? `: ${card.title}` : ''}${card.insight ? chalk.dim(` · ${card.insight}`) : ''} ${chalk.dim(`@ ${at}`)}`);
     for (const block of card.blocks) {
       const label = `    [${block.path}] ${block.type}${block.data ? ` ${block.data}` : ''}${block.tab ? chalk.dim(` (tab ${block.tab})`) : ''}`;
-      if (block.frame) {
+      if (block.explorer) {
+        console.log(`${label}:`);
+        for (const line of explorerLines(block.explorer)) console.log(`      ${line}`);
+      } else if (block.frame) {
         const lines = frameLines(block.frame);
         console.log(`${label}: ${lines[0]}`);
         for (const line of lines.slice(1)) console.log(`      ${line}`);
@@ -500,6 +707,49 @@ async function addCard(
     };
     if (opts.insight) card.insight = opts.insight;
     if (parsed) card.blocks = [parsed.block];
+    return { ...current, cards: [...current.cards, card] };
+  });
+  return board!;
+}
+
+/** Why a `--preset` invocation cannot run, or null. */
+function presetProblem(opts: { insight?: string; block?: string; preset?: string; locale?: string }): string | null {
+  if (opts.block !== undefined) return '--preset and --block are mutually exclusive: a preset writes the whole card.';
+  if (!(PRESET_IDS as readonly string[]).includes(opts.preset ?? '')) return `Unknown preset "${opts.preset}". Use one of: ${PRESET_IDS.join(', ')}.`;
+  if (!opts.insight) return `--preset ${opts.preset} needs --insight <slug>.`;
+  if (opts.locale !== undefined && opts.locale !== 'en' && opts.locale !== 'tr') return `--locale must be en or tr (got "${opts.locale}").`;
+  return null;
+}
+
+/**
+ * `add-card --preset funnel-explorer`: the insight's funnel frame decides the
+ * segments tabs (its client dimensions), so an unsynced insight is refused.
+ * The blocks come from presets.ts, the same function the dashboard's add-card
+ * entry calls, so both produce the same card.
+ */
+async function addPresetCard(
+  root: string,
+  boardSlug: string,
+  insight: string,
+  locale: PresetLocale,
+  opts: { at?: string; id?: string },
+): Promise<Board> {
+  const frame = resolveFrame(root, insight, ['funnel']);
+  if (frame.kind !== 'funnel') {
+    throw new LabError(`sync ${insight} first: the preset needs its funnel dimensions (\`dreamcontext lab sync ${insight}\`).`);
+  }
+  const blocks = funnelExplorerBlocks(insight, (frame.dimensions ?? []).map((d) => ({ key: d.key, label: d.label })), locale);
+  const title = getInsight(root, insight)?.title ?? null;
+  const at = opts.at !== undefined ? parseAt(opts.at) : null;
+  const board = await editBoard(root, boardSlug, (current) => {
+    if (!current) throw new BoardStoreError('not-found', `Board "${boardSlug}" does not exist. Create it with \`dreamcontext lab board create ${boardSlug} --title "..."\`.`);
+    const card: Record<string, unknown> = {
+      id: opts.id ?? freeCardId(current.cards, `c-${insight}`),
+      at: at ?? findFreeSlot(current.cards, FUNNEL_EXPLORER_SIZE.w, FUNNEL_EXPLORER_SIZE.h),
+      insight,
+      blocks,
+    };
+    if (title) card.title = title;
     return { ...current, cards: [...current.cards, card] };
   });
   return board!;
@@ -966,8 +1216,9 @@ export function registerLabCommand(program: Command): void {
     .command('show')
     .argument('<slug>', 'Board slug')
     .description('Show every card with its blocks resolved (the same values the dashboard draws; no fetch)')
+    .option('--select <dim=value,...>', 'Breakdown selection the funnel explorer blocks draw, e.g. "platform=Web,language=EN"')
     .option('--json', 'Emit as JSON')
-    .action((slug: string, opts: { json?: boolean }) => {
+    .action((slug: string, opts: { json?: boolean; select?: string }) => {
       const root = ensureContextRoot();
       const board = getBoard(root, slug);
       if (!board) {
@@ -975,7 +1226,7 @@ export function registerLabCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      const view = buildBoardView(root, board);
+      const view = buildBoardView(root, board, opts.select !== undefined ? parseSelection(opts.select) : {});
       if (opts.json) console.log(JSON.stringify(view, null, 2));
       else printBoardView(view);
       if (board.error) process.exitCode = 1;
@@ -1006,15 +1257,26 @@ export function registerLabCommand(program: Command): void {
     .option('--block <json>', 'One block, e.g. \'{"line": {"area": true}}\' (binds to --insight when it names no data)')
     .option('--at <x,y,w,h>', 'Grid position (default: the first free slot)')
     .option('--id <id>', 'Card id (default c-<insight>)')
-    .action(async (boardSlug: string, opts: { insight?: string; block?: string; at?: string; id?: string }) => {
+    .option('--preset <id>', `A ready-made card for --insight: ${PRESET_IDS.join(', ')} (not with --block)`)
+    .option('--locale <en|tr>', 'Language of the labels a preset writes into the card (default en)')
+    .action(async (boardSlug: string, opts: { insight?: string; block?: string; at?: string; id?: string; preset?: string; locale?: string }) => {
       const root = ensureContextRoot();
-      if (!opts.insight && opts.block === undefined) {
+      if (opts.preset !== undefined) {
+        const problem = presetProblem(opts);
+        if (problem) {
+          error(problem);
+          process.exitCode = 1;
+          return;
+        }
+      } else if (!opts.insight && opts.block === undefined) {
         error('Provide --insight <slug>, --block <json>, or both.');
         process.exitCode = 1;
         return;
       }
       try {
-        const board = await addCard(root, boardSlug, opts);
+        const board = opts.preset !== undefined
+          ? await addPresetCard(root, boardSlug, opts.insight!, opts.locale === 'tr' ? 'tr' : 'en', opts)
+          : await addCard(root, boardSlug, opts);
         const card = board.cards[board.cards.length - 1];
         success(`${boardSlug}: card "${card.id}" added at ${card.at.x},${card.at.y} ${card.at.w}x${card.at.h}.`);
         for (const w of board.warnings) warn(formatDiagnostic(w));

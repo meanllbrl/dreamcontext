@@ -14,7 +14,11 @@
     "tabs",
     "filter",
     "html",
-    "insight"
+    "insight",
+    "breakdown",
+    "trend",
+    "benchmark",
+    "segments"
   ],
   "blocks": [
     {
@@ -1025,6 +1029,41 @@
             "en": "Conversion rates",
             "tr": "Dönüşüm oranları"
           }
+        },
+        {
+          "key": "funnel",
+          "type": "pick",
+          "from": "funnels",
+          "default": null,
+          "labelKey": "lab.block.opt.funnel",
+          "label": {
+            "en": "Funnel",
+            "tr": "Huni"
+          }
+        },
+        {
+          "key": "layout",
+          "type": "enum",
+          "enum": [
+            "bars",
+            "flow"
+          ],
+          "default": "bars",
+          "labelKey": "lab.block.opt.layout",
+          "label": {
+            "en": "Layout",
+            "tr": "Yerleşim"
+          }
+        },
+        {
+          "key": "markWorst",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.markWorst",
+          "label": {
+            "en": "Mark the biggest drop",
+            "tr": "En büyük düşüşü işaretle"
+          }
         }
       ]
     },
@@ -1289,7 +1328,392 @@
         "w": 4,
         "h": 4
       },
-      "options": []
+      "options": [
+        {
+          "key": "page",
+          "type": "pick",
+          "from": "app-pages",
+          "default": null,
+          "labelKey": "lab.block.opt.page",
+          "label": {
+            "en": "Page",
+            "tr": "Sayfa"
+          }
+        },
+        {
+          "key": "nav",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.nav",
+          "label": {
+            "en": "Page tabs",
+            "tr": "Sayfa sekmeleri"
+          }
+        }
+      ]
+    },
+    {
+      "type": "breakdown",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.breakdown",
+      "label": {
+        "en": "Breakdown",
+        "tr": "Kırılım"
+      },
+      "descriptionKey": "lab.block.breakdown.description",
+      "description": {
+        "en": "Chips per dimension that select one measured path for the funnel blocks in the card, and pin paths as compare lanes.",
+        "tr": "Karttaki huni bloklarına ölçülmüş tek bir yol seçtiren boyut çipleri; yollar karşılaştırma şeridi olarak sabitlenir."
+      },
+      "defaultSize": {
+        "w": 12,
+        "h": 2
+      },
+      "options": [
+        {
+          "key": "funnel",
+          "type": "pick",
+          "from": "funnels",
+          "default": null,
+          "labelKey": "lab.block.opt.funnel",
+          "label": {
+            "en": "Funnel",
+            "tr": "Huni"
+          }
+        },
+        {
+          "key": "dims",
+          "type": "pick",
+          "from": "dims",
+          "multi": true,
+          "default": null,
+          "labelKey": "lab.block.opt.dims",
+          "label": {
+            "en": "Breakdowns",
+            "tr": "Kırılımlar"
+          }
+        },
+        {
+          "key": "counts",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.counts",
+          "label": {
+            "en": "User counts",
+            "tr": "Kullanıcı sayıları"
+          }
+        },
+        {
+          "key": "lanes",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.lanes",
+          "label": {
+            "en": "Compare lanes",
+            "tr": "Karşılaştırma şeritleri"
+          }
+        }
+      ]
+    },
+    {
+      "type": "trend",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.trend",
+      "label": {
+        "en": "Daily trend",
+        "tr": "Günlük eğilim"
+      },
+      "descriptionKey": "lab.block.trend.description",
+      "description": {
+        "en": "The selected path's metrics day by day.",
+        "tr": "Seçili yolun metrikleri gün gün."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 4
+      },
+      "options": [
+        {
+          "key": "funnel",
+          "type": "pick",
+          "from": "funnels",
+          "default": null,
+          "labelKey": "lab.block.opt.funnel",
+          "label": {
+            "en": "Funnel",
+            "tr": "Huni"
+          }
+        },
+        {
+          "key": "metrics",
+          "type": "pick",
+          "from": "metrics",
+          "multi": true,
+          "default": null,
+          "labelKey": "lab.block.opt.metrics",
+          "label": {
+            "en": "Metrics",
+            "tr": "Metrikler"
+          }
+        },
+        {
+          "key": "chart",
+          "type": "enum",
+          "enum": [
+            "line",
+            "bar"
+          ],
+          "default": "line",
+          "labelKey": "lab.block.opt.chart",
+          "label": {
+            "en": "Chart",
+            "tr": "Grafik"
+          }
+        },
+        {
+          "key": "switch",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.switch",
+          "label": {
+            "en": "Metric switch",
+            "tr": "Metrik anahtarı"
+          }
+        },
+        {
+          "key": "legend",
+          "type": "enum",
+          "enum": [
+            "top",
+            "bottom",
+            "right",
+            "none"
+          ],
+          "default": "bottom",
+          "labelKey": "lab.block.opt.legend",
+          "label": {
+            "en": "Legend",
+            "tr": "Açıklama"
+          }
+        },
+        {
+          "key": "axes",
+          "type": "enum",
+          "enum": [
+            "both",
+            "x",
+            "y",
+            "none"
+          ],
+          "default": "both",
+          "labelKey": "lab.block.opt.axes",
+          "label": {
+            "en": "Axes",
+            "tr": "Eksenler"
+          }
+        },
+        {
+          "key": "grid",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.grid",
+          "label": {
+            "en": "Gridlines",
+            "tr": "Kılavuz çizgileri"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
+          }
+        }
+      ]
+    },
+    {
+      "type": "benchmark",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.benchmark",
+      "label": {
+        "en": "Benchmark",
+        "tr": "Kıyas"
+      },
+      "descriptionKey": "lab.block.benchmark.description",
+      "description": {
+        "en": "Each metric against its floor and target on one ruler.",
+        "tr": "Her metrik, tek bir cetvel üzerinde tabanı ve hedefiyle."
+      },
+      "defaultSize": {
+        "w": 6,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "funnel",
+          "type": "pick",
+          "from": "funnels",
+          "default": null,
+          "labelKey": "lab.block.opt.funnel",
+          "label": {
+            "en": "Funnel",
+            "tr": "Huni"
+          }
+        },
+        {
+          "key": "metrics",
+          "type": "pick",
+          "from": "metrics",
+          "multi": true,
+          "default": null,
+          "labelKey": "lab.block.opt.metrics",
+          "label": {
+            "en": "Metrics",
+            "tr": "Metrikler"
+          }
+        },
+        {
+          "key": "comparePrev",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.comparePrev",
+          "label": {
+            "en": "Compare with previous period",
+            "tr": "Önceki dönemle karşılaştır"
+          }
+        },
+        {
+          "key": "sources",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.sources",
+          "label": {
+            "en": "Band sources",
+            "tr": "Bant kaynakları"
+          }
+        }
+      ]
+    },
+    {
+      "type": "segments",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.segments",
+      "label": {
+        "en": "Segments",
+        "tr": "Segmentler"
+      },
+      "descriptionKey": "lab.block.segments.description",
+      "description": {
+        "en": "One row per value of a dimension, under the current selection.",
+        "tr": "Geçerli seçim altında, bir boyutun her değeri için bir satır."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "funnel",
+          "type": "pick",
+          "from": "funnels",
+          "default": null,
+          "labelKey": "lab.block.opt.funnel",
+          "label": {
+            "en": "Funnel",
+            "tr": "Huni"
+          }
+        },
+        {
+          "key": "by",
+          "type": "pick",
+          "from": "dims",
+          "default": null,
+          "labelKey": "lab.block.opt.by",
+          "label": {
+            "en": "Split by",
+            "tr": "Kırılım ekseni"
+          }
+        },
+        {
+          "key": "metrics",
+          "type": "pick",
+          "from": "metrics",
+          "multi": true,
+          "default": null,
+          "labelKey": "lab.block.opt.metrics",
+          "label": {
+            "en": "Metrics",
+            "tr": "Metrikler"
+          }
+        },
+        {
+          "key": "bands",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.bands",
+          "label": {
+            "en": "Band colors",
+            "tr": "Bant renkleri"
+          }
+        },
+        {
+          "key": "sort",
+          "type": "sort",
+          "default": null,
+          "labelKey": "lab.block.opt.sort",
+          "label": {
+            "en": "Sort by",
+            "tr": "Sıralama"
+          }
+        },
+        {
+          "key": "limit",
+          "type": "number",
+          "min": 1,
+          "max": 400,
+          "labelKey": "lab.block.opt.limit",
+          "label": {
+            "en": "Row limit",
+            "tr": "Satır sınırı"
+          }
+        },
+        {
+          "key": "density",
+          "type": "enum",
+          "enum": [
+            "compact",
+            "comfortable"
+          ],
+          "default": "compact",
+          "labelKey": "lab.block.opt.density",
+          "label": {
+            "en": "Density",
+            "tr": "Yoğunluk"
+          }
+        }
+      ]
     }
   ],
   "enumLabels": {
@@ -1481,6 +1905,16 @@
         "tr": "Orta nokta etrafında"
       }
     },
+    "layout": {
+      "bars": {
+        "en": "Bars",
+        "tr": "Çubuklar"
+      },
+      "flow": {
+        "en": "Flow",
+        "tr": "Akış"
+      }
+    },
     "tone": {
       "info": {
         "en": "Info",
@@ -1497,6 +1931,16 @@
       "danger": {
         "en": "Danger",
         "tr": "Tehlike"
+      }
+    },
+    "chart": {
+      "line": {
+        "en": "Line",
+        "tr": "Çizgi"
+      },
+      "bar": {
+        "en": "Bars",
+        "tr": "Çubuklar"
       }
     }
   },

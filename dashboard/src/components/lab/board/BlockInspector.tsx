@@ -1,16 +1,17 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
+import { frameKey } from '../../../generated/frameOps';
 import { useInsightCache } from '../../../hooks/useBoards';
-import type { InsightSummary } from '../../../hooks/useLab';
+import type { InsightCache, InsightSummary } from '../../../hooks/useLab';
 import type {
-  Block, BlockCatalog, BlockType, Card, InspectorProps, LibraryBlock,
+  Block, BlockCatalog, BlockType, Card, Frame, InspectorProps, LibraryBlock,
 } from './boardTypes';
 import {
   addBlock, addTab, canRemoveBlock, cardProblems, changeType, datasetKeys, effectiveBlocks, entryOf, enumLabelKey,
   escapeHtml, fieldsFor, formatListField, formatSortField, formatWhereField, getBlock, inlineToRef, inputRows,
   inputsRecord, moveBlock, movedPath, moveTab, newBlock, parseBinding, parseListField, parseNumberField,
-  parseSortField, parseWhereField, pathKey, refBlock, refToInline, removeBlock, removeTab, renameTab, setBinding,
-  setInputs, setOption, typeChoices, updateBlock, type EditorProblem, type FieldSpec,
+  parseSortField, parseWhereField, pathKey, pickChoices, pickRows, refBlock, refToInline, removeBlock, removeTab, renameTab, setBinding,
+  setInputs, setOption, togglePick, typeChoices, updateBlock, type EditorProblem, type FieldSpec,
 } from './editorModel';
 import { SaveToLibraryDialog } from './SaveToLibraryDialog';
 import './editors.css';
@@ -61,7 +62,7 @@ export function inspectorTitle(
 }
 
 export function BlockInspector({
-  board, card, blockPath, catalog, library, insights, onChange, onSelectBlock, onClose,
+  board, card, blockPath, catalog, library, insights, frames, caches, onChange, onSelectBlock, onClose,
 }: InspectorProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -200,6 +201,8 @@ export function BlockInspector({
           catalog={catalog}
           insights={insights}
           library={library}
+          frame={frames[frameKey(view.id, path)] ?? null}
+          caches={caches}
           problems={problems.filter((p) => p.path === pathKey(path))}
           onEdit={editSelected}
           onEditCard={commit}
@@ -283,7 +286,7 @@ function AddBlock({ catalog, nested, onAdd, label }: { catalog: BlockCatalog; ne
 // ─── The selected block ─────────────────────────────────────────────────────
 
 function BlockSection({
-  block, path, card, catalog, insights, library, problems, onEdit, onEditCard, onSaveToLibrary,
+  block, path, card, catalog, insights, library, frame, caches, problems, onEdit, onEditCard, onSaveToLibrary,
 }: {
   block: Block;
   path: number[];
@@ -291,6 +294,8 @@ function BlockSection({
   catalog: BlockCatalog;
   insights: InsightSummary[];
   library: LibraryBlock[];
+  frame: Frame | null;
+  caches: Record<string, InsightCache | null>;
   problems: EditorProblem[];
   onEdit: (fn: (b: Block) => Block) => void;
   onEditCard: (card: Card) => void;
@@ -346,6 +351,8 @@ function BlockSection({
           card={card}
           insights={insights}
           library={library}
+          frame={frame}
+          caches={caches}
           problem={optionProblem(f.key)}
           onEdit={onEdit}
           onEditCard={onEditCard}
@@ -404,7 +411,7 @@ function BindingField({ block, insights, onEdit }: { block: Block; insights: Ins
 }
 
 function OptionField({
-  spec, block, path, card, insights, library, problem, onEdit, onEditCard,
+  spec, block, path, card, insights, library, frame, caches, problem, onEdit, onEditCard,
 }: {
   spec: FieldSpec;
   block: Block;
@@ -412,6 +419,8 @@ function OptionField({
   card: Card;
   insights: InsightSummary[];
   library: LibraryBlock[];
+  frame: Frame | null;
+  caches: Record<string, InsightCache | null>;
   problem: EditorProblem | undefined;
   onEdit: (fn: (b: Block) => Block) => void;
   onEditCard: (card: Card) => void;
@@ -527,6 +536,21 @@ function OptionField({
         </Field>
       );
     }
+    case 'pick':
+    case 'pick-list': {
+      // The block's own insight (its binding, else the card's): its cache fills the choices the frame cannot.
+      const insight = parseBinding(block.data)?.insight ?? card.insight ?? null;
+      const field = <PickField spec={spec} value={value} funnelId={typeof block.options.funnel === 'string' ? block.options.funnel : null} frame={frame} insight={insight} caches={caches} onSet={set} />;
+      // A checklist holds its own labels, so it sits in a plain field box, not inside a <label>.
+      if (spec.control === 'pick') return <Field label={label}>{field}{bad}</Field>;
+      return (
+        <div className="lab-editor-field">
+          <span className="lab-editor-label">{label}</span>
+          {field}
+          {bad}
+        </div>
+      );
+    }
     case 'tabs':
       return <TabsField block={block} path={path} card={card} onEditCard={onEditCard} />;
     case 'inputs':
@@ -567,6 +591,75 @@ function OptionField({
       );
     }
   }
+}
+
+/**
+ * A `pick` option: a select (one name, "Automatic" = unset) or a checklist
+ * (`multi`) over the names the block's data has. Nothing synced yet = the
+ * control is disabled and says to sync. A saved name the data no longer has
+ * stays listed as "(not in the data)", never silently dropped.
+ */
+function PickField({
+  spec, value, funnelId, frame, insight, caches, onSet,
+}: {
+  spec: FieldSpec;
+  value: unknown;
+  funnelId: string | null;
+  frame: Frame | null;
+  insight: string | null;
+  caches: Record<string, InsightCache | null>;
+  onSet: (v: unknown) => void;
+}) {
+  const { t } = useI18n();
+  const { key, schema } = spec;
+  // The board's caches cover its cards' insights; a block bound elsewhere loads its own.
+  const known = insight !== null && caches[insight] != null;
+  const fetched = useInsightCache(known ? null : insight);
+  const cache = insight === null ? null : known ? caches[insight] : fetched.data?.cache ?? null;
+  const choices = schema.from ? pickChoices(schema.from, frame, cache, funnelId) : [];
+  const rows = pickRows(choices, value);
+  const labelOf = (r: { label: string; stale: boolean }) => (r.stale ? t('lab.editor.pick.stale').replace('{value}', r.label) : r.label);
+  const empty = choices.length === 0;
+
+  if (spec.control === 'pick-list') {
+    const picked = new Set(Array.isArray(value) ? value : []);
+    return (
+      <>
+        <div role="group" aria-label={t(spec.labelKey)} data-lab-field={key} data-lab-pick={schema.from} aria-disabled={empty || undefined}>
+          {rows.map((r) => (
+            <label key={r.value} className="lab-editor-check" data-lab-pick-stale={r.stale ? '' : undefined}>
+              <input
+                type="checkbox"
+                value={r.value}
+                checked={picked.has(r.value)}
+                disabled={empty && !r.stale}
+                onChange={(e) => onSet(togglePick(rows, value, r.value, e.target.checked))}
+              />
+              <span>{labelOf(r)}</span>
+            </label>
+          ))}
+        </div>
+        {(empty || picked.size === 0) && <span className="lab-editor-hint">{t(empty ? 'lab.editor.pick.empty' : 'lab.editor.pick.auto')}</span>}
+      </>
+    );
+  }
+  const current = typeof value === 'string' ? value : '';
+  return (
+    <>
+      <select
+        className="lab-editor-input"
+        data-lab-field={key}
+        data-lab-pick={schema.from}
+        value={current}
+        disabled={empty}
+        onChange={(e) => onSet(e.target.value || undefined)}
+      >
+        <option value="">{t('lab.editor.pick.auto')}</option>
+        {rows.map((r) => <option key={r.value} value={r.value} data-lab-pick-stale={r.stale ? '' : undefined}>{labelOf(r)}</option>)}
+      </select>
+      {empty && <span className="lab-editor-hint">{t('lab.editor.pick.empty')}</span>}
+    </>
+  );
 }
 
 function TabsField({ block, path, card, onEditCard }: { block: Block; path: number[]; card: Card; onEditCard: (card: Card) => void }) {

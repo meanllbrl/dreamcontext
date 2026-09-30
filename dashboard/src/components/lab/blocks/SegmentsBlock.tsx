@@ -134,6 +134,8 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
             <tbody>
               {shown.map((row) => {
                 const unmeasured = notMeasuredText(t, row.reason);
+                // A measured row's null cell is the SEGMENT's own metric (its reason), never the funnel level's.
+                const own = row.measured ? funnelSlice(f, pick, row.selection).metrics : {};
                 const low = row.measured && row.lowSample ? t('lab.blocks.explorer.lowSample').replace('{n}', formatNumber(row.users, { maxDecimals: 0, locale })) : null;
                 return (
                   <tr
@@ -156,8 +158,8 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
                       const cell = row.cells[k];
                       const fmtKey = levels[k]?.format ?? 'number';
                       if (!cell || cell.v === null) {
-                        const own = row.measured ? notMeasuredText(t, levels[k]?.reason ?? null) : unmeasured;
-                        return <td key={k} className="lab-table-num" data-metric={k}><Dash reason={own} /></td>;
+                        const reason = row.measured ? notMeasuredText(t, own[k]?.reason ?? null) : unmeasured;
+                        return <td key={k} className="lab-table-num" data-metric={k}><Dash reason={reason} /></td>;
                       }
                       const tone = bands ? cell.tone : null;
                       const delta = cell.prev !== null ? cell.v - cell.prev : null;
@@ -191,9 +193,9 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
 /** An unmeasured cell: a dash (never a 0) whose reason shows on hover and on keyboard focus. */
 function Dash({ reason }: { reason: string }) {
   return (
-    <span className="lab-seg-dash" tabIndex={0} data-lab-seg-unmeasured="">
+    <span className="lab-seg-dash" tabIndex={0} role="img" aria-label={reason} data-lab-seg-unmeasured="">
       <span aria-hidden="true">–</span>
-      <span className="lab-seg-reason" data-lab-seg-reason="">{reason}</span>
+      <span className="lab-seg-reason" data-lab-seg-reason="" aria-hidden="true">{reason}</span>
     </span>
   );
 }

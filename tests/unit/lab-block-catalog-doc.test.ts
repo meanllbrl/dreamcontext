@@ -25,6 +25,8 @@ interface CatalogOption {
   min?: number;
   max?: number;
   default?: unknown;
+  from?: string;
+  multi?: boolean;
   label: { en: string };
 }
 interface CatalogBlock {
@@ -48,6 +50,7 @@ function valuesOf(o: CatalogOption): string {
     case 'tabs': return '`[{label, blocks: [...]}]`';
     case 'html': return 'inline HTML';
     case 'inputs': return '`{name: <binding>}`';
+    case 'pick': return `${o.multi ? 'list of names' : 'one name'} (pick: ${o.from ?? 'data'})`;
     default: return o.type;
   }
 }

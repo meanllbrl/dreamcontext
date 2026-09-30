@@ -21,7 +21,7 @@
 }
 
 /* A chart never scrolls inside its cell: it draws to the box it is given. */
-.lab-block:is(.lab-block--line, .lab-block--bar, .lab-block--stacked, .lab-block--pie, .lab-block--heatmap, .lab-block--stat, .lab-block--funnel) {
+.lab-block:is(.lab-block--line, .lab-block--bar, .lab-block--stacked, .lab-block--pie, .lab-block--heatmap, .lab-block--stat, .lab-block--funnel, .lab-block--trend, .lab-block--benchmark) {
   overflow: hidden;
 }
 

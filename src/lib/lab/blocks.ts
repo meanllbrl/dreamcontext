@@ -32,6 +32,10 @@ export const BLOCK_TYPES = [
   'filter',
   'html',
   'insight',
+  'breakdown',
+  'trend',
+  'benchmark',
+  'segments',
 ] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
@@ -165,7 +169,14 @@ const AXES = choice('axes', 'Axes', 'Eksenler', [
 /** Row density, shared by every block that draws a table. */
 const DENSITY = choice('density', 'Density', 'Yoğunluk', [['compact', 'Compact', 'Sıkı'], ['comfortable', 'Comfortable', 'Rahat']], 'compact');
 const GRID = opt('grid', 'boolean', 'Gridlines', 'Kılavuz çizgileri', { default: true });
+/** Compare against the previous window: one label, each block keeps its own default. */
+const comparePrev = (def: boolean): BlockOptionSchema =>
+  opt('comparePrev', 'boolean', 'Compare with previous period', 'Önceki dönemle karşılaştır', { default: def });
 const TOP_N = opt('topN', 'number', 'Top N, rest as Other', 'İlk N, kalanı Diğer', { min: 1, max: 50, default: null });
+
+// Funnel explorer picks: the choices come from the block's funnel frame (or the insight cache).
+const FUNNEL_PICK = opt('funnel', 'pick', 'Funnel', 'Huni', { from: 'funnels', default: null });
+const METRICS_PICK = opt('metrics', 'pick', 'Metrics', 'Metrikler', { from: 'metrics', multi: true, default: null });
 
 const entry = (
   type: BlockType,
@@ -233,7 +244,7 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     [
       choice('orientation', 'Orientation', 'Yön', [['h', 'Horizontal', 'Yatay'], ['v', 'Vertical', 'Dikey']], 'h'),
       COLOR,
-      opt('comparePrev', 'boolean', 'Compare with previous period', 'Önceki dönemle karşılaştır', { default: false }),
+      comparePrev(false),
       WHERE,
       SORT,
       LIMIT,
@@ -324,6 +335,10 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     [
       opt('compact', 'boolean', 'Compact', 'Sıkı', { default: false }),
       opt('showConversion', 'boolean', 'Conversion rates', 'Dönüşüm oranları', { default: true }),
+      FUNNEL_PICK,
+      choice('layout', 'Layout', 'Yerleşim', [['bars', 'Bars', 'Çubuklar'], ['flow', 'Flow', 'Akış']], 'bars'),
+      // Off by default so written boards draw exactly as before.
+      opt('markWorst', 'boolean', 'Mark the biggest drop', 'En büyük düşüşü işaretle', { default: false }),
     ],
   ),
   pivot: entry(
@@ -385,7 +400,68 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     { en: 'Insight', tr: 'İçgörü' },
     { en: 'The insight exactly as it renders on its own.', tr: 'İçgörü, kendi başına nasıl görünüyorsa öyle.' },
     { w: 4, h: 4 },
-    [],
+    [
+      opt('page', 'pick', 'Page', 'Sayfa', { from: 'app-pages', default: null }),
+      opt('nav', 'boolean', 'Page tabs', 'Sayfa sekmeleri', { default: false }),
+    ],
+  ),
+  breakdown: entry(
+    'breakdown', 'binding', ['funnel'],
+    { en: 'Breakdown', tr: 'Kırılım' },
+    {
+      en: 'Chips per dimension that select one measured path for the funnel blocks in the card, and pin paths as compare lanes.',
+      tr: 'Karttaki huni bloklarına ölçülmüş tek bir yol seçtiren boyut çipleri; yollar karşılaştırma şeridi olarak sabitlenir.',
+    },
+    { w: 12, h: 2 },
+    [
+      FUNNEL_PICK,
+      opt('dims', 'pick', 'Breakdowns', 'Kırılımlar', { from: 'dims', multi: true, default: null }),
+      opt('counts', 'boolean', 'User counts', 'Kullanıcı sayıları', { default: false }),
+      opt('lanes', 'boolean', 'Compare lanes', 'Karşılaştırma şeritleri', { default: true }),
+    ],
+  ),
+  trend: entry(
+    'trend', 'binding', ['funnel'],
+    { en: 'Daily trend', tr: 'Günlük eğilim' },
+    { en: 'The selected path\'s metrics day by day.', tr: 'Seçili yolun metrikleri gün gün.' },
+    { w: 8, h: 4 },
+    [
+      FUNNEL_PICK,
+      METRICS_PICK,
+      choice('chart', 'Chart', 'Grafik', [['line', 'Line', 'Çizgi'], ['bar', 'Bars', 'Çubuklar']], 'line'),
+      opt('switch', 'boolean', 'Metric switch', 'Metrik anahtarı', { default: true }),
+      LEGEND,
+      AXES,
+      GRID,
+      FORMAT,
+    ],
+  ),
+  benchmark: entry(
+    'benchmark', 'binding', ['funnel'],
+    { en: 'Benchmark', tr: 'Kıyas' },
+    { en: 'Each metric against its floor and target on one ruler.', tr: 'Her metrik, tek bir cetvel üzerinde tabanı ve hedefiyle.' },
+    { w: 6, h: 6 },
+    [
+      FUNNEL_PICK,
+      METRICS_PICK,
+      comparePrev(true),
+      opt('sources', 'boolean', 'Band sources', 'Bant kaynakları', { default: true }),
+    ],
+  ),
+  segments: entry(
+    'segments', 'binding', ['funnel'],
+    { en: 'Segments', tr: 'Segmentler' },
+    { en: 'One row per value of a dimension, under the current selection.', tr: 'Geçerli seçim altında, bir boyutun her değeri için bir satır.' },
+    { w: 8, h: 6 },
+    [
+      FUNNEL_PICK,
+      opt('by', 'pick', 'Split by', 'Kırılım ekseni', { from: 'dims', default: null }),
+      METRICS_PICK,
+      opt('bands', 'boolean', 'Band colors', 'Bant renkleri', { default: true }),
+      SORT,
+      LIMIT,
+      DENSITY,
+    ],
   ),
 };
 

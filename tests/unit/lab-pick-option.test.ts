@@ -3,8 +3,9 @@
  * insight cache (`from`: funnels, dims, metrics, app-pages), one string or, with
  * `multi`, a list. The engine validator and the inspector's `optionAccepts` check
  * SHAPE only (a non-blank string up to 128 characters); whether the name exists
- * is decided at render time. No catalog entry uses `pick` yet, so the engine half
- * adds two fixture options to the funnel entry for the duration of the test.
+ * is decided at render time. The engine half adds two fixture options to the
+ * funnel entry for the duration of the test; the catalog's own pick options
+ * (W3) are checked to validate the same in the engine and the editor.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BLOCK_CATALOG, type BlockOptionSchema } from '../../src/lib/lab/blocks.js';
@@ -63,13 +64,28 @@ describe('pick option: the inspector model agrees with the engine', () => {
     for (const v of BAD_MANY) expect(optionAccepts(many, v), JSON.stringify(v)).toBe(false);
   });
 
-  it('a single pick edits as text, a multi pick as a list', () => {
+  it('a single pick edits as a select, a multi pick as a checklist', () => {
     const entry = { ...(catalogJson.blocks.find((b) => b.type === 'funnel') as unknown as BlockCatalogEntry), options: [one, many] };
-    expect(fieldsFor(entry).map((f) => f.control)).toEqual(['text', 'list']);
+    expect(fieldsFor(entry).map((f) => f.control)).toEqual(['pick', 'pick-list']);
   });
 
-  it('no catalog entry uses pick yet', () => {
-    const types = (catalogJson.blocks as unknown as BlockCatalogEntry[]).flatMap((b) => b.options.map((o) => o.type));
-    expect(types).not.toContain('pick');
+  it('every catalog pick option validates the same in the engine and the editor', () => {
+    const entries = catalogJson.blocks as unknown as BlockCatalogEntry[];
+    const picks = entries.flatMap((b) => b.options.filter((o) => o.type === 'pick').map((o) => ({ type: b.type, schema: o as DashSchema })));
+    expect(picks.length).toBeGreaterThan(0);
+    const spec = (type: string, extra: Record<string, unknown>) =>
+      validateBoardSpec({ title: 'T', cards: [{ id: 'c-a', insight: 'a', at: { x: 0, y: 0, w: 6, h: 4 }, blocks: [{ [type]: { data: 'a', ...extra } }] }] }, 't');
+    for (const { type, schema } of picks) {
+      const at = `${type}.${schema.key}`;
+      expect(spec(type, {}).errors, `${at} baseline`).toEqual([]);
+      const engine = BLOCK_CATALOG[type as keyof typeof BLOCK_CATALOG].options.find((o) => o.key === schema.key)!;
+      expect(engine.type, at).toBe('pick');
+      expect({ from: engine.from, multi: !!engine.multi }, at).toEqual({ from: schema.from, multi: !!schema.multi });
+      const values = [...GOOD_ONE, ...BAD_ONE, ...GOOD_MANY, ...BAD_MANY];
+      for (const v of values) {
+        const engineOk = spec(type, { [schema.key]: v }).errors.length === 0;
+        expect(optionAccepts(schema, v), `${at} ${JSON.stringify(v)}`).toBe(engineOk);
+      }
+    }
   });
 });

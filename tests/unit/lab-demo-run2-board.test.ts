@@ -23,6 +23,12 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   I18nProvider: ({ children }: { children: unknown }) => children,
 }));
 
+/** AddCardMenu reads the bound insight's cache (the funnel explorer preset); no QueryClient here, so nothing is loaded. */
+vi.mock('../../dashboard/src/hooks/useBoards.js', async (orig) => ({
+  ...((await orig()) as Record<string, unknown>),
+  useInsightCache: () => ({ data: undefined }),
+}));
+
 const { coveredHoles, fillHoles, placeCard } = await import('../../dashboard/src/components/lab/board/BoardGrid.js');
 const { toastDelay, TOAST_MS } = await import('../../dashboard/src/components/lab/board/BoardPage.js');
 const { inspectorTitle } = await import('../../dashboard/src/components/lab/board/BlockInspector.js');

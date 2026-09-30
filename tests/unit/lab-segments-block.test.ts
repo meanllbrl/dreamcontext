@@ -162,7 +162,9 @@ describe('segments: band washes, low sample, not measured', () => {
     const html = render({ by: 'platform' });
     const denom = cell(row(html, 'Meta Ads'), 'checkout_to_purchase');
     expect(denom).toContain('data-lab-seg-unmeasured');
-    expect(denom).toContain(`Not measured: ${DENOM}`);
+    // The Meta Ads segment carries no checkout_to_purchase of its own: its reason is the segment's (none), never the funnel level's.
+    expect(denom).toContain('Not measured: No measured path for this combination.');
+    expect(denom).not.toContain(DENOM);
     expect(denom).toContain('tabindex="0"');
     const tiktok = row(render({ by: 'platform' }, { language: 'EN' }), 'TikTok Ads');
     expect(tiktok).not.toMatch(/>0%?</);
