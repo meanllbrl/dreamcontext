@@ -384,7 +384,7 @@ describe('editing an agent', () => {
     expect(edited.effort).toBe('high');
     expect(edited.catchupHours).toBe(4);
     expect(edited.prompt).toBe('Summarise yesterday.');
-    expect(edited.schedule).toEqual({ days: ['mon', 'wed'], at: '09:00' });
+    expect(edited.schedule).toEqual({ slots: [{ kind: 'weekly', days: ['mon', 'wed'], at: '09:00' }] });
   });
 
   it('switching to on-call drops the schedule; switching back needs a real one', () => {
@@ -394,7 +394,7 @@ describe('editing an agent', () => {
 
     // Back to scheduled, supplying a schedule — fine.
     const back = updateAutomation(contextRoot, 'digest', { mode: 'sched', days: ['fri'], at: '17:00' });
-    expect(back.schedule).toEqual({ days: ['fri'], at: '17:00' });
+    expect(back.schedule).toEqual({ slots: [{ kind: 'weekly', days: ['fri'], at: '17:00' }] });
   });
 
   it('refuses an empty prompt rather than writing an agent that does nothing', () => {

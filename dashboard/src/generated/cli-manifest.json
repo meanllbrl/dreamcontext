@@ -78,6 +78,14 @@
       ]
     },
     {
+      "path": "assistant look",
+      "desc": "Screenshot the owner's screen(s) and print the image paths to Read — only when the owner asks",
+      "args": [],
+      "valueFlags": [
+        "--display"
+      ]
+    },
+    {
       "path": "assistant notify",
       "desc": "Show a notice in the notch",
       "args": [
@@ -169,6 +177,7 @@
       ],
       "valueFlags": [
         "--title",
+        "--slot",
         "--days",
         "--at",
         "--mode",
@@ -303,6 +312,20 @@
       "desc": "Run one automation now — dueness and sleep-deference bypassed only with --force",
       "args": [
         "<slug>"
+      ]
+    },
+    {
+      "path": "automations schedule",
+      "desc": "Show or edit an automation's fire slots — no YAML editing, no re-approval (the schedule is not approval-hashed)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--slot",
+        "--add",
+        "--remove",
+        "--days",
+        "--at"
       ]
     },
     {
@@ -2050,6 +2073,22 @@
       ]
     },
     {
+      "path": "notify",
+      "desc": "Post a macOS banner whose click opens the exact place in the dreamcontext app",
+      "args": [
+        "<title>",
+        "[body]"
+      ],
+      "valueFlags": [
+        "--vault",
+        "--session",
+        "--automation",
+        "--file",
+        "--link",
+        "--sound"
+      ]
+    },
+    {
       "path": "patterns",
       "desc": "Browse project patterns, sync their \"/\" entries, and test what a prompt triggers",
       "args": [],
@@ -2624,6 +2663,14 @@
       ]
     },
     {
+      "path": "tasks priority",
+      "desc": "Print or set a task's priority (logs \"priority: old -> new\" to the task changelog)",
+      "args": [
+        "<name>",
+        "[priority]"
+      ]
+    },
+    {
       "path": "tasks provision",
       "desc": "Create the recommended fields on the remote task container (urgency, summary, RICE, …)",
       "args": []
@@ -2715,6 +2762,14 @@
       "desc": "Lift a decline so the idea may be filed again",
       "args": [
         "<key>"
+      ]
+    },
+    {
+      "path": "tasks urgency",
+      "desc": "Print or set a task's urgency (logs \"urgency: old -> new\" to the task changelog)",
+      "args": [
+        "<name>",
+        "[urgency]"
       ]
     },
     {

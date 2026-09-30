@@ -46,5 +46,10 @@
     "reason": "Warm Knowledge previews were removed from the snapshot (snapshot.ts:2056); the corrected list names what is injected instead.",
     "home": "skill/SKILL.md",
     "anchor": "Pinned bodies are NOT inlined"
+  },
+  {
+    "match": "The `_dream_context/` directory is your persistent brain — it remembers what you cannot.",
+    "disposition": "deleted",
+    "reason": "Tagline dropped in the SKILL.md slim (42ae4f24); it passed fuzzy until the surrounding sentence was trimmed further for the 46,080 B cap. The sentence still calls the directory your persistent brain and the next one says the hook pre-loads it."
   }
 ]

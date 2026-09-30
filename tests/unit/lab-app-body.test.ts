@@ -29,6 +29,7 @@ import {
   mintAppNonce,
   buildAppSrcdoc,
   escapeForInlineScript,
+  makeHeightDamper,
 } from '../../dashboard/src/components/lab/labAppRuntime.js';
 import {
   findAppPage,
@@ -357,5 +358,40 @@ describe('LabAppFrame.tsx (security pins — source-text, no jsdom harness in th
   it('an unknown navigate target is dropped, never forwarded to the host router', () => {
     expect(source).toContain('appPageIds(spec).includes(msg.page)');
     expect(source).toMatch(/console\.warn\(`\[lab-app\] \$\{slug\}: navigate to unknown page/);
+  });
+});
+
+describe('makeHeightDamper — the frame cannot strobe between two heights', () => {
+  it('a plain sequence of new heights passes through untouched', () => {
+    const damp = makeHeightDamper();
+    expect([400, 520, 610, 800].map(damp)).toEqual([400, 520, 610, 800]);
+  });
+
+  it('an A,B,A,B… pair settles on the TALLER member and stays there', () => {
+    const damp = makeHeightDamper();
+    // The shipped failure: the embedder's 8px scrollbar toggling on the frame's
+    // own height re-flows the body between 2004 and 2012, forever.
+    expect(damp(2012)).toBe(2012);
+    expect(damp(2004)).toBe(2004);
+    expect(damp(2012)).toBe(2012); // the 2-cycle is now visible to the host
+    // Every further report of the short member is held at the tall one, so the
+    // iframe height stops changing and the guest's observer stops firing.
+    expect(damp(2004)).toBe(2012);
+    expect(damp(2004)).toBe(2012);
+    expect(damp(2012)).toBe(2012);
+    expect(damp(2004)).toBe(2012);
+  });
+
+  it('a REAL content change (an in-app filter click) still gets through and clears the pair', () => {
+    const damp = makeHeightDamper();
+    damp(2012); damp(2004); damp(2012); damp(2004);
+    // Fewer funnel steps after a chip click — nothing to do with the loop.
+    expect(damp(1200)).toBe(1200);
+    expect(damp(2004)).toBe(2004); // the old pair is gone, not remembered forever
+  });
+
+  it('a repeated height is not mistaken for an oscillation', () => {
+    const damp = makeHeightDamper();
+    expect([900, 900, 900, 900].map(damp)).toEqual([900, 900, 900, 900]);
   });
 });

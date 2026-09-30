@@ -5,7 +5,7 @@ import fg from 'fast-glob';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
 import { generateId } from '../id.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
-import { parseSchedule } from './schedule.js';
+import { formatSchedule, parseScheduleDetailed, parseSlot, serializeSchedule, serializeSlot } from './schedule.js';
 import {
   AutomationError,
   AUTOMATIONS_GITIGNORE_ENTRIES,
@@ -51,6 +51,8 @@ import {
   type ReviewMode,
   type RunEvent,
   type RunSidecar,
+  type Schedule,
+  type ScheduleSlot,
   type Weekday,
 } from './types.js';
 
@@ -309,7 +311,7 @@ export function deriveFlowFromManifest(m: AutomationManifest): FlowGraph {
     {
       id: 'trigger',
       kind: 'trigger',
-      label: formatScheduleLabel(m.schedule),
+      label: truncateFlowLabel(cadenceLabel(m), FLOW_LABEL_MAX_CHARS),
       config: { source: 'schedule' },
     },
     {
@@ -345,14 +347,24 @@ export function deriveFlowFromManifest(m: AutomationManifest): FlowGraph {
   return { version: FLOW_GRAPH_VERSION, nodes, edges };
 }
 
-/** `formatSchedule` lives in schedule.ts, which this module already imports for
- *  `parseSchedule` — but only the label is wanted here, and importing it for one
- *  string keeps the derived graph readable rather than printing a raw object. */
-function formatScheduleLabel(schedule: AutomationManifest['schedule']): string {
-  if (schedule === null) return 'no schedule';
-  if (schedule.days === 'daily') return `every day at ${schedule.at}`;
-  if (schedule.days.length === 0) return 'no schedule';
-  return `${schedule.days.join(', ')} at ${schedule.at}`;
+/**
+ * The graph a surface DRAWS: the manifest's own `## Flow` (or the derived one),
+ * with every schedule-sourced trigger node relabelled from the live schedule.
+ *
+ * A written `## Flow` froze the schedule label it was created with, and the
+ * block is approval-hashed while the schedule deliberately is not — so an edit
+ * to the slots can never rewrite it without costing a re-approval. The label is
+ * therefore asked of the schedule at read time, for display only; the graph on
+ * disk and its hash are untouched.
+ */
+export function flowForDisplay(m: AutomationManifest): FlowGraph {
+  const graph = m.flow ?? deriveFlowFromManifest(m);
+  const label = truncateFlowLabel(cadenceLabel(m), FLOW_LABEL_MAX_CHARS);
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) =>
+      n.kind === 'trigger' && n.config?.source === 'schedule' ? { ...n, label } : n),
+  };
 }
 
 // ─── Output-directory containment ───────────────────────────────────────────
@@ -521,9 +533,12 @@ export function parseAutomationMode(v: unknown): AutomationMode {
  * than in each surface so the CLI, the dashboard and the profile popover never
  * disagree about what an agent's cadence is called.
  */
-export function cadenceLabel(m: Pick<AutomationManifest, 'mode' | 'schedule'>): string {
+export function cadenceLabel(m: Pick<AutomationManifest, 'mode' | 'schedule' | 'scheduleError'>): string {
   if (m.mode === 'call') return 'When you call it';
-  return formatScheduleLabel(m.schedule);
+  // A broken schedule says WHICH slot is broken, not just "no schedule" — the
+  // owner of a three-slot agent needs to know it is slot 2's `monthdays: [0]`.
+  if (m.schedule === null && m.scheduleError) return `invalid schedule (${m.scheduleError})`;
+  return formatSchedule(m.schedule);
 }
 
 // ─── Manifest read ───────────────────────────────────────────────────────────
@@ -532,6 +547,7 @@ export function readAutomationFile(filePath: string): AutomationManifest {
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
   const slug = basename(filePath, '.md');
   const output = asRecord(data.output);
+  const parsedSchedule = parseScheduleDetailed(data.schedule);
   return {
     slug,
     id: typeof data.id === 'string' && data.id.trim() ? data.id : '',
@@ -546,7 +562,8 @@ export function readAutomationFile(filePath: string): AutomationManifest {
     // path by degrading to initials.
     photo: strOrNull(data.photo),
     enabled: data.enabled !== false,
-    schedule: parseSchedule(data.schedule),
+    schedule: parsedSchedule.schedule,
+    scheduleError: parsedSchedule.error,
     model: strOrNull(data.model),
     effort: parseEffort(data.effort),
     timeoutMinutes: numberOrDefault(data.timeout_minutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES),
@@ -947,10 +964,12 @@ export interface CreateAutomationInput {
    *  outright if it escapes — an agent's photo is served over HTTP, so a
    *  manifest must never be able to point that reader at the rest of the brain. */
   photo?: string | null;
-  /** Ignored when `mode` is `'call'`. */
-  days: 'daily' | Weekday[];
-  /** Ignored when `mode` is `'call'`. */
-  at: string;
+  /** The one-slot shorthand. Ignored when `mode` is `'call'`, and when `slots` is given. */
+  days?: 'daily' | Weekday[];
+  /** Ignored when `mode` is `'call'`, and when `slots` is given. */
+  at?: string;
+  /** Every slot the agent fires on (union). Wins over `days`/`at`. */
+  slots?: ScheduleSlot[];
   model?: string | null;
   effort?: EffortLevel | null;
   timeoutMinutes?: number;
@@ -1006,11 +1025,7 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   // An on-call agent HAS no schedule, so there is nothing to validate — and
   // demanding a placeholder one would put a lie in the manifest that `list`,
   // `show` and the card would all then have to print.
-  if (mode !== 'call' && parseSchedule({ days: i.days, at: i.at }) === null) {
-    throw new AutomationError(
-      'Invalid schedule — days must be "daily" or a list of weekdays (sun..sat), and at must be a 24h "HH:MM" time.',
-    );
-  }
+  if (mode !== 'call') scheduleFromInput(i);
   // STRICT here even though `resolveAutomationPhoto` degrades on read. The two
   // are not redundant: the read gate stops an escaping path from being SERVED,
   // this stops one from being WRITTEN, so a manifest never carries a string
@@ -1045,6 +1060,47 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   if (i.review !== undefined && !(REVIEW_MODES as readonly string[]).includes(i.review)) {
     throw new AutomationError(`Invalid review mode "${i.review}" — must be one of: ${REVIEW_MODES.join(', ')}.`);
   }
+}
+
+/**
+ * A prompt that tells its run to ask with `automations propose` under `review: off` describes
+ * a gate the CLI will refuse at runtime: the run proposes, is told no, and the human gets the
+ * decision as plain text with nothing to press (observed 2026-09-30). Advisory, not a write
+ * error — the prompt may only MENTION the verb — so `show` and `approve` say it out loud and
+ * name the fix while the owner is looking at the manifest.
+ */
+export function reviewMismatch(m: Pick<AutomationManifest, 'review' | 'prompt'>): string | null {
+  if (m.review !== 'off' || !/\bpropose\b/i.test(m.prompt)) return null;
+  return 'The prompt asks the run to `propose`, but review is off, so `propose` will refuse: set `review: agent` for it to ask with buttons.';
+}
+
+/**
+ * The ONE schedule validator every write path goes through — create, update,
+ * the CLI's `--slot`/`--days --at`, and the dashboard's slots. A slot that
+ * arrives typed is still re-parsed from its serialized form, so a slot built
+ * by a surface (or sent over HTTP) meets exactly the rules a hand-written YAML
+ * slot meets, and there is no second, drifting copy of them.
+ */
+export function scheduleFromInput(i: { days?: 'daily' | Weekday[]; at?: string; slots?: ScheduleSlot[] }): Schedule {
+  if (i.slots !== undefined) {
+    if (!Array.isArray(i.slots) || i.slots.length === 0) {
+      throw new AutomationError('A scheduled agent needs at least one slot — or switch it to on-call.');
+    }
+    const slots: ScheduleSlot[] = [];
+    i.slots.forEach((raw, idx) => {
+      const r = parseSlot(raw && typeof raw === 'object' && 'kind' in raw ? serializeSlot(raw as ScheduleSlot) : raw);
+      if ('error' in r) throw new AutomationError(`Invalid schedule — slot ${idx + 1}: ${r.error}.`);
+      slots.push(r.slot);
+    });
+    return { slots };
+  }
+  const parsed = parseScheduleDetailed({ days: i.days, at: i.at });
+  if (parsed.schedule === null) {
+    throw new AutomationError(
+      `Invalid schedule — ${parsed.error ?? 'missing'}. Days must be "daily" or weekdays (sun..sat), and at a 24h "HH:MM" time.`,
+    );
+  }
+  return parsed.schedule;
 }
 
 /** Idempotently ensure both governing `.gitignore` files (contextRoot- and
@@ -1106,12 +1162,7 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
   // depth rather than bookkeeping: `mode` alone already stops the dispatcher,
   // and a null schedule independently makes `isDue` return `no-schedule`, so
   // it takes both fields being wrong for an on-call agent to fire.
-  const schedule = mode === 'call' ? null : parseSchedule({ days: i.days, at: i.at });
-  if (mode !== 'call' && schedule === null) {
-    // Unreachable — validateAutomationForWrite already confirmed this — kept
-    // explicit so this function never silently proceeds with a null schedule.
-    throw new AutomationError(`Invalid schedule for "${slug}".`);
-  }
+  const schedule = mode === 'call' ? null : scheduleFromInput(i);
 
   if (i.outputDir !== undefined && i.outputDir !== null) {
     resolveOutputDir(contextRoot, i.outputDir, slug); // throws AutomationError on escape
@@ -1129,7 +1180,7 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
     // any hash.
     photo: i.photo ?? null,
     enabled: i.enabled ?? true,
-    schedule,
+    schedule: serializeSchedule(schedule),
     model: i.model ?? null,
     effort: i.effort ?? null,
     timeout_minutes: numberOrDefault(i.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES),
@@ -1163,14 +1214,18 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
  * about half the manifest (the dialog knows nothing about `catchup_hours`,
  * `shared`, `review` or the flow) can never blank the other half by omission.
  *
- * `days`/`at` are read only when the resulting mode is `'sched'`. Switching an
- * agent to `'call'` drops its schedule; switching it back requires the caller
- * to supply one, which is why the validation below demands it rather than
- * resurrecting a stale schedule the owner has not looked at.
+ * `slots` (or the one-slot `days`/`at`) are read only when the resulting mode
+ * is `'sched'`. Switching an agent to `'call'` drops its schedule. A patch that
+ * names no schedule leaves the one on disk byte-identical — a multi-slot agent
+ * edited from a surface that only knows its title keeps every slot.
  */
 export interface UpdateAutomationInput {
   title?: string;
   mode?: AutomationMode;
+  /** Replaces the whole schedule with these slots. Wins over `days`/`at`. */
+  slots?: ScheduleSlot[];
+  /** One-slot shorthand: replaces the whole schedule with a single weekly slot,
+   *  the missing half taken from the current first slot. */
   days?: 'daily' | Weekday[];
   at?: string;
   model?: string | null;
@@ -1218,38 +1273,51 @@ export function updateAutomation(
   const title = patch.title === undefined ? manifest.title : patch.title.trim();
   if (!title) throw new AutomationError('An automation title is required.');
 
+  // Which schedule this edit ends with. `undefined` ⇒ untouched: the field on
+  // disk is not rewritten at all. A scheduled agent must END UP with a real
+  // schedule, so turning `call` back into `sched` with nothing supplied gets the
+  // daily 09:00 default rather than a `schedule: null` that `isDue` would
+  // silently refuse forever, and an untouched schedule that is BROKEN on disk
+  // is refused rather than quietly replaced.
+  let nextSchedule: Schedule | null | undefined;
+  if (mode === 'call') {
+    nextSchedule = manifest.mode === 'call' && manifest.schedule === null ? undefined : null;
+  } else if (patch.slots !== undefined) {
+    nextSchedule = scheduleFromInput({ slots: patch.slots });
+  } else if (patch.days !== undefined || patch.at !== undefined) {
+    const first = manifest.schedule?.slots[0];
+    const firstWeekly = first?.kind === 'weekly' ? first : undefined;
+    nextSchedule = scheduleFromInput({
+      days: patch.days ?? firstWeekly?.days ?? 'daily',
+      at: patch.at ?? (first && first.kind !== 'cron' ? first.at : '09:00'),
+    });
+  } else if (manifest.schedule !== null) {
+    nextSchedule = undefined;
+  } else if (manifest.scheduleError) {
+    throw new AutomationError(
+      `This agent's schedule on disk is broken (${manifest.scheduleError}) — pass a new schedule with the edit.`,
+    );
+  } else {
+    nextSchedule = scheduleFromInput({ days: 'daily', at: '09:00' });
+  }
+
   // Reuse the create-path validator so an edit can never write a value
-  // `create` would have refused. `days`/`at` are only meaningful for a
-  // scheduled agent; for an on-call one we hand it a syntactically valid pair
-  // it will skip anyway (the `mode !== 'call'` guard inside), so there is one
-  // validator and no second, drifting copy of these rules.
-  const days = patch.days ?? (manifest.schedule?.days ?? 'daily');
-  const at = patch.at ?? (manifest.schedule?.at ?? '09:00');
+  // `create` would have refused. The schedule was already validated above
+  // through the same `scheduleFromInput`; handing the validator the resolved
+  // slots keeps it one rule set.
   validateAutomationForWrite({
     slug,
     title,
     mode,
-    days,
-    at,
+    slots: (nextSchedule ?? manifest.schedule ?? { slots: [{ kind: 'weekly', days: 'daily', at: '09:00' }] }).slots,
     model: patch.model === undefined ? manifest.model : patch.model,
     effort: patch.effort === undefined ? manifest.effort : patch.effort,
     timeoutMinutes: patch.timeoutMinutes,
     photo: patch.photo === undefined ? manifest.photo : patch.photo,
   });
 
-  // A scheduled agent must END UP with a real schedule. Turning `call` back
-  // into `sched` without supplying one would otherwise write `schedule: null`
-  // and produce an agent the owner believes is scheduled and which `isDue`
-  // silently refuses forever — the exact failure the `no-schedule` verdict
-  // exists to make visible, arrived at through the UI instead of a hand edit.
-  const schedule = mode === 'call' ? null : parseSchedule({ days, at });
-  if (mode !== 'call' && schedule === null) {
-    throw new AutomationError(
-      'Invalid schedule — days must be "daily" or a list of weekdays (sun..sat), and at must be a 24h "HH:MM" time.',
-    );
-  }
-
-  const fields: Record<string, unknown> = { title, mode, schedule };
+  const fields: Record<string, unknown> = { title, mode };
+  if (nextSchedule !== undefined) fields.schedule = serializeSchedule(nextSchedule);
   if (patch.model !== undefined) fields.model = patch.model;
   if (patch.effort !== undefined) fields.effort = patch.effort;
   if (patch.timeoutMinutes !== undefined) {

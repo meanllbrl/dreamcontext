@@ -58,6 +58,22 @@ describe('announceTurn', () => {
     expect(notifyViaBundle.mock.calls[0][1]).toBe('Publish it?');
   });
 
+  it("links the banner to the agent's thread when the project is a registered vault", () => {
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'Sosyal Medya', path: projectRoot }] }));
+    const since = newThreadEntryId();
+    appendThreadEntry(contextRoot, 'social', { runId: RUN, kind: 'agent', via: 'cli', text: 'Cover is ready.' });
+    announceTurn(contextRoot, 'social', since, null, home);
+    expect(notifyViaBundle.mock.calls[0][3]).toMatchObject({ link: 'dreamcontext://project/Sosyal%20Medya/automation/social' });
+  });
+
+  it('carries no link for an unregistered project', () => {
+    const since = newThreadEntryId();
+    appendThreadEntry(contextRoot, 'social', { runId: RUN, kind: 'agent', via: 'cli', text: 'Cover is ready.' });
+    announceTurn(contextRoot, 'social', since, null, home);
+    expect(notifyViaBundle.mock.calls[0][3]).toMatchObject({ link: null });
+  });
+
   it('ignores posts from before the marker and falls back to the final message', () => {
     appendThreadEntry(contextRoot, 'social', { runId: RUN, kind: 'agent', via: 'cli', text: 'old news' });
     const since = newThreadEntryId(Date.now() + 5);

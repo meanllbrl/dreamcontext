@@ -119,6 +119,12 @@ if (ask && slug === 'reporter') {
   process.exit(0);
 }
 if (ask && slug === 'flaky') { process.stderr.write('the analytics API returned 500\\n'); process.exit(2); }
+if (process.argv.includes('--resume') && (slug === 'crawler' || slug === 'slowpoke')) {
+  // A message queued behind the slow run is answered at once, so it does not hold the lock
+  // for another whole slow run.
+  out({ session_id: 'standin-' + slug, is_error: false, result: 'About halfway.\\n', total_cost_usd: 0.01, num_turns: 1, duration_ms: 1000, permission_denials: [] });
+  process.exit(0);
+}
 if (!ask && (slug === 'crawler' || slug === 'slowpoke')) {
   // Holds its run for a while, so something else can meet it in flight.
   const until = Date.now() + (slug === 'crawler' ? 15000 : 25000);
@@ -859,19 +865,21 @@ async function main() {
     await say('flaky', 'check the analytics API');
     await until(async () => threadEntries('flaky').some((e) => e.event === 'failed'), 60000);
     await slotFree();
-    // R2-2: a REAL skipped row, through the server path. A CLI run of the same agent holds its
-    // run lock, so an @mention that lands meanwhile never becomes a run, and the job writes
-    // its own "did not run" row under the ask.
-    const PATHV = [join(HOME, '.local', 'bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
-    const holder = spawn(process.execPath, [DIST_INDEX, 'automations', 'run', 'crawler', '--force'], {
-      cwd: PROJ, env: { ...process.env, HOME, PATH: PATHV }, stdio: 'ignore',
-    });
-    await page.waitForTimeout(2500);
+    // R2-2: a REAL skipped row, through the server path. A sleep cycle holds the lock, so an
+    // @mention of an idle agent never becomes a run (`deferred`), and the job writes its own
+    // "did not run" row under the ask. (This used to be staged by a CLI run of the same agent
+    // holding its run lock; a message to a WORKING agent now queues into its running thread
+    // instead, which [Q1]-[Q3] prove.)
+    const sleepFile = join(PROJ, '_dream_context', 'state', '.sleep.json');
+    const sleepBefore = existsSync(sleepFile) ? readFileSync(sleepFile, 'utf-8') : null;
+    const sleepNow = sleepBefore ? JSON.parse(sleepBefore) : {};
+    mkdirSync(dirname(sleepFile), { recursive: true });
+    writeFileSync(sleepFile, JSON.stringify({ ...sleepNow, sleep_started_at: new Date().toISOString() }, null, 2));
     const s3 = await say('crawler', 'how far did the crawl get?');
     const skippedRow = await until(async () => threadEntries('crawler').some((e) => e.event === 'skipped'), 30000);
-    check('[guard] a second ask while the agent\'s run holds its lock leaves a real "did not run" row', skippedRow,
+    check('[guard] an ask while a sleep cycle holds the lock leaves a real "did not run" row', skippedRow,
       `${JSON.stringify(s3)} :: ${threadEntries('crawler').map((e) => e.event ?? e.kind).join(' ')}`);
-    await new Promise((r) => holder.on('exit', r));
+    if (sleepBefore === null) rmSync(sleepFile, { force: true }); else writeFileSync(sleepFile, sleepBefore);
     await slotFree();
 
     await openChannel();
@@ -1093,26 +1101,43 @@ async function main() {
     const fieldDown = await field.isDisabled();
     check('[R2-4] while one agent runs the channel field stays open (was read-only for the whole channel)',
       !fieldDown, `disabled=${fieldDown} placeholder="${await field.getAttribute('placeholder')}"`);
-    // A draft that names the running agent is refused HERE, with its words and chips kept.
+    // A draft that names the running agent is NOT refused any more: it says where it goes, is
+    // sent, lands in the thread of the run in flight, and that thread opens saying "Working".
     const sayCalls = [];
     const onReq = (r) => { if (r.url().includes('/api/automations/threads/say')) sayCalls.push(r.method()); };
     page.on('request', onReq);
     let busyNote = '';
-    let kept = '';
     if (!fieldDown) {
       await field.click();
       await field.fill('@slowpoke how far along are you');
       await page.waitForTimeout(400);
-      busyNote = (await page.locator('.agents-composer .agents-composer-note--error').innerText().catch(() => '')).trim();
+      busyNote = (await page.locator('.agents-composer-note').first().innerText().catch(() => '')).trim();
       await field.press('Enter');
-      await page.waitForTimeout(800);
-      kept = await field.inputValue();
     }
+    const queuedLanded = await until(async () => threadEntries('slowpoke')
+      .some((e) => e.kind === 'user' && e.text.includes('how far along')), 10000);
     page.off('request', onReq);
-    check('[R2-4] a draft naming the running agent says so and is not sent, its words kept (was: the field was disabled)',
-      /Slow crawler is still running/.test(busyNote) && sayCalls.length === 0 && kept.includes('how far along'),
-      `note="${busyNote}" say=${sayCalls.length} kept="${kept}"`);
-    if (!fieldDown) await field.fill('');
+    const sameRun = (() => {
+      const all = threadEntries('slowpoke');
+      const mine = all.find((e) => e.kind === 'user' && e.text.includes('how far along'));
+      return !!mine && all.some((e) => e.runId === mine.runId && e.kind === 'system' && e.event === 'started');
+    })();
+    check('[Q1] a draft naming the running agent says where it goes and is SENT into its running thread (was refused with "still running")',
+      /is working/.test(busyNote) && sayCalls.length === 1 && queuedLanded && sameRun,
+      `note="${busyNote}" say=${sayCalls.length} landed=${queuedLanded} sameRun=${sameRun}`);
+    const live = page.locator('.agent-thread .agent-thread-live');
+    // Settled, not first paint: the panel draws the feed's copy of the activity at once and
+    // the thread's own read (which names the queued message) lands a poll later.
+    const queuedMarkEl = page.locator('.agent-thread .agent-thread-post-queued');
+    const liveShown = await until(async () => (await live.count()) > 0
+      && /message/.test(await live.innerText()) && (await queuedMarkEl.count()) > 0, 8000);
+    const liveText = (await live.count()) ? (await live.innerText()).trim() : '';
+    const queuedMark = await queuedMarkEl.count();
+    check('[Q2] that thread opens and says the agent is working, with a climbing time and your message marked queued',
+      liveShown && /Working · \d+s|Working · \d+m/.test(liveText) && /message/.test(liveText) && queuedMark > 0,
+      `live="${liveText}" queuedMarks=${queuedMark}`);
+    await page.screenshot({ path: join(SHOTS, '12a-working-thread.png') });
+    await closeThread();
     // A DIFFERENT agent is called while the first still runs, and finishes first.
     const parallelAt = Date.now();
     const s4 = await page.evaluate(async () => {
@@ -1131,6 +1156,15 @@ async function main() {
       s4.status === 200 && reporterDone && slowStillRunning,
       `say=${s4.status} ${s4.body.slice(0, 120)} reporterDone=${reporterDone} slowStillRunning=${slowStillRunning}`);
     await slotFree();
+    // The message queued in [Q1] is delivered once the slow run ends: its thread closes it.
+    const queuedSettled = await until(async () => {
+      const all = threadEntries('slowpoke');
+      const mine = all.find((e) => e.kind === 'user' && e.text.includes('how far along'));
+      return !!mine && all.some((e) => e.id > mine.id && e.kind === 'system' && ['replied', 'failed'].includes(e.event ?? ''));
+    }, 60000);
+    const delivered = threadEntries('slowpoke').some((e) => e.kind === 'system' && e.event === 'replied');
+    check('[Q3] the queued message is delivered when the turn ahead of it ends, in the same thread',
+      queuedSettled && delivered, `settled=${queuedSettled} delivered=${delivered}`);
 
     // ── 12c. A run in progress (C4) and a still page under reduced motion (X5) ──
     // A fresh slow run, started from outside the page, so the checks below have its whole
@@ -1141,9 +1175,43 @@ async function main() {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' }, body: '{}',
     });
     check('[guard] a second slow run is started from outside the page', again.ok, `status=${again.status}`);
-    const liveRow = namedRow('Slow crawler');
-    await until(async () => (await liveRow.locator('.agent-msg-status--running').count()) > 0, 20000);
+    // The RUNNING Slow crawler row: the channel also holds the finished run from section 12,
+    // whose thread now carries a delivered reply.
+    const liveRow = page.locator('article.agent-msg', { has: page.locator('.agent-msg-name', { hasText: 'Slow crawler' }) })
+      .filter({ has: page.locator('.agent-msg-status--running') }).first();
+    const liveSeen = await until(async () => (await liveRow.count()) > 0, 20000);
+    if (!liveSeen) {
+      const rows = await page.locator('article.agent-msg', { has: page.locator('.agent-msg-name', { hasText: 'Slow crawler' }) })
+        .evaluateAll((els) => els.map((el) => el.querySelector('[class*="agent-msg-status"]')?.className ?? 'none'));
+      const feed = await page.evaluate(async () => (await (await fetch('/api/automations/threads', { headers: { 'x-dreamcontext-vault': 'proj' } })).json()));
+      console.log('   [debug] slow rows:', JSON.stringify(rows), 'runSlots:', JSON.stringify(feed.runSlots), 'working:', JSON.stringify(feed.working),
+        'slow msgs:', JSON.stringify((feed.messages ?? []).filter((m) => m.slug === 'slowpoke').map((m) => [m.runId, m.status])));
+    }
     await page.waitForTimeout(1500);
+    // [Q4] The OLDER run's thread, open while this newer run works: it says the agent is
+    // working on a newer run and takes you there (owner, 2026-09-29: the status stayed outside,
+    // in the channel row, while the open thread read as idle).
+    const slowRows = page.locator('article.agent-msg', { has: page.locator('.agent-msg-name', { hasText: 'Slow crawler' }) });
+    const doneRow = slowRows.filter({ hasNot: page.locator('.agent-msg-status--running') }).first();
+    let elsewhereText = '';
+    let jumped = false;
+    if (await doneRow.locator('.agent-thread-bar').count()) {
+      await doneRow.locator('.agent-thread-bar').first().click();
+      const liveOld = page.locator('.agent-thread .agent-thread-live');
+      await until(async () => (await liveOld.count()) > 0 && /newer run/.test(await liveOld.innerText()), 8000);
+      elsewhereText = (await liveOld.count()) ? (await liveOld.innerText()).trim() : '';
+      const go = page.locator('.agent-thread .agent-thread-live-open');
+      if (await go.count()) {
+        await go.click();
+        jumped = await until(async () => (await page.locator('.agent-thread .agent-msg-status--running').count()) > 0
+          && (await page.locator('.agent-thread .agent-thread-live').count()) > 0
+          && !/newer run/.test(await page.locator('.agent-thread .agent-thread-live').innerText()), 8000);
+      }
+      await page.screenshot({ path: join(SHOTS, '12c-newer-run-thread.png') });
+      await closeThread();
+    }
+    check('[Q4] an older thread open while a newer run works says "Working on a newer run" and opens that thread',
+      /Working on a newer run · \d+/.test(elsewhereText) && jumped, `text="${elsewhereText}" jumped=${jumped}`);
     const dot = liveRow.locator('.agent-msg-live-dot');
     const dotState = (await dot.count()) ? await dot.first().evaluate((el) => ({
       name: getComputedStyle(el).animationName, duration: getComputedStyle(el).animationDuration,

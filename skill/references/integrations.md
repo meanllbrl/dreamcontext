@@ -249,6 +249,7 @@ Light/dark with system detection.
 An alternate, settings-gated renderer for the SAME embedded agent: instead of xterm.js drawing Claude Code's raw TUI, a headless `claude -p --output-format stream-json` conversation is rendered as native app UI — streaming markdown bubbles, collapsible tool cards with status/duration, and Claude's permission prompts / `AskUserQuestion` as clickable cards (options + multiSelect) instead of a numbered-list readline prompt. It is the **same engine, different renderer** — same `claude` binary, same permission model (no-bypass → Auto/`auto`, bypass → `bypassPermissions`), same per-vault agent-session-map identity registry, same SessionStart/Stop hooks (brain preload, sleep debt all fire normally).
 
 - **Discovery:** Settings → Agents → **"Agent screen"** picker — **Terminal** (default) or **Chat (BETA)** (`chatView` in `agent-ui.json`). A mutually-exclusive SWAP, not a superset: the chosen surface takes over every Claude entry point (＋ New, ⌘T/⌘D, empty state, reopened/resumed tabs, Sleep / brain-resolve / delegate spawns) — chat mode never opens a terminal Claude and vice versa. Plain shells (⌃`) stay available in both modes; already-running sessions keep their surface; a tab saved under one surface resumes the same conversation in the other (shared transcript + conversation UUID).
+- **A connected Claude account that got signed out** (Settings → Agents lists the accounts): its row has **Sign in again**, which opens Claude's own sign-in in the browser for THAT account and keeps its place in the list. A chat running on it shows a banner naming the account with the same button, then resumes. Never tell the user to run `claude auth login` in a terminal for a second account: a terminal signs in the machine's own account, not the connected one. Removing and re-adding the account is not needed.
 - **Resume interop:** a chat and a terminal session both pin/resume by the SAME Claude conversation UUID, so either surface can pick up a conversation the other started — a chat pane offers "Continue in Terminal view" (e.g. if question-routing isn't available), and a terminal tab offers "Open in Chat (BETA)" to reopen its conversation natively.
 - **Interrupt:** a Stop button sends the CLI's `interrupt_receipt_v1` control request; a short watchdog escalates to SIGINT→kill if the turn doesn't wind down.
 - **Live model/effort switch:** the composer's pickers switch a RUNNING chat — model via the CLI's `set_model` control request, effort via a headless `/effort <level>` command frame (both apply from the next turn; the CLI confirms with a re-emitted init / a synthetic "Set effort level to …" bubble).
@@ -385,6 +386,7 @@ dreamcontext app status      # show installed version and state
 - **Federation board** — projects rendered as Excalidraw-style cards; click source→target to wire a live "reads" relationship (violet wire = one project reads another's canonical memory live during recall; never a copy), gated by the target being shareable.
 - **In-app onboarding** — quiz-style wizard creates or initializes a project, scaffolds `_dream_context/`, runs `setup`, installs the global CLI; deterministic, LLM-free.
 - Delivery is CLI/curl-driven (no Apple notarization); prefers your auto-upgrading global CLI over its bundled copy. First launch may need right-click → Open.
+- **Routable banners (`dreamcontext://` URL scheme)** — the app claims the `dreamcontext` scheme, so a banner's click lands in the exact place: an automation banner on that agent's thread (its document opens in a small viewer window rendered as formatted markdown with its images), a "Claude is asking" banner on that chat tab (brought forward, or resumed if closed), a sleep banner on Sleep, and a banner with no in-app place in a Notifications window listing recent banners. The existing window and tab of that project come forward; a duplicate is never opened. Without the desktop app the click falls back to opening the file, as before. Hooks and scripts post their own with `dreamcontext notify` — see [cli-reference.md](cli-reference.md#notifications).
 
 ---
 
@@ -546,6 +548,7 @@ dreamcontext assistant answer <sessionId> --question <id> (--choice <label> | --
 dreamcontext assistant focus <vault>
 dreamcontext assistant tile <vault…> [--layout columns|rows|grid]
 dreamcontext assistant notify "<text>" [--level info|attention]
+dreamcontext assistant look [--display n]           # "ekranıma bak": screenshot(s) to Read, ONLY on request
 ```
 
 Run anywhere else they fail with *"only the dreamcontext Assistant can drive the app"*: the
@@ -555,10 +558,14 @@ token is refused. A token from before a restart is told apart from a wrong one (
 restarted — this turn cannot drive it").
 
 **How a verb reaches a project window (the relay).** `open`/`chat`/`send`/`answer`/`focus` go
-down the notch's own socket; the notch finds that project's window, or opens the project in a
-window of its OWN (never a chip in somebody else's window — if even that fails the answer is
-`ceiling`), binds the command id to that window by label, and rings a doorbell carrying only
-the id. The window claims the command from the server with the nonce it registered at
+down the notch's own socket; the notch finds the window the project is ALREADY open in — as
+one tab among several — by asking the server which windows hold a live instance of it
+(`GET /api/assistant/windows?vault=`; every instance registers at mount and withdraws at
+unmount), not the localStorage heartbeat, which goes stale when macOS throttles a background
+window. A tab that is listed but cold is woken in place (`dream://assistant-wake`). Only a
+project open nowhere gets a window of its OWN (never a chip in somebody else's window — if even
+that fails the answer is `ceiling`). The notch binds the command id to that window by label
+and rings a doorbell carrying only the id. The window claims the command from the server with the nonce it registered at
 bootstrap and posts the result. A forged, reused, unbound or mis-addressed id lands nothing.
 
 **Autonomy and taint.** `ask` — send, answer and broadcast become PROPOSALS the owner approves,
@@ -576,6 +583,13 @@ of M". **Detail buttons**: a notch answer's `dream-actions` `task`/`knowledge`/`
 carries `"vault"`; clicking it posts `POST /api/assistant/open`, which rides the same relay, so
 the project's window opens on that page. **Tile** moves only dreamcontext's own windows (no
 Accessibility), each project in its own window, columns / rows / grid on the notch's monitor.
+
+**Looking at the screen.** `look` runs macOS `screencapture` from the app's process tree, one
+JPEG per display shrunk to 1920 px, into the hidden vault's `tmp/screens/` (deleted after 30
+min); the assistant Reads the paths. Free only while the owner's own words are the last thing
+the session heard (the same rule as `chat`), so a project reply cannot ask to see the desktop.
+macOS asks for **Screen Recording** the first time (listed in the wizard's permissions step);
+without it the answer is `screen_permission` and the Privacy pane opens.
 
 **Retired, with the records kept.** The Meeting Room's code is gone; its threads stay on disk
 at `~/.dreamcontext/meeting-room/threads/`, unread. The voice key stays in

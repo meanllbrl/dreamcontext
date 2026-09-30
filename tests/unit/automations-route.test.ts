@@ -50,6 +50,8 @@ import {
   handleAutomationsQueue,
   handleAutomationsAttention,
   handleAutomationsAttentionAck,
+  handleAutomationsCreate,
+  handleAutomationsUpdate,
 } from '../../src/server/routes/automations.js';
 import {
   startAutomationJob,
@@ -1069,5 +1071,42 @@ describe('GET /api/automations/attention', () => {
     await handleAutomationsAttention(getReq, after.res, {}, contextRoot);
     expect((after.body().runs as unknown[])).toEqual([]);
     expect(after.body().watermark).toBe('2026-08-28T06:31:00.000Z');
+  });
+});
+
+
+describe('schedule slots over the dashboard routes', () => {
+  const SLOTS = [
+    { kind: 'weekly', days: ['mon'], at: '09:30' },
+    { kind: 'weekly', days: ['mon', 'tue', 'wed', 'thu', 'fri'], at: '16:30' },
+  ];
+
+  it('create takes slots, and the summary carries every slot and the earliest next fire', async () => {
+    const { res, status, body } = makeRes();
+    await handleAutomationsCreate(makePostReqWithBody({ title: 'Funnel', prompt: 'Report.', mode: 'sched', slots: SLOTS }), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    const a = body().automation as Record<string, unknown>;
+    expect(a.scheduleLabel).toBe('mon 09:30 · mon–fri 16:30');
+    expect(a.schedule).toEqual({ slots: SLOTS });
+    expect(typeof a.nextFireAt).toBe('string');
+    const next = new Date(a.nextFireAt as string);
+    expect([9, 16]).toContain(next.getHours());
+    expect(a.scheduleError).toBeNull();
+  });
+
+  it('update replaces the slots, and a bad slot is a 400 naming it — nothing written', async () => {
+    const m = makeAutomation('funnel');
+    const ok = makeRes();
+    await handleAutomationsUpdate(makePostReqWithBody({ slots: SLOTS }), ok.res, { slug: m.slug }, contextRoot);
+    expect(ok.status()).toBe(200);
+    expect((ok.body().automation as Record<string, unknown>).scheduleLabel).toBe('mon 09:30 · mon–fri 16:30');
+
+    const bad = makeRes();
+    await handleAutomationsUpdate(
+      makePostReqWithBody({ slots: [...SLOTS, { kind: 'nth', nth: [{ weekday: 'mon', n: 9 }], at: '09:00' }] }),
+      bad.res, { slug: m.slug }, contextRoot,
+    );
+    expect(bad.status()).toBe(400);
+    expect(JSON.stringify(bad.body())).toMatch(/slot 3/);
   });
 });

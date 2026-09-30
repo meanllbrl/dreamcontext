@@ -3,10 +3,8 @@ import { useVault } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { CardHeader } from './molecules';
 import { InlineTerminal } from './InlineTerminal';
-import { postToSession } from './postToSession';
 import { buildRunReport, type RunOutcome } from './runReport';
 import type { RunViewSpec } from '../../../lib/chatViewSpec';
-import type { ChatSession } from '../chatSession';
 
 /**
  * ORGANISM — the `dream-view` RUN card: a command, a ▶, and a real terminal that opens
@@ -31,7 +29,12 @@ import type { ChatSession } from '../chatSession';
 
 type Phase = 'idle' | 'running' | 'done';
 
-export function RunCard({ spec, session }: { spec: RunViewSpec; session?: ChatSession }) {
+export function RunCard({ spec, report }: {
+  spec: RunViewSpec;
+  /** Where the exit report goes: the chat's session, or an agent thread's reply. Absent on
+   *  a read-only host, where the card still runs but nothing continues. */
+  report?: (text: string) => void;
+}) {
   const { vault } = useVault();
   const desktop = isDesktop();
   const [phase, setPhase] = useState<Phase>('idle');
@@ -49,8 +52,8 @@ export function RunCard({ spec, session }: { spec: RunViewSpec; session?: ChatSe
     const next = { ...result, seconds };
     setOutcome(next);
     setPhase('done');
-    if (session) postToSession(session, buildRunReport(spec.command, next, { includeOutput }));
-  }, [includeOutput, session, spec.command, startedAt]);
+    report?.(buildRunReport(spec.command, next, { includeOutput }));
+  }, [includeOutput, report, spec.command, startedAt]);
 
   const start = () => {
     setOutcome(null);
@@ -140,7 +143,7 @@ export function RunCard({ spec, session }: { spec: RunViewSpec; session?: ChatSe
 
       {phase === 'done' && outcome && (
         <p className="chat-runcard-note">
-          {session
+          {report
             ? includeOutput
               ? 'Reported back to the agent with the output.'
               : 'Reported back to the agent — exit code only.'

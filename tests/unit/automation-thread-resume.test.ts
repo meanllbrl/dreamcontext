@@ -167,6 +167,12 @@ describe('surface selects the preamble, and the two make opposite delivery promi
     expect(p).toContain('--- END MESSAGE ---');
     expect(p).toContain('it is not a new');
   });
+
+  it('a thread reply is told the same skimmable shape a run is', () => {
+    const p = buildThreadMessagePreamble('Taskleri uygula');
+    expect(p).toContain('WRITE TO BE SKIMMED');
+    expect(p).not.toContain('<one or two sentences>');
+  });
 });
 
 // ─── 2. The env allowlist (AC D8) ────────────────────────────────────────────
@@ -220,8 +226,10 @@ describe('the resume env is an allowlist, not a passthrough', () => {
     // ABSENCE IS A PASS, and deliberately so: `accountEnvFor` returns
     // `{ CLAUDE_CONFIG_DIR: undefined }` for the machine's own account, which REMOVES an
     // inherited value rather than setting one. Asserting "present and equal" would fail
-    // on exactly the common single-account machine.
-    const expected = accountEnvFor(resolveConfigDir(null)).CLAUDE_CONFIG_DIR;
+    // on exactly the common single-account machine. The register is read from the injected
+    // `home`, never the developer's own: a machine whose preferred account is a sandbox must
+    // not decide what this test sees.
+    const expected = accountEnvFor(resolveConfigDir(null, home), home).CLAUDE_CONFIG_DIR;
     expect(calls[0].env.CLAUDE_CONFIG_DIR).toBe(expected);
   });
 });

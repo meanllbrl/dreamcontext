@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { findPackageDir } from '../catalog.js';
+import { recordNotification } from '../notification-log.js';
 
 /**
  * Branded macOS notifications for automations.
@@ -123,13 +124,21 @@ export function notifierIconPath(): string | null {
  * instead of replaying it on every subsequent launch.
  *
  * Payload format is deliberately not JSON — AppleScript has no JSON parser, and
- * shelling out to one would add a dependency for no gain. Line 1 is the title,
- * line 2 is the sound name (empty ⇒ silent), LINE 3 is the click target (empty
- * ⇒ none), everything after is the body.
+ * shelling out to one would add a dependency for no gain. This is payload v2:
+ * line 1 is the title, line 2 is the sound name (empty ⇒ silent), LINE 3 is the
+ * `dreamcontext://` link (empty ⇒ none), LINE 4 is the fallback file (empty ⇒
+ * none), everything after is the body. The poster only writes v2 to an applet
+ * compiled from THIS script (see {@link notifyViaBundle}); an older applet gets
+ * the legacy three-line payload it knows how to read.
  *
  * The click branch at the end is what makes a banner worth pressing — see
  * {@link notifyClickTargetPath} for why an empty queue is a reliable proxy for
- * "a human clicked this".
+ * "a human clicked this". It opens the link first, because a link lands in the
+ * exact place in the app; `open` exits non-zero when no app claims the scheme
+ * (the desktop app is not installed), and only then does the fallback file
+ * open, so nothing is lost for a CLI-only user. The target file holds the link
+ * on line 1 and the fallback on line 2; a target written by an older applet
+ * holds a lone path on line 1, which `open` still opens.
  */
 export function renderNotifierScript(queueDir: string, clickTargetPath: string, armedPath: string): string {
   const q = queueDir.endsWith('/') ? queueDir : `${queueDir}/`;
@@ -151,13 +160,14 @@ export function renderNotifierScript(queueDir: string, clickTargetPath: string, 
     '\t\t\t\tset raw to do shell script "cat " & quoted form of p',
     '\t\t\t\tdo shell script "rm -f " & quoted form of p',
     '\t\t\t\tset payloadLines to paragraphs of raw',
-    '\t\t\t\tif (count of payloadLines) > 2 then',
+    '\t\t\t\tif (count of payloadLines) > 3 then',
     '\t\t\t\t\tset t to item 1 of payloadLines',
     '\t\t\t\t\tset snd to item 2 of payloadLines',
-    '\t\t\t\t\tset tgt to item 3 of payloadLines',
+    '\t\t\t\t\tset lnk to item 3 of payloadLines',
+    '\t\t\t\t\tset fb to item 4 of payloadLines',
     '\t\t\t\t\tset b to ""',
-    '\t\t\t\t\tif (count of payloadLines) > 3 then',
-    '\t\t\t\t\t\trepeat with i from 4 to count of payloadLines',
+    '\t\t\t\t\tif (count of payloadLines) > 4 then',
+    '\t\t\t\t\t\trepeat with i from 5 to count of payloadLines',
     '\t\t\t\t\t\t\tif b is "" then',
     '\t\t\t\t\t\t\t\tset b to item i of payloadLines',
     '\t\t\t\t\t\t\telse',
@@ -167,9 +177,11 @@ export function renderNotifierScript(queueDir: string, clickTargetPath: string, 
     '\t\t\t\t\tend if',
     // Recorded BEFORE posting, so the banner the user is about to see is the
     // one whose target is armed.
-    '\t\t\t\t\tif tgt is not "" then',
+    // Link on line 1, fallback on line 2. `echo` supplies the separator so the
+    // AppleScript source carries no backslash escape to get wrong.
+    '\t\t\t\t\tif lnk is not "" or fb is not "" then',
     '\t\t\t\t\t\ttry',
-    '\t\t\t\t\t\t\tdo shell script "printf \'%s\' " & quoted form of tgt & " > " & quoted form of targetFile',
+    '\t\t\t\t\t\t\tdo shell script "printf \'%s\' " & quoted form of lnk & " > " & quoted form of targetFile & "; echo >> " & quoted form of targetFile & "; printf \'%s\' " & quoted form of fb & " >> " & quoted form of targetFile',
     '\t\t\t\t\t\tend try',
     '\t\t\t\t\tend if',
     // `sound name ""` is not silence, it is an invalid sound — the clause has
@@ -197,9 +209,21 @@ export function renderNotifierScript(queueDir: string, clickTargetPath: string, 
     // race, not a click — see notifyArmedPath.
     `\t\tif armedAgo > ${CLICK_ARM_DELAY_SECONDS} then`,
     '\t\t\ttry',
-    '\t\t\t\tset tgt to do shell script "cat " & quoted form of targetFile',
-    '\t\t\t\tif tgt is not "" then',
-    '\t\t\t\t\tdo shell script "open " & quoted form of tgt',
+    '\t\t\t\tset tgtLines to paragraphs of (do shell script "cat " & quoted form of targetFile)',
+    '\t\t\t\tset lnk to ""',
+    '\t\t\t\tset fb to ""',
+    '\t\t\t\tif (count of tgtLines) > 0 then set lnk to item 1 of tgtLines',
+    '\t\t\t\tif (count of tgtLines) > 1 then set fb to item 2 of tgtLines',
+    // The link first; `open` fails when no app claims the scheme, and only
+    // then does the file the banner was about open instead.
+    '\t\t\t\tif lnk is not "" then',
+    '\t\t\t\t\ttry',
+    '\t\t\t\t\t\tdo shell script "open " & quoted form of lnk',
+    '\t\t\t\t\ton error',
+    '\t\t\t\t\t\tif fb is not "" then do shell script "open " & quoted form of fb',
+    '\t\t\t\t\tend try',
+    '\t\t\t\telse if fb is not "" then',
+    '\t\t\t\t\tdo shell script "open " & quoted form of fb',
     '\t\t\t\tend if',
     '\t\t\tend try',
     '\t\tend if',
@@ -265,7 +289,7 @@ export function buildNotifierApp(
     plistSet(plist, 'Set', ':CFBundleName dreamcontext');
     // Stamp WHAT was compiled, so `install --check` can answer "is this applet
     // what today's CLI would generate?" — see NotifierState.scriptCurrent.
-    plistSet(plist, 'Add', `:${SCRIPT_SHA_KEY} string ${scriptSha(home)}`);
+    plistSet(plist, 'Add', `:${SCRIPT_SHA_KEY} string ${expectedNotifierScriptSha(home)}`);
     // Layer 3 from the header comment. Both of these are required; doing only
     // one leaves the default applet icon in place.
     plistSet(plist, 'Delete', ':CFBundleIconName');
@@ -310,11 +334,44 @@ const realOpen: OpenImpl = (appPath) => {
     .on('error', () => { /* best-effort; the payload stays queued for the next post */ });
 };
 
+export interface NotifyViaBundleOptions {
+  sound?: string;
+  openImpl?: OpenImpl;
+  /** The FALLBACK file: what a click opens when no app claims the link (or there is
+   *  none). Kept under its original name so every existing caller reads the same. */
+  openTarget?: string | null;
+  /** The `dreamcontext://` link the click opens first. See `lib/app-link.ts`. */
+  link?: string | null;
+}
+
+/** Newline is the record separator, so every single-line field is flattened. */
+function oneLine(value: string | null | undefined): string {
+  return (value ?? '').replace(/[\r\n]+/g, ' ');
+}
+
+/**
+ * Compose the queued payload. v2 (title, sound, LINK, FALLBACK, body) only for an applet
+ * compiled from today's script; anything older reads the legacy three-line shape (title,
+ * sound, target, body), so it gets the fallback path as its target, which is exactly what it
+ * did before links existed. Writing v2 to an old applet would shift the fallback into its
+ * target line and lose the body's first line; writing legacy to a new one would do the reverse.
+ */
+export function renderNotifyPayload(
+  fields: { title: string; body: string; sound?: string; link?: string | null; fallback?: string | null },
+  appletCurrent: boolean,
+): string {
+  const head = [oneLine(fields.title), oneLine(fields.sound)];
+  const lines = appletCurrent
+    ? [...head, oneLine(fields.link), oneLine(fields.fallback)]
+    : [...head, oneLine(fields.fallback)];
+  return `${lines.join('\n')}\n${fields.body}`;
+}
+
 export function notifyViaBundle(
   title: string,
   body: string,
   home: string = homedir(),
-  opts: { sound?: string; openImpl?: OpenImpl; openTarget?: string | null } = {},
+  opts: NotifyViaBundleOptions = {},
 ): boolean {
   if (process.platform !== 'darwin') return false;
   const appPath = notifierAppPath(home);
@@ -322,15 +379,10 @@ export function notifyViaBundle(
   try {
     const queueDir = notifyQueueDir(home);
     mkdirSync(queueDir, { recursive: true });
-    // Newline is the record separator, so it can appear in the title, the sound
-    // name, or the click target — all three are single-line fields by
-    // construction, and the target is a filesystem path (a newline in one would
-    // be pathological, but stripping costs nothing and keeps the grammar
-    // total).
-    const oneLineTitle = title.replace(/[\r\n]+/g, ' ');
-    const sound = (opts.sound ?? '').replace(/[\r\n]+/g, ' ');
-    const target = (opts.openTarget ?? '').replace(/[\r\n]+/g, ' ');
-    const payload = `${oneLineTitle}\n${sound}\n${target}\n${body}`;
+    const payload = renderNotifyPayload(
+      { title, body, sound: opts.sound, link: opts.link, fallback: opts.openTarget },
+      notifierScriptCurrent(home),
+    );
     const name = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}.txt`;
     writeFileSync(join(queueDir, name), payload, 'utf-8');
     // Armed BEFORE the launch, so the applet can tell its own drain from a
@@ -339,6 +391,12 @@ export function notifyViaBundle(
       writeFileSync(notifyArmedPath(home), String(Math.floor(Date.now() / 1000)), 'utf-8');
     } catch { /* the guard degrades to "treat as click"; never block the notification */ }
     (opts.openImpl ?? realOpen)(appPath);
+    // History AFTER the post is committed: the Notifications window lists what was
+    // announced, and a history write can never cost the banner (it does not throw).
+    recordNotification(
+      { title: oneLine(title), body, link: opts.link ?? null, file: opts.openTarget ?? null },
+      home,
+    );
     return true;
   } catch {
     return false;
@@ -372,7 +430,7 @@ export interface NotifierState {
 }
 
 /** sha256 of the applescript this CLI would generate for `home` right now. */
-function scriptSha(home: string): string {
+export function expectedNotifierScriptSha(home: string = homedir()): string {
   const source = renderNotifierScript(notifyQueueDir(home), notifyClickTargetPath(home), notifyArmedPath(home));
   return createHash('sha256').update(source, 'utf8').digest('hex');
 }
@@ -392,6 +450,13 @@ function installedScriptSha(home: string): string | null {
   }
 }
 
+/** Is the installed applet the one today's CLI would compile? False when absent or stale.
+ *  Decides the payload shape the poster writes, and whether `notify` rebuilds. */
+export function notifierScriptCurrent(home: string = homedir()): boolean {
+  if (!existsSync(notifierAppPath(home))) return false;
+  return installedScriptSha(home) === expectedNotifierScriptSha(home);
+}
+
 /** What `automations install --check` reports. */
 export function inspectNotifier(home: string = homedir()): NotifierState {
   const bundlePath = notifierAppPath(home);
@@ -406,7 +471,7 @@ export function inspectNotifier(home: string = homedir()): NotifierState {
     bundlePath,
     iconPackaged: notifierIconPath() !== null,
     queuedPayloads,
-    scriptCurrent: bundlePresent && installedScriptSha(home) === scriptSha(home),
+    scriptCurrent: bundlePresent && notifierScriptCurrent(home),
   };
 }
 

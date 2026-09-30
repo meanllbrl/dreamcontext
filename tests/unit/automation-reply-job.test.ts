@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -27,9 +27,9 @@ vi.mock('../../src/lib/automations/notifier.js', async (importOriginal) => ({
 }));
 
 const {
-  startAutomationReplyJob, currentReplyJob, reconcileReplyThreads, PROCESS_STARTED_AT,
+  startAutomationReplyJob, currentReplyJob, reconcileReplyThreads, PROCESS_STARTED_AT, agentActivity,
 } = await import('../../src/server/automation-job.js');
-const { createAutomation, writeRunSidecar } = await import('../../src/lib/automations/store.js');
+const { createAutomation, writeRunSidecar, lockPathFor } = await import('../../src/lib/automations/store.js');
 const { appendThreadEntry, readThread, newThreadEntryId, markThreadRead } =
   await import('../../src/lib/automations/threads.js');
 
@@ -336,5 +336,58 @@ describe('reconciliation closes what a previous process left open', () => {
 
     await reconcileReplyThreads(contextRoot, { processStartedAt: PROCESS_STARTED_AT });
     expect(readThread(contextRoot, 'digest').some((e) => e.id === `${entryId}~r`)).toBe(false);
+  });
+});
+
+describe('agentActivity — whether an agent is working, asked of its run lock', () => {
+  const holdLock = (slug: string, pid: number, at: number) => {
+    const p = lockPathFor(contextRoot, slug);
+    mkdirSync(join(p, '..'), { recursive: true });
+    writeFileSync(p, JSON.stringify({ pid, at }) + '\n');
+  };
+
+  it('is null when nothing holds the lock and nothing waits', () => {
+    expect(agentActivity(contextRoot, 'digest')).toBeNull();
+  });
+
+  it('a live holder is working since the lock was taken, on the run its sidecar names', () => {
+    const at = Date.now() - 42_000;
+    holdLock('digest', process.pid, at);
+    writeRunSidecar(contextRoot, 'digest', {
+      slug: 'digest', runnerPid: process.pid, childPid: process.pid, childPgid: process.pid,
+      fireAt: RUN, startedAt: new Date(at).toISOString(), timeoutAt: new Date(at + 60_000).toISOString(),
+    });
+    expect(agentActivity(contextRoot, 'digest')).toEqual({ since: at, runId: RUN, queued: [] });
+    // Another agent is not working because this one is.
+    expect(agentActivity(contextRoot, 'watcher')).toBeNull();
+  });
+
+  it('a lock left by a dead process is litter, not work', () => {
+    holdLock('digest', 2 ** 22 + 12345, Date.now());
+    expect(agentActivity(contextRoot, 'digest')).toBeNull();
+  });
+
+  it('a reply waiting behind the lock is QUEUED; once it holds the lock it is the turn', async () => {
+    holdLock('digest', process.pid, Date.now());
+    let takeLock: () => void = () => {};
+    let finish: () => void = () => {};
+    resumeWithMessage.mockImplementation((_c: string, _s: string, _t: string, opts: { onLockAcquired?: () => void }) =>
+      new Promise((resolve) => {
+        takeLock = () => opts.onLockAcquired?.();
+        finish = () => resolve({ status: 'ok', error: null, result: 'done', costUsd: null });
+      }));
+    const entryId = seedUserEntry('digest');
+    const job = startAutomationReplyJob(contextRoot, 'digest', { runId: RUN, text: 'and?', entryId, home });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(currentReplyJob(job.id)?.phase).toBe('waiting');
+    expect(agentActivity(contextRoot, 'digest')?.queued).toEqual([{ entryId, runId: RUN }]);
+
+    takeLock();
+    expect(currentReplyJob(job.id)?.phase).toBe('delivering');
+    const now = agentActivity(contextRoot, 'digest');
+    expect(now?.queued).toEqual([]);
+    expect(now?.runId).toBe(RUN);
+    finish();
+    await settled(job.id);
   });
 });

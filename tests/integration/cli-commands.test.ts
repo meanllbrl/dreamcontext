@@ -305,6 +305,41 @@ describe('CLI commands (integration)', () => {
       expect(existsSync(join(tmpDir, '_dream_context', 'state', 'no-why.md'))).toBe(false);
     });
 
+    it('prints, sets and no-ops priority and urgency on an existing task', () => {
+      run('tasks create level-task --description "Levels" --priority medium --urgency low -w "test why"', tmpDir);
+      const file = join(tmpDir, '_dream_context', 'state', 'level-task.md');
+
+      expect(run('tasks priority level-task', tmpDir)).toContain('priority: medium');
+      expect(run('tasks urgency level-task', tmpDir)).toContain('urgency: low');
+
+      expect(run('tasks priority level-task high', tmpDir)).toContain('medium -> high');
+      expect(run('tasks urgency level-task CRITICAL', tmpDir)).toContain('low -> critical');
+      let content = readFileSync(file, 'utf-8');
+      expect(content).toMatch(/^priority: "?high"?$/m);
+      expect(content).toMatch(/^urgency: "?critical"?$/m);
+      expect(content).toContain('- priority: medium -> high');
+      expect(content).toContain('- urgency: low -> critical');
+
+      // Same value: nothing written — no second changelog line.
+      expect(run('tasks priority level-task high', tmpDir)).toContain('no change');
+      content = readFileSync(file, 'utf-8');
+      expect(content.match(/- priority: /g)).toHaveLength(1);
+    });
+
+    it('rejects an invalid priority or urgency with a non-zero exit', () => {
+      run('tasks create bad-level --description "Levels" --priority medium -w "test why"', tmpDir);
+      let code = 0;
+      try {
+        execSync(`node ${CLI} tasks priority bad-level urgent 2>&1`, { cwd: tmpDir, encoding: 'utf-8' });
+      } catch (e: any) {
+        code = e.status;
+        expect(e.stdout).toContain('Priority must be one of: critical, high, medium, low');
+      }
+      expect(code).toBe(1);
+      expect(run('tasks urgency bad-level soon', tmpDir)).toContain('Urgency must be one of');
+      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'bad-level.md'), 'utf-8')).toMatch(/^priority: "?medium"?$/m);
+    });
+
     it('inserts into task user_stories section', () => {
       run('tasks create ins-test --description "Test" --priority low -w "test why"', tmpDir);
       const output = run('tasks insert ins-test user_stories "As a user, I want to test inserts"', tmpDir);

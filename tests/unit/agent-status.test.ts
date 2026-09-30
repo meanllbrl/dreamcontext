@@ -53,6 +53,17 @@ describe('deriveSessionStatus', () => {
       .toEqual({ kind: 'ready', label: 'ready', mood: 'waving' });
   });
 
+  it('open + idle turn with its agents still running → working (agents working)', () => {
+    expect(deriveSessionStatus({ status: 'open', busy: false, agentsWorking: true }))
+      .toEqual({ kind: 'working', label: 'agents working', mood: 'working' });
+    // A live turn keeps its own label; asking still wins; a closed or dormant session is not
+    // revived by a stale run.
+    expect(deriveSessionStatus({ status: 'open', busy: true, agentsWorking: true }).label).toBe('working');
+    expect(deriveSessionStatus({ status: 'open', asking: true, agentsWorking: true }).kind).toBe('asking');
+    expect(deriveSessionStatus({ status: 'closed', agentsWorking: true }).kind).toBe('ended');
+    expect(deriveSessionStatus({ dormant: true, status: 'open', agentsWorking: true }).kind).toBe('saved');
+  });
+
   it('open + asking → asking (needs you), even while stale bytes keep busy set', () => {
     expect(deriveSessionStatus({ status: 'open', asking: true }))
       .toEqual({ kind: 'asking', label: 'needs you', mood: 'asking' });

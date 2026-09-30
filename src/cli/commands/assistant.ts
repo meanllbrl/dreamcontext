@@ -151,6 +151,11 @@ export function registerAssistantCommand(program: Command): void {
     .option('--layout <layout>', 'columns | rows | grid', 'columns')
     .action((vaults: string[], o: { layout: string }) => ui('tile', { vaults, layout: o.layout }));
 
+  a.command('look')
+    .description('Screenshot the owner\'s screen(s) and print the image paths to Read — only when the owner asks')
+    .option('--display <n>', 'Only this display (1 = main); default every display')
+    .action(async (o: { display?: string }) => print(await callAssistant('POST', '/api/assistant/look', o.display ? { display: Number(o.display) } : {})));
+
   a.command('notify <text>')
     .description('Show a notice in the notch')
     .option('--level <level>', 'info | attention', 'info')

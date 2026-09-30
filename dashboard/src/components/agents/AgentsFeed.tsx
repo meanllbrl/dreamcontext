@@ -105,12 +105,17 @@ export function AgentsFeed({
   onOpenFile,
   onOpenAgent,
   fileOpen,
+  focus = null,
+  onFocusDone,
 }: {
   onOpenFile: (path: string) => void;
   onOpenAgent: (slug: string) => void;
   /** A document viewer is open over the page. It owns Esc while it is, so the thread does not
    *  close underneath it. */
   fileOpen: boolean;
+  /** Open this agent's NEWEST thread (a clicked banner for that agent), once per nonce. */
+  focus?: { slug: string; nonce: number } | null;
+  onFocusDone?: () => void;
 }) {
   const { t } = useI18n();
   // The agents running right now, one slot per agent, as the feed itself reports them
@@ -120,6 +125,10 @@ export function AgentsFeed({
   // second poll is what makes a run started elsewhere (another tab, "run now") visible here.
   const { data, isLoading } = useAgentFeed();
   const runSlots = useMemo(() => data?.runSlots ?? {}, [data]);
+  // Who is WORKING, whatever started the turn (a schedule, a reply, another tab): the
+  // agent's run lock, as the server reads it. Wider than `runSlots`, which only knows the
+  // runs this server started.
+  const working = useMemo(() => data?.working ?? {}, [data]);
   const markRead = useMarkThreadRead();
   const { vault } = useVault();
   const { data: dispatcher } = useAutomationDispatcher();
@@ -292,11 +301,11 @@ export function AgentsFeed({
   // A running agent's title, for the sentence that says it is busy: under the channel field when
   // a draft names it, and in its own thread's composer. Null for an agent that is free.
   const agents = useMemo(() => data?.agents ?? [], [data]);
+  const isBusy = useCallback((slug: string) => slug in runSlots || slug in working, [runSlots, working]);
   const busyTitle = useCallback(
-    (slug: string) => (slug in runSlots ? (agents.find((a) => a.slug === slug)?.title ?? slug) : null),
-    [runSlots, agents],
+    (slug: string) => (isBusy(slug) ? (agents.find((a) => a.slug === slug)?.title ?? slug) : null),
+    [isBusy, agents],
   );
-  const isBusy = useCallback((slug: string) => slug in runSlots, [runSlots]);
 
   const say = useSayInChannel();
   const mentions = useMemo(() => agents.map((a) => agentMention(a, vault)), [agents, vault]);
@@ -337,6 +346,21 @@ export function AgentsFeed({
     setPendingOpen(null);
   }, [pendingOpen, messages]);
 
+  /**
+   * A clicked banner asked for this agent: open its newest message's thread. Waits for the
+   * feed's first load (a link can land before it), then spends the request either way, so a
+   * later remount of the page does not reopen a thread the reader has since closed.
+   */
+  const focusedNonce = useRef(0);
+  useEffect(() => {
+    if (!focus || focus.nonce === focusedNonce.current || isLoading) return;
+    focusedNonce.current = focus.nonce;
+    let newest: FeedMessage | undefined;
+    for (const m of messages) if (m.slug === focus.slug) newest = m;
+    if (newest) setOpenThread({ message: newest, opener: null, focus: true });
+    onFocusDone?.();
+  }, [focus, isLoading, messages, onFocusDone]);
+
   const slashCommands = useProjectSlashCommands().data?.commands;
   const { host, note, setNote, focusComposer, restoreLastSent } = useAgentsChannelHost(
     agents, onSend, slashCommands, isBusy,
@@ -346,12 +370,12 @@ export function AgentsFeed({
 
   // A "still running" note is about a slot, not about a keystroke: when the agent it names
   // finishes, the note goes with it, rather than waiting for the reader to type again.
-  const slotKey = Object.keys(runSlots).sort().join();
+  const slotKey = [...new Set([...Object.keys(runSlots), ...Object.keys(working)])].sort().join();
   const noteNow = useRef(note);
   noteNow.current = note;
   useEffect(() => {
     const busySlug = noteNow.current?.busySlug;
-    if (busySlug && !(busySlug in runSlots)) setNote(null);
+    if (busySlug && !isBusy(busySlug)) setNote(null);
     // `slotKey` is the trigger; `runSlots` is read for the answer it gives at that moment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slotKey, setNote]);
@@ -505,7 +529,11 @@ export function AgentsFeed({
                   threadOpen={openThread?.message.key === m.key}
                   panelId={THREAD_PANEL_ID}
                   // The run's own start, from the slot it holds, for the live elapsed time.
-                  runStartedAt={m.status === 'running' ? (runSlots[m.slug]?.startedAt ?? null) : null}
+                  runStartedAt={m.status === 'running'
+                    ? (runSlots[m.slug]?.startedAt
+                      ?? (working[m.slug]?.runId === m.runId ? working[m.slug]?.since : undefined)
+                      ?? null)
+                    : null}
                 />
               </div>
             );
@@ -591,9 +619,16 @@ export function AgentsFeed({
           onClose={closeThread}
           onOpenFile={onOpenFile}
           onOpenAgent={onOpenAgent}
+          onOpenRun={(runId) => {
+            const slug = openThread.message.slug;
+            const m = messages.find((x) => x.slug === slug && x.runId === runId);
+            if (m) setOpenThread({ message: m, opener: null, focus: false });
+            else setPendingOpen({ slug, runId });
+          }}
           onToast={setToast}
           // Only THIS thread's agent can hold its composer down; another agent's run does not.
           busyWith={busyTitle(openThread.message.slug)}
+          working={working[openThread.message.slug] ?? null}
           closeOnEscape={!fileOpen}
           autoFocus={openThread.focus}
           footRef={setFootEl}

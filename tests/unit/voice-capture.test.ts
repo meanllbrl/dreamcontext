@@ -18,7 +18,7 @@ import {
   resample, removeDc, normalizeTake, toPcm16, encodeWav, mergeChunks, wavFromTake,
   TARGET_SAMPLE_RATE, TARGET_PEAK, MAX_TAKE_GAIN,
 } from '../../dashboard/src/lib/voice/wavEncoder.js';
-import { sliceFor, frameSizeFor, RAW_MIC } from '../../dashboard/src/lib/voice/useVoiceCapture.js';
+import { sliceFor, frameSizeFor, MIC } from '../../dashboard/src/lib/voice/useVoiceCapture.js';
 
 // ── The WAV the app encodes itself (AC2) ────────────────────────────────────────────────
 //
@@ -131,21 +131,21 @@ describe('the recorded WAV', () => {
   });
 });
 
-// ── The signal the device is asked for (the dictation fix, 2026-09-12) ──────────────────
+// ── The signal the device is asked for (reversed 2026-09-29) ────────────────────────────
 
 describe('what the microphone is asked for', () => {
-  it('asks for the RAW device — no echo canceller, no noise gate, no AGC', () => {
-    // Every one of these is on by default and every one of them is lossy in the band a
-    // recogniser reads. The echo canceller is the worst of the three in THIS mode: the
-    // machine's own voice was playing seconds ago, so it has adapted to it and carves a
-    // matching notch out of the owner.
-    expect(RAW_MIC.echoCancellation).toEqual({ ideal: false });
-    expect(RAW_MIC.noiseSuppression).toEqual({ ideal: false });
-    expect(RAW_MIC.autoGainControl).toEqual({ ideal: false });
+  it('asks for the PROCESSED chain, never the raw device', () => {
+    // Measured 2026-09-29 on WebKit/macOS with the owner speaking: with the chain off the
+    // built-in mic peaked at 0.008-0.009 RMS (the silence gate's noise floor, so every take
+    // was refused and nothing was heard); with it on, 0.13-0.22. On WebKit the three flags
+    // are one switch, so asking any of them OFF is asking for the silent path.
+    expect(MIC.echoCancellation).toEqual({ ideal: true });
+    expect(MIC.noiseSuppression).toEqual({ ideal: true });
+    expect(MIC.autoGainControl).toEqual({ ideal: true });
   });
 
   it('states them as IDEAL, so a device that cannot honour one still opens', () => {
-    for (const v of Object.values(RAW_MIC)) {
+    for (const v of Object.values(MIC)) {
       expect(v).not.toHaveProperty('exact');
     }
   });

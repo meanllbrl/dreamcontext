@@ -553,6 +553,37 @@ async function main() {
     check('…and no bespoke box came back', await page.locator('.agent-thread-input').count() === 0);
     await page.screenshot({ path: join(SHOTS, '3-thread-composer.png') });
 
+    // ── 5b: a post draws the Chat's blocks ───────────────────────────────
+    // The 2026-09-30 incident: a run that needed the owner to run two `--apply` commands
+    // could only write them as a bullet list. A `dream-view` run card in a post must be the
+    // Chat's own RunCard, between the sentences it was written between, and the fence must
+    // survive the thread store (whose entries are themselves fenced JSON).
+    console.log('\n═══ 5b. A post draws the Chat\'s blocks ═══');
+    const RUN_CMD = 'cd /tmp/w && npm run corpus:weekly -- --apply';
+    const BLOCK_POST = [
+      'Onaylandı. ▶ ile uygula:',
+      '```dream-view',
+      JSON.stringify({ type: 'run', id: 'apply', command: RUN_CMD, why: 'prod yazar' }),
+      '```',
+      'Bitince sonucu buraya yazarım.',
+    ].join('\n');
+    cli(['automations', 'post', 'digest', BLOCK_POST, '--run', digest[0].runId]);
+    check('the fenced card survives the thread store verbatim',
+      threadEntries('digest').some((e) => e.kind === 'agent' && e.text === BLOCK_POST));
+    const blockRow = panel.locator('.agent-thread-post--agent', { hasText: 'Onaylandı' }).last();
+    check('the thread draws the Chat\'s own run card in the post',
+      await until(async () => (await blockRow.locator('.chat-runcard').count()) === 1, 15000));
+    check('…showing the command in full',
+      (await blockRow.locator('.chat-runcard-cmd').innerText()).trim() === RUN_CMD);
+    check('…between the two sentences, in written order', await blockRow.evaluate((row) => {
+      const md = row.querySelector('.agent-msg-md--blocks');
+      const kids = md ? [...md.children].map((c) => (c.classList.contains('chat-runcard') ? 'card' : c.textContent.trim().slice(0, 9))) : [];
+      return kids.length === 3 && kids[1] === 'card' && kids[0].startsWith('Onaylandı') && kids[2].startsWith('Bitince');
+    }));
+    check('…and the raw fence is not printed', !(await blockRow.innerText()).includes('dream-view'));
+    await blockRow.scrollIntoViewIfNeeded();
+    await blockRow.screenshot({ path: join(SHOTS, '3b-thread-run-card.png') });
+
     // ── 6: a reply reaches the run's session ─────────────────────────────
     console.log('\n═══ 6. Replying ═══');
     const digestRun = digest[0].runId;

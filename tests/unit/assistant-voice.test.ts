@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  emitExternalPushToTalk, onExternalPushToTalk, pushToTalkAction, type PushToTalkSignal,
+  emitExternalPushToTalk, onExternalPushToTalk, pushToTalkAction, summonTakeDue, type PushToTalkSignal,
 } from '../../dashboard/src/lib/voice/externalPushToTalk';
 
 const sig = (edge: PushToTalkSignal['edge'], mode: PushToTalkSignal['mode'], summon = false): PushToTalkSignal => ({ edge, mode, summon });
@@ -33,6 +33,26 @@ describe('hotkey edge → take (pushToTalkAction)', () => {
     expect(pushToTalkAction(sig('pressed', 'toggle'), true, true)).toBe('stop');
     expect(pushToTalkAction(sig('pressed', 'toggle'), true, false)).toBeNull();
     expect(pushToTalkAction(sig('released', 'toggle'), true, true)).toBeNull();
+  });
+});
+
+describe('the summoning press waits for the panel (summonTakeDue)', () => {
+  // Opening the mic in the press's own tick stalled the notch's resize for seconds (WebKit's
+  // audio-session activation holds the webview thread): the hotkey looked dead.
+  it('hold: a tap only opens the panel; a press still down when it lands becomes a take', () => {
+    expect(summonTakeDue('hold', false, true, true)).toBe(false);
+    expect(summonTakeDue('hold', true, true, true)).toBe(true);
+  });
+
+  it('toggle: the summoning press starts the take once the panel is open', () => {
+    expect(summonTakeDue('toggle', false, true, true)).toBe(true);
+  });
+
+  it('never when the panel closed again meanwhile, or a newer press owns the moment', () => {
+    expect(summonTakeDue('hold', true, false, true)).toBe(false);
+    expect(summonTakeDue('toggle', false, false, true)).toBe(false);
+    expect(summonTakeDue('toggle', false, true, false)).toBe(false);
+    expect(summonTakeDue('hold', true, true, false)).toBe(false);
   });
 });
 

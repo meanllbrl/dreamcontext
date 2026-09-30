@@ -2,14 +2,10 @@
 id: know_7dSXMSGM
 name: codex-cli-integration-feasibility
 description: >-
-  RETIRED DIRECTION (2026-08-17) — kept as the costing record, not a plan. Codex
-  CLI 0.139 platform audit (2026-08-01): it ships all 7 hooks dreamcontext uses
-  with a near-identical wire contract, plus subagents, SKILL.md skills,
-  app-server JSON-RPC and a session index, so the integration cost is a
-  config-emitter job, not a rewrite. The owner retired the
-  include-codex-opencode-support objective anyway: Claude Code only is a SCOPE
-  decision, and cheap-to-build is not a reason to build. Read this only if that
-  decision is revisited
+  RETIRED DIRECTION (2026-08-17), kept as the costing record. Codex CLI 0.139
+  ships all 7 hooks dreamcontext uses plus subagents and skills, so support
+  would be a config-emitter job; the owner retired it anyway (Claude Code only
+  is a scope decision). Read only if that is revisited.
 tags:
   - 'topic:agents'
   - 'domain:infrastructure'

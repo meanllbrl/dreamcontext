@@ -3,10 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
-import { buildPreamble, runAutomation, type SpawnImpl } from '../../src/lib/automations/runner.js';
+import { buildAskBlock, buildPreamble, runAutomation, SKIMMABLE_MARKDOWN, type SpawnImpl } from '../../src/lib/automations/runner.js';
 import { createAutomation, writeRunSidecar } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
-import { readThread } from '../../src/lib/automations/threads.js';
+import { plainPostText, readThread } from '../../src/lib/automations/threads.js';
 import { writeSleepState } from '../../src/cli/commands/sleep.js';
 import type { SleepState } from '../../src/lib/sleep-consolidation.js';
 import type { AutomationManifest } from '../../src/lib/automations/types.js';
@@ -209,6 +209,30 @@ describe('the run carries its own identity into the child', () => {
     // The floor is the load-bearing half: without it a run narrates itself and
     // the channel becomes the transcript it exists to spare the reader.
     expect(preamble).toContain('Zero posts is the right number');
+  });
+
+  it('the run and ask briefs both name the skimmable shape, including the inline "1) 2)" anti-shape', () => {
+    const manifest = createApproved('shape-check');
+    const preamble = buildPreamble(manifest, projectRoot, NOW, '/tmp/out.md');
+    const ask = buildAskBlock('Bu hafta ne yapmalıyız?', manifest);
+    for (const brief of [preamble, ask]) {
+      expect(brief).toContain(SKIMMABLE_MARKDOWN.trim());
+    }
+    // The anti-shape is named verbatim: "use markdown" alone did not stop it.
+    expect(SKIMMABLE_MARKDOWN).toContain('1) … 2) … 3) …');
+    expect(preamble).not.toContain('<one or two sentences>');
+  });
+});
+
+describe('plainPostText — a markdown post as one banner line', () => {
+  it('keeps every item, drops list markers and emphasis, keeps numbers', () => {
+    const post = 'Bu hafta **3 iş**:\n\n1. **Bütçe** ES → FR\n2. `PIX` kararı\n- [belge](output/x.md) hazır';
+    expect(plainPostText(post)).toBe('Bu hafta 3 iş: 1. Bütçe ES → FR 2. PIX kararı belge hazır');
+  });
+
+  it('leaves a plain sentence alone and collapses an empty post to nothing', () => {
+    expect(plainPostText('FR CPA $54.')).toBe('FR CPA $54.');
+    expect(plainPostText('  \n\n ')).toBe('');
   });
 });
 

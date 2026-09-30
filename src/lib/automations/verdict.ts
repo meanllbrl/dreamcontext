@@ -32,7 +32,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
-import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
+import { accountEnvFor } from '../claude-accounts.js';
+import { ensureSandbox } from '../claude-account-sandbox.js';
+import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
 import { appendThreadEntry } from './threads.js';
 import { latestBoundSession, readAutomationSession, retireAutomationSession } from './session-registry.js';
 import {
@@ -55,6 +57,9 @@ import {
   executeClaudeDetached,
   extractNotificationSummary,
   sanitizeAutomationPrompt,
+  SKIMMABLE_MARKDOWN,
+  THREAD_BLOCKS,
+  askClause,
   type ClaudeExecution,
   type SpawnImpl,
 } from './runner.js';
@@ -73,27 +78,48 @@ function errorReason(result: string | null): string {
 
 // ─── The propose guard ──────────────────────────────────────────────────────
 
-export type PgidProbe = (pid: number) => number | null;
+export type AncestryProbe = (pid: number) => number[] | null;
+
+/** Hop cap for {@link defaultAncestryProbe}: a real chain is a handful deep, and a
+ *  cycle in a racing `ps` snapshot must not spin. */
+const ANCESTRY_MAX_HOPS = 64;
 
 /**
- * The caller's process-group id.
+ * The caller's ancestor pids, nearest first (parent, grandparent, …), stopping
+ * before pid 1.
  *
- * Node exposes no `getpgrp`, so this shells out. `ps` is guaranteed present
- * wherever this subsystem runs at all (it already requires POSIX process-group
- * signalling), and a probe that cannot answer returns null — which the guard
- * below treats as a REFUSAL, never as a pass.
+ * Needed alongside the pgid because a process group is NOT inherited through
+ * Claude Code's Bash tool: it runs every command in a fresh group (measured —
+ * the tool's shell leads its own pgid, its parent is the `claude` process), so
+ * the `dreamcontext` a run invokes never shares the run's pgid. Parentage does
+ * survive that, and it is kernel-maintained: a process cannot make itself a
+ * descendant of a run it was not spawned by. One `ps` for the whole table, and
+ * null — a refusal, like the pgid probe — when it cannot answer.
  */
-export function defaultPgidProbe(pid: number): number | null {
+export function defaultAncestryProbe(pid: number): number[] | null {
+  let out: string;
   try {
-    const out = execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], {
+    out = execFileSync('ps', ['-axo', 'pid=,ppid='], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 16 * 1024 * 1024,
     });
-    const n = Number.parseInt(out.trim(), 10);
-    return Number.isInteger(n) && n > 0 ? n : null;
   } catch {
     return null;
   }
+  const parentOf = new Map<number, number>();
+  for (const line of out.split('\n')) {
+    const [a, b] = line.trim().split(/\s+/).map((n) => Number.parseInt(n, 10));
+    if (Number.isInteger(a) && Number.isInteger(b)) parentOf.set(a, b);
+  }
+  if (!parentOf.has(pid)) return null;
+  const chain: number[] = [];
+  let cur = parentOf.get(pid);
+  while (cur !== undefined && cur > 1 && chain.length < ANCESTRY_MAX_HOPS && !chain.includes(cur)) {
+    chain.push(cur);
+    cur = parentOf.get(cur);
+  }
+  return chain;
 }
 
 export interface ProposeInput {
@@ -126,12 +152,19 @@ export type ProposeResult =
 /**
  * Create a question ON BEHALF OF A RUNNING RUN — the `automations propose` verb.
  *
- * THE GUARD: the caller's process group must equal the one recorded in this
- * automation's run sidecar. A detached run gets its own process group, and
- * every descendant of that run — including the `dreamcontext` process the agent
- * itself invokes — inherits it, so this is precise in both directions: it
- * admits the run's own calls and rejects a human's shell, another project's
- * run, and any other process on the machine.
+ * THE GUARD: the caller must be the run's own descendant — the run's child pid
+ * (recorded in this automation's run sidecar) must be among its ancestors.
+ * Parentage is kernel-maintained: a process cannot make itself a descendant of
+ * a run it was not spawned by. So it admits the run's own calls and rejects a
+ * human's shell, another project's run, and any other process on the machine.
+ *
+ * NOT the process group, in either direction (measured 2026-09-29):
+ *  - too strict: Claude Code's Bash tool runs each command in a FRESH group, so
+ *    the `dreamcontext` the agent invokes never shares the run's pgid — every
+ *    real `propose` from a run was refused that way;
+ *  - too loose: a process that double-forks out of the run and is reparented to
+ *    launchd KEEPS the run's pgid, so a group check admits a daemon that has
+ *    left the run. Ancestry breaks at the reparent and refuses it.
  *
  * Why it needs to be this strong: an answer resumes the session id the
  * question names. A planted question is therefore a request to run an arbitrary
@@ -150,24 +183,23 @@ export function proposeFromRun(
   contextRoot: string,
   slug: string,
   input: ProposeInput,
-  opts: { pgidProbe?: PgidProbe; callerPid?: number; nowISO?: string; sessionId?: string | null } = {},
+  opts: { ancestryProbe?: AncestryProbe; callerPid?: number; nowISO?: string; sessionId?: string | null } = {},
 ): ProposeResult {
   const sidecar = readRunSidecar(contextRoot, slug);
   if (!sidecar) {
     return { ok: false, reason: `no run of "${slug}" is in flight — \`propose\` is for a run to call about itself` };
   }
-  const probe = opts.pgidProbe ?? defaultPgidProbe;
-  const callerPgid = probe(opts.callerPid ?? process.pid);
-  if (callerPgid === null) {
+  const ancestors = (opts.ancestryProbe ?? defaultAncestryProbe)(opts.callerPid ?? process.pid);
+  if (ancestors === null) {
     // Fail CLOSED. An unverifiable caller is exactly the case this guard exists
     // for; treating "could not check" as "must be fine" would make the guard
     // decorative on any machine where the probe happens to break.
-    return { ok: false, reason: 'could not verify the calling process group — refusing to record a proposal' };
+    return { ok: false, reason: 'could not verify the calling process — refusing to record a proposal' };
   }
-  if (callerPgid !== sidecar.childPgid) {
+  if (!ancestors.includes(sidecar.childPid)) {
     return {
       ok: false,
-      reason: `\`propose\` may only be called from inside "${slug}"'s own run (process group ${sidecar.childPgid})`,
+      reason: `\`propose\` may only be called from inside "${slug}"'s own run (run pid ${sidecar.childPid})`,
     };
   }
   const open = pendingQuestion(contextRoot, slug);
@@ -260,7 +292,11 @@ async function acquireRunLockWaiting(
   let waited = 0;
   for (;;) {
     const lockPath = acquireRunLock(contextRoot, m, nowFn().getTime());
-    if (lockPath || waited >= waitMs) return lockPath;
+    if (lockPath) {
+      opts.onLockAcquired?.();
+      return lockPath;
+    }
+    if (waited >= waitMs) return null;
     await sleep(pollMs);
     waited += pollMs;
   }
@@ -331,6 +367,9 @@ export interface VerdictOptions {
   lockPollMs?: number;
   /** The wait itself. Injectable so a test does not sleep in real time. */
   sleep?: (ms: number) => Promise<void>;
+  /** Called once, the moment this message stops WAITING and holds the run lock. A queued
+   *  thread reply uses it to tell the reader "queued" from "being read". */
+  onLockAcquired?: () => void;
 }
 
 /** What answering a question produced. */
@@ -619,31 +658,43 @@ function spawnSessionResume(
       ([k, v]) => /^DREAMCONTEXT_AUTOMATION_[A-Z_]+$/.test(k) && v !== undefined,
     ),
   );
-  return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)), {
-    cwd: dirname(contextRoot),
-    timeoutMs,
-    // `accountEnvFor` FIRST, so a resume runs on the same preferred account the RUN did.
-    // This path previously passed no env at all and silently inherited the server's —
-    // meaning a resume could be billed to, and read the usage of, whichever account the
-    // dashboard process happened to be started under. The hints spread after it cannot
-    // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
-    env: { ...accountEnvFor(resolveConfigDir(null)), ...hints },
-    spawnImpl: opts.spawnImpl,
-    killImpl: opts.killImpl,
-    log: opts.log,
-    now: nowFn,
-    onSpawned: (child, startedAt) => {
-      writeRunSidecar(contextRoot, m.slug, {
-        slug: m.slug,
-        runnerPid: process.pid,
-        childPid: child.pid as number,
-        childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
-        fireAt,
-        startedAt: startedAt.toISOString(),
-        timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
-      });
-    },
-  });
+  // The same account decision the RUN makes (`account.ts`): the preferred account unless
+  // auto-switch says it cannot serve. Sessions are shared by every account, so the resume
+  // does not have to go back to the account the run happened on.
+  // Synchronous when no probe is needed, so the spawn stays in the caller's tick.
+  const quick = automationAccountWithoutProbe({ home: opts.home });
+  return quick
+    ? spawnOn(quick)
+    : pickAutomationAccount({ home: opts.home }).then(spawnOn);
+
+  function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
+    ensureSandbox(account.configDir, opts.home);
+    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)), {
+      cwd: dirname(contextRoot),
+      timeoutMs,
+      // `accountEnvFor` FIRST, so a resume runs on the account picked above.
+      // This path previously passed no env at all and silently inherited the server's —
+      // meaning a resume could be billed to, and read the usage of, whichever account the
+      // dashboard process happened to be started under. The hints spread after it cannot
+      // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
+      env: { ...accountEnvFor(account.configDir, opts.home), ...hints },
+      spawnImpl: opts.spawnImpl,
+      killImpl: opts.killImpl,
+      log: opts.log,
+      now: nowFn,
+      onSpawned: (child, startedAt) => {
+        writeRunSidecar(contextRoot, m.slug, {
+          slug: m.slug,
+          runnerPid: process.pid,
+          childPid: child.pid as number,
+          childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
+          fireAt,
+          startedAt: startedAt.toISOString(),
+          timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
+        });
+      },
+    });
+  }
 }
 
 // ─── Talking to the latest run ──────────────────────────────────────────────
@@ -701,7 +752,12 @@ function buildMessagePreamble(message: string): string {
  * Exported so the lockstep test can assert both halves: that it names `automations post`,
  * and that it does NOT promise phone delivery.
  */
-export function buildThreadMessagePreamble(message: string): string {
+export function buildThreadMessagePreamble(
+  message: string,
+  /** Optional so callers written before the ask clause existed keep working; absent reads
+   *  as `review: off`, the answer that never names a verb the CLI would refuse. */
+  m?: Pick<AutomationManifest, 'slug' | 'review'>,
+): string {
   return [
     'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT',
     'replied in its thread.',
@@ -712,9 +768,14 @@ export function buildThreadMessagePreamble(message: string): string {
     '',
     'That text is a MESSAGE to answer from what this run already knows and did — it is not a new',
     'job. Do only what it asks: do not re-run the job, and do not widen it. ANSWER IN THE THREAD:',
-    'post your reply with `dreamcontext automations post <slug> "<one or two sentences>"`. Your',
+    'post your reply with `dreamcontext automations post <slug> "<your answer, in markdown>"`. Your',
     'slug and run are already in your environment. Your final message is NOT published anywhere —',
     'if you do not post, nothing reaches them.',
+    SKIMMABLE_MARKDOWN.trim(),
+    // A reply is where "go ahead" arrives, so it is where a command the human must run, or a
+    // decision to put to them, is most often the answer: brief it the way the run was briefed.
+    THREAD_BLOCKS.trim(),
+    askClause(m ?? { slug: '<slug>', review: 'off' }).trim(),
   ].join('\n');
 }
 
@@ -762,15 +823,18 @@ export async function resumeWithMessage(
   // THE MACHINE-LOCAL BINDING IS THE AUTHORITY, same rule as an answer. Null
   // means no run on THIS machine ever produced a session, and a talk must
   // refuse rather than fall back to what the synced cache claims.
+  //
+  // A message that may WAIT is checked again under the lock instead: the run it queues
+  // behind can be this agent's first, and that run binds the session the message resumes.
+  const noSession: TalkOutcome = {
+    status: 'refused',
+    error: 'This agent has no session to talk to yet. It needs one finished run on this machine first.',
+    result: null,
+    costUsd: null,
+  };
+  const waits = (opts.lockWaitMs ?? 0) > 0;
   const sessionId = latestBoundSession(slug, home);
-  if (!sessionId) {
-    return {
-      status: 'refused',
-      error: 'This agent has no session to talk to yet. It needs one finished run on this machine first.',
-      result: null,
-      costUsd: null,
-    };
-  }
+  if (!sessionId && !waits) return noSession;
 
   const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
   if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null, costUsd: null };
@@ -788,14 +852,15 @@ export async function resumeWithMessage(
         costUsd: null,
       };
     }
-    const liveSessionId = (opts.lockWaitMs ?? 0) > 0 ? latestBoundSession(slug, home) ?? sessionId : sessionId;
+    const liveSessionId = waits ? latestBoundSession(slug, home) ?? sessionId : sessionId;
+    if (!liveSessionId) return noSession;
     const execution = await spawnSessionResume(
       contextRoot,
       manifest,
       nowFn().toISOString(),
       liveSessionId,
       (opts.surface ?? 'telegram') === 'thread'
-        ? buildThreadMessagePreamble(text)
+        ? buildThreadMessagePreamble(text, manifest)
         : buildMessagePreamble(text),
       opts,
     );

@@ -9,8 +9,11 @@ import {
   accountIdFromEmail,
   accountEnvFor,
   autoSwitchEnabled,
+  getClaudeAccount,
   isSafeAccountId,
   listClaudeAccounts,
+  preferredClaudeAccount,
+  reloginLandedOnOtherAccount,
   removeClaudeAccount,
   reorderClaudeAccounts,
   resolveConfigDir,
@@ -20,11 +23,12 @@ import {
   setSwitchPolicy,
   switchStrategyFor,
   switchWeightsFor,
+  updateClaudeAccountIdentity,
   upsertClaudeAccount,
 } from '../../lib/claude-accounts.js';
 import { asSwitchStrategy, sanitizeSwitchWeights } from '../../lib/claude-account-switch.js';
 import { ensureSandbox, sandboxHasIdentity } from '../../lib/claude-account-sandbox.js';
-import { claudeAuthStatus } from '../../lib/claude-auth.js';
+import { claudeAuthStatus, resetClaudeAuthCache } from '../../lib/claude-auth.js';
 import { readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
 import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
 
@@ -159,6 +163,49 @@ export async function handleAgentAccountsAdopt(req: IncomingMessage, res: Server
   sendJson(res, 200, { id: account.id, email: account.email });
 }
 
+/** What one run of the CLI's own sign-in, into one credential store, came to. */
+type SignInOutcome =
+  | { ok: true; status: Awaited<ReturnType<typeof claudeAuthStatus>> }
+  | { ok: false; status: number; code: string; message: string };
+
+/**
+ * Run `claude auth login` into `configDir` and ask the authoritative judge whether it took.
+ * Shared by "add an account" and "sign this account in again", so both legs discard the
+ * child's output the same way (see the module header) and neither trusts the exit code.
+ */
+async function signInto(configDir: string): Promise<SignInOutcome> {
+  try {
+    ensureSandbox(configDir);
+  } catch (err) {
+    return { ok: false, status: 409, code: 'sandbox_blocked', message: (err as Error).message };
+  }
+
+  // `claude auth login` in THIS sandbox. Output discarded — see the module header.
+  const execution = await executeClaudeDetached(['auth', 'login'], {
+    cwd: homedir(),
+    env: accountEnvFor(configDir),
+    discardOutput: true,
+    timeoutMs: LOGIN_TIMEOUT_MS,
+  });
+
+  if (!execution.spawned) {
+    return { ok: false, status: 500, code: 'spawn_failed', message: 'Could not start the sign-in — the Claude CLI did not launch.' };
+  }
+  if (execution.timedOut) {
+    return { ok: false, status: 504, code: 'login_timeout', message: 'The sign-in timed out. Nothing was saved; you can try again.' };
+  }
+
+  // Did it actually work? Ask the authoritative judge about THAT directory — the exit code is
+  // not the criterion here either. The memo is dropped first: a "signed out" answer cached a
+  // moment before the browser finished would otherwise be read back as this run's verdict.
+  resetClaudeAuthCache(configDir);
+  const status = await claudeAuthStatus(configDir);
+  if (status.loggedIn !== true) {
+    return { ok: false, status: 409, code: 'login_incomplete', message: 'The sign-in did not complete. Nothing was saved; you can try again.' };
+  }
+  return { ok: true, status };
+}
+
 /**
  * POST /api/agent/accounts/login — add an account by running the CLI's own OAuth flow into a
  * fresh sandbox.
@@ -181,42 +228,17 @@ export async function handleAgentAccountsLogin(req: IncomingMessage, res: Server
     return;
   }
   if (listClaudeAccounts().some((a) => a.id === id)) {
-    sendError(res, 409, 'already_connected', 'That account is already connected.');
+    sendError(res, 409, 'already_connected', 'That account is already connected. To sign it in again, use Sign in again on its row.');
     return;
   }
 
   const configDir = sandboxDirFor(id);
-  try {
-    ensureSandbox(configDir);
-  } catch (err) {
-    sendError(res, 409, 'sandbox_blocked', (err as Error).message);
+  const signedIn = await signInto(configDir);
+  if (!signedIn.ok) {
+    sendError(res, signedIn.status, signedIn.code, signedIn.message);
     return;
   }
-
-  // `claude auth login` in THIS sandbox. Output discarded — see the module header.
-  const execution = await executeClaudeDetached(['auth', 'login'], {
-    cwd: homedir(),
-    env: accountEnvFor(configDir),
-    discardOutput: true,
-    timeoutMs: LOGIN_TIMEOUT_MS,
-  });
-
-  if (!execution.spawned) {
-    sendError(res, 500, 'spawn_failed', 'Could not start the sign-in — the Claude CLI did not launch.');
-    return;
-  }
-  if (execution.timedOut) {
-    sendError(res, 504, 'login_timeout', 'The sign-in timed out. Nothing was saved; you can try again.');
-    return;
-  }
-
-  // Did it actually work? Ask the authoritative judge about THAT directory — the exit code is
-  // not the criterion here either.
-  const status = await claudeAuthStatus(configDir);
-  if (status.loggedIn !== true) {
-    sendError(res, 409, 'login_incomplete', 'The sign-in did not complete. Nothing was saved; you can try again.');
-    return;
-  }
+  const { status } = signedIn;
 
   const account = upsertClaudeAccount({
     id,
@@ -235,6 +257,72 @@ export async function handleAgentAccountsLogin(req: IncomingMessage, res: Server
     organizationName: account.organizationName,
     tier: account.tier,
   });
+}
+
+/**
+ * POST /api/agent/accounts/relogin — `{ id? }`. Sign an ALREADY-CONNECTED account in again.
+ *
+ * The gap it closes (Faruk, Slack 2026-09-30): a second account's credential expired, and
+ * there was no way back. Settings drew "Signed out — sign in again" with no button, "Add an
+ * account" with the same email answered `already_connected`, and Chat's sign-in banner ran
+ * `claude auth login` in a plain shell — which signs in the REAL `~/.claude`, the account that
+ * was already fine. Ten sign-ins later the sandbox the session actually runs on was still
+ * signed out.
+ *
+ * `id` omitted means the account new sessions start on, which is what a chat pane with no
+ * explicit account is running on. The machine's own account (#0) is refused with
+ * `primary_account`: its sign-in keeps the terminal flow, where the CLI's login-method picker
+ * is on screen, and the caller falls back to it.
+ *
+ * Refuses a sign-in that landed on a DIFFERENT account than the row names. The browser picks
+ * the account, so this is an easy mistake to make, and silently re-labelling the row would
+ * bill one account under another's name.
+ */
+export async function handleAgentAccountsRelogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!guard(req, res)) return;
+  const body = await parseJsonBody(req);
+  const requested = typeof body?.id === 'string' ? body.id : '';
+  if (requested && !isSafeAccountId(requested)) {
+    sendError(res, 422, 'account_error', `Not a usable account id: ${JSON.stringify(requested)}`);
+    return;
+  }
+  const account = requested ? getClaudeAccount(requested) : preferredClaudeAccount();
+  if (requested && !account) {
+    sendError(res, 422, 'account_error', `No such account: ${requested}`);
+    return;
+  }
+  if (!account || account.configDir === null) {
+    sendError(res, 409, 'primary_account', "This is the machine's own Claude account. It signs in from a terminal.");
+    return;
+  }
+
+  let configDir: string;
+  try {
+    configDir = resolveConfigDir(account.id);
+  } catch (err) {
+    sendError(res, 422, 'account_error', (err as Error).message);
+    return;
+  }
+
+  const signedIn = await signInto(configDir);
+  if (!signedIn.ok) {
+    sendError(res, signedIn.status, signedIn.code, signedIn.message);
+    return;
+  }
+  const { status } = signedIn;
+  if (reloginLandedOnOtherAccount(account.email, status.email)) {
+    sendError(
+      res, 409, 'wrong_account',
+      `The browser signed in ${status.email}, but this row is ${account.email}. Sign in again and choose ${account.email}.`,
+    );
+    return;
+  }
+
+  const updated = updateClaudeAccountIdentity(account.id, {
+    organizationUuid: status.orgId ?? '',
+    tier: status.subscription ?? '',
+  });
+  sendJson(res, 200, { id: updated.id, email: updated.email, tier: updated.tier });
 }
 
 /** POST /api/agent/accounts/preferred — `{ id }`. New sessions start on this account. */

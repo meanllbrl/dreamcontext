@@ -20,6 +20,7 @@ import {
   PATTERN_LESSON_LIMIT,
   type Weekday,
   type EffortLevel,
+  type ScheduleSlot,
   type AutomationManifest,
   type AutomationMode,
   type AutomationQuestion,
@@ -42,7 +43,11 @@ import {
   recordLesson,
   cadenceLabel,
   deriveFlowFromManifest,
+  flowForDisplay,
+  scheduleFromInput,
+  updateAutomation,
   writeFlowSection,
+  reviewMismatch,
   type ShareState,
 } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest, toolCallLabel } from '../../lib/automations/session.js';
@@ -77,7 +82,16 @@ import {
   pruneStrayNegations,
   type ShareResult,
 } from '../../lib/automations/sharing.js';
-import { isDue, formatSchedule } from '../../lib/automations/schedule.js';
+import {
+  isDue,
+  formatSchedule,
+  formatSlot,
+  formatLocalFire,
+  nextFire,
+  parseSlot,
+  parseSlotSpec,
+  slotSpec,
+} from '../../lib/automations/schedule.js';
 import {
   checkApproval,
   approveAutomation,
@@ -206,17 +220,37 @@ function isAlive(pid: number): boolean {
  *  unrecognized day token so the error names the actual bad token, rather
  *  than falling through to `validateAutomationForWrite`'s generic message. */
 function parseDaysFlag(value: string): 'daily' | Weekday[] {
-  const trimmed = value.trim().toLowerCase();
-  if (trimmed === 'daily') return 'daily';
-  const tokens = trimmed.split(',').map((d) => d.trim()).filter(Boolean);
-  const valid: readonly string[] = WEEKDAYS;
-  const invalid = tokens.filter((t) => !valid.includes(t));
-  if (invalid.length > 0) {
+  // Through the schedule parser, so `--days` accepts exactly what a manifest's
+  // `days:` does (ranges like mon-fri included) and there is one rule set.
+  const r = parseSlot({ days: value, at: '00:00' });
+  if ('error' in r || r.slot.kind !== 'weekly') {
     throw new AutomationError(
-      `--days: invalid weekday(s) "${invalid.join(', ')}" — use "daily" or a comma list of ${WEEKDAYS.join(',')}.`,
+      `--days: invalid days "${value}" — use "daily", a comma list of ${WEEKDAYS.join(',')}, or a range like mon-fri.`,
     );
   }
-  return tokens as Weekday[];
+  return r.slot.days;
+}
+
+/** Commander's repeatable collector for `--slot` / `--add`. */
+function collectSlot(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+/** `--slot` values → validated slots, naming the bad one. `now` anchors an
+ *  `Nw:` slot that gave no date to the current week. */
+function parseSlotFlags(specs: string[], now: Date): ScheduleSlot[] {
+  return specs.map((spec, i) => {
+    const r = parseSlotSpec(spec, now);
+    if ('error' in r) throw new AutomationError(`--slot ${specs.length > 1 ? `#${i + 1} ` : ''}${r.error}`);
+    return r.slot;
+  });
+}
+
+/** "next: Mon 2026-09-28 16:30" for an enabled scheduled agent, else null. */
+function nextFireLabel(m: AutomationManifest, now: Date): string | null {
+  if (m.mode === 'call' || !m.enabled || m.schedule === null) return null;
+  const next = nextFire(m.schedule, now);
+  return next ? formatLocalFire(next) : null;
 }
 
 /** `--mode <sched|call>` → a validated {@link AutomationMode}. Same boundary
@@ -618,8 +652,14 @@ export function registerAutomationsCommand(program: Command): void {
     // manifest that `list` and the card would then have to print. Required for
     // `--mode sched` (the default) by an explicit check in the action below,
     // so the refusal names the mode rather than a missing flag.
-    .option('--days <daily|mon,wed>', 'Schedule days: "daily" or a comma list of weekdays (required unless --mode call)')
-    .option('--at <HH:MM>', 'Schedule time, 24h local (e.g. 18:00) (required unless --mode call)')
+    .option(
+      '--slot <spec>',
+      'A fire slot, repeatable (union): mon-fri@16:30, 2w:mon@10:00, month:1,15,last@09:00, month:1st-mon@09:30, cron:30 9 * * 1',
+      collectSlot,
+      [],
+    )
+    .option('--days <daily|mon,wed>', 'One-slot shorthand: "daily", a comma list of weekdays or a range (with --at)')
+    .option('--at <HH:MM>', 'One-slot shorthand: time, 24h local (e.g. 18:00) (with --days)')
     .option('--mode <sched|call>', 'sched = runs on its schedule (default); call = no schedule, runs only when you call it')
     .option('--photo <path>', `Agent photo, brain-relative under ${AUTOMATION_PHOTOS_DIR}/ (default: initials)`)
     .option('--model <model>', 'Model override (default: let claude pick)')
@@ -636,7 +676,7 @@ export function registerAutomationsCommand(program: Command): void {
       `Stop and ask a human before the work takes effect: ${REVIEW_MODES.join('|')} (default off)`,
     )
     .action((slug: string, opts: {
-      title: string; days?: string; at?: string; mode?: string; photo?: string; model?: string;
+      title: string; slot: string[]; days?: string; at?: string; mode?: string; photo?: string; model?: string;
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
       learning?: boolean; review?: string;
@@ -644,11 +684,16 @@ export function registerAutomationsCommand(program: Command): void {
       const root = ensureContextRoot();
       try {
         const mode = parseModeFlag(opts.mode);
-        if (mode !== 'call' && (!opts.days || !opts.at)) {
+        const slotSpecs = opts.slot ?? [];
+        if (slotSpecs.length > 0 && (opts.days || opts.at)) {
+          throw new AutomationError('--slot and --days/--at both set the schedule — use --slot for every time, or --days/--at for one.');
+        }
+        if (mode !== 'call' && slotSpecs.length === 0 && (!opts.days || !opts.at)) {
           throw new AutomationError(
-            'A scheduled agent needs --days and --at. Pass --mode call for an agent that runs only when you call it.',
+            'A scheduled agent needs --slot (repeatable) or --days and --at. Pass --mode call for an agent that runs only when you call it.',
           );
         }
+        const slots = mode !== 'call' && slotSpecs.length > 0 ? parseSlotFlags(slotSpecs, new Date()) : undefined;
         const days = parseDaysFlag(opts.days ?? 'daily');
         const effort = parseEffortFlag(opts.effort);
         let prompt: string | undefined;
@@ -665,6 +710,7 @@ export function registerAutomationsCommand(program: Command): void {
           photo: opts.photo ?? null,
           days,
           at: opts.at ?? '09:00',
+          slots,
           model: opts.model ?? null,
           effort,
           timeoutMinutes: opts.timeout ? Number(opts.timeout) : undefined,
@@ -742,8 +788,12 @@ export function registerAutomationsCommand(program: Command): void {
       const manifests = listAutomations(root);
 
       if (opts.json) {
+        const now = new Date();
         const rows = manifests.map((m) => ({
           ...m,
+          nextFireAt: m.mode === 'call' || !m.enabled || m.schedule === null
+            ? null
+            : (nextFire(m.schedule, now)?.toISOString() ?? null),
           cache: readAutomationCache(root, m.slug),
           approved: checkApproval(projectRoot, m).approved,
           shareState: shareStateFor(root, m),
@@ -754,9 +804,10 @@ export function registerAutomationsCommand(program: Command): void {
 
       console.log(header('Automations'));
       if (manifests.length === 0) {
-        console.log(chalk.dim('  (none yet — dreamcontext automations create <slug> --title "..." --days daily --at 18:00)'));
+        console.log(chalk.dim('  (none yet — dreamcontext automations create <slug> --title "..." --slot daily@18:00)'));
         return;
       }
+      const now = new Date();
       for (const m of manifests) {
         const cache = readAutomationCache(root, m.slug);
         const approval = checkApproval(projectRoot, m);
@@ -767,7 +818,9 @@ export function registerAutomationsCommand(program: Command): void {
         // `cadenceLabel`, not `formatSchedule`: an on-call agent genuinely has
         // no schedule, and printing "no schedule" next to it would report a
         // deliberate choice as a malformed manifest.
-        console.log(`  ${chalk.magentaBright(m.slug)} — ${m.title} · ${cadenceLabel(m)}${enabledBadge}${statusBit}${approvalBadge} · ${badge}`);
+        const next = nextFireLabel(m, now);
+        const cadence = m.scheduleError && m.mode !== 'call' ? chalk.red(cadenceLabel(m)) : cadenceLabel(m);
+        console.log(`  ${chalk.magentaBright(m.slug)} — ${m.title} · ${cadence}${next ? ` · next ${next}` : ''}${enabledBadge}${statusBit}${approvalBadge} · ${badge}`);
         if (warning) warn(`    ${warning}`);
       }
     });
@@ -799,6 +852,9 @@ export function registerAutomationsCommand(program: Command): void {
       if (opts.json) {
         console.log(JSON.stringify({
           manifest,
+          nextFireAt: manifest.mode === 'call' || !manifest.enabled || manifest.schedule === null
+            ? null
+            : (nextFire(manifest.schedule, new Date())?.toISOString() ?? null),
           cache,
           approved: approval.approved,
           approvalReason: approval.approved ? null : approval.reason,
@@ -811,6 +867,15 @@ export function registerAutomationsCommand(program: Command): void {
       console.log(header(`Automation: ${slug}`));
       console.log(`  title: ${manifest.title}`);
       console.log(`  runs: ${cadenceLabel(manifest)}`);
+      if (manifest.mode !== 'call' && manifest.schedule && manifest.schedule.slots.length > 1) {
+        manifest.schedule.slots.forEach((slot, i) => {
+          console.log(chalk.dim(`    slot ${i + 1}: ${formatSlot(slot)}  (--slot "${slotSpec(slot)}")`));
+        });
+      }
+      {
+        const next = nextFireLabel(manifest, new Date());
+        if (next) console.log(`  next fire: ${next}`);
+      }
       console.log(`  enabled: ${manifest.enabled}`);
       console.log(`  model: ${manifest.model ?? '(default)'}`);
       console.log(`  effort: ${manifest.effort ?? '(default)'}`);
@@ -850,6 +915,8 @@ export function registerAutomationsCommand(program: Command): void {
               ? 'output — every document waits for your verdict'
               : 'agent — the run decides when to stop and ask'}`,
         );
+        const mismatch = reviewMismatch(manifest);
+        if (mismatch) warn(`  ${mismatch}`);
         // Rendered right under the mode, not buried in the history: this is the
         // reason the automation is not running, and a `show` that made you infer
         // that from an `awaiting-review` history entry would be hiding the lede.
@@ -913,7 +980,7 @@ export function registerAutomationsCommand(program: Command): void {
       if (!manifest) return;
 
       const derived = manifest.flow === null;
-      const graph = manifest.flow ?? deriveFlowFromManifest(manifest);
+      const graph = flowForDisplay(manifest);
       const problems = validateFlowGraph(graph);
 
       if (opts.json) {
@@ -1110,7 +1177,7 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('post')
     .argument('<slug>', 'Automation slug')
-    .argument('<text>', 'One or two sentences: what is IMPORTANT about this run')
+    .argument('<text>', 'What is IMPORTANT about this run, in skimmable markdown (one list item per line)')
     .description('Post to this automation\'s channel (a run calls this about itself)')
     .option('--file <path>', 'Brain-relative path to attach (repeatable, max 4)', collectFile, [])
     .option('--kv <pair>', `A key=value summary row (repeatable, max ${THREAD_SUMMARY_MAX_ROWS})`, collectKv, [])
@@ -1645,6 +1712,97 @@ export function registerAutomationsCommand(program: Command): void {
     });
 
   automations
+    .command('schedule')
+    .argument('<slug>', 'Automation slug')
+    .description("Show or edit an automation's fire slots — no YAML editing, no re-approval (the schedule is not approval-hashed)")
+    .option('--slot <spec>', 'Replace every slot with these (repeatable): mon-fri@16:30, 2w:mon@10:00, month:last@09:00, cron:…', collectSlot, [])
+    .option('--add <spec>', 'Add a slot, keeping the others (repeatable)', collectSlot, [])
+    .option('--remove <n>', 'Remove slot n (1-based, as numbered by this command), repeatable', collectSlot, [])
+    .option('--days <daily|mon,wed>', 'One-slot shorthand, with --at: replace the schedule with one weekly slot')
+    .option('--at <HH:MM>', 'One-slot shorthand, with --days')
+    .option('--json', 'Emit the resulting schedule as JSON')
+    .action((slug: string, opts: {
+      slot: string[]; add: string[]; remove: string[]; days?: string; at?: string; json?: boolean;
+    }) => {
+      const root = ensureContextRoot();
+      try {
+        const manifest = requireAutomation(root, slug);
+        if (!manifest) return;
+        const now = new Date();
+        const editing = opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0 || !!opts.days || !!opts.at;
+
+        let updated = manifest;
+        if (editing) {
+          if (manifest.mode === 'call') {
+            throw new AutomationError(`"${slug}" is on-call — it has no schedule to edit. Recreate it with a schedule, or switch its mode in the dashboard.`);
+          }
+          if ((opts.days || opts.at) && (opts.slot.length > 0 || opts.add.length > 0 || opts.remove.length > 0)) {
+            throw new AutomationError('--days/--at replace the whole schedule with one slot — do not combine them with --slot, --add or --remove.');
+          }
+          if (opts.slot.length > 0 && (opts.add.length > 0 || opts.remove.length > 0)) {
+            throw new AutomationError('--slot replaces every slot — use it alone, or use --add/--remove to change the current ones.');
+          }
+          let slots: ScheduleSlot[];
+          if (opts.days || opts.at) {
+            if (!opts.days || !opts.at) throw new AutomationError('--days and --at go together.');
+            slots = [{ kind: 'weekly', days: parseDaysFlag(opts.days), at: opts.at }];
+          } else if (opts.slot.length > 0) {
+            slots = parseSlotFlags(opts.slot, now);
+          } else {
+            if (manifest.schedule === null) {
+              throw new AutomationError(
+                `"${slug}" has no valid schedule${manifest.scheduleError ? ` (${manifest.scheduleError})` : ''} — set one with --slot.`,
+              );
+            }
+            const current = manifest.schedule.slots;
+            const drop = new Set(opts.remove.map((raw) => {
+              const n = Number(raw);
+              if (!Number.isInteger(n) || n < 1 || n > current.length) {
+                throw new AutomationError(`--remove ${raw}: there is no slot ${raw} (this agent has ${current.length}).`);
+              }
+              return n - 1;
+            }));
+            slots = [...current.filter((_, i) => !drop.has(i)), ...parseSlotFlags(opts.add, now)];
+            if (slots.length === 0) {
+              throw new AutomationError('That would leave no slots — a scheduled agent needs at least one. Use --slot to replace them instead.');
+            }
+          }
+          // Validated by the store's one schedule validator on the way in.
+          scheduleFromInput({ slots });
+          updated = updateAutomation(root, slug, { slots });
+        }
+
+        if (opts.json) {
+          console.log(JSON.stringify({
+            slug,
+            schedule: updated.schedule,
+            label: cadenceLabel(updated),
+            nextFireAt: updated.schedule ? (nextFire(updated.schedule, now)?.toISOString() ?? null) : null,
+          }, null, 2));
+          return;
+        }
+
+        console.log(header(`Schedule: ${slug}`));
+        if (updated.mode === 'call') {
+          console.log('  When you call it — no schedule.');
+          return;
+        }
+        if (updated.schedule === null) {
+          warn(`  ${cadenceLabel(updated)}`);
+          return;
+        }
+        updated.schedule.slots.forEach((slot, i) => {
+          console.log(`  ${i + 1}. ${formatSlot(slot)}  ${chalk.dim(`--slot "${slotSpec(slot)}"`)}`);
+        });
+        const next = nextFireLabel(updated, now);
+        console.log(next ? `  next fire: ${next}` : chalk.dim(updated.enabled ? '  no upcoming fire' : '  disabled — no upcoming fire'));
+        if (editing) success(`Schedule saved: ${cadenceLabel(updated)} (no re-approval needed).`);
+      } catch (err) {
+        handleAutomationsError(err);
+      }
+    });
+
+  automations
     .command('enable')
     .argument('<slug>', 'Automation slug')
     .description('Enable an automation (tick will consider it again)')
@@ -1764,13 +1922,21 @@ export function registerAutomationsCommand(program: Command): void {
         for (const key of APPROVAL_DIFF_FIELDS) {
           const value = fields[key];
           console.log(chalk.dim(`  ${key}:`));
-          console.log(`    ${value === null || value === '' ? chalk.dim('(none)') : String(value)}`);
+          // An object field (the `## Flow` graph) is printed as JSON: `String()` gave the
+          // reviewer "[object Object]" for a field the hash covers, i.e. nothing to review.
+          const shown = value === null || value === ''
+            ? chalk.dim('(none)')
+            : typeof value === 'object' ? JSON.stringify(value, null, 2).replace(/\n/g, '\n    ') : String(value);
+          console.log(`    ${shown}`);
         }
 
         // The duplicate-run warning. Approval is machine-local and shared
         // automations have no cross-machine coordination, so approving one that
         // already runs on a teammate's machine runs it HERE TOO. Advisory only
         // — duplication may be wanted — but it must never happen unwittingly.
+        const mismatch = reviewMismatch(manifest);
+        if (mismatch) warn(mismatch);
+
         const foreign = foreignRunEvidence(root, manifest);
         if (foreign && foreign.count > 0) {
           warn(

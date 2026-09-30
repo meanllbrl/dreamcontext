@@ -63,3 +63,20 @@ export function pushToTalkAction(
   if (recording) return 'stop';
   return signal.summon && owns ? 'start' : null;
 }
+
+/**
+ * The summoning press reaches the composer only AFTER the panel has opened, never in the same
+ * tick. Opening the mic is synchronous WebKit audio work (the barge-in's autoplay banking, the
+ * meter's `new AudioContext`), and WebKit's audio-session activation can hold the notch
+ * webview's thread for seconds (1.6 s measured on 2026-09-28, longer while the screen is being
+ * recorded). Done first, it stalled the resize behind it: the hotkey looked dead, the notch
+ * stayed a pill. So the panel lands first, then this decides whether the press still becomes a
+ * take:
+ * - the panel was closed again meanwhile, or a newer press came → no;
+ * - hold: only if the key is still down (a tap just opens the panel, and never touches audio);
+ * - toggle: yes (the next press sends).
+ */
+export function summonTakeDue(mode: PushToTalkSignal['mode'], stillHeld: boolean, stillOpen: boolean, latestPress: boolean): boolean {
+  if (!stillOpen || !latestPress) return false;
+  return mode === 'toggle' || stillHeld;
+}

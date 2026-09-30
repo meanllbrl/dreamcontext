@@ -1073,6 +1073,8 @@
   min-height: 0;
   display: flex;
   align-items: stretch;
+  /* The panes' offsetParent, so the focus glide bar can be placed in their coordinates. */
+  position: relative;
 }
 .agent-panes > .agent-pane {
   flex: 1 1 0;
@@ -1107,26 +1109,12 @@
 .agent-overlay-tabs[data-split] > .agent-pane-tabbar.active {
   flex-basis: max(0px, min(var(--pane-focus-bonus), 100% - var(--pane-count) * var(--pane-min)));
 }
-/* Animated so focus moving between panes reads as one row rebalancing rather than a
-   jump cut. It is also why the widening is safe for terminals: the surface's
-   ResizeObserver is 150ms-debounced, so the whole slide costs ONE xterm refit at the
-   end, the same deal the sidebar's own width animation already makes.
-
-   FAST, not normal (owner call 09-14): at 240ms a click waits on the layout before the
-   pane reads as switched. `--transition-fast` still crosses ~20 frames, so the row is
-   visibly rebalancing rather than cutting — it just stops being something you wait out. */
-.agent-panes > .agent-pane,
-.agent-overlay-tabs > .agent-pane-tabbar {
-  /* The token ALREADY carries its easing (`--transition-normal: 240ms ease`), so the
-     duration must not be followed by another one: `flex-basis 240ms ease ease` is invalid
-     and the browser drops the whole declaration — which is exactly why this "animation"
-     was landing in a single frame. Fallback included for the same reason. */
-  transition: flex-basis var(--transition-fast, 120ms ease);
-}
-@media (prefers-reduced-motion: reduce) {
-  .agent-panes > .agent-pane,
-  .agent-overlay-tabs > .agent-pane-tabbar { transition: none; }
-}
+/* NOT animated. A `flex-basis` transition is a layout per frame of every pane in the row —
+   transcripts, cards, diagram frames — and in WebKit with long transcripts that painted 6
+   frames in 160ms with 36ms gaps: the widening stepped instead of sliding (owner, 09-28).
+   The row now lands in ONE layout and the motion lives on `.agent-pane-glide` below, a
+   single bar animated with `transform` only (usePaneFocusGlide.ts). The switch still waits
+   for the release (the pane-focus-click fix), so nothing jumps out from under a press. */
 /* Shown when EVERY pane was minimized to the corner — keeps the expanded view from
    reading as a blank void. */
 .agent-allmin-hint {
@@ -1167,14 +1155,26 @@
   pointer-events: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
 }
-.agent-panes.split > .agent-pane.active::before {
-  content: '';
+/* The top bar is NOT a per-pane pseudo-element: it is one `.agent-pane-glide` in the row,
+   placed on the focused pane and FLIP-animated there with `transform` (usePaneFocusGlide.ts),
+   so focus moving reads as a slide while the panes themselves land in a single layout. The
+   ring above fades in alongside it. */
+.agent-pane-glide {
   position: absolute;
-  top: 0; left: 0; right: 0;
+  top: 0;
+  left: 0;
   height: 3px;
   background: var(--color-accent);
   box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 60%, transparent);
   z-index: 3;
+  pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.agent-panes:not(.split) > .agent-pane-glide { display: none; }
+.agent-panes.split > .agent-pane.active::after { animation: agentFadeIn var(--transition-fast); }
+@media (prefers-reduced-motion: reduce) {
+  .agent-panes.split > .agent-pane.active::after { animation: none; }
 }
 /* Inactive panes are NOT dimmed — you read both terminals at once, so the other pane
    stays fully legible. Only the active pane's accent ring + top bar (above) mark focus.

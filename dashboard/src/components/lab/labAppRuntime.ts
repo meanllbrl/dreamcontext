@@ -84,6 +84,50 @@ export type LabAppInbound =
   | { type: 'dataResult'; requestId: string; ok: false; error: string }
   | { type: 'theme'; scheme: 'light' | 'dark'; tokens: Record<string, string> };
 
+/**
+ * The 2-CYCLE DAMPER — the belt to `LabAppPage.css`'s `scrollbar-gutter` braces.
+ *
+ * Sizing the frame to the height its body reports is a two-way coupling: the
+ * height the host writes decides what the embedder's layout does around the
+ * frame, and whatever that does to the frame's WIDTH decides the height the body
+ * reports next. When two heights straddle an embedder threshold — an 8px
+ * scrollbar appearing and disappearing is the case we actually shipped — the
+ * pair flips at frame rate and never settles. The guest cannot see this:
+ * `lab-app-runtime.js` guards with `h === lastHeight`, which stops a REPEAT and
+ * is blind to an A↔B pair, because from inside the frame every report is
+ * genuinely new.
+ *
+ * So the host, the half that can see the sequence, breaks it: a height equal to
+ * the one BEFORE last means we are in a loop, and we hold the TALLER member of
+ * the pair. Taller is the safe side — the shorter measurement is the one taken
+ * while something was stealing the frame's width, and a few px of slack at the
+ * bottom beats a page that strobes. Only that pair's shorter member is
+ * suppressed; any other height is real content (an in-app filter click changes
+ * the body with no host-visible event) and passes straight through, clearing the
+ * pair with it. Stateful per frame instance — a remount starts clean.
+ */
+export function makeHeightDamper(): (px: number) => number {
+  let recent: number[] = [];
+  let pair: { short: number; tall: number } | null = null;
+  return (px: number): number => {
+    // EITHER member of a known pair is the loop still running, not news — hold
+    // the tall one and leave the pair standing. (Treating the tall member as a
+    // fresh height clears the pair and the strobe resumes on the next flip.)
+    if (pair && (px === pair.short || px === pair.tall)) return pair.tall;
+    const last = recent[recent.length - 1];
+    const prior = recent[recent.length - 2];
+    if (prior === px && last !== undefined && last !== px) {
+      pair = { short: Math.min(px, last), tall: Math.max(px, last) };
+      recent = [];
+      return pair.tall;
+    }
+    pair = null;
+    recent.push(px);
+    if (recent.length > 3) recent.shift();
+    return px;
+  };
+}
+
 /** The envelope every message (either direction) is wrapped in on the wire. */
 export type LabAppEnvelope<T> = T & {
   __dreamLabApp: 1;

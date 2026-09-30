@@ -6,11 +6,11 @@ import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { isDesktop } from '../../lib/desktop';
 import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
-import { claimSeat, flying, healSeat, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
+import { claimSeat, flying, guardHeal, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
 import { ProposalList, type Proposal } from './ProposalList';
 import { EMPTY_ROLLUP, pillBubbles, pillLabel, readRollup, type Rollup } from './notchModel';
-import { emitExternalPushToTalk } from '../../lib/voice/externalPushToTalk';
+import { emitExternalPushToTalk, summonTakeDue } from '../../lib/voice/externalPushToTalk';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { initAgentSettingsFromServer, readAgentSettings } from '../../lib/agentSettings';
 // The pill's right ear draws the tab strip's own status bubbles (`project-tab-bubble*`); the
@@ -349,7 +349,7 @@ export function Notch() {
     setExpanded(true);
     setAttention(false);
     const seated = seatRef.current === 'window' ? seatWindow(geo, frameRef.current) : seat(true, geo);
-    void seated.then(() => sessionRef.current?.focus());
+    return seated.then(() => sessionRef.current?.focus());
   }, [geo]);
   // Popped out, "collapse" hides the window (still mounted, still connected) instead of
   // shrinking it to a pill; the next summon brings the window back.
@@ -480,7 +480,10 @@ export function Notch() {
   //
   // The summoning press un-hides the panel SYNCHRONOUSLY (flushSync) before the edge goes to
   // the composer: `ownsPushToTalk` only answers for a VISIBLE composer, and a hidden one would
-  // let the owner's first sentence fall on the floor.
+  // let the owner's first sentence fall on the floor. The edge itself waits for the panel to
+  // land (`summonTakeDue`): opening the mic in the same tick froze the resize for seconds.
+  const heldRef = useRef(false);
+  const pressRef = useRef(0);
   useEffect(() => {
     if (!isDesktop()) return;
     let unlisten: (() => void) | null = null;
@@ -491,12 +494,20 @@ export function Notch() {
         const { listen } = await import('@tauri-apps/api/event');
         const fn = await listen<{ state: 'pressed' | 'released' }>('assistant://hotkey', (e) => {
           const edge = e.payload?.state;
-          if (edge === 'released') { emitExternalPushToTalk({ edge, mode, summon: false }); return; }
+          if (edge === 'released') {
+            heldRef.current = false;
+            emitExternalPushToTalk({ edge, mode, summon: false });
+            return;
+          }
           if (edge !== 'pressed') return;
+          heldRef.current = true;
+          const press = ++pressRef.current;
           if (!expandedRef.current) {
             flushSync(() => setExpanded(true));
-            expand();
-            emitExternalPushToTalk({ edge, mode, summon: true });
+            void expand().then(() => {
+              if (!summonTakeDue(mode, heldRef.current, expandedRef.current, press === pressRef.current)) return;
+              emitExternalPushToTalk({ edge, mode, summon: true });
+            });
             return;
           }
           const acted = emitExternalPushToTalk({ edge, mode, summon: false });
@@ -510,36 +521,40 @@ export function Notch() {
 
   // Esc and click-outside collapse the notch. Never an unmount. A popped-out window is a
   // window: it stays open when the owner clicks elsewhere or presses Esc in it.
+  // Click-outside is NATIVE (`assistant://outside-click`, assistant.rs `watch_outside_clicks`):
+  // summoned over another app the non-activating panel never becomes key, so a focus loss never
+  // comes. The focus loss stays as the second way out (⌘-Tab away from a panel that had focus).
   useEffect(() => {
     if (!expanded || seatMode === 'window') return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) collapse(); };
     window.addEventListener('keydown', onKey);
-    let unlisten: (() => void) | null = null;
+    const unlisteners: Array<() => void> = [];
     let cancelled = false;
     if (isDesktop()) {
       void (async () => {
         try {
           const { getCurrentWindow } = await import('@tauri-apps/api/window');
-          const fn = await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) collapse(); });
-          if (cancelled) fn(); else unlisten = fn;
+          const { listen } = await import('@tauri-apps/api/event');
+          const fns = [
+            await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) collapse(); }),
+            await listen('assistant://outside-click', () => collapse()),
+          ];
+          for (const fn of fns) { if (cancelled) fn(); else unlisteners.push(fn); }
         } catch { /* no runtime */ }
       })();
     }
-    return () => { cancelled = true; window.removeEventListener('keydown', onKey); unlisten?.(); };
+    return () => { cancelled = true; window.removeEventListener('keydown', onKey); unlisteners.forEach((fn) => fn()); };
   }, [expanded, collapse, seatMode]);
 
   // The seat guard (seatGuard.ts): a resize or move the notch did not ask for is undone at once,
   // and a slow check catches a frame that changed without telling anyone (a Space switch). A
-  // frame macOS keeps refusing is given up on after a few tries instead of fought every second.
+  // frame macOS keeps refusing is given up on for a while instead of fought every second
+  // (`guardHeal`: the next seat change, or a cooldown, re-arms it).
   useEffect(() => {
     if (!isDesktop()) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let streak = 0;
-    const check = () => {
-      if (streak >= 4) return;
-      void healSeat().then((healed) => { streak = healed ? streak + 1 : 0; });
-    };
+    const check = () => { void guardHeal(); };
     const soon = () => { if (timer) clearTimeout(timer); timer = setTimeout(check, 150); };
     const tick = setInterval(check, 1000);
     const unlisteners: Array<() => void> = [];
@@ -597,7 +612,7 @@ export function Notch() {
         body: JSON.stringify({ vault, page: `${page}/${id}` }),
       }).catch(() => { /* the button stays; the next click retries */ });
     },
-    signIn: () => { /* sign in from a project window */ },
+    signIn: async () => { /* sign in from a project window */ },
   }), [startSession]);
 
   const name = status?.config?.name ?? 'Assistant';

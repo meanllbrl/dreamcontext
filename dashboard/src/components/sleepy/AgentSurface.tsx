@@ -4,7 +4,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
-import { api } from '../../api/client';
+import { api, RequestError } from '../../api/client';
 import { useVault, useApi, useInstanceEvent, emitInstance } from '../../context/VaultContext';
 import { uploadAgentFile } from '../../lib/agentDrop';
 import {
@@ -22,6 +22,7 @@ import {
 } from '../../lib/agentSettings';
 import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow } from './agentStatus';
 import { PaneFragment, type PaneActions } from './PaneFragment';
+import { usePaneFocusGlide } from './usePaneFocusGlide';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { MobileSessionDrawer } from './MobileSessionDrawer';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -34,6 +35,7 @@ import {
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
+import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
@@ -163,6 +165,12 @@ function titleFor(s: Session | ChatSession): string {
   if (s.kind === 'shell') return `Terminal ${num}`;
   if (s.kind === 'chat') return `Chat ${num}`;
   return `Agent ${num}`;
+}
+
+/** A chat's still-running agents keep its tab `working` after the turn ends. Only a chat
+ *  pane can see them, so a terminal session never reports any. */
+function agentsWorkingOf(s: Session | ChatSession | undefined): boolean {
+  return !!s && 'agentsWorking' in s && s.agentsWorking;
 }
 
 /** X2's placeholder title suffix, appended IDEMPOTENTLY: the tab this labels gets
@@ -305,6 +313,11 @@ function removeFromPane(p: PaneState, sid: string): PaneState {
 function carryDraftInto(next: ChatSession, draft: string): void {
   if (draft) next.sendText(draft);
 }
+
+/** How long a chat link waits for the surface's capabilities, settings and saved roster
+ *  before acting on what it has, and how often it looks. */
+const LINKED_SESSION_WAIT_MS = 8_000;
+const LINKED_SESSION_POLL_MS = 150;
 
 // ── The persistent surface ─────────────────────────────────────────────────────
 
@@ -777,6 +790,9 @@ export function AgentSurface() {
   const started = sessionList.length > 0;
   // The action-focused pane (falls back to the first pane when the stored id is stale).
   const activePane = panes.find((p) => p.id === activePaneId) ?? panes[0];
+  const panesRowRef = useRef<HTMLDivElement>(null);
+  const glideRef = useRef<HTMLDivElement>(null);
+  usePaneFocusGlide(panesRowRef, glideRef, activePane?.id, panes.length);
   const focusedSessionId = activePane?.active ?? '';
 
   // ── Capabilities (fetched on mount; re-fetched after an in-app install so a
@@ -1540,6 +1556,28 @@ export function AgentSurface() {
     cs.setPermissionMode(mode, () => resumeChatSession(cs, mode === 'bypass'));
   }, [bus, vault, resumeChatSession]);
 
+  // The chat banner's "Sign in", for the ACCOUNT this conversation runs on.
+  //
+  // `signInToClaude` above opens a plain shell, and a plain shell has no `CLAUDE_CONFIG_DIR`:
+  // its `claude auth login` signs in the machine's own `~/.claude`. For a chat running on a
+  // connected second account that is the wrong credential store, so the banner came straight
+  // back however many times the user signed in (Faruk, Slack 2026-09-30). A connected account
+  // signs in again through its own sandbox instead (`/agent/accounts/relogin`, browser OAuth,
+  // no terminal needed), and the conversation resumes on it. The server answers
+  // `primary_account` for the machine's own account, which keeps the terminal flow.
+  const signInChatAccount = useCallback(async (cs?: ChatSession) => {
+    if (cs) {
+      try {
+        await api.post('/agent/accounts/relogin', cs.accountId ? { id: cs.accountId } : {});
+        resumeChatSession(cs);
+        return;
+      } catch (err) {
+        if (!(err instanceof RequestError) || err.code !== 'primary_account') throw err;
+      }
+    }
+    if (canSignInInApp) signInToClaude();
+  }, [resumeChatSession, canSignInInApp, signInToClaude]);
+
   /**
    * Plan → Develop: the hand-off behind a plan agent's "Go to development" button.
    *
@@ -2048,6 +2086,43 @@ export function AgentSurface() {
     if (detail?.sessionId && openAutomationRunChat(detail)) detail.accepted = true;
   });
 
+  // ── Open one chat from a clicked link ("Claude is asking" banner) ─────────────────
+  //
+  // `dreamcontext://project/<vault>/session/<claudeId>` lands here (`ProjectInstance`'s
+  // AppLinkBridge). It walks `resumePastSession`: a tab that holds the conversation comes
+  // forward (restored from the dock, resumed if dormant), and only a conversation with no tab
+  // is `--resume`d into a new one — never two live CLIs on one transcript.
+  //
+  // TAKEN AT ONCE, ACTED ON WHEN READY. A window built for this very link mounts the surface a
+  // moment before its capabilities, its settings and the saved roster have loaded. Resuming
+  // before the roster lands would open the conversation a second time beside the tab the
+  // roster is about to restore, so a request that has no live tab yet waits (bounded) for all
+  // three. The ACK is set on receipt so the sender stops asking.
+  const [linkedSession, setLinkedSession] = useState<{ claudeId: string; since: number } | null>(null);
+  const [, bumpLinkWait] = useReducer((x: number) => x + 1, 0);
+  useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT, (detail) => {
+    if (!detail?.claudeId) return;
+    setLinkedSession({ claudeId: detail.claudeId, since: Date.now() });
+    detail.accepted = true;
+  });
+  useEffect(() => {
+    if (!linkedSession) return undefined;
+    const { claudeId, since } = linkedSession;
+    const existing = sessionList.find((m) => m.claudeId === claudeId);
+    const ready = caps !== null && settingsReady && hydratedRef.current;
+    if (!(existing && !existing.dormant) && !ready && Date.now() - since < LINKED_SESSION_WAIT_MS) {
+      const timer = window.setTimeout(bumpLinkWait, LINKED_SESSION_POLL_MS);
+      return () => window.clearTimeout(timer);
+    }
+    setLinkedSession(null);
+    if (!existing && !(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled)) {
+      console.warn('[app-link] cannot open chat', claudeId, 'here: the agent surface is unavailable');
+      return undefined;
+    }
+    resumePastSession({ id: claudeId, title: '', preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' });
+    return undefined;
+  }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession]);
+
   // ── Train an automated agent (the Train button on its detail panel) ───────────────
   //
   // A NEW chat in Train Me mode whose first message binds it to the automation, so the
@@ -2486,7 +2561,7 @@ export function AgentSurface() {
     changeAccount: changeChatAccountFor,
     handoffToDevelop,
     openAppPage: onOpenAppPage,
-    signIn: signInToClaude,
+    signIn: signInChatAccount,
   };
   const chatActionsRef = useRef(chatActionsImpl);
   useEffect(() => { chatActionsRef.current = chatActionsImpl; });
@@ -2500,7 +2575,7 @@ export function AgentSurface() {
     changeAccount: (sid, accountId) => chatActionsRef.current.changeAccount(sid, accountId),
     handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),
-    signIn: () => chatActionsRef.current.signIn(),
+    signIn: (cs) => chatActionsRef.current.signIn(cs),
   }), []);
 
   const handleTabDragStart = useCallback((sid: string) => {
@@ -3107,7 +3182,7 @@ export function AgentSurface() {
       return {
         id,
         title: meta?.title ?? id,
-        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
+        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s) }),
         sessionKind: meta?.kind ?? 'agent',
         // WHICH AGENT this tab's run belongs to, so the strip can draw its FACE
         // instead of the generic automation glyph. Read straight off the roster
@@ -3135,7 +3210,7 @@ export function AgentSurface() {
       id: meta.id,
       title: meta.title,
       kind: meta.kind,
-      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
+      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s) }),
       attention: !meta.dormant && !!s?.attention,
       claudeId: s?.claudeId,
       // The ROSTER's mode, not the live session's: a mode switch respawns the process and
@@ -3250,7 +3325,10 @@ export function AgentSurface() {
             session the file — its path is written to the vault temp dir and injected
             (readline for a terminal, composer draft for a chat). The listeners live on
             the surface HOST as native DOM handlers — see the drag-drop effect above. */}
-        <div className={'agent-panes' + (panes.length > 1 ? ' split' : '')}>
+        <div ref={panesRowRef} className={'agent-panes' + (panes.length > 1 ? ' split' : '')}>
+          {/* The focused pane's top bar, ONE element that glides between panes on the
+              compositor while the panes land in a single layout (usePaneFocusGlide.ts). */}
+          <div ref={glideRef} className="agent-pane-glide" aria-hidden />
           {panes.length === 0 && (
             <div className="agent-allmin-hint">
               <p className="agent-allmin-title">All agents minimized</p>

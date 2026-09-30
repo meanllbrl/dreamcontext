@@ -300,7 +300,7 @@ export function AutostartStep({ autostart, autonomy, desktop, busy, failure, onT
   );
 }
 
-export const PERMISSIONS = ['mic', 'notifications', 'appleEvents', 'loginItem'] as const;
+export const PERMISSIONS = ['mic', 'notifications', 'appleEvents', 'screen', 'loginItem'] as const;
 export type PermissionKey = typeof PERMISSIONS[number];
 
 export function PermissionsStep({ ticks, testState, onTick, onTest }: {

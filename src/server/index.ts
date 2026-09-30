@@ -14,8 +14,8 @@ import { declineAllProposals } from '../lib/assistant/proposals.js';
 import {
   handleAssistantStatus, handleAssistantRollup, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
-  handleAssistantWindowRegister, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
-  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi,
+  handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
+  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
 } from './routes/assistant.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
@@ -164,7 +164,7 @@ import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
   handleAgentAccountsSwitchPolicy, handleAgentAccountsList,
-  handleAgentAccountsLogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
+  handleAgentAccountsLogin, handleAgentAccountsRelogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
 import {
@@ -178,6 +178,7 @@ import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent
 import { attachAgentChat, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
+import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
 import {
   handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus,
@@ -381,6 +382,8 @@ export function buildRouter(): Router {
   router.get('/api/assistant/proposals', handleAssistantProposalsList);
   router.post('/api/assistant/proposals/:id', handleAssistantProposalDecide);
   router.post('/api/assistant/windows', handleAssistantWindowRegister);
+  router.post('/api/assistant/windows/release', handleAssistantWindowRelease);
+  router.get('/api/assistant/windows', handleAssistantWindowLookup);
   router.post('/api/assistant/open', handleAssistantOpen);
   router.post('/api/assistant/commands/:id/bind', handleAssistantCommandBind);
   router.post('/api/assistant/commands/:id/claim', handleAssistantCommandClaim);
@@ -390,6 +393,7 @@ export function buildRouter(): Router {
   router.get('/api/assistant/watch', handleAssistantWatch);
   router.post('/api/assistant/broadcast', handleAssistantBroadcast);
   router.post('/api/assistant/ui/:verb', handleAssistantUi);
+  router.post('/api/assistant/look', handleAssistantLook);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
   router.post('/api/launcher/agent-settings', handleAgentSettingsSet);
@@ -440,6 +444,7 @@ export function buildRouter(): Router {
   router.get('/api/agent/accounts', handleAgentAccountsList);
   router.post('/api/agent/accounts/adopt', handleAgentAccountsAdopt);
   router.post('/api/agent/accounts/login', handleAgentAccountsLogin);
+  router.post('/api/agent/accounts/relogin', handleAgentAccountsRelogin);
   router.post('/api/agent/accounts/preferred', handleAgentAccountsPreferred);
   router.post('/api/agent/accounts/reorder', handleAgentAccountsReorder);
   router.post('/api/agent/accounts/refresh', handleAgentAccountsRefresh);
@@ -498,6 +503,11 @@ export function buildRouter(): Router {
   // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
   // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
   router.post('/api/agent/drop', handleAgentDrop);
+  // The app's own routable banners + the machine's banner history (the Notifications
+  // window). Desktop-gated like /drop; VAULT-AGNOSTIC — the history belongs to the
+  // machine and a link names its own vault.
+  router.get('/api/notifications', handleNotificationsGet);
+  router.post('/api/notify', handleNotifyPost);
   // A credential typed into the Chat surface's secret card → written straight into the
   // project's `.env` by the SERVER, so it never travels through the agent or the
   // transcript. Vault-SCOPED (the .env belongs to the project named in the header), and
@@ -753,7 +763,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

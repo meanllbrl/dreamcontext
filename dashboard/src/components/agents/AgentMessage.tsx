@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentQuestionBlock } from './AgentQuestionBlock';
 import { AgentSummaryBlock } from './AgentSummaryBlock';
@@ -6,6 +6,9 @@ import { BoardEmbed } from '../sleepy/chat/BoardEmbed';
 import { boardName } from '../sleepy/chat/BoardEmbed';
 import { MediaEmbed } from '../sleepy/chat/MediaEmbed';
 import { MarkdownPreview } from '../core/MarkdownPreview';
+import { parseChatActions } from '../sleepy/chat/chatActions';
+import { fitRunReport } from '../sleepy/chat/runReport';
+import { ChatBlockSegment, ChatViewNotices } from '../sleepy/chat/ChatViews';
 import { graphContentUrl } from '../../api/client';
 import { useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
@@ -15,7 +18,7 @@ import { middleTruncate } from '../../lib/fileLabel';
 import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import { runDuration, useNow } from './agentRunState';
 import {
-  useAutomation, useAutomationSession, type FeedMessage, type FeedStatus,
+  useAutomation, useAutomationSession, useReplyToAgentThread, type FeedMessage, type FeedStatus,
 } from '../../hooks/useAutomations';
 
 /**
@@ -394,13 +397,68 @@ function cost(usd: number | null): string | null {
  * backticked paths), and printing its asterisks is what made the channel harder to read than
  * the chat it sits beside. No card here: a channel row is not a bubble (see the header note);
  * the thread panel is where an answer gets the chat's full card.
+ *
+ * `blocks` turns on the CHAT'S OWN BLOCKS, parsed by the chat's own `parseChatActions` and
+ * drawn by the chat's own `ChatBlockSegment`, in written order: a `dream-view` run card is the
+ * same ▶ and real terminal it is in Chat, a secret the same masked field, a `dream-html` the
+ * same sandboxed view. The owner's rule (2026-09-30): the Chat's structures are atoms an agent
+ * can use anywhere it talks, not a Chat-only feature. `report` is where a card's hand-back
+ * goes — here, a reply in the run's thread, which resumes the agent exactly as typing would.
+ * Only an AGENT's words get blocks: a human's reply is shown as what they typed.
  */
-export function AgentProse({ text, className = '' }: { text: string; className?: string }) {
+export function AgentProse({ text, className = '', blocks = false, report }: {
+  text: string;
+  className?: string;
+  blocks?: boolean;
+  report?: (text: string) => void;
+}) {
+  const parsed = useMemo(() => (blocks ? parseChatActions(text) : null), [blocks, text]);
+  if (!parsed) {
+    return (
+      <div className={`agent-msg-md ${className}`.trim()}>
+        <MarkdownPreview content={text} />
+      </div>
+    );
+  }
+  // What this host could not draw, said out loud, like the chat's own strip: a button row has
+  // no router here, and a view with nowhere to report is still drawn by `ChatBlockSegment`
+  // only when a sink exists, so its absence is named rather than silent.
+  const hostNotices: string[] = [];
+  if (parsed.actions.length > 0) {
+    hostNotices.push(parsed.actions.length === 1
+      ? 'A button was written here but not offered: a thread has nothing to run it against.'
+      : `${parsed.actions.length} buttons were written here but not offered: a thread has nothing to run them against.`);
+  }
+  if (!report && parsed.segments.some((seg) => seg.kind === 'view')) {
+    hostNotices.push('A card was written here but not drawn: this row cannot reply to the agent.');
+  }
   return (
-    <div className={`agent-msg-md ${className}`.trim()}>
-      <MarkdownPreview content={text} />
+    <div className={`agent-msg-md agent-msg-md--blocks ${className}`.trim()}>
+      {parsed.segments.map((seg, i) => (
+        seg.kind === 'prose'
+          ? <MarkdownPreview key={i} content={seg.text} />
+          : <ChatBlockSegment key={i} segment={seg} report={report} />
+      ))}
+      <ChatViewNotices notices={[...parsed.notices, ...hostNotices]} />
     </div>
   );
+}
+
+/** The server's cap on one thread reply — mirrors `THREAD_TEXT_MAX_CHARS` (src/lib/automations/
+ *  types.ts); the dashboard cannot import across the bundle boundary. */
+export const THREAD_REPLY_MAX_CHARS = 2000;
+
+/**
+ * The hand-back for a card in a feed row: a reply in that run's thread, the same request the
+ * thread's own composer sends. A refused reply (a newer run took the thread, a question is
+ * pending) is told, never dropped: the report is the only record the command ran.
+ */
+export function useThreadReport(slug: string, runId: string, onToast?: (msg: string) => void): (text: string) => void {
+  const reply = useReplyToAgentThread();
+  const { mutate } = reply;
+  return useCallback((text: string) => {
+    mutate({ slug, runId, text: fitRunReport(text, THREAD_REPLY_MAX_CHARS) }, { onError: (err) => onToast?.((err as Error).message) });
+  }, [mutate, slug, runId, onToast]);
 }
 
 /**
@@ -500,6 +558,7 @@ export function AgentMessage({
   runStartedAt?: number | null;
 }) {
   const { t } = useI18n();
+  const report = useThreadReport(message.slug, message.runId, onToast);
   const running = message.status === 'running';
   // Called on every render, before the ask row's early return: a hook's order cannot depend on
   // which kind of row this is.
@@ -685,7 +744,7 @@ export function AgentMessage({
         {message.text ? (
           message.textFrom === 'error' || message.textFrom === 'skipped'
             ? <p className="agent-msg-text agent-msg-text--error">{message.text}</p>
-            : <AgentProse text={message.text} />
+            : <AgentProse text={message.text} blocks report={report} />
         ) : message.status === 'running' ? (
           // A run in flight has nothing to say YET. Saying so is the honest
           // state; an empty row reads as a message that failed to load.

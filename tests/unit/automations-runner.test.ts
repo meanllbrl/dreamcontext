@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import {
@@ -488,6 +488,41 @@ describe('runAutomation — completion notifications', () => {
     expect(body).not.toContain(contextRoot);
     // The path travels as the CLICK TARGET instead, which macOS never displays.
     expect(target).toMatch(/\.md$/);
+  });
+
+  /** Register this test's project in the injected home's vault registry, by its REAL path —
+   *  the runner resolves the non-realpath'd tmp contextRoot, so this also pins realpath matching. */
+  const registerVault = (name: string): void => {
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name, path: realpathSync(projectRoot) }] }));
+  };
+
+  it('links a SUCCESS banner to the agent thread and its document, keeping the absolute path as fallback', async () => {
+    registerVault('Kitap Ağacı');
+    const notify = vi.fn();
+    await runToSuccess('linked-ok', notify);
+    const [, , , target, link] = notify.mock.calls[0];
+    expect(target).toMatch(/\.md$/);
+    const rel = relative(contextRoot, target as string).split(sep).join('/');
+    expect(link).toBe(`dreamcontext://project/Kitap%20A%C4%9Fac%C4%B1/automation/linked-ok?file=${encodeURIComponent(rel)}`);
+  });
+
+  it('links a FAILURE banner to the agent thread', async () => {
+    registerVault('v');
+    const manifest = createApproved('linked-fail');
+    const { child } = makeFakeChild(undefined);
+    const notify = vi.fn();
+    await runAutomation(contextRoot, manifest.slug, { now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify });
+    expect(notify.mock.calls[0][2]).toBe(NOTIFY_SOUND_FAILED);
+    expect(notify.mock.calls[0][4]).toBe('dreamcontext://project/v/automation/linked-fail');
+  });
+
+  it('carries NO link for an unregistered project: the fallback file alone, as before', async () => {
+    const notify = vi.fn();
+    await runToSuccess('unlinked-ok', notify);
+    const [, , , target, link] = notify.mock.calls[0];
+    expect(target).toMatch(/\.md$/);
+    expect(link).toBeNull();
   });
 
   it('falls back to naming the output file when the document offers no summary', async () => {

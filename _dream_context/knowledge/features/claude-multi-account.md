@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-09-13'
+updated: '2026-09-30'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -31,6 +31,8 @@ related_tasks:
     auto-switch-brings-the-session-home-when-the-preferred-account-s-window-reopens
   - auto-switch-iki-mod-agirlikli-puan-ve-sirayla-tuketme
   - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim
+  - >-
+    automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands
 ---
 
 ## Why
@@ -83,6 +85,15 @@ and moving before the limit lands did not exist at all.
       code. All three legs are tested.
 - [x] An account whose identity has lapsed (expired, revoked, hand-logged-out) says "needs
       re-login" in the UI rather than showing an ambiguous "unknown" row.
+- [x] A connected account signs in AGAIN without being removed (2026-09-30, Faruk's report:
+      ten sign-ins and the second account stayed signed out). `POST /api/agent/accounts/relogin`
+      runs `claude auth login` into THAT account's sandbox, refuses the machine's own account
+      (`primary_account`, which keeps the terminal flow), refuses a browser sign-in that landed
+      on a different email (`wrong_account`), and updates the row in place so the list order
+      survives. Settings draws "Sign in again" on every connected row; Chat's sign-in banner
+      names the signed-out account and signs it in through the same route, then resumes the
+      conversation. Before this, the banner ran `claude auth login` in a plain shell, which
+      signs in the real `~/.claude` and never the sandbox the chat was running on.
 - [x] With no second account connected, behaviour is bit-for-bit what it was: no sandbox is
       built, no symlink is laid, and no ordinary spawn is rejected.
 - [x] A sandbox's `.claude.json` carries NO MCP configuration at any depth
@@ -99,8 +110,12 @@ and moving before the limit lands did not exist at all.
       before the user confirms. A picker that silently no-ops is not acceptable.
 - [x] The resolved account id joins the session state next to `spawnAuthEpoch`, so the live
       panel can be labelled with the account actually being billed.
-- [x] Automations run on the preferred account — one line in the shared spawn core
-      (`...accountEnv`). Per-automation account pinning is explicitly out of scope (owner call).
+- [x] Automations use every account (2026-09-28, owner report: two runs died at the 5-hour
+      limit with a second account idle). `src/lib/automations/account.ts` makes the chat's
+      `chooseAccount` decision once before the spawn; a run the API refuses records the refusal
+      and continues on the next account (resume if it had worked, fresh if refused on turn 1),
+      one attempt per account inside the one timeout. Verdict/message resumes pick the same way.
+      Per-automation account pinning is still out of scope (owner call).
 
 ### Auto-switch
 
@@ -357,7 +372,7 @@ readers over the refusal frame — structural first, the synthetic assistant TEX
 account), `src/lib/claude-limit-rejections.ts` (`readAccountRejections` /
 `recordAccountRejection` / `clearAccountRejection`, `DEFAULT_COOLDOWN_MS = 20m`),
 `src/lib/claude-usage-probe.ts` (`probeAccountUsage`, incl. the `healthy-unmeasured` outcome),
-`src/server/routes/agent-accounts.ts` (list / login / reorder / refresh, wired at
+`src/server/routes/agent-accounts.ts` (list / login / relogin / reorder / refresh, wired at
 `src/server/index.ts:385-388`), the account-switch block of `src/server/routes/agent-chat.ts`
 (`shouldProbe` / `shouldSwitchAway` / `SWITCH_THRESHOLD_PERCENT`, passing the live `accounts` array
 as `orderedIds`), and the one-line `...accountEnv`

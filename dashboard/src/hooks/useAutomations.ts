@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
 
 /**
  * Automations — the dashboard's read + "run now" + approve surface over
@@ -38,9 +39,11 @@ export type RunStatus =
   | 'awaiting-approval';
 export type Weekday = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 
+/** Every slot the agent fires on (union) — the backend's own type, imported
+ *  rather than mirrored so the two can never drift. */
+export type AutomationScheduleSlot = ScheduleSlot;
 export interface AutomationSchedule {
-  days: 'daily' | Weekday[];
-  at: string;
+  slots: ScheduleSlot[];
 }
 
 /** Why `approved` is false — mirrors registry.ts's `ApprovalVerdict['reason']`. */
@@ -79,6 +82,11 @@ export interface AutomationSummary {
   enabled: boolean;
   schedule: AutomationSchedule | null;
   scheduleLabel: string;
+  /** Which slot is broken when the manifest's schedule does not parse. */
+  scheduleError: string | null;
+  /** The earliest upcoming fire across every slot (ISO); null when on-call,
+   *  paused, or without a valid schedule. Server-computed. */
+  nextFireAt: string | null;
   model: string | null;
   /** On the summary so the Edit dialog can prefill straight from the list
    *  rather than fetching the manifest and flashing a default first. */
@@ -326,13 +334,16 @@ export function useAutomations() {
 }
 
 /** Full manifest (every hashed field for review) + approval state + cache/history. */
-export function useAutomation(slug: string | null) {
+export function useAutomation(slug: string | null, opts: { fresh?: boolean } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: ['automations', slug],
     queryFn: () => api.get<AutomationDetail>(`/automations/${slug}`),
     enabled: !!slug,
     retry: 0,
+    // `fresh`: re-read on every mount even inside the client's 5s staleTime, for a reader
+    // that WRITES what it read back (the edit dialog) and so must never start from a copy.
+    ...(opts.fresh ? { refetchOnMount: 'always' as const } : {}),
   });
 }
 
@@ -504,8 +515,10 @@ export interface AgentDraft {
   title: string;
   prompt: string;
   mode: AutomationMode;
-  days: 'daily' | Weekday[];
-  at: string;
+  /** Every time it fires. Wins over the one-slot `days`/`at`. */
+  slots?: ScheduleSlot[];
+  days?: 'daily' | Weekday[];
+  at?: string;
   model: string | null;
   effort: 'low' | 'medium' | 'high' | null;
 }
@@ -880,6 +893,21 @@ export interface AgentFeed {
    *  is busy with no poll of its own. Different agents run side by side; only the
    *  named agent's own slot refuses a new message. */
   runSlots: Record<string, { runId: string | null; startedAt: number }>;
+  /** Every agent doing something right now, read from its run lock, so a scheduled
+   *  run or a reply turn is as visible as one this window started. Absent on an
+   *  older server. */
+  working?: Record<string, AgentActivity>;
+}
+
+/** What one agent is doing right now. Mirrors `AgentActivity` in
+ *  `src/server/automation-job.ts`. */
+export interface AgentActivity {
+  /** When the turn holding the agent's run lock began, epoch ms. */
+  since: number;
+  /** The run whose thread that turn writes into, when the server knows it. */
+  runId: string | null;
+  /** Replies waiting behind it, oldest first. */
+  queued: { entryId: string; runId: string }[];
 }
 
 /** One row of a posted summary — a figure that moved, not prose. Mirrors
@@ -923,7 +951,12 @@ export function useAgentFeed(
     queryFn: () => api.get<AgentFeed>('/automations/threads'),
     // Fast while a run is in flight — one this window started, or one the feed
     // itself reports holding a slot — so its answer lands as it is written.
-    refetchInterval: (query) => (live || Object.keys(query.state.data?.runSlots ?? {}).length > 0 ? 2_000 : 15_000),
+    refetchInterval: (query) => (
+      live
+      || Object.keys(query.state.data?.runSlots ?? {}).length > 0
+      || Object.keys(query.state.data?.working ?? {}).length > 0
+        ? 2_000 : 15_000
+    ),
     refetchOnWindowFocus: true,
     retry: 0,
   });
@@ -953,11 +986,14 @@ export function useAgentThread(slug: string | null, runId: string | null) {
         /** The feed row's own count, from the same server function. */
         replyCount?: number;
         lastReplyAt?: string | null;
+        /** What the agent is doing right now; null when it is idle. */
+        working?: AgentActivity | null;
       }>(
         `/automations/${slug}/thread?run=${encodeURIComponent(runId ?? '')}`,
       ),
     enabled: !!slug && !!runId,
-    refetchInterval: 15_000,
+    // Fast while the agent works, so its posts and the end of the turn land as they happen.
+    refetchInterval: (query) => (query.state.data?.working ? 2_000 : 15_000),
     retry: 0,
   });
 }
@@ -1007,6 +1043,9 @@ export function useSayInChannel() {
         runId: string;
         slug: string;
         mode: 'sched' | 'call';
+        /** The agent was working: the message went into the thread of the run in
+         *  flight and waits for that turn to end. */
+        queued?: boolean;
       }>('/automations/threads/say', v),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
@@ -1025,6 +1064,8 @@ export interface ReplyJobState {
   runId: string;
   entryId: string;
   status: 'running' | 'ok' | 'refused' | 'failed';
+  /** While running: queued behind the turn ahead of it, or being read. */
+  phase?: 'waiting' | 'delivering';
   /** The server's own sentence on a non-ok settle — never a generic "failed". */
   reason: string | null;
   startedAt: string;

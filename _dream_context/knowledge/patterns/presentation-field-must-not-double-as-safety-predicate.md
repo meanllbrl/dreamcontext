@@ -119,3 +119,7 @@ Display rules are low-stakes and change often. Safety rules are high-stakes and 
 ## Last verified
 
 2026-08-11
+
+## Also: a display field never seeds an editor that writes back (2026-09-30)
+
+The agent list's 600-char `description` preview seeded the Edit dialog, so "Save and re-approve" truncated and approved a 6,700-char prompt. An editor that writes back must load the full source fresh on open (and gate Save until it has); the server should refuse a write that matches a preview truncation (`409 prompt_truncated`). Commit `36bf226a`.

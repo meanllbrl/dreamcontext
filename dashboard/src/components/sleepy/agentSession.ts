@@ -360,7 +360,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
         // `source` is this session's own VAULT: it is what the chip strip keys a background
         // project's alarm off, so a title here would silence the wrong project's chip.
         session.attention = true;
-        raiseAskAttention({ source: vault });
+        raiseAskAttention({ source: vault, sessionId: isShell ? null : session.claudeId });
       }
       notify();
       return;

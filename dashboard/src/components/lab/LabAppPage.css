@@ -2,12 +2,23 @@
    reach into FunnelOverviewPage.css's classes, even though the visual intent
    mirrors it — that file belongs to a different task). */
 
+/* `scrollbar-gutter: stable` is LOAD-BEARING, not polish. This container scrolls,
+   and the app body inside it is an iframe whose HEIGHT the host sets from what the
+   body reports (LabAppFrame ← lab-app-runtime.js). That closes a circle: the frame's
+   height decides whether this container shows its scrollbar → the scrollbar (8px,
+   global.css) decides the frame's WIDTH → the width decides the height the body
+   reports. When the two heights straddle this container's scroll threshold there is
+   no fixed point, and the page flips between the two states at frame rate — measured
+   on the CalBuddy Funnel Explorer's Akış page: ~60 flips/second, the percentage-width
+   bars rescaling by 8px each time, forever. Reserving the gutter takes the scrollbar
+   out of the width and the circle cannot close at any window size. */
 .lab-app-page {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   height: 100%;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: var(--space-4);
 }
 

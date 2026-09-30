@@ -57,7 +57,9 @@ export interface ChatSurfaceActions {
   handoffToDevelop: (cs: ChatSession, taskSlug: string) => void;
   /** `vault` is set only by the dreamcontext Assistant's detail buttons (see `ChatAction`). */
   openAppPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => void;
-  signIn: () => void;
+  /** Sign THIS conversation's account in again. Resolves once the terminal is open or the
+   *  account is signed in and the chat resumed; rejects with the reason it could not. */
+  signIn: (cs?: ChatSession) => Promise<void>;
 }
 
 function ChatPaneHostInner({
@@ -97,7 +99,7 @@ function ChatPaneHostInner({
   const onOpenAppPage = useCallback(
     (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => actions.openAppPage(page, id, vault), [actions],
   );
-  const onSignIn = useCallback(() => actions.signIn(), [actions]);
+  const onSignIn = useCallback(() => actions.signIn(session), [actions, session]);
 
   return (
     <ChatPane

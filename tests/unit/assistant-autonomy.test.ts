@@ -47,8 +47,8 @@ describe('decide — the full matrix', () => {
       for (const tainted of [false, true]) {
         const gated = GATED_VERBS.includes(verb);
         const expected = autonomy === 'bypass' ? 'pass'
-          // chat carries the owner's words only while nothing untrusted was read since.
-          : verb === 'chat' ? (tainted ? 'propose' : 'pass')
+          // chat (and look) carry the owner's request only while nothing untrusted was read since.
+          : verb === 'chat' || verb === 'look' ? (tainted ? 'propose' : 'pass')
             : !gated ? 'pass'
               : autonomy === 'ask' ? 'propose'
                 : tainted ? 'propose' : 'pass';

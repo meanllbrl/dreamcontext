@@ -73,6 +73,7 @@
     "verify:project-chip-status": "node scripts/verify/project-chip-status.mjs",
     "verify:automations": "node scripts/verify/automations.mjs",
     "verify:agents-members": "node scripts/verify/agents-members.mjs",
+    "verify:agent-slots": "node scripts/verify/agent-schedule-slots.mjs",
     "verify:agents-feed": "node scripts/verify/agents-feed.mjs",
     "verify:agent-threads": "node scripts/verify/agent-threads.mjs",
     "verify:agent-attachments": "node scripts/verify/agent-attachments.mjs",

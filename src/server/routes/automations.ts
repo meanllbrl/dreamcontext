@@ -9,6 +9,7 @@ import {
   readPattern,
   setAutomationEnabled,
   deriveFlowFromManifest,
+  flowForDisplay,
   createAutomation,
   updateAutomation,
   removeAutomation,
@@ -42,7 +43,7 @@ import {
   removeNotifierApp,
   NOTIFY_SOUND_OK,
 } from '../../lib/automations/notifier.js';
-import { formatSchedule } from '../../lib/automations/schedule.js';
+import { formatSchedule, nextFire } from '../../lib/automations/schedule.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
 import { allPendingQuestions, claimQuestion, pendingQuestion } from '../../lib/automations/hitl.js';
 import { resumeWithAnswer } from '../../lib/automations/verdict.js';
@@ -58,6 +59,8 @@ import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib
 import {
   startAutomationJob, currentAutomationJob, runningAutomationJobs,
   startAutomationReplyJob, currentReplyJob, reconcileReplyThreads,
+  agentActivity,
+  agentActivities,
 } from '../automation-job.js';
 
 /** The feed's hard ceiling. A channel is read from the bottom: a window past
@@ -80,6 +83,7 @@ import {
   type AutomationQuestion,
   type EffortLevel,
   type FlowGraph,
+  type ScheduleSlot,
   type Weekday,
   THREAD_TEXT_MAX_CHARS,
 } from '../../lib/automations/types.js';
@@ -117,6 +121,11 @@ interface AutomationSummary {
   enabled: boolean;
   schedule: AutomationManifest['schedule'];
   scheduleLabel: string;
+  /** Which slot is broken, when the manifest's schedule does not parse. */
+  scheduleError: string | null;
+  /** The earliest upcoming fire across every slot (ISO), or null when the
+   *  agent is on-call, paused, or has no valid schedule. */
+  nextFireAt: string | null;
   /** What this agent DOES, in the owner's own words — its `## Prompt`, capped.
    *  The dialog writes the prompt from the plain-language description, so the
    *  prompt IS the description and there is no second field to drift from it. */
@@ -211,6 +220,12 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     enabled: m.enabled,
     schedule: m.schedule,
     scheduleLabel: formatSchedule(m.schedule),
+    scheduleError: m.scheduleError ?? null,
+    // The earliest fire across every slot. Server-computed so the card and the
+    // CLI's `list` can never disagree about when an agent next runs.
+    nextFireAt: m.mode === 'call' || !m.enabled || m.schedule === null
+      ? null
+      : (nextFire(m.schedule, new Date())?.toISOString() ?? null),
     mode: m.mode,
     hasPhoto: resolveAutomationPhoto(contextRoot, m.photo) !== null,
     description: m.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
@@ -574,7 +589,7 @@ export async function handleAutomationsFlow(
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
-    const flow: FlowGraph = manifest.flow ?? deriveFlowFromManifest(manifest);
+    const flow: FlowGraph = flowForDisplay(manifest);
     sendJson(res, 200, { flow, derived: manifest.flow === null });
   } catch {
     sendError(res, 500, 'flow_failed', 'Failed to read the automation flow.');
@@ -871,6 +886,13 @@ export async function handleAutomationsDisable(
  *  whole thing, this is the preview. */
 const DESCRIPTION_MAX_CHARS = 600;
 
+/** True when `incoming` is exactly the list preview of a LONGER `current` prompt — see the
+ *  update route. Exported for its unit test. */
+export function isPreviewTruncation(incoming: string, current: string): boolean {
+  const full = current.trim();
+  return full.length > DESCRIPTION_MAX_CHARS && incoming.trim() === full.slice(0, DESCRIPTION_MAX_CHARS).trim();
+}
+
 /** An agent photo is a small square rendered at 56px at its largest. 4 MB is
  *  already absurdly generous for that and bounds what one manifest can pin
  *  into the brain directory. */
@@ -908,6 +930,15 @@ function readDays(v: unknown): 'daily' | Weekday[] | undefined {
   if (bad.length > 0) throw new AutomationError(`Invalid weekday(s): ${bad.join(', ')}.`);
   if (days.length === 0) throw new AutomationError('Pick at least one day, or switch the agent to on-call.');
   return days as Weekday[];
+}
+
+/** `slots` off the wire: a list of slot objects. Shape-checked only — every
+ *  rule lives in the store's `scheduleFromInput`, which both routes reach. */
+function readSlots(v: unknown): ScheduleSlot[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) throw new AutomationError('Invalid slots — expected a list.');
+  if (v.length === 0) throw new AutomationError('Add at least one time, or switch the agent to on-call.');
+  return v as ScheduleSlot[];
 }
 
 function readTimeout(v: unknown): number | undefined {
@@ -996,6 +1027,7 @@ export async function handleAutomationsCreate(
       photo: null,
       days: readDays(body.days) ?? 'daily',
       at: str(body.at) ?? '09:00',
+      slots: readSlots(body.slots),
       model: str(body.model) ?? null,
       effort: readEffort(body.effort) ?? null,
       timeoutMinutes: readTimeout(body.timeoutMinutes),
@@ -1038,13 +1070,26 @@ export async function handleAutomationsUpdate(
     return;
   }
   try {
-    if (!isSafeAutomationSlug(params.slug) || !getAutomation(contextRoot, params.slug)) {
+    const current = params.slug && isSafeAutomationSlug(params.slug) ? getAutomation(contextRoot, params.slug) : null;
+    if (!current) {
       sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+      return;
+    }
+    // The list's `description` IS the prompt cut to DESCRIPTION_MAX_CHARS, and an edit dialog
+    // that seeded its field from it saved that preview back as the prompt and re-approved it
+    // (2026-09-30: a 6,700-character manifest cut mid-word). Any client still built that way
+    // is refused here, before a byte is written: a prompt that is exactly the preview of a
+    // longer one is a truncation, never an edit.
+    const incoming = str(body.prompt);
+    if (incoming !== undefined && isPreviewTruncation(incoming, current.prompt)) {
+      sendError(res, 409, 'prompt_truncated',
+        'This save would replace the prompt with its first 600 characters. Reopen the agent so the full prompt loads, then save again.');
       return;
     }
     const manifest = updateAutomation(contextRoot, params.slug, {
       title: str(body.title),
       mode: readMode(body.mode),
+      slots: readSlots(body.slots),
       days: readDays(body.days),
       at: str(body.at),
       model: body.model === undefined ? undefined : (str(body.model) ?? null),
@@ -1566,7 +1611,11 @@ export async function handleAutomationsThreads(
     const runSlots = Object.fromEntries(runningAutomationJobs(contextRoot).map((j) => [
       j.slug, { runId: j.runId ?? null, startedAt: j.startedAt },
     ]));
-    sendJson(res, 200, { ...buildFeed(contextRoot, { limit }), runSlots });
+    // WHO IS WORKING, from each agent's run lock: every turn, whatever started it. This is
+    // what the channel and the thread draw as "working"; `runSlots` stays the narrower
+    // "which run did this server start" the run-now poll needs.
+    const working = agentActivities(contextRoot);
+    sendJson(res, 200, { ...buildFeed(contextRoot, { limit }), runSlots, working });
   } catch {
     sendError(res, 500, 'feed_failed', 'Failed to read the agents channel.');
   }
@@ -1621,6 +1670,9 @@ export async function handleAutomationsThreadGet(
       replyCount: replies?.count ?? 0,
       lastReplyAt: replies?.lastAt ?? null,
       unread: threadUnread(contextRoot, params.slug),
+      // What the agent is doing right now, so the thread can say "working" and mark the
+      // reader's queued messages. Whole-agent, not per run: the panel compares `runId`.
+      working: agentActivity(contextRoot, params.slug),
     });
   } catch {
     sendError(res, 500, 'thread_failed', 'Failed to read that thread.');
@@ -1729,12 +1781,32 @@ export async function handleAutomationsSay(
     // ── synchronous from here to the job start ──
     // Per AGENT: only a second run of THIS agent is refused — it would write into the same
     // thread and resume the same session. Another agent's run is no reason to wait.
+    //
+    // A message to an agent that is WORKING is not refused any more: it is written into the
+    // thread of the run in flight and queued behind it, exactly as a reply typed in that
+    // thread is. The owner talks to a busy agent the way they would to a busy colleague, and
+    // the words land where the work is. Only when nothing names that run (the moment before
+    // a first run's child spawns) is it still refused.
     const busy = currentAutomationJob(contextRoot, slug);
-    if (busy?.status === 'running') {
-      sendError(
-        res, 409, 'say_busy',
-        `${manifest.title} is still running. Try again when it finishes.`,
-      );
+    const working = agentActivity(contextRoot, slug);
+    if (busy?.status === 'running' || working) {
+      const liveRun = working?.runId
+        ?? (busy?.status === 'running' ? busy.runId : null)
+        ?? listThreadRuns(contextRoot, slug, 1)[0]?.runId
+        ?? null;
+      if (!liveRun || pendingQuestion(contextRoot, slug)?.kind === 'approval') {
+        sendError(
+          res, 409, 'say_busy',
+          `${manifest.title} is still running. Try again when it finishes.`,
+        );
+        return;
+      }
+      const entry = appendThreadEntry(contextRoot, slug, { runId: liveRun, kind: 'user', text, via: 'dashboard' });
+      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id });
+      sendJson(res, 200, {
+        job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
+        started: true, runId: liveRun, slug, mode: manifest.mode, queued: true,
+      });
       return;
     }
     const fireAt = new Date();
@@ -1870,7 +1942,8 @@ export async function handleAutomationsThreadReply(
     // THE MACHINE-LOCAL BINDING IS THE AUTHORITY. Null means no run on THIS machine ever
     // produced a session, so nothing here could carry the reply — and a reply that will
     // never execute must not be left in the channel looking delivered.
-    if (!latestBoundSession(slug)) {
+    // A run in flight is the exception: it is about to bind the session this reply queues for.
+    if (!latestBoundSession(slug) && !agentActivity(contextRoot, slug)) {
       sendError(
         res, 409, 'not_bound',
         `${manifest.title} has no session to talk to yet. It needs one finished run on this machine first.`,

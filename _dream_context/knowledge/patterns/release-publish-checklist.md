@@ -12,10 +12,9 @@ description: >-
   SUPERSEDED row.
 type: knowledge
 tags:
-  - kind:pattern
-  - release
-  - layer:devops
-  - topic:publishing
+  - 'kind:pattern'
+  - 'topic:release'
+  - 'layer:devops'
 pinned: false
 created: '2026-08-26'
 ---

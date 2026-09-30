@@ -107,8 +107,8 @@ export function useAgentsChannelHost(
   send: ChannelSend,
   /** This project's skills and commands, for the `/` menu — see `useProjectSlashCommands`. */
   slashCommands: string[] = [],
-  /** Whether this agent holds its run slot right now. Agents run in parallel, one slot each,
-   *  so the channel refuses only a message to the agent that is already running. */
+  /** Whether this agent is working right now. A message to it is not refused: the server
+   *  writes it into the running thread and queues it, and the note under the field says so. */
   isBusy: (slug: string) => boolean = () => false,
 ): AgentsChannelComposer {
   const live = useRef({ agents, send, slashCommands, isBusy });
@@ -132,8 +132,10 @@ export function useAgentsChannelHost(
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const focusTarget = useRef<HTMLElement | null>(null);
   const [note, setNote] = useState<ChannelNote | null>(null);
+  // A HINT, not a refusal: a message to a working agent is written into the thread of the
+  // run in flight and read when that turn ends. The note says where it goes.
   const busyNote = (target: ComposerAgent): ChannelNote => ({
-    kind: 'error',
+    kind: 'hint',
     text: tRef.current('agents.busy').replace('{name}', target.title),
     busySlug: target.slug,
   });
@@ -206,12 +208,6 @@ export function useAgentsChannelHost(
         // A bare `@agent` with nothing after it is someone mid-sentence, not a request. Refuse
         // rather than starting a run with an empty prompt.
         return refuse(tRef.current('agents.composer.noBody').replace('{name}', target.title));
-      }
-      if (live.current.isBusy(target.slug)) {
-        // The agent named is mid-run, and a second run of one agent would write into the same
-        // thread. Refused HERE, with the draft and chips kept, rather than sent to a 409.
-        setNote(busyNote(target));
-        return false as const;
       }
       lastSent.current = text;
       draft.current = '';

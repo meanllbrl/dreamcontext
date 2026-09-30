@@ -72,7 +72,7 @@ function fakeManifest(overrides: Partial<AutomationManifest> = {}): AutomationMa
     mode: 'sched',
     photo: null,
     enabled: true,
-    schedule: { days: 'daily', at: '18:00' },
+    schedule: { slots: [{ kind: 'weekly', days: 'daily', at: '18:00' }] },
     model: null,
     effort: null,
     timeoutMinutes: 15,
@@ -265,7 +265,7 @@ describe('createAutomation', () => {
     expect(m.slug).toBe('eod-digest');
     expect(m.title).toBe('EOD Digest');
     expect(m.enabled).toBe(true);
-    expect(m.schedule).toEqual({ days: 'daily', at: '18:00' });
+    expect(m.schedule).toEqual({ slots: [{ kind: 'weekly', days: 'daily', at: '18:00' }] });
     expect(m.model).toBeNull();
     expect(m.effort).toBeNull();
     expect(m.timeoutMinutes).toBe(15);
@@ -1161,7 +1161,7 @@ describe('deriveFlowFromManifest', () => {
     const m = createAutomation(contextRoot, { slug: 'eod-digest', title: 'EOD Digest', days: 'daily', at: '18:00' });
     const g = deriveFlowFromManifest(m);
     expect(g.nodes.map((n) => n.kind)).toEqual(['trigger', 'agent', 'report']);
-    expect(g.nodes[0].label).toBe('every day at 18:00');
+    expect(g.nodes[0].label).toBe('daily 18:00');
     expect(g.nodes[1].label).toBe('EOD Digest');
     expect(g.edges).toEqual([{ from: 'trigger', to: 'run' }, { from: 'run', to: 'report' }]);
   });

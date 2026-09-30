@@ -10,7 +10,7 @@ description: >-
 tags:
   - 'topic:agents'
   - 'topic:dashboard'
-  - 'topic:design'
+  - 'kind:design'
 ---
 
 Both dreamcard phrase-map gaps and the `actionText` note are folded in; nothing else changed.

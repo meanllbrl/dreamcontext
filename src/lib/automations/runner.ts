@@ -4,12 +4,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
+import { recordNotification } from '../notification-log.js';
+import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
 import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
-import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
+import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
+import { recordAccountRejection } from '../claude-limit-rejections.js';
+import type { ProbeOutcome } from '../claude-usage-probe.js';
+import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
@@ -17,7 +22,8 @@ import { backfillQuestionSession, createQuestion, pendingQuestion } from './hitl
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
-import { appendThreadEntry, readThreadRun } from './threads.js';
+import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
+import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
   clearRunSidecar,
@@ -74,6 +80,92 @@ const TELEGRAM_SEND_TIMEOUT_MS = 10_000;
 
 // ─── Preamble / prompt composition ──────────────────────────────────────────
 
+/**
+ * How a run's words are SHAPED, said once and reused by every brief that asks an agent to
+ * write for the owner (the run preamble, an ask, a thread reply).
+ *
+ * The owner skims: the channel and the answer card render markdown, and they read the bold
+ * words and the list heads, not the paragraph. Left to itself a run writes the answer as one
+ * dense paragraph with "1) … 2) … 3) …" run together inline, which renders as a wall of text
+ * that reads like a list and is not one (observed 2026-09-29, a Product Owner run). Naming
+ * the anti-shape verbatim is what stops it; "use markdown" alone does not.
+ */
+export const SKIMMABLE_MARKDOWN =
+  ' WRITE TO BE SKIMMED (markdown renders): several items are a real list, one `- ` or `1.` line ' +
+  'each, never "1) … 2) … 3) …" run together inside a paragraph; bold the one word or figure per ' +
+  'line the eye should land on (**$54 CPA**, **bugün**), never whole sentences; short paragraphs.'
+
+/**
+ * The Chat's blocks, as a post can carry them — told to every brief that posts (the run
+ * preamble, an ask, a thread reply).
+ *
+ * The thread renders an agent post with the Chat's own segment parser and cards, so a
+ * `dream-view` run card in a post is the same ▶ and real terminal it is in Chat, and its exit
+ * report comes back as the human's reply. Without this clause a run that needs the owner to
+ * run a command writes "run this in your terminal" as prose (observed 2026-09-30, a recipe
+ * corpus run: two `--apply` commands in a bullet list, nothing to press).
+ */
+export const THREAD_BLOCKS =
+  ' A POST DRAWS THE CHAT\'S BLOCKS: a command only the human can run (a login, an OTP, an ' +
+  '`--apply` they must approve by doing it) is a fenced ```dream-view block ' +
+  '{"type":"run","id":"apply","command":"<one line>","why":"<what makes it theirs>"}, drawn as the ' +
+  'command with a ▶ that opens a real terminal; when it exits, its exit code and output come back ' +
+  'to you as their reply. cwd, if given, is project-relative; for a directory outside the project ' +
+  'write `cd <dir> && …` in the command. Several commands that must run in order are ONE card ' +
+  'joined with `&&`. A credential you need is {"type":"secret","id":"key","title":"<what it is>","fields":' +
+  '[{"key":"NAME"}]}: a masked field the app writes to .env, you get a receipt, never the value. ' +
+  'A diagram is a ```dream-html block. Never write "run this in your terminal" as text.';
+
+/**
+ * How a brief tells its agent to ask for a decision — `review`-aware, because `propose`
+ * refuses under `review: off` and a brief that names a verb the CLI will refuse spends the
+ * run's turn discovering that (observed 2026-09-30: the run proposed, was refused, and fell
+ * back to a plain-text question with nothing to press).
+ */
+export function askClause(m: Pick<AutomationManifest, 'slug' | 'review'>): string {
+  return m.review !== 'off'
+    ? ' To ask for a decision, ask with buttons: ' +
+      `\`dreamcontext automations propose ${m.slug} --title … --body … --choice "A" --choice "B"\` ` +
+      '(≤4, ≤64 chars each), then stop; the answer resumes you. Never post a question as plain ' +
+      'text: it has nothing to press.'
+    : ' This automation cannot stop to ask (review is off, so `propose` refuses): do not call it. ' +
+      'When something needs the human, post what it is and what you recommend; they reply in the ' +
+      'thread, and a command they must run goes in a run card.';
+}
+
+/**
+ * Which slot this fire belongs to, recomputed from the manifest and the fire
+ * moment itself — never carried alongside the fire. That is what keeps it
+ * right through the queue (a parked fire keeps its ORIGINAL `fireAt`) and a
+ * late catch-up (fired at 11:02, still the 09:30 slot). `null` when no slot
+ * names the moment: a manual run, or an on-call agent.
+ */
+export function fireSlotFor(m: Pick<AutomationManifest, 'mode' | 'schedule'>, fireAt: Date): string | null {
+  if (m.mode === 'call') return null;
+  return fireSlotLabel(m.schedule, fireAt);
+}
+
+/** `DREAMCONTEXT_AUTOMATION_SLOT`: the slot label in plain ASCII ("mon-fri
+ *  16:30"), or `manual` when no slot names this fire. */
+export function fireSlotEnv(m: Pick<AutomationManifest, 'mode' | 'schedule'>, fireAt: Date): string {
+  return fireSlotFor(m, fireAt)?.replace(/–/g, '-') ?? 'manual';
+}
+
+/** The preamble's one line on which slot fired. Prompts branch on this, not on
+ *  the wall clock, because a catch-up runs late and the clock then lies. Empty
+ *  for an on-call agent, which has no slots to name. */
+export function buildFireSlotLine(m: Pick<AutomationManifest, 'mode' | 'schedule'>, fireAt: Date): string {
+  if (m.mode === 'call' || m.schedule === null) return '';
+  const label = fireSlotFor(m, fireAt);
+  if (label === null) {
+    return `This fire: a manual run, not one of the scheduled slots (${formatSchedule(m.schedule)}). `;
+  }
+  return (
+    `This fire: the ${label} slot, scheduled for ${formatLocalFire(fireAt)} local time ` +
+    '(also in $DREAMCONTEXT_AUTOMATION_SLOT) — go by the slot, not the wall clock, since a catch-up can run late. '
+  );
+}
+
 export function buildPreamble(
   m: AutomationManifest,
   projectRoot: string,
@@ -88,6 +180,7 @@ export function buildPreamble(
     `You are scheduled dreamcontext automation "${m.title}" in ${projectRoot}. ` +
     'NO user available: never ask, finish autonomously. ' +
     `Fire time ${fireAt.toISOString()}. ` +
+    buildFireSlotLine(m, fireAt) +
     'Brain lives in `_dream_context/`; use the dreamcontext CLI as needed. ' +
     `OUTPUT CONTRACT: your final message is saved verbatim to ${outputPath} — ` +
     'write one complete, self-contained markdown document, with no meta-commentary. ' +
@@ -101,7 +194,9 @@ export function buildPreamble(
     'FIRST LINE: open the document with one plain sentence stating the actual RESULT ' +
     '(the numbers, the finding, what changed) — not "the job ran". That sentence becomes ' +
     'the desktop notification the user reads. Put a heading after it, never before it. ' +
-    'To send a different banner, add a `## Notification` section and it wins.' +
+    'Keep that sentence short: when the answer is several actions, it names the headline and the ' +
+    'actions follow it as a list. To send a different banner, add a `## Notification` section and it wins.' +
+    SKIMMABLE_MARKDOWN +
     // The thread is a CHANNEL a human reads, not a log. Without the "what NOT
     // to post" half of this clause a run narrates itself — "starting now",
     // "step 2 of 4" — and the channel becomes the transcript it exists to
@@ -109,7 +204,8 @@ export function buildPreamble(
     // the floor (zero posts is a valid run) or everything gets posted.
     ' THREAD: this run has a channel the human reads. Post only what is IMPORTANT — a finding, ' +
     'a number that moved, something that needs a decision — with ' +
-    `\`dreamcontext automations post ${m.slug} "<one or two sentences>" [--file <brain-relative path>]\`. ` +
+    `\`dreamcontext automations post ${m.slug} "<the point, in markdown>" [--file <brain-relative path>]\`. ` +
+    'A post is short and follows the same skimmable shape; a newline inside the quotes starts a new line. ' +
     'Your slug and run are already in your environment; no ids needed. Do NOT post progress ' +
     'narration, "starting now", or your whole document (it is saved for them already). ' +
     'Zero posts is the right number for an unremarkable run.' +
@@ -126,10 +222,9 @@ export function buildPreamble(
     'opens in the viewer, markdown in a reader. Save anything you attach NEXT TO your document ' +
     `(${attachmentDirHint(outputPath)}, ` +
     'brain-relative). Also up to 6 key=value rows with --kv — --kv ' +
-    'is for numbers, not prose. To ask with buttons: ' +
-    `\`dreamcontext automations propose ${m.slug} --title … --body … --choice "A" --choice ` +
-    '"B"` (≤4, ≤64 chars each; needs review on). Never post a question as plain text — it ' +
-    'has nothing to press.' +
+    'is for numbers, not prose.' +
+    THREAD_BLOCKS +
+    askClause(m) +
     // Without this line, a run (or its resumed chat) that gets asked "why
     // didn't this reach my Telegram?" concludes — correctly, from its own
     // view — that no Telegram connection exists, and starts recommending the
@@ -236,8 +331,12 @@ function formatRunDuration(ms: number): string {
  * Local time on purpose: `resetsAt` is a moment the user waits for, and an ISO string in
  * UTC is arithmetic they should not have to do.
  */
+function limitWindowLabel(sig: LimitSignal): string {
+  return sig.window === 'session' ? '5-hour' : sig.window === 'weekly' ? 'weekly' : 'account';
+}
+
 function limitReason(sig: LimitSignal): string {
-  const window = sig.window === 'session' ? '5-hour' : sig.window === 'weekly' ? 'weekly' : 'account';
+  const window = limitWindowLabel(sig);
   if (sig.resetsAtMs === null) {
     return `It stopped at the ${window} usage limit. Nothing was published. Try again once the window resets.`;
   }
@@ -289,7 +388,8 @@ function lastAgentPost(
 ): string | null {
   try {
     const posts = readThreadRun(contextRoot, slug, runId).filter((e) => e.kind === 'agent');
-    return posts[posts.length - 1]?.text.trim() || null;
+    // Flattened: the post is markdown for the channel, the banner is one plain line.
+    return plainPostText(posts[posts.length - 1]?.text ?? '') || null;
   } catch (err) {
     logFn(`automation "${slug}": could not read the thread for the banner — ${(err as Error).message}`);
     return null;
@@ -380,10 +480,10 @@ export function buildAskBlock(ask: string, m?: Pick<AutomationManifest, 'slug' |
     'something the job does not cover, do that instead and say so.',
     // THE ANSWER FIRST. The thread shows the post in full and the document folded under
     // it, so the post is what the owner reads: it has to BE the answer, not a pointer.
-    'ANSWER IN THE THREAD: post the direct answer to their question (a few sentences, the names',
-    'and numbers that matter, --kv for the figures). Your final message is still the document and',
-    'it is shown under your post, folded by section, so open it with the same answer and keep the',
-    'detail in sections below.',
+    'ANSWER IN THE THREAD: post the direct answer to their question (the names and numbers that',
+    'matter, --kv for the figures). Your final message is still the document and it is shown under',
+    'your post, folded by section, so open it with the same answer and keep the detail in sections below.',
+    SKIMMABLE_MARKDOWN.trim(),
     // No blanket sign-off on a conversation (the runner skips the gates for an ask), so
     // the agent must not write as if a human approval step follows it.
     'This is a conversation, not an unattended run: no approval step runs after you, and the',
@@ -395,6 +495,7 @@ export function buildAskBlock(ask: string, m?: Pick<AutomationManifest, 'slug' |
         'and stop. That is drawn as buttons; a question written as plain text has nothing to press.',
       ]
       : ['If something needs their go-ahead before it happens, do not do it: say so in your post and stop.']),
+    THREAD_BLOCKS.trim(),
     // The channel's `/` menu offers this project's skills and commands, so a `/name`
     // in the ask is a PICK from that menu, not punctuation. Inside a `-p` brief the
     // CLI will not expand it on its own; without this line the run reads "/whatsapp"
@@ -561,6 +662,22 @@ export function parseClaudeJson(stdout: string): ClaudeResult {
   }
 }
 
+/** Below this much of its timeout left, a limited run ends rather than starting over elsewhere. */
+const MIN_SWITCH_BUDGET_MS = 60_000;
+
+/** What a run moved to another account mid-job is told. Its original instructions are
+ *  already in the conversation it resumes, so this only has to say what happened. */
+const CONTINUE_AFTER_SWITCH_PROMPT = [
+  'Your previous turn was stopped by an account usage limit before the job was finished.',
+  'The run now continues on another account. Carry on from where you stopped and finish the job',
+  'exactly as the original instructions say, ending with the final document they ask for.',
+].join(' ');
+
+/** Resume the run's own session under the same approved envelope (model, effort). */
+function buildContinueArgs(m: AutomationManifest, sessionId: string): string[] {
+  return ['--resume', sessionId, ...buildClaudeArgs(m, CONTINUE_AFTER_SWITCH_PROMPT)];
+}
+
 function buildClaudeArgs(m: AutomationManifest, prompt: string): string[] {
   const args = ['-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'json'];
   if (m.model) args.push('--model', m.model);
@@ -583,9 +700,14 @@ function escapeForAppleScript(s: string): string {
  * the wrong thing about who sent it still beats no notification at all. See
  * `notifier.ts` for why the bundle is needed to get an icon in the first place.
  */
-function defaultNotify(title: string, body: string, home?: string, sound?: string, openTarget?: string | null): void {
+function defaultNotify(
+  title: string, body: string, home?: string, sound?: string, openTarget?: string | null, link?: string | null,
+): void {
   if (process.platform !== 'darwin') return;
-  if (notifyViaBundle(title, body, home ?? homedir(), { sound, openTarget })) return;
+  if (notifyViaBundle(title, body, home ?? homedir(), { sound, openTarget, link })) return;
+  // The osascript banner is still a banner the user saw, so it joins the history the
+  // Notifications window lists, where its link stays clickable even though this one is not.
+  recordNotification({ title, body, link: link ?? null, file: openTarget ?? null }, home ?? homedir());
   try {
     // `sound name` must be OMITTED rather than passed empty — an empty sound
     // name is invalid, not silent, and would fail the whole notification.
@@ -595,6 +717,16 @@ function defaultNotify(title: string, body: string, home?: string, sound?: strin
   } catch {
     /* best-effort */
   }
+}
+
+/**
+ * The banner's `dreamcontext://` link: this agent's thread, plus the document when it lives
+ * inside the brain (a custom output dir outside it cannot ride `?file=`, so the thread alone is
+ * the target and the absolute path stays the fallback). Null for an unregistered project.
+ */
+function automationLink(contextRoot: string, slug: string, file: string | null, home?: string): string | null {
+  const rel = file ? brainRelativePath(contextRoot, file) : null;
+  return appLinkForContextRoot(contextRoot, { kind: 'automation', slug, file: rel }, home);
 }
 
 // ─── Output collection + timeout/kill matrix ────────────────────────────────
@@ -900,7 +1032,9 @@ interface RunOptionsBase {
   fireAt?: Date;
   killImpl?: KillImpl;
   log?: (line: string) => void;
-  notify?: (title: string, body: string, sound?: string, openTarget?: string | null) => void;
+  /** `openTarget` is the fallback file; `link` the `dreamcontext://` link the click opens
+   *  first (null when this project is not a registered vault). */
+  notify?: (title: string, body: string, sound?: string, openTarget?: string | null, link?: string | null) => void;
   /** Injectable so NO test in this repo can reach api.telegram.org (the same
    *  contract `tick.ts` holds for polling). Defaults to the real per-slug
    *  sender, which is a no-op when the automation has no bot configured. */
@@ -910,6 +1044,8 @@ interface RunOptionsBase {
    *  the prompt through `buildAskBlock` and nowhere else — it is not stored,
    *  not hashed, and not replayed. */
   ask?: string | null;
+  /** Injectable so no test spawns a real `claude /usage` while the account is picked. */
+  probeUsage?: (configDir: string) => Promise<ProbeOutcome>;
 }
 
 type RunHostOpts =
@@ -971,9 +1107,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // still cannot reach into the developer's real ~/.dreamcontext.
   const notifyFn =
     opts.notify ??
-    ((t: string, b: string, s?: string, target?: string | null) => defaultNotify(t, b, opts.home, s, target));
+    ((t: string, b: string, s?: string, target?: string | null, link?: string | null) =>
+      defaultNotify(t, b, opts.home, s, target, link));
   const fireAt = opts.fireAt ?? nowFn();
   const home = opts.home;
+  /** Where the account register and the recorded refusals live. */
+  const accountsHome = home ?? homedir();
   // The per-automation Telegram connection (D8), read ONCE per run. It feeds
   // two places: the preamble's channel line (the run must know the connection
   // exists, or a resumed chat asked "why didn't this reach my phone?" denies
@@ -1149,18 +1288,20 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // The click opens the STAGED proposal when there is one, because a
         // macOS `display notification` cannot carry buttons: reading is the
         // only thing a banner can offer, and the proposal is the thing to read.
-        // For an `agent` card there is no staged file, so there is nothing to
-        // open — the queue and Telegram are where that one gets answered.
+        // For an `agent` card there is no staged file; its link still lands on
+        // the thread, which is where that one gets answered (or Telegram).
         //
-        // KNOWN GAP: clicking cannot open the CARD itself. That needs a URL
-        // scheme on the Tauri side, which does not exist yet; noted rather than
-        // faked with a localhost URL that fails whenever the app is closed —
-        // which is exactly when automations fire.
+        // The click opens the app first: `dreamcontext://…/automation/<slug>` lands
+        // on this agent's thread (where the card is answered) and names the same
+        // file for the viewer. The absolute path stays the fallback, so a machine
+        // without the desktop app still opens the document as before.
+        const clickFile = params.reviewCardId ? params.reviewStagedPath ?? null : params.outputPath;
         notifyFn(
           params.reviewCardId ? `${manifest.title} — needs your verdict` : manifest.title,
           summary,
           NOTIFY_SOUND_OK,
-          params.reviewCardId ? params.reviewStagedPath ?? null : params.outputPath,
+          clickFile,
+          automationLink(contextRoot, slug, clickFile, home),
         );
       } else {
         // Capped like the success body. `error` can carry a STDERR_TAIL_BYTES
@@ -1174,6 +1315,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
             : `${reason.slice(0, NOTIFY_BODY_MAX_CHARS - 1).trimEnd()}…`,
           NOTIFY_SOUND_FAILED,
           params.outputPath,
+          automationLink(contextRoot, slug, params.outputPath, home),
         );
       }
     }
@@ -1415,6 +1557,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     mkdirSync(outDir, { recursive: true });
     mkdirSync(outputRootDir(contextRoot), { recursive: true });
 
+    // WHICH ACCOUNT. Picked once, here, so the approval question and the job run on the same
+    // one: the preferred account unless auto-switch says it cannot serve, the same decision a
+    // chat turn makes (`account.ts`). A single-account machine returns at once, with no probe.
+    // `?? await` so the common case spawns in this same tick, exactly as it did before.
+    const accountDeps = { home: accountsHome, probe: opts.probeUsage };
+    let account = automationAccountWithoutProbe(accountDeps) ?? await pickAutomationAccount(accountDeps);
+    ensureSandbox(account.configDir, accountsHome);
+
     // Step 6.5 — the approval question, when the manifest changed under an
     // existing grant. Asks and EXITS: nothing of the job runs here.
     if (needsApprovalQuestion) {
@@ -1424,7 +1574,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         {
           cwd: projectRoot,
           // Same account as the job itself — this child is part of the same automation.
-          env: accountEnvFor(ensureSandbox(resolveConfigDir(null)).configDir),
+          env: accountEnvFor(account.configDir, accountsHome),
           timeoutMs: APPROVAL_QUESTION_TIMEOUT_MS,
           spawnImpl: spawnFn,
           killImpl: killFn,
@@ -1515,25 +1665,24 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // which it calls synchronously before any await for exactly that reason.
     const timeoutMs = manifest.timeoutMinutes * 60_000;
     const claudeArgs = buildClaudeArgs(manifest, prompt);
-    // Automations run on the PREFERRED account, full stop. Per-automation account pinning is
-    // OUT OF SCOPE by owner decision (there is no manifest field, parser or UI for it), and
-    // this one-line resolution is all the feature needs: `resolveConfigDir(null)` is the
-    // preferred account, falling back to account #0 — i.e. today's behaviour on a machine
-    // with one account. `ensureSandbox` short-circuits immediately in that case.
-    const automationConfigDir = resolveConfigDir(null);
-    ensureSandbox(automationConfigDir);
-    const execution = await executeClaudeDetached(claudeArgs, {
+    // Per-automation account PINNING stays out of scope by owner decision (no manifest field,
+    // parser or UI for it): the account is the one `pickAutomationAccount` chose above, and a
+    // limit met mid-run moves the run to the next one below. `firstSpawn` keeps the thread's
+    // root entry to one per fire however many accounts the run passes through.
+    let firstSpawn = true;
+    const runOn = (acct: AutomationAccount, args: string[], budgetMs: number): Promise<ClaudeExecution> => executeClaudeDetached(args, {
       cwd: projectRoot,
       // The two thread vars are HINTS, not capabilities. `automations post`
       // still requires the slug as a positional and validates it, so a leaked
       // or forged env var grants nothing it did not already have — it only
       // spares the run from having to know its own fire time to post.
       env: {
-        ...accountEnvFor(automationConfigDir),
+        ...accountEnvFor(acct.configDir, accountsHome),
         DREAMCONTEXT_AUTOMATION_SLUG: slug,
         DREAMCONTEXT_AUTOMATION_RUN: fireAt.toISOString(),
+        DREAMCONTEXT_AUTOMATION_SLOT: fireSlotEnv(manifest, fireAt),
       },
-      timeoutMs,
+      timeoutMs: budgetMs,
       spawnImpl: spawnFn,
       killImpl: killFn,
       log: logFn,
@@ -1548,7 +1697,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
           fireAt: fireAt.toISOString(),
           startedAt: spawnedAt.toISOString(),
-          timeoutAt: new Date(spawnedAt.getTime() + timeoutMs).toISOString(),
+          timeoutAt: new Date(spawnedAt.getTime() + budgetMs).toISOString(),
         });
 
         // The thread's ROOT entry. It is written here, next to the sidecar,
@@ -1557,10 +1706,14 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // this point (blocked, deferred, the orphan guard) leaves the channel
         // silent, which is the whole reason a still-due automation does not
         // write an entry every five minutes forever.
-        postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', 'Run started.', logFn);
+        if (firstSpawn) postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', 'Run started.', logFn);
+        firstSpawn = false;
 
-        // Step 10 — host wiring.
+        // Step 10 — host wiring. A retry on another account REPLACES the previous child's
+        // registration: that child has exited, and a kill aimed at its group would miss the
+        // one that is actually running.
         if (opts.host === 'server') {
+          untrackFn();
           const killGroup = (): void => {
             try {
               killFn(-(child.pid as number), 'SIGKILL');
@@ -1570,6 +1723,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           };
           untrackFn = opts.registerChild(killGroup);
         } else {
+          if (sigintHandler) process.off('SIGINT', sigintHandler);
+          if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
           sigintHandler = () => {
             try {
               killFn(-(child.pid as number), 'SIGKILL');
@@ -1594,7 +1749,49 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       },
     });
 
-    const { startedAt, finishedAt } = execution;
+
+    let execution = await runOn(account, claudeArgs, timeoutMs);
+    const startedAt = execution.startedAt;
+
+    // THE ACCOUNT SWITCH. A run the API refused on its limit is moved to the next account with
+    // capacity instead of ending there. The refusal is WRITTEN DOWN first, which is what every
+    // chat pane and the next automation also read, so nobody else walks into the same wall.
+    // `tried` bounds the loop at one attempt per account. When nothing is left, the last
+    // execution still carries its limit and the usage-limit gate below reports it.
+    const tried: string[] = [];
+    while (execution.spawned && !execution.timedOut && execution.result?.limit && account.id !== null) {
+      const limit = execution.result.limit;
+      tried.push(account.id);
+      try {
+        recordAccountRejection(account.id, limit, accountsHome);
+      } catch (err) {
+        logFn(`automation "${slug}": could not record the account refusal: ${(err as Error).message}`);
+      }
+      const next = await pickAutomationAccount({ home: accountsHome, probe: opts.probeUsage, exclude: tried });
+      if (next.id === null || tried.includes(next.id)) break;
+      // Every attempt shares the ONE timeout the manifest approved: the run lock goes stale on
+      // that budget, so a retry allowed its own full timeout could overlap the next fire.
+      const budgetMs = timeoutMs - (nowFn().getTime() - startedAt.getTime());
+      if (budgetMs < MIN_SWITCH_BUDGET_MS) break;
+      ensureSandbox(next.configDir, accountsHome);
+      const from = account;
+      account = next;
+      postSystemEntry(
+        contextRoot, slug, fireAt.toISOString(), 'started',
+        `The ${limitWindowLabel(limit)} usage limit stopped it on ${from.label ?? from.id}. Continuing on ${next.label ?? next.id}.`,
+        logFn,
+      );
+      logFn(`automation "${slug}": limit on ${from.id}, continuing on ${next.id}`);
+      // A run that had already done work continues its own conversation (sessions are shared
+      // by every account, so it resumes anywhere); one refused on its first turn starts over,
+      // since there is nothing to continue and a resume of an empty session can fail.
+      const sessionId = execution.result.sessionId;
+      const args = sessionId && (execution.result.numTurns ?? 0) > 1
+        ? buildContinueArgs(manifest, sessionId)
+        : claudeArgs;
+      execution = await runOn(next, args, budgetMs);
+    }
+    const { finishedAt } = execution;
 
     // Step 8 — spawn-failure gate. `child.pid` is null when the exec itself
     // failed. Given §1.1's whole premise, a stale/broken binary is the LIKELY

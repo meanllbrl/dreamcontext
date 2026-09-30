@@ -9,14 +9,22 @@
  * one), and rings the window's doorbell. The window claims the command from the server and
  * posts the result there itself, so the handler answers `null` and sends nothing back.
  *
- * NEVER A CHIP IN SOMEBODY'S WINDOW. A project that is not live anywhere gets its OWN window
+ * AN OPEN PROJECT IS REUSED WHERE IT IS. The owner keeps several projects as tabs of one
+ * window; a command for one of them lands in THAT tab. Where a project lives is asked of the
+ * server first (`GET /api/assistant/windows` — every live instance registers there and
+ * withdraws on unmount), because the browser-side registry is a localStorage heartbeat that
+ * goes stale when macOS throttles a background window's timers: that staleness is what used
+ * to make the notch build a second window for a project already open in a tab. A tab that is
+ * listed but cold is woken in place ({@link ASSISTANT_WAKE_EVENT}).
+ *
+ * NEVER A CHIP IN SOMEBODY'S WINDOW. A project that is not open anywhere gets its OWN window
  * (`openVaultWindow`), so the per-window chip ceiling can never refuse the assistant; if even
  * the own window cannot be built, the answer is `ceiling`, which the assistant says aloud.
  */
 import type { AssistantCommandHandler } from '../sleepy/chatSession';
 import { openVaultWindow, sendDesktopNotification, vaultWindowLabel } from '../../lib/desktop';
-import { resolveLiveWindowForVault } from '../../lib/windowRegistry';
-import { ASSISTANT_COMMAND_EVENT } from '../../lib/assistantBridge';
+import { findOpenProject } from '../../lib/openProject';
+import { ASSISTANT_COMMAND_EVENT, ASSISTANT_WAKE_EVENT } from '../../lib/assistantBridge';
 import { tileWindows, type TileLayout } from './tile';
 
 /** How long a window gets to register its nonce after being found / built. Inside the
@@ -42,21 +50,10 @@ async function bind(id: string, vault: string, label: string, withinMs: number):
   }
 }
 
-/** Find (or build) the window that holds `vault`, bind the command to it, ring it. */
-async function ringDoorbell(id: string, vault: string, newWindow: boolean): Promise<Out> {
-  let label = newWindow ? null : await resolveLiveWindowForVault(vault);
-  // Already live somewhere: that window registered its nonce when the project mounted.
-  let bound = label ? await bind(id, vault, label, 3_000) : false;
-  if (!bound) {
-    try {
-      await openVaultWindow(vault);
-    } catch (err) {
-      return { ok: false, error: `ceiling: could not open a window for ${vault} (${err instanceof Error ? err.message : String(err)})` };
-    }
-    label = vaultWindowLabel(vault);
-    bound = await bind(id, vault, label, BIND_WINDOW_MS);
-  }
-  if (!bound || !label) return { ok: false, error: `${vault} did not come up in its window in time` };
+/** Re-exported: callers that already import it from here keep working. */
+export { findOpenProject };
+
+async function emitDoorbell(id: string, vault: string, label: string): Promise<Out> {
   try {
     const { emitTo } = await import('@tauri-apps/api/event');
     await emitTo(label, ASSISTANT_COMMAND_EVENT, { commandId: id, vault });
@@ -64,6 +61,34 @@ async function ringDoorbell(id: string, vault: string, newWindow: boolean): Prom
     return { ok: false, error: `could not reach the ${vault} window (${err instanceof Error ? err.message : String(err)})` };
   }
   return null;
+}
+
+/** Find (or build) the window that holds `vault`, bind the command to it, ring it. */
+async function ringDoorbell(id: string, vault: string, newWindow: boolean): Promise<Out> {
+  if (!newWindow) {
+    const { live, cold } = await findOpenProject(vault);
+    // Already live in a tab somewhere: that instance registered its nonce when it mounted.
+    for (const label of live) {
+      if (await bind(id, vault, label, 3_000)) return emitDoorbell(id, vault, label);
+    }
+    // Listed in a window but cold: rebuild the tab THERE, then bind once it has registered.
+    const holder = cold ?? live[0] ?? null;
+    if (holder) {
+      try {
+        const { emitTo } = await import('@tauri-apps/api/event');
+        await emitTo(holder, ASSISTANT_WAKE_EVENT, { vault });
+        if (await bind(id, vault, holder, BIND_WINDOW_MS)) return emitDoorbell(id, vault, holder);
+      } catch { /* the window went away — fall through to its own window */ }
+    }
+  }
+  try {
+    await openVaultWindow(vault);
+  } catch (err) {
+    return { ok: false, error: `ceiling: could not open a window for ${vault} (${err instanceof Error ? err.message : String(err)})` };
+  }
+  const label = vaultWindowLabel(vault);
+  if (!(await bind(id, vault, label, BIND_WINDOW_MS))) return { ok: false, error: `${vault} did not come up in its window in time` };
+  return emitDoorbell(id, vault, label);
 }
 
 /** Listeners for `notify` — the pill pulses on an `attention` one. */

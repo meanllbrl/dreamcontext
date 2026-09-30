@@ -364,6 +364,27 @@ describe('review: output asks the human before publishing', () => {
     expect(notify.mock.calls[0][3]).toBeNull();
   });
 
+  it('a verdict banner still LANDS somewhere: the agent thread where the question is answered', async () => {
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'gate', path: projectRoot }] }));
+    const m = makeApproved('digest', 'agent');
+    const impl = vi.fn(() => {
+      openQuestion('digest', { sessionId: null, question: 'Send the mail?', runFiredAt: NOW.toISOString() });
+      const stdout = new EventEmitter();
+      const stderr = new EventEmitter();
+      const child = Object.assign(new EventEmitter(), { pid: 4321, stdout, stderr, kill: () => {} });
+      setImmediate(() => {
+        stdout.emit('data', Buffer.from(OK_JSON, 'utf-8'));
+        child.emit('close', 0);
+      });
+      return child;
+    }) as unknown as SpawnImpl;
+    const notify = vi.fn();
+    await run(m.slug, impl, { notify });
+    expect(notify.mock.calls[0][0]).toMatch(/needs your verdict/);
+    expect(notify.mock.calls[0][4]).toBe('dreamcontext://project/gate/automation/digest');
+  });
+
   it('a FAILED run publishes nothing and asks nothing', async () => {
     const m = makeApproved('digest', 'output');
     const { impl } = fakeSpawn(JSON.stringify({ result: 'broke', is_error: true, session_id: SESSION }));

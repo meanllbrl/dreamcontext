@@ -115,6 +115,8 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 | `tasks rice <name>` | Print or update RICE values. `--reach`/`--impact`/`--confidence`/`--effort`, `--clear`. |
 | `tasks start <name> <YYYY-MM-DD\|clear>` | Set or clear a planned start date (range start). A start past the due date pushes the due date out by just enough to keep the window's length — it is never rejected. Setting it removes the `backlog` tag. |
 | `tasks due <name> <YYYY-MM-DD\|clear>` | Set or clear a due/end date (range end). Must be ≥ the start date. |
+| `tasks priority <name> [critical\|high\|medium\|low]` | Print (no value) or change priority on an existing task. Same values as `PATCH /api/tasks`; logs `priority: old -> new` to the task changelog, bumps `updated_at`, and the next `tasks sync` pushes it (ClickUp native priority). Same value = no-op; an invalid value exits 1. |
+| `tasks urgency <name> [critical\|high\|medium\|low]` | Same as `tasks priority`, for urgency (ClickUp: the urgency custom field). |
 | `tasks objectives <name> [slugs\|clear]` | Print, set (comma-separated, validated against `core/objectives/`), or clear the roadmap objectives a task serves. LOCAL-ONLY — never synced to a cloud backend. |
 | `tasks tag <name> <tags...>` | Add (or `--remove`) tags. `person:<slug>` assigns a person. |
 | `tasks field <name> <key> [value\|clear]` | Set or clear a user-defined custom field declared in `overrides/task.md` (synced to ClickUp/GitHub). Validates select options + number types. |
@@ -213,9 +215,10 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 
 | Command | Description |
 |---|---|
-| `automations create <slug>` | Scaffold a new automation manifest, private and auto-approved on this machine. `--title <title>` (required), `--mode <sched\|call>` (`sched` runs on a schedule and is the default; `call` has NO schedule — the dispatcher never fires it and it runs only when you call it), `--days <daily\|mon,wed>` (schedule days, required unless `--mode call`), `--at <HH:MM>` (24h local, required unless `--mode call`), `--photo <path>` (agent photo, brain-relative under `automations/photos/`; omit for initials), `--model <model>` (default: let claude pick), `--effort <level>` (`low\|medium\|high\|xhigh\|max`, default: let claude pick), `--timeout <minutes>` (1-60, default 15), `--catchup <hours>` (1-168, default 6), `--prompt-file <path>` (read the `## Prompt` body from this file instead of the scaffold stub), `--shared` (publish the manifest, cache, and output immediately instead of staying private), `--no-notify` (stay silent when a scheduled run finishes; notifies on completion by default), `--disabled` (create with `enabled: false`). |
-| `automations list` | List automations with schedule, approval, sharing state, and last-run status. `--json`. |
-| `automations show <slug>` | Show one automation's manifest, cache, approval, sharing state, and orphan state. `--json`, `--history <n>` (default 5). |
+| `automations create <slug>` | Scaffold a new automation manifest, private and auto-approved on this machine. `--title <title>` (required), `--mode <sched\|call>` (`sched` runs on a schedule and is the default; `call` has NO schedule — the dispatcher never fires it and it runs only when you call it), `--slot <spec>` (a fire slot, repeatable — the agent is due at every one: `mon@09:30`, `mon-fri@16:30`, `daily@07:00`, `2w:mon@10:00` / `2w/2026-09-28:mon@10:00` every N weeks, `month:1,15,last@09:00` days of the month, `month:1st-mon@09:30` / `month:last-fri@17:00` nth weekday, `cron:30 9 * * 1`; a scheduled agent needs `--slot` or `--days`+`--at`), `--days <daily\|mon,wed\|mon-fri>` + `--at <HH:MM>` (the one-slot shorthand; not combinable with `--slot`), `--photo <path>` (agent photo, brain-relative under `automations/photos/`; omit for initials), `--model <model>` (default: let claude pick), `--effort <level>` (`low\|medium\|high\|xhigh\|max`, default: let claude pick), `--timeout <minutes>` (1-60, default 15), `--catchup <hours>` (1-168, default 6), `--prompt-file <path>` (read the `## Prompt` body from this file instead of the scaffold stub), `--shared` (publish the manifest, cache, and output immediately instead of staying private), `--no-notify` (stay silent when a scheduled run finishes; notifies on completion by default), `--disabled` (create with `enabled: false`). |
+| `automations list` | List automations with every slot (`mon 09:30 · mon–fri 16:30`), the next fire (earliest across slots), approval, sharing state, and last-run status. A broken slot prints as `invalid schedule (slot N: …)`. `--json` (each row carries `nextFireAt`). |
+| `automations show <slug>` | Show one automation's manifest, slots (each with its `--slot` string), next fire, cache, approval, sharing state, and orphan state. `--json`, `--history <n>` (default 5). |
+| `automations schedule <slug>` | Show or edit an automation's slots without touching YAML. No flags: list them numbered. `--add <spec>` (repeatable) adds, `--remove <n>` (repeatable, 1-based) removes, `--slot <spec>` (repeatable) replaces them all, `--days <d> --at <HH:MM>` replaces them with one weekly slot. `--json`. Never re-approves — the schedule is not approval-hashed. |
 | `automations run <slug>` | Run one automation now. `-f/--force` bypasses dueness and sleep-deference only, never approval and never the orphan guard. |
 | `automations tick [slug]` | Simulate a dispatcher tick: evaluate dueness and run whatever is due (never forces). `[slug]` ticks only that automation in the current project; omit for the whole project. `-a/--all` ticks every project registered on this machine. `--json`. |
 | `automations enable <slug>` / `automations disable <slug>` | Enable (tick considers it again) or disable (tick skips it; approval untouched) an automation. |
@@ -226,11 +229,11 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 | `automations telegram setup <slug>` | Point a Telegram bot at ONE automation, so its questions reach you when you are not at the Mac. Stored at `~/.dreamcontext/telegram/<slug>.json`, mode 0600, machine-local, never synced. `--token <token>`, `--chat <id>` (the only chat allowed to answer). The token is a capability: it can resume a `bypassPermissions` session on this machine, which is exactly why it is not in the brain. |
 | `automations telegram test <slug>` / `automations telegram off <slug>` | Post this automation's waiting question now and report what its bot can see / forget this automation's bot token and stop its channel. |
 | `automations session <slug>` | Show the claude session a run actually had — its turns, tool calls, and errors. |
-| `automations post <slug> "<text>" [--file <brain-relative>] [--kv key=value] [--run <id>]` | Post to this agent's channel — the ONE way anything reaches it on the agent's own behalf. A run calls this about itself and needs no ids: the runner exports `DREAMCONTEXT_AUTOMATION_SLUG`/`_RUN`, which are HINTS (the slug positional is still required and validated). With no run resolvable it exits non-zero and writes nothing rather than inventing one. `--file` is repeatable up to 4 (brain-relative, refused if it is a symlink or resolves outside the brain); `--kv` is repeatable up to 6 and renders as a key/value block — figures only, split on the first `=`, both halves required. Over either cap exits non-zero and writes nothing. |
+| `automations post <slug> "<text>" [--file <brain-relative>] [--kv key=value] [--run <id>]` | Post to this agent's channel — the ONE way anything reaches it on the agent's own behalf. A run calls this about itself and needs no ids: the runner exports `DREAMCONTEXT_AUTOMATION_SLUG`/`_RUN` (plus `DREAMCONTEXT_AUTOMATION_SLOT`, the slot that fired, e.g. `mon 09:30`, or `manual`), which are HINTS (the slug positional is still required and validated). With no run resolvable it exits non-zero and writes nothing rather than inventing one. `--file` is repeatable up to 4 (brain-relative, refused if it is a symlink or resolves outside the brain); `--kv` is repeatable up to 6 and renders as a key/value block — figures only, split on the first `=`, both halves required. Over either cap exits non-zero and writes nothing. |
 | `automations thread <slug> [--run <id>] [--limit N] [--json]` | Read a channel, or one run's thread, in id order. |
 | `automations read <slug> [--up-to <id>]` | Clear this MACHINE's unread for that channel. Monotonic — an older id never rewinds the mark. |
 | `automations pattern <slug>` / `automations learn <slug>` | Show what this automation has learned (its playbook and lesson ledger) / record a lesson into it. A run calls `learn` on itself; the pattern's CONTENTS are deliberately not approval-hashed, since they change every run by design — the `learning` switch that admits them is. |
-| `automations propose <slug> [--choice <text>]` | Stop and ask a human before acting. A run calls this about itself; it cannot be called by hand (a process-group probe refuses a nested call). `--choice` is repeatable up to 4, 64 chars each, and turns the question into buttons in the channel; over either cap exits non-zero and creates nothing. Refused entirely under `review: off` — buttons nobody is watching for are still nobody watching. |
+| `automations propose <slug> [--choice <text>]` | Stop and ask a human before acting. A run calls this about itself; it cannot be called by hand (the caller must descend from the run's own child process, so a human shell, another run or a daemon that left the run is refused). `--choice` is repeatable up to 4, 64 chars each, and turns the question into buttons in the channel; over either cap exits non-zero and creates nothing. Refused entirely under `review: off` — buttons nobody is watching for are still nobody watching. |
 | `automations share <slug>` | Publish this automation: flips `shared` to `true` and publishes its manifest, cache, and output together. |
 | `automations unshare <slug>` | Stop publishing this automation from this machine. Prints a warning that this is not retroactive: anything already committed and pushed stays in git history. `-y/--yes` skips the interactive confirmation. |
 | `automations kill <slug>` | Kill a previous run's orphaned process group, read from its recorded sidecar. Never guesses with `pgrep`/`pkill`. `-y/--yes` skips confirmation, `--force` kills even when the sidecar is old enough that its process-group id may have been recycled. |
@@ -431,6 +434,7 @@ Verbs for the Assistant that lives in the desktop app's notch, above every proje
 | `assistant focus <vault>` | Bring a project's window to the front. |
 | `assistant tile <vault…> [--layout columns\|rows\|grid]` | Place project windows on the notch's monitor. |
 | `assistant notify "<text>" [--level info\|attention]` | A notice in the notch; `attention` pulses the pill. |
+| `assistant look [--display <n>]` | Screenshot the owner's screen(s) (macOS) and print the image paths to Read. Only on the owner's own request: gated like `chat`, a proposal once the session has read project output. No Screen Recording permission → `screen_permission`, and the Privacy pane opens. Shots are deleted after 30 min. |
 
 Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `answer` / `broadcast` run or become a proposal the owner approves in the notch; project-derived output comes back wrapped in `<untrusted-project-output>`.
 
@@ -474,6 +478,34 @@ Orchestrator commands: `council create` (`--rounds N`, `--interrupt`, `--options
 Persona helpers: `round-context` (now includes verdict landscape + injected facts + pending directives), `council verdict <id> <slug> <round> --stance <s> --conviction <n> --headline "<h>" [--concession "<c>"]` (submit BEFORE `report append`; idempotent per round+slug), `report append` (warns when the round's verdict is missing; accepts an optional `### Cross-examination` subsection), `summaries` (appends per-persona stance/conviction lines), `research add|list`.
 
 The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-changing commands; the app's live chamber panel renders from it, in BOTH agent renderers — above the composer in Terminal view, on the live rail in Chat view (the panel is scoped to the conversation that started the debate, so it only appears in the orchestrator's own pane). No browser viewer.
+
+---
+
+## Notifications
+
+`dreamcontext notify <title> [body]` posts a macOS banner through the branded `dreamcontext` notifier, and clicking it opens a `dreamcontext://` link in the desktop app, so the banner lands in the exact chat, thread or page instead of only raising the app. Works in any directory: no `_dream_context/` is needed, because the vault comes from the registry (`~/.dreamcontext/vaults.json`).
+
+| Flag | What the click opens |
+|---|---|
+| (none) | The Notifications window, which lists recent banners (`dreamcontext://inbox`). |
+| `--vault <name>` | That registered project (a registered NAME, never a path). Without it, the vault that contains the cwd is used for the flags below. |
+| `--session <claudeId>` | That Claude Code chat tab, brought forward if open, resumed if closed. |
+| `--session-stdin` | Same, reading `session_id` and `cwd` from a Claude Code hook payload on stdin (its `message` becomes the body when none is given). |
+| `--automation <slug>` | That automation's thread on the Automations page. With `--file` inside the brain, the document also opens in the viewer window. |
+| `--file <path>` | The document the banner is about: inside the project it opens in the viewer window; it is also the fallback the click opens when no app claims the link. |
+| `--link <url>` | An explicit, validated `dreamcontext://` link (not combinable with `--session`/`--automation`). |
+| `--sound <name>` | A system sound name (default `Glass`), or `none` for silence. |
+
+Builds the notifier on first use (and rebuilds a stale one), printing the macOS permission line the first time: macOS files an unauthorised banner silently. Exits 1 when nothing was posted (a refused flag, an unbuildable notifier), so a hook can branch on it; off macOS it is a no-op that exits 0.
+
+```bash
+# Claude Code Stop hook: "Claude finished" lands on that chat tab
+dreamcontext notify "Claude finished" --session-stdin
+```
+
+**The link grammar** (the desktop app drops anything else whole; total length at most 4096): `dreamcontext://project/<vault>`, `…/session/<claudeId>`, `…/automation/<slug>[?file=<brain-relative path>]`, `…/page/<sleep|automations|tasks|knowledge|core|lab|roadmap|hypotheses|settings>[/<id>]` (an id only for tasks, knowledge, core), `…/view?path=<project-relative path>`, and `dreamcontext://inbox`. `<vault>` is the registered name, percent-encoded UTF-8.
+
+Every posted banner is appended to `~/.dreamcontext/notifications.jsonl` (`{id, at, title, body, link, file}`, the newest 200, machine-local, never synced). The app reads it with `GET /api/notifications?limit=50` (`{notifications: [...]}`, newest first) and posts its own routable banners with `POST /api/notify {title, body, link?, sound?}` (`{posted}`; `posted:false` means no notifier here). Both routes are desktop-only and never build the notifier. Automation completion, verdict and failure banners, resumed-turn banners and background-sleep banners carry their links automatically when the project is a registered vault.
 
 ---
 

@@ -7,7 +7,6 @@ import { createAutomation, writeRunSidecar } from '../../src/lib/automations/sto
 import { appendThreadEntry, readThread, threadUnread } from '../../src/lib/automations/threads.js';
 import { listQuestions, QUESTION_CHOICE_MAX_CHARS, QUESTION_CHOICES_MAX } from '../../src/lib/automations/hitl.js';
 import { THREAD_SUMMARY_MAX_ROWS } from '../../src/lib/automations/types.js';
-import { defaultPgidProbe } from '../../src/lib/automations/verdict.js';
 
 /**
  * `automations post` — the ONE way anything reaches a channel on an agent's
@@ -245,17 +244,17 @@ describe('automations post --kv — the summary block', () => {
 });
 
 describe('automations propose --choice — the buttons a run offers', () => {
-  /** A live sidecar for THIS process, so `proposeFromRun`'s process-group guard
-   *  sees its own caller. Without it every propose below refuses as "not from
-   *  inside the run", and the choice assertions would pass for the wrong reason. */
+  /** A live sidecar naming THIS process's parent as the run child, so
+   *  `proposeFromRun`'s ancestry guard sees its own caller (the CLI runs in
+   *  process here, and a process is never its own ancestor). Without it every
+   *  propose below refuses as "not from inside the run", and the choice
+   *  assertions would pass for the wrong reason. */
   function sidecarForThisProcess(slug: string): void {
-    const pgid = defaultPgidProbe(process.pid);
-    if (pgid === null) throw new Error('cannot read this process group — the propose guard cannot be satisfied');
     writeRunSidecar(contextRoot, slug, {
       slug,
       runnerPid: process.pid,
-      childPid: process.pid,
-      childPgid: pgid,
+      childPid: process.ppid,
+      childPgid: process.ppid,
       fireAt: RUN_ID,
       startedAt: RUN_ID,
       timeoutAt: '2099-01-01T00:00:00.000Z',

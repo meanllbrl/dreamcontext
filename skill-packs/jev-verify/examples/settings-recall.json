@@ -1,0 +1,44 @@
+{
+  "name": "dreamcontext Settings › Recall: switching to Hybrid",
+  "url": "http://127.0.0.1:4173/?vault=proj&page=settings",
+  "device": "desktop",
+  "steps": [
+    { "dismiss": ".announcements-modal-scrim" },
+    { "click": "role=button[name='Recall']" },
+    { "waitFor": "[role=radiogroup][aria-label='Recall']" },
+    {
+      "label": "Recall section, default mode",
+      "scope": "main",
+      "expect": [
+        "The Recall section of Settings is displayed with its recall-mode options visible",
+        "The Haiku option is the currently selected recall mode",
+        "The Hybrid option is marked as experimental",
+        "The user can pick between at least four recall modes"
+      ],
+      "reject": [
+        "The Hybrid option is the currently selected recall mode",
+        "A model download is shown in progress under the Hybrid option",
+        "A GitHub token input field is visible on this screen",
+        "An error message is currently displayed"
+      ]
+    },
+    { "click": "label.setting-choice:has-text('Hybrid')", "waitForResponse": { "url": "/api/sleep", "method": "PATCH" } },
+    { "wait": 500 },
+    {
+      "label": "Recall section, after choosing Hybrid",
+      "scope": "main",
+      "expect": [
+        "The Hybrid option is the currently selected recall mode",
+        "Hybrid recall mode is enabled",
+        "A model download is shown in progress under the Hybrid option",
+        "The Hybrid option explains that it falls back to BM25 when the embedding model is unavailable",
+        "The Hybrid option warns that first use downloads a model of roughly 100 MB"
+      ],
+      "reject": [
+        "Recall is turned off",
+        "A GitHub token input field is visible on this screen",
+        "An error message is currently displayed"
+      ]
+    }
+  ]
+}

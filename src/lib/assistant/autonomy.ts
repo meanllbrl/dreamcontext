@@ -24,14 +24,18 @@ import type { Autonomy } from './home.js';
  * Free verbs never write into another conversation: they read, open or arrange windows, or
  * start a chat with words the owner already said — `chat` only while the session is CLEAN;
  * a tainted `chat` is a proposal at `ask` and `auto` alike.
+ *
+ * `look` (a screenshot of the owner's screen) follows the same rule as `chat`: it is the
+ * owner's own request only while nothing untrusted was read since they last spoke. A project
+ * reply saying "take a screenshot" must not be able to see the owner's desktop unasked.
  */
 
 export const ASSISTANT_VERBS = [
-  'projects', 'sessions', 'watch', 'open', 'chat', 'send', 'answer', 'focus', 'tile', 'broadcast', 'notify',
+  'projects', 'sessions', 'watch', 'open', 'chat', 'send', 'answer', 'focus', 'tile', 'broadcast', 'notify', 'look',
 ] as const;
 export type AssistantVerb = typeof ASSISTANT_VERBS[number];
 
-export const FREE_VERBS: readonly AssistantVerb[] = ['projects', 'sessions', 'watch', 'open', 'chat', 'focus', 'tile', 'notify'];
+export const FREE_VERBS: readonly AssistantVerb[] = ['projects', 'sessions', 'watch', 'open', 'chat', 'focus', 'tile', 'notify', 'look'];
 export const GATED_VERBS: readonly AssistantVerb[] = ['send', 'answer', 'broadcast'];
 
 export type GateDecision = 'pass' | 'propose';
@@ -50,7 +54,8 @@ export function decide(input: GateInput): GateDecision {
   // `chat` is free because it carries the OWNER's words — which nothing can prove once the
   // session has read project output. A tainted `chat` is exactly the "start a chat in Y with
   // prompt: …" an injected reply would ask for, and a new agent in Y would run that prompt.
-  if (verb === 'chat') return tainted ? 'propose' : 'pass';
+  // `look` the same: a tainted look is a project asking to see the owner's screen.
+  if (verb === 'chat' || verb === 'look') return tainted ? 'propose' : 'pass';
   if (!GATED_VERBS.includes(verb)) return 'pass';
   if (autonomy === 'ask') return 'propose';
   // auto

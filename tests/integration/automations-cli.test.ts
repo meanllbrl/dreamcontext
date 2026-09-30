@@ -267,6 +267,56 @@ describe('automations CLI (integration)', () => {
     expect(approveOut.stdout).toMatch(/already approved/i);
   });
 
+  it('create --slot (repeatable) → list/show every slot + next fire → schedule add/remove/replace, no re-approval', () => {
+    const createOut = run(
+      ['automations', 'create', 'funnel', '--title', 'Funnel', '--slot', 'mon@09:30', '--slot', 'mon-fri@16:30'],
+      projectDir, home,
+    );
+    expect(createOut.exitCode).toBe(0);
+    const manifestPath = join(projectDir, '_dream_context', 'automations', 'funnel.md');
+    expect(readFileSync(manifestPath, 'utf-8')).toContain('slots:');
+
+    const listOut = run(['automations', 'list'], projectDir, home);
+    expect(listOut.stdout).toContain('mon 09:30 · mon–fri 16:30');
+    expect(listOut.stdout).toMatch(/next (Mon|Tue|Wed|Thu|Fri) \d{4}-\d{2}-\d{2} (09:30|16:30)/);
+    const rows = JSON.parse(run(['automations', 'list', '--json'], projectDir, home).stdout);
+    expect(rows[0].nextFireAt).toMatch(/^\d{4}-/);
+
+    const showOut = run(['automations', 'show', 'funnel'], projectDir, home);
+    expect(showOut.stdout).toContain('slot 2: mon–fri 16:30');
+    expect(showOut.stdout).toMatch(/next fire: /);
+
+    // --slot and --days/--at are two answers to one question.
+    const both = run(['automations', 'create', 'x', '--title', 'X', '--slot', 'mon@09:30', '--days', 'daily', '--at', '09:00'], projectDir, home);
+    expect(both.exitCode).toBe(1);
+    expect(both.stdout).toMatch(/--slot and --days\/--at/);
+    const bad = run(['automations', 'create', 'y', '--title', 'Y', '--slot', 'month:0@09:00'], projectDir, home);
+    expect(bad.exitCode).toBe(1);
+    expect(bad.stdout).toMatch(/monthdays/);
+
+    // Edit without touching YAML: add a biweekly and a monthly slot, remove one.
+    const added = run(['automations', 'schedule', 'funnel', '--add', '2w/2026-09-28:mon@10:00', '--add', 'month:1,15,last@09:00'], projectDir, home);
+    expect(added.exitCode).toBe(0);
+    expect(added.stdout).toContain('every 2 weeks mon 10:00');
+    expect(added.stdout).toContain('monthly 1, 15, last 09:00');
+    const removed = run(['automations', 'schedule', 'funnel', '--remove', '1', '--json'], projectDir, home);
+    const after = JSON.parse(removed.stdout);
+    expect(after.label).toBe('mon–fri 16:30 · every 2 weeks mon 10:00 · monthly 1, 15, last 09:00');
+    expect(after.nextFireAt).toMatch(/^\d{4}-/);
+    expect(run(['automations', 'schedule', 'funnel', '--remove', '9'], projectDir, home).stdout).toMatch(/no slot 9/);
+
+    // Replace everything; the agent stays approved (the schedule is not hashed).
+    const replaced = run(['automations', 'schedule', 'funnel', '--slot', 'cron:30 9 * * 1'], projectDir, home);
+    expect(replaced.stdout).toContain('cron 30 9 * * 1');
+    expect(run(['automations', 'show', 'funnel'], projectDir, home).stdout).toMatch(/approval:\s*approved/i);
+
+    // The one-slot shorthand writes the legacy shape back.
+    run(['automations', 'schedule', 'funnel', '--days', 'mon-fri', '--at', '16:30'], projectDir, home);
+    const raw = readFileSync(manifestPath, 'utf-8');
+    expect(raw).not.toContain('slots:');
+    expect(run(['automations', 'list'], projectDir, home).stdout).toContain('mon–fri 16:30');
+  }, 60_000); // a dozen real CLI subprocesses — the 5s default trips under a loaded full-suite run
+
   it('approve shows every hashed field after a manifest edit, and refuses non-interactively without --yes', () => {
     run(
       ['automations', 'create', 'weekly-report', '--title', 'Weekly Report', '--days', 'fri', '--at', '17:00'],

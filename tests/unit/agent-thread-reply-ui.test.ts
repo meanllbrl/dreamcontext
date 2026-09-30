@@ -32,6 +32,7 @@ const TABS = 'dashboard/src/components/sleepy/AgentTabs.tsx';
 const SURFACE = 'dashboard/src/components/sleepy/AgentSurface.tsx';
 const PAGE = 'dashboard/src/pages/AutomationsPage.tsx';
 const HOOKS = 'dashboard/src/hooks/useAutomations.ts';
+const FEED = 'dashboard/src/components/agents/AgentsFeed.tsx';
 
 /**
  * Source with COMMENTS removed but strings kept.
@@ -54,6 +55,7 @@ const tabs = code(read(TABS));
 const surface = code(read(SURFACE));
 const page = code(read(PAGE));
 const hooks = code(read(HOOKS));
+const feed = code(read(FEED));
 
 // ── The composer is the shared one ───────────────────────────────────────────────────────
 
@@ -229,15 +231,41 @@ describe('the overlay is Chat\'s SlideOver, and only a split can be resized', ()
 
 // ── One run slot per agent: only the agent named is refused ──────────────────────────────
 
-describe('the channel refuses only a message to an agent that is already running', () => {
+describe('a message to a working agent goes into its running thread, not back to the field', () => {
   const channel = host.slice(host.indexOf('export function useAgentsChannelHost'), host.indexOf('export function useAgentThreadHost'));
 
-  it('asks isBusy about the agent the draft names', () => {
+  it('asks isBusy about the agent the draft names, for the note under the field', () => {
     expect(channel).toMatch(/live\.current\.isBusy\(target\.slug\)/);
   });
 
-  it('refuses it without clearing, so the draft and its chips stay', () => {
-    expect(channel).toMatch(/if \(live\.current\.isBusy\(target\.slug\)\) \{[\s\S]{0,300}return false as const;/);
+  it('the note is a hint, and send no longer refuses a busy agent', () => {
+    expect(channel).toMatch(/busyNote = \(target: ComposerAgent\): ChannelNote => \(\{\s*kind: 'hint'/);
+    expect(channel).not.toMatch(/if \(live\.current\.isBusy\(target\.slug\)\) \{[\s\S]{0,300}return false as const;/);
+  });
+});
+
+describe('the thread says when its agent is working', () => {
+  it('draws a live row from the agent activity, with the queued count', () => {
+    expect(panel).toMatch(/\{liveHere && activity && <LiveRow activity=\{activity\} waiting=\{queuedHere\.size\} \/>\}/);
+    expect(panel).toMatch(/'agents\.thread\.live'/);
+  });
+
+  it('says so in an older thread too, when the agent works on a newer run, with the way there', () => {
+    expect(panel).toMatch(/const liveElsewhere = !!activity && !liveHere;/);
+    expect(panel).toMatch(/t\(elsewhere \? 'agents\.thread\.liveElsewhere' : 'agents\.thread\.live'\)/);
+    expect(panel).toMatch(/onOpenRun\(activity\.runId as string\)/);
+  });
+
+  it('the feed actually hands the panel its way to the newer run (a prop, not text in a comment)', () => {
+    const start = feed.indexOf('<AgentThreadPanel');
+    const props = feed.slice(start, feed.indexOf('overlay={overlay}', start));
+    expect(start).toBeGreaterThan(-1);
+    expect(props).toMatch(/onOpenRun=\{\(runId\) => \{/);
+  });
+
+  it('marks a message of yours that is still waiting as queued', () => {
+    expect(panel).toMatch(/queued=\{queuedHere\.has\(e\.id\)\}/);
+    expect(panel).toMatch(/t\('agents\.thread\.queued'\)/);
   });
 });
 

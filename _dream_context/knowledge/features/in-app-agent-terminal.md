@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-29'
+updated: '2026-09-30'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -491,6 +491,7 @@ any future attempt (all of it is history — none of this ships):
 
 - [x] SECRET CARD — a credential reaches DISK without passing through the agent. `dream-view` gains `{"type":"secret", id, title, file?, fields[{key,label?,hint?}]}`; the card (`chat/SecretCard.tsx`, masked field shared with the checklist via `core/MaskedSecretInput`) POSTs to `POST /api/agent/secret` and posts back only the SERVER-built receipt (key · file · chars · `sha256:` prefix · added/updated). Every guard lives in `src/lib/env-secrets.ts` and is re-run on the raw body: `.env`-family path inside the project, realpath-contained parent, symlinked leaf refused (an arbitrary-file OVERWRITE otherwise), a git-TRACKED file refused outright, and the `.gitignore` entry placed BEFORE the write with a failure aborting it (issue #11's ordering guarantee); 0600 at write, value ends trimmed but never its middle, the LAST duplicate assignment rewritten (the one dotenv uses). Not desktop-gated on purpose — a bounded write behind the same CSRF/token gates as every other write, so the phone case keeps working. The client's copies of the constants are pinned to the owner by `tests/unit/chat-secret-mirror.test.ts`; 39 unit tests in `env-secrets.test.ts` cover the four refusals.
 - [x] RUN CARD — an interactive command runs INSIDE the transcript. `dream-view` gains `{"type":"run", id, command, why?, cwd?}`; `/api/agent/terminal` gains `kind=exec` (`$SHELL -ilc 'exec <cmd>'`, so the PTY's exit IS the command's, plus a BINARY `{type:'exit',code}` frame before close). `chat/InlineTerminal.tsx` is a real PTY built on the extracted `termCore.ts` factory — the same theme, cell metrics and font-ready open as the agent terminal, not a second hand-rolled xterm. On exit the card reports back through `postToSession` (the composer's own steer→queue chain, now shared with the checklist submit), so the agent continues by itself; the tail is ANSI-stripped, 40 lines / 6000 chars. The command is NOT vetted (shown in full, nothing runs until ▶) but the bridge runs the command the card SHOWED: a newline truncates rather than collapsing to a space, control bytes stripped, multi-line refused client-side, `cwd` realpath-contained. The output switch is asked BEFORE the run, because whether a command prints a credential is the user's call while looking at it.
+- [x] **[2026-09-30] Run and secret cards work outside Chat** (`37c3118f`): `RunCard` and `SecretCard` hand back through a `report(text)` sink instead of a `ChatSession`. In Chat the sink is `postToSession`; in an agent thread it is a thread reply that resumes the run.
 - [x] THE SAME ▶ ON A PERMISSION CARD — Bash requests render Deny / ▶ Run here / Allow. "Run here" opens the inline PTY on that exact command and answers the permission `deny` carrying the run report as the tool result. Deny, not allow, is load-bearing: allow would re-run the command headless, straight back into the prompt it just hung on; the message says the user ran it, so "denied" never reads as "refused".
 - [x] THE PHONE OPENS INTO CHAT, AND ONE DRAWER CARRIES EVERYTHING (2026-09-19, `1430f0b9`; task `chat-yuzeyi-telefonda-calisir-…`). `useIsMobile()` recognises ≤768px and follows resize/rotation, returning false on desktop unconditionally; on mobile the app routes straight to the chat surface with `.agent-surface` at full viewport (never boxed under the dashboard header/sidebar), renders ONE pane with every split/side-by-side affordance absent, and replaces the tab strip with a hamburger + left drawer. The drawer is the whole navigation surface the owner asked for in one pass: a PROJECT dropdown over the existing vault registry, the ACTIVE sessions (status dot · title · kind glyph), the PAST chats so a finished conversation can be re-entered, "New chat", and a footer route into the full dashboard so Settings is not unreachable from a phone. The transcript does not scroll sideways at 390px — code blocks and tables scroll INSIDE themselves. Photographed in real Chromium at 390×844 and 430×932.
 - [ ] Touch polish is NOT done, and is left unticked on purpose: tap-outside / Esc / back-gesture do not all close the drawer and the transcript behind it still scrolls; composer targets are not yet ≥44px with the keyboard up; tool/permission cards, the pin shelf and sub-agent cards still overflow at 390px.
@@ -504,6 +505,11 @@ any future attempt (all of it is history — none of this ships):
 - [x] **A QUESTION CARD'S OPTION PREVIEW OPENS TO MOST OF THE MOCK** (2026-09-27, `e7f0e38d`). A board tile's preview sat in a FIXED 180px window, so a real form mock showed its first rows and the reader had to go full screen just to judge an option — which defeats the A/B/C board's whole purpose. The window now HUGS the preview up to `min(440px, 62vh)`; tiles in a row still share one height (so the row does not stagger), a lone picture keeps its own shape, and the swipe face uses the same cap. Past that, the fullscreen door has the rest. `verify:chat-questions` 88/88 in both themes, with a new tall-mock scenario that fails on the old CSS (`windows=180,180`).
 
 
+- [x] **A chat's tab stays `working` while agents it started still run** (2026-09-28, `ae692a4b`): the pane reports whether any agent run it knows about is running and `deriveSessionStatus` reads that as `working` ("agents working") while the session is open; asking still wins, a closed/dormant session is not revived, plain background shells do not count.
+- [x] **A Develop run reads in order** (2026-09-27, `7536550f`): goal-live wave/round travel onto `SubAgentRun`; `questModel` groups build parties per registered wave (a resumed builder stays in its wave), anchors unplaced parties by time instead of trailing them, the kicker prints the real wave, one entry per agent; a finished party is never docked at the tail.
+- [x] **A Develop lead whose session id rotated keeps writing to its tab's run** (2026-09-27, `ddc4b201`): a goal-live write from a session with no file of its own continues its tab's open Develop run (never another tab's, a done run, or a tab-less one) and removes the orphan; resumed builders register with `--session`, one literal line per builder.
+- [x] **No `alert()` in the app** (2026-09-26, `f22dae76`): WKWebView implements no JS panel methods, so the Plan→Develop refusal and three other alerts use `confirmAction`; the refusal lists the missing parts and offers "Ask the planner". `no-window-confirm` bans `alert()` too.
+- [x] **Focusing a side-by-side pane lands in one layout** (2026-09-28, `5ed93d53`): no flex-basis transition; the accent bar is one `.agent-pane-glide` element FLIP-animated with transform only (`usePaneFocusGlide.ts`); reduced motion = no glide.
 
 ## Constraints & Decisions
 
@@ -710,6 +716,9 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 - Polish: a question card's option preview hugs the mock up to `min(440px, 62vh)` instead of a
   180px slit (`e7f0e38d`); a tab name handed a slug is unslugged into words and a Plan→Develop
   hand-off tab can be renamed by its own agent (`314d93e7`).
+
+### 2026-09-29 — Develop reads in order, a tab keeps working while its agents do (sleep reconcile)
+- Five criteria added from `ae692a4b`, `7536550f`, `ddc4b201`, `f22dae76`, `5ed93d53`. Tab naming, question cards and Train Me were already reconciled.
 
 ### 2026-09-27 — A fourth mode that learns you, and two clocks that stopped lying
 

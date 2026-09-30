@@ -8,6 +8,7 @@ import '@fontsource-variable/plus-jakarta-sans';
 import '@fontsource-variable/jetbrains-mono';
 import { App } from './App';
 import { installExternalLinkHandler } from './lib/externalLinks';
+import { installAppLinkListener } from './lib/appLink';
 import { sweepExpiredPins } from './lib/pinStore';
 import { sweepExpired as sweepExpiredChecklists } from './lib/checklistStore';
 
@@ -34,6 +35,11 @@ try {
 } catch (err) {
   console.error('[boot] storage sweep failed (continuing):', err);
 }
+
+// `dreamcontext://` links (a clicked banner). Only the launcher and project windows act on
+// them — the installer checks the label — and it takes whatever the shell parked on a cold
+// launch, which is why it runs at boot rather than inside any one surface's mount.
+installAppLinkListener();
 
 // Inside the desktop shell the window uses the macOS "overlay" title-bar style:
 // the native title bar is transparent and the traffic-light buttons float over

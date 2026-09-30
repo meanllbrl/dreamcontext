@@ -1,5 +1,107 @@
 [
   {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "cli",
+    "description": "Fix the approve screen printing [object Object] for the Flow graph; it now renders the graph as JSON and warns when the approved prompt's propose calls would be refused.",
+    "breaking": false,
+    "summary": "automations approve prints the Flow graph as JSON and says when a prompt's propose will be refused",
+    "references": [
+      "commit:6bff5b5c"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Add Chat block rendering to agent thread posts: a dream-view run card opens a real terminal whose exit report resumes the agent as a thread reply, plus secret and dream-html blocks. THREAD_BLOCKS and a review-aware askClause join the run, ask and thread-reply briefs, and a reviewMismatch warning flags a prompt whose review stance contradicts its flow.",
+    "breaking": false,
+    "summary": "An agent's thread draws the Chat's blocks, so a run can hand you a run card whose exit report resumes the agent",
+    "references": [
+      "commit:37c3118f"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Fix the Edit agent dialog seeding its prompt from the list's 600-char description preview, so Save and re-approve truncated and approved a 6,700-char prompt (tarif-korpus-haftalik in h-f_dreamcontext, restored from a run transcript). The dialog now reads the full prompt fresh on every open (refetchOnMount always) with Save gated until loaded, and the server rejects a write that looks like a preview truncation with 409 prompt_truncated.",
+    "breaking": false,
+    "summary": "Editing an agent never saves the list's 600-char preview as its prompt; the server refuses a preview-truncation with 409 prompt_truncated",
+    "references": [
+      "commit:36bf226a",
+      "knowledge:presentation-field-must-not-double-as-safety-predicate"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "accounts",
+    "description": "Fix re-sign-in for a connected Claude account that had signed out: the login now runs inside that account's own sandbox config dir instead of failing or landing in another account.",
+    "breaking": false,
+    "summary": "A signed-out connected account signs in again, into its own sandbox",
+    "references": [
+      "commit:c6524429"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "fix",
+    "scope": "voice",
+    "description": "Revert the Assistant's mic capture to the processed chain; the raw chain delivered silence.",
+    "breaking": false,
+    "summary": "The microphone is asked for the processed audio chain again, because the raw one is silent",
+    "references": [
+      "commit:6189c2b3"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Show live agent activity in its thread and queue a message sent while it works; an older run's thread now points at the newer run the agent is working on instead of looking idle.",
+    "breaking": false,
+    "summary": "A working agent shows in its thread, a message to it queues there, and an older thread says when its agent works on a newer run",
+    "references": [
+      "commit:55fe871b",
+      "commit:ab0a5bb7"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "type": "feat",
+    "scope": "notify",
+    "description": "Add a dreamcontext:// URL handler to the desktop app, stamp every banner (automation, Claude-is-asking, sleep, dreamcontext notify) with a link to where it belongs, and route a click to that agent thread, chat tab or page; banners with no in-app place open a Notifications window. No app installed keeps the old open-the-file behaviour.",
+    "breaking": false,
+    "summary": "Routable notifications: the app answers dreamcontext:// links, every banner carries one, and a clicked banner lands in its window, tab and place",
+    "references": [
+      "commit:0108e68e",
+      "commit:7a4a13b3",
+      "commit:797970d8"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-29",
     "type": "fix",
     "scope": "sleep",
@@ -267,6 +369,131 @@
     "references": [
       "commit:7536550f",
       "task:a-develop-run-reads-in-order-each-build-card-names-its-real-wave-sits-where-it-happened-and-the-live-step-is-the-one-on-top"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Posts from a resumed agent turn now raise a notification, and the Agents page's focused pane lands in a single layout with a gliding accent bar instead of widening frame by frame.",
+    "breaking": false,
+    "summary": "Resumed-turn posts notify, and the focused pane glides into one layout",
+    "references": [
+      "commit:454026e6",
+      "commit:5ed93d53"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix tab naming (slugs lose dashes, Develop tabs renamable, hook reminder until named), keep a tab in working state while agents it started are still running, and open question-card option previews to most of the mock instead of a 180px slit.",
+    "breaking": false,
+    "summary": "Chat tabs: names read as words, the hook reminds the agent to name its tab, tabs stay working while their agents run, question previews open large",
+    "references": [
+      "commit:9312d733",
+      "commit:314d93e7",
+      "commit:ae692a4b",
+      "commit:e7f0e38d"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "assistant",
+    "description": "Fix the notch hotkey freezing behind the mic, an outside click not closing an unfocused panel, and the seat guard staying off until quit after giving up.",
+    "breaking": false,
+    "summary": "Notch fixes: hotkey opens at once, outside click closes it, seat guard re-arms",
+    "references": [
+      "commit:aa5cca65",
+      "commit:2343ef78",
+      "commit:35636bc5"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "Extend the notch Assistant: it screenshots the owner's screens when asked, can be switched off without deleting it, is woken when a session it delegated asks, finishes a turn or closes, routes a command for an already-open project into that tab, steps out of the notch while working with pitch-preserved speech and Spidey delegation, and answers without 15-40 s of setup before each turn.",
+    "breaking": false,
+    "summary": "Assistant: look at my screen, switch-off, delegated sessions wake it, commands land in the open tab, and 15-40 s of per-turn plumbing removed",
+    "references": [
+      "commit:b4214fd9",
+      "commit:e79500cc",
+      "commit:11f18123",
+      "commit:2a8ed530",
+      "commit:42ff5c02",
+      "commit:e174cb67"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Add dreamcontext tasks priority and tasks urgency verbs that print the current level with no value or set it on an existing task.",
+    "breaking": false,
+    "summary": "tasks priority / tasks urgency print or change the level on an existing task",
+    "references": [
+      "commit:8db14f12"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "automations",
+    "description": "Add multiple fire slots per automation and new cadences (weekly, every-N-weeks, monthly, nth weekday, cron); a run now uses every configured Claude account and moves to the next when a usage limit lands.",
+    "breaking": false,
+    "summary": "Automations fire at several times per day on weekly, every-N-weeks, monthly, nth-weekday or cron cadences, and rotate across every Claude account on usage limits",
+    "references": [
+      "commit:786e781a",
+      "commit:f73326c4"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "automations",
+    "description": "Rewrite the run prompt guidance so channel posts and the dated output document lead with the result in short scannable lines instead of narrative.",
+    "breaking": false,
+    "summary": "A run's posts and document are written to be skimmed",
+    "references": [
+      "commit:a0b0140e"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "automations",
+    "description": "Fix automations propose so a run's own calls made through Claude's Bash tool are admitted, then close the hole the first fix opened: identity is now decided by process ancestry alone, not a spoofable environment marker, so a daemon that detached from the run is refused. Decision: an automation-run identity check must rely on process ancestry, never an inheritable marker.",
+    "breaking": false,
+    "summary": "propose trusts only the run's process ancestry; the Bash-tool marker path that let a detached daemon pass is refused",
+    "references": [
+      "commit:f6862718",
+      "commit:bd7c4b34"
     ],
     "authors": [
       "mehmet-nuraydin"
@@ -1164,22 +1391,6 @@
     ]
   },
   {
-    "date": "2026-09-06",
-    "type": "chore",
-    "scope": "release",
-    "description": "0.27.0 IS ON THE REGISTRY. Published 2026-09-06T22:13:08Z; dist-tags.latest moved 0.26.2 -> 0.27.0 and dreamcontext-0.27.0.tgz resolves (shasum 80b37ae7). Tag v0.27.0 created on the release commit 46c11a4 and pushed AFTER the registry confirmed — never before (scar 1: a tag pointing at a version the registry does not have reads as published to every later cross-check). The tag fired desktop-release CI, which builds, signs and publishes the .app to the GitHub Release, so no release was created by hand.\n\nTHE PUBLISH TOOK TWO ATTEMPTS AND THE FIRST FAILURE LOOKED LIKE A SUCCESS. Attempt one reached npm far enough to STAGE 0.27.0 but never committed the metadata — the browser auth flow it opened was not completed. The registry then served 0.26.2 with no 0.27.0 anywhere (the version endpoint 404d), while a retry failed with 'E409 Cannot publish over previously staged version'. The right move was to WAIT, not to bump: staging clears on its own within minutes, and jumping to 0.27.1 would have burned a version over a transient registry state and forced a re-stamp of all five version surfaces, the release row and the announcement. It cleared and the publish landed about four minutes later.\n\nRELEASES 0.27.0 flipped planning -> released only now, because 'released' means the registry has it and nothing else.",
-    "breaking": false,
-    "summary": "0.27.0 published and tagged; the release record flipped to released only after the registry confirmed.",
-    "references": [
-      "commit:46c11a4",
-      "tag:v0.27.0",
-      "file:_dream_context/state/pre-publish-checklist-v0-27-0.md"
-    ],
-    "authors": [
-      "mehmet-nuraydin"
-    ]
-  },
-  {
     "date": "2026-09-07",
     "type": "chore",
     "scope": "sleepy",
@@ -1235,6 +1446,22 @@
       "file:_dream_context/state/pre-publish-checklist-v0-27-0.md"
     ],
     "supersedes": "2026-09-05|chat",
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-06",
+    "type": "chore",
+    "scope": "release",
+    "description": "0.27.0 IS ON THE REGISTRY. Published 2026-09-06T22:13:08Z; dist-tags.latest moved 0.26.2 -> 0.27.0 and dreamcontext-0.27.0.tgz resolves (shasum 80b37ae7). Tag v0.27.0 created on the release commit 46c11a4 and pushed AFTER the registry confirmed — never before (scar 1: a tag pointing at a version the registry does not have reads as published to every later cross-check). The tag fired desktop-release CI, which builds, signs and publishes the .app to the GitHub Release, so no release was created by hand.\n\nTHE PUBLISH TOOK TWO ATTEMPTS AND THE FIRST FAILURE LOOKED LIKE A SUCCESS. Attempt one reached npm far enough to STAGE 0.27.0 but never committed the metadata — the browser auth flow it opened was not completed. The registry then served 0.26.2 with no 0.27.0 anywhere (the version endpoint 404d), while a retry failed with 'E409 Cannot publish over previously staged version'. The right move was to WAIT, not to bump: staging clears on its own within minutes, and jumping to 0.27.1 would have burned a version over a transient registry state and forced a re-stamp of all five version surfaces, the release row and the announcement. It cleared and the publish landed about four minutes later.\n\nRELEASES 0.27.0 flipped planning -> released only now, because 'released' means the registry has it and nothing else.",
+    "breaking": false,
+    "summary": "0.27.0 published and tagged; the release record flipped to released only after the registry confirmed.",
+    "references": [
+      "commit:46c11a4",
+      "tag:v0.27.0",
+      "file:_dream_context/state/pre-publish-checklist-v0-27-0.md"
+    ],
     "authors": [
       "mehmet-nuraydin"
     ]

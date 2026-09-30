@@ -836,6 +836,43 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
 
 .agent-thread-sys-text { overflow-wrap: anywhere; }
 
+/* THE AGENT IS WORKING: the thread's last line while a turn runs. The system row's size and
+   ink, with the channel's breathing dot, so "alive" reads the same here as on the row. */
+.agent-thread-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.agent-thread-live-text { font-weight: var(--font-weight-semibold); }
+
+.agent-thread-live-queue::before {
+  content: '·';
+  margin-right: var(--space-2);
+}
+
+/* The way to the thread a newer run writes into: a link-weight action, not a filled button. */
+.agent-thread-live-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-accent-strong);
+  cursor: pointer;
+}
+
+.agent-thread-live-open:hover { text-decoration: underline; }
+
+/* Your message, still waiting for the turn ahead of it. A word, not a colour. */
+.agent-thread-post-queued {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
 .agent-thread-post {
   display: flex;
   gap: var(--space-3);
@@ -1014,6 +1051,14 @@ div.agent-msg-file--board:hover { border-color: var(--color-border); background:
   max-width: 92ch;
   color: var(--color-text);
   overflow-wrap: anywhere;
+}
+
+/* A post that carries the Chat's blocks: prose runs and cards are siblings in written order,
+   spaced like the chat's own answer row. */
+.agent-msg-md--blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .agent-msg-md .md-preview {

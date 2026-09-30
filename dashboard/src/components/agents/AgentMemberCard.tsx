@@ -1,6 +1,7 @@
 import type { AutomationSummary, RunStatus } from '../../hooks/useAutomations';
 import { useSetAutomationEnabled } from '../../hooks/useAutomations';
 import { summarize } from '../../lib/markdownToText';
+import { nextFireWords } from '../../lib/agentDraft';
 import { AgentAvatar } from './AgentAvatar';
 import { useI18n } from '../../context/I18nContext';
 import './AgentMemberCard.css';
@@ -98,6 +99,9 @@ export function AgentMemberCard({
   const setEnabled = useSetAutomationEnabled();
   const scheduled = summary.mode === 'sched';
   const lastWhen = fmtWhen(summary.cache?.lastFireAt ?? summary.cache?.lastRunAt ?? null);
+  // The earliest upcoming fire across every slot — server-computed, so a
+  // three-slot agent says when it NEXT runs, not when its first slot does.
+  const nextWhen = scheduled && summary.enabled ? nextFireWords(summary.nextFireAt, new Date()) : null;
   const tone = statusTone(summary);
   const description = summarize(summary.description, 150);
 
@@ -172,6 +176,7 @@ export function AgentMemberCard({
             {statusWord(summary.cache?.status ?? null)}
           </span>
           {lastWhen && <span className="agent-card-status-when">{lastWhen}</span>}
+          {nextWhen && <span className="agent-card-status-when">next {nextWhen}</span>}
           {!summary.approved && summary.approvalReason === 'never-approved' && (
             <span className="agent-card-status-note">needs approval</span>
           )}

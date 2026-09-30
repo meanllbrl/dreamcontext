@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "viewer-window",
+  "description": "Narrow capability for the document viewer window (`viewer-*`), opened when a notification links to a file. It renders agent-authored markdown and images, so it gets only its own window chrome: drag by its title bar, close, focus. No shell:*, no dialogs, no webview creation and no allow-take-app-link: a viewer never routes links. See capabilities/checklist.json for the same containment pattern.",
+  "windows": ["viewer-*"],
+  "remote": {
+    "urls": ["http://localhost:*", "http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-set-focus"
+  ]
+}

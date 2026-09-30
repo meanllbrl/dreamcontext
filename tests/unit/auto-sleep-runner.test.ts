@@ -106,6 +106,22 @@ describe('runAutoSleep — what it actually spawns', () => {
     expect(notes[0]).toContain('Consolidated 3 tasks.');
   });
 
+  it("links every sleep banner to the project's Sleep page when it is a registered vault", async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dc-runner-home-'));
+    try {
+      mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+      writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'proj', path: project }] }));
+      const links: Array<string | null | undefined> = [];
+      await runAutoSleep(ctx, { execImpl: fakeExec().impl, home, notifyImpl: (_t, _b, link) => links.push(link) });
+      expect(links).toEqual(['dreamcontext://project/proj/page/sleep']);
+      rmSync(join(home, '.dreamcontext', 'vaults.json'));
+      await runAutoSleep(ctx, { execImpl: fakeExec().impl, home, notifyImpl: (_t, _b, link) => links.push(link) });
+      expect(links[1]).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('records a FAILED run with the stderr tail, and says so', async () => {
     const { impl } = fakeExec({ exitCode: 1, stderrTail: 'boom: the specialist died', result: null });
     const notes: string[] = [];

@@ -16,10 +16,13 @@
 //    permission in permissions/ names them AND a capability grants it — see
 //    `pick_paths` / permissions/pick-paths.toml. Anything ungranted is blocked.
 // 6. Kill the Node child on APP EXIT (not per-window) so no orphan survives.
+// 7. `dreamcontext://` links arrive as RunEvent::Opened and are parked for a
+//    webview to take (src/app_link.rs); the shell never routes them itself.
 //
 // CRASH-SAFETY: any startup failure shows an explanatory error window instead
 // of panicking — a Finder double-click must never silently abort.
 
+mod app_link;
 mod assistant;
 mod frames;
 
@@ -47,6 +50,11 @@ use objc2_foundation::{NSArray, NSString, NSURL};
 /// The Node child process, kept so it can be killed on app exit.
 type ChildHandle = Arc<Mutex<Option<Child>>>;
 
+/// The dashboard server's loopback port, managed once it answers /api/health.
+/// Kept because the Launcher is no longer only built at startup: a link that
+/// arrives while every window is closed builds it again (src/app_link.rs).
+pub(crate) struct DashboardPort(pub(crate) u16);
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -66,7 +74,11 @@ pub fn run() {
             assistant::assistant_wake,
             assistant::assistant_set_enabled,
             frames::set_frames,
+            app_link::take_app_link,
         ])
+        // Managed before setup runs, so a link macOS hands over on a cold launch has
+        // somewhere to wait even if the server never comes up.
+        .manage(app_link::PendingLinks::default())
         // Per-label generations for `set_frames` (src/frames.rs): the last requested frame wins.
         .manage(frames::FramesState::default())
         // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
@@ -111,6 +123,12 @@ pub fn run() {
             if let Some(handle) = app_handle.try_state::<ChildHandle>() {
                 reap_server(handle.inner());
             }
+        }
+        // A clicked `dreamcontext://` link (banner, hook, browser). macOS delivers it
+        // here whether this click launched the app or it was already running.
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Opened { urls } = &event {
+            app_link::handle_opened(app_handle, urls);
         }
     });
 }
@@ -577,6 +595,7 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         }
         return Err(format!("{e}\n\nNode: {node}"));
     }
+    app.manage(DashboardPort(port));
 
     // The Assistant: register its hotkey and seat the notch (no-op until it exists).
     assistant::setup(&app, port);
@@ -589,8 +608,20 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     }
 
     // First window: the Launcher (no vault pinned).
+    open_launcher_window(&app, port)
+}
+
+/// Build the Launcher window (label `main`, no vault pinned) at the dashboard port.
+///
+/// Idempotent: a `main` that already exists is left as it is. Startup and a link
+/// arriving with every window closed can both ask for it, and a second builder
+/// under the same label would fail and surface as the startup error window.
+pub(crate) fn open_launcher_window(app: &AppHandle, port: u16) -> Result<(), String> {
+    if app.get_webview_window("main").is_some() {
+        return Ok(());
+    }
     WebviewWindowBuilder::new(
-        &app,
+        app,
         "main",
         WebviewUrl::External(
             format!("http://127.0.0.1:{port}/")

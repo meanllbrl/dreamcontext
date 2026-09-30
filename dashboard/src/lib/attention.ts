@@ -22,7 +22,8 @@
  * are a klaxon no matter which project rang.
  */
 import { playAskChime } from './chime';
-import { bounceDockIcon, sendDesktopNotification } from './desktop';
+import { bounceDockIcon, isDesktop, sendDesktopNotification } from './desktop';
+import { buildAppLink, isValidAppLinkVault } from './appLink';
 
 /** Several agents in ONE project asking in the same breath must not stack into three banners
  *  and a Dock that never stops jumping. Scoped per source rather than per app: a different
@@ -50,6 +51,25 @@ export interface AskAlarm {
    *  AskUserQuestion payload is structured); the terminal surface only has pixels on a
    *  screen, so it passes nothing and gets the generic line. */
   detail?: string | null;
+  /** The asking conversation's Claude id, when the surface knows it. It makes the banner a
+   *  link to THAT chat tab (`dreamcontext://project/<vault>/session/<id>`); without it the
+   *  banner still brings the project forward. */
+  sessionId?: string | null;
+}
+
+/** Hidden vaults (`__assistant__`, the notch's own) are never a chip and never in the
+ *  registry, so a link to one would land nowhere: those banners carry no link. */
+const HIDDEN_VAULT_RE = /^__.*__$/;
+const CLAUDE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+
+/** Where clicking the ask banner should land, or null when it cannot be attributed. */
+export function askAlarmLink(alarm: AskAlarm): string | null {
+  const vault = alarm.source?.trim() ?? '';
+  if (!vault || HIDDEN_VAULT_RE.test(vault) || !isValidAppLinkVault(vault)) return null;
+  const id = alarm.sessionId?.trim() ?? '';
+  return CLAUDE_ID_RE.test(id)
+    ? buildAppLink({ kind: 'session', vault, claudeId: id })
+    : buildAppLink({ kind: 'project', vault });
 }
 
 /** Collapse whitespace and clip to a banner-sized line. */
@@ -116,9 +136,33 @@ function isAlarmChipOnScreen(source: string): boolean {
   return chipActiveProbe?.(source) ?? true;
 }
 
-/** Post the banner through the desktop shell, falling back to the browser's own
- *  Notification API for the dev/web build (where there is no Tauri to ask). */
-async function postBanner(title: string, body: string): Promise<void> {
+/**
+ * Ask the server to post the banner through dreamcontext's own notifier (`POST /api/notify`),
+ * which is the one banner a click can ROUTE: it opens `link` into the exact chat. Resolves true
+ * only when the server says it posted one; false on `posted: false` (no notifier on this Mac
+ * yet) and on any failure, which is the caller's cue to fall back.
+ */
+async function postRoutableBanner(title: string, body: string, link: string | null): Promise<boolean> {
+  try {
+    const res = await fetch('/api/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(link ? { title, body, link } : { title, body }),
+    });
+    if (!res.ok) return false;
+    const out = await res.json() as { posted?: unknown };
+    return out.posted === true;
+  } catch (err) {
+    console.warn('[attention] routable banner unavailable, falling back:', err);
+    return false;
+  }
+}
+
+/** Post the banner: routable through the server first (desktop only — the route is
+ *  desktop-gated), then the Tauri plugin, then the browser's own Notification API for the
+ *  dev/web build (where there is no Tauri to ask). */
+async function postBanner(title: string, body: string, link: string | null): Promise<void> {
+  if (isDesktop() && await postRoutableBanner(title, body, link)) return;
   if (await sendDesktopNotification(title, body)) return;
   try {
     // WKWebView has no `window.Notification` until the Tauri plugin injects one, so this
@@ -156,5 +200,6 @@ export function raiseAskAttention(alarm: AskAlarm = {}): void {
   void postBanner(
     source ? `Claude is asking · ${oneLine(source)}` : 'Claude is asking',
     detail ? oneLine(detail) : 'A question is waiting for your answer.',
+    askAlarmLink(alarm),
   );
 }

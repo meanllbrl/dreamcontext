@@ -77,11 +77,36 @@ export type Weekday = (typeof WEEKDAYS)[number];
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
-/** Structured, self-documenting schedule — NOT a cron string (see the task's
- *  Constraints & Decisions). `at` is 24h "HH:MM", machine-local wall-clock. */
+/**
+ * One way an automation fires. A schedule is a UNION of slots: the agent is
+ * due at every moment any slot names, and a slot is exactly one of four
+ * cadences. Every `at` is 24h "HH:MM", machine-local wall-clock.
+ *
+ * - `weekly`    — `days` (+ optional `everyWeeks`/`anchor` for "every N weeks";
+ *                 the anchor is a YYYY-MM-DD in the first fire week).
+ * - `monthdays` — day numbers of the month, 1..31, or -1..-31 counted from the
+ *                 end (-1 is the last day). A day a month lacks does not fire
+ *                 in that month — `31` skips April; `-1` never skips.
+ * - `nth`       — the nth weekday of the month, `n` 1..5 or -1..-5 (-1 = last).
+ * - `cron`      — a 5-field local-time expression, the escape hatch. It has no
+ *                 `at`: the time is inside the expression.
+ *
+ * Structured fields first, cron second, on purpose: "every 2 weeks" and "last
+ * day of the month" are the two things cron itself cannot say, and a YAML
+ * field is readable by the person the manifest belongs to.
+ */
+export type ScheduleSlot =
+  | { kind: 'weekly'; days: 'daily' | Weekday[]; at: string; everyWeeks?: number; anchor?: string }
+  | { kind: 'monthdays'; monthdays: number[]; at: string }
+  | { kind: 'nth'; nth: { weekday: Weekday; n: number }[]; at: string }
+  | { kind: 'cron'; cron: string };
+
+/** On disk either the legacy single slot (`schedule: { days, at }`, still
+ *  written for a one-slot weekly agent so no manifest changes shape) or
+ *  `schedule: { slots: [...] }`. Never approval-hashed: a schedule changes
+ *  WHEN a run happens, never what it does. */
 export interface Schedule {
-  days: 'daily' | Weekday[];
-  at: string;
+  slots: ScheduleSlot[];
 }
 
 // ─── The flow graph (the `## Flow` manifest section) ────────────────────────
@@ -243,8 +268,12 @@ export interface AutomationManifest {
    *  recognise the agent, not what the run does. */
   photo: string | null;
   enabled: boolean;
-  /** null ⇒ malformed on disk ⇒ this automation is never due, flagged in `list`. */
+  /** null ⇒ absent or malformed on disk ⇒ this automation is never due, flagged in `list`. */
   schedule: Schedule | null;
+  /** Why `schedule` is null when the manifest DID carry one — names the broken
+   *  slot ("slot 2: monthdays must be …"). Absent/null when there is no schedule
+   *  at all or it parsed. Optional so hand-built manifests (tests) need not set it. */
+  scheduleError?: string | null;
   /** Validated against /^[a-z0-9.-]+$/ on write; null ⇒ let `claude` pick its default. */
   model: string | null;
   /** One of EFFORT_LEVELS on write; null ⇒ omit `--effort` entirely and let

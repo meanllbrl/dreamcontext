@@ -10,6 +10,8 @@
  */
 
 import type { Weekday } from '../hooks/useAutomations';
+import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
+import { parseSlot } from '../../../src/lib/automations/schedule.js';
 
 /** How long a primed Delete stays primed, in ms. The
  *  `inline-two-click-confirm` pattern's own figure — long enough to be a
@@ -76,3 +78,148 @@ export function shouldPrefill({ touched, editing }: { touched: boolean; editing:
 export function packDays(days: Weekday[]): 'daily' | Weekday[] {
   return days.length === 7 ? 'daily' : days;
 }
+
+// ─── Schedule slots (the dialog's "When does it run?" rows) ─────────────────
+
+/** How one row fires. `weeks` is weekly with an "every N weeks" count. */
+export type SlotCadence = 'weekly' | 'weeks' | 'monthdays' | 'nth' | 'cron';
+
+/**
+ * One editable row. It keeps EVERY cadence's inputs at once, so flipping the
+ * cadence select back and forth never throws away what the owner typed; only
+ * the fields of the chosen cadence become the slot. Month days and nth
+ * weekdays are text ("1, 15, last" / "1st mon, last fri") because a picker for
+ * each would be a calendar the owner has to learn — and the text is exactly
+ * what the CLI's `month:` slot takes.
+ */
+export interface SlotRow {
+  id: number;
+  cadence: SlotCadence;
+  days: Weekday[];
+  at: string;
+  everyWeeks: number;
+  /** YYYY-MM-DD — a day in a week the slot fires. */
+  anchor: string;
+  monthText: string;
+  nthText: string;
+  cron: string;
+}
+
+let slotRowSeq = 0;
+
+function todayString(today: Date): string {
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+export function newSlotRow(today: Date, over: Partial<SlotRow> = {}): SlotRow {
+  slotRowSeq += 1;
+  return {
+    id: slotRowSeq,
+    cadence: 'weekly',
+    days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+    at: '09:00',
+    everyWeeks: 2,
+    anchor: todayString(today),
+    monthText: '1',
+    nthText: '1st mon',
+    cron: '0 9 * * 1',
+    ...over,
+  };
+}
+
+const ALL_DAYS: Weekday[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/** A saved slot → an editable row. */
+export function slotRowFromSlot(slot: ScheduleSlot, today: Date): SlotRow {
+  switch (slot.kind) {
+    case 'weekly': {
+      const days = slot.days === 'daily' ? [...ALL_DAYS] : [...slot.days];
+      return slot.everyWeeks && slot.everyWeeks > 1
+        ? newSlotRow(today, { cadence: 'weeks', days, at: slot.at, everyWeeks: slot.everyWeeks, anchor: slot.anchor ?? todayString(today) })
+        : newSlotRow(today, { cadence: 'weekly', days, at: slot.at });
+    }
+    case 'monthdays':
+      return newSlotRow(today, {
+        cadence: 'monthdays',
+        at: slot.at,
+        monthText: slot.monthdays.map((d) => (d === -1 ? 'last' : String(d))).join(', '),
+      });
+    case 'nth':
+      return newSlotRow(today, {
+        cadence: 'nth',
+        at: slot.at,
+        nthText: slot.nth
+          .map((x) => `${x.n === -1 ? 'last' : x.n < 0 ? String(x.n) : `${x.n}${x.n === 1 ? 'st' : x.n === 2 ? 'nd' : x.n === 3 ? 'rd' : 'th'}`} ${x.weekday}`)
+          .join(', '),
+      });
+    case 'cron':
+      return newSlotRow(today, { cadence: 'cron', cron: slot.cron });
+  }
+}
+
+/** The rows a dialog opens with: the agent's saved slots, else one row from
+ *  the starter's `days`/`at`, else weekdays at 09:00. */
+export function initialSlotRows(
+  saved: ScheduleSlot[] | null | undefined,
+  start: { days?: Weekday[]; at?: string } | undefined,
+  today: Date,
+): SlotRow[] {
+  if (saved && saved.length > 0) return saved.map((s) => slotRowFromSlot(s, today));
+  return [newSlotRow(today, { ...(start?.days ? { days: start.days } : {}), ...(start?.at ? { at: start.at } : {}) })];
+}
+
+/**
+ * A row → the slot it means, or why it means none. Goes through
+ * `parseSlot` — the SAME validator the server's write path uses — so the
+ * dialog can never accept a slot the save would then refuse.
+ */
+export function slotFromRow(row: SlotRow): { slot: ScheduleSlot } | { error: string } {
+  const split = (t: string) => t.split(',').map((x) => x.trim()).filter(Boolean);
+  switch (row.cadence) {
+    case 'weekly':
+      if (row.days.length === 0) return { error: 'Pick at least one day.' };
+      return parseSlot({ days: packDays(row.days), at: row.at });
+    case 'weeks':
+      if (row.days.length === 0) return { error: 'Pick at least one day.' };
+      return parseSlot({ days: packDays(row.days), at: row.at, every_weeks: row.everyWeeks, anchor: row.anchor });
+    case 'monthdays':
+      return parseSlot({ monthdays: split(row.monthText), at: row.at });
+    case 'nth':
+      return parseSlot({ nth: split(row.nthText), at: row.at });
+    case 'cron':
+      return parseSlot({ cron: row.cron });
+  }
+}
+
+/** Every row as a slot, or the first row's problem ("Time 2: …"). */
+export function slotsFromRows(rows: SlotRow[]): { slots: ScheduleSlot[] } | { error: string } {
+  const slots: ScheduleSlot[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = slotFromRow(rows[i]);
+    if ('error' in r) return { error: rows.length > 1 ? `Time ${i + 1}: ${r.error}` : r.error };
+    slots.push(r.slot);
+  }
+  if (slots.length === 0) return { error: 'Add at least one time.' };
+  return { slots };
+}
+
+/**
+ * "today 16:30", "tomorrow 09:30", "Mon 09:30" within the week, else
+ * "12 Oct, 10:00". The next fire is a moment the owner plans around, so it is
+ * named the way a person says it rather than as an ISO stamp.
+ */
+export function nextFireWords(iso: string | null, now: Date): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate(), 12).getTime();
+  const dayDiff = Math.round((startOf(d) - startOf(now)) / 86_400_000);
+  if (dayDiff === 0) return `today ${time}`;
+  if (dayDiff === 1) return `tomorrow ${time}`;
+  if (dayDiff > 1 && dayDiff < 7) return `${WEEKDAY_LABEL[d.getDay()]} ${time}`;
+  return `${d.getDate()} ${MONTH_LABEL[d.getMonth()]}, ${time}`;
+}
+
+const WEEKDAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_LABEL = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

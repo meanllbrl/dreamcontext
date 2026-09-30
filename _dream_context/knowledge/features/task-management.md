@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-09-13'
+updated: '2026-09-29'
 released_version: v0.19.0
 tags:
   - backend
@@ -140,6 +140,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] GitHub custom-field sync: `select` fields → `key:value` GitHub labels (via `github-map.ts`); all other types → `<!-- dc:fields -->` body block (parsed on pull, stripped before prose merge — same pattern as `<!-- dc:dates -->`).
 - [x] `renderOverrideBriefing(ov)` renders a concise agent briefing (template note + custom field list with prompts); injected into the SessionStart snapshot and sub-agent briefing by `generateSubagentBriefing()` when an override is present.
 - [x] `tasks field <slug> <key> <value>` CLI verb: sets a value in the task's `custom_fields:` frontmatter map; validates the key exists in the active override.
+- [x] `tasks priority <slug> [level]` / `tasks urgency <slug> [level]` (2026-09-28, `8db14f12`): no level prints the current one; a level changes it through `backend.updateFields` (same value set as `PATCH /api/tasks`, so a cloud backend syncs it next `tasks sync`), logs `field: old -> new` to the task changelog; the same value is a no-op, an invalid one exits 1.
 - [x] Custom field defs accept an optional `required: true` boolean. `loadTaskOverride()` passes this flag through in each `CustomFieldDef`.
 - [x] Hard-fail enforcement: `tasks create`, `tasks complete`, and `tasks status <name> completed|in_review` each call `checkRequiredFields(task, override)` before mutating; if any required field is unset the command exits with code 1 and prints a descriptive error listing the unset field(s) — the action is refused. The `--allow-missing-required` flag (or env var `DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1`) bypasses the check for draft/WIP use. Blast radius is CLI command paths only; the dashboard create flow does not enforce the hard-fail (it may show a warning instead).
 - [x] Agent visibility of custom field values: the snapshot Active Tasks block renders per-task `Custom fields: key=value / key=⚠ UNSET (required)` when an override is active; `tasks list --long` includes the `custom_fields` map from `TaskRecord.custom_fields` in its per-task output.
@@ -323,6 +324,7 @@ custom_fields:          # populated by `tasks field` or dashboard; synced to Cli
 - `tasks start <name> <date|clear>` — sets or clears `start_date` (v0.10.0).
 - `tasks due <name> <date|clear>` — sets or clears `due_date`; `clear` sentinel accepted (v0.10.0).
 - `tasks field <name> <key> <value>` — set a custom field value in `custom_fields:` frontmatter; validates key against active override (v0.10.0).
+- `tasks priority <name> [level]` / `tasks urgency <name> [level]` — print or change the level on an existing task (logged, backend-synced).
 
 **Lookup logic** (`findTaskFile`): exact slug → prefix match → substring match.
 
@@ -399,6 +401,9 @@ custom_fields:          # populated by `tasks field` or dashboard; synced to Cli
 - The snapshot only shows a one-line summary per task. Agents needing full task context should `Read _dream_context/state/<task>.md` directly.
 
 ## Changelog
+
+### 2026-09-29 - `tasks priority` / `tasks urgency`
+- Print or change the level on an existing task without hand-editing frontmatter (`8db14f12`).
 
 ### 2026-09-07 - Declared task statuses SHIPPED in 0.27.0 (released 2026-09-06)
 - Consolidated `task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change` (status `completed`, version 0.27.0). The 2026-09-06 entry below recorded this as "v0.26.3, in working tree"; it cut in **0.27.0** and the section labels in Acceptance Criteria and Technical Details were corrected to say so.
