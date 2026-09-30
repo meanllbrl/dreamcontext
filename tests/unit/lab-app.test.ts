@@ -240,6 +240,42 @@ describe('parseDatasetBundle', () => {
     expect(notices[0]).toMatch(/^dataset "wide": dimension "x" had 9 values/);
   });
 
+  it('an ingestion cap stamps its Other row with how many source rows it folds (the topN `other` marker)', () => {
+    const letters = 'abcdefghij'.split('');
+    const { bundle } = parseDatasetBundle({
+      kind: 'dataset/v1',
+      datasets: [{ key: 'wide', dims: [{ key: 'x' }], rows: letters.map((x, i) => ({ d: { x }, v: 10 - i })) }],
+    });
+    const rows = bundle.datasets[0].rows as Array<{ d: Record<string, string>; v: number | null; other?: number }>;
+    expect(rows).toHaveLength(9);
+    const other = rows.find((r) => r.d.x === 'Other');
+    expect(other).toMatchObject({ v: 3, other: 2 });
+    expect(rows.filter((r) => r.other !== undefined)).toHaveLength(1);
+  });
+
+  it('a source row named Other is not a fold; per-dim collapse counts the coordinates each Other row holds', () => {
+    const { bundle } = parseDatasetBundle({
+      kind: 'dataset/v1',
+      datasets: [{
+        key: 'two',
+        dims: [{ key: 'x' }, { key: 'plan' }],
+        rows: [
+          ...'abcdefghi'.split('').map((x, i) => ({ d: { x, plan: 'pro' }, v: 20 - i })),
+          { d: { x: 'i', plan: 'free' }, v: 1 },
+        ],
+      }],
+    });
+    const rows = bundle.datasets[0].rows as Array<{ d: Record<string, string>; other?: number }>;
+    expect(rows.find((r) => r.d.x === 'Other' && r.d.plan === 'pro')?.other).toBe(1);
+    expect(rows.find((r) => r.d.x === 'Other' && r.d.plan === 'free')?.other).toBe(1);
+
+    const named = parseDatasetBundle({
+      kind: 'dataset/v1',
+      datasets: [{ key: 'n', dims: [{ key: 'x' }], rows: [{ d: { x: 'a' }, v: 2 }, { d: { x: 'Other' }, v: 1 }] }],
+    });
+    expect(named.bundle.datasets[0].rows.some((r) => 'other' in r)).toBe(false);
+  });
+
   it('propagates a parseMatrixSet rejection with dataset index+key context', () => {
     expect(() => parseDatasetBundle({
       kind: 'dataset/v1',

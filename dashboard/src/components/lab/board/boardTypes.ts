@@ -163,9 +163,25 @@ export interface BlockFilter {
 }
 
 /** What every block component receives. */
+/**
+ * A block's colour identity, taken from its RAW frame (before the series pick,
+ * where, the interactive filter, sort, topN or limit ran), in source order.
+ * A chart builds its colour scale over this list, so hiding, picking or
+ * filtering entities never repaints the ones that remain. `series` names what
+ * series-shaped charts draw (line, stacked, pie from series); `rows` names what
+ * row-shaped charts draw (bar, pie from a table). An entity missing from the
+ * list (a folded "Other") falls to the end or wears the Other grey.
+ */
+export interface ColorDomain {
+  series: readonly string[];
+  rows: readonly string[];
+}
+
 export interface BlockProps {
   /** The block's frame (already shaped by frameOps), or null for blocks with no data. */
   frame: Frame | null;
+  /** The unfiltered entity names colours are assigned over (see ColorDomain). */
+  colorDomain?: ColorDomain | null;
   options: Record<string, unknown>;
   /** The primary insight's summary (legacy `insight` block, stat titles). */
   summary?: InsightSummary;

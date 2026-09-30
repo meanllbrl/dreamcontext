@@ -1,0 +1,34 @@
+/*
+ * Shared figure marks for the lab's chart bodies (chartBody.tsx). Tokens only.
+ *
+ * The change mark: arrow icon + sign + value, so direction never rides on colour
+ * alone. The status inks (--color-success-ink / --color-error-ink) are the AA text
+ * variants of the status hues (6.10 / 6.96 on white, 9.31 / 6.10 on the dark card),
+ * reserved for "this went up / down"; an uncoloured mark wears the secondary text.
+ */
+
+.lab-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-delta-icon {
+  flex: none;
+  fill: currentColor;
+}
+
+.lab-delta[data-colored][data-dir='up'] {
+  color: var(--color-success-ink);
+}
+
+.lab-delta[data-colored][data-dir='down'] {
+  color: var(--color-error-ink);
+}
+
+.lab-delta[data-dir='none'] {
+  color: var(--color-text-tertiary);
+}

@@ -1,5 +1,6 @@
 import { applyFrameOps, frameOpsFromOptions, type Frame, type FrameOps } from '../../../generated/frameOps';
-import type { Block, BlockFilter } from '../board/boardTypes';
+import type { Block, BlockFilter, ColorDomain } from '../board/boardTypes';
+import { rowLabel } from './frameAdapters';
 
 /**
  * Shaping a block's frame on the client: the static options (`where`, `sort`,
@@ -73,6 +74,31 @@ export function blockFrameOps(block: Block, frame: Frame, active: readonly Activ
  * The frame a block draws. A filter block is shaped by its own static options
  * only, never by a filter (its chips would collapse to the one chosen value).
  */
+/**
+ * The colour identity of a RAW (unshaped) frame, in source order: series
+ * frames name their series; tables name the series frameToSeries pivots out of
+ * them (the second dim's values, or one per row for a single dim) and the rows
+ * frameToBarRows labels. Computed before any op, so it is the same whatever the
+ * block picks or the filter keeps.
+ */
+export function frameColorDomain(raw: Frame | null | undefined): ColorDomain | null {
+  if (!raw) return null;
+  if (raw.kind === 'series') {
+    const names = raw.series.map((s) => s.name);
+    return { series: names, rows: names };
+  }
+  if (raw.kind === 'value') return { series: [raw.insight], rows: [raw.insight] };
+  if (raw.kind !== 'table') return null;
+  const rows = unique(raw.rows.map((r) => rowLabel(r, raw.dims)));
+  const second = raw.dims[1];
+  const series = raw.dims[0] && second ? unique(raw.rows.map((r) => r.d[second.key] ?? '')) : rows;
+  return { series, rows };
+}
+
+function unique(list: readonly string[]): string[] {
+  return Array.from(new Set(list.filter((s) => s !== '')));
+}
+
 export function shapeBlockFrame(block: Block, raw: Frame | null | undefined, active: readonly ActiveFilter[] = []): Frame | null {
   if (!raw) return null;
   return applyFrameOps(raw, blockFrameOps(block, raw, active));

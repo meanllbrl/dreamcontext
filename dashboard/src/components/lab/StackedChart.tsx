@@ -1,153 +1,341 @@
-import { useState } from 'react';
-import type { Series } from '../../hooks/useLab';
-import { CHART_COLORS } from './chartColors';
-import { ChartEmpty, ChartTooltip, formatValue, unionTimeKeys, type ChartBodyProps } from './chartBody';
+import { useMemo } from 'react';
+import { useI18n } from '../../context/I18nContext';
+import { ChartEmpty, type ChartBodyProps } from './chartBody';
+import {
+  Axis, ChartFrame, Crosshair, Grid, HitArea, bandScale, cartesianLayout, colorScale, formatValue, keyGrain,
+  timeTickFormatter, useChartHover, useChartSize, useSeriesToggle,
+  type AxisTick, type CartesianLayout, type ChartFormat, type LegendItem, type LegendPosition, type Measure, type Rect,
+  type TooltipRow,
+} from './chart';
+import {
+  axesShown, edgePadding, entityDomain, pointXTicks, seriesLabel, valueTicks, xDomainOf, xPositionsOf, xTitle,
+  type AxesMode, type ChartSeries, type XDomain,
+} from './LineChart';
 
 /**
- * `stacked` render — one stacked bar per time bucket: composition over time
- * (which series make up the total, and how that mix moves).
+ * `stacked`: composition over time (which series make up the total, and how
+ * that mix moves), on the shared chart foundation. Two shapes: `bar` (one
+ * stacked column per bucket, segments split by a 2px surface gap, the top one
+ * rounded) and `area` (stacked bands). `normalized` data (frameOps already
+ * turned each bucket into shares of 100) pins the axis to 0-100%.
  *
- * Same x axis as LineChart (the sorted union of every series' keys), and the
- * same readout contract: hovering a column reads out EVERY layer at that x, so
- * the pointer aims at a date rather than at a 3px band.
+ * Same x domain and hover contract as LineChart: the pointer snaps to the
+ * nearest bucket and the tooltip reads out EVERY visible layer there, in the
+ * legend's fixed order, with the bucket's total in the footer.
  */
 
-const WIDTH = 560;
-const PAD = { top: 10, right: 8, bottom: 22, left: 8 };
-/** Share of a column's width left as a gap, so the bars read as buckets. */
-const COLUMN_GAP = 0.18;
+export const STACK_MODES = ['bar', 'area'] as const;
+export type StackMode = (typeof STACK_MODES)[number];
+export function toStackMode(v: unknown): StackMode {
+  return (STACK_MODES as readonly unknown[]).includes(v) ? (v as StackMode) : 'bar';
+}
 
-export function StackedBody({ summary, series, full = false, emptyHint }: ChartBodyProps) {
-  return <StackedChart series={series} unit={summary.unit} full={full} emptyHint={emptyHint} />;
+/** The surface gap between stacked segments (dataviz: separation by white, never by a stroke). */
+const SEGMENT_GAP = 2;
+/** Radius of a column's data end (the top segment only; the baseline end stays square). */
+const DATA_END_RADIUS = 4;
+/** Stacked columns are thin marks (dataviz: bars <= 24px), wider than a plain bar never. */
+const MAX_COLUMN = 24;
+
+/** A value a stack can draw: a stack has no meaning below zero, so a negative part draws as nothing. */
+const stackable = (v: number | undefined): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, v) : 0);
+
+export interface StackedColumn {
+  key: string;
+  /** Each visible series' [low, high] cumulative span, in series order. */
+  spans: { name: string; lo: number; hi: number; value: number | null }[];
+  total: number;
+}
+
+/** The stack per x key over the VISIBLE series (series order = bottom to top). Pure. */
+export function stackColumns(visible: readonly ChartSeries[], keys: readonly string[]): StackedColumn[] {
+  const lookup = visible.map((s) => new Map(s.points.map((p) => [p.t, p.v] as [string, number])));
+  return keys.map((key) => {
+    let acc = 0;
+    const spans = visible.map((s, i) => {
+      const raw = lookup[i].get(key);
+      const lo = acc;
+      acc += stackable(raw);
+      return { name: s.name, lo, hi: acc, value: typeof raw === 'number' && Number.isFinite(raw) ? raw : null };
+    });
+    return { key, spans, total: acc };
+  });
+}
+
+/**
+ * The readout for one bucket: a row per visible series (value as sent, "-"
+ * when it has none there), and the bucket total for the footer.
+ */
+export function stackedTooltip(
+  column: StackedColumn,
+  opts: { color(name: string): string; label(name: string): string; format: ChartFormat; unit: string | null; locale?: string },
+): { rows: TooltipRow[]; total: string } {
+  // Shares read to one decimal (46.7%): a second one is noise at a glance.
+  const fmt = { format: opts.format, unit: opts.unit, locale: opts.locale, ...(opts.unit?.trim() === '%' ? { maxDecimals: 1 } : {}) };
+  const rows = column.spans.map((s) => ({
+    id: s.name,
+    label: opts.label(s.name),
+    value: s.value === null ? '-' : formatValue(s.value, fmt),
+    color: opts.color(s.name),
+    shape: 'rect' as const,
+    dim: s.value === null,
+  }));
+  return { rows, total: formatValue(column.total, fmt) };
+}
+
+export interface StackedGeometry {
+  layout: CartesianLayout;
+  plot: Rect;
+  /** Hover positions: bucket centres (bar) or key x (area). */
+  xs: number[];
+  /** Value -> plot-local y. */
+  yOf(v: number): number;
+  baseline: number;
+  columns: StackedColumn[];
+  /** bar mode: one path per non-empty segment. */
+  segments: { key: string; index: number; name: string; color: string; d: string }[];
+  /** area mode: one band per visible series. */
+  bands: { name: string; color: string; d: string; top: string }[];
+  bandwidth: number;
+}
+
+const n1 = (v: number) => (Math.round(v * 10) / 10).toString();
+
+/** A column segment from y0 (bottom, px) up to y1 (top, px); `round` gives it a 4px rounded data end. */
+function segmentPath(x: number, w: number, y0: number, y1: number, round: boolean): string {
+  const h = y0 - y1;
+  if (!round || h <= 0) return `M${n1(x)},${n1(y0)}V${n1(y1)}H${n1(x + w)}V${n1(y0)}Z`;
+  const r = Math.min(DATA_END_RADIUS, w / 2, h);
+  return `M${n1(x)},${n1(y0)}V${n1(y1 + r)}Q${n1(x)},${n1(y1)} ${n1(x + r)},${n1(y1)}H${n1(x + w - r)}Q${n1(x + w)},${n1(y1)} ${n1(x + w)},${n1(y1 + r)}V${n1(y0)}Z`;
+}
+
+/** Bucket-centred x ticks for columns: dates in the calendar's short form, other keys as they are. */
+function bandXTicks(domain: XDomain, centers: readonly number[], locale?: string): AxisTick[] {
+  if (!domain.isTime) return domain.keys.map((k, i) => ({ pos: centers[i], label: k }));
+  const f = timeTickFormatter(keyGrain(domain.keys), locale);
+  return domain.times.map((t, i) => ({ pos: centers[i], label: f(t, i, domain.times), value: t }));
+}
+
+/** All hover-independent geometry for one measured size. Pure. */
+export function stackedGeometry(input: {
+  visible: readonly ChartSeries[];
+  domain: XDomain;
+  mode: StackMode;
+  normalized: boolean;
+  width: number;
+  height: number;
+  fontPx: number;
+  measure: Measure;
+  color(name: string): string;
+  showX: boolean;
+  showY: boolean;
+  format: ChartFormat;
+  unit: string | null;
+  locale?: string;
+}): StackedGeometry | null {
+  const { domain, fontPx, mode } = input;
+  if (domain.keys.length === 0 || input.width <= 0 || input.height <= 0) return null;
+  const columns = stackColumns(input.visible, domain.keys);
+  const totals = columns.map((c) => c.total);
+  const fmt = { zero: true, format: input.format, unit: input.unit, locale: input.locale, fixed: input.normalized ? [0, 100] as [number, number] : undefined };
+  const band = (w: number) => bandScale(domain.keys.length, [0, w], { maxBandwidth: MAX_COLUMN });
+  const layout = cartesianLayout({
+    width: input.width,
+    height: input.height,
+    fontPx,
+    measure: input.measure,
+    showX: input.showX,
+    showY: input.showY,
+    xLabelMode: domain.isTime ? 'thin' : 'rotate',
+    padding: edgePadding(input.showX, input.showY, fontPx),
+    yTicks: (h) => valueTicks(totals, h, fontPx, fmt).ticks,
+    xTicks: (w) => {
+      if (mode === 'area') return pointXTicks(domain, w, 0, fontPx, input.locale);
+      const b = band(w);
+      return bandXTicks(domain, domain.keys.map((_, i) => b.center(i)), input.locale);
+    },
+  });
+  const { plot } = layout;
+  const { y } = valueTicks(totals, plot.height, fontPx, fmt);
+  const baseline = Math.min(plot.height, Math.max(0, y(0)));
+  const segments: StackedGeometry['segments'] = [];
+  const bands: StackedGeometry['bands'] = [];
+  let xs: number[];
+  let bandwidth = 0;
+  if (mode === 'bar') {
+    const b = band(plot.width);
+    bandwidth = b.bandwidth;
+    xs = domain.keys.map((_, i) => b.center(i));
+    columns.forEach((col, ci) => {
+      const drawn = col.spans.filter((s) => s.hi > s.lo);
+      drawn.forEach((s, k) => {
+        const y0 = plot.top + y(s.lo);
+        // Every segment above the first gives up the surface gap at its foot (when it has room to).
+        const foot = k > 0 && y0 - (plot.top + y(s.hi)) > SEGMENT_GAP * 2 ? SEGMENT_GAP : 0;
+        segments.push({
+          key: col.key,
+          index: ci,
+          name: s.name,
+          color: input.color(s.name),
+          d: segmentPath(plot.left + b.start(ci), b.bandwidth, y0 - foot, plot.top + y(s.hi), k === drawn.length - 1),
+        });
+      });
+    });
+  } else {
+    xs = xPositionsOf(domain, plot.width, 0);
+    input.visible.forEach((s, si) => {
+      const upper = columns.map((c, i) => `${n1(plot.left + xs[i])},${n1(plot.top + y(c.spans[si].hi))}`);
+      const lower = columns.map((c, i) => `${n1(plot.left + xs[i])},${n1(plot.top + y(c.spans[si].lo))}`).reverse();
+      bands.push({
+        name: s.name,
+        color: input.color(s.name),
+        d: `M${upper.join('L')}L${lower.join('L')}Z`,
+        top: `M${upper.join('L')}`,
+      });
+    });
+  }
+  return { layout, plot, xs, yOf: y, baseline, columns, segments, bands, bandwidth };
+}
+
+/** Registry body (`stacked`). A host with a definite box passes `height`: the chart fills it. */
+export function StackedBody({ summary, series, full = false, emptyHint, height }: ChartBodyProps) {
+  return <StackedChart series={series} unit={summary.unit} full={full} emptyHint={emptyHint} fill={height !== undefined} />;
 }
 
 /** The stacked drawing. `colorIndex` is the palette slot (1-8) the bottom layer takes. */
-export function StackedChart({ series, unit, full = false, emptyHint, colorIndex = 1, height: heightProp }: {
-  series: Series[];
+export function StackedChart({
+  series, unit, full = false, emptyHint, colorIndex = 1, colorDomain = null, height: heightProp, fill = false, mode = 'bar', normalized = false,
+  legend = 'bottom', axes = 'both', grid = true, format = 'auto', ariaLabel,
+}: {
+  series: ChartSeries[];
   unit: string | null;
   full?: boolean;
   emptyHint?: string;
   colorIndex?: number;
+  /** Every series name before any pick or filter (BlockProps.colorDomain.series): colours key on it. */
+  colorDomain?: readonly string[] | null;
+  /** A fixed pixel height; omitted = the legacy card (150) or panel (280) height, unless `fill`. */
   height?: number;
+  /** Fill the parent's box (blocks): no fixed height at all. */
+  fill?: boolean;
+  mode?: StackMode;
+  /** The data is already shares of 100 (frameOps `normalize`): pin the axis to 0-100%. */
+  normalized?: boolean;
+  legend?: LegendPosition;
+  axes?: AxesMode;
+  grid?: boolean;
+  format?: ChartFormat;
+  ariaLabel?: string;
 }) {
-  const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const { t, locale } = useI18n();
+  const size = useChartSize();
+  const colors = useMemo(
+    () => colorScale(entityDomain(colorDomain, series.map((s) => s.name)), {
+      start: colorIndex, other: series.filter((s) => typeof s.other === 'number').map((s) => s.name),
+    }),
+    [series, colorDomain, colorIndex],
+  );
+  const names = useMemo(() => series.map((s) => s.name), [series]);
+  const toggle = useSeriesToggle(names);
+  const visible = useMemo(() => series.filter((s) => !toggle.hidden.has(s.name)), [series, toggle.hidden]);
+  const domain = useMemo(() => xDomainOf(series), [series]);
+  const { showX, showY } = axesShown(axes);
+  // Shares read as shares: 25%, never 0.25 or 2,500%.
+  const shareUnit = normalized ? '%' : unit;
+  const shareFormat: ChartFormat = normalized ? 'number' : format;
 
-  const height = heightProp ?? (full ? 280 : 150);
-  const offset = Math.max(0, Math.round(colorIndex) - 1);
-  const colorAt = (i: number) => CHART_COLORS[(offset + i) % CHART_COLORS.length];
-  const innerW = WIDTH - PAD.left - PAD.right;
-  const innerH = height - PAD.top - PAD.bottom;
+  const geo = useMemo(() => (size.ready ? stackedGeometry({
+    visible, domain, mode, normalized, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure,
+    color: colors.color, showX, showY, format: shareFormat, unit: shareUnit, locale,
+  }) : null), [size.ready, size.width, size.height, size.fontPx, size.measure, visible, domain, mode, normalized, colors, showX, showY, shareFormat, shareUnit, locale]);
 
-  const keys = unionTimeKeys(series);
-  if (keys.length === 0) return <ChartEmpty hint={emptyHint} />;
+  const hover = useChartHover({ positions: geo?.xs ?? [], plotWidth: geo?.plot.width ?? 0, plotHeight: geo?.plot.height ?? 0 });
+  const hi = hover.index;
 
-  // A stack has no meaning below zero — a negative contribution is drawn as no
-  // segment, while the hover readout still reports the value the adapter sent.
-  const valueAt = (seriesIndex: number, key: string): number | null => {
-    const point = series[seriesIndex].points.find((p) => p.t === key);
-    return point ? point.v : null;
+  if (domain.keys.length === 0) return <ChartEmpty hint={emptyHint} />;
+
+  const byName = new Map(series.map((s) => [s.name, s] as [string, ChartSeries]));
+  const label = (name: string) => {
+    const s = byName.get(name);
+    return s ? seriesLabel(s, t) : name;
   };
-  const totals = keys.map((key) =>
-    series.reduce((sum, _s, i) => sum + Math.max(0, valueAt(i, key) ?? 0), 0),
-  );
-  const max = Math.max(...totals, 1);
+  const column = geo && hi !== null ? geo.columns[hi] ?? null : null;
+  const readout = column ? stackedTooltip(column, { color: colors.color, label, format: shareFormat, unit: shareUnit, locale }) : null;
+  const tooltip = geo && hi !== null && column && readout ? {
+    anchor: {
+      x: geo.plot.left + geo.xs[hi] + (mode === 'bar' ? geo.bandwidth / 2 : 0),
+      y: hover.pointer ? geo.plot.top + hover.pointer.y : geo.plot.top + geo.plot.height / 2,
+    },
+    title: xTitle(domain, hi, locale),
+    rows: readout.rows,
+    footer: visible.length > 1 ? (
+      <span data-total="">
+        <span className="lab-chart-tooltip-value">{readout.total}</span> {t('lab.chart.total')}
+      </span>
+    ) : undefined,
+  } : null;
+  const legendItems: LegendItem[] = series.map((s) => ({ id: s.name, label: label(s.name), color: colors.color(s.name), shape: 'rect' as const }));
 
-  const columnW = innerW / keys.length;
-  const barW = Math.max(1, columnW * (1 - COLUMN_GAP));
-  const baseY = PAD.top + innerH;
-  const hoverIndex = hoverKey === null ? -1 : keys.indexOf(hoverKey);
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <svg
-        viewBox={`0 0 ${WIDTH} ${height}`}
-        width="100%"
-        height={height}
-        role="img"
-        aria-label="Stacked bar chart"
-        style={{ display: 'block', touchAction: 'pan-y' }}
-        onPointerLeave={() => setHoverKey(null)}
-      >
-        <line x1={PAD.left} y1={baseY} x2={PAD.left + innerW} y2={baseY} stroke="var(--color-border)" strokeWidth={1} />
-        {keys.map((key, ki) => {
-          const x = PAD.left + ki * columnW + (columnW - barW) / 2;
-          let top = baseY;
-          return (
-            <g key={key}>
-              {series.map((s, si) => {
-                const v = Math.max(0, valueAt(si, key) ?? 0);
-                if (v <= 0) return null;
-                const h = (v / max) * innerH;
-                top -= h;
-                return (
-                  <rect
-                    key={s.name}
-                    x={x}
-                    y={top}
-                    width={barW}
-                    height={h}
-                    fill={colorAt(si)}
-                    opacity={hoverKey === null || hoverKey === key ? 1 : 0.45}
-                    style={{ transition: 'opacity 0.12s ease' }}
-                  />
-                );
-              })}
-              {/* Full-height hit area: the bars are too thin to aim at. */}
-              <rect
-                x={PAD.left + ki * columnW}
-                y={PAD.top}
-                width={columnW}
-                height={innerH}
-                fill="transparent"
-                onPointerEnter={() => setHoverKey(key)}
-              />
-            </g>
-          );
-        })}
-        <text x={PAD.left} y={height - 6} fontSize={10} fill="var(--color-text-tertiary)">{keys[0]}</text>
-        <text x={PAD.left + innerW} y={height - 6} fontSize={10} fill="var(--color-text-tertiary)" textAnchor="end">
-          {keys[keys.length - 1]}
-        </text>
-      </svg>
-
-      {hoverKey !== null && hoverIndex >= 0 && (
-        <ChartTooltip
-          style={{
-            top: 0,
-            left: `${(((PAD.left + hoverIndex * columnW + columnW / 2) / WIDTH) * 100)}%`,
-            transform: hoverIndex > keys.length / 2 ? 'translateX(calc(-100% - 8px))' : 'translateX(8px)',
-          }}
+  const chart = (
+    <ChartFrame
+      plotRef={size.ref}
+      data-chart="stacked"
+      data-mode={mode}
+      data-normalized={normalized ? 'true' : 'false'}
+      data-hover-index={hi ?? ''}
+      legend={series.length > 1 ? { position: legend, items: legendItems, hidden: toggle.hidden, onToggle: toggle.toggle } : null}
+      tooltip={tooltip}
+    >
+      {geo && (
+        <svg
+          className="lab-chart-svg"
+          width={size.width}
+          height={size.height}
+          viewBox={`0 0 ${size.width} ${size.height}`}
+          role="img"
+          aria-label={ariaLabel ?? t('lab.chart.stacked')}
+          {...hover.focusProps}
         >
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)', marginBottom: 4 }}>{hoverKey}</div>
-          {series.map((s, si) => (
-            <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: colorAt(si), flexShrink: 0 }} />
-              <span style={{ fontWeight: 700, color: 'var(--color-text)', fontFamily: 'var(--font-mono)' }}>
-                {formatValue(valueAt(si, hoverKey), unit)}
-              </span>
-              {series.length > 1 && <span style={{ color: 'var(--color-text-secondary)', fontSize: 11.5 }}>{s.name}</span>}
-            </div>
+          {grid && <Grid plot={geo.plot} y={geo.layout.y.ticks} dpr={size.dpr} />}
+          {showY && <Axis orientation="y" axis={geo.layout.y} plot={geo.plot} dpr={size.dpr} />}
+          {geo.bands.map((b) => (
+            <g key={b.name} data-series={b.name} pointerEvents="none">
+              <path data-band="" d={b.d} fill={b.color} fillOpacity={0.35} stroke="none" />
+              <path d={b.top} fill="none" stroke={b.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            </g>
           ))}
-          {series.length > 1 && (
-            <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', fontSize: 11.5 }}>
-              Total <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
-                {formatValue(totals[hoverIndex], unit)}
-              </span>
-            </div>
-          )}
-        </ChartTooltip>
-      )}
-
-      {series.length > 1 && (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
-          {series.map((s, i) => (
-            <span key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: colorAt(i), display: 'inline-block' }} />
-              {s.name}
-            </span>
+          {geo.segments.map((s) => (
+            <path
+              key={`${s.key}-${s.name}`}
+              data-segment=""
+              data-series={s.name}
+              d={s.d}
+              fill={s.color}
+              // The hovered bucket stays full strength; the rest step back so it reads as picked.
+              opacity={hi === null || hi === s.index ? 1 : 0.45}
+              pointerEvents="none"
+            />
           ))}
-        </div>
+          <Axis orientation="x" axis={geo.layout.x} plot={geo.plot} baseline={showX ? geo.baseline : null} dpr={size.dpr} />
+          {hi !== null && mode === 'area' && <Crosshair plot={geo.plot} x={geo.xs[hi]} dpr={size.dpr} />}
+          {hi !== null && mode === 'area' && column && column.spans.map((s) => (s.hi > s.lo ? (
+            <circle
+              key={`h-${s.name}`}
+              data-hover-point=""
+              cx={geo.plot.left + geo.xs[hi]}
+              cy={geo.plot.top + geo.yOf(s.hi)}
+              r={4}
+              fill={colors.color(s.name)}
+              stroke="var(--viz-surface)"
+              strokeWidth={2}
+              pointerEvents="none"
+            />
+          ) : null))}
+          <HitArea plot={geo.plot} {...hover.hitProps} />
+        </svg>
       )}
-    </div>
+    </ChartFrame>
   );
+  if (fill) return chart;
+  return <div style={{ height: heightProp ?? (full ? 280 : 150), minWidth: 0 }}>{chart}</div>;
 }

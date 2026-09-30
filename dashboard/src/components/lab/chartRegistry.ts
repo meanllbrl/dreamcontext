@@ -72,6 +72,13 @@ export interface ChartRegistryEntry {
   routed?: boolean;
   /** Card tooltip — what clicking it does. */
   openHint: string;
+  /**
+   * How the body sits in a board cell (the `insight` block). `fill`: a chart; it gets
+   * a box of definite size with no scroll and draws to it (ChartBodyProps.height).
+   * `scroll`: a table-like body (rows, a pivot, a multi-page app); it keeps its natural
+   * height and scrolls inside the cell. html/v1 and app/v1 bodies always scroll.
+   */
+  fit: 'fill' | 'scroll';
 }
 
 const DETAIL_HINT = 'Open details, history & interactive chart';
@@ -92,6 +99,7 @@ function spanOf(render: Render): CardSpan {
 export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   number: {
     CardBody: NumberBody,
+    fit: 'fill',
     DetailBody: NumberDetailBody,
     defaultSpan: spanOf('number'),
     supportsWindow: true,
@@ -100,6 +108,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   line: {
     CardBody: LineBody,
+    fit: 'fill',
     defaultSpan: spanOf('line'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
@@ -107,6 +116,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   pie: {
     CardBody: PieBody,
+    fit: 'fill',
     defaultSpan: spanOf('pie'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
@@ -114,6 +124,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   raw: {
     CardBody: RawBody,
+    fit: 'scroll',
     defaultSpan: spanOf('raw'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
@@ -121,6 +132,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   funnel: {
     CardBody: FunnelBody,
+    fit: 'scroll',
     defaultSpan: spanOf('funnel'),
     supportsWindow: true,
     emptyHint: 'No funnel data yet — sync to fetch.',
@@ -129,6 +141,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   bar: {
     CardBody: BarBody,
+    fit: 'fill',
     defaultSpan: spanOf('bar'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
@@ -136,6 +149,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   bar_compare: {
     CardBody: BarCompareBody,
+    fit: 'fill',
     defaultSpan: spanOf('bar_compare'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
@@ -143,6 +157,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   stacked: {
     CardBody: StackedBody,
+    fit: 'fill',
     defaultSpan: spanOf('stacked'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
@@ -151,6 +166,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   table: {
     // A metric table needs room for four columns of numbers before it wraps.
     CardBody: TableBody,
+    fit: 'scroll',
     defaultSpan: spanOf('table'),
     supportsWindow: true,
     emptyHint: 'No series yet.',
@@ -158,6 +174,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   heatmap: {
     CardBody: HeatmapBody,
+    fit: 'fill',
     defaultSpan: spanOf('heatmap'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
@@ -166,6 +183,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   breakdown: {
     // A pivot needs room for its column axis before it wraps.
     CardBody: BreakdownBody,
+    fit: 'scroll',
     defaultSpan: spanOf('breakdown'),
     supportsWindow: true,
     emptyHint: 'No breakdown data yet — sync to fetch.',
@@ -174,6 +192,7 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   app: {
     // A multi-page app body needs room to preview its entry/card page.
     CardBody: LabAppBody,
+    fit: 'scroll',
     defaultSpan: spanOf('app'),
     supportsWindow: true,
     emptyHint: 'No app body yet — sync to build it.',

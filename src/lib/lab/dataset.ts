@@ -3,10 +3,11 @@ import {
   type Dataset,
   type DatasetBundle,
   type DatasetSnapshot,
+  type MatrixDim,
   type MatrixRow,
   type Series,
 } from './types.js';
-import { MATRIX_SET_KIND, MAX_MATRIX_BYTES, matrixLatest, matrixToSeries, parseMatrixSet } from './matrix.js';
+import { MATRIX_OTHER_VALUE, MATRIX_SET_KIND, MAX_MATRIX_BYTES, matrixLatest, matrixToSeries, parseMatrixSet } from './matrix.js';
 
 /**
  * Dataset-bundle contract (`dataset/v1`) — validation, caps, lookup,
@@ -52,6 +53,47 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/**
+ * The ingestion caps (parseMatrixSet: top values per dim, then the row tail)
+ * fold source rows into `Other` rows but keep no count. Recount them from the
+ * raw rows and stamp each folding row with `other: <distinct source rows it
+ * holds>`, the same marker frameOps' `topN` sets, so every consumer reads an
+ * ingested cap and a block's topN the same way ("Other (3)", the Other grey).
+ * A source row that was itself named `Other` is not a fold and is not counted.
+ */
+function markFolded(rawRows: unknown, dims: readonly MatrixDim[], rows: MatrixRow[]): MatrixRow[] {
+  if (!Array.isArray(rawRows) || !rows.some((r) => dims.some((d) => r.d[d.key] === MATRIX_OTHER_VALUE))) return rows;
+  const coord = (d: Record<string, string>) => dims.map((dim) => `${dim.key}=${d[dim.key]}`).join('|');
+  const byCoord = new Map(rows.map((r) => [coord(r.d), r] as [string, MatrixRow]));
+  const kept = dims.map((dim) => new Set(rows.map((r) => r.d[dim.key])));
+  const allOther = coord(Object.fromEntries(dims.map((dim) => [dim.key, MATRIX_OTHER_VALUE])));
+  const folded = new Map<string, Set<string>>();
+  for (const raw of rawRows) {
+    if (!isRecord(raw) || !isRecord(raw.d)) continue;
+    const src = raw.d;
+    // The same coordinate parseMatrixSet gives the row (a blank dim is `Unknown`).
+    const own: Record<string, string> = {};
+    dims.forEach((dim) => {
+      const v = src[dim.key];
+      own[dim.key] = v === undefined || v === null || String(v).trim() === '' ? 'Unknown' : String(v);
+    });
+    const ownKey = coord(own);
+    if (byCoord.has(ownKey)) continue;
+    const mapped = coord(Object.fromEntries(dims.map((dim, i) => [dim.key, kept[i].has(own[dim.key]) ? own[dim.key] : MATRIX_OTHER_VALUE])));
+    // A coordinate the per-dim collapse kept but the row-tail cap merged lands in the all-Other row.
+    const target = byCoord.has(mapped) ? mapped : allOther;
+    if (!byCoord.has(target)) continue;
+    const set = folded.get(target) ?? new Set<string>();
+    set.add(ownKey);
+    folded.set(target, set);
+  }
+  if (folded.size === 0) return rows;
+  return rows.map((r) => {
+    const n = folded.get(coord(r.d))?.size ?? 0;
+    return n > 0 ? ({ ...r, other: n } as MatrixRow) : r;
+  });
+}
+
 /** Validate one dataset by delegating its dims/rows/total to `parseMatrixSet`
  *  — a dataset IS a matrix/v1 row set, just named and one of several. */
 function parseDataset(raw: unknown, index: number, notices: string[]): Dataset {
@@ -78,7 +120,7 @@ function parseDataset(raw: unknown, index: number, notices: string[]): Dataset {
   }
   for (const notice of parsed.notices) notices.push(`dataset "${key}": ${notice}`);
 
-  const dataset: Dataset = { key, dims: parsed.set.dims, rows: parsed.set.rows };
+  const dataset: Dataset = { key, dims: parsed.set.dims, rows: markFolded(raw.rows, parsed.set.dims, parsed.set.rows) };
   if (typeof raw.label === 'string' && raw.label.trim()) dataset.label = raw.label.trim();
   if (parsed.set.unit !== undefined) dataset.unit = parsed.set.unit;
   if (parsed.set.total) dataset.total = parsed.set.total;

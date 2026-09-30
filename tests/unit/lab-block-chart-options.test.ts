@@ -24,6 +24,20 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   I18nProvider: ({ children }: { children: unknown }) => children,
 }));
 
+// The foundation charts measure their box (ResizeObserver); under static markup nothing is
+// measured, so the hook reports a fixed box and the charts draw (lanes C and D, W2).
+vi.mock('../../dashboard/src/components/lab/chart/useChartSize.js', async (orig) => {
+  const real = await orig<typeof import('../../dashboard/src/components/lab/chart/useChartSize.js')>();
+  const { estimateTextWidth } = await import('../../dashboard/src/components/lab/chart/layout.js');
+  return {
+    ...real,
+    useChartSize: () => ({
+      ref: { current: null }, width: 560, height: 240, fontPx: 12, dpr: 2, ready: true,
+      measure: (s: string) => estimateTextWidth(s, 12),
+    }),
+  };
+});
+
 const { LineChart } = await import('../../dashboard/src/components/lab/LineChart.js');
 const { BarChart } = await import('../../dashboard/src/components/lab/BarChart.js');
 const { BarCompareChart } = await import('../../dashboard/src/components/lab/BarCompareChart.js');
@@ -102,15 +116,15 @@ describe('LineChart: area, colorIndex, series filter', () => {
   it('colorIndex shifts the palette the lines start at', () => {
     const plain = html(createElement(LineChart, { series: SERIES }));
     const shifted = html(createElement(LineChart, { series: SERIES, colorIndex: 3 }));
-    expect(plain).toMatch(/<polyline[^>]*stroke="var\(--chart-1\)"/);
-    expect(shifted).toMatch(/<polyline[^>]*stroke="var\(--chart-3\)"/);
-    expect(shifted).not.toMatch(/<polyline[^>]*stroke="var\(--chart-1\)"/);
+    expect(plain).toMatch(/<path d="[^"]*" fill="none" stroke="var\(--viz-cat-1\)"/);
+    expect(shifted).toMatch(/<path d="[^"]*" fill="none" stroke="var\(--viz-cat-3\)"/);
+    expect(shifted).not.toContain('stroke="var(--viz-cat-1)"');
   });
 
   it('the series filter keeps only the named lines, in the filter order', () => {
     const out = html(createElement(LineChart, { series: SERIES, seriesFilter: ['android', 'web'] }));
-    expect(count(out, /<polyline/g)).toBe(2);
-    expect(out.indexOf('android')).toBeLessThan(out.indexOf('>web<'));
+    expect(count(out, /<path d="[^"]*" fill="none" stroke=/g)).toBe(2);
+    expect(out.indexOf('data-series="android"')).toBeLessThan(out.indexOf('data-series="web"'));
   });
 });
 
@@ -120,49 +134,48 @@ const ROWS = [
 ];
 
 describe('BarChart: orientation, color, ranking', () => {
-  it('orientation v draws columns, h draws the bar list', () => {
+  it('orientation v draws columns, h draws rows; both draw one bar per row', () => {
     const h = html(createElement(BarChart, { rows: ROWS, unit: null }));
     const v = html(createElement(BarChart, { rows: ROWS, unit: null, orientation: 'v' }));
-    expect(count(h, /data-bar/g)).toBe(0);
-    expect(count(v, /data-bar/g)).toBe(2);
-    expect(v).toContain('Vertical bar chart');
+    expect(h).toContain('data-orientation="h"');
+    expect(v).toContain('data-orientation="v"');
+    expect(count(h, /data-bar=""/g)).toBe(2);
+    expect(count(v, /data-bar=""/g)).toBe(2);
   });
 
-  it('colorIndex recolors from that palette slot', () => {
+  it('colorIndex: a single series wears that one slot on every bar', () => {
     const out = html(createElement(BarChart, { rows: ROWS, unit: null, orientation: 'v', colorIndex: 5 }));
-    expect(out).toContain('var(--chart-5)');
-    expect(out).toContain('var(--chart-6)');
-    expect(out).not.toContain('var(--chart-1)');
+    expect(count(out, /fill="var\(--viz-cat-5\)"/g)).toBe(2);
+    expect(out).not.toContain('var(--viz-cat-1)');
   });
 
   it('ranked=false keeps the caller order (a block sort)', () => {
-    const ranked = html(createElement(BarChart, { rows: ROWS, unit: null }));
-    const kept = html(createElement(BarChart, { rows: ROWS, unit: null, ranked: false }));
-    expect(ranked.indexOf('title="a"')).toBeLessThan(ranked.indexOf('title="b"'));
-    expect(kept.indexOf('title="b"')).toBeLessThan(kept.indexOf('title="a"'));
+    const first = (s: string) => s.match(/data-axis="y"[\s\S]*?<text[^>]*>([^<]*)</)?.[1];
+    expect(first(html(createElement(BarChart, { rows: ROWS, unit: null })))).toBe('a');
+    expect(first(html(createElement(BarChart, { rows: ROWS, unit: null, ranked: false })))).toBe('b');
   });
 });
 
-describe('BarCompareChart (comparePrev reuses bar_compare)', () => {
+describe('BarCompareChart (the bar_compare render)', () => {
   it('explicit groups draw one group per row with a bar per series, colored from colorIndex', () => {
     const series = [
       { name: 'Previous', points: [{ t: 'Atlantis', v: 40 }, { t: 'Lemuria', v: 10 }] },
       { name: 'Current', points: [{ t: 'Atlantis', v: 50 }, { t: 'Lemuria', v: 20 }] },
     ];
     const out = html(createElement(BarCompareChart, { series, unit: null, groups: ['Atlantis', 'Lemuria'], colorIndex: 2 }));
-    expect(count(out, /<rect/g)).toBe(4);
+    expect(count(out, /data-bar=""/g)).toBe(4);
     expect(out).toContain('>Atlantis<');
-    expect(out).toContain('var(--chart-2)');
-    expect(out).toContain('var(--chart-3)');
+    expect(out).toContain('fill="var(--viz-cat-2)"');
+    expect(out).toContain('fill="var(--viz-cat-3)"');
   });
 });
 
 describe('StackedChart: color offset', () => {
   it('the bottom layer takes the chosen slot', () => {
-    expect(html(createElement(StackedChart, { series: SERIES, unit: null }))).toContain('fill="var(--chart-1)"');
+    expect(html(createElement(StackedChart, { series: SERIES, unit: null }))).toContain('fill="var(--viz-cat-1)"');
     const shifted = html(createElement(StackedChart, { series: SERIES, unit: null, colorIndex: 4 }));
-    expect(shifted).toContain('fill="var(--chart-4)"');
-    expect(shifted).not.toContain('fill="var(--chart-1)"');
+    expect(shifted).toContain('fill="var(--viz-cat-4)"');
+    expect(shifted).not.toContain('fill="var(--viz-cat-1)"');
   });
 });
 
@@ -172,15 +185,16 @@ describe('PieChart: donut, degrade kept', () => {
     const donut = html(createElement(PieChart, { series: SERIES, donut: true }));
     expect(pie).not.toContain('data-donut');
     expect(donut).toContain('data-donut');
-    const arcs = (s: string) => count(s, / A /g);
+    const arcs = (s: string) => count(s, /A[\d.]+,[\d.]+ 0 [01] [01] /g);
+    expect(arcs(pie)).toBe(3);
     expect(arcs(donut)).toBe(2 * arcs(pie));
   });
 
   it('seven or more slices still degrade to bars, donut or not', () => {
     const many = Array.from({ length: 7 }, (_, i) => ({ name: `s${i}`, points: [{ t: '', v: i + 1 }] }));
     const out = html(createElement(PieChart, { series: many, donut: true }));
-    expect(out).not.toContain('Donut chart');
-    expect(out).toContain('Share by series');
+    expect(out).not.toContain('data-donut');
+    expect(out).toContain('data-chart="bar-list"');
   });
 });
 
@@ -199,7 +213,7 @@ describe('MetricTable / FrameTable: column pick', () => {
   it('table frame: the pick chooses and orders columns', () => {
     const all = html(createElement(FrameTable, { dims: t.dims, rows: t.rows, unit: null, labels }));
     const picked = html(createElement(FrameTable, { dims: t.dims, rows: t.rows, unit: null, labels, columns: ['v', 'country'] }));
-    expect(all).toContain('data-columns="country,plan,v,n,prev"');
+    expect(all).toContain('data-columns="country,plan,v,n,prev,delta"');
     expect(picked).toContain('data-columns="v,country"');
   });
 
@@ -211,19 +225,19 @@ describe('MetricTable / FrameTable: column pick', () => {
 });
 
 describe('HeatmapChart / HeatmapMatrix: color', () => {
-  it('series grid tints with the chosen chart token', () => {
+  it('series grid: slot 1 is the validated blue ramp, another slot a ramp of that hue', () => {
     const plain = html(createElement(HeatmapChart, { series: SERIES, unit: null, granularity: 'daily' }));
     const tinted = html(createElement(HeatmapChart, { series: SERIES, unit: null, granularity: 'daily', colorIndex: 4 }));
-    expect(plain).toContain('var(--chart-1)');
-    expect(tinted).toContain('var(--chart-4)');
-    expect(tinted).not.toContain('var(--chart-1)');
+    expect(plain).toContain('var(--viz-seq-');
+    expect(tinted).toContain('var(--viz-cat-4)');
+    expect(tinted).not.toContain('var(--viz-seq-');
   });
 
   it('table matrix: rows by the first dim, columns by the second', () => {
     const t = TABLE_FRAME as Extract<Frame, { kind: 'table' }>;
     const out = html(createElement(HeatmapMatrix, { dims: t.dims, rows: t.rows, unit: null, colorIndex: 6 }));
-    expect(count(out, /data-heat-cell/g)).toBe(3 * 2);
-    expect(out).toContain('var(--chart-6)');
+    expect(count(out, /data-heat-cell=""/g)).toBe(3 * 2);
+    expect(out).toContain('var(--viz-cat-6)');
   });
 });
 
@@ -277,8 +291,8 @@ describe('blocks: each option changes the render', () => {
     const base = renderBlock(LineBlock, block('line'), { frame: SERIES_FRAME });
     expect(renderBlock(LineBlock, block('line', { area: true }), { frame: SERIES_FRAME })).toContain('data-area');
     expect(base).not.toContain('data-area');
-    expect(renderBlock(LineBlock, block('line', { color: 7 }), { frame: SERIES_FRAME })).toMatch(/stroke="var\(--chart-7\)"/);
-    expect(count(renderBlock(LineBlock, block('line', { series: ['ios'] }), { frame: SERIES_FRAME }), /<polyline/g)).toBe(1);
+    expect(renderBlock(LineBlock, block('line', { color: 7 }), { frame: SERIES_FRAME })).toMatch(/stroke="var\(--viz-cat-7\)"/);
+    expect(count(renderBlock(LineBlock, block('line', { series: ['ios'] }), { frame: SERIES_FRAME }), /<path d="[^"]*" fill="none" stroke=/g)).toBe(1);
   });
 
   it('bar: orientation, color, comparePrev', () => {
@@ -287,16 +301,15 @@ describe('blocks: each option changes the render', () => {
     const colored = renderBlock(BarBlock, block('bar', { orientation: 'v', color: 3 }), { frame: TABLE_FRAME });
     const compare = renderBlock(BarBlock, block('bar', { comparePrev: true }), { frame: TABLE_FRAME });
     expect(base).toContain('data-orientation="h"');
-    expect(count(base, /data-bar/g)).toBe(0);
-    expect(count(vertical, /data-bar/g)).toBeGreaterThan(0);
-    expect(colored).toContain('var(--chart-3)');
-    expect(compare).toContain('Grouped bar chart');
-    expect(compare).toContain('lab.blocks.compare.prev');
-    expect(compare).toContain('lab.blocks.compare.current');
+    expect(vertical).toContain('data-orientation="v"');
+    expect(count(base, /data-bar=""/g)).toBeGreaterThan(0);
+    expect(colored).toContain('fill="var(--viz-cat-3)"');
+    expect(count(base, /data-ghost="true"/g)).toBe(0);
+    expect(count(compare, /data-ghost="true"/g)).toBeGreaterThan(0);
   });
 
   it('stacked: color', () => {
-    expect(renderBlock(StackedBlock, block('stacked', { color: 5 }), { frame: SERIES_FRAME })).toContain('fill="var(--chart-5)"');
+    expect(renderBlock(StackedBlock, block('stacked', { color: 5 }), { frame: SERIES_FRAME })).toContain('fill="var(--viz-cat-5)"');
   });
 
   it('pie: donut', () => {
@@ -308,13 +321,13 @@ describe('blocks: each option changes the render', () => {
   it('table: columns', () => {
     const all = renderBlock(TableBlock, block('table'), { frame: TABLE_FRAME });
     const picked = renderBlock(TableBlock, block('table', { columns: ['country', 'v'] }), { frame: TABLE_FRAME });
-    expect(all).toContain('data-columns="country,plan,v,n,prev"');
+    expect(all).toContain('data-columns="country,plan,v,n,prev,delta"');
     expect(picked).toContain('data-columns="country,v"');
   });
 
   it('heatmap: color', () => {
-    expect(renderBlock(HeatmapBlock, block('heatmap', { color: 2 }), { frame: TABLE_FRAME })).toContain('var(--chart-2)');
-    expect(renderBlock(HeatmapBlock, block('heatmap'), { frame: TABLE_FRAME })).not.toContain('var(--chart-2)');
+    expect(renderBlock(HeatmapBlock, block('heatmap', { color: 2 }), { frame: TABLE_FRAME })).toContain('var(--viz-cat-2)');
+    expect(renderBlock(HeatmapBlock, block('heatmap'), { frame: TABLE_FRAME })).not.toContain('var(--viz-cat-2)');
   });
 
   it('funnel: compact draws the dense bars and one funnel', () => {
@@ -454,8 +467,18 @@ describe('text/callout: remote media stripped before markdown', () => {
   });
 });
 
-describe('blocks.css speaks only in tokens', () => {
-  const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/blocks/blocks.css'), 'utf-8')
+// blocks.css plus the stylesheets the table, stat, funnel and insight blocks added (W2).
+const BLOCK_CSS = [
+  'blocks/blocks.css',
+  'blocks/dataBlocks.css',
+  'MetricTable.css',
+  'NumberCard.css',
+  'chartBody.css',
+  'funnel/FunnelBars.css',
+];
+
+describe.each(BLOCK_CSS)('%s speaks only in tokens', (file) => {
+  const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab', file), 'utf-8')
     .replace(/\/\*[\s\S]*?\*\//g, '');
 
   it('has no literal colors, font sizes, off-ladder weights or durations', () => {

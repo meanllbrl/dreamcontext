@@ -1,0 +1,73 @@
+/*
+ * Board data blocks that are not cartesian charts: table, funnel and the legacy
+ * insight block's two fits. Tokens only (checked with blocks.css): no literal
+ * colours, sizes, weights or durations.
+ */
+
+/* ── table ──────────────────────────────────────────────────────────── */
+
+/* The cell holds the table's own scroll box (MetricTable.css .lab-table-wrap): it
+   shrinks to its rows and scrolls past the cell with the header stuck on top. */
+.lab-block-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── funnel ─────────────────────────────────────────────────────────── */
+
+.lab-block-funnel--fit {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-block-funnel--fit .lab-block-funnel-item {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.lab-block-funnel-more {
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+/* ── insight (legacy renders) ───────────────────────────────────────── */
+
+/* A chart render: a box of definite size (the body is absolutely placed in it), so
+   a body that fills its parent resolves 100% and nothing can scroll or grow the cell. */
+.lab-block-insight--fill {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-block-insight-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A table-like render scrolls; a table that owns a scroll box shrinks into the cell
+   instead, so its sticky header holds. */
+.lab-block-insight--scroll {
+  display: flex;
+  flex-direction: column;
+}
+
+.lab-block-insight--scroll > .lab-table-wrap {
+  min-height: 0;
+}

@@ -1,0 +1,199 @@
+/* Bar, pie and heatmap marks on the chart foundation (chart/chart.css owns the palette,
+ * axes, tooltip and legend). TOKENS ONLY: every colour is a token; no hex lives here.
+ *
+ *   --lab-cat-ink-N   the label ink for text set INSIDE a categorical fill (a pie's
+ *                     inside labels, a heat cell at full hue): white or ink, whichever
+ *                     clears more contrast (WCAG) on that slot's validated hex against
+ *                     --color-ink / --color-snow in that theme (light: white on violet,
+ *                     green, blue, red; dark: white on orange, magenta, green).
+ *   --lab-heat-far    where a custom-hue heat ramp goes PAST its hue (ink in light,
+ *                     white in dark), so the ramp spans enough lightness for its steps
+ *                     to read apart; --lab-heat-far-ink labels those steps.
+ *
+ * The custom-hue heat ramp (HeatmapChart.tsx HUE_RAMP: the hue at 16/40/70/100% over the
+ * surface, then 34/64% toward --lab-heat-far) was run through validate_palette.js --ordinal
+ * for slots 2-8 in both themes: monotone, adjacent dL >= 0.06 and single hue all PASS; the
+ * light-end contrast fails by design (near zero recedes to the surface, as on the
+ * foundation's sequential ramp). Label inks on every step clear 3.5:1 (most above 4.5).
+ */
+
+:root {
+  --lab-cat-ink-1: var(--color-snow);
+  --lab-cat-ink-2: var(--color-ink);
+  --lab-cat-ink-3: var(--color-ink);
+  --lab-cat-ink-4: var(--color-ink);
+  --lab-cat-ink-5: var(--color-ink);
+  --lab-cat-ink-6: var(--color-snow);
+  --lab-cat-ink-7: var(--color-snow);
+  --lab-cat-ink-8: var(--color-snow);
+  --lab-other-ink: var(--color-ink);
+  --lab-heat-far: var(--color-ink);
+  --lab-heat-far-ink: var(--color-snow);
+}
+
+[data-theme='dark'],
+.surface-night {
+  --lab-cat-ink-1: var(--color-ink);
+  --lab-cat-ink-2: var(--color-snow);
+  --lab-cat-ink-3: var(--color-ink);
+  --lab-cat-ink-4: var(--color-ink);
+  --lab-cat-ink-5: var(--color-snow);
+  --lab-cat-ink-6: var(--color-snow);
+  --lab-cat-ink-7: var(--color-ink);
+  --lab-cat-ink-8: var(--color-ink);
+  --lab-other-ink: var(--color-snow);
+  --lab-heat-far: var(--color-snow);
+  --lab-heat-far-ink: var(--color-ink);
+}
+
+/* ── A board cell's chart area: its child is pinned to the whole box, so the chart's
+   size comes from the cell alone and nothing inside can make it grow or scroll. */
+.lab-chart-cell {
+  position: relative;
+}
+
+.lab-chart-cell > * {
+  position: absolute;
+  inset: 0;
+}
+
+/* ── Boxes: a chart fills what it is given (a board cell) or the fixed height its caller set. */
+.lab-bar-box,
+.lab-pie-box,
+.lab-heat-box {
+  position: relative;
+  width: 100%;
+  height: var(--lab-chart-h, 100%);
+  min-width: 0;
+  min-height: 0;
+}
+
+.lab-pie-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lab-bar-list {
+  position: relative;
+  width: 100%;
+  height: var(--lab-chart-h, auto);
+  min-width: 0;
+}
+
+.lab-bar-list[data-fill='true'] {
+  height: 100%;
+  min-height: 0;
+}
+
+/* ── Bars ── */
+.lab-bar-marks path {
+  transition: opacity var(--transition-fast);
+}
+
+.lab-bar-marks path[data-active='false'] {
+  opacity: 0.55;
+}
+
+.lab-bar-hover {
+  fill: var(--viz-grid);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.lab-bar-value {
+  fill: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* ── Pie ── */
+.lab-pie-slice {
+  stroke: var(--viz-surface);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  cursor: default;
+  outline: none;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.lab-pie-slice[data-dim='true'] {
+  opacity: 0.35;
+}
+
+.lab-pie-slice:focus-visible {
+  stroke: var(--color-border-focus);
+}
+
+.lab-pie-label {
+  fill: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  pointer-events: none;
+}
+
+.lab-pie-label-share {
+  fill: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-pie-leader {
+  fill: none;
+  stroke: var(--viz-axis);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.lab-pie-inside {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.lab-pie-inside-name {
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-pie-center-value {
+  fill: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  pointer-events: none;
+}
+
+.lab-pie-center-label {
+  fill: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  pointer-events: none;
+}
+
+/* ── Heatmap ── */
+.lab-heat-cell {
+  cursor: default;
+  outline: none;
+}
+
+.lab-heat-cell[data-empty='true'] {
+  fill: var(--viz-grid);
+}
+
+.lab-heat-cell[data-active='true'],
+.lab-heat-cell:focus-visible {
+  stroke: var(--color-text);
+  stroke-width: 1.5;
+}
+
+.lab-heat-label {
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.lab-heat-legend-label {
+  fill: var(--viz-tick);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}

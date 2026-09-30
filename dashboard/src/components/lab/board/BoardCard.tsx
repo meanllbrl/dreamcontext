@@ -5,7 +5,7 @@ import { frameKey } from '../../../generated/frameOps';
 import { blockRenderKey } from '../blocks/htmlBlockBridge';
 import { headingText } from '../blocks/TextBlock';
 import {
-  activeFilterFor, filterTarget, setActiveFilter, shapeBlockFrame, type ActiveFilter,
+  activeFilterFor, filterTarget, frameColorDomain, setActiveFilter, shapeBlockFrame, type ActiveFilter,
 } from '../blocks/frameShape';
 import type { CardSyncState, FreshReason } from './boardSync';
 import type { Block, BlockProps, BlockRenderer, Card, Frame } from './boardTypes';
@@ -155,6 +155,8 @@ export function BoardCard({
     const slug = block.type === 'insight' ? block.data ?? card.insight : card.insight;
     const props: BlockProps = {
       frame: shapeBlockFrame(block, raw, filters),
+      // Colours are keyed on the RAW frame's entities: a pick or a filter never repaints a survivor.
+      colorDomain: frameColorDomain(raw),
       options: block.options,
       summary: slug ? summaries[slug] : undefined,
       cache: block.type === 'insight' && slug ? caches?.[slug] ?? null : undefined,

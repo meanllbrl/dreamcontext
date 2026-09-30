@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { textMeasurer, type Measure } from './layout';
 
 /**
@@ -38,39 +38,70 @@ function readDpr(): number {
   return typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
 }
 
-export function useChartSize<T extends HTMLElement = HTMLDivElement>(): ChartSize & { ref: RefObject<T | null> } {
-  const ref = useRef<T | null>(null);
+/**
+ * A ref that FOLLOWS its element: a callback ref (React calls it with the node
+ * on mount, null on unmount, the new node on a swap) that also exposes
+ * `.current`, so it can be handed anywhere a RefObject is read. Each attach
+ * disconnects the previous observer and observes the new node, so a chart that
+ * first renders an empty state and mounts its plot later (data arriving after
+ * a cache load) is still measured. Pure (no React): unit-tested with fake nodes.
+ */
+export type FollowedRef<T> = ((node: T | null) => void) & { current: T | null };
+
+export function followElement<T extends Element>(
+  onResize: (width: number, height: number) => void,
+  onAttach: (node: T | null) => void,
+): FollowedRef<T> {
+  let observer: ResizeObserver | null = null;
+  const ref = ((node: T | null) => {
+    if (node === ref.current) return;
+    observer?.disconnect();
+    observer = null;
+    ref.current = node;
+    onAttach(node);
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      // contentRect is in the element's own layout pixels (unaffected by transforms),
+      // floored so sub-pixel jitter never re-renders the chart.
+      onResize(Math.floor(entry.contentRect.width), Math.floor(entry.contentRect.height));
+    });
+    observer.observe(node);
+  }) as FollowedRef<T>;
+  ref.current = null;
+  return ref;
+}
+
+export function useChartSize<T extends HTMLElement = HTMLDivElement>(): ChartSize & { ref: FollowedRef<T> } {
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [font, setFont] = useState(() => readFont(null));
   const [dpr, setDpr] = useState(readDpr);
 
-  const refreshFont = useCallback(() => {
-    const next = readFont(ref.current);
+  const refreshFont = useCallback((el: Element | null) => {
+    const next = readFont(el);
     setFont((prev) => (prev.font === next.font ? prev : next));
     setDpr(readDpr());
   }, []);
 
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    refreshFont();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(([entry]) => {
-      // contentRect is in the element's own layout pixels (unaffected by transforms),
-      // floored so sub-pixel jitter never re-renders the chart.
-      const width = Math.floor(entry.contentRect.width);
-      const height = Math.floor(entry.contentRect.height);
+  // Stable for the component's life: React re-invokes it only when the node itself changes.
+  const ref = useMemo(() => followElement<T>(
+    (width, height) => {
       setBox((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
-      refreshFont();
-    });
-    observer.observe(el);
+      refreshFont(ref.current);
+    },
+    (node) => {
+      // Detached (an empty state replaced the plot): not ready until the next node is measured.
+      if (!node) setBox((prev) => (prev.width === 0 && prev.height === 0 ? prev : { width: 0, height: 0 }));
+      else refreshFont(node);
+    },
+  ), [refreshFont]);
+
+  useEffect(() => {
     // App zoom scales the type ladder without necessarily resizing the cell.
-    window.addEventListener('dreamcontext-zoom', refreshFont);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('dreamcontext-zoom', refreshFont);
-    };
-  }, [refreshFont]);
+    const onZoom = () => refreshFont(ref.current);
+    window.addEventListener('dreamcontext-zoom', onZoom);
+    return () => window.removeEventListener('dreamcontext-zoom', onZoom);
+  }, [ref, refreshFont]);
 
   const measure = useMemo(() => textMeasurer(font.font, font.fontPx), [font]);
   return {

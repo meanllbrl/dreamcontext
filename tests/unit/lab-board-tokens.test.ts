@@ -22,6 +22,12 @@ const FILES = [
   'components/lab/board/lab-shell.css',
   // The inspector, add-card menu and save-to-library dialog.
   'components/lab/board/editors.css',
+  // W2 chart and block stylesheets: bar/pie/heatmap (lane D), table, stat, change mark, data blocks (lane E).
+  'components/lab/lab-bar-pie-heat.css',
+  'components/lab/MetricTable.css',
+  'components/lab/NumberCard.css',
+  'components/lab/chartBody.css',
+  'components/lab/blocks/dataBlocks.css',
 ];
 
 interface Decl { file: string; line: number; prop: string; value: string }

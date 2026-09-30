@@ -1,0 +1,135 @@
+/*
+ * The stat tile (NumberCard.tsx). Tokens only: no literal colours, sizes,
+ * weights or durations. The hero figure's px comes from the component (it
+ * scales with the measured box), everything else rides the 12/14 ladder.
+ *
+ * `--fit`: the tile fills its host and lays out on an absolutely positioned
+ * inner box, so its content can never drive (or scroll) the size it is
+ * measured from. The goal meter is a same-ramp track: the accent-soft step
+ * under the palette's slot 1 fill (--viz-cat-1 is the accent's hue).
+ */
+
+.lab-stat {
+  min-width: 0;
+  color: var(--color-text);
+}
+
+/* Stretched by its flex parent on both axes (a row parent stretches the height, a
+   column parent grows it): never a percentage height, which a flex item may not resolve. */
+.lab-stat--fit {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-stat-inner {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.lab-stat--fit .lab-stat-inner {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.lab-stat-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* The hero: the app's own sans, semibold, proportional figures (dataviz figure rules). */
+.lab-stat-value {
+  flex: none;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.lab-stat-unit {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.lab-stat-spark {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: center;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--space-4);
+  margin-left: var(--space-2);
+}
+
+.lab-stat:not(.lab-stat--fit) .lab-stat-spark {
+  max-width: var(--space-16);
+}
+
+.lab-stat-delta {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lab-stat-change {
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-stat-period {
+  color: var(--color-text-tertiary);
+  font-weight: var(--font-weight-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-stat-goal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-top: var(--space-1);
+}
+
+.lab-stat-goal-track {
+  height: var(--space-2);
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+}
+
+.lab-stat-goal-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--viz-cat-1);
+}
+
+.lab-stat-goal-text {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.lab-stat-goal-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-tertiary);
+}
