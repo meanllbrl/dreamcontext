@@ -11,12 +11,19 @@ import type { BlockViewProps } from './blockCommon';
  * page that hands `renderChild` in prefixes the tabs block's own index (the
  * frame key is `index.tab.child`). Only the active panel is mounted, so an
  * html child gets a fresh instance each time its tab is shown.
+ *
+ * The open tab is CONTROLLED by the card (`activeTab` / `onTab`) so it survives
+ * the card going fullscreen; without them (a detail panel, a test) the block
+ * keeps it locally.
  */
-export function TabsBlock({ block, renderChild }: BlockViewProps) {
+export function TabsBlock({ block, renderChild, activeTab, onTab }: BlockViewProps) {
   const { t } = useI18n();
   const tabs = block.tabs ?? [];
-  const [active, setActive] = useState(0);
-  const current = Math.min(active, Math.max(0, tabs.length - 1));
+  const [local, setLocal] = useState(0);
+  const control = typeof activeTab === 'number' && onTab ? { index: activeTab, set: onTab } : null;
+  const active = control ? control.index : local;
+  const setActive = (i: number) => (control ? control.set(i) : setLocal(i));
+  const current = Math.min(Math.max(0, active), Math.max(0, tabs.length - 1));
   const tab = tabs[current];
 
   return (

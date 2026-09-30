@@ -8,6 +8,7 @@ import {
   type Series,
 } from './types.js';
 import { MATRIX_OTHER_VALUE, MATRIX_SET_KIND, MAX_MATRIX_BYTES, matrixLatest, matrixToSeries, parseMatrixSet } from './matrix.js';
+import { parseFunnelSet, type ParsedFunnelSet } from './funnel.js';
 
 /**
  * Dataset-bundle contract (`dataset/v1`) — validation, caps, lookup,
@@ -44,9 +45,32 @@ export const DATASET_HISTORY_MAX = 60;
 export const DATASET_HISTORY_MAX_BYTES = 1_000_000;
 
 export interface ParsedDatasetBundle {
+  /** The bundle WITHOUT its `funnel` member (that one is stored as cache.funnel). */
   bundle: DatasetBundle;
   /** Human-readable cap/coercion notices — surface them, never swallow. */
   notices: string[];
+  /** The optional `funnel` member (a funnel-set/v1), parsed by `parseFunnelSet`
+   *  with its own caps; its notices are also in `notices`, prefixed "funnel: ". */
+  funnel?: ParsedFunnelSet;
+}
+
+/** The optional `funnel` member: one funnel-set/v1 riding in a dataset bundle
+ *  (a funnel explorer needs step paths AND tables). Its caps are the funnel
+ *  contract's own; a malformed member fails the whole payload, never degrades. */
+function parseFunnelMember(raw: unknown, notices: string[]): ParsedFunnelSet {
+  let parsed: ParsedFunnelSet;
+  try {
+    parsed = parseFunnelSet(raw);
+  } catch (err) {
+    const msg = err instanceof LabError ? err.message : String(err);
+    throw new LabError(`Dataset payload's \`funnel\` member: ${msg}`);
+  }
+  if (parsed.set.funnels.length === 0) {
+    const why = parsed.notices.length > 0 ? ` (${parsed.notices.join(' ')})` : '';
+    throw new LabError(`Dataset payload's \`funnel\` member has no valid funnel${why}.`);
+  }
+  for (const notice of parsed.notices) notices.push(`funnel: ${notice}`);
+  return parsed;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -132,7 +156,9 @@ function parseDataset(raw: unknown, index: number, notices: string[]): Dataset {
  * fundamentally not one (wrong kind, no usable datasets, over the dataset
  * count or byte cap) or when any one dataset fails `parseMatrixSet`;
  * individual malformed rows within a dataset degrade to notices exactly as
- * they do for a bare matrix/v1 payload.
+ * they do for a bare matrix/v1 payload. An optional `funnel` member is parsed
+ * by `parseFunnelSet` and returned beside the bundle (never inside it, so the
+ * bundle's byte cap covers only its tables); a malformed one throws.
  */
 export function parseDatasetBundle(raw: unknown): ParsedDatasetBundle {
   if (!isRecord(raw) || raw.kind !== DATASET_BUNDLE_KIND) {
@@ -167,6 +193,9 @@ export function parseDatasetBundle(raw: unknown): ParsedDatasetBundle {
     throw new LabError(`Dataset payload exceeds the ${MAX_MATRIX_BYTES}-byte cap even after per-dataset collapse — return fewer datasets/rows.`);
   }
 
+  if (raw.funnel !== undefined) {
+    return { bundle, notices, funnel: parseFunnelMember(raw.funnel, notices) };
+  }
   return { bundle, notices };
 }
 

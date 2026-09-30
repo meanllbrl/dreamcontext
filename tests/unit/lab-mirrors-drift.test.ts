@@ -20,7 +20,7 @@ describe('generated mirrors', () => {
     expect(json).toEqual(JSON.parse(JSON.stringify(blockCatalogMirror())));
   });
 
-  for (const file of ['frameOps.ts', 'grid.ts']) {
+  for (const file of ['frameOps.ts', 'grid.ts', 'presets.ts']) {
     it(`dashboard/src/generated/${file} is byte-identical to src/lib/lab/${file}`, () => {
       expect(read(`dashboard/src/generated/${file}`)).toBe(read(`src/lib/lab/${file}`));
     });

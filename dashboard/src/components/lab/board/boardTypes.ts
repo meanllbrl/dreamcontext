@@ -228,11 +228,10 @@ export interface InspectorProps {
   library: LibraryBlock[];
   /** Insight slugs bindings can pick from. */
   insights: InsightSummary[];
-  /** The board's resolved frames by frame key (`pick` options read their choices here).
-   *  Optional until BoardPage passes it (W3). */
-  frames?: Record<string, Frame>;
+  /** The board's resolved frames by frame key (`pick` options read their choices here). */
+  frames: Record<string, Frame>;
   /** Insight caches by slug, null while not loaded (`pick` options on app pages read them). */
-  caches?: Record<string, InsightCache | null>;
+  caches: Record<string, InsightCache | null>;
   /** A new card value; BoardPage records undo and saves. */
   onChange: (card: Card) => void;
   onSelectBlock: (path: number[] | null) => void;

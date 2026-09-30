@@ -891,3 +891,70 @@
     transition: none;
   }
 }
+
+/* ─── Fullscreen card (BoardPage `?card=<id>`) ──────────────────────────── */
+
+/*
+ * The overlay covers the viewport (the card keeps a small inset, well past 95% of it) and sits
+ * under the menus (z 60), so a card's ⋯ menu still opens over it. Inline, not portaled: a
+ * background project's page is hidden and inert, and its overlay must be too.
+ */
+.board-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  box-sizing: border-box;
+  padding: var(--space-3);
+  background: var(--color-bg);
+}
+
+.board-fullscreen > .board-card {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  box-shadow: var(--shadow-lg);
+}
+
+/* The grid slot of the card on screen fullscreen: its place, empty, visibly lifted out. */
+.board-card--lifted {
+  border-style: dashed;
+  background: var(--color-bg-tertiary);
+}
+
+.board-card-exit {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.board-card-exit:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.board-card-exit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* A table of the selected insight that is not split by a selected dim: left whole, and says so. */
+.board-block-note {
+  flex: none;
+  margin: 0 0 var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}

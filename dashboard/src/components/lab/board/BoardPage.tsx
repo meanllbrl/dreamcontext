@@ -1,5 +1,5 @@
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState,
   type ComponentType, type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi, useVault } from '../../../context/VaultContext';
 import { useDismissOnOutside } from '../../../lib/useDismissOnOutside';
+import { isTopOverlay, popOverlay, pushOverlay } from '../../../lib/overlayStack';
 import { revealPath } from '../../../lib/reveal';
 import { useFocusTarget, type FocusTarget } from '../../../hooks/useFocusTarget';
 import {
@@ -22,7 +23,7 @@ import { RequestError } from '../../../api/client';
 import { isRoutedRender } from '../chartRegistry';
 import { InsightDetailPanel } from '../InsightDetailPanel';
 import { LabCredentialsBanner } from '../LabCredentialsBanner';
-import { pushLabPath } from '../funnel/labRoute';
+import { pushLabPath, useLabSearchParams } from '../funnel/labRoute';
 import { BoardGrid } from './BoardGrid';
 import { BoardCard } from './BoardCard';
 import { BoardMenu } from './BoardMenu';
@@ -35,6 +36,7 @@ import { MoveBlockedError, duplicateCard, moveCardToBoard, removeCard, specOf } 
 import {
   RECHECK_MS, busySlugs, cardSyncState, freshReason, isExpired, planAutomaticSync,
 } from './boardSync';
+import { pruneViews, updateView, type CardView, type CardViews } from './cardViewState';
 import { renderBlock as registryRenderBlock } from '../blocks/blockRegistry';
 import type {
   AddCardMenuProps, Board, BlockCatalog, BlockRenderer, BoardSpec, Card, InspectorProps,
@@ -73,6 +75,17 @@ import './lab-shell.css';
  * AN ERROR BOARD (conflict markers, unparseable YAML) shows its name, the parse
  * error and "Open file", and cannot enter edit mode: the server refuses its PUT
  * (423) and the page never offers one.
+ *
+ * CARD VIEW STATE (filters, breakdown selection, lanes, open tab, open app page)
+ * lives HERE, per card id (`cardViewState.ts`), so a card and its fullscreen
+ * twin share it. A card's view dies when the card leaves the board; a board
+ * switch starts every view empty. Nothing of it is saved.
+ *
+ * FULLSCREEN is the URL's `?card=<id>`: the card menu pushes a history entry
+ * (Back closes), a link with the param reopens it, Esc and the exit button
+ * close it and focus returns to the card's menu. The overlay draws the ONE live
+ * copy of the card; its grid slot shows an empty lifted box, so an app card
+ * never runs two iframes.
  */
 
 const CATALOG = catalogJson as unknown as BlockCatalog;
@@ -128,6 +141,30 @@ function agoText(iso: string, locale: string): string {
   return rtf.format(Math.round(s / 86400), 'day');
 }
 
+/** The page's card views, tagged with the board they belong to (a board switch empties them). */
+interface ViewState { board: string | null; views: CardViews }
+type ViewAction =
+  | { type: 'update'; board: string; card: string; fn: (view: CardView) => CardView }
+  | { type: 'prune'; board: string | null; cards: string[] };
+
+export function viewReducer(state: ViewState, action: ViewAction): ViewState {
+  if (action.type === 'prune') {
+    if (state.board !== action.board) return { board: action.board, views: {} };
+    const views = pruneViews(state.views, action.cards);
+    return views === state.views ? state : { ...state, views };
+  }
+  // An update from a board that is no longer the one on screen is dropped.
+  if (state.board !== action.board) return state;
+  const views = updateView(state.views, action.card, action.fn);
+  return views === state.views ? state : { ...state, views };
+}
+
+/** The fullscreen card: `?card=<id>` naming a card on this (readable) board, else null. */
+export function fullscreenCard(board: Pick<Board, 'cards' | 'error'> | null, param: string | null): Card | null {
+  if (!board || board.error || !param) return null;
+  return board.cards.find((c) => c.id === param) ?? null;
+}
+
 type ToastKind = 'undo' | 'conflict' | 'queued' | 'info';
 interface Toast { id: number; kind: ToastKind; text: string }
 
@@ -178,6 +215,8 @@ export function BoardPage({
   const deleteBoard = useDeleteBoard();
   const fetchBoard = useFetchBoard();
   const writer = useBoardWriter();
+  const pageRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<{ card: string; block: number[] | null } | null>(null);
@@ -457,17 +496,95 @@ export function BoardPage({
     }
   }, [board, boards, fetchBoard, writer, say, t, boardTitle]);
 
+  // ─── Card views + fullscreen ───────────────────────────────────────────────
+
+  const [viewState, dispatchView] = useReducer(viewReducer, { board: null, views: {} });
+  const boardSlug = board?.slug ?? null;
+  const cardIds = board?.cards.map((c) => c.id).join('\n') ?? '';
+  useEffect(() => {
+    dispatchView({ type: 'prune', board: boardSlug, cards: cardIds ? cardIds.split('\n') : [] });
+  }, [boardSlug, cardIds]);
+
+  const [search, updateSearch] = useLabSearchParams();
+  const fsCard = fullscreenCard(board, search.get('card'));
+  const fsId = fsCard?.id ?? null;
+  /** The open fullscreen pushed its own history entry: closing goes Back over it. */
+  const pushedFs = useRef(false);
+  /** The card whose menu gets focus back once the overlay is gone. */
+  const returnFocus = useRef<string | null>(null);
+
+  const openFullscreen = useCallback((id: string) => {
+    // labRoute's search writer only replaces; a duplicate entry first makes the param its own
+    // history step, so Back closes the overlay. A click is the foreground instance's (a
+    // background project is inert), which is the one that owns the address bar.
+    window.history.pushState(window.history.state, '', window.location.href);
+    pushedFs.current = true;
+    updateSearch((p) => p.set('card', id));
+  }, [updateSearch]);
+
+  const closeFullscreen = useCallback(() => {
+    if (!fsId) return;
+    returnFocus.current = fsId;
+    if (pushedFs.current) {
+      pushedFs.current = false;
+      window.history.back();
+    } else {
+      updateSearch((p) => p.delete('card'));
+    }
+  }, [fsId, updateSearch]);
+
+  // Closed by any route (Back, a link): the next close must not go Back again.
+  useEffect(() => { if (!fsId) pushedFs.current = false; }, [fsId]);
+
+  // Esc closes, queued LIFO with menus and panels on the app's overlay stack.
+  const overlayId = useId();
+  const closeRef = useRef(closeFullscreen);
+  closeRef.current = closeFullscreen;
+  useEffect(() => {
+    if (!fsId || !isActive) return;
+    pushOverlay(overlayId);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !isTopOverlay(overlayId)) return;
+      e.preventDefault();
+      closeRef.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      popOverlay(overlayId);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [fsId, isActive, overlayId]);
+
+  // Focus moves into the overlay on open and back to the card's menu on close.
+  useEffect(() => {
+    if (fsId) {
+      overlayRef.current?.querySelector<HTMLElement>('[data-lab-card-exit]')?.focus();
+      return;
+    }
+    const id = returnFocus.current;
+    returnFocus.current = null;
+    if (!id) return;
+    const cardEl = [...(pageRef.current?.querySelectorAll<HTMLElement>('.board-canvas [data-card-id]') ?? [])]
+      .find((el) => el.dataset.cardId === id);
+    cardEl?.querySelector<HTMLElement>('[data-lab-card-menu]')?.focus();
+  }, [fsId]);
+
   const targets = useMemo(
     () => boards.filter((b) => b.slug !== active && !b.error).map((b) => ({ slug: b.slug, title: boardTitle(b) })),
     [boards, active, boardTitle],
   );
 
-  const renderCard = useCallback((card: Card) => {
+  const views = viewState.views;
+  const cardNode = useCallback((card: Card, fullscreen: boolean) => {
     const missing = !!card.insight && !!shown.data && !summaries[card.insight];
     const primary = card.insight ? summaries[card.insight] : undefined;
     return (
       <BoardCard
         card={card}
+        view={views[card.id]}
+        onView={boardSlug ? (fn) => dispatchView({ type: 'update', board: boardSlug, card: card.id, fn }) : undefined}
+        fullscreen={fullscreen}
+        onExitFullscreen={fullscreen ? closeFullscreen : undefined}
         frames={frames}
         summaries={summaries}
         caches={cacheMap}
@@ -487,12 +604,19 @@ export function BoardPage({
             onMoveTo={(slug) => { void moveTo(card.id, slug); }}
             onRemove={() => { if (board) writeCards(removeCard(board.cards, card.id)); }}
             onToast={(text) => say('info', text)}
+            fullscreen={fullscreen}
+            onFullscreen={fullscreen ? closeFullscreen : () => openFullscreen(card.id)}
           />
         )}
       />
     );
   }, [board, cacheMap, frames, renderBlock, shown.data, summaries, writeCards, writable, running, pending,
-    lastResults, targets, openInsight, moveTo, say]);
+    lastResults, targets, openInsight, moveTo, say, views, boardSlug, closeFullscreen, openFullscreen]);
+
+  // The fullscreen card's grid slot keeps its place as an empty lifted box: ONE live copy of the card.
+  const renderCard = useCallback((card: Card) => (card.id === fsId
+    ? <div className="board-card board-card--lifted" data-lab-card-lifted={card.id} aria-hidden="true" />
+    : cardNode(card, false)), [fsId, cardNode]);
 
   const selectedCard = board && selected ? board.cards.find((c) => c.id === selected.card) ?? null : null;
   const unplaced = shown.data?.unplaced ?? [];
@@ -591,6 +715,7 @@ export function BoardPage({
 
   return (
     <div
+      ref={pageRef}
       className="board-page"
       data-lab-board={active ?? ''}
       data-lab-board-derived={board?.derived ? 'true' : undefined}
@@ -651,6 +776,8 @@ export function BoardPage({
             catalog={CATALOG}
             library={library.data ?? []}
             insights={insights.data ?? []}
+            frames={frames}
+            caches={cacheMap}
             onChange={(card) => writeCards(board.cards.map((c) => (c.id === card.id ? card : c)))}
             onSelectBlock={(path) => setSelected((s) => (s ? { ...s, block: path } : s))}
             onClose={() => setSelected(null)}
@@ -672,6 +799,18 @@ export function BoardPage({
           />
         )}
       </div>
+      {fsCard && (
+        <div
+          ref={overlayRef}
+          className="board-fullscreen"
+          role="dialog"
+          aria-modal="true"
+          aria-label={fsCard.title ?? (fsCard.insight ? summaries[fsCard.insight]?.title : undefined) ?? t('lab.board.card.fullscreen')}
+          data-lab-fullscreen={fsCard.id}
+        >
+          {cardNode(fsCard, true)}
+        </div>
+      )}
       {openSummary && (
         <InsightDetailPanel summary={openSummary} onClose={() => setOpenSlug(null)} onToast={(text) => say('info', text)} />
       )}

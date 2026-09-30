@@ -7,8 +7,11 @@ import { chartEntry } from '../chartRegistry';
 import { BoardPopover, MenuItem } from './BoardPopover';
 
 /**
- * A card's ⋯ menu: Edit blocks, Open detail, Refresh, Force full refresh,
- * Range ▸, Tweaks, Duplicate card, Move to board ▸, Remove.
+ * A card's ⋯ menu: Edit blocks, Open detail, Full screen, Refresh, Force full
+ * refresh, Range ▸, Tweaks, Duplicate card, Move to board ▸, Remove.
+ *
+ * Full screen is offered on EVERY card (it needs no insight and no write);
+ * on the fullscreen card itself it reads "Exit full screen".
  *
  * What touches the card's DATA runs here (a sync, a tweak save), through the
  * same hooks the detail panel uses: Refresh is `'user'` (the TTL is skipped,
@@ -37,10 +40,15 @@ export interface CardMenuProps {
   onMoveTo: (slug: string) => void;
   onRemove: () => void;
   onToast: (text: string) => void;
+  /** Open (or, on the fullscreen card, close) the card fullscreen. Absent = no item. */
+  onFullscreen?: () => void;
+  /** This menu sits on the fullscreen card. */
+  fullscreen?: boolean;
 }
 
 export function CardMenu({
   summary, editable, targets, onEditBlocks, onOpenDetail, onDuplicate, onMoveTo, onRemove, onToast,
+  onFullscreen, fullscreen = false,
 }: CardMenuProps) {
   const { t } = useI18n();
   const [level, setLevel] = useState<Level | null>(null);
@@ -109,6 +117,21 @@ export function CardMenu({
         <BoardPopover key="root" anchor={triggerRef} onClose={close} label={t('lab.board.card.menu')}>
           <MenuItem hook="edit-blocks" disabled={!editable} onSelect={run(onEditBlocks)}>{t('lab.board.card.editBlocks')}</MenuItem>
           <MenuItem hook="open-detail" disabled={!summary} onSelect={run(onOpenDetail)}>{t('lab.board.card.openDetail')}</MenuItem>
+          {onFullscreen && (
+            // MenuItem's markup, plus the `data-lab-card-fullscreen` hook the verify script anchors on.
+            <button
+              type="button"
+              role="menuitem"
+              className="board-menu-item"
+              data-lab-menu-item="fullscreen"
+              data-lab-card-fullscreen={fullscreen ? 'exit' : 'open'}
+              onClick={run(onFullscreen)}
+            >
+              <span className="board-menu-item-label">
+                {t(fullscreen ? 'lab.board.card.exitFullscreen' : 'lab.board.card.fullscreen')}
+              </span>
+            </button>
+          )}
           <MenuItem hook="refresh" disabled={!summary || busy} onSelect={() => refresh('user')}>{t('lab.board.card.refresh')}</MenuItem>
           <MenuItem hook="force-refresh" disabled={!summary || busy} onSelect={() => refresh('hard')}>{t('lab.board.card.forceRefresh')}</MenuItem>
           <MenuItem hook="range" submenu disabled={!windowed || busy} onSelect={() => setLevel('range')}>{t('lab.board.card.range')}</MenuItem>

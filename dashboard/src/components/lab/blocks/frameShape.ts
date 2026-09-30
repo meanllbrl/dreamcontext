@@ -1,4 +1,4 @@
-import { applyFrameOps, frameOpsFromOptions, type Frame, type FrameOps } from '../../../generated/frameOps';
+import { applyFrameOps, frameOpsFromOptions, type Frame, type FrameOps, type Selection } from '../../../generated/frameOps';
 import type { Block, BlockFilter, ColorDomain } from '../board/boardTypes';
 import { rowLabel } from './frameAdapters';
 
@@ -8,6 +8,9 @@ import { rowLabel } from './frameAdapters';
  * card, through the mirrored frameOps in ONE pass (where -> filter -> sort ->
  * limit), so a filtered table's `total` is taken after the filter and before
  * the limit. Zero network: the server's frames come back un-limited.
+ *
+ * A card's breakdown selection narrows its same-insight table frames the same
+ * way (merged into `where`), so a table beside the breakdown chips follows them.
  *
  * `BlockProps.frame` is the OUTPUT of `shapeBlockFrame`. Shape exactly once:
  * a second pass would see "nothing filtered out" and report the source's
@@ -53,9 +56,15 @@ export function activeFilterFor(list: readonly ActiveFilter[], key: string): Blo
  * interactive filter; any further ones fold into `where` (AND), so the whole
  * thing is still one applyFrameOps pass.
  */
-export function blockFrameOps(block: Block, frame: Frame, active: readonly ActiveFilter[]): FrameOps {
+export function blockFrameOps(
+  block: Block,
+  frame: Frame,
+  active: readonly ActiveFilter[],
+  selection: Selection | null = null,
+): FrameOps {
   const ops = frameOpsFromOptions(block.options);
   if (block.type === 'filter' || frame.kind !== 'table') return ops;
+  narrowBySelection(ops, frame, selection);
   const mine = active.filter((f) => f.target.insight === frame.insight && f.target.dataset === frame.dataset);
   if (mine.length === 0) return ops;
   ops.filter = mine[0].filter;
@@ -99,7 +108,38 @@ function unique(list: readonly string[]): string[] {
   return Array.from(new Set(list.filter((s) => s !== '')));
 }
 
-export function shapeBlockFrame(block: Block, raw: Frame | null | undefined, active: readonly ActiveFilter[] = []): Frame | null {
+/**
+ * A breakdown SELECTION narrows a table frame of the same insight: every selected dim the table
+ * carries is ANDed into `where` (so the table's total is taken after it, like a filter's). A dim
+ * the table does not carry is left alone and reported by `selectionIgnored`. The caller hands the
+ * selection of the frame's own insight, so another insight's selection never reaches it.
+ */
+function narrowBySelection(ops: FrameOps, frame: Extract<Frame, { kind: 'table' }>, selection: Selection | null): void {
+  if (!selection) return;
+  const carried = new Set(frame.dims.map((d) => d.key));
+  const picks = Object.entries(selection).filter(([dim, value]) => carried.has(dim) && value !== '');
+  if (picks.length === 0) return;
+  const where: Record<string, string[]> = { ...(ops.where ?? {}) };
+  for (const [dim, value] of picks) {
+    const allowed = where[dim];
+    where[dim] = allowed ? allowed.filter((v) => v === value) : [value];
+  }
+  ops.where = where;
+}
+
+/** The selected dims a table frame cannot narrow by (it is not split by them), in selection order. */
+export function selectionIgnored(raw: Frame | null | undefined, selection: Selection | null | undefined): string[] {
+  if (!raw || raw.kind !== 'table' || !selection) return [];
+  const carried = new Set(raw.dims.map((d) => d.key));
+  return Object.entries(selection).filter(([dim, value]) => value !== '' && !carried.has(dim)).map(([dim]) => dim);
+}
+
+export function shapeBlockFrame(
+  block: Block,
+  raw: Frame | null | undefined,
+  active: readonly ActiveFilter[] = [],
+  selection: Selection | null = null,
+): Frame | null {
   if (!raw) return null;
-  return applyFrameOps(raw, blockFrameOps(block, raw, active));
+  return applyFrameOps(raw, blockFrameOps(block, raw, active, selection));
 }

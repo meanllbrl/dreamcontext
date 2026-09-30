@@ -526,3 +526,403 @@ export function applyFrameOps(frame: Frame, ops: FrameOps): Frame {
   }
   return frame;
 }
+
+// ─── Funnel explorer ────────────────────────────────────────────────────────
+//
+// A funnel frame answers ONE exact selection (`funnelSlice`). In `lookup` mode
+// each segment is its own measured path, looked up and never summed; in
+// `cells` mode (the default) the matching disjoint cells' step users are
+// summed and rates are left empty (they cannot be summed). Not measured is not
+// zero: an unmeasured slice has no steps, no metrics and no users to draw.
+
+/** Rows whose users fall below this read as low sample when the frame names none. */
+export const DEFAULT_LOW_SAMPLE = 30;
+
+/** `a=1&b=2`: sorted `dim=value` pairs, the stable key of a selection. */
+export function selectionKey(sel: Selection): string {
+  return Object.keys(sel)
+    .sort()
+    .map((k) => `${k}=${sel[k]}`)
+    .join('&');
+}
+
+/** LENIENT: `"a=b,c=d"` -> `{a: 'b', c: 'd'}`. Parts without a key or value are skipped; the last wins per dim. */
+export function parseSelection(s: string): Selection {
+  const out: Selection = {};
+  if (typeof s !== 'string') return out;
+  for (const part of s.split(',')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key && value) out[key] = value;
+  }
+  return out;
+}
+
+/** The chip toggle: the active value clears its dim, any other value replaces it. */
+export function toggleSelection(sel: Selection, dim: string, value: string): Selection {
+  const out: Selection = { ...sel };
+  if (out[dim] === value) delete out[dim];
+  else out[dim] = value;
+  return out;
+}
+
+/** The picked funnel; null or an unknown id falls back to the first (the caller compares ids to say so). */
+function pickFunnel(frame: FunnelFrame, funnelId: string | null): FunnelFrameFunnel | null {
+  if (funnelId !== null) {
+    const found = frame.funnels.find((f) => f.id === funnelId);
+    if (found) return found;
+  }
+  return frame.funnels[0] ?? null;
+}
+
+/** The dims a selection may name: the frame's declared dimensions, else every dim a segment carries. */
+function declaredDims(frame: FunnelFrame): string[] {
+  if (frame.dimensions) return frame.dimensions.map((d) => d.key);
+  const out: string[] = [];
+  for (const f of frame.funnels) {
+    for (const seg of f.segments ?? []) for (const k of Object.keys(seg.dims)) if (out.indexOf(k) === -1) out.push(k);
+  }
+  return out;
+}
+
+function sameSelection(a: Selection, b: Selection): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => b[k] === a[k]);
+}
+
+function lowSampleOf(frame: FunnelFrame, users: number): boolean {
+  const threshold = typeof frame.lowSample === 'number' ? frame.lowSample : DEFAULT_LOW_SAMPLE;
+  return users < threshold;
+}
+
+/**
+ * The funnel as one exact selection sees it. An empty selection is the funnel
+ * level. Selection dims the frame does not declare are dropped into `ignored`.
+ */
+export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Selection): FunnelSlice {
+  const f = pickFunnel(frame, funnelId);
+  const declared = declaredDims(frame);
+  const effective: Selection = {};
+  const ignored: string[] = [];
+  for (const k of Object.keys(sel).sort()) {
+    const v = sel[k];
+    if (typeof v !== 'string' || v === '') continue;
+    if (declared.indexOf(k) === -1) ignored.push(k);
+    else effective[k] = v;
+  }
+  const frameBands = frame.bands ?? {};
+  const unmeasured = (reason: string | null): FunnelSlice => ({
+    funnelId: f ? f.id : '',
+    funnelName: f ? f.name : '',
+    selection: effective,
+    measured: false,
+    reason,
+    users: 0,
+    steps: [],
+    metrics: {},
+    bands: frameBands,
+    bandsInherited: true,
+    daily: [],
+    lowSample: false,
+    ignored,
+  });
+  if (!f) return unmeasured(null);
+
+  if (Object.keys(effective).length === 0) {
+    const users = f.steps[0]?.users ?? 0;
+    return {
+      funnelId: f.id,
+      funnelName: f.name,
+      selection: effective,
+      measured: true,
+      reason: null,
+      users,
+      steps: f.steps.map((s) => ({ ...s })),
+      metrics: f.metrics ?? {},
+      bands: frameBands,
+      bandsInherited: false,
+      daily: f.daily ?? [],
+      lowSample: lowSampleOf(frame, users),
+      ignored,
+    };
+  }
+
+  const labelOf = (key: string) => f.steps.find((s) => s.key === key)?.label ?? key;
+  const segments = f.segments ?? [];
+
+  if (frame.segmentMode === 'lookup') {
+    const seg = segments.find((s) => sameSelection(s.dims, effective));
+    if (!seg || !seg.measured) return unmeasured(seg ? seg.reason : null);
+    const own = seg.bands && Object.keys(seg.bands).length > 0 ? seg.bands : null;
+    return {
+      funnelId: f.id,
+      funnelName: f.name,
+      selection: effective,
+      measured: true,
+      reason: null,
+      users: seg.users,
+      steps: seg.steps.map((s) => ({ key: s.key, label: labelOf(s.key), users: s.users })),
+      metrics: seg.metrics ?? {},
+      bands: own ?? frameBands,
+      bandsInherited: own === null,
+      daily: seg.daily ?? [],
+      lowSample: lowSampleOf(frame, seg.users),
+      ignored,
+    };
+  }
+
+  // cells: sum the matching measured cells; an unmeasured cell never adds to the sum.
+  const matching = segments.filter((seg) => Object.keys(effective).every((k) => seg.dims[k] === effective[k]));
+  const measured = matching.filter((seg) => seg.measured);
+  if (measured.length === 0) return unmeasured(matching.find((seg) => seg.reason !== null)?.reason ?? null);
+  const byStep = new Map<string, number>();
+  let users = 0;
+  for (const seg of measured) {
+    users += seg.users;
+    for (const s of seg.steps) byStep.set(s.key, (byStep.get(s.key) ?? 0) + s.users);
+  }
+  return {
+    funnelId: f.id,
+    funnelName: f.name,
+    selection: effective,
+    measured: true,
+    reason: null,
+    users,
+    steps: f.steps.map((s) => ({ key: s.key, label: s.label, users: byStep.get(s.key) ?? 0 })),
+    metrics: {},
+    bands: frameBands,
+    bandsInherited: true,
+    daily: [],
+    lowSample: lowSampleOf(frame, users),
+    ignored,
+  };
+}
+
+/**
+ * One chip row per declared dimension. A chip is enabled when toggling it
+ * yields a measured slice, or when it is the active chip (it must stay
+ * clearable); users and reason come from the slice the chip leads to (the
+ * active chip reports the current slice).
+ */
+export function breakdownAxes(frame: FunnelFrame, funnelId: string | null, sel: Selection): BreakdownAxis[] {
+  return (frame.dimensions ?? []).map((dim) => ({
+    key: dim.key,
+    label: dim.label,
+    chips: dim.values.map((value) => {
+      const active = sel[dim.key] === value;
+      const slice = funnelSlice(frame, funnelId, active ? sel : toggleSelection(sel, dim.key, value));
+      return {
+        value,
+        active,
+        enabled: active || slice.measured,
+        users: slice.measured ? slice.users : null,
+        reason: slice.measured ? null : slice.reason,
+      };
+    }),
+  }));
+}
+
+/**
+ * Per-step rates, 0-100: `ofTop` of the first step, `ofPrev` of the previous
+ * one, `dropPct` = 100 - ofPrev. The worst step is the largest drop (ties to
+ * the first); with fewer than 2 steps nothing is worst. A 0-user previous
+ * step gives null rates, never Infinity.
+ */
+export function stepDrops(steps: ReadonlyArray<{ key: string; label?: string; users: number }>): StepDrop[] {
+  const top = steps[0]?.users ?? 0;
+  const out: StepDrop[] = steps.map((s, i) => {
+    const prev = i > 0 ? steps[i - 1].users : null;
+    const ofPrev = prev === null || !(prev > 0) ? null : (s.users / prev) * 100;
+    return {
+      key: s.key,
+      label: s.label ?? s.key,
+      users: s.users,
+      ofTop: top > 0 ? (s.users / top) * 100 : null,
+      ofPrev,
+      dropPct: ofPrev === null ? null : 100 - ofPrev,
+      worst: false,
+    };
+  });
+  let worst = -1;
+  for (let i = 1; i < out.length; i++) {
+    const d = out[i].dropPct;
+    if (d !== null && (worst === -1 || d > (out[worst].dropPct as number))) worst = i;
+  }
+  if (worst !== -1) out[worst].worst = true;
+  return out;
+}
+
+type BandTone = 'below' | 'between' | 'above';
+
+/** Where `v` sits against a band, in goodness terms (`better: 'lower'` flips the comparisons). */
+function bandTone(v: number, band: FunnelFrameBand | undefined): BandTone | null {
+  if (!band || (band.floor === null && band.target === null)) return null;
+  const worse = (a: number, b: number) => (band.better === 'lower' ? a > b : a < b);
+  if (band.floor !== null && worse(v, band.floor)) return 'below';
+  if (band.target !== null && !worse(v, band.target)) return 'above';
+  return 'between';
+}
+
+function finite(v: number | null | undefined): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * One benchmark row per metric (the slice's own keys, or `metricKeys` in that
+ * order). A key the slice lacks is skipped on a measured slice and reads as
+ * unmeasured (with the slice's reason) on an unmeasured one.
+ */
+export function benchmarkRows(slice: FunnelSlice, metricKeys: readonly string[] | null): BenchmarkRow[] {
+  const keys = metricKeys ?? Object.keys(slice.metrics);
+  const rows: BenchmarkRow[] = [];
+  for (const key of keys) {
+    const m = slice.metrics[key];
+    if (!m && slice.measured) continue;
+    const band = slice.bands[key];
+    const better = band ? band.better : 'higher';
+    const measured = !!m && m.measured && finite(m.v) !== null;
+    const current = measured ? finite(m.v) : null;
+    const prev = measured ? finite(m.prev) : null;
+    const delta = current !== null && prev !== null ? current - prev : null;
+    let status: BenchmarkRow['status'] = 'unmeasured';
+    if (current !== null) status = bandTone(current, band) ?? 'no-band';
+    rows.push({
+      key,
+      label: m?.label ?? key,
+      format: m ? m.format : 'number',
+      current,
+      prev,
+      delta,
+      floor: band ? band.floor : null,
+      target: band ? band.target : null,
+      floorSource: band ? band.floorSource : null,
+      targetSource: band ? band.targetSource : null,
+      better,
+      status,
+      trend: delta === null ? null : delta === 0 ? 'flat' : (delta > 0) === (better === 'higher') ? 'improving' : 'worsening',
+      reason: measured ? null : m ? m.reason : slice.reason,
+      inherited: !!band && slice.bandsInherited,
+    });
+  }
+  return rows;
+}
+
+/**
+ * One row per value of dim `by`, each the exact slice of that value under the
+ * current selection on the other axes. Cells carry the value, its previous
+ * window and its band tone; an unmeasured metric (or slice) is a null cell.
+ */
+export function segmentRows(
+  frame: FunnelFrame,
+  funnelId: string | null,
+  by: string,
+  sel: Selection,
+  metricKeys: readonly string[] | null,
+): SegmentRow[] {
+  const dim = (frame.dimensions ?? []).find((d) => d.key === by);
+  if (!dim) return [];
+  const f = pickFunnel(frame, funnelId);
+  const keys = metricKeys ?? Object.keys(f?.metrics ?? {});
+  return dim.values.map((value) => {
+    const selection: Selection = { ...sel, [by]: value };
+    const slice = funnelSlice(frame, funnelId, selection);
+    const cells: SegmentRow['cells'] = {};
+    for (const key of keys) {
+      const m = slice.metrics[key];
+      const v = m && m.measured ? finite(m.v) : null;
+      const prev = m && m.measured ? finite(m.prev) : null;
+      cells[key] = { v, prev, tone: v === null ? null : bandTone(v, slice.bands[key]) };
+    }
+    return {
+      value,
+      selection: slice.selection,
+      measured: slice.measured,
+      reason: slice.reason,
+      users: slice.users,
+      lowSample: slice.lowSample,
+      cells,
+    };
+  });
+}
+
+const FORMAT_UNITS: Record<FunnelMetricFormat, string | null> = {
+  count: null,
+  number: null,
+  pct: '%',
+  usd: 'USD',
+  x: 'x',
+  seconds: 's',
+};
+
+/**
+ * The slice's daily trend as a series frame, one series per metric (the
+ * slice's metric keys, else every key the days carry). A null day is a gap,
+ * never a 0. The unit is the metrics' shared format unit, else null.
+ */
+export function dailySeries(slice: FunnelSlice, metricKeys: readonly string[] | null, insight = ''): SeriesFrame {
+  let keys: string[];
+  if (metricKeys) keys = metricKeys.slice();
+  else {
+    keys = Object.keys(slice.metrics);
+    for (const day of slice.daily) for (const k of Object.keys(day.m)) if (keys.indexOf(k) === -1) keys.push(k);
+  }
+  const formats = keys.map((k) => slice.metrics[k]?.format ?? null);
+  const unit = formats.length > 0 && formats[0] !== null && formats.every((x) => x === formats[0])
+    ? FORMAT_UNITS[formats[0] as FunnelMetricFormat]
+    : null;
+  return {
+    kind: 'series',
+    insight,
+    series: keys.map((key) => ({
+      name: slice.metrics[key]?.label ?? key,
+      points: slice.daily
+        .filter((day) => finite(day.m[key]) !== null)
+        .map((day) => ({ t: day.t, v: day.m[key] as number })),
+    })),
+    unit,
+    granularity: 'daily',
+  };
+}
+
+/**
+ * The part of a funnel frame one block needs (bounds the board response): a
+ * `funnel` pick keeps only that funnel (an unknown pick keeps all, the block
+ * notes the fallback); daily trends travel only to `trend`; metrics and bands
+ * are dropped for `funnel` and `breakdown`, which draw neither.
+ */
+export function projectFunnelFrame(
+  frame: FunnelFrame,
+  blockType: string,
+  options: Record<string, unknown> | null | undefined,
+): FunnelFrame {
+  const pick = options && typeof options.funnel === 'string' ? options.funnel.trim() : '';
+  const picked = pick !== '' ? frame.funnels.filter((f) => f.id === pick) : [];
+  const funnels = picked.length > 0 ? picked : frame.funnels;
+  const keepDaily = blockType === 'trend';
+  const keepRates = blockType !== 'funnel' && blockType !== 'breakdown';
+  const out: FunnelFrame = {
+    ...frame,
+    funnels: funnels.map((f) => {
+      const next: FunnelFrameFunnel = { ...f };
+      if (!keepDaily) delete next.daily;
+      if (!keepRates) delete next.metrics;
+      if (f.segments) {
+        next.segments = f.segments.map((seg) => {
+          const s: FunnelFrameSegment = { ...seg };
+          if (!keepDaily) delete s.daily;
+          if (!keepRates) {
+            delete s.metrics;
+            delete s.bands;
+          }
+          return s;
+        });
+      }
+      return next;
+    }),
+  };
+  if (!keepRates) delete out.bands;
+  return out;
+}

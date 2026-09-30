@@ -5,9 +5,12 @@ import { frameKey } from '../../../generated/frameOps';
 import { blockRenderKey } from '../blocks/htmlBlockBridge';
 import { headingText } from '../blocks/TextBlock';
 import {
-  activeFilterFor, filterTarget, frameColorDomain, setActiveFilter, shapeBlockFrame, type ActiveFilter,
+  activeFilterFor, filterTarget, frameColorDomain, selectionIgnored, setActiveFilter, shapeBlockFrame,
 } from '../blocks/frameShape';
 import type { CardSyncState, FreshReason } from './boardSync';
+import {
+  EMPTY_VIEW, pathKey, setAppPage, setFilters, setLanes, setSelection, setTab, type CardView,
+} from './cardViewState';
 import type { Block, BlockProps, BlockRenderer, Card, Frame } from './boardTypes';
 import './board.css';
 
@@ -30,6 +33,14 @@ import './board.css';
  * filter block itself is shaped by its static options only, so its chips never
  * disappear under their own selection. Nothing is fetched: the server sent the
  * frames un-limited, so a filter narrows what is already here.
+ *
+ * VIEW STATE (filters, the breakdown selection and lanes per insight, the open
+ * tab, the open app page) is the card's `view`, held by the page per card id so
+ * the grid card and its fullscreen twin are one view (`cardViewState.ts`).
+ * Without `view` / `onView` (a test, a detail surface) the card keeps it itself.
+ * A block's insight is its binding's slug (before any `/`), else the card's.
+ * The selection narrows every same-insight TABLE frame by the dims it carries;
+ * a table not split by a selected dim is left whole and says so.
  *
  * A card with no blocks is one legacy `insight` block of its primary insight
  * (the v1 render). A card whose primary insight is gone says so and offers
@@ -63,6 +74,12 @@ export function htmlInputs(frames: Record<string, Frame>, cardId: string, path: 
     if (key.startsWith(prefix)) out[key.slice(prefix.length)] = frame;
   }
   return out;
+}
+
+/** The insight a block reads: its binding's slug (before any `/`), else the card's primary insight. */
+export function blockInsight(block: Block, card: Pick<Card, 'insight'>): string | null {
+  const binding = typeof block.data === 'string' ? block.data.split('/')[0].trim() : '';
+  return binding || card.insight || null;
 }
 
 /** A tabs child's full block path: the tabs block's own path + TabsBlock's relative `[tab, child]`. */
@@ -146,47 +163,85 @@ export interface BoardCardProps {
   syncState?: CardSyncState;
   /** Why the data is current without a fetch, when known. */
   freshReason?: FreshReason | null;
+  /** The card's view state, held by the page (absent = the card keeps its own). */
+  view?: CardView;
+  /** Apply one update to the card's view. */
+  onView?: (update: (view: CardView) => CardView) => void;
+  /** Drawn in the fullscreen overlay: full header, an exit button. */
+  fullscreen?: boolean;
+  /** Leave fullscreen (the exit button). */
+  onExitFullscreen?: () => void;
 }
 
 export function BoardCard({
   card, frames, summaries, caches, renderBlock, missing = false, onRemove, menu, syncState = null, freshReason = null,
+  view: heldView, onView, fullscreen = false, onExitFullscreen,
 }: BoardCardProps) {
   const { t, locale } = useI18n();
-  const [filters, setFilters] = useState<ActiveFilter[]>([]);
+  const [ownView, setOwnView] = useState<CardView>(EMPTY_VIEW);
+  const view = heldView ?? ownView;
+  const update = useCallback((fn: (v: CardView) => CardView) => {
+    if (onView) onView(fn);
+    else setOwnView(fn);
+  }, [onView]);
   const primary = card.insight ? summaries[card.insight] : undefined;
   const title = card.title ?? primary?.title ?? card.insight ?? '';
   const fresh = freshnessOf(primary);
   const blocks = useMemo(() => cardBlocks(card), [card]);
   // A section heading card: no title row, no card box, just the heading; the menu floats at the end.
-  const heading = isHeadingCard(blocks, title, !!fresh || !!syncState);
+  const heading = !fullscreen && isHeadingCard(blocks, title, !!fresh || !!syncState);
 
   const draw = useCallback((block: Block, path: number[]): ReactNode => {
     const key = frameKey(card.id, path);
     const raw = frames[key] ?? null;
     const isFilter = block.type === 'filter';
     const slug = block.type === 'insight' ? block.data ?? card.insight : card.insight;
+    const insight = blockInsight(block, card);
+    const selection = insight ? view.selection[insight] : undefined;
+    const lanes = insight ? view.lanes[insight] : undefined;
+    // Only a table of THIS insight narrows by the selection (a same-insight table, however bound).
+    const narrows = !isFilter && !!selection && !!raw && raw.kind === 'table' && raw.insight === insight;
+    const at = pathKey(path);
     const props: BlockProps = {
-      frame: shapeBlockFrame(block, raw, filters),
+      frame: shapeBlockFrame(block, raw, view.filters, narrows ? selection : null),
       // Colours are keyed on the RAW frame's entities: a pick or a filter never repaints a survivor.
       colorDomain: frameColorDomain(raw),
       options: block.options,
       summary: slug ? summaries[slug] : undefined,
       cache: block.type === 'insight' && slug ? caches?.[slug] ?? null : undefined,
-      filter: isFilter ? activeFilterFor(filters, key) : null,
+      filter: isFilter ? activeFilterFor(view.filters, key) : null,
       onFilter: isFilter
-        ? (next) => setFilters((prev) => setActiveFilter(prev, key, filterTarget(raw), next))
+        ? (next) => update((v) => setFilters(v, setActiveFilter(v.filters, key, filterTarget(raw), next)))
         : undefined,
+      selection: selection ?? {},
+      onSelection: insight ? (next) => update((v) => setSelection(v, insight, next)) : undefined,
+      lanes: lanes ?? [],
+      onLanes: insight ? (next) => update((v) => setLanes(v, insight, next)) : undefined,
+      activeTab: block.type === 'tabs' ? view.tabs[at] ?? 0 : undefined,
+      onTab: block.type === 'tabs' ? (i) => update((v) => setTab(v, at, i)) : undefined,
+      appPage: block.type === 'insight' ? view.appPage[at] ?? null : undefined,
+      onAppPage: block.type === 'insight' ? (id) => update((v) => setAppPage(v, at, id)) : undefined,
+      fullscreen,
       inputs: block.type === 'html' ? htmlInputs(frames, card.id, path) : undefined,
       // TabsBlock hands a path RELATIVE to itself ([tab, child]); the engine keys frames by the
       // full path (index.tab.child), so the tabs block's own path is prefixed here.
       renderChild: block.type === 'tabs' ? (child, rel) => draw(child, tabChildPath(path, rel)) : undefined,
     };
-    const node = renderBlock(block, props);
+    const ignored = narrows ? selectionIgnored(raw, selection) : [];
+    const drawn = renderBlock(block, props);
+    const node = ignored.length > 0 ? (
+      <>
+        <p className="board-block-note" data-lab-not-split={ignored.join(',')}>
+          {t('lab.board.card.notSplit').replace('{dims}', ignored.join(', '))}
+        </p>
+        {drawn}
+      </>
+    ) : drawn;
     // A tabs child gets its own hook box (a top-level block's is the card's block row).
     return path.length > 1
       ? <div className="board-block-child" data-lab-block={block.type} data-lab-block-path={path.join('.')}>{node}</div>
       : node;
-  }, [card.id, card.insight, frames, filters, summaries, caches, renderBlock]);
+  }, [card.id, card.insight, frames, view, update, summaries, caches, renderBlock, fullscreen, t]);
 
   if (missing) {
     return (
@@ -224,8 +279,20 @@ export function BoardCard({
 
   // An untitled card with no status line has no header row at all (an empty title row read as a
   // gap above the content): its menu floats over the top corner instead.
-  const headed = !!title || !!fresh || !!syncState;
-  const density = cardDensity(card.at?.h);
+  const headed = fullscreen || !!title || !!fresh || !!syncState;
+  const density = fullscreen ? 'full' : cardDensity(card.at?.h);
+  const exit = fullscreen && onExitFullscreen ? (
+    <button
+      type="button"
+      className="board-card-exit"
+      data-lab-card-exit
+      aria-label={t('lab.board.card.exitFullscreen')}
+      title={t('lab.board.card.exitFullscreen')}
+      onClick={onExitFullscreen}
+    >
+      <span aria-hidden="true">×</span>
+    </button>
+  ) : null;
   const freshLine = fresh || syncState ? freshnessText(t, locale, primary, fresh, syncState, freshReason) : '';
   const freshTip = [freshLine, !syncState ? primary?.freshnessNote : null, fresh === 'failed' ? primary?.error : null]
     .filter(Boolean).join('\n');
@@ -248,8 +315,9 @@ export function BoardCard({
 
   return (
     <article
-      className={`board-card${headed ? '' : ' board-card--untitled'}${density === 'full' ? '' : ` board-card--${density}`}`}
+      className={`board-card${headed ? '' : ' board-card--untitled'}${density === 'full' ? '' : ` board-card--${density}`}${fullscreen ? ' board-card--fullscreen' : ''}`}
       data-card-id={card.id}
+      data-lab-card-fullscreen-view={fullscreen ? true : undefined}
     >
       {!headed && menu && <div className="board-card-float-menu">{menu}</div>}
       {headed && (
@@ -258,6 +326,7 @@ export function BoardCard({
             <h3 className="board-card-title" title={titleTip}>{title}</h3>
             {density !== 'full' && freshEl}
             {menu}
+            {exit}
           </div>
           {density === 'full' && freshEl}
         </header>

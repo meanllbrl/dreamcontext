@@ -2,10 +2,35 @@ import { findDataset } from './dataset.js';
 import { getInsight, isSafeInsightSlug, readCache } from './store.js';
 import { BLOCK_CATALOG, HTML_INPUT_DEFAULT_FRAMES } from './blocks.js';
 import { getLibraryBlock, isSafeInputName } from './block-library.js';
-import { frameKey, tableTotal } from './frameOps.js';
+import { frameKey, projectFunnelFrame, tableTotal } from './frameOps.js';
 import type { Block, Board, Card } from './boards.js';
-import type { InsightCache, InsightManifest, MatrixDim, MatrixRow, MatrixTotal } from './types.js';
-import type { EmptyReason, Frame, FrameKind, FunnelFrame, SeriesFrame, TableFrame, ValueFrame } from './frameOps.js';
+import type {
+  FunnelBenchmark,
+  FunnelDay,
+  FunnelDimension,
+  FunnelMetricValue,
+  FunnelSet,
+  InsightCache,
+  InsightManifest,
+  MatrixDim,
+  MatrixRow,
+  MatrixTotal,
+} from './types.js';
+import type {
+  EmptyReason,
+  Frame,
+  FrameKind,
+  FunnelFrame,
+  FunnelFrameBand,
+  FunnelFrameDay,
+  FunnelFrameFunnel,
+  FunnelFrameMetric,
+  FunnelFrameSegment,
+  FunnelFrameStep,
+  SeriesFrame,
+  TableFrame,
+  ValueFrame,
+} from './frameOps.js';
 
 export type {
   EmptyFrame,
@@ -112,18 +137,108 @@ function buildSeries(slug: string, cache: InsightCache): SeriesFrame | null {
   };
 }
 
+function metricOf(m: FunnelMetricValue): FunnelFrameMetric {
+  return {
+    v: typeof m.v === 'number' && Number.isFinite(m.v) ? m.v : null,
+    prev: typeof m.prev === 'number' && Number.isFinite(m.prev) ? m.prev : null,
+    format: m.format,
+    label: m.label ?? null,
+    measured: m.measured !== false,
+    reason: m.reason ?? null,
+  };
+}
+
+function metricsOf(metrics: Record<string, FunnelMetricValue> | undefined): Record<string, FunnelFrameMetric> | undefined {
+  if (!metrics || Object.keys(metrics).length === 0) return undefined;
+  const out: Record<string, FunnelFrameMetric> = {};
+  for (const [k, m] of Object.entries(metrics)) out[k] = metricOf(m);
+  return out;
+}
+
+function bandsOf(benchmarks: Record<string, FunnelBenchmark> | undefined): Record<string, FunnelFrameBand> | undefined {
+  if (!benchmarks || Object.keys(benchmarks).length === 0) return undefined;
+  const out: Record<string, FunnelFrameBand> = {};
+  for (const [k, b] of Object.entries(benchmarks)) {
+    out[k] = {
+      floor: typeof b.floor === 'number' ? b.floor : null,
+      target: typeof b.target === 'number' ? b.target : null,
+      floorSource: b.floor_source ?? null,
+      targetSource: b.target_source ?? null,
+      better: b.better === 'lower' ? 'lower' : 'higher',
+    };
+  }
+  return out;
+}
+
+function dailyOf(daily: FunnelDay[] | undefined): FunnelFrameDay[] | undefined {
+  if (!daily || daily.length === 0) return undefined;
+  return daily.map((d) => ({ t: d.t, m: { ...d.m } }));
+}
+
+/** A dimension's chip values: the declared ones, else those the segments carry (most users first). */
+function dimensionValuesOf(set: FunnelSet, dim: FunnelDimension): string[] {
+  if (dim.values && dim.values.length > 0) return dim.values.map((v) => v.value);
+  const users = new Map<string, number>();
+  for (const f of set.funnels) {
+    for (const seg of f.segments ?? []) {
+      const v = seg.dims[dim.key];
+      if (v !== undefined) users.set(v, (users.get(v) ?? 0) + seg.users);
+    }
+  }
+  return [...users.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([v]) => v);
+}
+
+/** The full funnel set as a frame (snake -> camel). Optional parts appear only when the set carries them. */
 function buildFunnel(slug: string, cache: InsightCache): FunnelFrame | null {
   const set = cache.funnel?.set;
   if (!set || !Array.isArray(set.funnels)) return null;
-  return {
+  const frame: FunnelFrame = {
     kind: 'funnel',
     insight: slug,
-    funnels: set.funnels.map((f) => ({
-      id: f.id,
-      name: f.name,
-      steps: f.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })),
-    })),
+    funnels: set.funnels.map((f) => {
+      const out: FunnelFrameFunnel = {
+        id: f.id,
+        name: f.name,
+        steps: f.steps.map((s) => {
+          const step: FunnelFrameStep = { key: s.key, label: s.label, users: s.users };
+          if (s.prev !== undefined) step.prev = typeof s.prev === 'number' && Number.isFinite(s.prev) ? s.prev : null;
+          return step;
+        }),
+      };
+      const metrics = metricsOf(f.metrics);
+      if (metrics) out.metrics = metrics;
+      const daily = dailyOf(f.daily);
+      if (daily) out.daily = daily;
+      if (f.segments && f.segments.length > 0) {
+        out.segments = f.segments.map((seg) => {
+          const s: FunnelFrameSegment = {
+            dims: { ...seg.dims },
+            users: seg.users,
+            steps: seg.steps.map((st) => ({ key: st.key, users: st.users })),
+            measured: seg.measured !== false,
+            reason: seg.reason ?? null,
+          };
+          const m = metricsOf(seg.metrics);
+          if (m) s.metrics = m;
+          const b = bandsOf(seg.benchmarks);
+          if (b) s.bands = b;
+          const d = dailyOf(seg.daily);
+          if (d) s.daily = d;
+          return s;
+        });
+      }
+      return out;
+    }),
   };
+  const dims = (set.dimensions ?? []).filter((d) => d.mode === 'client');
+  if (dims.length > 0) {
+    frame.dimensions = dims.map((d) => ({ key: d.key, label: d.label || d.key, values: dimensionValuesOf(set, d) }));
+  }
+  if (set.segment_mode === 'lookup' || set.segment_mode === 'cells') frame.segmentMode = set.segment_mode;
+  const bands = bandsOf(set.benchmarks);
+  if (bands) frame.bands = bands;
+  if (typeof set.low_sample_threshold === 'number' && Number.isFinite(set.low_sample_threshold)) frame.lowSample = set.low_sample_threshold;
+  return frame;
 }
 
 function buildValue(slug: string, cache: InsightCache, ref: DataRef): ValueFrame | 'missing-dataset' {
@@ -258,7 +373,9 @@ function resolveBlocks(
     const entry = BLOCK_CATALOG[block.type];
     if (!entry) return;
     if (entry.data === 'binding') {
-      out[frameKey(card.id, path)] = resolveFrame(contextRoot, block.data, blockFramePreference(block, entry.frames), memo);
+      const frame = resolveFrame(contextRoot, block.data, blockFramePreference(block, entry.frames), memo);
+      // Each block gets only the part of a funnel set it draws (bounds the board response).
+      out[frameKey(card.id, path)] = frame.kind === 'funnel' ? projectFunnelFrame(frame, block.type, block.options) : frame;
     } else if (entry.data === 'inputs') {
       for (const input of htmlBlockInputs(contextRoot, block)) {
         out[frameKey(card.id, path, input.name)] = resolveFrame(contextRoot, input.ref, input.accepts, memo);

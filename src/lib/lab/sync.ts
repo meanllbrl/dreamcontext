@@ -789,6 +789,16 @@ export async function syncInsight(
         prior?.datasetHistory,
         makeDatasetSnapshot(parsed.bundle, resolvedTweaks.range, new Date(nowMs).toISOString()),
       );
+      // A funnel explorer's bundle carries one funnel-set/v1 member: it is
+      // stored as cache.funnel (with its history) exactly as a bare funnel-set
+      // would be; latest + series stay the primary dataset's.
+      if (parsed.funnel) {
+        funnel = { set: parsed.funnel.set, notices: parsed.funnel.notices, range: resolvedTweaks.range };
+        funnelHistory = appendFunnelHistory(
+          prior?.funnelHistory,
+          makeFunnelSnapshot(parsed.funnel.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
+        );
+      }
     } else {
       const rolled = rollupSeries(result, resolvedTweaks.spanDays, aggFor(manifest));
       series = rolled.series;
