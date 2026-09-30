@@ -1,0 +1,153 @@
+/*
+ * Control Panel: one board open full-bleed under a toolbar (the board switcher, the save
+ * state). The switcher's own rules live in whiteboards/BoardSwitcher.css.
+ *
+ * Accent budget (K8): none here beyond the focus ring. Save state is plain text; the one
+ * failure ink is the error token, on "Not saved" and the corrupt-board card.
+ */
+
+.wbp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.wbp-loading {
+  padding: var(--space-10);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+/* The toolbar sits above the canvas: `z-index` so the switcher's panels overlay Excalidraw,
+   whose own layers stay contained by `.wbp-canvas`'s isolation. */
+.wbp-bar {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  height: var(--space-12);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.wbp-head-spacer {
+  flex: 1;
+}
+
+.wbp-btn {
+  flex-shrink: 0;
+  height: var(--space-8);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.wbp-btn:hover { border-color: var(--color-border-hover); }
+
+.wbp-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg-secondary), 0 0 0 4px var(--color-accent);
+}
+
+/* ─── one board, full-bleed ─── */
+
+.wbp-editor {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+.wbp-status {
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbp-status--bad {
+  color: var(--color-error-ink);
+  font-weight: var(--font-weight-medium);
+}
+
+.wbp-banner {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-error);
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink);
+  font-size: var(--font-size-sm);
+}
+
+.wbp-banner--quiet {
+  border-bottom-color: var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.wbp-canvas {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+}
+
+.wbp-card-state {
+  margin: var(--space-12) auto;
+  max-width: 560px;
+  padding: var(--space-6);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-lg);
+  background: var(--color-error-subtle);
+}
+
+.wbp-state-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+}
+
+.wbp-state-body,
+.wbp-state-reason {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.wbp-state-reason {
+  color: var(--color-error-ink);
+}
+
+.wbp-state-file {
+  display: block;
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wbp-btn {
+    transition: none;
+  }
+}

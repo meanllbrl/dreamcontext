@@ -7,7 +7,7 @@ import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
-const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements'];
+const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards'];
 
 /**
  * Which page a project was last on — per-project navigation, so it goes through the

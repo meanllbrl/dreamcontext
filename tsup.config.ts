@@ -71,6 +71,9 @@ export default defineConfig({
     // Pure-JS WebSocket server for the agent terminal's PTY bridge — bundle it so
     // the .app (which ships dist/ without node_modules) can require it.
     'ws',
+    // Pure-JS fractional indices for whiteboard elements (Excalidraw's own ordering scheme) —
+    // every whiteboard write imports it, so leaving it external crashes the .app's CLI at load.
+    'fractional-indexing',
   ],
   // node-pty is a NATIVE module — it cannot be bundled. It's an optionalDependency,
   // loaded via dynamic import() with graceful degradation (the agent terminal falls

@@ -243,6 +243,24 @@ Scheduled headless `claude` runs, user-authored, ships completely disabled until
 
 ---
 
+## Whiteboard
+
+Editable Excalidraw boards carrying live widgets (`insight`, `knowledge`, `task`, `todo`, `note`, `html`, `web`), stored at `_dream_context/whiteboards/<slug>/<slug>.excalidraw.md`. The dashboard's **Whiteboard** rail entry is the user's side (it opens the default board Control Panel, `control-panel`, creating it on first open); this command is yours. Every write locks the board, merges per element, and writes atomically. Format, widget payloads, sandbox rules and recipes: [whiteboards.md](whiteboards.md).
+
+| Command | Description |
+|---|---|
+| `whiteboard list` | List boards: name, slug, live element count, or `does not parse: <reason>`; the default board is marked `(default)` (`"isDefault": true` in `--json`). The default verb. `--json`. |
+| `whiteboard create "<name>"` | Create a board. The name is kept verbatim in the frontmatter; the slug is derived from it (`"Günlük"` → `gunluk`, `-2` on collision, so a second `"Control Panel"` is `control-panel-2`; `default` is reserved → `default-2`). `-d, --description <text>`, `--json`. The first board also writes `whiteboards/.gitattributes` (`* merge=binary`) and `.gitignore` (`.locks/`, `*.tmp`). |
+| `whiteboard show <slug> [id]` | List live elements: `id`, `type`, `bbox`, `text`, `tag`, and for widgets `kind`, `size` (`s|m|l|xl`, nearest preset for a free-form box), `ref`, `title`, `items[{id,text,done}]`, `url`, `markdown`/`html` (cut to 500 chars with `truncated: true`). `[id]` shows one element. `--full` (no truncation), `--json`. A todo the user ticked reads `done: true`. |
+| `whiteboard add <slug> <kind>` | Add a widget. `--ref <slug>` (insight / knowledge / task; a missing target warns, never fails), `--title <text>`, `--text <text>` or `--file <path>` (note markdown / HTML block), `--url <https-url>` (web), `--item <text>` (todo, repeatable), `--at <x,y>` (default: the next free slot on the 196px grid pitch, right of / below existing content, never overlapping), `--size <s|m|l|xl>` (S 180×180, M 376×180, L 376×376, XL 768×376; default per kind: `knowledge`/`task` s, `insight`/`todo`/`note` m, `html`/`web` l) or free-form `--size <w,h>` (no `dc.size`), `--tag <tag>`, `--json` (prints `{id, slug, kind}`). |
+| `whiteboard update <slug> <id>` | Update a widget or a text element's text. `--title`, `--text` / `--file`, `--url`, `--ref`, `--item <text>` (append, repeatable), `--check <n>` / `--uncheck <n>` (1-based position or item id, repeatable), `--at <x,y>`, `--size <s|m|l|xl>` (sets `dc.size` + box) or `--size <w,h>` (free-form, clears `dc.size`), `--json`. |
+| `whiteboard remove <slug> [ids...]` | Tombstone elements by id or `--tag <tag>` (bound text goes with its container). Prints the removed group's bbox `x,y,w,h`; `--json` → `{removed, bbox}` (`bbox: null` when nothing matched). |
+| `whiteboard draw <slug> --file <path>` | Import a drawing built by the `excalidraw` skill (`.excalidraw.md` or scene `.json`): re-ids elements keeping bindings, groups, frames and element links consistent, then places the group. `--at <x,y>`, `--tag <tag>` (stored as `customData.dcTag` on plain elements), `--json` (`{ids, bbox}`). An image element refuses the import. |
+
+Refusals exit non-zero with the reason: an invalid slug, ref or tag, a non-https web URL, an `image` element, and a board that does not parse (including one Obsidian saved **compressed**), which is never written over. Deleting a board is dashboard-only (it moves to `whiteboards/.trash/`); the default board cannot be deleted.
+
+---
+
 ## Theses (Hypotheses)
 
 Opt-in proactive learning layer (`learning.enabled`, default OFF). Falsifiable claims validated/invalidated across sleep cycles in `_dream_context/theses/`; dashboard label is "Hypotheses", code/CLI say theses throughout. Commands stay callable when the layer is off (a dim hint prints first). See [learning.md](learning.md) for the full lifecycle, derived-confidence formula, and sleep-learn contract.

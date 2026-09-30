@@ -1,0 +1,265 @@
+/* The editable whiteboard and its widget palette. Design tokens only. */
+
+.wb-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Excalidraw's own embeddable chrome: the widget card is the chrome here (A18).
+   - The outer box is padded by the element's strokeWidth (inline style); the card fills the
+     whole element box instead, since widgets draw no stroke.
+   - The inner box clips to the element's corner radius; the card rounds itself, and clipping
+     would cut its shadow off. */
+.wb-canvas-wrap .excalidraw__embeddable__outer {
+  padding: 0 !important;
+  background: transparent;
+}
+
+.wb-canvas-wrap .excalidraw__embeddable-container__inner {
+  overflow: visible;
+}
+
+/* Excalidraw rounds the embed's child to the element's own radius (0 for a widget); the card
+   keeps its token radius. */
+.wb-canvas-wrap .excalidraw__embeddable__outer > .wb-widget {
+  border-radius: var(--radius-xl);
+}
+
+/* Excalidraw's "Click to interact": shown only while the pointer is over the centre of an
+   INACTIVE widget (its hover state), never on an active one. Restyled as a quiet pill. */
+.wb-canvas-wrap .excalidraw__embeddable-hint {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: normal;
+  pointer-events: none;
+}
+
+/* A selection of widgets only (A18): Excalidraw's properties panel (stroke, sloppiness, opacity…)
+   has nothing to say about a frameless card, and its link popup would show the raw
+   `dreamcontext://` URL with edit/embed buttons. Excalidraw 0.18.1 has no prop or UIOption for
+   either, so both go by class; free drawing, alone or mixed with a widget, keeps them. The popup's
+   window-capture guard (linkRouting.ts) is untouched and still covers every other element's link.
+   Delete, duplicate and layer order stay on the keyboard and the element's right-click menu,
+   which loses only its "Edit embeddable link" item (it would open the hidden popup).
+   The small link icon above an unselected widget's corner is painted on the canvas itself and
+   cannot be reached from here. */
+.wb-canvas-wrap--widgets-selected .selected-shape-actions,
+.wb-canvas-wrap--widgets-selected .excalidraw-hyperlinkContainer,
+.wb-canvas-wrap--widgets-selected .context-menu li[data-testid="hyperlink"] {
+  display: none;
+}
+
+/* The selected widget's S / M / L / XL control, centred under it. */
+.wb-size-picker {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  transform: translateX(-50%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-family);
+}
+
+.wb-size-option {
+  min-width: var(--space-8);
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.wb-size-option:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.wb-size-option.is-current {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--color-border-hover);
+}
+
+.wb-size-option:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.wb-add-btn {
+  height: var(--space-8);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.wb-add-btn:hover {
+  border-color: var(--color-border-hover);
+}
+
+.wb-palette {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  max-height: 380px;
+  padding: var(--space-1);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+}
+
+.wb-palette-heading {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wb-palette-item,
+.wb-palette-back,
+.wb-picker-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-palette-item:hover,
+.wb-palette-item:focus-visible,
+.wb-palette-back:hover,
+.wb-picker-row:hover,
+.wb-picker-row:focus-visible {
+  background: var(--color-bg-tertiary);
+  outline: none;
+}
+
+.wb-palette-back {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.wb-palette-sep {
+  margin: var(--space-1) 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.wb-palette-btn {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-accent-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+}
+
+.wb-picker-search {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.wb-picker-search:focus {
+  border-color: var(--color-border-focus);
+  outline: none;
+}
+
+.wb-picker-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.wb-picker-row {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.wb-picker-row-title {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-picker-row-meta {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-picker-empty {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--color-text-tertiary);
+}
+
+.wb-picker-error {
+  margin: 0;
+  padding: 0 var(--space-1);
+  color: var(--color-error-ink);
+  font-size: var(--font-size-xs);
+}
+
+.wb-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+}

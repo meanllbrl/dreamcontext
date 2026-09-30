@@ -3033,6 +3033,98 @@
       "args": [
         "<name>"
       ]
+    },
+    {
+      "path": "whiteboard",
+      "desc": "Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "whiteboard add",
+      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web",
+      "args": [
+        "<slug>",
+        "<kind>"
+      ],
+      "valueFlags": [
+        "--ref",
+        "--title",
+        "--text",
+        "--file",
+        "--url",
+        "--item",
+        "--at",
+        "--size",
+        "--tag"
+      ]
+    },
+    {
+      "path": "whiteboard create",
+      "desc": "Create a whiteboard (the name is kept verbatim; the slug is derived from it)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "-d",
+        "--description"
+      ]
+    },
+    {
+      "path": "whiteboard draw",
+      "desc": "Import a drawing built by the excalidraw skill (.excalidraw.md or scene .json) onto a board",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--file",
+        "--at",
+        "--tag"
+      ]
+    },
+    {
+      "path": "whiteboard list",
+      "desc": "List whiteboards",
+      "args": []
+    },
+    {
+      "path": "whiteboard remove",
+      "desc": "Remove elements by id or by --tag; prints the removed group's bbox (x,y,w,h)",
+      "args": [
+        "<slug>",
+        "[ids...]"
+      ],
+      "valueFlags": [
+        "--tag"
+      ]
+    },
+    {
+      "path": "whiteboard show",
+      "desc": "Show a board's live elements (or one element with --full)",
+      "args": [
+        "<slug>",
+        "[id]"
+      ]
+    },
+    {
+      "path": "whiteboard update",
+      "desc": "Update a widget (or a text element's text)",
+      "args": [
+        "<slug>",
+        "<id>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--text",
+        "--file",
+        "--url",
+        "--ref",
+        "--item",
+        "--check",
+        "--uncheck",
+        "--at",
+        "--size"
+      ]
     }
   ]
 }

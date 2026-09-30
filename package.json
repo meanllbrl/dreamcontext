@@ -65,6 +65,7 @@
     "verify:delegate-modes": "node scripts/verify/delegate-modes.mjs",
     "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs",
     "verify:lab-board": "node scripts/verify/lab-board.mjs",
+    "verify:whiteboard": "node scripts/verify/whiteboard.mjs",
     "verify:lab-html-height": "node scripts/verify/lab-html-height.mjs",
     "verify:lab-breakdown-reports": "node scripts/verify/lab-breakdown-reports.mjs",
     "verify:lab-report-template": "node scripts/verify/lab-report-template.mjs",
@@ -107,6 +108,7 @@
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
     "fast-glob": "^3.3.3",
+    "fractional-indexing": "^4.0.0",
     "gray-matter": "^4.0.3",
     "nanoid": "^5.1.2",
     "ws": "^8.21.0"

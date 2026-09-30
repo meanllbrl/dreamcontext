@@ -69,6 +69,29 @@ describe('classifyReference', () => {
     expect(ref.appNav).toBeUndefined();
   });
 
+  it('routes a whiteboard to the Whiteboards page, BEFORE the .excalidraw.md board rule', () => {
+    // A whiteboard is an `.excalidraw.md` too: as a `board` it would open in the read-only
+    // viewer. It must come out as a file with an appNav to the editable page instead.
+    for (const path of [
+      '_dream_context/whiteboards/gunluk/gunluk.excalidraw.md',
+      './_dream_context/whiteboards/gunluk/gunluk.excalidraw.md',
+      '_dream_context\\whiteboards\\gunluk\\gunluk.excalidraw.md',
+    ]) {
+      const ref = classifyReference(path);
+      expect(ref.kind, path).toBe('file');
+      expect(ref.appNav, path).toEqual({ page: 'whiteboards', id: 'gunluk' });
+    }
+    // Any path inside the board's folder, and the folder itself, opens the same board.
+    expect(classifyReference('_dream_context/whiteboards/daily-plan').appNav).toEqual({ page: 'whiteboards', id: 'daily-plan' });
+    // An excalidraw file anywhere else under the brain is still a read-only board.
+    expect(classifyReference('_dream_context/knowledge/diagram.excalidraw.md').kind).toBe('board');
+  });
+
+  it('does not route an invalid whiteboard slug or the trash folder', () => {
+    expect(classifyReference('_dream_context/whiteboards/.trash/old-1/old.excalidraw.md').appNav).toBeUndefined();
+    expect(classifyReference('_dream_context/whiteboards/-bad/-bad.excalidraw.md').appNav).toBeUndefined();
+  });
+
   it('classifies a task file (_dream_context/state/<slug>.md) with appNav to the tasks page', () => {
     const ref = classifyReference('_dream_context/state/feat-sleepy-agent-surface-ux-redesign.md');
     expect(ref.kind).toBe('task');

@@ -569,7 +569,7 @@ export function ChatPane({
    *  link, which needs a Shell-level listener outside this task's file ownership. Omitted
    *  entirely degrades to "Open in app" simply not being offered (SlideOver already gates
    *  the button on `reference.appNav` existing at all). */
-  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core', id: string, vault?: string) => void;
+  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => void;
   /** Open a terminal pane that runs the sign-in command — the only surface the flow exists on
    *  (this engine is headless; it answers `/login` with "isn't available in this environment").
    *  Fires from the SignInBanner and from typing `/login` into the composer. */
@@ -1445,7 +1445,7 @@ export function ChatPane({
   const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
   const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
   const handleQuote = useCallback((text: string) => setQuote(convId, text), [convId]);
-  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core', id: string, vault?: string) => {
+  const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id, vault);
   }, [onOpenAppPage]);

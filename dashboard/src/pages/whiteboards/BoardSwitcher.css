@@ -1,0 +1,426 @@
+/*
+ * The board switcher (A16): a native-toolbar name button + "+" at the top of a board, and the
+ * two panels they open. Tokens only, both themes.
+ *
+ * Accent budget (K8): the Create button (strong gradient) and the focus ring. The highlighted
+ * row is a neutral surface, never an accent fill; the one danger ink is on Delete.
+ */
+
+.wbs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.wbs-current,
+.wbs-icon-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: var(--space-8);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.wbs-current {
+  flex-shrink: 1;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 420px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.wbs-current-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbs-icon-btn {
+  justify-content: center;
+  width: var(--space-8);
+  color: var(--color-text-secondary);
+}
+
+.wbs-current:hover,
+.wbs-icon-btn:hover,
+.wbs-current[aria-expanded='true'],
+.wbs-icon-btn[aria-expanded='true'] {
+  border-color: var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.wbs-glyph {
+  flex-shrink: 0;
+  display: block;
+}
+
+.wbs-current > .wbs-glyph:first-child {
+  color: var(--color-text-secondary);
+}
+
+.wbs-chevron {
+  color: var(--color-text-tertiary);
+  transition: transform var(--transition-fast);
+}
+
+.wbs-current[aria-expanded='true'] .wbs-chevron {
+  transform: rotate(180deg);
+}
+
+.wbs-current:focus-visible,
+.wbs-icon-btn:focus-visible,
+.wbs-row-delete:focus-visible,
+.wbs-btn:focus-visible,
+.wbs-primary:focus-visible,
+.wbs-foot-btn:focus-visible,
+.wbs-create-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg-elevated), 0 0 0 4px var(--color-accent);
+}
+
+/* ─── panels ─── */
+
+.wbs-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+  overflow: hidden;
+  animation: wbs-in var(--transition-fast) both;
+}
+
+.wbs-panel--boards {
+  width: 360px;
+  max-width: calc(100vw - var(--space-8));
+  max-height: min(480px, calc(100vh - 160px));
+}
+
+.wbs-panel--create {
+  width: 320px;
+  max-width: calc(100vw - var(--space-8));
+  padding: var(--space-3);
+  gap: var(--space-2);
+}
+
+@keyframes wbs-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.wbs-search {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+.wbs-search-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--space-10);
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.wbs-note {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.wbs-panel--create .wbs-note {
+  padding: 0;
+}
+
+.wbs-note--bad {
+  color: var(--color-error-ink);
+}
+
+.wbs-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  overflow-y: auto;
+}
+
+.wbs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+}
+
+.wbs-row[data-active] {
+  background: var(--color-bg-tertiary);
+}
+
+.wbs-row-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wbs-row-check {
+  flex-shrink: 0;
+  width: 16px;
+  color: var(--color-text-secondary);
+}
+
+.wbs-row-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wbs-row-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbs-row[aria-current='page'] .wbs-row-name {
+  font-weight: var(--font-weight-semibold);
+}
+
+.wbs-badge {
+  flex-shrink: 0;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.wbs-row-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbs-row-corrupt {
+  color: var(--color-error-ink);
+  font-weight: var(--font-weight-medium);
+}
+
+.wbs-row-delete {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  margin-right: var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.wbs-row[data-active] .wbs-row-delete,
+.wbs-row-delete:focus-visible {
+  opacity: 1;
+}
+
+.wbs-row-delete:hover {
+  color: var(--color-error-ink);
+}
+
+.wbs-row--confirm {
+  flex-wrap: wrap;
+  padding: var(--space-2);
+  gap: var(--space-2);
+  background: var(--color-error-subtle);
+}
+
+.wbs-row--confirm[data-active] {
+  background: var(--color-error-subtle);
+}
+
+.wbs-confirm-text {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.wbs-confirm-error {
+  flex-basis: 100%;
+  font-size: var(--font-size-xs);
+  color: var(--color-error-ink);
+}
+
+.wbs-confirm-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.wbs-btn,
+.wbs-primary {
+  flex-shrink: 0;
+  height: var(--space-8);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.wbs-btn {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.wbs-btn:hover { border-color: var(--color-border-hover); }
+
+.wbs-btn--danger {
+  border-color: var(--color-error);
+  color: var(--color-error-ink);
+}
+
+.wbs-btn:disabled,
+.wbs-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wbs-primary {
+  border: none;
+  background: var(--gradient-brand-strong);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.wbs-primary:not(:disabled):hover { filter: brightness(1.06); }
+
+.wbs-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1);
+  border-top: 1px solid var(--color-border);
+}
+
+.wbs-foot-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--space-8);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.wbs-foot-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.wbs-foot-hint {
+  margin-left: auto;
+  padding-right: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.wbs-create-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.wbs-create-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.wbs-create-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--space-8);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.wbs-create-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wbs-panel { animation: none; }
+  .wbs-current,
+  .wbs-icon-btn,
+  .wbs-chevron,
+  .wbs-row-delete {
+    transition: none;
+  }
+}

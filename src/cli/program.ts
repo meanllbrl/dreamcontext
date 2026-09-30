@@ -43,6 +43,7 @@ import { registerMigrationsCommand } from './commands/migrations.js';
 import { registerBrainCommand } from './commands/brain.js';
 import { registerLinkCommand } from './commands/link.js';
 import { registerPatternsCommand } from './commands/patterns.js';
+import { registerWhiteboardCommand } from './commands/whiteboard.js';
 
 /**
  * The command TREE, with no entrypoint attached.
@@ -77,6 +78,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('roadmap')}           PO-authored objective board (rollups, dependencies, target vs forecast)
   ${chalk.magentaBright('lab')}               Analytics insights: curated metrics from HTTP APIs or scripts
   ${chalk.magentaBright('bookmark')}          Tag important moments for consolidation
+  ${chalk.magentaBright('whiteboard')}        Read and edit whiteboards (excalidraw boards with live widgets)
   ${chalk.magentaBright('trigger')}           Manage contextual reminders (prospective memory)
   ${chalk.magentaBright('council')}           Run structured multi-agent debates on decisions
 
@@ -133,6 +135,7 @@ export function createProgram(): Command {
   registerKnowledgeCommand(program);
   registerPatternsCommand(program);
   registerTasksCommand(program);
+  registerWhiteboardCommand(program);
   registerRoadmapCommand(program);
   registerLabCommand(program);
   registerThesesCommand(program);

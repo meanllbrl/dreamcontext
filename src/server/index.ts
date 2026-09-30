@@ -142,6 +142,10 @@ import {
   handleLearningDisable,
 } from './routes/theses.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
+import {
+  handleWhiteboardsList, handleWhiteboardsCreate, handleWhiteboardGet, handleWhiteboardRev,
+  handleWhiteboardPut, handleWhiteboardDelete, handleWhiteboardDefault,
+} from './routes/whiteboards.js';
 import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
 import {
   handleAgentCapabilities,
@@ -715,6 +719,16 @@ export function buildRouter(): Router {
   router.get('/api/chat/html-kit', handleChatHtmlKitGet);
   router.put('/api/board/shared', handleBoardSharedPut);
   router.put('/api/board/local', handleBoardLocalPut);
+
+  // Whiteboards — editable Excalidraw boards under whiteboards/<slug>/. `default` and `:slug/rev` before
+  // `:slug` (first match wins); every write goes through the store's lock + merge.
+  router.get('/api/whiteboards', handleWhiteboardsList);
+  router.post('/api/whiteboards', handleWhiteboardsCreate);
+  router.get('/api/whiteboards/default', handleWhiteboardDefault);
+  router.get('/api/whiteboards/:slug/rev', handleWhiteboardRev);
+  router.get('/api/whiteboards/:slug', handleWhiteboardGet);
+  router.put('/api/whiteboards/:slug', handleWhiteboardPut);
+  router.delete('/api/whiteboards/:slug', handleWhiteboardDelete);
 
   // Version check
   router.get('/api/version-check', handleVersionCheckGet);

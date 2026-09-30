@@ -1,0 +1,494 @@
+/* Whiteboard widgets. Design tokens only. */
+
+/* The card (A18): rounded, a hairline border and a soft shadow, and nothing else. The element's
+   own Excalidraw stroke is transparent (widgetModel.WIDGET_STROKE), so this is the only frame. */
+.wb-widget {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.wb-widget.is-active {
+  border-color: var(--color-border-focus);
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+}
+
+/* A quiet header: kind and title in one line of small secondary text, no band, no rule. */
+.wb-widget-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  min-height: var(--space-10);
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.wb-widget-kind {
+  flex: none;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.wb-widget-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.wb-widget-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.wb-widget-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+}
+
+.wb-widget.is-active .wb-widget-body {
+  overflow: auto;
+}
+
+.wb-widget--html .wb-widget-body,
+.wb-widget--web .wb-widget-body {
+  padding: var(--space-2) 0 0;
+}
+
+/* S is one cell: tighter chrome so the content keeps the room. */
+.wb-widget--size-s .wb-widget-head {
+  min-height: var(--space-8);
+  padding: var(--space-2) var(--space-3) 0;
+}
+
+.wb-widget--size-s .wb-widget-body {
+  padding: var(--space-1) var(--space-3) var(--space-3);
+}
+
+.wb-widget-btn {
+  padding: 0 var(--space-2);
+  min-height: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.wb-widget-btn:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+}
+
+.wb-widget-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wb-widget-btn--primary {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-text);
+}
+
+.wb-widget-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: var(--space-12);
+  padding: var(--space-3);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.wb-widget-notice--action {
+  width: 100%;
+  border: 1px dashed var(--color-border-hover);
+  border-radius: var(--radius-lg);
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.wb-widget-notice--action:hover {
+  border-color: var(--color-border-focus);
+  color: var(--color-text);
+}
+
+.wb-widget-notice--missing,
+.wb-widget-notice--error {
+  color: var(--color-error-ink);
+  background: var(--color-error-subtle);
+  border-radius: var(--radius-md);
+}
+
+.wb-widget-notice code {
+  font-family: var(--font-mono);
+}
+
+.wb-widget-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.wb-widget-chip {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+/* Knowledge and task: a title that carries the card, then a summary or one meta line. */
+.wb-entity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.wb-entity-title {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-heading-sm);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.wb-widget--size-s .wb-entity-title {
+  -webkit-line-clamp: 4;
+  font-size: var(--font-size-base);
+}
+
+.wb-widget--size-s .wb-entity {
+  justify-content: space-between;
+}
+
+.wb-entity-summary {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.wb-widget--size-l .wb-entity-summary { -webkit-line-clamp: 9; }
+.wb-widget--size-xl .wb-entity-summary { -webkit-line-clamp: 8; }
+
+.wb-entity-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-status-dot {
+  display: inline-block;
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  margin-right: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+}
+
+.wb-status-dot--in_progress { background: var(--color-warning); }
+.wb-status-dot--in_review { background: var(--color-border-focus); }
+.wb-status-dot--completed { background: var(--color-success); }
+
+.wb-widget-meta {
+  margin-top: auto;
+}
+
+/* Insight S / M: the number is the widget. */
+.wb-insight-headline {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  height: 100%;
+}
+
+.wb-insight-figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.wb-insight-value {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-snug);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.wb-insight-value.is-long {
+  font-size: var(--font-size-xl);
+}
+
+.wb-insight-unit {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.wb-insight-trend {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.wb-insight-delta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.wb-insight-delta.is-up { color: var(--color-success-ink); }
+.wb-insight-delta.is-down { color: var(--color-error-ink); }
+
+.wb-insight-foot {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+/* M is two cells wide: number on the left, trend on the right. */
+.wb-widget--size-m .wb-insight-headline {
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.wb-widget--size-m .wb-insight-trend {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* Todo */
+.wb-todo-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* XL is four cells wide: rows flow into two columns. */
+.wb-widget--size-xl:not(.is-active) .wb-todo-list {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(11, auto);
+  grid-template-columns: 1fr 1fr;
+  column-gap: var(--space-6);
+}
+
+.wb-todo-item,
+.wb-todo-more {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-7); /* widgetSize.TODO_ROW_PX */
+  min-width: 0;
+}
+
+.wb-todo-more {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.wb-todo-item input[type="checkbox"] {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
+  accent-color: var(--color-accent-strong);
+}
+
+.wb-todo-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-todo-item label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.wb-todo-item.is-done .wb-todo-text {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+}
+
+.wb-todo-remove {
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.wb-todo-add {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.wb-input,
+.wb-textarea {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.wb-textarea {
+  height: 100%;
+  min-height: var(--space-20);
+  resize: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.wb-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+}
+
+.wb-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+/* HTML block */
+.wb-html-frame {
+  display: block;
+  width: 100%;
+  border: none;
+}
+
+.wb-html-body {
+  padding: var(--space-2);
+}
+
+/* Web embed */
+.wb-web-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--color-bg);
+}
+
+.wb-web-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.wb-web-host {
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-semibold);
+  word-break: break-all;
+}
+
+.wb-web-puny {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  word-break: break-all;
+}
+
+.wb-web-trust-note {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.wb-web-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* Insight: the chat card sits flush inside the widget body. */
+.wb-widget--insight .chat-insightcard {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+
+/* Note: the markdown sits straight on the card (the app's preview box would be a frame in a frame). */
+.wb-widget--note .md-preview {
+  padding: 0;
+  overflow: hidden;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.wb-widget--note.is-active .md-preview {
+  overflow: auto;
+}

@@ -37,7 +37,7 @@ export interface SlideOverFileProps {
   path: string;
   reference: Reference;
   onClose: () => void;
-  onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  onNavApp: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
   /** Open another path from inside this panel — a row of a folder's listing. Routed through
    *  the pane's own `handleOpenFile`, so a subfolder re-enters here and a file/image/board
    *  lands wherever that path would have landed from the transcript. */
@@ -54,7 +54,7 @@ export interface SlideOverSubAgentProps {
    *  Stop) one click away from this header. */
   onShowOutput?: (run: SubAgentRun) => void;
   onClose: () => void;
-  onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  onNavApp: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
 }
 export interface SlideOverShellProps {
   mode: 'shell';
@@ -62,7 +62,7 @@ export interface SlideOverShellProps {
   conversationId: string;
   onStop: (run: SubAgentRun) => void;
   onClose: () => void;
-  onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  onNavApp: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
 }
 export type SlideOverProps =
   | SlideOverFileProps | SlideOverSubAgentProps | SlideOverShellProps | McpPanelProps;

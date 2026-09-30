@@ -90,6 +90,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory — fire reminders when context matches | this file |
+| **Whiteboard** | live boards (`dreamcontext whiteboard`), default Control Panel | [whiteboards.md](references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs with a dated output and a learned pattern. A `## Flow` graph draws the orchestration; a run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot). Replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card in Chat). A usage-limited run publishes **nothing**. Disabled until approved on this machine; private until `automations share <slug>` | [automations.md](references/automations.md) |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
 | **Taxonomy** | Project tag vocabulary that drives recall precision | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
@@ -138,6 +139,7 @@ Two routing rules that override surface reading:
 | "we solve this class of problem THIS way", **or the problem-shape:** the same approach worked twice | **Pattern** — `knowledge/patterns/<slug>.md` | A portable solution shape, written awake; the prompt hook injects every pattern your message names. **When the user contradicts or extends an injected pattern, UPDATE that pattern file before finishing the task.** Adding a FEATURE? `knowledge/patterns/feature-integration-pattern.md` is MANDATORY | plain knowledge file under `knowledge/patterns/` (offer-and-confirm when agent-initiated) |
 | "remind me when / next time X comes up" | **Trigger** | Prospective memory — fires when context matches | `dreamcontext trigger add <when> <remind>` |
 | "every evening at 6pm, summarize today", "her akşam / her cuma / her gün", **or the problem-shape:** "it happens on its own while nobody is at the keyboard" | **Automation**: `automations/<slug>.md` | A schedule plus a prose prompt, run unattended. **Private to this machine by default** (say so; `automations share <slug>` shares it) | `dreamcontext automations create <slug> --title "…" --days <daily\|mon,wed> --at HH:MM` (capture protocol → [automations.md](references/automations.md)) |
+| "board / whiteboard / control panel / pano" | **Whiteboard**: `whiteboards/<slug>/` | An editable widget canvas; not a knowledge `.excalidraw.md`, not a Tasks board view | `dreamcontext whiteboard create "<name>"` |
 | "version / release / sprint / milestone" | **Release entry** — `RELEASES.json` | A planning version or shipped release | `dreamcontext core releases add` |
 | "add a teammate", "who am I", "kim çalışıyor" | **Person** — `people/<slug>.md` (constitution) + a row in `people/people.json` (roster) | A **human who works in this vault**; the constitution renders verbatim when they are ACTIVE on this machine. **Not knowledge** | `dreamcontext people add "<Name>" --email <address>`; `dreamcontext people whoami [--set <slug>]` binds THIS machine |
 
@@ -440,6 +442,7 @@ Open these with `Read` when the task needs depth:
 - **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (read when a rule's edge case is unclear).
 - **[learning.md](references/learning.md)**: theses (hypotheses): the quality bar, evidence ledger, derived confidence, flips and promotion.
 - **[automations.md](references/automations.md)**: scheduled headless runs: capture, the `## Flow` graph and its questions, per-automation Telegram, sharing, the channel, approval, stopping a run.
+- **[whiteboards.md](references/whiteboards.md)**: widgets, format, daily and todo recipes.
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync (one cloud backend at a time), dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing. (Brain sync has its own reference above.)
 - **[troubleshooting.md](references/troubleshooting.md)**: symptom, cause and careful fix for broken-brain states: duplicate tasks, sync ledger refusals, a stuck brain sync, structure and version drift.

@@ -230,6 +230,20 @@ function AutomationsIcon() {
   );
 }
 
+/** Control Panel (page id `whiteboards`) — a board on an easel with a stroke drawn on it:
+ *  the canvas you and the agent draw on together. */
+function WhiteboardsIcon() {
+  return (
+    <Svg>
+      <rect x="3" y="3.5" width="18" height="12.5" rx="1.5" />
+      <path d="M6.5 12.5c1.6-3.2 3-3.2 4 0s2.6 3 4.4-1.2" />
+      <line x1="16.5" y1="7" x2="18" y2="7" />
+      <line x1="8" y1="16" x2="6" y2="21" />
+      <line x1="16" y1="16" x2="18" y2="21" />
+    </Svg>
+  );
+}
+
 /** Chat — a speech bubble with a line of text in it: you, talking to the agent now.
  *  Not in {@link ICONS}: Chat is a launcher row, not a `Page`. */
 export function ChatIcon() {
@@ -254,6 +268,7 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   hypotheses: HypothesesIcon,
   lab: LabIcon,
   automations: AutomationsIcon,
+  whiteboards: WhiteboardsIcon,
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,

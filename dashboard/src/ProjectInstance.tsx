@@ -23,6 +23,7 @@ import { PacksPage } from './pages/PacksPage';
 import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
+import { WhiteboardsPage } from './pages/WhiteboardsPage';
 import type { Page } from './components/layout/Sidebar';
 import './ProjectInstance.css';
 
@@ -65,7 +66,7 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     'dreamcontext-agent-open-page',
     (detail) => {
       const page = detail?.page;
-      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core') return;
+      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards') return;
       nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null);
     },
   );
@@ -138,6 +139,8 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <AboutPage />;
     case 'announcements':
       return <AnnouncementsPage focus={focus} />;
+    case 'whiteboards':
+      return <WhiteboardsPage focus={focus} />;
   }
 }
 

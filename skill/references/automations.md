@@ -106,6 +106,32 @@ If the dispatcher isn't installed yet, mention `dreamcontext automations install
 
 Turning the scheduler on from the dashboard grants nothing extra: it installs the clock, not permission. Every automation still needs its own machine-local approval before that clock will run it, and each automation's own `enabled` flag is a separate switch again — flippable per card in the dashboard or with `automations enable|disable <slug>`. That flag is deliberately not approval-hashed, so toggling it never re-blocks an approved automation.
 
+### Recipe: a daily whiteboard ("every morning, clear yesterday's board and write today's")
+
+A run can write to a **whiteboard** as its output surface: the user opens the board in the dashboard and sees today's list, ticks items there, and the next run reads the ticks back. Board format and widget kinds → [whiteboards.md](whiteboards.md).
+
+```bash
+dreamcontext automations create daily-board --title "Günlük board" --days daily --at 08:30
+dreamcontext whiteboard create "Günlük"          # once, by hand; the run never creates boards
+```
+
+A `## Prompt` that works (write it in the user's words; the steps are the contract):
+
+```
+1. Run `dreamcontext whiteboard show gunluk --json`. For the widget tagged `daily` with kind `todo`,
+   note which items are done:true (the user ticked them) and which are not.
+2. Run `dreamcontext whiteboard remove gunluk --tag daily --json` and keep the printed bbox.
+3. Build today's list: yesterday's unticked items first, then today's (active tasks, due dates,
+   anything the brain says is due). Add it back WHERE yesterday's was:
+   `dreamcontext whiteboard add gunluk todo --title "<today's date>" --item "…" --tag daily --at <bbox.x>,<bbox.y>`
+   (bbox null on the first run → omit --at).
+4. Optional: a `note` widget beside it (`--at <bbox.x + 360>,<bbox.y> --tag daily`) with a
+   three-line summary of yesterday.
+5. Open your document with one line: how many items carried over and how many were done.
+```
+
+Always tag everything the run writes with the same tag, and only ever remove by that tag: the user's own drawings on the board carry no tag and survive every run. A run that edits the board while the user has it open is safe; the page folds the CLI edit in within seconds without dropping the user's strokes.
+
 ---
 
 ## Sharing: automations are private by default
@@ -426,6 +452,7 @@ Full flags for every verb live in [cli-reference.md](cli-reference.md#automation
 - [cli-reference.md](cli-reference.md#automations): every flag, live from `--help`.
 - [sleep.md](sleep.md): sleep never runs automations and never owns their files, but it does read new output and fold it into knowledge, including a private automation's output. A private automation's output can still end up published this way, through the knowledge file it becomes, and `sleep done` refuses to finish until you've reviewed that.
 - [tasks-and-features.md](tasks-and-features.md): the offer-and-confirm capture pattern automations shares with insights and theses.
+- [whiteboards.md](whiteboards.md): a board as a run's output surface (the daily-board recipe above).
 
 ## Detail behind the SKILL.md summaries
 

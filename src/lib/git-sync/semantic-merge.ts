@@ -15,6 +15,9 @@ import { inspectJsonArray } from '../json-file.js';
 import { addPath, readOursTheirsBase } from './git.js';
 import { loadStatuses } from '../overrides.js';
 import { DEFAULT_STATUSES, pickMergedStatus, type StatusDef } from '../task-status.js';
+import { parseWhiteboard, serializeWhiteboard, type Whiteboard } from '../whiteboards/format.js';
+import { mergeElements, stripTombstones } from '../whiteboards/merge.js';
+import { WhiteboardCorruptError } from '../whiteboards/errors.js';
 
 /**
  * Deterministic merge engine for the brain-repo sync engine — see
@@ -33,6 +36,8 @@ export type MergeClass =
   | 'knowledge-md'
   | 'feature-md'
   | 'taxonomy-json'
+  /** `whiteboards/<slug>/<slug>.excalidraw.md` — element-level merge (whiteboard D13). */
+  | 'whiteboard-md'
   | 'other'
   /**
    * full-repo only: a real project/code file (anything NOT under `_dream_context/`).
@@ -53,6 +58,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
   if (/^knowledge\/features\//.test(norm)) return 'feature-md';
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
+  if (/^whiteboards\/([^/]+)\/\1\.excalidraw\.md$/.test(norm)) return 'whiteboard-md';
   return 'other';
 }
 
@@ -362,6 +368,62 @@ export function mergeTaskMd(
   return { merged, sibling: null, ...(pick.unknown.length > 0 ? { unknownStatuses: pick.unknown } : {}) };
 }
 
+// ─── whiteboards/<slug>/<slug>.excalidraw.md — element-level merge ───────────
+//
+// `whiteboards/.gitattributes` (`* merge=binary`) stops git from line-splicing two copies of
+// an element, so every two-sided board edit lands here. Elements merge with the store's own
+// rule (higher version, then lower nonce; tombstones travel as higher-version deletions);
+// frontmatter merges per key with 3-way semantics. An empty stage is an absent file, never a
+// corrupt one. A side that does not parse is never written over: it goes to the agent.
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+export function mergeWhiteboardMd(base: string, ours: string, theirs: string): { merged: string | null; needsAgent: boolean } {
+  // Delete versus modify: the side that still has the file wins, byte for byte.
+  if (ours === '' && theirs !== '') return { merged: theirs, needsAgent: false };
+  if (theirs === '' && ours !== '') return { merged: ours, needsAgent: false };
+
+  const parseSide = (s: string): Whiteboard | null => (s.trim() === '' ? null : parseWhiteboard(s));
+  let b: Whiteboard | null;
+  let o: Whiteboard | null;
+  let t: Whiteboard | null;
+  try {
+    o = parseSide(ours);
+    t = parseSide(theirs);
+  } catch (err) {
+    if (err instanceof WhiteboardCorruptError) return { merged: null, needsAgent: true };
+    throw err;
+  }
+  try {
+    b = parseSide(base);
+  } catch (err) {
+    // A corrupt ancestor only costs the 3-way frontmatter rule its reference point.
+    if (!(err instanceof WhiteboardCorruptError)) throw err;
+    b = null;
+  }
+  if (!o || !t) return { merged: ours || theirs, needsAgent: false };
+
+  const frontmatter: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(o.frontmatter), ...Object.keys(t.frontmatter)])) {
+    const ov = o.frontmatter[key];
+    const tv = t.frontmatter[key];
+    const bv = b?.frontmatter[key];
+    // Take the side that changed from base; ours when both did.
+    const v = sameValue(ov, tv) ? ov : sameValue(ov, bv) ? tv : ov;
+    if (v !== undefined) frontmatter[key] = v;
+  }
+  const merged: Whiteboard = {
+    frontmatter,
+    elements: stripTombstones(mergeElements(o.elements, t.elements).elements),
+    appState: o.appState,
+    files: { ...t.files, ...o.files },
+    embeddedFiles: o.embeddedFiles ?? t.embeddedFiles,
+  };
+  return { merged: serializeWhiteboard(merged), needsAgent: false };
+}
+
 // ─── knowledge/** (incl. knowledge/features/**) and anything unclassified ──
 
 /**
@@ -524,6 +586,15 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
           addPath(cwd, siblingPath);
           resolved.push(siblingPath);
         }
+        break;
+      }
+      case 'whiteboard-md': {
+        const board = mergeWhiteboardMd(base, ours, theirs);
+        if (board.needsAgent) {
+          deferredToAgent.push({ path: relPath, class: cls });
+          continue;
+        }
+        mergedContent = board.merged;
         break;
       }
       case 'knowledge-md':

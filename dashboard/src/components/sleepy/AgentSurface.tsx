@@ -1641,7 +1641,7 @@ export function AgentSurface() {
   // On the INSTANCE bus. `id` is a task/knowledge slug that means something in exactly one
   // vault: broadcast, every mounted project's bridge would navigate, and all but one would
   // be deep-linking to a slug that does not exist in their brain.
-  const onOpenAppPage = useCallback((page: 'tasks' | 'knowledge' | 'core', id: string) => {
+  const onOpenAppPage = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => {
     setExpanded(false);
     emitInstance(bus, 'dreamcontext-agent-open-page', { page, id });
   }, [bus]);

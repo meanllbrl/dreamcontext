@@ -82,12 +82,14 @@ export interface Reference {
   label: string;
   isImage: boolean;
   /** Present only for dreamcontext entities with a real dashboard page to open into
-   *  (task/knowledge/core) — the SlideOver's "Open in app ↗" action is gated on this. */
-  appNav?: { page: 'tasks' | 'knowledge' | 'core'; id: string };
+   *  (task/knowledge/core/whiteboards) — the SlideOver's "Open in app ↗" action is gated on this. */
+  appNav?: { page: 'tasks' | 'knowledge' | 'core' | 'whiteboards'; id: string };
 }
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const BOARD_RE = /\.excalidraw(\.md)?$/i;
+/** A whiteboard (`_dream_context/whiteboards/<slug>/…`), capturing its slug. */
+const WHITEBOARD_RE = /^_dream_context\/whiteboards\/([a-z0-9][a-z0-9-]{0,63})(?:\/|$)/i;
 const PDF_RE = /\.pdf$/i;
 
 /** A PDF, from its name alone — the one document type the app displays itself rather than
@@ -254,6 +256,13 @@ export function classifyReference(path: string): Reference {
   const label = basename(normalized);
   const isImage = IMAGE_EXT_RE.test(normalized);
 
+  // Before the board rule: a whiteboard is also an `.excalidraw.md`, and as a `board` it would
+  // open in the read-only viewer. As a `file` with an appNav it takes the task/knowledge path
+  // instead, whose "Open in app" lands on the Whiteboards page, where it can be edited.
+  const whiteboardMatch = normalized.match(WHITEBOARD_RE);
+  if (whiteboardMatch) {
+    return { raw, kind: 'file', label, isImage: false, appNav: { page: 'whiteboards', id: whiteboardMatch[1].toLowerCase() } };
+  }
   if (BOARD_RE.test(normalized) && normalized.includes('_dream_context')) {
     return { raw, kind: 'board', label, isImage: false };
   }

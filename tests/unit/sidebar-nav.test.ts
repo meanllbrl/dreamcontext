@@ -262,6 +262,43 @@ describe('sidebar rail — section hues (C6)', () => {
   });
 });
 
+describe('sidebar rail — the Workspace entry is Whiteboard, the settings group is System (A15)', () => {
+  it('the Workspace entry says Whiteboard, keeps the whiteboards page id and stays alpha', () => {
+    const items = navItems(read(SIDEBAR_TSX));
+    const board = items.find((i) => i.page === 'whiteboards');
+    // The page id is persisted nav state and the chat's appNav target: only the label moved.
+    expect(board?.labelKey).toBe('nav.whiteboard');
+    expect(board?.maturity).toBe('alpha');
+    expect(items.findIndex((i) => i.page === 'whiteboards')).toBe(items.findIndex((i) => i.page === 'automations') + 1);
+    const en = read(I18N);
+    // The feature is "Whiteboard" (owner, 2026-09-30); "Control Panel" is only the default board.
+    expect(en).toContain("'nav.whiteboard': 'Whiteboard',");
+    expect(en).not.toContain("'nav.controlPanel':");
+    expect(en).not.toContain("'nav.whiteboards':");
+  });
+
+  it('exactly one rail row is named Whiteboard, and no rail label says Control Panel', () => {
+    const en = read(I18N);
+    const labels = new Map([...en.matchAll(/'(nav\.[\w.]+)': '([^']*)'/g)].map((m) => [m[1], m[2]]));
+    // Every label the rail prints: group titles, page rows and launcher rows (Chat).
+    const railLabels = [...navGroupsBlock(read(SIDEBAR_TSX)).matchAll(/labelKey:\s*'([^']+)'/g)].map((m) => labels.get(m[1]));
+    expect(railLabels.filter((l) => l === 'Whiteboard')).toHaveLength(1);
+    expect(railLabels).not.toContain('Control Panel');
+  });
+
+  it('the Packs/Settings group is System, so "Control Panel" names only the default board', () => {
+    const groups = navGroups(read(SIDEBAR_TSX));
+    expect(groups.map((g) => g.labelKey)).toContain('nav.group.system');
+    expect(groups.map((g) => g.labelKey)).not.toContain('nav.group.control');
+    const block = navGroupsBlock(read(SIDEBAR_TSX));
+    const system = block.slice(block.indexOf("'nav.group.system'"));
+    expect(system).toMatch(/page: 'packs'[\s\S]*page: 'settings'/);
+    const en = read(I18N);
+    expect(en).toContain("'nav.group.system': 'System',");
+    expect(en).not.toContain("'nav.group.control':");
+  });
+});
+
 describe('sidebar rail — the hero row (C5)', () => {
   it('puts Automations right after Tasks in Workspace, at beta, flagged hero', () => {
     const items = navItems(read(SIDEBAR_TSX));

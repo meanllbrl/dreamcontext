@@ -55,7 +55,8 @@ const GROUPS = [
   { label: 'Workspace', token: '--nav-hue-workspace' },
   { label: 'Memory', token: '--nav-hue-memory' },
   { label: 'Brain', token: '--nav-hue-brain' },
-  { label: 'Control Panel', token: '--nav-hue-control' },
+  // Was "Control Panel": the default whiteboard board took that name (whiteboard A15).
+  { label: 'System', token: '--nav-hue-control' },
 ];
 
 const report = { pass: 0, fail: 0 };
@@ -142,10 +143,15 @@ async function readRail(page) {
     const sample = {};
     for (const { label } of groups) {
       const g = byLabel[label];
-      const icon = g?.querySelector('.sidebar-item .sidebar-icon');
+      // The group's hue sample is its first NON-active row: the active badge wears the accent,
+      // so sampling it (Chat, first in Workspace, is active whenever the chat surface is open)
+      // would compare the active badge with itself.
+      const icon = g?.querySelector('.sidebar-item:not(.sidebar-item--active) .sidebar-icon');
       const labelEl = g?.querySelector('.sidebar-group-label');
       sample[label] = {
         found: !!g,
+        item: (icon?.closest('.sidebar-item')?.querySelector('.sidebar-label')?.textContent || '').trim(),
+        itemActive: !!icon?.closest('.sidebar-item--active'),
         bg: cs(icon, 'background-color'),
         ring: cs(icon, 'box-shadow'),
         ink: cs(icon, 'color'),
@@ -189,6 +195,11 @@ async function readRail(page) {
 
     const out = {
       sample,
+      // Every group's label and its rows' labels, for the rename checks (whiteboard A15).
+      groupRows: groupEls.map((g) => ({
+        label: (g.querySelector('.sidebar-group-label')?.textContent || '').trim(),
+        items: [...g.querySelectorAll('.sidebar-item .sidebar-label')].map((el) => (el.textContent || '').trim()),
+      })),
       tokens: Object.fromEntries(groups.map((g) => [g.token, norm(root.getPropertyValue(g.token).trim())])),
       chart1: norm(root.getPropertyValue('--chart-1').trim()),
       accent: norm(root.getPropertyValue('--color-accent').trim()),
@@ -215,6 +226,7 @@ async function readRail(page) {
         ring: cs(plain.querySelector('.sidebar-icon'), 'box-shadow'),
       } : null,
       active: active ? {
+        label: (active.querySelector('.sidebar-label')?.textContent || '').trim(),
         bg: cs(active.querySelector('.sidebar-icon'), 'background-color'),
         ring: cs(active.querySelector('.sidebar-icon'), 'box-shadow'),
         ink: cs(active.querySelector('.sidebar-icon'), 'color'),
@@ -319,6 +331,7 @@ async function main() {
         const snap = await readRail(page);
         snap.geo = await readGeometry(page);
         snaps[key] = snap;
+        console.log(`  · ${key}: active="${snap.active?.label ?? ''}", Workspace sample="${snap.sample.Workspace?.item}" (active=${snap.sample.Workspace?.itemActive}) activeBg=${snap.active?.bg} sampleBg=${snap.sample.Workspace?.bg} accentSoft=${snap.accentSoft}`);
 
         const n = ['light-expanded', 'light-collapsed', 'dark-expanded', 'dark-collapsed'].indexOf(key) + 1;
         await page.screenshot({ path: join(SHOTS, `${n}-${key}.png`), clip: { x: 0, y: 0, width: 280, height: 1000 } });
@@ -339,6 +352,19 @@ async function main() {
       le.hero?.title === 'Automations (Beta)', `title="${le.hero?.title}"`);
     check('…in sentence case, not shouted (K15)', le.hero?.maturityTransform === 'none',
       `text-transform: ${le.hero?.maturityTransform}`);
+
+    // ── 1b: the group names after the Control Panel rename (whiteboard A15) ──
+    console.log('\n═══ 1b. System group, Whiteboard entry ═══');
+    const rows = le.groupRows ?? [];
+    const rowsOf = (label) => rows.find((g) => g.label === label)?.items ?? [];
+    check('the group holding Packs and Settings is titled "System"',
+      rowsOf('System').includes('Packs') && rowsOf('System').includes('Settings'), JSON.stringify(rows));
+    check('…and no group is titled "Control Panel" any more', !rows.some((g) => g.label === 'Control Panel'),
+      rows.map((g) => g.label).join(' | '));
+    check('Workspace carries the "Whiteboard" entry', rowsOf('Workspace').includes('Whiteboard'),
+      rowsOf('Workspace').join(' | '));
+    check('…and no rail row says "Control Panel" (that names the default board only)',
+      !rows.some((g) => g.items.includes('Control Panel')), JSON.stringify(rows));
 
     // ── 2: the emphasis is weight and ring, never a colour of its own ────
     console.log('\n═══ 2. Emphasis without a new colour ═══');
@@ -372,8 +398,12 @@ async function main() {
     // ── 4: identity loses to status ──────────────────────────────────────
     console.log('\n═══ 4. The active badge still wins ═══');
     check('an item is active', !!le.active);
+    check('the Workspace hue sample is not the active row (no self-comparison)',
+      le.sample['Workspace']?.itemActive === false && le.sample['Workspace']?.item !== le.active?.label,
+      `sampled ${le.sample['Workspace']?.item}, active ${le.active?.label}`);
     check('the active badge is the accent-soft fill, not its section tint',
-      le.active?.bg !== le.sample['Workspace']?.bg, `active=${le.active?.bg} section=${le.sample['Workspace']?.bg}`);
+      le.active?.bg !== le.sample['Workspace']?.bg,
+      `active=${le.active?.bg} (${le.active?.label}) section=${le.sample['Workspace']?.bg} (sampled ${le.sample['Workspace']?.item}, active=${le.sample['Workspace']?.itemActive})`);
     check('…and its ink is the accent', le.active?.ink === le.accent, `${le.active?.ink} vs ${le.accent}`);
     check('…and its ring is the accent outright', (le.active?.ring ?? '').includes(le.accent),
       `ring=${le.active?.ring} accent=${le.accent}`);

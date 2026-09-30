@@ -205,6 +205,8 @@ Standard bare tags: `architecture`, `api`, `frontend`, `backend`, `database`, `d
 
 ## Excalidraw boards (diagrams)
 
+> **Editable boards live in Whiteboards, not here.** A board the user and you both edit, with live widgets (todos, notes, insight cards, HTML blocks), is a **whiteboard** at `_dream_context/whiteboards/<slug>/`, edited with `dreamcontext whiteboard …` → [whiteboards.md](whiteboards.md). The boards below are read-only knowledge diagrams, generated from a spec.
+
 Excalidraw boards (`.excalidraw.md`) are first-class knowledge files. **A board belongs INSIDE the context folder it documents**, co-located with that context's `.md` knowledge — not in a separate top-level diagrams dump. A board lives in its own `<title>/` wrapper folder so its tooling siblings stay together:
 
 ```

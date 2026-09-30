@@ -14,8 +14,11 @@ import {
   mergeTasksMapJson,
   mergeTaskMd,
   mergeMarkdownDoc,
+  mergeWhiteboardMd,
   resolveConflicts,
 } from '../../src/lib/git-sync/semantic-merge.js';
+import { emptyWhiteboard, parseWhiteboard, serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
+import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
 
 /**
  * `resolveConflicts` calls `readOursTheirsBase`/`addPath` (git.ts), which shell
@@ -480,5 +483,92 @@ describe('git-sync/semantic-merge — resolveConflicts: task-md sibling-suffix d
     expect(forward.resolved).toEqual(['state/foo-2.md', 'state/foo-3.md', 'state/foo.md']);
     expect(forward.foo).toBe(fooOurs); // keeper (smaller dcId) unaffected by the collision
     expect(forward.foo3).toBe(fooTheirs); // bumped to -3 because -2 was already taken this pass
+  });
+});
+
+// ─── whiteboards/<slug>/<slug>.excalidraw.md (whiteboard D13) ───────────────
+
+function wbEl(id: string, version: number, index: string, extra: Partial<WhiteboardElement> = {}): WhiteboardElement {
+  return { id, type: 'rectangle', version, versionNonce: 1, index, isDeleted: false, x: 0, y: 0, width: 10, height: 10, ...extra };
+}
+
+function wbDoc(elements: WhiteboardElement[], fm: Record<string, unknown> = {}): string {
+  const b = emptyWhiteboard('Günlük', 'desc');
+  return serializeWhiteboard({ ...b, frontmatter: { ...b.frontmatter, ...fm }, elements });
+}
+
+describe('git-sync/semantic-merge — whiteboard-md', () => {
+  it('classifies whiteboards/<slug>/<slug>.excalidraw.md, with or without the in-tree prefix, and nothing else', () => {
+    expect(classifyPath('whiteboards/gunluk/gunluk.excalidraw.md')).toBe('whiteboard-md');
+    expect(classifyPath('_dream_context/whiteboards/gunluk/gunluk.excalidraw.md')).toBe('whiteboard-md');
+    expect(classifyPath('whiteboards/gunluk/other.excalidraw.md')).toBe('other');
+    expect(classifyPath('whiteboards/.gitattributes')).toBe('other');
+  });
+
+  it('two machines editing different elements: both survive', () => {
+    const base = wbDoc([wbEl('a', 1, 'a0')]);
+    const ours = wbDoc([wbEl('a', 2, 'a0', { x: 50 })]);
+    const theirs = wbDoc([wbEl('a', 1, 'a0'), wbEl('b', 1, 'a1')]);
+    const r = mergeWhiteboardMd(base, ours, theirs);
+    expect(r.needsAgent).toBe(false);
+    const els = parseWhiteboard(r.merged!).elements;
+    expect(els.map((e) => e.id)).toEqual(['a', 'b']);
+    expect(els[0].x).toBe(50);
+  });
+
+  it('add/add (both machines ran create) is the union; equal indexes from both sides settle by id', () => {
+    const r = mergeWhiteboardMd('', wbDoc([wbEl('zz', 1, 'a0')]), wbDoc([wbEl('aa', 1, 'a0')]));
+    expect(r.needsAgent).toBe(false);
+    const els = parseWhiteboard(r.merged!).elements;
+    expect(els.map((e) => e.id)).toEqual(['aa', 'zz']);
+    // stable: merging the other way round gives the same bytes
+    expect(mergeWhiteboardMd('', wbDoc([wbEl('aa', 1, 'a0')]), wbDoc([wbEl('zz', 1, 'a0')])).merged).toBe(r.merged);
+  });
+
+  it('delete/modify: the surviving side wins byte for byte', () => {
+    const base = wbDoc([wbEl('a', 1, 'a0')]);
+    const modified = wbDoc([wbEl('a', 2, 'a0', { x: 9 })]);
+    expect(mergeWhiteboardMd(base, '', modified)).toEqual({ merged: modified, needsAgent: false });
+    expect(mergeWhiteboardMd(base, modified, '')).toEqual({ merged: modified, needsAgent: false });
+  });
+
+  it('a tombstone beats a stale live copy — nothing resurrects', () => {
+    const base = wbDoc([wbEl('a', 1, 'a0')]);
+    const ours = wbDoc([wbEl('a', 2, 'a0', { isDeleted: true })]);
+    const theirs = wbDoc([wbEl('a', 1, 'a0', { x: 5 }), wbEl('b', 1, 'a1')]);
+    const els = parseWhiteboard(mergeWhiteboardMd(base, ours, theirs).merged!).elements;
+    expect(els.find((e) => e.id === 'a')!.isDeleted).toBe(true);
+    expect(els.find((e) => e.id === 'b')!.isDeleted).toBe(false);
+  });
+
+  it('a corrupt side goes to the agent, never written over', () => {
+    const good = wbDoc([wbEl('a', 1, 'a0')]);
+    const corrupt = good.replace('"elements": [', '"elements": [[');
+    expect(mergeWhiteboardMd(good, corrupt, good)).toEqual({ merged: null, needsAgent: true });
+    expect(mergeWhiteboardMd(good, good, 'no drawing block')).toEqual({ merged: null, needsAgent: true });
+  });
+
+  it('frontmatter merges per key, 3-way: the side that changed from base wins; ours when both did', () => {
+    const base = wbDoc([], { name: 'Base', description: 'd0', color: 'red' });
+    const ours = wbDoc([], { name: 'Ours', description: 'd0', color: 'blue' });
+    const theirs = wbDoc([], { name: 'Base', description: 'd1', color: 'green' });
+    const fm = parseWhiteboard(mergeWhiteboardMd(base, ours, theirs).merged!).frontmatter;
+    expect(fm.name).toBe('Ours');
+    expect(fm.description).toBe('d1');
+    expect(fm.color).toBe('blue');
+  });
+
+  it('resolveConflicts writes the merged board and marks it resolved; a corrupt one is deferred to the agent', () => {
+    const cwd = makeCwd();
+    mkdirSync(join(cwd, 'whiteboards', 'b'), { recursive: true });
+    mkdirSync(join(cwd, 'whiteboards', 'c'), { recursive: true });
+    const base = wbDoc([wbEl('a', 1, 'a0')]);
+    setFixture('whiteboards/b/b.excalidraw.md', { base, ours: wbDoc([wbEl('a', 2, 'a0')]), theirs: wbDoc([wbEl('a', 1, 'a0'), wbEl('n', 1, 'a1')]) });
+    setFixture('whiteboards/c/c.excalidraw.md', { base, ours: 'garbage', theirs: base });
+    const r = resolveConflicts(cwd, ['whiteboards/b/b.excalidraw.md', 'whiteboards/c/c.excalidraw.md']);
+    expect(r.resolved).toEqual(['whiteboards/b/b.excalidraw.md']);
+    expect(r.deferredToAgent).toEqual([{ path: 'whiteboards/c/c.excalidraw.md', class: 'whiteboard-md' }]);
+    const merged = parseWhiteboard(readFileSync(join(cwd, 'whiteboards/b/b.excalidraw.md'), 'utf-8'));
+    expect(merged.elements.map((e) => [e.id, e.version])).toEqual([['a', 2], ['n', 1]]);
   });
 });
