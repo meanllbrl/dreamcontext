@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-09-27'
+date: '2026-09-29'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-09-27 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-09-29 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/13 done (54%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -91,7 +91,7 @@ date: '2026-09-27'
   Unblocks: hello-world-pr, make-it-a-business
   - a-browser-run-shows-its-screenshots-in-chat-a-live-frame-while-it-runs-a-strip-when-it-lands (todo) · 0.28.0
   - a-declared-status-whose-key-collides-with-a-custom-field-is-accepted-by-the-settings-editor-then-silently-never-appears (todo) · 0.27.0
-  - a-develop-run-reads-in-order-each-build-card-names-its-real-wave-sits-where-it-happened-and-the-live-step-is-the-one-on-top (in_progress) · 0.28.0 · 2026-09-27 → …
+  - a-develop-run-reads-in-order-each-build-card-names-its-real-wave-sits-where-it-happened-and-the-live-step-is-the-one-on-top (in_review) · 0.28.0 · 2026-09-27 → …
   - a-discuss-do-not-act-mode-whose-plan-lands-in-a-task-never-a-scratch-file (todo) · 0.26.0
   - a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica (in_review) · 0.28.0 · 2026-09-26 → …
   - a-headless-builder-reads-as-a-live-teammate-in-chat-its-brief-its-steps-and-its-status-not-a-bare-shell-row (in_review) · 0.28.0 · 2026-09-25 → …

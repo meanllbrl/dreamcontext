@@ -3,19 +3,18 @@ id: feat_lWnraM5v
 type: feature
 name: dreamcontext-assistant
 description: >-
-  An assistant that lives ABOVE every project: a hidden vault
-  (`~/.dreamcontext/assistant/`) driven by one long-lived Claude Code session,
-  summoned into a notch window by a global hotkey. It opens projects, starts and
-  steers chats in them, watches sessions, broadcasts a rule to every vault and
-  talks by voice; autonomy is a setting (ask / auto / bypass). The Jarvis chat
-  mode and the Meeting Room retired into it. The native checks wait on the
-  owner's manual checklist.
+  An assistant living ABOVE every project: a hidden vault
+  (`~/.dreamcontext/assistant/`) on one long-lived Claude Code session, summoned
+  into a notch by a global hotkey. It opens projects, delegates work to their own
+  agents and is woken when they ask, broadcasts a rule to every vault, and talks
+  by voice; autonomy is a setting (ask / auto / bypass). Jarvis mode and the
+  Meeting Room retired into it.
 pinned: false
 date: '2026-09-26'
 status: in_review
 product: desktop
 created: '2026-09-26'
-updated: '2026-09-27'
+updated: '2026-09-29'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -28,6 +27,10 @@ related_tasks:
     a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica
   - >-
     the-notch-assistant-answers-without-the-15-40-s-of-plumbing-in-front-of-every-turn
+  - >-
+    the-assistant-is-woken-by-an-event-whenever-a-session-it-delegated-asks-finishes-a-turn-or-closes
+  - >-
+    desktop-windows-move-and-resize-in-one-smooth-animation-instead-of-frame-by-frame-jumps
 ---
 
 ## Why
@@ -56,6 +59,9 @@ the notch by a hotkey and answers there in two or three sentences.
 - [ ] As the owner, I choose how much the assistant may do on its own — `ask` (every follow-up, answer or broadcast needs my approval), `auto`, or `bypass` — and I am warned about what I am turning on.
 - [ ] As the owner, I set the assistant up in a Launcher wizard (name, avatar, character, hotkey, autonomy, voice key, permissions) and it can wake at login.
 - [ ] As the owner, the assistant's own memory improves: its hidden vault sleeps like any other, so what it learned about me persists.
+- [x] As the owner, I hand a project's work to that project's OWN agent and am told when it asks something, finishes its turn or closes — without watching its window.
+- [x] As the owner, the assistant answers in a beat rather than after half a minute of plumbing.
+- [x] As the owner, I can switch the assistant OFF without deleting it, and switching it back on resumes where it left off.
 
 ## Acceptance Criteria
 
@@ -81,8 +87,21 @@ hands: a real key press, the real app, a reboot.
 - [x] **W5 retirement.** The `jarvis` chat mode and the Meeting Room are gone from code (routes, components, hooks, capability, verify script, i18n, tests); `runPeerHeadless` stays; records on disk are untouched. `jarvis-voice-mode.md` and `meeting-room.md` carry RETIRED banners and `status: deprecated`; skill references and `cli-manifest.json` are updated.
 - [ ] **Validation method.** Unit/integration tests (`npm test`, tsc root + dashboard) + `scripts/verify/assistant.mjs` on an isolated HOME + the owner's manual checklist for the native parts (notch placement incl. external monitor, hotkey from another app, TR+EN hold-to-talk, music, autostart after reboot, "what happened in X this week" end to end, rule broadcast to all vaults, ask-mode approval, add + connect projects by voice).
 
+### After the first week of real use (2026-09-27 → 29)
+
+- [x] **A DELEGATED SESSION WAKES THE ASSISTANT** (`11f18123`). Delegation was write-only: the Assistant could start a chat in a project and then had no way to learn that it asked something. `watch --until settled` (idle **or** asking) is now the default, the chat registry reports every change through `onChatChange`, and `src/lib/assistant/delegations.ts` tracks sessions the Assistant started or sent/answered into — **asking wakes at once, idle after a 2 s debounce, gone once after 3 s** unless a respawn under the same id is live. The wake lands in an inbox on the owner's `switchGate` chain: a wake TAINTS and never clears taint, and a wake held for an account switch is never handed back as `pendingText` (it would be typed into the composer as if the owner wrote it). Project text stays fenced in `wrapUntrusted`. With no Assistant chat open, events QUEUE (one per session, cap 20) and flush once on attach — `pattern-every-store-key-needs-a-death` applied to a queue. The briefing tells Spidey to end its turn and relay the question to the owner rather than answering for them.
+- [x] **THE ASSISTANT ANSWERS WITHOUT 15–40 s OF PLUMBING IN FRONT OF EVERY TURN** (`e174cb67`, task `the-notch-assistant-answers-without-…`). Measured: the recall hook took **16.9 s in its own vault and 28.4 s in a delegated project** before a single token — the notch's whole premise is a two-sentence answer, so this was the feature failing, not slow. Four causes, four fixes: (1) recall for the Assistant, and for haiku-mode vaults it DELEGATES to, runs `hybrid` when the embedding model is already on disk and `raw` otherwise — never a cloud call in front of a notch turn (→ **1.2 s** and **0.8 s**); the delegation marker (`origin=assistant`) survives a resume, so a resumed delegated chat does not silently fall back to the slow path. (2) The Assistant's embedding index builds in the BACKGROUND at spawn: single-flight, a 30-minute cooldown after a failed build, and it **never downloads the model** (a first-run model fetch in front of a hotkey press is the same defect wearing a different hat). (3) Embedding-cache writes are serialized per vault by a lockfile (`src/lib/file-lock.ts`) and the recall hook never waits on it. (4) The model loads OFFLINE once it is on disk. Also: `--allowedTools 'Bash(dreamcontext assistant:*)'` only under autonomy `auto`, and an autonomy change respawns the live Assistant IN PLACE without losing a message. Effort comes from `AssistantConfig.effort` (default `medium`); a delegated basic chat defaults to `medium`. `tests/unit/assistant-latency.test.ts`, `embedder-offline.test.ts`, `embeddings-lock.test.ts`; `verify:assistant` 135 passing.
+- [x] **THE NOTCH STEPS OUT WHILE IT WORKS, AND SPEECH KEEPS ITS PITCH** (`42ff5c02`). A turn starting pops the notch out to a **480×620 side seat** (top-right, never takes focus) with a thin dreamcontext-coloured loading line along the top edge; when the turn AND its speech end it animates back into the collapsed notch (1.5 s, or 8 s with read-aloud off — an owner who cannot hear the answer needs longer to read it). Clicking or typing into it keeps it open. The open notch grew 460×400 → 580×560. Speech rate no longer raises pitch (the "helium" defect): chunks are time-stretched with **WSOLA** (`timeStretch.ts`) and played at rate 1, with the element fallback keeping `preservesPitch`. New notch chats open on the saved **"Set as default"** model/effort instead of the CLI's own `xhigh`, and a default set in one window reaches every other through the storage event.
+- [x] **THE OWNER CAN SWITCH THE ASSISTANT OFF WITHOUT DELETING IT** (`e79500cc`). The Launcher's assistant card carries an on/off switch: off hides the notch, releases the global hotkey and removes the Login Item, while the hidden vault and the conversation are KEPT, so switching back on resumes where it left off. An `enabled` flag in `config.json` (default **on**, so older configs stay on) decides whether boot seats the notch, the hotkey registers, and a login launch opens only the notch. The notch webview stops re-seating itself while it is off (the seat guard would otherwise fight the hide), and the wizard's "Wake up" switches it back on.
+- [x] **EVERY WINDOW MOVE IS ONE ANIMATION, NOT A RUN OF VISIBLE FRAMES** (`1412f266`, task `desktop-windows-move-and-resize-…`). Notch pop-out, dock, expand and assistant tiling jumped through several frames — separate `setSize`/`setPosition` IPCs, a min-size grow BEFORE the move, sequential tiling, new windows born at 1280×800 — and the chat re-laid out every diagram on each width change. Rust `set_frames` (`desktop/src-tauri/src/frames.rs`) moves **every window of a call in ONE eased `NSAnimationContext` group (~200 ms)**. Instant frames go through `animator()` in a ZERO-duration group, because a plain `setFrame` does not cancel an animation already in flight and the older one would land last. All-or-nothing on labels, per-label generations gate everything after start, a 50 ms spam bound, a hard deadline so the call always resolves, and min size as a preset (`window-seat` / `clear`) applied AFTER the frame lands. Granted only in `capabilities/assistant.json`; `apply_seat` no longer sets it. `seatGuard.ts` steps the heal guard aside while a move is in flight; overlapping tiles serialize, missing windows are created AT their tile rect, and one `setFrames` moves the rest together. Diagrams fit-scale during a resize and re-lay out 150 ms after it stops. `prefers-reduced-motion` makes every move instant. `cargo test` 12/12; `assistant-window-frames` + `chat-html` + `window-capabilities` 196/196. Owner's manual desktop checklist still open.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-09-28] A latency budget is a product requirement for this surface, not an optimisation.** The notch's premise is "hold a key, get two sentences" — 16.9 s of recall in front of that is the feature not working. The rule that came out of it: **nothing in a notch turn's critical path may do network I/O or a cold model download.** Recall degrades to `raw` rather than waiting, the embedding index builds in the background or not at all, and a lockfile serializes cache writes so the hook never blocks on another vault's build. A delegated project inherits the same budget, which is why the `origin=assistant` marker has to survive a resume.
+- **[2026-09-28] Delegation is only half a channel until the delegate can wake you.** The Assistant could start work in a project and then had to be asked what happened. Wakes are therefore pushed (asking immediately, idle debounced 2 s, gone after 3 s unless respawned), but every wake TAINTS the session and never clears the taint, and a wake is never handed back as `pendingText` — a project's own words must never arrive in the composer wearing the owner's voice. Spidey relays a question; it does not answer one on the owner's behalf.
+- **[2026-09-28] Off is a state, not a deletion.** The owner asked to stop the notch without losing the conversation, so `enabled: false` hides the notch, releases the hotkey and removes the Login Item while the hidden vault and its conversation stay untouched. The flag defaults to ON so every config written before it existed keeps working.
+- **[2026-09-28] Window motion belongs in ONE native call, not a sequence of IPCs.** Each `setSize`/`setPosition` round trip is its own visible frame, and a min-size grow before a move shows the wrong rect first. `set_frames` takes every window of a move at once inside a single `NSAnimationContext` group; an "instant" frame still goes through `animator()` in a zero-duration group, because `setFrame` does not cancel an in-flight animation and the older one would win. The capability is granted to the assistant surface alone.
 
 - **[2026-09-26] Security invariants, four-lens reviewed.** `__assistant__` is loopback + desktop ONLY, and the chat WS branch runs BEFORE the `isTrustedRemotePeer` OR so the tailnet phone surface structurally cannot reach it. UI commands relay DOWN the assistant's own chat WS; the Tauri event is a **doorbell, never the command** — it carries only a single-use 128-bit `commandId` with a 30s TTL, which the receiving vault window must claim from the server with its own per-window nonce, because Tauri v2 cannot scope `emitTo` by target label. The server wraps every project-derived string in `<untrusted-project-output>` and marks the session TAINTED until the owner's next message.
 - **[2026-09-26] The token is an honest, LIMITED boundary — write it down rather than overstate it.** `DREAMCONTEXT_ASSISTANT_TOKEN` stops remote use and accidental use by other vaults' agents. It is NOT a defense against a malicious same-user process: sub-agents and MCP servers the assistant itself spawns inherit it and are equally privileged.
@@ -131,6 +150,13 @@ drives all of it against the real built server on an isolated HOME.**
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-28/29 - The first week of real use: it wakes you, it answers fast, it moves smoothly, and it can be switched off
+- **Woken by its delegates** (`11f18123`): `watch --until settled`, `onChatChange`, and a delegations module that wakes the Assistant when a session it started asks, finishes a turn or closes. Events queue (cap 20, one per session) when no Assistant chat is attached.
+- **Latency** (`e174cb67`): the recall hook went 16.9 s → 1.2 s in its own vault and 28.4 s → 0.8 s in a delegated project — hybrid-when-on-disk recall, a background single-flight embedding build that never downloads the model, and a per-vault lockfile the hook never waits on. `verify:assistant` 135 passing.
+- **Notch behaviour** (`42ff5c02`): a working turn pops out to a 480×620 side seat that never takes focus and animates home when the turn and its speech end; WSOLA time-stretching ends the "helium" voice; new chats open on the saved default model/effort; the briefing tells Spidey to delegate project work rather than run `gh`/`git`/`grep` itself.
+- **On/off** (`e79500cc`): an `enabled` flag and a Launcher switch that hides the notch, releases the hotkey and drops the Login Item while keeping the vault and the conversation.
+- **Smooth windows** (`1412f266`): `set_frames` in Rust moves every window of a call in one ~200 ms eased group, with generations, a spam bound, a hard deadline and `prefers-reduced-motion` honoured.
 
 ### 2026-09-27 - W6/W7: black compact notch, pop-out window, truthful working/stale, opt-in read-aloud
 - Owner verdicts on the real app ("aynı renk olsun, küçük olsun, notch ile perfect"; "sığması lazım, pencere olarak açılabilmeli, gerçekten working/stale göstermeli"; "okuma modu sadece açıksa okusun"). Built by Develop-mode builders, each wave reviewed clean; `verify:assistant` 107/107 (fit, bubbles, pop-out same node + socket, read-aloud off → zero TTS).

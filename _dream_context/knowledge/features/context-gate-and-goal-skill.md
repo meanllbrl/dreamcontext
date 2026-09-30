@@ -2,7 +2,7 @@
 id: feat_rL12JiTu
 status: active
 created: '2026-05-31'
-updated: '2026-07-19'
+updated: '2026-09-29'
 released_version: v0.19.0
 tags:
   - 'topic:skills'
@@ -112,9 +112,14 @@ Both are inspired by the `superpowers` project pattern of behavioral bootstrappi
 - `skill-packs/agents/goal-validator.md` — no v2 changes (already clean+fresh validator).
 - **Live run state is written by the CLI, not by hand (2026-09-25, quest-party goal; spec `knowledge/plans/quest-party-chat-ux-plan.md`).** `dreamcontext goal-live start|phase|actor|state|clear` (`src/cli/commands/goal-live.ts`, reducer `src/lib/goal-live.ts`) is the only writer of `_dream_context/tmp/.goal-skill-live.<CLAUDE_CODE_SESSION_ID>.json` (`.solo.json` when unset): v3 adds named forks, `judges` with verdicts, `history`, and a `lineage` of spawn / fork / resume / fresh events, with `ctx` measured by `--context-of` on forks only. Every call is chained with `&&` onto the step it describes (or sent first in a dispatch message); both the success end and the sign-off end chain `phase done` and keep the file, and only escalation runs `clear`. `tests/unit/goal-live-schema-lockstep.test.ts` pins the writer and reader types, the subcommands and those rules against the pack's SKILL.md. The app draws the file as a quest map (`GoalLivePanel`, `lib/quest.ts` `goalQuest` / `goalLineage`): six sentence-case stages from Draft to Final trial, the cast on the active stage, a branch fan with the measured tokens each builder did not rebuild, and after `phase done` one win beat plus a "How this was built" family tree.
 - `skill-packs/catalog.json` — v2 description + base updated to mention "CLI builder sessions fork once and resume per round, clean fresh judges, tier router, dependency-map waves, convergence by signal + valve 8".
+- **A live-run file belongs to ONE session, and a write with no file continues its tab's run (2026-09-28/29, `531aca2c` + `ddc4b201`).** Two ways the same defect showed: a `goal-live phase`/`actor` write with no file of its own and no open run to carry started a **blank, stamp-less** live file, and the route read a stamp-less file as a LEGACY run — so it served another session's wave header and builder card to every idle pane. Now: a stamp-less per-session file is scoped by the session id in its FILE NAME, and only the legacy single file and `solo` stay the everyone-fallback; the CLI stamps a blank run the writer starts with the session it ran under. The second half is the lead whose session id ROTATES (handoff, reopen) without a new `goal-live start` — every later phase/actor call landed in a blank orphan file and the pane drew "Draft" with no party. A write from a session with no file of its own now CONTINUES its tab's open Develop run, re-stamped, removing the old file — never another tab's run, never a done run, never a tab-less one. Recipe rules that came out of the same debugging: resumed builders register with `--session`; each builder is registered on its OWN literal line (zsh never word-splits a string, so a split loop sent `"wN-L <sid> <pid>"` as the id and the register was refused); and `goal-live` output is never sent to `/dev/null` — a silenced writer is a writer whose refusals nobody reads.
+
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-29 - goal-live run ownership: one session per file, and a rotated lead keeps its run
+- `531aca2c` + `ddc4b201`: stamp-less per-session live files are scoped by session id (only the legacy single file and `solo` remain the everyone-fallback), a blank run the CLI writer starts is stamped, and a write from a session with no file of its own continues its tab's open Develop run instead of orphaning into a blank file. Recipe: resumed builders register with `--session`, one literal line per builder, and `goal-live` output is never discarded.
 
 ### 2026-07-19 - goal-skill pack hardening
 - SKILL.md hardened with headless fork permission flags, report≠work verification gate, and red-flags row. Orchestrator reminded to check for actual code changes (not just reports) before proceeding through phases, and to require explicit permission before forking builder sessions in headless/autonomous contexts. Session a8f96107, commit 318e236.

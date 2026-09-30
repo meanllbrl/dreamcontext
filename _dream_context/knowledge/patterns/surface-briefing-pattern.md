@@ -86,6 +86,24 @@ describe('Surface briefing ↔ parser contract', () => {
 
 This is the mechanical guard: drift between promise and parser breaks a test.
 
+### 5. A briefing does NOT survive a resume — read the mode the model HOLDS
+
+Claude Code 2.1.x restores a resumed conversation's system prompt from the transcript's
+`prompt_snapshot`. A new `--append-system-prompt-file` handed to the respawn is therefore
+**read and ignored**: the app's badge says Plan while the model keeps behaving as Basic
+(shipped fix `7eca3421`, `src/server/chat-mode-drift.ts`). So a briefing that can CHANGE
+mid-conversation cannot be delivered by respawn alone.
+
+- On resume, read which variant the model actually holds (latest snapshot, then any later
+  note of ours, reset by a compaction) and compare it to the one the surface intends.
+- When they differ, correct it with a **`SessionStart` hook scoped to that process** via
+  `--settings`, whose `additionalContext` states explicitly that the new brief REPLACES the
+  system prompt's corresponding section. Fire it on resume when the held variant differs, and
+  on compact when the snapshot does.
+- Measure this against real `claude` processes and real briefs, never by reading the flags:
+  the failure is silent by construction (the flag is accepted, the file is read, the content
+  loses). Basic → Plan edited `calc.py` without the fix and asked questions with it.
+
 ## When to Apply
 
 - **Always** when spawning into a non-default surface (Chat, not Terminal).

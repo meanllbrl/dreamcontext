@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-09-27'
+updated: '2026-09-29'
 product: desktop
 released_version: v0.21.0
 tags:
@@ -188,7 +188,9 @@ As of 0.22 the TUI is no longer what you land in. The native **Chat** screen —
 
 - [x] As a developer ending a Plan-mode session, the "Go to development" button actually appears — it was being written every time and silently dropped before it reached me. (2026-09-19)
 
-- [ ] As a developer, I can have a structured answer DRAWN as a built board (deterministic geometry — nodes, axes, lanes, a path) instead of authored markup, so it converts to visual memory at a glance. (Proposed in the depiction task's A–D; the owner put the board flip explicitly OUT OF SCOPE on 2026-09-06 — `dream-html` stays the depiction default. Not built: an inline board is still the live pan/zoom canvas, not a static SVG.)
+- [ ] As a developer, I can have a structured answer DRAWN as a built board (deterministic geometry — nodes, axes, lanes, a path) instead of authored markup, so it converts to visual memory at a glance. (Proposed in the depiction task's A–D; the owner put the board flip explicitly OUT OF SCOPE on 2026-09-06 — `dream-html` stays the depiction default. Not built: an inline board is still the live pan/zoom canvas, not a static SVG.)- [x] As a developer, I can search a long conversation with ⌘F and step through every hit, instead of scrolling to find the message I remember.
+- [x] As a developer, the name a chat carries in the app is the name I find it under everywhere — in Past chats after the tab closes, and in `claude --resume` outside the app.
+
 
 ## Acceptance Criteria
 
@@ -495,6 +497,12 @@ any future attempt (all of it is history — none of this ships):
 - [x] THE WS CHAT GATE OPENS TO A TAILNET DEVICE, AND ONLY TO ONE (2026-09-19, `338c10ab`). `agent-chat.ts`'s `isDesktop() && isLoopback(req)` becomes the INTERSECTION OF THREE INDEPENDENT FACTS, any one missing refusing the upgrade: `DREAMCONTEXT_REMOTE=1` in the SERVER's own environment (explicit consent — without it nothing changes), a peer address inside the tailnet ranges (`100.64.0.0/10` + Tailscale's IPv6 prefix), and the existing `dreamcontext_token`. The intersection is what makes it safe to leave in: a TUNNEL CANNOT SATISFY IT — cloudflared/ngrok terminate at loopback or at a public edge, neither of which is a tailnet peer, so opening a tunnel tomorrow does not incidentally expose the agent surface. `src/server/remote-access.ts` is the single predicate, shared by the WS upgrade (which never passed through `checkNetworkAuth` — that ran only in the HTTP handler) and by `checkNetworkAuth` itself. THE PTY TERMINAL (`kind=shell`/`kind=exec`) STAYS LOOPBACK-ONLY on purpose: xterm on a phone is a surface nobody asked for and it would double the blast radius for free. Second blocker found on the way and fixed: the CSRF guard recognised only `localhost` spellings, so the phone's OWN writes (`Origin: http://100.x:4173`) read as cross-site and took a 403 — Origin is now compared against Host, and evil.com is still refused. Verified against a real server across six scenarios (LAN+token → 200, LAN WS without a tailnet address → 403, loopback WS unchanged).
 - [x] THE PLAN → DEVELOP HAND-OFF SURVIVES A REAL SLUG (2026-09-19, `5b094e64`). Owner report was "Plan mode very rarely offers the switch-to-Develop action"; the plan agent had been writing it every time — 83 real `develop` buttons across this machine's transcripts — and `toAction` silently dropped 49 of them (59%) on a 64-char bound that was never a property of a slug (task names are sentence-style, `slugify` truncates nothing, and 240 of this project's own 350 slugs exceed it). The gate is now `MAX_SLUG_CHARS` (252 = a 255-byte filename minus `.md`), the same derived ceiling the progress shelf uses; replaying all 83 recorded buttons honours 83 while the 12 `<the-task-slug>` placeholders quoted from the docs are still refused. The SILENCE was the other half of the defect — a button that vanishes is indistinguishable from a button never written — so `parseActionBlock` now reports every entry it cannot honour and `parseChatActions` renders those as a visible notice.
 - [x] RUNTIME-VERIFIED IN THE REAL APP, and it found three defects tests could not. `npm run verify:chat-secret-run` drives the real server, the real `/ws/agent-chat`, the real PTY bridge and a real browser against a scratch vault + scripted `claude` (no tokens): 76 assertions × light+dark green, covering all three cards — the third by having the stand-in raise a real `can_use_tool` Bash request and hold the turn open until the answer comes back, so "the blocked turn resumes" is measured rather than reasoned. It also WRITES SCREENSHOTS by default (`tmp/verify-shots/<theme>-NN-<phase>.png`, each scrolled to the card it is about), because "did you validate it" is a question an assertion count cannot answer; including the canary (the pasted value must appear in neither the CLI's stdin nor a pixel of the DOM) and a real `read` typed into from the card. What it caught: **(1)** `-ilc 'exec <command>'` ran only the FIRST simple command — `exec` binds there, so `echo READY; read line` became `echo READY` and the card ran something other than what it displayed; now an inner non-interactive shell takes the command as an OPERAND (`execShellArgs`, regression-locked). **(2)** xterm SUSPENDS its write buffer and its keyboard handling while its element is off-screen — output arrived on the socket and never painted, keystrokes went nowhere; the card now reveals itself on open (twice, 250ms apart, because the 300px growth makes the transcript re-pin to the bottom and undo a single scroll). **(3)** `ChatPane`'s click-to-focus handed the caret back to the composer on every click inside the terminal (xterm's screen is a `div`, so it was not in the exempt list) — every keystroke meant for a live `read` landed in the message box. All three are invisible to unit tests and all three would have shipped.
+- [x] **⌘F FINDS IN THE TRANSCRIPT** (2026-09-28, `c3e3dc12`). The desktop app's WKWebView ships no find-in-page, so a long conversation could only be searched by scrolling. `⌘F` opens a find bar on the FOCUSED pane (`chat/ChatFindBar.tsx`, matcher `chat/findInChat.ts`): every hit is painted with the **CSS Custom Highlight API** — nothing is inserted into React's DOM, so a re-render can never fight the paint and no card is remounted mid-turn. The current hit scrolls to the middle of the viewport and RELEASES stick-to-bottom (otherwise the scroll is undone by the next streamed token); `Enter`/`⌘G` step forward, `⇧` steps back. Matching folds the Turkish i family (`İ/ı/i/I`) so `ıslak` and `İSLAK` find each other — the same tokenizer limitation recall hit (`[[recall-tokenizer-turkish-ascii-limitation]]`). A WINDOWED transcript can only paint what is mounted, so the bar says so and OFFERS to reveal the earlier messages instead of silently reporting fewer hits than exist. Unit proof `tests/unit/chat-find.test.ts`.
+- [x] **A TAB'S NAME IS THE CONVERSATION'S NAME, AND IT OUTLIVES THE TAB** (2026-09-28, `447a3d15` + `2796e53d`). Two halves of one complaint — the name the agent (or the owner) gave a tab existed only in the open-tab roster. (1) *Past chats*: roster saves now also record each NAMED tab's title in `state/.session-titles.json`, keyed by the conversation the tab is actually on (resolved through the tab→session map), and `listPastSessions` PREFERS it — so the picker is searchable by the name you know, with the first prompt demoted to the preview line, and a resumed named chat reopens under its full name. Clipped first-prompt titles are never stored (a truncated guess must not outrank a real name). (2) *Claude's own surfaces*: the same name is appended to the transcript as the custom-title record `/rename` writes, so `claude --resume` lists the conversation under the tab's name — stamped ONCE per new name, and a tab named before its transcript exists is retried on later roster saves while it stays open. `src/lib/session-titles.ts`; verified against the real `claude --resume` picker.
+- [x] **A TAB NAME READS AS WORDS, AND A DEVELOP TAB CAN BE RENAMED BY ITS AGENT** (2026-09-27, `314d93e7`). `cleanTabTitle` unslugs a title that is nothing but dash/underscore-joined words, so a tab handed a task slug shows a sentence. The Plan→Develop hand-off tab opens under the UNSLUGGED task name and is marked `titleByAgent` — it had been stuck on the slug, because a hand-off title is not a `Chat N` default and nothing else could replace it. The briefing and the hook reminder now ask for plain words spaced like a sentence, never a slug.
+- [x] **A MODE PICKED FOR AN OPEN CHAT REACHES THE MODEL, NOT JUST THE BADGE** (2026-09-28, `7eca3421`). Claude Code 2.1.x restores a RESUMED conversation's system prompt from the transcript's `prompt_snapshot`, so the new `--append-system-prompt-file` that a mode switch respawns with was read and **ignored**: the badge said Plan while the model kept building in Basic. On a resume the server now reads which mode the model actually HOLDS (`src/server/chat-mode-drift.ts` — the latest snapshot, then any later note of ours, reset by a compaction) and, when it differs from the picked one, attaches a `SessionStart` hook scoped to that process via `--settings`. The hook's `additionalContext` states that the new brief REPLACES the system prompt's mode section; it runs on resume when the held mode differs and on compact when the snapshot does. Measured with real `claude` processes and the real briefs: Basic → Plan edited `calc.py` without the fix and asked questions instead with it. `tests/unit/chat-mode-drift.test.ts`.
+- [x] **A QUESTION CARD'S OPTION PREVIEW OPENS TO MOST OF THE MOCK** (2026-09-27, `e7f0e38d`). A board tile's preview sat in a FIXED 180px window, so a real form mock showed its first rows and the reader had to go full screen just to judge an option — which defeats the A/B/C board's whole purpose. The window now HUGS the preview up to `min(440px, 62vh)`; tiles in a row still share one height (so the row does not stagger), a lone picture keeps its own shape, and the swipe face uses the same cap. Past that, the fullscreen door has the rest. `verify:chat-questions` 88/88 in both themes, with a new tall-mock scenario that fails on the old CSS (`windows=180,180`).
+
 
 
 ## Constraints & Decisions
@@ -678,6 +686,30 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 - Plan mode (`--permission-mode plan`) is always available via the external-terminal fallback (`POST /api/agent/open-terminal`); the in-app embedded plan mode is the remaining open AC.
 
 ## Changelog
+
+### 2026-09-28 — The transcript becomes searchable, a name stops being local, and the mode badge stops lying
+
+- **⌘F** (`c3e3dc12`) — a find bar on the focused pane, hits painted with the Custom Highlight
+  API (never inserted into React's DOM), Turkish i-folding, and an offer to reveal the earlier
+  messages a windowed transcript cannot paint. The desktop shell has no find-in-page of its own,
+  so this was the only way to search a day-long chat.
+- **A name that travels** (`447a3d15`, `2796e53d`) — a named tab's title is recorded in
+  `state/.session-titles.json` against the conversation it is on, so Past chats lists it by that
+  name after the tab closes, and the same name is stamped into the transcript as Claude Code's
+  own custom-title record so `claude --resume` agrees. Two surfaces, one name; the first prompt
+  becomes the preview rather than the title.
+- **The mode badge stopped lying** (`7eca3421`) — the resumed-conversation `prompt_snapshot`
+  silently outranked the `--append-system-prompt-file` a mode switch respawned with. The server
+  now reads the mode the model HOLDS and corrects it with a process-scoped `SessionStart` hook.
+  This is the second time a chat surface assumption about respawn semantics failed quietly; the
+  fix is measured against real `claude` processes, not reasoned.
+- **A Develop run's builders stay in their own pane** (`531aca2c`, `ddc4b201`) — a `goal-live`
+  write with no run of its own started a stamp-less live file that the route served to EVERY
+  pane, so an idle session drew another session's wave header. Recorded in full under the
+  goal-live writer contract in `[[context-gate-and-goal-skill]]`.
+- Polish: a question card's option preview hugs the mock up to `min(440px, 62vh)` instead of a
+  180px slit (`e7f0e38d`); a tab name handed a slug is unslugged into words and a Plan→Develop
+  hand-off tab can be renamed by its own agent (`314d93e7`).
 
 ### 2026-09-27 — A fourth mode that learns you, and two clocks that stopped lying
 

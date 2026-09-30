@@ -1,5 +1,278 @@
 [
   {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "sleep",
+    "description": "Fix sleep-debt scoring that was ~60% phantom: tool calls are counted from real tool_use records, token usage is deduplicated per message.id, a startup baseline stops the injected snapshot counting as novel work, and sessions spawned by dreamcontext or an orchestrator carry a spawn marker and add no debt. The consolidation directive is now tiered (REQUIRED / DEEP CYCLE / OVERDUE) so the warning means something again. New src/lib/session-origin.ts and src/lib/transcript-records.ts, with rescore, spawn-ledger, directive-tier and docs-lockstep tests plus an eval/sleep-debt harness.",
+    "breaking": false,
+    "summary": "Sleep debt counts only real human work: real tool_use counting, per-message usage dedup, startup baseline, spawned sessions excluded, tiered directive",
+    "references": [
+      "file:src/lib/salience.ts",
+      "file:src/lib/session-origin.ts",
+      "file:src/lib/transcript-records.ts",
+      "file:src/lib/sleep-consolidation.ts",
+      "file:src/cli/commands/hook.ts",
+      "task:sleep-debt-counts-only-real-human-work-so-the-consolidation-warning-means-something-again",
+      "feature:sleep-consolidation"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Picking a new mode (Basic/Plan/Develop) for an already-open chat updated the mode badge in the UI but did not always change what the model was actually told to do, letting the badge and the live behavior drift apart. A new chat-mode-drift check on the server reconciles them so the picked mode reaches the model on the next turn.",
+    "breaking": false,
+    "summary": "A mode picked for an open chat reaches the model, not just the badge",
+    "references": [
+      "commit:7eca3421",
+      "file:src/server/chat-mode-drift.ts",
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Chat gained in-transcript search: Cmd+F opens a find bar that paints every match across the transcript, with Enter and Cmd+G stepping forward through hits, backed by a new ChatFindBar component.",
+    "breaking": false,
+    "summary": "Cmd+F finds in the transcript — every hit painted, Enter and Cmd+G step through them",
+    "references": [
+      "commit:c3e3dc12",
+      "file:dashboard/src/components/sleepy/chat/ChatFindBar.tsx",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/components/sleepy/ChatPane.css"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Renaming a Chat tab now propagates the new name into the underlying Claude session title, so running claude --resume outside the app lists the conversation under the name it carries in the tab — the two names no longer drift apart.",
+    "breaking": false,
+    "summary": "Renaming a tab renames its Claude conversation, so claude --resume lists it under the same name",
+    "references": [
+      "commit:2796e53d",
+      "file:src/lib/session-titles.ts",
+      "file:tests/unit/session-titles.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Builders registered by a running Develop wave were leaking into every idle Chat session's pane instead of staying scoped to the pane that actually runs them. The agent-terminal route now filters builders to their owning run.",
+    "breaking": false,
+    "summary": "A Develop run's builders show only in the pane that runs them, not in every idle session",
+    "references": [
+      "commit:531aca2c",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:src/cli/commands/goal-live.ts",
+      "file:tests/unit/goal-live-route.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "chat",
+    "description": "The Past Chats picker previously fell back to a generic label once a tab closed, losing the name the user gave it. Closed conversations now keep and display the name their tab carried while it was open.",
+    "breaking": false,
+    "summary": "Past chats lists a conversation under the name its tab carried, even after the tab closes",
+    "references": [
+      "commit:447a3d15",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/ChatHistoryPicker.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "perf",
+    "scope": "assistant",
+    "description": "Every notch Assistant turn was paying 15-40 seconds of setup plumbing before the model saw the prompt. That overhead is removed from the hot path, so answers return close to model latency alone.",
+    "breaking": false,
+    "summary": "The notch Assistant answers without 15-40s of plumbing in front of every turn",
+    "references": [
+      "commit:e174cb67",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/chatSession.ts",
+      "task:the-notch-assistant-answers-without-the-15-40-s-of-plumbing-in-front-of-every-turn"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "The Assistant entry card and wizard gained an off switch that disables the notch Assistant while keeping its configuration intact, so the owner doesn't have to delete and re-create it to stop it running.",
+    "breaking": false,
+    "summary": "The owner can switch the notch Assistant off without deleting it",
+    "references": [
+      "commit:e79500cc",
+      "file:dashboard/src/components/assistant/AssistantEntryCard.tsx",
+      "file:dashboard/src/components/assistant/AssistantWizard.tsx",
+      "file:dashboard/src/components/assistant/Notch.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Desktop window move/resize (including the notch Assistant's tile) now animates smoothly in a single pass rather than snapping between discrete frames, backed by a new seat-guard for tile placement.",
+    "breaking": false,
+    "summary": "Windows move and resize in one smooth animation instead of frame-by-frame jumps",
+    "references": [
+      "commit:1412f266",
+      "file:dashboard/src/components/assistant/Notch.tsx",
+      "file:dashboard/src/components/assistant/seatGuard.ts",
+      "file:dashboard/src/components/assistant/tile.ts",
+      "task:desktop-windows-move-and-resize-in-one-smooth-animation-instead-of-frame-by-frame-jumps"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "The notch Assistant can delegate work to a Chat session and now gets woken back up at the right moments — when that session asks it a question, finishes its turn, or closes — instead of the owner having to check on delegated work manually. Backed by a new delegations registry alongside the chat registry.",
+    "breaking": false,
+    "summary": "A session the Assistant delegated wakes it when it asks, finishes a turn, or closes",
+    "references": [
+      "commit:11f18123",
+      "file:src/lib/assistant/delegations.ts",
+      "file:src/lib/assistant/chat-registry.ts",
+      "file:src/cli/commands/assistant.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "develop",
+    "description": "When a Develop lead's Claude session id rotated mid-run, its writes could detach from the tab's run record, and builders it registered afterward could end up hidden from the pane. The run now tracks the lead by tab rather than by a session id that can change, and every builder it registers stays visible.",
+    "breaking": false,
+    "summary": "A lead whose session id changed keeps writing to its tab's run, and builders it registers are never hidden",
+    "references": [
+      "commit:ddc4b201",
+      "file:src/cli/commands/goal-live.ts",
+      "file:src/lib/develop-recipe.ts",
+      "file:src/lib/goal-live.ts",
+      "task:develop-mode-runs-like-goal-skill-waves-on-the-map-builders-build-each-wave-a-review-closes-every-wave-a-validator-closes-the-run"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "agents",
+    "description": "A resumed automation turn could finish and post without ever surfacing to the owner — the notification path only fired for a run's original turn. Resumed turns now notify the same way, so a reply that lands after a session was resumed is not silently missed.",
+    "breaking": false,
+    "summary": "What a resumed automation turn posts reaches the owner as a notification",
+    "references": [
+      "commit:454026e6",
+      "file:src/lib/automations/threads.ts",
+      "file:src/server/automation-job.ts",
+      "file:src/server/routes/automations.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "chat",
+    "description": "A hook now reminds a Chat tab's agent to name its tab until it actually does, closing the gap where a tab sat unnamed indefinitely. Tab names generated from slugs now read as words — dashes are dropped rather than shown literally — and a Develop tab can be renamed by its own agent instead of only by the user.",
+    "breaking": false,
+    "summary": "A Chat tab's agent is nudged by the hook to name its tab, and names read as words instead of raw slugs",
+    "references": [
+      "commit:9312d733",
+      "commit:314d93e7",
+      "file:src/lib/chat-tab-title-nudge.ts",
+      "file:dashboard/src/lib/chatViewSpec.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "The notch Assistant now visibly steps aside while a turn is running instead of sitting frozen, its spoken replies hold a consistent pitch instead of drifting, new chats it opens respect the user's saved default mode, and the Spidey persona can delegate work to another session rather than handling everything itself.",
+    "breaking": false,
+    "summary": "The notch Assistant steps out while it works, keeps its speech pitch steady, opens chats on the saved default, and lets Spidey delegate",
+    "references": [
+      "commit:42ff5c02",
+      "file:dashboard/src/components/assistant/Notch.tsx",
+      "file:dashboard/src/components/assistant/notch.css",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Question card option previews in Chat were clipped to a ~180px sliver, hiding most of the mock they were meant to show. The preview now opens wide enough to show the bulk of the referenced mock, verified with a new chat-questions script check.",
+    "breaking": false,
+    "summary": "A question card's option previews open to most of the mock, not a 180px slit",
+    "references": [
+      "commit:e7f0e38d",
+      "file:dashboard/src/components/sleepy/chat/cards.css",
+      "file:scripts/verify/chat-questions.mjs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Develop-mode build cards in Chat now carry their actual wave number and render in the order the wave ran, instead of floating loose above the transcript. Each agent gets exactly one card, and the live step surfaces on top of it, so a multi-wave run reads as a sequence rather than a pile.",
+    "breaking": false,
+    "summary": "A Develop run reads in order — build cards name their real wave and sit where they happened, one entry per agent",
+    "references": [
+      "commit:7536550f",
+      "task:a-develop-run-reads-in-order-each-build-card-names-its-real-wave-sits-where-it-happened-and-the-live-step-is-the-one-on-top"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-27",
     "type": "decision",
     "scope": "validation",

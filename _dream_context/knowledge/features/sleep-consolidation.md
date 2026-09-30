@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-09-13'
+updated: '2026-09-29'
 released_version: 0.1.0
 tags:
   - architecture
@@ -21,6 +21,8 @@ related_tasks:
   - >-
     sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception
   - rescale-sleep-debt-scoring-weighted-sum-token-signal
+  - >-
+    sleep-debt-counts-only-real-human-work-so-the-consolidation-warning-means-something-again
 type: feature
 name: sleep-consolidation
 description: >-
