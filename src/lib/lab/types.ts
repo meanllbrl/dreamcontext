@@ -266,6 +266,18 @@ export interface FunnelMetricValue {
   label?: string;
   /** Previous equal-length period value — adapter-provided; wins over history-derived deltas. */
   prev?: number | null;
+  /** False when the value could not be measured (e.g. a broken denominator). Default true. */
+  measured?: boolean;
+  /** Why it is not measured (<= 200 chars). */
+  reason?: string;
+}
+
+/** One day of a funnel's (or segment's) metric trend. Keys must exist in the funnel's `metrics`. */
+export interface FunnelDay {
+  /** `YYYY-MM-DD`. */
+  t: string;
+  /** metric key → value that day (null = no value). */
+  m: Record<string, number | null>;
 }
 
 /** One step in a funnel. Array ORDER is step order; `key` aligns steps across
@@ -280,13 +292,26 @@ export interface FunnelStep {
   median_seconds?: number | null;
 }
 
-/** One disjoint segment cell (client-mode filters/breakdowns). Cells must not
- *  overlap: for any dimension value combination there is at most one cell. */
+/** One segment. In `cells` mode (default) a disjoint cell (client-mode
+ *  filters/breakdowns): cells must not overlap, for any dimension value combination
+ *  there is at most one cell. In `lookup` mode its own measured path for an exact
+ *  selection (see `FunnelSet.segment_mode`). */
 export interface FunnelSegment {
   /** dimension key → value for this cell (e.g. { language: 'en' }). */
   dims: Record<string, string>;
   users: number;
+  /** May be empty when `measured` is false. */
   steps: { key: string; users: number }[];
+  /** False = not measured, which is not zero: never added to a cells sum. Default true. */
+  measured?: boolean;
+  /** Why it is not measured (<= 200 chars). */
+  reason?: string;
+  /** The segment's own current/prev metric values. */
+  metrics?: Record<string, FunnelMetricValue>;
+  /** The segment's own bands; absent = inherits the set's `benchmarks`. */
+  benchmarks?: Record<string, FunnelBenchmark>;
+  /** The segment's own daily trend (max 92 days). */
+  daily?: FunnelDay[];
 }
 
 /** A declared breakdown/filter dimension. */
@@ -312,6 +337,8 @@ export interface FunnelDef {
   metrics: Record<string, FunnelMetricValue>;
   steps: FunnelStep[];
   segments?: FunnelSegment[];
+  /** Daily metric trend, oldest first (max 92 days; the last 92 are kept). */
+  daily?: FunnelDay[];
 }
 
 /** Optional per-metric benchmark thresholds (colors rate cells; off when absent). */
@@ -320,6 +347,12 @@ export interface FunnelBenchmark {
   floor?: number;
   /** At/above this → good tint. */
   target?: number;
+  /** Where the floor comes from (<= 64 chars). */
+  floor_source?: string;
+  /** Where the target comes from (<= 64 chars). */
+  target_source?: string;
+  /** Which direction is good. Default 'higher'; 'lower' flips the comparisons. */
+  better?: 'higher' | 'lower';
 }
 
 /** The versioned funnel-set payload an adapter returns for `render: funnel`. */
@@ -333,6 +366,9 @@ export interface FunnelSet {
   low_sample_threshold?: number;
   /** metric key → thresholds. Absent = benchmarks off. */
   benchmarks?: Record<string, FunnelBenchmark>;
+  /** `cells` (default) = disjoint cells, summed for a selection; `lookup` = each
+   *  segment is its own measured path for an exact selection, looked up, never summed. */
+  segment_mode?: 'cells' | 'lookup';
 }
 
 /** A compact per-sync snapshot kept for deltas/trends (bounded — see funnel.ts). */

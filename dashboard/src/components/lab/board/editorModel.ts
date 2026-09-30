@@ -94,13 +94,17 @@ const CONTROL_OF: Record<BlockOptionSchema['type'], FieldControl> = {
   tabs: 'tabs',
   inputs: 'inputs',
   html: 'html',
+  // A pick edits as plain text (one name) for now; `multi` makes it a list (see fieldsFor).
+  pick: 'text',
 };
 
 /** One field per catalog option, in catalog order. An html block's `ref` is the library picker. */
 export function fieldsFor(entry: BlockCatalogEntry): FieldSpec[] {
   return entry.options.map((schema) => ({
     key: schema.key,
-    control: entry.type === 'html' && schema.key === 'ref' ? 'library-ref' : CONTROL_OF[schema.type],
+    control: entry.type === 'html' && schema.key === 'ref' ? 'library-ref'
+      : schema.type === 'pick' && schema.multi ? 'list'
+      : CONTROL_OF[schema.type],
     labelKey: schema.labelKey,
     schema,
   }));
@@ -147,6 +151,11 @@ export function optionAccepts(schema: BlockOptionSchema, v: unknown): boolean {
     case 'sort': return sortParts(v) !== null;
     case 'inputs': return inputsRecord(v) !== null;
     case 'tabs': return true;
+    case 'pick': {
+      // Shape only, like the engine: whether the name exists is decided at render time.
+      const isPick = (x: unknown) => typeof x === 'string' && x.trim() !== '' && x.length <= 128;
+      return schema.multi ? Array.isArray(v) && v.every(isPick) : isPick(v);
+    }
   }
 }
 

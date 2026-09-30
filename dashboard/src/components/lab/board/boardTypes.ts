@@ -125,11 +125,15 @@ export interface LocalizedText {
 
 export interface BlockOptionSchema {
   key: string;
-  type: 'boolean' | 'enum' | 'number' | 'string' | 'markdown' | 'string-list' | 'where' | 'sort' | 'tabs' | 'inputs' | 'html';
+  type: 'boolean' | 'enum' | 'number' | 'string' | 'markdown' | 'string-list' | 'where' | 'sort' | 'tabs' | 'inputs' | 'html' | 'pick';
   enum?: readonly (string | number)[];
   default?: string | number | boolean | null;
   min?: number;
   max?: number;
+  /** Where a `pick` option's choices come from (the block's frame or the insight cache). */
+  from?: 'funnels' | 'dims' | 'metrics' | 'app-pages';
+  /** A list of picks instead of one (`pick` only). */
+  multi?: boolean;
   labelKey: string;
   label: LocalizedText;
 }
@@ -195,6 +199,20 @@ export interface BlockProps {
   inputs?: Record<string, Frame>;
   /** `tabs` blocks: render a panel's child block at its path (`[index, tab, index]`). */
   renderChild?: (block: Block, path: number[]) => ReactNode;
+  /** The card's breakdown selection for this block's insight (one value per dim). */
+  selection?: Record<string, string>;
+  onSelection?: (selection: Record<string, string>) => void;
+  /** Selections pinned as side-by-side lanes (at most 4). */
+  lanes?: readonly Record<string, string>[];
+  onLanes?: (lanes: readonly Record<string, string>[]) => void;
+  /** `tabs` blocks: the open tab, held by the card so fullscreen keeps it. */
+  activeTab?: number;
+  onTab?: (index: number) => void;
+  /** `insight` blocks on a v1 app: the open page, or null for the app's own start page. */
+  appPage?: string | null;
+  onAppPage?: (id: string) => void;
+  /** The card is shown fullscreen. */
+  fullscreen?: boolean;
 }
 
 /** The injected renderer BoardCard draws blocks through (placeholder default until blockRegistry is wired). */
@@ -210,6 +228,11 @@ export interface InspectorProps {
   library: LibraryBlock[];
   /** Insight slugs bindings can pick from. */
   insights: InsightSummary[];
+  /** The board's resolved frames by frame key (`pick` options read their choices here).
+   *  Optional until BoardPage passes it (W3). */
+  frames?: Record<string, Frame>;
+  /** Insight caches by slug, null while not loaded (`pick` options on app pages read them). */
+  caches?: Record<string, InsightCache | null>;
   /** A new card value; BoardPage records undo and saves. */
   onChange: (card: Card) => void;
   onSelectBlock: (path: number[] | null) => void;

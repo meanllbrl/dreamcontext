@@ -1351,6 +1351,16 @@
         "tr": "Gizli"
       }
     },
+    "density": {
+      "compact": {
+        "en": "Compact",
+        "tr": "Sıkı"
+      },
+      "comfortable": {
+        "en": "Comfortable",
+        "tr": "Rahat"
+      }
+    },
     "delta": {
       "none": {
         "en": "None",
@@ -1459,16 +1469,6 @@
       "none": {
         "en": "Hidden",
         "tr": "Gizli"
-      }
-    },
-    "density": {
-      "compact": {
-        "en": "Compact",
-        "tr": "Sıkı"
-      },
-      "comfortable": {
-        "en": "Comfortable",
-        "tr": "Rahat"
       }
     },
     "scale": {

@@ -50,7 +50,11 @@ export type BlockOptionType =
   | 'sort'
   | 'tabs'
   | 'inputs'
-  | 'html';
+  | 'html'
+  | 'pick';
+
+/** Where a `pick` option draws its choices from: the block's resolved frame or the insight cache. */
+export type BlockPickSource = 'funnels' | 'dims' | 'metrics' | 'app-pages';
 
 export interface LocalizedText {
   en: string;
@@ -66,6 +70,10 @@ export interface BlockOptionSchema {
   /** Inclusive bounds (`number` only). */
   min?: number;
   max?: number;
+  /** Where the choices come from (`pick` only). */
+  from?: BlockPickSource;
+  /** A list of picks instead of one (`pick` only). */
+  multi?: boolean;
   labelKey: string;
   label: LocalizedText;
 }
@@ -98,7 +106,7 @@ const opt = (
   type: BlockOptionType,
   en: string,
   tr: string,
-  extra: Partial<Pick<BlockOptionSchema, 'enum' | 'default' | 'min' | 'max'>> = {},
+  extra: Partial<Pick<BlockOptionSchema, 'enum' | 'default' | 'min' | 'max' | 'from' | 'multi'>> = {},
 ): BlockOptionSchema => ({ key, type, ...extra, labelKey: `lab.block.opt.${key}`, label: { en, tr } });
 
 /**
@@ -154,6 +162,8 @@ const AXES = choice('axes', 'Axes', 'Eksenler', [
   ['y', 'Y only', 'Yalnızca Y'],
   ['none', 'Hidden', 'Gizli'],
 ], 'both');
+/** Row density, shared by every block that draws a table. */
+const DENSITY = choice('density', 'Density', 'Yoğunluk', [['compact', 'Compact', 'Sıkı'], ['comfortable', 'Comfortable', 'Rahat']], 'compact');
 const GRID = opt('grid', 'boolean', 'Gridlines', 'Kılavuz çizgileri', { default: true });
 const TOP_N = opt('topN', 'number', 'Top N, rest as Other', 'İlk N, kalanı Diğer', { min: 1, max: 50, default: null });
 
@@ -287,7 +297,7 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
       WHERE,
       SORT,
       LIMIT,
-      choice('density', 'Density', 'Yoğunluk', [['compact', 'Compact', 'Sıkı'], ['comfortable', 'Comfortable', 'Rahat']], 'compact'),
+      DENSITY,
       opt('bars', 'boolean', 'Data bars', 'Veri çubukları', { default: false }),
       opt('deltaColor', 'boolean', 'Color the change', 'Değişimi renklendir', { default: true }),
       FORMAT,

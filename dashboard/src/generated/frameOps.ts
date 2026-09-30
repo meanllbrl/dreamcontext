@@ -90,16 +90,143 @@ export interface TableFrame {
   unit: string | null;
 }
 
+/** One value per dimension. */
+export type Selection = Record<string, string>;
+
+export type FunnelMetricFormat = 'count' | 'pct' | 'usd' | 'x' | 'seconds' | 'number';
+
 export interface FunnelFrameStep {
   key: string;
   label: string;
   users: number;
+  prev?: number | null;
+}
+
+export interface FunnelFrameMetric {
+  v: number | null;
+  prev: number | null;
+  format: FunnelMetricFormat;
+  label: string | null;
+  measured: boolean;
+  reason: string | null;
+}
+
+export interface FunnelFrameBand {
+  floor: number | null;
+  target: number | null;
+  floorSource: string | null;
+  targetSource: string | null;
+  better: 'higher' | 'lower';
+}
+
+export interface FunnelFrameDay {
+  t: string;
+  m: Record<string, number | null>;
+}
+
+export interface FunnelFrameSegment {
+  dims: Selection;
+  users: number;
+  steps: { key: string; users: number }[];
+  measured: boolean;
+  reason: string | null;
+  metrics?: Record<string, FunnelFrameMetric>;
+  bands?: Record<string, FunnelFrameBand>;
+  daily?: FunnelFrameDay[];
+}
+
+export interface FunnelFrameFunnel {
+  id: string;
+  name: string;
+  steps: FunnelFrameStep[];
+  metrics?: Record<string, FunnelFrameMetric>;
+  daily?: FunnelFrameDay[];
+  segments?: FunnelFrameSegment[];
+}
+
+export interface FunnelFrameDimension {
+  key: string;
+  label: string;
+  values: string[];
 }
 
 export interface FunnelFrame {
   kind: 'funnel';
   insight: string;
-  funnels: Array<{ id: string; name: string; steps: FunnelFrameStep[] }>;
+  funnels: FunnelFrameFunnel[];
+  dimensions?: FunnelFrameDimension[];
+  segmentMode?: 'cells' | 'lookup';
+  bands?: Record<string, FunnelFrameBand>;
+  lowSample?: number;
+}
+
+/** The funnel as one exact selection sees it (`funnelSlice`). */
+export interface FunnelSlice {
+  funnelId: string;
+  funnelName: string;
+  selection: Selection;
+  measured: boolean;
+  reason: string | null;
+  users: number;
+  steps: FunnelFrameStep[];
+  metrics: Record<string, FunnelFrameMetric>;
+  bands: Record<string, FunnelFrameBand>;
+  bandsInherited: boolean;
+  daily: FunnelFrameDay[];
+  lowSample: boolean;
+  ignored: string[];
+}
+
+export interface BreakdownChip {
+  value: string;
+  active: boolean;
+  enabled: boolean;
+  users: number | null;
+  reason: string | null;
+}
+
+export interface BreakdownAxis {
+  key: string;
+  label: string;
+  chips: BreakdownChip[];
+}
+
+export interface StepDrop {
+  key: string;
+  label: string;
+  users: number;
+  ofTop: number | null;
+  ofPrev: number | null;
+  dropPct: number | null;
+  worst: boolean;
+}
+
+export interface BenchmarkRow {
+  key: string;
+  label: string;
+  format: FunnelMetricFormat;
+  current: number | null;
+  prev: number | null;
+  delta: number | null;
+  floor: number | null;
+  target: number | null;
+  floorSource: string | null;
+  targetSource: string | null;
+  better: 'higher' | 'lower';
+  status: 'below' | 'between' | 'above' | 'no-band' | 'unmeasured';
+  trend: 'improving' | 'worsening' | 'flat' | null;
+  reason: string | null;
+  inherited: boolean;
+}
+
+export interface SegmentRow {
+  value: string;
+  selection: Selection;
+  measured: boolean;
+  reason: string | null;
+  users: number;
+  lowSample: boolean;
+  cells: Record<string, { v: number | null; prev: number | null; tone: 'below' | 'between' | 'above' | null }>;
 }
 
 export interface ValueFrame {

@@ -227,6 +227,9 @@ function checkInsightRef(ctx: WalkCtx, cardId: string | null, path: string, ref:
   }
 }
 
+/** Longest name a `pick` option accepts. */
+const MAX_PICK_LENGTH = 128;
+
 function isStringList(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((s) => typeof s === 'string' && s.trim() !== '');
 }
@@ -278,6 +281,16 @@ function optionProblem(schema: BlockOptionSchema, v: unknown): { message: string
         if (!parseDataRef(ref)) return { message: `input "${name}" binding ${show(ref)} is not a safe "<insight>" or "<insight>/<dataset>".`, fix: 'bind it to a kebab-case insight slug.' };
       }
       return null;
+    }
+    case 'pick': {
+      // Shape only: whether the name exists in the frame is decided at render time (visible fallback).
+      const isPick = (x: unknown): boolean => typeof x === 'string' && x.trim() !== '' && x.length <= MAX_PICK_LENGTH;
+      if (schema.multi) {
+        return Array.isArray(v) && v.every(isPick)
+          ? null
+          : { message: `must be a list of names, each 1-${MAX_PICK_LENGTH} characters ${got}.`, fix: `write ${schema.key}: [name-a, name-b].` };
+      }
+      return isPick(v) ? null : { message: `must be one name, 1-${MAX_PICK_LENGTH} characters ${got}.`, fix: `set ${schema.key} to one name.` };
     }
     case 'tabs':
       return null; // walked structurally
