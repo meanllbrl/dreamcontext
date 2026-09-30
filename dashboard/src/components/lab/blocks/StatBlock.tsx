@@ -1,13 +1,27 @@
 import { useI18n } from '../../../context/I18nContext';
 import { useInsightCache } from '../../../hooks/useBoards';
-import { NumberCard, periodKey, toStatSize } from '../NumberCard';
+import { NumberCard, periodKey, toStatSize, wholeFigure } from '../NumberCard';
 import type { Frame } from '../board/boardTypes';
 import { BlockEmpty, boolOption, drawableFrame, stringListOption, stringOption, type BlockViewProps } from './blockCommon';
 import { frameToStat, statFromSeries, type StatValue } from './frameAdapters';
-import { formatStat, statUnitSuffix, toStatFormat } from './format';
+import { currencyCode, formatStat, statUnitSuffix, toStatFormat, type StatFormat } from './format';
 
 /** Trailing points the stat's sparkline draws. */
 const SPARK_POINTS = 24;
+
+/**
+ * How a stat writes its figure, its change and its goal. From 1,000 up the
+ * figure is whole (NumberCard `wholeFigure`): no cents on a big KPI, the
+ * currency keeps its symbol ("$52,073", "Goal $60,000"). Compact and percent
+ * already carry their own precision.
+ */
+export function statFormatter(value: number | null, format: StatFormat, unit: string | null, locale?: string): (v: number) => string {
+  if (!wholeFigure(value) || (format !== 'number' && format !== 'currency')) return (v) => formatStat(v, format, unit, locale);
+  const nf = format === 'currency'
+    ? new Intl.NumberFormat(locale, { style: 'currency', currency: currencyCode(unit), minimumFractionDigits: 0, maximumFractionDigits: 0 })
+    : new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+  return (v) => nf.format(v);
+}
 
 /**
  * `stat`: one figure through NumberCard, filling its cell (never scrolls).
@@ -72,7 +86,7 @@ function StatView({ stat, options, granularity, series }: {
         delta={showDelta && stat.prev !== null ? stat.value - stat.prev : null}
         showDelta={showDelta}
         showSpark={boolOption(options, 'spark')}
-        format={(v) => formatStat(v, format, unit, locale)}
+        format={statFormatter(stat.value, format, unit, locale)}
         size={size}
         goal={goal}
         period={t(periodKey(granularity))}

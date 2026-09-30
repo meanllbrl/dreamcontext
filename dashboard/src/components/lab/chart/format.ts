@@ -91,6 +91,18 @@ export function formatValue(v: number, opts: FormatOptions = {}): string {
   return formatNumber(v, opts) + unitSuffix(opts.format ?? 'auto', opts.unit);
 }
 
+/**
+ * A formatter for a SET of figures read side by side (the end labels of a
+ * compact chart, one tooltip's rows, a chart's value labels): `auto` resolves
+ * ONCE from the largest, so a set never mixes "22K" with "8,859". The rest of
+ * the options (unit, decimals) apply to every figure alike.
+ */
+export function setFormatter(values: readonly number[], opts: FormatOptions = {}): (v: number) => string {
+  const magnitude = values.reduce((m, v) => (Number.isFinite(v) ? Math.max(m, Math.abs(v)) : m), 0);
+  const o: FormatOptions = { ...opts, format: resolveFormat(opts.format ?? 'auto', magnitude) };
+  return (v) => formatValue(v, o);
+}
+
 /** Decimal places a step of this size needs (0.25 -> 2, 5 -> 0). */
 export function stepDecimals(step: number): number {
   if (!(step > 0) || !Number.isFinite(step)) return 0;

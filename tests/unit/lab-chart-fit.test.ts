@@ -162,7 +162,7 @@ describe('y axis: at least two value labels, or none', () => {
   const base = { width: 300, fontPx: 12, measure, showX: false, showY: true, xTicks: () => [] };
   it('a lone value label is replaced by the two extremes when they sit far enough apart', () => {
     const l = cartesianLayout({ ...base, height: 60, yTicks: (h) => [{ pos: h, label: '0', value: 0 }, { pos: h - 10, label: '5', value: 5 }, { pos: 0, label: '20K', value: 20000 }] });
-    expect(l.y.labels.map((t) => t.label)).toEqual(['0', '20K']);
+    expect(l.y.labels.map((t) => t.label).sort()).toEqual(['0', '20K']);
   });
   it('...and dropped (no band) when even they would collide', () => {
     const l = cartesianLayout({ ...base, height: 20, yTicks: (h) => [{ pos: h, label: '0', value: 0 }, { pos: h - 4, label: '5', value: 5 }] });
@@ -381,5 +381,156 @@ describe('heatmap: a compact frame draws one strip of cells, no axes, no scale l
     const big = renderToStaticMarkup(createElement(HeatmapChart, { series: DAU, unit: 'users', granularity: 'daily' }));
     expect(big).toContain('data-heat-form="grid"');
     expect(big).toContain('data-heat-legend');
+  });
+});
+
+// ─── Demo run 2 ─────────────────────────────────────────────────────────────
+
+const { niceExtent, niceDomain, linearScale, TIGHT_TICKS } = await import('../../dashboard/src/components/lab/chart/scales.js');
+const { setFormatter } = await import('../../dashboard/src/components/lab/chart/format.js');
+const { lineTooltipRows } = await import('../../dashboard/src/components/lab/LineChart.js');
+const { stackColumns, stackedTooltip } = await import('../../dashboard/src/components/lab/StackedChart.js');
+
+const yLabels = (html: string) => [...(html.match(/<g class="lab-chart-axis" data-axis="y"[\s\S]*?<\/g>/)?.[0] ?? '').matchAll(/>([^<]+)<\/text>/g)].map((m) => m[1]);
+const xLabels = (html: string) => [...(html.match(/<g class="lab-chart-axis" data-axis="x"[\s\S]*?<\/g>/)?.[0] ?? '').matchAll(/>([^<]+)<\/text>/g)].map((m) => m[1]);
+const kilo = (s: string) => { const m = s.replace(/,/g, '').match(/^(-?[\d.]+)(K|M)?$/); return m ? Number(m[1]) * (m[2] === 'K' ? 1e3 : m[2] === 'M' ? 1e6 : 1) : NaN; };
+
+describe('small value axes end near the data max', () => {
+  it('niceExtent: a 2-tick axis hugs the data (0..25K for 24K, 0..2,500 for 2,040), never double it', () => {
+    expect(niceExtent(0, 24000, 2)).toEqual({ domain: [0, 25000], step: 25000 });
+    expect(niceExtent(0, 2040, 2)).toEqual({ domain: [0, 2500], step: 2500 });
+    for (const [lo, hi] of [[0, 24000], [7600, 24000], [0, 2040], [0, 4820], [0, 137], [-300, 900], [0, 0.73]]) {
+      for (const count of [2, 3, 4]) {
+        const { domain, step } = niceExtent(lo, hi, count);
+        expect(domain[0]).toBeLessThanOrEqual(lo);
+        expect(domain[1]).toBeGreaterThanOrEqual(hi);
+        // The axis ends within one step of the data (a step no bigger than the domain).
+        expect(domain[1] - hi).toBeLessThan(step);
+        expect((domain[1] - domain[0]) / step).toBeLessThanOrEqual(count + 1);
+      }
+    }
+  });
+
+  it('a long axis keeps the old nice domain (the large sizes are unchanged)', () => {
+    expect(niceExtent(0, 24000, TIGHT_TICKS + 2).domain).toEqual(niceDomain(0, 24000, TIGHT_TICKS + 2));
+    const s = linearScale([0, 24000], { range: [200, 0], tickCount: 6 });
+    expect(s.domain).toEqual(niceDomain(0, 24000, 6));
+  });
+
+  it('linearScale with few ticks puts a labelled tick at the domain top', () => {
+    const s = linearScale([0, 24000], { range: [40, 0], tickCount: 2 });
+    expect(s.ticks).toEqual([0, 25000]);
+    expect(s.domain).toEqual([0, 25000]);
+  });
+
+  it('the 3x3 line: the top y label sits within 30% of the data max, and the time axis shows >= 2 labels', () => {
+    at(...SMALL_3X3);
+    const html = renderToStaticMarkup(createElement(LineChart, { series: DAU }));
+    const max = Math.max(...DAU.flatMap((s) => s.points.map((p) => p.v)));
+    const ys = yLabels(html).map(kilo);
+    expect(ys.length).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...ys)).toBeGreaterThanOrEqual(max * 0.85);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(max * 1.3);
+    expect(xLabels(html).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a 3x3 horizontal bar\'s value axis (value labels off) ends near the max too', () => {
+    const model = { categories: ['a', 'b', 'c'].map((k) => ({ key: k, label: k })), series: [{ id: 'v', label: '', values: [2040, 1200, 600] }] };
+    const g = layoutBars({ model, opts: { small: true, valueLabels: false }, width: 244, height: 72, fontPx: 12, measure });
+    const top = Math.max(...g.layout.x.ticks.map((t) => t.value ?? 0));
+    expect(top).toBeGreaterThanOrEqual(2040);
+    expect(top).toBeLessThanOrEqual(2500);
+  });
+});
+
+describe('one number style per set', () => {
+  it('setFormatter resolves auto once, from the largest', () => {
+    const f = setFormatter([22000, 19100, 8859]);
+    expect([22000, 19100, 8859].map(f)).toEqual(['22K', '19.1K', '8.9K']);
+    const g = setFormatter([900, 1204]);
+    expect([900, 1204].map(g)).toEqual(['900', '1,204']);
+    expect(setFormatter([5, 8], { format: 'number', unit: 'users' })(5)).toBe('5 users');
+  });
+
+  it('compact end labels never mix "22K" with "8,859"', () => {
+    at(...WIDE_9X2);
+    const series = [
+      { name: 'iOS', points: [{ t: '2026-09-01', v: 21000 }, { t: '2026-09-02', v: 22000 }] },
+      { name: 'Web', points: [{ t: '2026-09-01', v: 8000 }, { t: '2026-09-02', v: 8859 }] },
+    ];
+    const html = renderToStaticMarkup(createElement(LineChart, { series }));
+    expect(html).toContain('>22K<');
+    expect(html).toContain('>8.9K<');
+    expect(html).not.toContain('8,859');
+    const st = renderToStaticMarkup(createElement(StackedChart, { series, unit: null, fill: true }));
+    expect(st).toContain('>8.9K<');
+    expect(st).not.toContain('8,859');
+  });
+
+  it('a line tooltip reads every row in one style', () => {
+    const series = [
+      { name: 'iOS', points: [{ t: 'k', v: 19000 }] },
+      { name: 'Web', points: [{ t: 'k', v: 7872 }] },
+    ];
+    const rows = lineTooltipRows(series, 'k', { color: () => 'c', label: (s) => s.name, format: 'auto', unit: 'users' });
+    expect(rows.map((r) => r.value)).toEqual(['19K users', '7.9K users']);
+  });
+
+  it('a stacked readout (rows and total) shares the total\'s style', () => {
+    const series = [{ name: 'a', points: [{ t: 'k', v: 7000 }] }, { name: 'b', points: [{ t: 'k', v: 6000 }] }];
+    const col = stackColumns(series, ['k'])[0];
+    const r = stackedTooltip(col, { color: () => 'c', label: (n) => n, format: 'auto', unit: null });
+    expect(r.rows.map((x) => x.value)).toEqual(['7K', '6K']);
+    expect(r.total).toBe('13K');
+  });
+
+  it('bar value labels share one style ("12.4K" beside "5.2K", never "5,200")', () => {
+    const model = { categories: ['US', 'DE'].map((k) => ({ key: k, label: k })), series: [{ id: 'v', label: '', values: [12400, 5200] }] };
+    const g = layoutBars({ model, opts: {}, width: 560, height: 260, fontPx: 12, measure });
+    expect(g.labels.map((l) => l.text)).toEqual(['12.4K', '5.2K']);
+  });
+
+  it('heatmap cell labels share one style', () => {
+    at(560, 240);
+    const html = renderToStaticMarkup(createElement(HeatmapMatrix, {
+      dims: [{ key: 'r', label: 'R' }, { key: 'c', label: 'C' }],
+      rows: [{ d: { r: 'a', c: 'x' }, v: 12400 }, { d: { r: 'a', c: 'y' }, v: 5200 }], unit: null, cellLabels: true,
+    }));
+    expect(html).toContain('>12.4K<');
+    expect(html).toContain('>5.2K<');
+    expect(html).not.toContain('5,200');
+  });
+});
+
+describe('a vertical bar at 3x3 keeps a plot of real height', () => {
+  const model = {
+    categories: ['Organic search', 'App Store', 'Referral', 'Paid social', 'Newsletter', 'Partnerships'].map((k) => ({ key: k, label: k })),
+    series: [{ id: 'v', label: '', values: [4820, 3610, 2240, 1870, 960, 540], prev: [4410, 3390, 1980, 2150, 870, 610] }],
+  };
+
+  for (const [w, h] of [[282, 94], [244, 72]] as const) {
+    it(`${w}x${h}: plot >= 40% of the block height, no value labels, no rotated band`, () => {
+      const g = layoutBars({ model, opts: { small: true, orientation: 'v', comparePrev: true }, width: w, height: h, fontPx: 12, measure });
+      expect(g.plot.height / h).toBeGreaterThanOrEqual(0.4);
+      expect(g.labels).toEqual([]);
+      expect(g.layout.x.rotate).toBe(false);
+    });
+  }
+
+  it('with the names hidden, the bottom value label still sits inside the block', () => {
+    const g = layoutBars({ model, opts: { small: true, orientation: 'v' }, width: 244, height: 94, fontPx: 12, measure });
+    expect(g.layout.x.labels).toEqual([]);
+    expect(g.plot.top + g.plot.height + 12 / 2).toBeLessThanOrEqual(94);
+  });
+
+  it('a regular column chart keeps its value labels and rotated names', () => {
+    const g = layoutBars({ model, opts: { orientation: 'v' }, width: 300, height: 260, fontPx: 12, measure });
+    expect(g.layout.x.rotate).toBe(true);
+  });
+
+  it('short names (time buckets) still label the small columns', () => {
+    const short = { categories: ['Sep 7', 'Sep 14', 'Sep 21'].map((k) => ({ key: k, label: k })), series: [{ id: 'v', label: '', values: [3, 4, 5] }] };
+    const g = layoutBars({ model: short, opts: { small: true, orientation: 'v' }, width: 282, height: 94, fontPx: 12, measure });
+    expect(g.layout.x.labels.map((l) => l.label)).toEqual(['Sep 7', 'Sep 14', 'Sep 21']);
   });
 });

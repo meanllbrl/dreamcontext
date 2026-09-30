@@ -3,7 +3,7 @@ import { useI18n } from '../../context/I18nContext';
 import { ChartEmpty, type ChartBodyProps } from './chartBody';
 import {
   Axis, ChartFrame, Crosshair, EndLabelMarks, Grid, HitArea, bandScale, cartesianLayout, chartFit, colorScale,
-  compactEndLabels, formatValue, keyGrain, linearScale, timeTickFormatter, useChartHover, useChartSize, useSeriesToggle,
+  compactEndLabels, keyGrain, linearScale, setFormatter, timeTickFormatter, useChartHover, useChartSize, useSeriesToggle,
   type AxisTick, type CartesianLayout, type ChartFormat, type EndLabelItem, type EndLabels, type LegendItem,
   type LegendPosition, type Measure, type Rect, type TooltipRow,
 } from './chart';
@@ -70,17 +70,20 @@ export function stackedTooltip(
   column: StackedColumn,
   opts: { color(name: string): string; label(name: string): string; format: ChartFormat; unit: string | null; locale?: string },
 ): { rows: TooltipRow[]; total: string } {
-  // Shares read to one decimal (46.7%): a second one is noise at a glance.
-  const fmt = { format: opts.format, unit: opts.unit, locale: opts.locale, ...(opts.unit?.trim() === '%' ? { maxDecimals: 1 } : {}) };
+  // Shares read to one decimal (46.7%): a second one is noise at a glance. One number style for
+  // the rows and the total alike, resolved from the largest (the total).
+  const fmt = setFormatter([column.total, ...column.spans.map((s) => s.value ?? 0)], {
+    format: opts.format, unit: opts.unit, locale: opts.locale, ...(opts.unit?.trim() === '%' ? { maxDecimals: 1 } : {}),
+  });
   const rows = column.spans.map((s) => ({
     id: s.name,
     label: opts.label(s.name),
-    value: s.value === null ? '-' : formatValue(s.value, fmt),
+    value: s.value === null ? '-' : fmt(s.value),
     color: opts.color(s.name),
     shape: 'rect' as const,
     dim: s.value === null,
   }));
-  return { rows, total: formatValue(column.total, fmt) };
+  return { rows, total: fmt(column.total) };
 }
 
 export interface StackedGeometry {
@@ -269,13 +272,20 @@ export function StackedChart({
   });
   const compact = fit.size === 'compact';
   // Compact: each visible layer's latest value, named when there is more than one layer (a unit other than % stays in the title).
-  const endItems = useMemo<EndLabelItem[]>(() => (compact ? visible.flatMap((s) => {
-    const last = lastPoint(s, domain);
-    return last ? [{
-      id: s.name, color: colors.color(s.name), shape: 'rect' as const, name: series.length > 1 ? seriesLabel(s, t) : '',
-      value: formatValue(last.v, { format: shareFormat, unit: shareUnit?.trim() === '%' ? shareUnit : null, locale, ...(normalized ? { maxDecimals: 1 } : {}) }),
-    }] : [];
-  }) : []), [compact, visible, domain, colors, series.length, t, shareFormat, shareUnit, locale, normalized]);
+  const endItems = useMemo<EndLabelItem[]>(() => {
+    if (!compact) return [];
+    const lasts = visible.map((s) => lastPoint(s, domain));
+    // One number style for the whole set, resolved from the largest.
+    const fmt = setFormatter(lasts.flatMap((p) => (p ? [p.v] : [])), {
+      format: shareFormat, unit: shareUnit?.trim() === '%' ? shareUnit : null, locale, ...(normalized ? { maxDecimals: 1 } : {}),
+    });
+    return visible.flatMap((s, i) => {
+      const last = lasts[i];
+      return last ? [{
+        id: s.name, color: colors.color(s.name), shape: 'rect' as const, name: series.length > 1 ? seriesLabel(s, t) : '', value: fmt(last.v),
+      }] : [];
+    });
+  }, [compact, visible, domain, colors, series.length, t, shareFormat, shareUnit, locale, normalized]);
 
   const geo = useMemo(() => (size.ready ? stackedGeometry({
     visible, domain, mode, normalized, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure,

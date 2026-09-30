@@ -72,6 +72,56 @@ export function niceDomain(min: number, max: number, count: number): [number, nu
   return [lo, hi];
 }
 
+/** Step multipliers a SHORT axis may use: 2.5 lets 0..25K end at the data instead of 0..40K. */
+const TIGHT_STEPS = [1, 2, 2.5, 5];
+/** Axes with at most this many ticks pick the step that hugs the data (`niceExtent`). */
+export const TIGHT_TICKS = 4;
+
+/**
+ * The domain and step for an axis of about `count` intervals. A long axis
+ * (count > TIGHT_TICKS) is `niceDomain` + `niceStep`, as before. A short one
+ * (a 3x3 cell's 2 or 3 ticks) searches the 1 / 2 / 2.5 / 5 steps for the one
+ * whose whole-step domain overshoots the data least, with a small cost for
+ * straying from `count` intervals: 0..24K gets 0 / 25K, never 0 / 20K / 40K.
+ */
+export function niceExtent(min: number, max: number, count: number): { domain: [number, number]; step: number } {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max || count > TIGHT_TICKS) {
+    const domain = niceDomain(min, max, count);
+    return { domain, step: niceStep(domain[0], domain[1], count) };
+  }
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  const span = hi - lo;
+  const top = Math.floor(Math.log10(span));
+  let best: { domain: [number, number]; step: number; score: number } | null = null;
+  for (let k = top - 2; k <= top + 1; k++) {
+    for (const m of TIGHT_STEPS) {
+      const step = m * 10 ** k;
+      const d0 = clean(Math.floor(lo / step + 1e-9) * step, step);
+      const d1 = clean(Math.ceil(hi / step - 1e-9) * step, step);
+      const n = Math.round((d1 - d0) / step);
+      if (n < 1 || n > count + 1) continue;
+      const score = (d1 - d0) / span - 1 + 0.1 * Math.abs(n - count);
+      if (!best || score < best.score - 1e-9) best = { domain: [d0, d1], step, score };
+    }
+  }
+  if (!best) {
+    const domain = niceDomain(min, max, count);
+    return { domain, step: niceStep(domain[0], domain[1], count) };
+  }
+  return { domain: best.domain, step: best.step };
+}
+
+/** Every multiple of `step` in [d0, d1] (the ticks of a `niceExtent`). */
+function stepTicks(d0: number, d1: number, step: number): number[] {
+  if (!(step > 0)) return [d0];
+  const out: number[] = [];
+  const start = Math.ceil(d0 / step - 1e-9);
+  const stop = Math.floor(d1 / step + 1e-9);
+  for (let i = start; i <= stop; i++) out.push(clean(i * step, step));
+  return out;
+}
+
 export interface LinearScale {
   (v: number): number;
   invert(px: number): number;
@@ -103,15 +153,17 @@ export function linearScale(values: readonly number[], opts: LinearScaleOptions)
     hi = Math.max(hi, 0);
   }
   const count = opts.tickCount ?? 5;
-  const [d0, d1] = opts.nice === false ? (lo === hi ? niceDomain(lo, hi, count) : [lo, hi]) : niceDomain(lo, hi, count);
+  // A short nice axis hugs the data (niceExtent); a long one, and an un-niced range, keep niceTicks.
+  const tight = opts.nice !== false && lo !== hi && count <= TIGHT_TICKS ? niceExtent(lo, hi, count) : null;
+  const [d0, d1] = tight ? tight.domain : opts.nice === false ? (lo === hi ? niceDomain(lo, hi, count) : [lo, hi]) : niceDomain(lo, hi, count);
   const [r0, r1] = opts.range;
   const span = d1 - d0 || 1;
   const scale = ((v: number) => r0 + ((v - d0) / span) * (r1 - r0)) as LinearScale;
   scale.invert = (px: number) => d0 + ((px - r0) / ((r1 - r0) || 1)) * span;
   scale.domain = [d0, d1];
   scale.range = [r0, r1];
-  scale.ticks = niceTicks(d0, d1, count);
-  scale.step = niceStep(d0, d1, count);
+  scale.ticks = tight ? stepTicks(d0, d1, tight.step) : niceTicks(d0, d1, count);
+  scale.step = tight ? tight.step : niceStep(d0, d1, count);
   return scale;
 }
 

@@ -485,9 +485,12 @@
 }
 
 /*
- * An untitled card has no header row: the content starts at the card's top inset and the menu
- * floats over the top corner, on the card surface so it never reads over a chart line. It shows
- * on hover, keyboard focus, while open and while editing; a touch screen always shows it.
+ * An untitled card has no header row: the content starts at the card's top inset. Its menu
+ * floats over the top corner ONLY in edit mode (or while it holds keyboard focus / is open):
+ * an untitled card has no insight, so everything in its menu is an edit (edit blocks, duplicate,
+ * move, remove), and in view mode the corner belongs to the content. An html block's own
+ * top-right control (a toggle, a "Change %" button) is never covered where it is usable; in edit
+ * mode the drag handle covers the content anyway, so the menu over it hides nothing clickable.
  */
 .board-card--untitled {
   position: relative;
@@ -502,20 +505,15 @@
   border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--transition-fast);
 }
 
-.board-card--untitled:hover > .board-card-float-menu,
+.board-grid--editing .board-card-float-menu,
 .board-card-float-menu:focus-within,
-.board-card-float-menu:has([aria-expanded='true']),
-.board-grid--editing .board-card-float-menu {
+.board-card-float-menu:has([aria-expanded='true']) {
   opacity: 1;
-}
-
-@media (hover: none) {
-  .board-card-float-menu {
-    opacity: 1;
-  }
+  pointer-events: auto;
 }
 
 /*

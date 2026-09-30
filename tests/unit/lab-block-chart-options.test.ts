@@ -278,8 +278,9 @@ describe('blocks: each option changes the render', () => {
     const currency = renderBlock(StatBlock, block('stat', { format: 'currency' }), { frame: VALUE_FRAME });
     const unit = renderBlock(StatBlock, block('stat', { unit: 'orders' }), { frame: VALUE_FRAME });
     expect(base).toContain('data-delta="none"');
-    expect(withDelta).toContain('+34.5');
-    expect(base).not.toContain('+34.5');
+    // A figure from 1,000 up is written whole, its change too (1,234.5 - 1,200 = +35).
+    expect(withDelta).toContain('+35');
+    expect(base).not.toContain('+35');
     expect(base).not.toContain('aria-label="Trend"');
     expect(withSpark).toContain('aria-label="Trend"');
     expect(currency).toContain('€');

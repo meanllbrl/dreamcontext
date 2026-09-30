@@ -4,7 +4,7 @@ import {
 } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import {
-  GRID_COLUMNS, GRID_MAX_H, GRID_ROW_PX, clampRect, compact, gridBottom, narrowOrder, rectsOverlap, readingOrder,
+  GRID_COLUMNS, GRID_MAX_H, GRID_ROW_PX, clampRect, compact, findFreeSlot, gridBottom, narrowOrder, rectsOverlap, readingOrder,
   type GridRect,
 } from '../../../generated/grid';
 import type { Card } from './boardTypes';
@@ -68,9 +68,58 @@ export function snapResize(start: GridRect, dx: number, dy: number, pitch: numbe
 }
 
 /**
+ * The holes a board shows: empty cells with a card somewhere below them in the same column.
+ * Space to the right of the last row, or under the last card of a column, is not a hole.
+ */
+export function coveredHoles(cards: readonly { id: string; at: GridRect }[]): number {
+  const bottom = gridBottom(cards);
+  let holes = 0;
+  for (let x = 0; x < GRID_COLUMNS; x++) {
+    const filled = new Array<boolean>(bottom).fill(false);
+    let lowest = 0;
+    for (const { at } of cards) {
+      if (x < at.x || x >= at.x + at.w) continue;
+      for (let y = at.y; y < at.y + at.h; y++) filled[y] = true;
+      lowest = Math.max(lowest, at.y + at.h);
+    }
+    for (let y = 0; y < lowest; y++) if (!filled[y]) holes += 1;
+  }
+  return holes;
+}
+
+/**
+ * Gravity alone leaves a hole whenever a card cannot float up past a neighbour (a full-width card
+ * under a row of mixed heights). Each other card, in reading order, may move to the first free
+ * slot that fits it (top-down, left-right) when that, after compaction, leaves strictly fewer
+ * holes; repeated until nothing improves. The card the user just placed (`pinned`) never moves
+ * sideways, and a layout with no holes comes back unchanged.
+ */
+export function fillHoles<T extends { id: string; at: GridRect }>(cards: readonly T[], pinned: string | null): T[] {
+  let cur: T[] = [...cards];
+  let holes = coveredHoles(cur);
+  for (let round = 0; holes > 0 && round < cards.length * 2; round++) {
+    let better: T[] | null = null;
+    for (const card of readingOrder(cur)) {
+      if (card.id === pinned) continue;
+      const others = compact(cur.filter((c) => c.id !== card.id));
+      const slot = findFreeSlot(others, card.at.w, card.at.h);
+      const trial = compact([...others, { ...card, at: slot }]);
+      const n = coveredHoles(trial);
+      if (n < holes) { better = trial; holes = n; break; }
+    }
+    if (!better) break;
+    cur = better;
+  }
+  // The input order, so a save diff stays the layout change only.
+  const byId = new Map(cur.map((c) => [c.id, c.at]));
+  return cards.map((c) => ({ ...c, at: byId.get(c.id) ?? c.at }));
+}
+
+/**
  * The board after `id` lands on `at`: the moved card keeps its spot, every card
  * it now covers is pushed down (reading order) until it fits, then the board is
- * compacted upward so no holes are left behind.
+ * compacted upward and its holes are filled ({@link fillHoles}), so no holes
+ * are left behind.
  */
 export function placeCard<T extends { id: string; at: GridRect }>(cards: readonly T[], id: string, at: GridRect): T[] {
   const target = clampRect(at);
@@ -82,7 +131,7 @@ export function placeCard<T extends { id: string; at: GridRect }>(cards: readonl
     placed.push(next);
     moved.set(card.id, next);
   }
-  return compact(cards.map((c) => ({ ...c, at: moved.get(c.id) ?? c.at })));
+  return fillHoles(compact(cards.map((c) => ({ ...c, at: moved.get(c.id) ?? c.at }))), id);
 }
 
 /** Did a layout change at all (so a click that moved nothing writes nothing)? */

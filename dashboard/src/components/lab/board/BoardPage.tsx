@@ -80,10 +80,15 @@ const CATALOG = catalogJson as unknown as BlockCatalog;
 const MORE_ID = '__more';
 /** Keeps the menu off the window's edge, in px. */
 const EDGE_PAD = 8;
-/** How long a transient toast stays up, in ms. */
-const TOAST_MS = 5200;
+/** How long a transient toast stays up, in ms (the clock stops while the pointer or focus is on it). */
+export const TOAST_MS = 6000;
 
 export { specOf };
+
+/** How long until a toast goes away on its own: never while held (pointer or focus on it), else TOAST_MS. */
+export function toastDelay(toast: { id: number } | null, held: boolean): number | null {
+  return toast && !held ? TOAST_MS : null;
+}
 
 /** The tabs a row holding `k` of them shows: the first `k`, with the active one taking the last slot. */
 export function visibleTabs<T extends { slug: string }>(boards: readonly T[], k: number, active: string | null): T[] {
@@ -180,6 +185,8 @@ export function BoardPage({
   const [openError, setOpenError] = useState(false);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
+  // Pointer or keyboard focus on the toast holds it; leaving starts a fresh TOAST_MS.
+  const [toastHeld, setToastHeld] = useState(false);
   const toastSeq = useRef(0);
   const undo = useRef(createUndoStack());
   const [, setUndoTick] = useState(0);
@@ -189,10 +196,12 @@ export function BoardPage({
     setToast({ id: toastSeq.current, kind, text });
   }, []);
   useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast((cur) => (cur?.id === toast.id ? null : cur)), TOAST_MS);
+    const delay = toastDelay(toast, toastHeld);
+    if (!toast || delay === null) return;
+    const timer = setTimeout(() => setToast((cur) => (cur?.id === toast.id ? null : cur)), delay);
     return () => clearTimeout(timer);
-  }, [toast]);
+  }, [toast, toastHeld]);
+  useEffect(() => { if (!toast) setToastHeld(false); }, [toast]);
 
   const signal = useCallback((s: BoardSaveSignal) => {
     if (s.kind === 'conflict') {
@@ -503,7 +512,7 @@ export function BoardPage({
             onCreate={() => newBoard(t('lab.board.emptyState.firstTitle'))}
           />
         </div>
-        <BoardToasts toast={toast} onDismiss={() => setToast(null)} onUndo={() => step('undo')} saveFailed={false} onRetry={retry} />
+        <BoardToasts toast={toast} onDismiss={() => setToast(null)} onUndo={() => step('undo')} onHold={setToastHeld} saveFailed={false} onRetry={retry} />
       </div>
     );
   }
@@ -670,6 +679,7 @@ export function BoardPage({
         toast={toast}
         onDismiss={() => setToast(null)}
         onUndo={() => step('undo')}
+        onHold={setToastHeld}
         saveFailed={saveStatus === 'failed'}
         onRetry={retry}
       />
@@ -679,12 +689,14 @@ export function BoardPage({
 
 // ─── Toasts ─────────────────────────────────────────────────────────────────
 
-function BoardToasts({ toast, onDismiss, onUndo, saveFailed, onRetry }: {
+function BoardToasts({ toast, onDismiss, onUndo, saveFailed, onRetry, onHold }: {
   toast: Toast | null;
   onDismiss: () => void;
   onUndo: () => void;
   saveFailed: boolean;
   onRetry: () => void;
+  /** The pointer or focus entered (true) or left (false) the toast: its clock pauses meanwhile. */
+  onHold?: (held: boolean) => void;
 }) {
   const { t } = useI18n();
   if (!toast && !saveFailed) return null;
@@ -699,7 +711,16 @@ function BoardToasts({ toast, onDismiss, onUndo, saveFailed, onRetry }: {
         </div>
       )}
       {toast && (
-        <div key={toast.id} className="board-toast" data-lab-toast={toast.kind}>
+        <div
+          key={toast.id}
+          className="board-toast"
+          data-lab-toast={toast.kind}
+          data-lab-toast-ttl={TOAST_MS}
+          onPointerEnter={() => onHold?.(true)}
+          onPointerLeave={() => onHold?.(false)}
+          onFocus={() => onHold?.(true)}
+          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onHold?.(false); }}
+        >
           <span>{toast.text}</span>
           {toast.kind === 'undo' && (
             <button type="button" className="board-btn board-btn--quiet" data-lab-toast-undo onClick={() => { onDismiss(); onUndo(); }}>

@@ -37,6 +37,29 @@ import './editors.css';
 
 type Draft = { base: Card; card: Card };
 
+/**
+ * The inspector's heading, in the words a reader knows the card by: its title, its insight's
+ * name, the library entry its first block reuses, the first block's type ("Custom HTML"), and
+ * only then "Untitled card". Never the internal card id.
+ */
+export function inspectorTitle(
+  card: Card,
+  blocks: readonly Block[],
+  insights: readonly { slug: string; title: string }[],
+  library: readonly { slug: string; title: string }[],
+  t: (key: string) => string,
+): string {
+  if (card.title?.trim()) return card.title;
+  if (card.insight) return insights.find((i) => i.slug === card.insight)?.title ?? card.insight;
+  const first = blocks[0];
+  if (!first) return t('lab.editor.untitledCard');
+  const ref = typeof first.options.ref === 'string' ? first.options.ref : null;
+  const entry = ref ? library.find((b) => b.slug === ref) : undefined;
+  if (entry?.title) return entry.title;
+  const label = t(`lab.block.${first.type}`);
+  return label === `lab.block.${first.type}` ? t('lab.editor.untitledCard') : label;
+}
+
 export function BlockInspector({
   board, card, blockPath, catalog, library, insights, onChange, onSelectBlock, onClose,
 }: InspectorProps) {
@@ -72,8 +95,8 @@ export function BlockInspector({
     onSelectBlock(res.path);
   };
 
-  const title = view.title ?? insights.find((i) => i.slug === view.insight)?.title ?? view.insight ?? view.id;
   const blocks = effectiveBlocks(view);
+  const title = inspectorTitle(view, blocks, insights, library, t);
 
   return (
     <aside className="lab-editor" data-lab-inspector aria-label={t('lab.editor.inspector')}>

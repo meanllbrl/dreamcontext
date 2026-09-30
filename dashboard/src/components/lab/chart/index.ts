@@ -21,7 +21,7 @@ export {
   type ChartFit, type ChartSizeClass, type EndLabelItem, type EndLabels, type LegendForm, type PlacedEndLabel,
 } from './fit';
 export {
-  CHART_FORMATS, currencyCode, formatNumber, formatTimeKey, formatValue, resolveFormat, stepDecimals, tickFormatter,
+  CHART_FORMATS, currencyCode, formatNumber, formatTimeKey, formatValue, resolveFormat, setFormatter, stepDecimals, tickFormatter,
   timeTickFormatter, toChartFormat, unitSuffix, type ChartFormat, type FormatOptions,
 } from './format';
 export { nearestIndex, placeTooltip, pointerToIndex, pointerToLocal, stepIndex, type ClientRectLike } from './hover';

@@ -125,7 +125,8 @@ describe('units: written once, in the header', () => {
     expect(out).toContain('lab.blocks.table.value (users)');
     expect(out.match(/users/g)).toHaveLength(1);
     expect(out).toContain('>12.4K<');
-    expect(out).toContain('>5,200<');
+    // One number style per column: the largest (12,400) makes the whole column compact.
+    expect(out).toContain('>5.2K<');
   });
 
   it('a symbol unit (%) stays on the figure', () => {

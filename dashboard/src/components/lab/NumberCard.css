@@ -78,11 +78,24 @@
   max-width: var(--space-16);
 }
 
-.lab-stat-delta {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+/* A line of whole parts (the change sentence, the goal line): exactly one line tall, and
+   a part that does not fit wraps onto the clipped second line, so a narrow tile drops
+   whole words from the end and never cuts one. The full text is the line's tooltip. */
+.lab-stat-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-1);
   min-width: 0;
+  height: calc(var(--font-size-xs) * var(--line-height-normal));
   overflow: hidden;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  white-space: nowrap;
+}
+
+.lab-stat-delta {
+  font-weight: var(--font-weight-semibold);
 }
 
 .lab-stat-change {
@@ -92,8 +105,6 @@
 .lab-stat-period {
   color: var(--color-text-tertiary);
   font-weight: var(--font-weight-normal);
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .lab-stat-goal {
@@ -119,17 +130,11 @@
 }
 
 .lab-stat-goal-text {
-  display: flex;
   justify-content: space-between;
-  gap: var(--space-2);
-  min-width: 0;
+  column-gap: var(--space-2);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
 }
 
 .lab-stat-goal-target {
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--color-text-tertiary);
 }

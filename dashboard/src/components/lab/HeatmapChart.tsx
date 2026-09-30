@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import {
-  ChartFrame, cartesianLayout, chartSizeClass, divergingColor, divergingScale, formatTimeKey, formatValue, keyGrain, parseTimeKey,
+  ChartFrame, cartesianLayout, chartSizeClass, divergingColor, divergingScale, formatTimeKey, formatValue, keyGrain, parseTimeKey, setFormatter,
   sequentialColor, sequentialScale, timeTickFormatter, truncateToWidth, useChartSize, useMarkHover, allTimeKeys,
   DIVERGING_STEPS, SEQUENTIAL_STEPS,
   Axis, type AxisTick, type ChartFormat, type Measure, type TooltipSpec, type ValueColorScale,
@@ -340,6 +340,9 @@ function HeatGrid({ data: fullData, compactData = null, unit, scale = 'sequentia
     }],
   } : null;
 
+  // Every cell label (and each cell's spoken value) in ONE number style, from the largest on the grid.
+  const cellText = setFormatter(values, { ...fmt, unit: null });
+  const cellValue = setFormatter(values, fmt);
   // The x axis sits under the grid (which may be shorter than the plot when cells hit their cap).
   const xAxisPlot = geo ? { ...geo.layout.plot, height: geo.gridH } : null;
 
@@ -388,7 +391,7 @@ function HeatGrid({ data: fullData, compactData = null, unit, scale = 'sequentia
                   height={h}
                   rx={Math.min(3, w / 4, h / 4)}
                   fill={c.v === null ? undefined : colors.color(c.v)}
-                  aria-label={`${c.title}${c.label ? `, ${c.label}` : ''}: ${c.v === null ? '-' : formatValue(c.v, fmt)}`}
+                  aria-label={`${c.title}${c.label ? `, ${c.label}` : ''}: ${c.v === null ? '-' : cellValue(c.v)}`}
                   {...hover.bind(i)}
                 />
               );
@@ -396,7 +399,7 @@ function HeatGrid({ data: fullData, compactData = null, unit, scale = 'sequentia
           </g>
           {cellLabels && data.cells.map((c) => {
             if (c.v === null) return null;
-            const text = formatValue(c.v, { ...fmt, unit: null });
+            const text = cellText(c.v);
             if (size.measure(text) + 4 > geo.cellW - CELL_GAP || size.fontPx + 2 > geo.cellH - CELL_GAP) return null;
             const ink = colors.ink(c.v);
             return (
@@ -431,8 +434,9 @@ function HeatLegend({ colors, x, y, width, fontPx, measure, fmt }: {
   measure: Measure;
   fmt: { format: ChartFormat; unit: string | null; locale?: string };
 }) {
-  const lo = formatValue(colors.min, { ...fmt, unit: null });
-  const hi = formatValue(colors.max, fmt);
+  // Both ends in one number style (never "900" beside "12K").
+  const lo = setFormatter([colors.min, colors.max], { ...fmt, unit: null })(colors.min);
+  const hi = setFormatter([colors.min, colors.max], fmt)(colors.max);
   const sw = Math.max(6, Math.min(14, fontPx));
   const swH = Math.max(6, Math.round(fontPx * 0.7));
   const rampW = colors.steps.length * sw;

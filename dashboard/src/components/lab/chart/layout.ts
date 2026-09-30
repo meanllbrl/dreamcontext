@@ -135,12 +135,20 @@ function resolveY(ticks: AxisTick[], fontPx: number, measure: Measure): Resolved
   const minSpacing = fontPx * 1.3;
   const labels: PlacedLabel[] = [];
   let last = -Infinity;
-  // Ticks arrive top-first or bottom-first; thin on actual distance either way.
-  for (const t of ticks) {
+  // Thin from the TOP down (whatever order the ticks arrive in): the label nearest the data's
+  // max always survives, so a short axis never reads 0..15K for data that reaches 19K.
+  const byPos = [...ticks].sort((p, q) => p.pos - q.pos);
+  for (const t of byPos) {
     if (Math.abs(t.pos - last) >= minSpacing) {
       labels.push({ ...t, dx: 0 });
       last = t.pos;
     }
+  }
+  // ...and the bottom end too, when it can take the last kept label's place (0 rather than 5).
+  const bottom = byPos[byPos.length - 1];
+  if (bottom && labels.length >= 2 && labels[labels.length - 1].pos !== bottom.pos
+    && Math.abs(bottom.pos - labels[labels.length - 2].pos) >= minSpacing) {
+    labels[labels.length - 1] = { ...bottom, dx: 0 };
   }
   // One lone VALUE label names no scale (a single "0" reads as a flat line at zero): keep the
   // two extreme ticks when they sit far enough apart, otherwise none (the tooltip reads values).

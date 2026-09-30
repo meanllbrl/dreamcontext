@@ -70,6 +70,15 @@ export function periodKey(granularity: string | null | undefined): string {
   }
 }
 
+/**
+ * A big figure is written whole: from 1,000 up the decimals are noise on a
+ * KPI ("52,073", not "52,073.46"), so the figure, its change and its goal all
+ * drop them. Below 1,000 they carry the precision.
+ */
+export function wholeFigure(value: number | null): boolean {
+  return value !== null && Number.isFinite(value) && Math.abs(value) >= 1000;
+}
+
 /** Second-to-last / last point delta of the first series. */
 function computeDelta(series: Series[]): number | null {
   const points = series[0]?.points ?? [];
@@ -113,7 +122,8 @@ export function NumberCard({
   const [sparkRef, sparkBox] = useMeasured<HTMLSpanElement>();
 
   const delta = showDelta ? (deltaOverride !== undefined ? deltaOverride : computeDelta(series)) : null;
-  const fmt = format ?? ((v: number) => v.toLocaleString(locale));
+  const whole = wholeFigure(latest);
+  const fmt = format ?? ((v: number) => v.toLocaleString(locale, whole ? { maximumFractionDigits: 0 } : undefined));
   const figure = latest !== null ? fmt(latest) : '-';
   const sparkPoints = (series[0]?.points ?? []).slice(-SPARK_POINTS);
   const hasSpark = showSpark && sparkPoints.length > 1;
@@ -142,6 +152,15 @@ export function NumberCard({
 
   const pctText = (v: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: Math.abs(v) < 10 ? 1 : 0 }).format(v);
   const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(Math.abs(v))}`;
+  const deltaDir = delta === null ? 'none' : delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+  // The whole sentence, for the tooltip: a narrow tile shows as many of its parts as fit.
+  const deltaSentence = delta === null ? '' : [
+    `${delta > 0 ? '+' : delta < 0 ? '−' : ''}${fmt(Math.abs(delta))}`,
+    change !== null ? `(${signed(change)})` : '',
+    period ?? '',
+  ].filter(Boolean).join(' ');
+  const ofGoal = pct !== null ? t('lab.blocks.stat.ofGoal').replace('{pct}', `${pctText(pct)}%`) : '';
+  const goalLine = goal !== null ? t('lab.blocks.stat.goal').replace('{v}', fmt(goal)) : '';
 
   return (
     <div
@@ -162,18 +181,15 @@ export function NumberCard({
             </span>
           )}
         </div>
+        {/* One line of whole parts: a part that does not fit wraps onto the hidden second
+            line (the period first, then the percent), so no word is ever cut. */}
         {delta !== null && showDeltaRow && (
-          <div className="lab-stat-delta">
-            <DeltaMark
-              delta={delta}
-              format={fmt}
-              suffix={(
-                <>
-                  {change !== null && <span className="lab-stat-change">({signed(change)})</span>}
-                  {period && <span className="lab-stat-period">{period}</span>}
-                </>
-              )}
-            />
+          <div className="lab-stat-delta lab-stat-line" title={deltaSentence}>
+            <DeltaMark delta={delta} format={fmt} />
+            {change !== null && (
+              <span className="lab-delta lab-stat-change" data-dir={deltaDir} data-colored="">({signed(change)})</span>
+            )}
+            {period && <span className="lab-stat-period">{period}</span>}
           </div>
         )}
         {pct !== null && goal !== null && showGoal && (
@@ -188,9 +204,9 @@ export function NumberCard({
             >
               <span className="lab-stat-goal-fill" style={{ width: `${Math.min(100, Math.max(0, pct)).toFixed(1)}%` }} />
             </div>
-            <div className="lab-stat-goal-text">
-              <span>{t('lab.blocks.stat.ofGoal').replace('{pct}', `${pctText(pct)}%`)}</span>
-              <span className="lab-stat-goal-target">{t('lab.blocks.stat.goal').replace('{v}', fmt(goal))}</span>
+            <div className="lab-stat-goal-text lab-stat-line" title={`${ofGoal} · ${goalLine}`}>
+              <span>{ofGoal}</span>
+              <span className="lab-stat-goal-target">{goalLine}</span>
             </div>
           </div>
         )}

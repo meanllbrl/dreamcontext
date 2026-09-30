@@ -388,6 +388,28 @@
   white-space: nowrap;
 }
 
+/*
+ * A library entry is named by its author, often at length: the name wraps (up to two lines) above
+ * its description (up to two more) instead of both sharing one ellipsized row. The whole title
+ * and description are the button's tooltip too.
+ */
+.lab-editor-item--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.lab-editor-item--stack > .lab-editor-item-name,
+.lab-editor-item--stack > .lab-editor-item-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .lab-editor-badge {
   flex: none;
   padding: 0 var(--space-2);

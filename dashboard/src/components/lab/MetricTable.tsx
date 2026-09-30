@@ -4,7 +4,8 @@ import { useI18n } from '../../context/I18nContext';
 import { ROW_CAP } from './barRows';
 import { Sparkline } from './Sparkline';
 import { ChartEmpty, DeltaMark, latestPoint, type ChartBodyProps } from './chartBody';
-import { OTHER_COLOR, colorScale, formatNumber, formatValue, unitSuffix, type ChartFormat } from './chart';
+import { OTHER_COLOR, colorScale, formatNumber, unitSuffix, type ChartFormat } from './chart';
+import { elementFont, textWidth } from './textMeasure';
 import './MetricTable.css';
 
 /**
@@ -250,18 +251,6 @@ const BAR_GAP = 8;
 /** The trend sparkline's width (the MetricTable draws it at 56px). */
 const TREND_WIDTH = 56;
 
-let measureCtx: CanvasRenderingContext2D | null | undefined;
-
-/** Text width in the table's own font (a canvas measure; 7px a character without a canvas). */
-function textWidth(text: string, font: string): number {
-  if (measureCtx === undefined) {
-    measureCtx = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
-  }
-  if (!measureCtx) return text.length * 7;
-  measureCtx.font = font;
-  return measureCtx.measureText(text).width;
-}
-
 /** The texts a column shows: its header, its cells full and compact, and any icon beside a cell. */
 interface ColumnTexts { header: string; cells: string[]; compact: string[]; icon?: number }
 
@@ -270,11 +259,9 @@ function measureColumns(
   density: TableDensity,
   texts: Readonly<Record<string, ColumnTexts>>,
 ): Record<string, ColumnWidth> {
-  const cs = getComputedStyle(table);
   const th = table.querySelector('th');
-  const headWeight = th ? getComputedStyle(th).fontWeight : '600';
-  const body = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-  const head = `${headWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const body = elementFont(table);
+  const head = elementFont(table, th ? getComputedStyle(th).fontWeight : '600');
   const pad = CELL_PAD[density] + FIT_SLACK;
   const widest = (list: string[]) => list.reduce((m, s) => Math.max(m, textWidth(s, body)), 0);
   const out: Record<string, ColumnWidth> = {};
@@ -358,6 +345,22 @@ function compactFormat(format: ChartFormat): ChartFormat {
   return format === 'auto' || format === 'number' || format === 'compact' ? 'compact' : format;
 }
 
+/**
+ * The magnitude a column's `auto` format resolves from: its largest absolute
+ * value, so one column is written one way (never "12.4K" above "5,200").
+ */
+export function columnMagnitude(values: readonly (number | null | undefined)[]): number {
+  return values.reduce<number>((m, v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(m, Math.abs(v)) : m), 0);
+}
+
+/**
+ * How many source rows a total covers: the frame's row count with each `Other`
+ * fold counted as the rows it holds ("Other (2)" is two rows, not one).
+ */
+export function coveredRows(count: number, rows: readonly { other?: number }[]): number {
+  return rows.reduce((n, r) => n + (typeof r.other === 'number' && r.other > 1 ? r.other - 1 : 0), count);
+}
+
 /** The row's tooltip when columns gave way: the label, then each dropped column and its value. */
 function rowTitle(label: string, dropped: readonly { header: string; text: string }[]): string | undefined {
   if (dropped.length === 0) return undefined;
@@ -435,8 +438,11 @@ export function MetricTable({
   // A word unit ("users") is written once, in the latest header; a symbol (%) stays on the figure.
   const headUnit = wordUnit(format, unit);
   const opts = (compact: boolean) => ({ format: compact ? compactFormat(format) : format, unit, locale });
-  const fmt = (v: number, compact = false) => (headUnit ? formatNumber(v, opts(compact)) : formatValue(v, opts(compact)));
-  const fmtAbs = (v: number, compact = false) => formatNumber(v, opts(compact));
+  // One number style per column: `auto` resolves once, from the column's largest value.
+  const mag = { latest: columnMagnitude(shown.map((r) => r.latest)), delta: columnMagnitude(shown.map((r) => r.delta)) };
+  const suffix = headUnit ? '' : unitSuffix(format, unit);
+  const fmt = (v: number, compact = false) => formatNumber(v, opts(compact), mag.latest) + suffix;
+  const fmtAbs = (v: number, compact = false) => formatNumber(v, opts(compact), mag.delta);
   const signed = (d: number | null, compact = false) => (d === null ? '-' : `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmtAbs(Math.abs(d), compact)}`);
 
   const label: Record<MetricColumn, string> = {
@@ -463,7 +469,7 @@ export function MetricTable({
   if (rows.length === 0) return <ChartEmpty hint={emptyHint} />;
   const view = fit.columns as MetricColumn[];
   const fullText = (row: MetricRow, c: MetricColumn): string => (c === 'latest'
-    ? (row.latest !== null ? formatValue(row.latest, opts(false)) : '-')
+    ? (row.latest !== null ? formatNumber(row.latest, opts(false), mag.latest) + unitSuffix(format, unit) : '-')
     : c === 'delta' ? signed(row.delta) : '');
 
   return (
@@ -616,20 +622,28 @@ export function FrameTable({
     return headUnit && key === unitCol ? `${base} (${headUnit})` : base;
   };
   const opts = (compact: boolean) => ({ format: compact ? compactFormat(format) : format, unit, locale });
-  const fmtV = (v: number, compact = false) => (headUnit ? formatNumber(v, opts(compact)) : formatValue(v, opts(compact)));
+  // One number style per column: `auto` resolves once, from the column's largest value (the total included).
+  const mag = {
+    v: columnMagnitude([...rows.map((r) => r.v), total?.v]),
+    prev: columnMagnitude(rows.map((r) => r.prev)),
+    n: columnMagnitude([...rows.map((r) => r.n), total?.n]),
+    delta: columnMagnitude(rows.map(rowDelta)),
+  };
+  const suffix = headUnit ? '' : unitSuffix(format, unit);
+  const fmtV = (v: number, compact = false, key: 'v' | 'prev' = 'v') => formatNumber(v, opts(compact), mag[key]) + suffix;
   // Counts are whole things: they keep the grouping (or compaction) but never a currency or percent.
   const countFormat = (compact: boolean): ChartFormat => (compact || format === 'compact' ? 'compact' : format === 'auto' ? 'auto' : 'number');
-  const fmtCount = (n: number, compact = false) => formatNumber(n, { format: countFormat(compact), locale, maxDecimals: 0 });
-  const fmtAbs = (v: number, compact = false) => formatNumber(v, opts(compact));
+  const fmtCount = (n: number, compact = false) => formatNumber(n, { format: countFormat(compact), locale, maxDecimals: 0 }, mag.n);
+  const fmtAbs = (v: number, compact = false) => formatNumber(v, opts(compact), mag.delta);
   const signed = (d: number | null, compact = false) => (d === null ? '-' : `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmtAbs(Math.abs(d), compact)}`);
   const otherLabel = (row: FrameTableRow) => t('lab.blocks.otherCount').replace('{n}', String(row.other));
-  const totalLabel = total ? `${L.total} (${total.count.toLocaleString(locale)} ${L.rows})` : '';
+  const totalLabel = total ? `${L.total} (${coveredRows(total.count, rows).toLocaleString(locale)} ${L.rows})` : '';
 
   /** A cell as plain text (the fit measures it, the tooltip quotes it). */
   const text = (row: FrameTableRow, key: string, compact = false): string => {
     if (key === 'v') return typeof row.v === 'number' ? fmtV(row.v, compact) : '';
     if (key === 'n') return typeof row.n === 'number' ? fmtCount(row.n, compact) : '';
-    if (key === 'prev') return typeof row.prev === 'number' ? fmtV(row.prev, compact) : '';
+    if (key === 'prev') return typeof row.prev === 'number' ? fmtV(row.prev, compact, 'prev') : '';
     if (key === 'delta') return signed(rowDelta(row), compact);
     // The fold's label goes in the first text column; the other dims stay blank.
     if (row.other !== undefined) return key === firstDim ? otherLabel(row) : '';
@@ -665,7 +679,7 @@ export function FrameTable({
   const lead = Math.max(0, cols.findIndex(isValue) === -1 ? cols.length : cols.findIndex(isValue));
   // The tooltip quotes a dropped figure in full, unit and all.
   const titleText = (row: FrameTableRow, key: string): string => {
-    if ((key === 'v' || key === 'prev') && typeof row[key] === 'number') return formatValue(row[key] as number, opts(false));
+    if ((key === 'v' || key === 'prev') && typeof row[key] === 'number') return formatNumber(row[key] as number, opts(false), mag[key]) + unitSuffix(format, unit);
     return text(row, key);
   };
   const rowLabel = (row: FrameTableRow) => (firstDim ? text(row, firstDim) : '') || cols.filter((c) => !isValue(c)).map((c) => text(row, c)).join(' ');

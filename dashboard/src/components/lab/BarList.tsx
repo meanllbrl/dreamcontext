@@ -3,7 +3,7 @@ import { useI18n } from '../../context/I18nContext';
 import { rankRows, ROW_CAP, type BarRow } from './barRows';
 import {
   Axis, COMPACT_PAD, ChartFrame, EndLabelMarks, Grid, HitArea, OTHER_COLOR, bandScale, cartesianLayout, chartFit, colorScale,
-  compactEndLabels, crisp, formatNumber, formatValue, linearScale, tickCountFor, tickFormatter, truncateToWidth,
+  compactEndLabels, crisp, formatNumber, formatValue, linearScale, resolveFormat, tickCountFor, tickFormatter, truncateToWidth,
   useChartHover, useChartSize, useSeriesToggle,
   type AxisTick, type CartesianLayout, type ChartFormat, type EndLabels, type LegendItem, type LegendPosition, type Measure,
   type Rect, type TooltipRow, type TooltipSpec,
@@ -95,6 +95,11 @@ export interface BarPlotOptions {
  */
 export function compactRowCount(height: number, fontPx: number): number {
   return Math.max(1, Math.floor((height - 4) / (fontPx * 1.6)));
+}
+
+/** Categories a layout draws (the model's, or the row cap's when rows are capped). */
+function nCatOf(model: BarModel, cap: number): number {
+  return Math.min(model.categories.length, cap);
 }
 
 /** Thickest a bar may be (dataviz: thin marks; the slot's leftover is air). */
@@ -217,6 +222,9 @@ export function layoutBars({ model: fullModel, hidden, opts, width, height, font
   const vertical = orientation === 'v';
   const compact = !!opts.compact;
   const smallRows = !compact && !!opts.small && !vertical;
+  // Small columns spend the height on the plot: no value labels (the tooltip reads them) and flat,
+  // slot-wide category labels instead of a rotated band (which would eat 40% of a 3x3 cell).
+  const smallCols = !compact && !!opts.small && vertical;
   const valueLabelsAsked = opts.valueLabels ?? true;
   // With labels at the tips, a small frame's value axis only repeats them: its band goes to the rows.
   const dropValueAxis = compact || (smallRows && valueLabelsAsked);
@@ -235,11 +243,18 @@ export function layoutBars({ model: fullModel, hidden, opts, width, height, font
   const single = model.series.length === 1;
   const stacked = (opts.group ?? 'grouped') === 'stacked' && shown.length > 1;
   const compare = !!opts.comparePrev && shown.some((s) => s.prev?.some((v) => typeof v === 'number'));
-  const valueLabels = (opts.valueLabels ?? true) && !(compact && vertical);
+  const valueLabels = (opts.valueLabels ?? true) && !(compact && vertical) && !smallCols;
   const fmt = { format: opts.format ?? 'auto', unit: opts.unit ?? null, locale };
   // Tight rows spend their width on the bar: a unit other than % stays in the title (the tooltip keeps it).
   const labelFmt = (compact || smallRows) && fmt.unit?.trim() !== '%' ? { ...fmt, unit: null } : fmt;
-  const showX = (opts.showX ?? true) && !dropValueAxis;
+  // A small column's name gets its own slot's width; under 3 readable characters, none is drawn.
+  const slotGuess = (width * 0.85) / Math.max(1, nCatOf(fullModel, rowCap));
+  const smallColLabel = (c: BarCategory) => truncateToWidth(c.label, Math.max(fontPx, slotGuess - 4), measure);
+  const colNamesRead = !smallCols || fullModel.categories.every((c) => {
+    const t = smallColLabel(c);
+    return t === c.label || t.replace('…', '').length >= 3;
+  });
+  const showX = (opts.showX ?? true) && !dropValueAxis && colNamesRead;
   const showY = (opts.showY ?? true) && !(compact && vertical);
   const colors = barColors(model, opts.colorStart ?? 1, opts.colorDomain);
   const nCat = model.categories.length;
@@ -282,7 +297,6 @@ export function layoutBars({ model: fullModel, hidden, opts, width, height, font
   }
 
   // The value labels' text, so their room can be reserved before the layout runs.
-  const labelText = (v: number) => formatValue(v, labelFmt);
   const labelled: number[] = [];
   if (valueLabels) {
     for (let c = 0; c < nCat; c++) {
@@ -294,6 +308,9 @@ export function layoutBars({ model: fullModel, hidden, opts, width, height, font
       }
     }
   }
+  // Every value label in ONE number style, resolved from the largest labelled value.
+  const labelMagnitude = labelled.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+  const labelText = (v: number) => formatValue(v, { ...labelFmt, format: resolveFormat(labelFmt.format, labelMagnitude) });
   const widestLabel = labelled.reduce((m, v) => Math.max(m, measure(labelText(v))), 0);
   const hasNegative = extent.some((v) => v < 0);
   const padding = compact
@@ -303,12 +320,16 @@ export function layoutBars({ model: fullModel, hidden, opts, width, height, font
     : smallRows && endsW > 0
       ? { right: (valueLabels ? Math.ceil(widestLabel) + 10 : 8) + endsW }
       : vertical
-      ? { top: valueLabels ? Math.ceil(fontPx * 1.4) + 2 : Math.ceil(fontPx / 2) + 2, bottom: hasNegative && valueLabels ? Math.ceil(fontPx * 1.4) : 2 }
+      ? {
+          top: valueLabels ? Math.ceil(fontPx * 1.4) + 2 : Math.ceil(fontPx / 2) + 2,
+          // No category band under the plot: the bottom value label (centred on the baseline) needs half a line.
+          bottom: hasNegative && valueLabels ? Math.ceil(fontPx * 1.4) : showX ? 2 : Math.ceil(fontPx / 2) + 2,
+        }
       : { right: valueLabels ? Math.ceil(widestLabel) + 10 : 8 };
 
   // Category labels: long names are truncated to a share of the cell, never allowed to eat the plot.
   const catLabelMax = Math.max(fontPx * 4, width * (vertical ? 0.5 : 0.34));
-  const catLabel = (c: BarCategory) => truncateToWidth(c.label, catLabelMax, measure);
+  const catLabel = (c: BarCategory) => (smallCols ? smallColLabel(c) : truncateToWidth(c.label, catLabelMax, measure));
 
   const valueScale = (len: number) => linearScale(extent, {
     range: vertical ? [len, 0] : [0, len],
@@ -328,7 +349,7 @@ export function layoutBars({ model: fullModel, hidden, opts, width, height, font
 
   const layout = cartesianLayout({
     width, height, fontPx, measure, showX, showY,
-    xLabelMode: vertical ? 'rotate' : 'thin',
+    xLabelMode: vertical && !smallCols ? 'rotate' : 'thin',
     yTicks: (h) => (vertical ? valueTicks(h) : catTicks(h)),
     xTicks: (w) => (vertical ? catTicks(w) : valueTicks(w)),
     padding,
@@ -480,11 +501,14 @@ export function barTooltipContent(
   model: BarModel, c: number, opts: BarPlotOptions, colors: Map<string, string>, copy: BarTooltipCopy,
   hidden?: ReadonlySet<string>, locale?: string,
 ): Omit<TooltipSpec, 'anchor'> {
-  const fmt = { format: opts.format ?? 'auto', unit: opts.unit ?? null, locale };
   const shown = model.series.filter((s) => !hidden?.has(s.id));
   const single = model.series.length === 1;
   const cat = model.categories[c];
   const num = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
+  // One number style for the whole readout (values, previous values, the total), from the largest.
+  const figures = shown.flatMap((s) => [s.values[c], s.prev?.[c]]).filter(num);
+  const magnitude = Math.max(Math.abs(figures.reduce((a, v) => a + v, 0)), ...figures.map(Math.abs), 0);
+  const fmt = { format: resolveFormat(opts.format ?? 'auto', magnitude), unit: opts.unit ?? null, locale };
   const compare = !!opts.comparePrev;
   const rows: TooltipRow[] = [];
   let footer: string | undefined;

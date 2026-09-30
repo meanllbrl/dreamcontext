@@ -124,8 +124,9 @@ export function AddCardMenu({ board, unplaced, insights, catalog, library, onAdd
             <li key={entry.slug}>
               <button
                 type="button"
-                className="lab-editor-item"
+                className="lab-editor-item lab-editor-item--stack"
                 data-lab-add-html={entry.slug}
+                title={entry.description ? `${entry.title}\n${entry.description}` : entry.title}
                 onClick={() => onAdd(cardFromHtml(catalog, board, entry, ctx))}
               >
                 <span className="lab-editor-item-name">{entry.title}</span>
@@ -136,7 +137,7 @@ export function AddCardMenu({ board, unplaced, insights, catalog, library, onAdd
           <li>
             <button
               type="button"
-              className="lab-editor-item"
+              className="lab-editor-item lab-editor-item--stack"
               data-lab-add-html="blank"
               onClick={() => onAdd(cardFromHtml(catalog, board, null, ctx))}
             >

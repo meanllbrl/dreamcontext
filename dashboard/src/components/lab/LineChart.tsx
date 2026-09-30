@@ -3,7 +3,7 @@ import type { Series } from '../../hooks/useLab';
 import { useI18n } from '../../context/I18nContext';
 import { ChartEmpty, type ChartBodyProps } from './chartBody';
 import {
-  Axis, COMPACT_PAD, ChartFrame, Crosshair, EndLabelMarks, Grid, HitArea, cartesianLayout, chartFit, colorScale,
+  Axis, COMPACT_PAD, ChartFrame, Crosshair, EndLabelMarks, Grid, HitArea, cartesianLayout, chartFit, colorScale, setFormatter,
   compactEndLabels, formatTimeKey, formatValue, keyGrain, linearScale, allTimeKeys, parseTimeKey, pointPositions,
   tickCountFor, tickFormatter, timeScale, timeTickFormatter, timeTicks, useChartHover, useChartSize, useSeriesToggle,
   type AxisTick, type CartesianLayout, type ChartFormat, type EndLabelItem, type EndLabels, type LegendItem,
@@ -80,8 +80,12 @@ export function pointXTicks(domain: XDomain, width: number, inset: number, fontP
   }
   const { times } = domain;
   const ts = timeScale([times[0], times[times.length - 1]], [0, width]);
-  const maxCount = Math.max(2, Math.floor(width / (fontPx * 6)));
-  const tt = timeTicks(times[0], times[times.length - 1], maxCount, keyGrain(domain.keys));
+  const grain = keyGrain(domain.keys);
+  // A narrow axis whose coarse unit lands one tick ("Sep 2026" alone) asks for finer ticks until it
+  // has two: the layout then thins labels by width, so the ends still read ("Aug 31 ... Sep 28").
+  let maxCount = Math.max(2, Math.floor(width / (fontPx * 6)));
+  let tt = timeTicks(times[0], times[times.length - 1], maxCount, grain);
+  while (tt.ticks.length < 2 && maxCount < 12) tt = timeTicks(times[0], times[times.length - 1], ++maxCount, grain);
   const f = timeTickFormatter(tt.unit, locale);
   return tt.ticks.map((t, i) => ({ pos: ts(t), label: f(t, i, tt.ticks), value: t }));
 }
@@ -192,20 +196,23 @@ export function areaPath(pts: readonly Pt[], curve: LineCurve, base: number): st
 
 /**
  * The crosshair readout at x key `key`: one row per VISIBLE series in their
- * fixed (legend) order, value formatted; a series with no point there is a
- * dimmed "-" row, so the rows never reshuffle as the pointer moves.
+ * fixed (legend) order, value formatted in ONE style for the whole readout
+ * (never "19K" beside "7,872"); a series with no point there is a dimmed "-"
+ * row, so the rows never reshuffle as the pointer moves.
  */
 export function lineTooltipRows(
   visible: readonly ChartSeries[],
   key: string,
   opts: { color(name: string): string; label(s: ChartSeries): string; format: ChartFormat; unit: string | null; locale?: string },
 ): TooltipRow[] {
-  return visible.map((s) => {
-    const p = s.points.find((q) => q.t === key);
+  const at = visible.map((s) => s.points.find((q) => q.t === key));
+  const fmt = setFormatter(at.flatMap((p) => (p ? [p.v] : [])), { format: opts.format, unit: opts.unit, locale: opts.locale });
+  return visible.map((s, i) => {
+    const p = at[i];
     return {
       id: s.name,
       label: visible.length > 1 ? opts.label(s) : '',
-      value: p ? formatValue(p.v, { format: opts.format, unit: opts.unit, locale: opts.locale }) : '-',
+      value: p ? fmt(p.v) : '-',
       color: opts.color(s.name),
       shape: 'line' as const,
       dim: !p,
@@ -434,13 +441,18 @@ export function LineChart({
   });
   const compact = fit.size === 'compact';
   // Compact: each visible line's last value, named when there is more than one series (a unit other than % stays in the title).
-  const endItems = useMemo<EndLabelItem[]>(() => (compact ? visible.flatMap((s) => {
-    const last = lastPoint(s, domain);
-    return last ? [{
-      id: s.name, color: colors.color(s.name), shape: 'line' as const, name: series.length > 1 ? seriesLabel(s, t) : '',
-      value: formatValue(last.v, { format, unit: unit?.trim() === '%' ? unit : null, locale }),
-    }] : [];
-  }) : []), [compact, visible, domain, colors, series.length, t, format, unit, locale]);
+  const endItems = useMemo<EndLabelItem[]>(() => {
+    if (!compact) return [];
+    const lasts = visible.map((s) => lastPoint(s, domain));
+    // One number style for the whole set: "22K / 19.1K / 8.9K", never "22K" beside "8,859".
+    const fmt = setFormatter(lasts.flatMap((p) => (p ? [p.v] : [])), { format, unit: unit?.trim() === '%' ? unit : null, locale });
+    return visible.flatMap((s, i) => {
+      const last = lasts[i];
+      return last ? [{
+        id: s.name, color: colors.color(s.name), shape: 'line' as const, name: series.length > 1 ? seriesLabel(s, t) : '', value: fmt(last.v),
+      }] : [];
+    });
+  }, [compact, visible, domain, colors, series.length, t, format, unit, locale]);
 
   const geo = useMemo(() => (size.ready ? lineGeometry({
     visible, domain, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure,
