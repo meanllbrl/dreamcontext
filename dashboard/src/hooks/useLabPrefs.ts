@@ -3,7 +3,13 @@ import { usePersistedState } from './usePersistedState';
 import { useApi } from '../context/VaultContext';
 
 /**
- * Insights (Lab) board preferences — per-group card order + collapsed groups.
+ * Insights (Lab) preferences: the active board, funnel columns, and the v1
+ * board's keys (per-group card order, collapsed groups, category tab + order).
+ *
+ * The v1 keys have no UI any more, but they are NOT dead: the server derives
+ * boards from `order` + `catOrder` until the first edit materializes them, and
+ * `PUT /api/lab-prefs` replaces the whole file. So every write carries every
+ * key it read, untouched, plus any key a newer build added (`extra`).
  *
  * Persistence mirrors `useRoadmapPrefs`: localStorage is the fast, flash-free
  * mirror, but the desktop app changes its loopback port every launch → a new
@@ -30,6 +36,9 @@ export interface LabPrefs {
    *  no opinion (the payload's metric columns); an empty array is a real choice
    *  (the user unchecked everything). A URL `cols` param still out-ranks this. */
   columns: Record<string, string[]>;
+  /** The board the page opens on, or null (the first board). A slug that no
+   *  longer names a board falls back to the first one (`resolveActiveBoard`). */
+  activeBoard: string | null;
 }
 
 export const DEFAULT_LAB_PREFS: LabPrefs = {
@@ -38,7 +47,10 @@ export const DEFAULT_LAB_PREFS: LabPrefs = {
   category: null,
   catOrder: [],
   columns: {},
+  activeBoard: null,
 };
+
+const KNOWN_KEYS = new Set<string>(Object.keys(DEFAULT_LAB_PREFS));
 
 /** A `key → string[]` blob with every malformed entry dropped. */
 function stringListMap(blob: unknown): Record<string, string[]> {
@@ -50,8 +62,9 @@ function stringListMap(blob: unknown): Record<string, string[]> {
   return out;
 }
 
-/** Merge a (possibly partial) blob over the defaults, dropping malformed keys. */
-function mergePrefs(blob: Partial<LabPrefs>): LabPrefs {
+/** Merge a (possibly partial) blob over the defaults, dropping malformed values
+ *  of known keys and keeping unknown keys as they are (a newer build's). */
+export function mergePrefs(blob: Partial<LabPrefs>): LabPrefs {
   const order = stringListMap(blob.order);
   const columns = stringListMap(blob.columns);
   const collapsed = Array.isArray(blob.collapsed)
@@ -61,7 +74,18 @@ function mergePrefs(blob: Partial<LabPrefs>): LabPrefs {
   const catOrder = Array.isArray(blob.catOrder)
     ? blob.catOrder.filter((c) => typeof c === 'string')
     : [];
-  return { order, collapsed, category, catOrder, columns };
+  const activeBoard = typeof blob.activeBoard === 'string' && blob.activeBoard ? blob.activeBoard : null;
+  const extra: Record<string, unknown> = {};
+  if (blob && typeof blob === 'object') {
+    for (const [key, value] of Object.entries(blob)) if (!KNOWN_KEYS.has(key)) extra[key] = value;
+  }
+  return { ...extra, order, collapsed, category, catOrder, columns, activeBoard };
+}
+
+/** The board to open: the saved one while it exists, else the first board, else null. */
+export function resolveActiveBoard(boards: readonly { slug: string }[], saved: string | null): string | null {
+  if (saved && boards.some((b) => b.slug === saved)) return saved;
+  return boards[0]?.slug ?? null;
 }
 
 interface LabPrefsResponse {
@@ -141,5 +165,9 @@ export function useLabPrefs() {
     update((p) => ({ ...p, columns: { ...p.columns, [slug]: keys } }));
   }, [update]);
 
-  return { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder, setColumnKeys };
+  const setActiveBoard = useCallback((activeBoard: string | null) => {
+    update((p) => (p.activeBoard === activeBoard ? p : { ...p, activeBoard }));
+  }, [update]);
+
+  return { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder, setColumnKeys, setActiveBoard };
 }

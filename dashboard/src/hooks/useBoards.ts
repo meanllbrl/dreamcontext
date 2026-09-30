@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { RequestError } from '../api/client';
 import { useApi } from '../context/VaultContext';
 import type { InsightCache, InsightSummary } from './useLab';
@@ -53,6 +53,8 @@ interface SaveEntry {
   /** The newest edit not yet sent. */
   pending: BoardSpec | null;
   failed: boolean;
+  /** `saveAndWait` callers: settled when the queue next empties (saved), 409s or fails. */
+  waiters: { resolve: (board: Board) => void; reject: (err: unknown) => void }[];
 }
 
 export interface BoardSaverDeps {
@@ -66,9 +68,21 @@ export interface BoardSaverDeps {
 export interface BoardSaver {
   /** Queue the board's whole next spec. `rev` is only read when the queue holds nothing for `slug`. */
   save: (slug: string, spec: BoardSpec, rev: string) => void;
+  /**
+   * `save`, then resolve with the saved board once this edit (or a later one
+   * coalesced over it) is on disk; reject with the error on a 409 or a failure
+   * (a failed edit still stays pending for Retry, as with `save`).
+   */
+  saveAndWait: (slug: string, spec: BoardSpec, rev: string) => Promise<Board>;
   /** Resend a failed board's pending edits. */
   retry: (slug: string) => void;
   status: (slug: string) => BoardSaveStatus;
+  /**
+   * The rev THIS client's last successful PUT produced for `slug`, or null.
+   * A board whose server rev is anything else was written by someone else
+   * (an agent, the CLI, a brain-sync pull): the page's undo stack must go.
+   */
+  savedRev: (slug: string) => string | null;
   /** The spec the screen should show while edits are unsaved (newest first), else null. */
   unsaved: (slug: string) => BoardSpec | null;
   subscribe: (listener: () => void) => () => void;
@@ -83,6 +97,8 @@ function statusOf(err: unknown): number | null {
 
 export function createBoardSaver(deps: BoardSaverDeps): BoardSaver {
   const entries = new Map<string, SaveEntry>();
+  /** Outlives the entry: the rev our own last write produced, per board. */
+  const lastSaved = new Map<string, string>();
   const flights = new Map<string, Promise<void>>();
   const listeners = new Set<() => void>();
   const notify = () => { for (const l of listeners) l(); };
@@ -98,14 +114,20 @@ export function createBoardSaver(deps: BoardSaverDeps): BoardSaver {
       (board) => {
         entry.inFlight = null;
         entry.rev = board.rev;
+        lastSaved.set(slug, board.rev);
         deps.onSaved?.(board);
         // The key dies with its last edit: an idle, saved board holds no entry.
         if (entry.pending) flush(slug);
-        else entries.delete(slug);
+        else {
+          entries.delete(slug);
+          for (const w of entry.waiters.splice(0)) w.resolve(board);
+        }
       },
       (err: unknown) => {
         entry.inFlight = null;
         const status = statusOf(err);
+        const waiters = entry.waiters.splice(0);
+        for (const w of waiters) w.reject(err);
         if (status === 409) {
           entries.delete(slug);
           deps.onConflict?.(slug);
@@ -125,19 +147,31 @@ export function createBoardSaver(deps: BoardSaverDeps): BoardSaver {
     notify();
   };
 
+  const save = (slug: string, spec: BoardSpec, rev: string): void => {
+    let entry = entries.get(slug);
+    if (!entry) {
+      entry = { rev, inFlight: null, pending: null, failed: false, waiters: [] };
+      entries.set(slug, entry);
+    }
+    entry.pending = spec;
+    flush(slug);
+    notify();
+  };
+
   return {
-    save(slug, spec, rev) {
-      let entry = entries.get(slug);
-      if (!entry) {
-        entry = { rev, inFlight: null, pending: null, failed: false };
-        entries.set(slug, entry);
-      }
-      entry.pending = spec;
-      flush(slug);
-      notify();
+    save,
+    saveAndWait(slug, spec, rev) {
+      return new Promise<Board>((resolve, reject) => {
+        save(slug, spec, rev);
+        const entry = entries.get(slug);
+        if (entry) entry.waiters.push({ resolve, reject });
+      });
     },
     retry(slug) {
       flush(slug);
+    },
+    savedRev(slug) {
+      return lastSaved.get(slug) ?? null;
     },
     status(slug) {
       const entry = entries.get(slug);
@@ -354,6 +388,7 @@ export function useSaveBoard(slug: string | null, onSignal?: (signal: BoardSaveS
   const queryClient = useQueryClient();
   const saver = useBoardSaver();
   const status = useSyncExternalStore(saver.subscribe, () => (slug ? saver.status(slug) : 'idle'));
+  const savedRev = useSyncExternalStore(saver.subscribe, () => (slug ? saver.savedRev(slug) : null));
 
   useEffect(() => {
     if (!onSignal) return;
@@ -369,5 +404,61 @@ export function useSaveBoard(slug: string | null, onSignal?: (signal: BoardSaveS
   const retry = useCallback(() => {
     if (slug) saver.retry(slug);
   }, [saver, slug]);
-  return { save, retry, status };
+  return { save, retry, status, savedRev };
+}
+
+/**
+ * Write ANY board, not just the open one (Move to board writes the target
+ * too), and wait for it: same queue, same rev rules, same signals as
+ * `useSaveBoard`. `idle(slug)` resolves once nothing is in flight for it.
+ */
+export function useBoardWriter() {
+  const saver = useBoardSaver();
+  return useMemo(() => ({
+    saveAndWait: (slug: string, spec: BoardSpec, rev: string) => saver.saveAndWait(slug, spec, rev),
+    idle: (slug: string) => saver.idle(slug),
+    unsaved: (slug: string) => saver.unsaved(slug),
+  }), [saver]);
+}
+
+/**
+ * A board read FRESH from the server (and written into the query cache): a
+ * cached copy may carry a rev the first materializing write already replaced.
+ */
+export function useFetchBoard() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useCallback((slug: string) => queryClient.fetchQuery({
+    queryKey: boardKey(slug),
+    queryFn: () => api.get<BoardResponse>(`/lab/boards/${encodeURIComponent(slug)}`),
+    staleTime: 0,
+  }), [api, queryClient]);
+}
+
+/** `POST /api/lab/boards { title }`: a new empty board after the last one (slug from the title). */
+export function useCreateBoard() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (title: string) => api.post<BoardResponse>('/lab/boards', { title }),
+    onSuccess: (r) => {
+      queryClient.setQueryData(boardKey(r.board.slug), r);
+      // A derived vault materialized every board with this create: every rev moved.
+      void queryClient.invalidateQueries({ queryKey: BOARDS_KEY });
+    },
+  });
+}
+
+/** `DELETE /api/lab/boards/:slug?rev=`: a rev that moved is a 409, never a silent delete. */
+export function useDeleteBoard() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, rev }: { slug: string; rev: string }) =>
+      api.del<{ deleted: string }>(`/lab/boards/${encodeURIComponent(slug)}?rev=${encodeURIComponent(rev)}`),
+    onSettled: (_r, _e, { slug }) => {
+      queryClient.removeQueries({ queryKey: boardKey(slug), exact: true });
+      void queryClient.invalidateQueries({ queryKey: BOARDS_KEY });
+    },
+  });
 }

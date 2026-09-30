@@ -245,6 +245,32 @@ export function useLabSyncJob() {
   });
 }
 
+/** Both job slots: the running (or last settled) job and the queued follow-up. */
+export interface LabSyncSlots {
+  running: LabSyncJob | null;
+  pending: LabSyncJob | null;
+}
+
+/**
+ * The same poll as `useLabSyncJob`, with the queued follow-up too (a board
+ * shows "queued" on the cards it covers). Shares its cache entry, so the two
+ * hooks never poll twice.
+ */
+export function useLabSyncSlots() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['lab-sync-job'],
+    queryFn: () => api.get<{ job: LabSyncJob | null; running?: LabSyncJob | null; pending?: LabSyncJob | null }>('/lab/sync-jobs/current'),
+    select: (d): LabSyncSlots => ({ running: d.running ?? d.job ?? null, pending: d.pending ?? null }),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d?.job?.status === 'running' || d?.pending ? 800 : false;
+    },
+    refetchOnWindowFocus: true,
+    retry: 0,
+  });
+}
+
 /** What starting a job produced: a new run, the adopted running one, or the
  *  queued follow-up (`queued: true`, `job` = that follow-up). */
 export interface LabSyncJobStart {
@@ -270,7 +296,8 @@ export function useStartLabSyncJob() {
       }),
     onSuccess: (d) => {
       // Seed the poll cache so the progress chip appears immediately (no 800ms gap).
-      queryClient.setQueryData(['lab-sync-job'], { job: d.running ?? d.job });
+      const running = d.running ?? (d.queued ? null : d.job);
+      queryClient.setQueryData(['lab-sync-job'], { job: running, running, pending: d.pending ?? (d.queued ? d.job : null) });
       queryClient.invalidateQueries({ queryKey: ['lab-sync-job'] });
     },
   });

@@ -18,6 +18,10 @@ const ROOT = process.env.LAB_BOARD_CSS_ROOT ?? join(new URL('../../', import.met
 
 const FILES = [
   'components/lab/board/board.css',
+  // The v1 board's surviving chrome (credentials banner, showcase stage, routed-page toast).
+  'components/lab/board/lab-shell.css',
+  // The inspector, add-card menu and save-to-library dialog.
+  'components/lab/board/editors.css',
 ];
 
 interface Decl { file: string; line: number; prop: string; value: string }

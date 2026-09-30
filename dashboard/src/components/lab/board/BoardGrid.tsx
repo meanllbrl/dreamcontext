@@ -95,6 +95,17 @@ export function sameLayout(a: readonly { id: string; at: GridRect }[], b: readon
   });
 }
 
+/** The verify hooks on a laid-out cell: its card id and the grid rect it occupies. */
+export function cellHooks(card: { id: string; at: GridRect }): Record<string, string | number> {
+  return {
+    'data-lab-card': card.id,
+    'data-lab-card-x': card.at.x,
+    'data-lab-card-y': card.at.y,
+    'data-lab-card-w': card.at.w,
+    'data-lab-card-h': card.at.h,
+  };
+}
+
 /** A running drag must stop the moment the grid turns into the narrow column. */
 export function shouldCancelDrag(dragging: boolean, containerWidth: number): boolean {
   return dragging && isNarrow(containerWidth);
@@ -202,6 +213,7 @@ export function BoardGrid({ cards, editing, renderCard, onLayout, onSelectCard }
             key={card.id}
             className="board-cell board-cell--narrow"
             data-card-id={card.id}
+            {...cellHooks(card)}
             style={{ height: card.at.h * GRID_ROW_PX - GRID_GAP_PX }}
           >
             {renderCard(card)}
@@ -235,6 +247,7 @@ export function BoardGrid({ cards, editing, renderCard, onLayout, onSelectCard }
             key={card.id}
             className={`board-cell${active ? ' board-cell--active' : ''}`}
             data-card-id={card.id}
+            {...cellHooks(card)}
             style={style}
           >
             {renderCard(card)}
@@ -243,6 +256,7 @@ export function BoardGrid({ cards, editing, renderCard, onLayout, onSelectCard }
                 {/* Over the card's content in edit mode: an iframe or a chart must not eat the drag. */}
                 <div
                   className="board-cell-handle"
+                  data-lab-drag-handle
                   role="button"
                   tabIndex={-1}
                   aria-label={t('lab.board.grid.move')}
@@ -253,6 +267,7 @@ export function BoardGrid({ cards, editing, renderCard, onLayout, onSelectCard }
                 />
                 <div
                   className="board-cell-resize"
+                  data-lab-resize-handle
                   role="button"
                   tabIndex={-1}
                   aria-label={t('lab.board.grid.resize')}

@@ -215,7 +215,8 @@ describe('the sandboxed iframe (security pins — C5 unit half)', () => {
   });
 
   it('the card swaps to the html body; the detail panel keeps the typed TWIN', () => {
-    const card = readFileSync(join(DASH, 'InsightCard.tsx'), 'utf-8');
+    // The board card draws a legacy insight through the `insight` block (v1's InsightCard is gone).
+    const card = readFileSync(join(DASH, 'blocks/InsightBlock.tsx'), 'utf-8');
     expect(card).toContain('cache?.html ?');
     expect(card).toContain('<HtmlInsightBody');
 

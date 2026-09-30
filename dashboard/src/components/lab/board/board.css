@@ -113,6 +113,26 @@
   font-weight: var(--font-weight-semibold);
 }
 
+.board-btn--icon {
+  justify-content: center;
+  width: var(--space-7);
+  padding: 0;
+  font-weight: var(--font-weight-semibold);
+}
+
+/* The neutral-selected recipe, not the accent: the snap preview keeps the page's one accent. */
+.board-btn--primary {
+  border-color: var(--color-text);
+  background: var(--color-bg-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.board-btn--danger {
+  border-color: var(--color-error-ink);
+  color: var(--color-error-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
 .board-btn--quiet {
   height: auto;
   padding: 0;
@@ -339,7 +359,16 @@
   padding: var(--space-3) var(--space-4) 0;
 }
 
+.board-card-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .board-card-title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   overflow: hidden;
   color: var(--color-text);
@@ -360,6 +389,50 @@
   color: var(--color-error-ink);
 }
 
+.board-card-fresh--syncing,
+.board-card-fresh--queued {
+  color: var(--color-text);
+}
+
+/* The source's own note, plain text after the freshness sentence. */
+.board-card-note {
+  margin-left: var(--space-2);
+  color: var(--color-text-tertiary);
+}
+
+/* Above the edit-mode drag handle (z 1): the menu stays usable while editing. */
+.board-card-menu {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.board-card-menu:hover,
+.board-card-menu[aria-expanded='true'] {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.board-card-menu:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
 .board-card-body {
   flex: 1;
   min-height: 0;
@@ -376,15 +449,10 @@
   min-width: 0;
 }
 
-.board-block-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.board-block-child {
   height: 100%;
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+  min-height: 0;
+  min-width: 0;
 }
 
 .board-card--missing {
@@ -446,44 +514,251 @@
   gap: var(--space-2);
 }
 
-/* ─── Slots (inspector, add-card menu) ──────────────────────────────────── */
+/* ─── Freshness sentence + unplaced notice ──────────────────────────────── */
 
-.board-slot {
-  flex: none;
-  width: calc(var(--space-28) * 2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  overflow-y: auto;
-  border-left: 1px solid var(--color-border);
-  background: var(--color-bg-secondary);
-}
-
-.board-slot-head {
+.board-freshness,
+.board-notice {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-5) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
 }
 
-.board-slot-title {
+.board-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+/* ─── Menus and small forms (BoardPopover) ──────────────────────────────── */
+
+.board-popover {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: calc(var(--space-28) * 1.75);
+  max-width: calc(100vw - var(--space-4));
+  padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+.board-popover--wide {
+  gap: var(--space-2);
+  padding: var(--space-3);
+  min-width: calc(var(--space-28) * 3);
+}
+
+.board-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-menu-item:hover:not(:disabled),
+.board-menu-item:focus-visible {
+  outline: none;
+  background: var(--color-bg-tertiary);
+}
+
+.board-menu-item:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.board-menu-item--danger:not(:disabled) {
+  color: var(--color-error-ink);
+}
+
+.board-menu-item-label {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.board-slot-note {
-  margin: 0;
+.board-menu-item-more {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.board-menu-sep {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--color-border);
+}
+
+.board-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+
+.board-form-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
 }
 
+.board-form-note {
+  margin: 0;
+  max-width: calc(var(--space-28) * 2.5);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.board-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.board-input {
+  height: var(--space-7);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.board-input:focus {
+  outline: none;
+  border-color: var(--color-text);
+}
+
+/* ─── Toasts ────────────────────────────────────────────────────────────── */
+
+.board-page {
+  position: relative;
+}
+
+.board-toasts {
+  position: absolute;
+  bottom: var(--space-5);
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 80%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.board-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  pointer-events: auto;
+}
+
+.board-toast--error {
+  color: var(--color-error-ink);
+}
+
+.board-toast-close {
+  padding: 0 var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+/* ─── Empty state ───────────────────────────────────────────────────────── */
+
+.board-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: calc(var(--space-28) * 6.5);
+  margin: 0 auto;
+  padding: var(--space-8) 0;
+  text-align: center;
+}
+
+.board-empty-kicker {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.board-empty-title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.board-empty-lead,
+.board-empty-foot {
+  margin: 0;
+  max-width: calc(var(--space-28) * 5);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.board-empty-foot {
+  font-size: var(--font-size-xs);
+}
+
+.board-empty-cmd {
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .board-card-menu,
   .board-btn,
   .board-tab {
     transition: none;

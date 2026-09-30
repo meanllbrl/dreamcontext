@@ -226,6 +226,25 @@ export function htmlBlockInputs(
     .map((name) => ({ name, ref: bound[name], accepts: HTML_INPUT_DEFAULT_FRAMES }));
 }
 
+/**
+ * The frame kinds a block asks for, in preference order. The catalog order,
+ * except a `stat` with a `series` pick on an insight (no dataset): the pick
+ * names a series, which only a series frame carries, so the series frame
+ * comes first. The dashboard's StatBlock honours the pick the same way, so
+ * `lab board show` and the card print the same figure.
+ */
+export function blockFramePreference(block: Pick<Block, 'type' | 'data' | 'options'>, catalog: readonly FrameKind[]): readonly FrameKind[] {
+  if (block.type !== 'stat') return catalog;
+  const pick = block.options?.series;
+  const picked = typeof pick === 'string'
+    ? pick.trim() !== ''
+    : Array.isArray(pick) && pick.some((s) => typeof s === 'string' && s.trim() !== '');
+  if (!picked) return catalog;
+  const parsed = parseDataRef(block.data);
+  if (!parsed || parsed.dataset !== null) return catalog;
+  return ['series', 'value'];
+}
+
 function resolveBlocks(
   contextRoot: string,
   card: Card,
@@ -239,7 +258,7 @@ function resolveBlocks(
     const entry = BLOCK_CATALOG[block.type];
     if (!entry) return;
     if (entry.data === 'binding') {
-      out[frameKey(card.id, path)] = resolveFrame(contextRoot, block.data, entry.frames, memo);
+      out[frameKey(card.id, path)] = resolveFrame(contextRoot, block.data, blockFramePreference(block, entry.frames), memo);
     } else if (entry.data === 'inputs') {
       for (const input of htmlBlockInputs(contextRoot, block)) {
         out[frameKey(card.id, path, input.name)] = resolveFrame(contextRoot, input.ref, input.accepts, memo);

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createInsight, writeCache } from '../../src/lib/lab/store.js';
 import { saveLibraryBlock } from '../../src/lib/lab/block-library.js';
-import { parseDataRef, resolveBoardFrames, resolveFrame, type TableFrame } from '../../src/lib/lab/frames.js';
+import { blockFramePreference, parseDataRef, resolveBoardFrames, resolveFrame, type TableFrame } from '../../src/lib/lab/frames.js';
 import { applyFrameOps, frameOpsFromOptions } from '../../src/lib/lab/frameOps.js';
 import type { InsightCache } from '../../src/lib/lab/types.js';
 
@@ -127,5 +127,32 @@ describe('resolveBoardFrames', () => {
     expect(frames['c-mix:3#bad']).toMatchObject({ kind: 'empty', reason: 'unsafe-ref' });
     expect(frames['c-mix:4#money'].kind).toBe('table');
     expect(frames['c-mix:4#sneaky']).toBeUndefined();
+  });
+
+  it('a stat with a series pick on an insight resolves the SERIES frame (lab board show = the dashboard StatBlock)', () => {
+    const frames = resolveBoardFrames(root, {
+      cards: [{
+        id: 'c-stat', at: { x: 0, y: 0, w: 12, h: 6 },
+        blocks: [
+          { type: 'stat', data: 'signups', options: { series: ['signups'] } },
+          { type: 'stat', data: 'signups', options: { series: [] } },
+          { type: 'stat', data: 'signups', options: {} },
+          { type: 'tabs', options: {}, tabs: [{ label: 'A', blocks: [{ type: 'stat', data: 'signups', options: { series: 'signups' } }] }] },
+        ],
+      }],
+    });
+    expect(frames['c-stat:0'].kind).toBe('series');
+    expect(frames['c-stat:1'].kind).toBe('value');
+    expect(frames['c-stat:2'].kind).toBe('value');
+    expect(frames['c-stat:3.0.0'].kind).toBe('series');
+  });
+
+  it('frame preference: only a stat with a non-empty series pick and no dataset flips to series-first', () => {
+    const catalog = ['value', 'series'] as const;
+    expect(blockFramePreference({ type: 'stat', data: 'signups', options: { series: ['a'] } }, catalog)).toEqual(['series', 'value']);
+    expect(blockFramePreference({ type: 'stat', data: 'signups', options: { series: [' '] } }, catalog)).toBe(catalog);
+    expect(blockFramePreference({ type: 'stat', data: 'revenue/by-country', options: { series: ['a'] } }, catalog)).toBe(catalog);
+    expect(blockFramePreference({ type: 'stat', data: '../x', options: { series: ['a'] } }, catalog)).toBe(catalog);
+    expect(blockFramePreference({ type: 'line', data: 'signups', options: { series: ['a'] } }, ['series'])).toEqual(['series']);
   });
 });

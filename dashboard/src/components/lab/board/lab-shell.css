@@ -1,0 +1,213 @@
+/*
+ * The Insights page's shared chrome that outlived the v1 board (LabBoard.css): the
+ * missing-credentials banner, the showcase stage the empty state draws, the status badges (from
+ * v1 InsightCard.css) and the routed pages' toast (`.lab-toast`, LabPage). Tokens only, 12 / 14 sizes, 400 / 600 weights
+ * (tests/unit/lab-board-tokens.test.ts).
+ */
+
+/* ─── Missing-credentials banner ────────────────────────────────────────── */
+
+.lab-cred-banner {
+  flex-shrink: 0;
+  margin: var(--space-3) var(--space-5) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-subtle);
+}
+
+.lab-cred-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.lab-cred-banner-title {
+  color: var(--color-warning-ink);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-cred-banner-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-warning-ink);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.lab-cred-banner-toggle:hover {
+  text-decoration: underline;
+}
+
+.lab-cred-banner-hint {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.lab-cred-banner-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lab-cred-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.lab-cred-banner-key {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lab-cred-banner-key code {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.lab-cred-banner-usedby {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.lab-cred-banner-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lab-cred-banner-input {
+  width: calc(var(--space-28) * 2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.lab-cred-banner-input:focus {
+  outline: none;
+  border-color: var(--color-warning);
+}
+
+.lab-cred-banner-save {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-warning);
+  color: var(--color-text-on-brand);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.lab-cred-banner-save:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ─── Showcase stage (the empty state's animated pipeline) ──────────────── */
+
+.lab-stage {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.lab-stage-tag {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-5);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-stage-flow {
+  max-width: calc(var(--space-28) * 5);
+  margin: 0 auto;
+}
+
+/* ─── Routed pages' toast (LabPage) ─────────────────────────────────────── */
+
+.lab-toast {
+  position: absolute;
+  bottom: var(--space-6);
+  left: 50%;
+  z-index: 40;
+  max-width: 80%;
+  padding: var(--space-2) var(--space-4);
+  transform: translateX(-50%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+/* ─── Status badges (detail panel, app page, funnel pages) ──────────────── */
+
+.lab-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.lab-badge--fresh {
+  background: var(--color-success-subtle);
+  color: var(--color-success-ink);
+}
+
+.lab-badge--stale {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-ink);
+}
+
+.lab-badge--error {
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink);
+}
+
+.lab-badge--loading,
+.lab-badge--binding {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+.lab-badge--muted {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+}

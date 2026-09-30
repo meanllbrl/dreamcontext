@@ -27,7 +27,8 @@ const ROOT = join(import.meta.dirname, '../../dashboard/src/components/lab');
 const HOOKS = join(import.meta.dirname, '../../dashboard/src/hooks/useLab.ts');
 
 const TWEAK_SAVERS = [
-  'InsightCard.tsx',
+  // The board card's ⋯ menu (Range, Tweaks): v1's InsightCard is gone.
+  'board/CardMenu.tsx',
   'InsightDetailPanel.tsx',
   'funnel/FunnelDetailPage.tsx',
   'funnel/FunnelOverviewPage.tsx',
@@ -130,7 +131,8 @@ describe('the RangeControl hands off to a save that re-syncs', () => {
   it('every surface names the outcome instead of claiming a refresh that failed', () => {
     for (const file of TWEAK_SAVERS) {
       expect(read(file), `${file} needs a distinct message for a failed re-fetch`)
-        .toMatch(/but the re-?fetch failed|but the refresh failed/);
+        // Surfaces on t() name it by key (EN: "saved, but the refresh failed").
+        .toMatch(/but the re-?fetch failed|but the refresh failed|lab\.board\.toast\.tweaksSyncFailed/);
     }
   });
 
@@ -145,7 +147,7 @@ describe('the RangeControl hands off to a save that re-syncs', () => {
     expect(entry, 'chartRegistry.ts must have a breakdown entry').toBeTruthy();
     expect(entry![1]).toContain('supportsWindow: true');
     // And it stays a slide-over render: no `routed` flag means the guarded
-    // InsightCard/InsightDetailPanel are the ONLY surfaces that save its tweaks.
+    // CardMenu/InsightDetailPanel are the ONLY surfaces that save its tweaks.
     expect(entry![1]).not.toContain('routed');
   });
 });

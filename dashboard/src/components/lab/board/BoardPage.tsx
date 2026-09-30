@@ -3,39 +3,72 @@ import {
   type ComponentType, type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../context/I18nContext';
-import { useApi } from '../../../context/VaultContext';
+import { useApi, useVault } from '../../../context/VaultContext';
 import { useDismissOnOutside } from '../../../lib/useDismissOnOutside';
 import { revealPath } from '../../../lib/reveal';
-import { useLabInsights, type InsightCache } from '../../../hooks/useLab';
+import { useFocusTarget, type FocusTarget } from '../../../hooks/useFocusTarget';
 import {
-  useBlockLibrary, useBoard, useBoardCaches, useBoards, useSaveBoard, type BoardSaveSignal,
+  useLabInsights, useLabSyncSlots, useStartLabSyncJob, type InsightCache, type InsightSummary, type SyncResult,
+} from '../../../hooks/useLab';
+import {
+  useBlockLibrary, useBoard, useBoardCaches, useBoards, useBoardWriter, useCreateBoard, useDeleteBoard,
+  useFetchBoard, useSaveBoard, type BoardSaveSignal,
 } from '../../../hooks/useBoards';
 import { findFreeSlot } from '../../../generated/grid';
 import catalogJson from '../../../generated/block-catalog.json';
+import { RequestError } from '../../../api/client';
+import { isRoutedRender } from '../chartRegistry';
+import { InsightDetailPanel } from '../InsightDetailPanel';
+import { LabCredentialsBanner } from '../LabCredentialsBanner';
+import { pushLabPath } from '../funnel/labRoute';
 import { BoardGrid } from './BoardGrid';
 import { BoardCard } from './BoardCard';
+import { BoardMenu } from './BoardMenu';
+import { CardMenu } from './CardMenu';
+import { BoardEmptyState } from './BoardEmptyState';
+import { BlockInspector } from './BlockInspector';
+import { AddCardMenu as EditorAddCardMenu } from './AddCardMenu';
+import { createRevGuard, createUndoStack, settleMoveUndo, undoKey } from './boardUndo';
+import { MoveBlockedError, duplicateCard, moveCardToBoard, removeCard, specOf } from './boardEdits';
+import {
+  RECHECK_MS, busySlugs, cardSyncState, freshReason, isExpired, planAutomaticSync,
+} from './boardSync';
 import { renderBlock as registryRenderBlock } from '../blocks/blockRegistry';
 import type {
   AddCardMenuProps, Board, BlockCatalog, BlockRenderer, BoardSpec, Card, InspectorProps,
 } from './boardTypes';
 import './board.css';
+import './lab-shell.css';
 
 /**
  * THE INSIGHTS PAGE: one board at a time, a switcher over all of them.
  *
  * Tabs name every board; the ones that do not fit fold into a "+N" chip whose
  * menu lists them (the Automations filter row's recipe), and the active board
- * always keeps a visible tab. Below them, the board's grid.
+ * always keeps a visible tab. Beside them: the board's ⋯ menu (New, Rename,
+ * Delete, Sync board) and the Edit toggle. Under them, one sentence on how
+ * fresh the board is. Below, the grid; every card has its own ⋯ menu.
  *
  * SEAMS. The page draws blocks, the inspector and the add-card menu through
- * props: `renderBlock` defaults to the block registry (wired by the Wave 1
- * integration), `Inspector` and `AddCardMenu` to small stand-in panels until
- * the Wave 2 integration wires `BlockInspector` and `AddCardMenu`.
+ * props: `renderBlock` defaults to the block registry, `Inspector` to
+ * `BlockInspector`, `AddCardMenu` to the editors' `AddCardMenu`. Every change
+ * they make arrives as a whole card through `onChange` / `onAdd`, so the save
+ * queue and the undo stack cover them like any other edit.
  *
- * EDITING writes through `useSaveBoard`: a layout change is the board's whole
- * next spec, queued (one PUT in flight, the rest coalesced). A conflict reloads
- * the board and says so; a failed save keeps the edits on screen with Retry.
+ * EDITING writes through `useSaveBoard`: every edit is the board's whole next
+ * spec, queued (one PUT in flight, the rest coalesced). Each edit also records
+ * the spec it replaced on an undo stack (⌘Z / ⇧⌘Z, and the Undo toast). A
+ * conflict (409: someone else wrote the file) reloads the board, says so and
+ * clears the stack, because every remembered spec is a rewrite of a file that
+ * no longer exists. A failed save keeps the edits on screen with Retry.
+ *
+ * SYNC. Opening a board starts ONE automatic job over the insights whose data
+ * expired, and none when all are fresh; while the page is visible a 60 s timer
+ * and every return to the tab ask again, from the summaries already loaded
+ * (`boardSync.ts`). Automatic requests carry no `force`; Sync board and a
+ * card's Refresh send `'user'`, Force full refresh `'hard'`.
  *
  * AN ERROR BOARD (conflict markers, unparseable YAML) shows its name, the parse
  * error and "Open file", and cannot enter edit mode: the server refuses its PUT
@@ -47,17 +80,10 @@ const CATALOG = catalogJson as unknown as BlockCatalog;
 const MORE_ID = '__more';
 /** Keeps the menu off the window's edge, in px. */
 const EDGE_PAD = 8;
+/** How long a transient toast stays up, in ms. */
+const TOAST_MS = 5200;
 
-/** A board's spec as the PUT wants it: the stored fields, none of the server's bookkeeping. */
-export function specOf(board: Board, cards: Card[] = board.cards): BoardSpec {
-  return {
-    title: board.title,
-    ...(board.titleKey ? { titleKey: board.titleKey } : {}),
-    order: board.order,
-    cards,
-    body: board.body,
-  };
-}
+export { specOf };
 
 /** The tabs a row holding `k` of them shows: the first `k`, with the active one taking the last slot. */
 export function visibleTabs<T extends { slug: string }>(boards: readonly T[], k: number, active: string | null): T[] {
@@ -68,56 +94,68 @@ export function visibleTabs<T extends { slug: string }>(boards: readonly T[], k:
   return k === 0 ? [hit] : [...head.slice(0, k - 1), hit];
 }
 
-function InspectorPlaceholder({ card, onClose }: InspectorProps) {
-  const { t } = useI18n();
-  return (
-    <aside className="board-slot" aria-label={t('lab.board.slot.inspector')}>
-      <header className="board-slot-head">
-        <span className="board-slot-title">{card.title ?? card.insight ?? card.id}</span>
-        <button type="button" className="board-btn" onClick={onClose}>{t('lab.board.close')}</button>
-      </header>
-      <p className="board-slot-note">{t('lab.board.slot.inspectorSoon')}</p>
-    </aside>
-  );
+/** The board-level freshness sentence's parts, from the board's summaries. */
+export function boardFreshness(summaries: Readonly<Record<string, InsightSummary>>, now: number): {
+  total: number; stale: number; failed: number; newest: string | null;
+} {
+  let stale = 0;
+  let failed = 0;
+  let newest: string | null = null;
+  const list = Object.values(summaries);
+  for (const s of list) {
+    if (s.error) failed++;
+    else if (isExpired(s, now)) stale++;
+    if (s.fetchedAt && (!newest || Date.parse(s.fetchedAt) > Date.parse(newest))) newest = s.fetchedAt;
+  }
+  return { total: list.length, stale, failed, newest };
 }
 
-function AddCardMenuPlaceholder({ onClose }: AddCardMenuProps) {
-  const { t } = useI18n();
-  return (
-    <aside className="board-slot" aria-label={t('lab.board.addCard')}>
-      <header className="board-slot-head">
-        <span className="board-slot-title">{t('lab.board.addCard')}</span>
-        <button type="button" className="board-btn" onClick={onClose}>{t('lab.board.close')}</button>
-      </header>
-      <p className="board-slot-note">{t('lab.board.slot.addCardSoon')}</p>
-    </aside>
-  );
+/** "3 minutes ago" in the reader's language. */
+function agoText(iso: string, locale: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  const s = Math.round((ms - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  const abs = Math.abs(s);
+  if (abs < 60) return rtf.format(s, 'second');
+  if (abs < 3600) return rtf.format(Math.round(s / 60), 'minute');
+  if (abs < 86400) return rtf.format(Math.round(s / 3600), 'hour');
+  return rtf.format(Math.round(s / 86400), 'day');
 }
+
+type ToastKind = 'undo' | 'conflict' | 'queued' | 'info';
+interface Toast { id: number; kind: ToastKind; text: string }
 
 export interface BoardPageProps {
-  /** The block renderer. Default: the block registry (W1 integration). */
+  /** The block renderer. Default: the block registry. */
   renderBlock?: BlockRenderer;
-  /** The block inspector slot. Default: a stand-in panel. */
+  /** The block inspector slot. Default: `BlockInspector`. */
   Inspector?: ComponentType<InspectorProps>;
-  /** The add-card menu slot. Default: a stand-in panel. */
+  /** The add-card menu slot. Default: `AddCardMenu`. */
   AddCardMenu?: ComponentType<AddCardMenuProps>;
   /** The board to open (route / saved prefs); falls back to the first board. */
   board?: string | null;
+  /** A board the user picked (a tab, a new board): the page's route and prefs follow. */
   onBoardChange?: (slug: string) => void;
-  /** Told about save conflicts and failures (undo stacks clear on a conflict). */
+  /** Told about save conflicts and failures (the page's own undo stack already clears on a conflict). */
   onSaveSignal?: (signal: BoardSaveSignal) => void;
+  /** Shell navigation focus: opens that insight's detail (⌘K recall hit). */
+  focus?: FocusTarget;
 }
 
 export function BoardPage({
   renderBlock = registryRenderBlock,
-  Inspector = InspectorPlaceholder,
-  AddCardMenu = AddCardMenuPlaceholder,
+  Inspector = BlockInspector,
+  AddCardMenu = EditorAddCardMenu,
   board: requested = null,
   onBoardChange,
   onSaveSignal,
+  focus,
 }: BoardPageProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const api = useApi();
+  const { isActive } = useVault();
+  const queryClient = useQueryClient();
   const list = useBoards();
   const boards = useMemo(() => list.data?.boards ?? [], [list.data]);
   const [picked, setPicked] = useState<string | null>(requested);
@@ -129,26 +167,66 @@ export function BoardPage({
   const caches = useBoardCaches(board?.cards);
   const insights = useLabInsights();
   const library = useBlockLibrary();
+  const slots = useLabSyncSlots();
+  const startSync = useStartLabSyncJob();
+  const createBoard = useCreateBoard();
+  const deleteBoard = useDeleteBoard();
+  const fetchBoard = useFetchBoard();
+  const writer = useBoardWriter();
 
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<{ card: string; block: number[] | null } | null>(null);
   const [adding, setAdding] = useState(false);
-  const [notice, setNotice] = useState<BoardSaveSignal | null>(null);
   const [openError, setOpenError] = useState(false);
+  const [openSlug, setOpenSlug] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastSeq = useRef(0);
+  const undo = useRef(createUndoStack());
+  const [, setUndoTick] = useState(0);
+
+  const say = useCallback((kind: ToastKind, text: string) => {
+    toastSeq.current += 1;
+    setToast({ id: toastSeq.current, kind, text });
+  }, []);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast((cur) => (cur?.id === toast.id ? null : cur)), TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const signal = useCallback((s: BoardSaveSignal) => {
-    setNotice(s);
+    if (s.kind === 'conflict') {
+      // Every remembered spec now rewrites a file that no longer exists.
+      if (s.slug === active) undo.current.clear();
+      setUndoTick((n) => n + 1);
+      say('conflict', t('lab.board.conflict'));
+    }
     onSaveSignal?.(s);
-  }, [onSaveSignal]);
-  const { save, retry, status: saveStatus } = useSaveBoard(active, signal);
+  }, [active, onSaveSignal, say, t]);
+  const { save, retry, status: saveStatus, savedRev } = useSaveBoard(active, signal);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
-  // A board switch leaves edit state behind.
+  // A rev this page did not write (an agent, the CLI, a brain-sync pull, seen through any refetch)
+  // voids the undo stack: undoing would PUT an old spec with THEIR rev and silently overwrite them.
+  const revGuard = useRef(createRevGuard());
+  const serverRev = shown.data?.board.rev ?? null;
+  useEffect(() => {
+    const slug = shown.data?.board.slug ?? null;
+    if (revGuard.current.observe(serverRev, { slug, ownRev: savedRev, saving: saveStatus === 'saving' }) === 'clear') {
+      undo.current.clear();
+      setUndoTick((n) => n + 1);
+    }
+  }, [serverRev, shown.data?.board.slug, savedRev, saveStatus]);
+
+  // A board switch leaves edit state and its undo history behind.
   useEffect(() => {
     setEditing(false);
     setSelected(null);
     setAdding(false);
-    setNotice(null);
     setOpenError(false);
+    undo.current.clear();
+    setUndoTick((n) => n + 1);
   }, [active]);
 
   const choose = useCallback((slug: string) => {
@@ -157,11 +235,54 @@ export function BoardPage({
   }, [onBoardChange]);
 
   const boardTitle = useCallback((b: Pick<Board, 'title' | 'titleKey'>) => (b.titleKey ? t(b.titleKey) : b.title), [t]);
+  const writable = !!board && !board.error;
+
+  /** Every board edit goes through here: record what it replaces, then queue the whole next spec. */
+  const writeSpec = useCallback((next: BoardSpec) => {
+    if (!board || board.error) return;
+    undo.current.record(specOf(board));
+    setUndoTick((n) => n + 1);
+    save(next, board.rev);
+    say('undo', t('lab.board.toast.edited'));
+  }, [board, save, say, t]);
 
   const writeCards = useCallback((cards: Card[]) => {
+    if (!board) return;
+    writeSpec(specOf(board, cards));
+  }, [board, writeSpec]);
+
+  const step = useCallback((dir: 'undo' | 'redo') => {
     if (!board || board.error) return;
-    save(specOf(board, cards), board.rev);
-  }, [board, save]);
+    const current = specOf(board);
+    const next = dir === 'undo' ? undo.current.undo(current) : undo.current.redo(current);
+    if (!next) return;
+    setUndoTick((n) => n + 1);
+    save(next, board.rev);
+    say('info', t(dir === 'undo' ? 'lab.board.toast.undone' : 'lab.board.toast.redone'));
+  }, [board, save, say, t]);
+
+  // ⌘Z / ⇧⌘Z while this page is the one on screen (a background project's page stays mounted).
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  const keysLive = isActive && !openSlug;
+  useEffect(() => {
+    if (!keysLive) return;
+    const onKey = (e: KeyboardEvent) => {
+      const dir = undoKey(e);
+      if (!dir) return;
+      e.preventDefault();
+      stepRef.current(dir);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [keysLive]);
+
+  // ─── Sync ──────────────────────────────────────────────────────────────────
+
+  const summaries = useMemo(() => shown.data?.summaries ?? {}, [shown.data]);
+  const frames = useMemo(() => shown.data?.frames ?? {}, [shown.data]);
+  const running = slots.data?.running ?? null;
+  const pending = slots.data?.pending ?? null;
 
   const cacheMap = useMemo<Record<string, InsightCache | null>>(() => {
     const out: Record<string, InsightCache | null> = {};
@@ -169,11 +290,172 @@ export function BoardPage({
     return out;
   }, [caches.data]);
 
-  const summaries = useMemo(() => shown.data?.summaries ?? {}, [shown.data]);
-  const frames = useMemo(() => shown.data?.frames ?? {}, [shown.data]);
+  /** Slugs this page asked for automatically, and when: not asked again inside their backoff window. */
+  const askedAt = useRef(new Map<string, number>());
+
+  const autoSync = useCallback(() => {
+    if (!isActive || document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    const req = planAutomaticSync(summaries, now, { recent: askedAt.current, busy: busySlugs(running, pending) });
+    if (!req) return;
+    for (const slug of req.slugs) askedAt.current.set(slug, now);
+    startSync.mutate(req, {
+      onSuccess: (d) => { if (d.queued) say('queued', t('lab.board.toast.queued')); },
+    });
+  }, [isActive, summaries, running, pending, startSync, say, t]);
+  const autoSyncRef = useRef(autoSync);
+  autoSyncRef.current = autoSync;
+
+  // Board open: ONE evaluation once the board's summaries are loaded and settled.
+  const evaluatedFor = useRef<string | null>(null);
+  const settled = !!shown.data && !shown.isFetching && slots.isFetched;
+  useEffect(() => {
+    if (!active || !settled || evaluatedFor.current === active) return;
+    evaluatedFor.current = active;
+    autoSyncRef.current();
+  }, [active, settled]);
+
+  // While visible: every 60 s, and on every return to the tab.
+  useEffect(() => {
+    if (!isActive) return;
+    const timer = setInterval(() => autoSyncRef.current(), RECHECK_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') autoSyncRef.current(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [isActive]);
+
+  // Cards light up as the job settles them: refetch on every settled count, not every poll tick.
+  const jobDone = running?.done ?? 0;
+  const jobId = running?.id ?? null;
+  useEffect(() => {
+    if (!jobId || jobDone === 0) return;
+    void queryClient.invalidateQueries({ queryKey: ['lab'] });
+  }, [jobDone, jobId, queryClient]);
+
+  // A job this page watched run: refetch once it settles, and report a user-started one's outcome.
+  const watched = useRef<string | null>(null);
+  const reported = useRef<string | null>(null);
+  useEffect(() => {
+    if (!running) return;
+    if (running.status === 'running') {
+      watched.current = running.id;
+      return;
+    }
+    if (watched.current !== running.id || reported.current === running.id) return;
+    reported.current = running.id;
+    void queryClient.invalidateQueries({ queryKey: ['lab'] });
+    if (running.force === null) return;
+    if (running.status === 'error') say('info', t('lab.board.toast.syncFailed').replace('{error}', running.error ?? ''));
+    else if (running.failed.length > 0) {
+      say('info', t('lab.board.toast.syncSomeFailed')
+        .replace('{n}', String(running.failed.length)).replace('{total}', String(running.results.length)));
+    } else say('info', t('lab.board.toast.synced').replace('{n}', String(running.results.length)));
+  }, [running, queryClient, say, t]);
+
+  /** The most recent job result per slug (the skip reason a card shows). */
+  const lastResults = useMemo(() => {
+    const out = new Map<string, SyncResult>();
+    for (const r of running?.results ?? []) out.set(r.slug, r);
+    return out;
+  }, [running]);
+
+  const syncBoard = useCallback(() => {
+    const slugs = Object.keys(summaries).sort();
+    if (slugs.length === 0) return;
+    startSync.mutate({ force: 'user', slugs }, {
+      onSuccess: (d) => { if (d.queued) say('queued', t('lab.board.toast.queued')); },
+      onError: (err) => say('info', t('lab.board.toast.syncFailed').replace('{error}', (err as Error).message)),
+    });
+  }, [summaries, startSync, say, t]);
+
+  // ─── Board + card actions ──────────────────────────────────────────────────
+
+  const newBoard = useCallback((title: string) => {
+    createBoard.mutate(title, {
+      onSuccess: (r) => { choose(r.board.slug); say('info', t('lab.board.toast.created').replace('{title}', r.board.title)); },
+      onError: (err) => say('info', t('lab.board.toast.createFailed').replace('{error}', (err as Error).message)),
+    });
+  }, [createBoard, choose, say, t]);
+
+  const renameBoard = useCallback((title: string) => {
+    if (!board) return;
+    // A derived board's localized title is replaced by the name the user typed.
+    writeSpec({ title, order: board.order, cards: board.cards, body: board.body });
+  }, [board, writeSpec]);
+
+  const removeBoard = useCallback(() => {
+    if (!board) return;
+    const next = boards.find((b) => b.slug !== board.slug);
+    deleteBoard.mutate({ slug: board.slug, rev: board.rev }, {
+      onSuccess: () => {
+        if (next) choose(next.slug);
+        else setPicked(null);
+        say('info', t('lab.board.toast.deleted').replace('{title}', boardTitle(board)));
+      },
+      onError: (err) => say(
+        err instanceof RequestError && err.status === 409 ? 'conflict' : 'info',
+        err instanceof RequestError && err.status === 409
+          ? t('lab.board.conflict')
+          : t('lab.board.toast.deleteFailed').replace('{error}', (err as Error).message),
+      ),
+    });
+  }, [board, boards, deleteBoard, choose, say, t, boardTitle]);
+
+  // Multi-page insights (funnel, app) open their routed page; the rest open the detail panel.
+  const openInsight = useCallback((slug: string) => {
+    const summary = summaries[slug] ?? insights.data?.find((s) => s.slug === slug);
+    if (summary && isRoutedRender(summary.render)) pushLabPath(slug, null);
+    else setOpenSlug(slug);
+  }, [summaries, insights.data]);
+  useFocusTarget(focus, setOpenSlug);
+  const openSummary = openSlug
+    ? insights.data?.find((s) => s.slug === openSlug) ?? summaries[openSlug] ?? null
+    : null;
+
+  // Target written and AWAITED first, then the source re-read for its rev (the first write on a
+  // derived vault materializes every board), then the source saved. A move spans two boards, so it
+  // is NOT on the (one-board) undo stack and gets no Undo toast; it clears the source's stack, but
+  // only if the source is still the board on screen when the move finishes (`settleMoveUndo`).
+  const moveTo = useCallback(async (cardId: string, target: string) => {
+    if (!board || board.error) return;
+    const from = board.slug;
+    try {
+      const moved = await moveCardToBoard({
+        fetchBoard: (slug) => fetchBoard(slug).then((r) => r.board),
+        saveAndWait: writer.saveAndWait,
+        idle: writer.idle,
+        unsaved: writer.unsaved,
+      }, from, target, cardId);
+      if (!moved) return;
+      if (settleMoveUndo(undo.current, from, activeRef.current)) setUndoTick((n) => n + 1);
+      writer.saveAndWait(from, moved.sourceSpec, moved.sourceRev).catch(() => {
+        // Conflict and failure already reach the page through the save signals (toast + Retry).
+      });
+      say('info', t('lab.board.toast.moved').replace('{title}', boardTitle(moved.target)));
+    } catch (err) {
+      if (err instanceof MoveBlockedError) {
+        const blocked = boards.find((b) => b.slug === err.slug);
+        say('info', err.slug === from || !blocked
+          ? t('lab.board.toast.moveBlocked')
+          : t('lab.board.toast.moveBlockedTarget').replace('{title}', boardTitle(blocked)));
+        return;
+      }
+      if (err instanceof RequestError && err.status === 409) return; // the conflict toast already said it
+      say('info', t('lab.board.toast.moveFailed').replace('{error}', (err as Error).message));
+    }
+  }, [board, boards, fetchBoard, writer, say, t, boardTitle]);
+
+  const targets = useMemo(
+    () => boards.filter((b) => b.slug !== active && !b.error).map((b) => ({ slug: b.slug, title: boardTitle(b) })),
+    [boards, active, boardTitle],
+  );
 
   const renderCard = useCallback((card: Card) => {
     const missing = !!card.insight && !!shown.data && !summaries[card.insight];
+    const primary = card.insight ? summaries[card.insight] : undefined;
     return (
       <BoardCard
         card={card}
@@ -182,12 +464,49 @@ export function BoardPage({
         caches={cacheMap}
         renderBlock={renderBlock}
         missing={missing}
-        onRemove={missing && board && !board.error ? () => writeCards(board.cards.filter((c) => c.id !== card.id)) : undefined}
+        onRemove={missing && writable && board ? () => writeCards(removeCard(board.cards, card.id)) : undefined}
+        syncState={cardSyncState(card.insight, running, pending)}
+        freshReason={freshReason(primary, card.insight ? lastResults.get(card.insight) : null)}
+        menu={(
+          <CardMenu
+            summary={primary}
+            editable={writable}
+            targets={targets}
+            onEditBlocks={() => { setEditing(true); setAdding(false); setSelected({ card: card.id, block: null }); }}
+            onOpenDetail={() => { if (card.insight) openInsight(card.insight); }}
+            onDuplicate={() => { if (board) writeCards(duplicateCard(board.cards, card.id)); }}
+            onMoveTo={(slug) => { void moveTo(card.id, slug); }}
+            onRemove={() => { if (board) writeCards(removeCard(board.cards, card.id)); }}
+            onToast={(text) => say('info', text)}
+          />
+        )}
       />
     );
-  }, [board, cacheMap, frames, renderBlock, shown.data, summaries, writeCards]);
+  }, [board, cacheMap, frames, renderBlock, shown.data, summaries, writeCards, writable, running, pending,
+    lastResults, targets, openInsight, moveTo, say]);
 
   const selectedCard = board && selected ? board.cards.find((c) => c.id === selected.card) ?? null : null;
+  const unplaced = shown.data?.unplaced ?? [];
+
+  // ─── Render ────────────────────────────────────────────────────────────────
+
+  const banner = <LabCredentialsBanner onToast={(text) => say('info', text)} />;
+
+  if (list.isSuccess && boards.length === 0) {
+    return (
+      <div className="board-page board-page--empty">
+        {banner}
+        <div className="board-canvas">
+          <BoardEmptyState
+            creating={createBoard.isPending}
+            failed={createBoard.isError}
+            onCreate={() => newBoard(t('lab.board.emptyState.firstTitle'))}
+          />
+        </div>
+        <BoardToasts toast={toast} onDismiss={() => setToast(null)} onUndo={() => step('undo')} saveFailed={false} onRetry={retry} />
+      </div>
+    );
+  }
 
   let body;
   if (list.isLoading || (active && shown.isLoading)) {
@@ -208,6 +527,7 @@ export function BoardPage({
           <button
             type="button"
             className="board-btn"
+            data-lab-open-file
             onClick={() => {
               setOpenError(false);
               void revealPath(api, `_dream_context/lab/boards/${board.slug}.md`).then((err) => setOpenError(err !== null));
@@ -220,7 +540,19 @@ export function BoardPage({
       </section>
     );
   } else if (board.cards.length === 0) {
-    body = <p className="board-note">{t('lab.board.noCards')}</p>;
+    body = (
+      <div className="board-blank">
+        <p className="board-note">{t('lab.board.noCards')}</p>
+        <button
+          type="button"
+          className="board-btn"
+          data-lab-add-first-card
+          onClick={() => { setEditing(true); setSelected(null); setAdding(true); }}
+        >
+          {t('lab.board.addCard')}
+        </button>
+      </div>
+    );
   } else {
     body = (
       <BoardGrid
@@ -233,39 +565,71 @@ export function BoardPage({
     );
   }
 
-  const canEdit = !!board && !board.error;
+  const fresh = board && !board.error ? boardFreshness(summaries, Date.now()) : null;
+  const boardJob = running?.status === 'running' && Object.keys(summaries).some((s) => cardSyncState(s, running, null) === 'syncing');
+  let sentence: string | null = null;
+  if (boardJob && running) {
+    sentence = t('lab.board.freshness.syncing').replace('{done}', String(running.done)).replace('{total}', String(running.total || running.done));
+  } else if (fresh && fresh.total > 0) {
+    if (fresh.failed > 0) {
+      sentence = t('lab.board.freshness.failed').replace('{n}', String(fresh.failed)).replace('{total}', String(fresh.total));
+    } else if (fresh.stale > 0) {
+      sentence = t('lab.board.freshness.stale').replace('{n}', String(fresh.stale)).replace('{total}', String(fresh.total));
+    } else if (fresh.newest) {
+      sentence = t('lab.board.freshness.fresh').replace('{total}', String(fresh.total)).replace('{ago}', agoText(fresh.newest, locale));
+    }
+  }
+
   return (
-    <div className="board-page">
+    <div
+      className="board-page"
+      data-lab-board={active ?? ''}
+      data-lab-board-derived={board?.derived ? 'true' : undefined}
+      data-lab-board-error={board?.error ? 'true' : undefined}
+    >
+      {banner}
       <div className="board-bar">
         <BoardTabs boards={boards} active={active} onSelect={choose} title={boardTitle} />
         <div className="board-bar-actions">
-          {saveStatus === 'saving' && <span className="board-status">{t('lab.board.saving')}</span>}
-          {notice?.kind === 'conflict' && <span className="board-status" role="status">{t('lab.board.conflict')}</span>}
-          {saveStatus === 'failed' && (
-            <span className="board-status board-status--error" role="status">
-              {t('lab.board.saveFailed')}
-              <button type="button" className="board-btn board-btn--quiet" onClick={retry}>{t('lab.board.retry')}</button>
-            </span>
-          )}
-          {editing && canEdit && (
-            <button type="button" className="board-btn" onClick={() => { setSelected(null); setAdding(true); }}>
+          {saveStatus === 'saving' && <span className="board-status" data-lab-saving>{t('lab.board.saving')}</span>}
+          {editing && writable && (
+            <button type="button" className="board-btn" data-lab-add-card-open onClick={() => { setSelected(null); setAdding(true); }}>
               {t('lab.board.addCard')}
             </button>
           )}
           <button
             type="button"
             className={`board-btn${editing ? ' board-btn--on' : ''}`}
+            data-lab-edit-toggle
             aria-pressed={editing}
-            disabled={!canEdit}
+            disabled={!writable}
             onClick={() => { setEditing((v) => !v); setSelected(null); setAdding(false); }}
           >
             {editing ? t('lab.board.done') : t('lab.board.edit')}
           </button>
+          <BoardMenu
+            title={board ? boardTitle(board) : null}
+            canRename={writable}
+            canDelete={!!board}
+            canSync={writable && Object.keys(summaries).length > 0}
+            onNew={newBoard}
+            onRename={renameBoard}
+            onDelete={removeBoard}
+            onSync={syncBoard}
+          />
         </div>
       </div>
-      {board && !board.error && (shown.data?.unplaced.length ?? 0) > 0 && (
-        <p className="board-note">
-          {t('lab.board.unplaced').replace('{n}', String(shown.data?.unplaced.length ?? 0))}
+      {sentence && <p className="board-freshness" data-lab-board-freshness>{sentence}</p>}
+      {writable && unplaced.length > 0 && (
+        <p className="board-notice" data-lab-unplaced={unplaced.length}>
+          <span>{t('lab.board.unplaced').replace('{n}', String(unplaced.length))}</span>
+          <button
+            type="button"
+            className="board-btn board-btn--quiet"
+            onClick={() => { setEditing(true); setSelected(null); setAdding(true); }}
+          >
+            {t('lab.board.addCard')}
+          </button>
         </p>
       )}
       <div className="board-main">
@@ -286,7 +650,7 @@ export function BoardPage({
         {editing && board && !board.error && adding && (
           <AddCardMenu
             board={board}
-            unplaced={shown.data?.unplaced ?? []}
+            unplaced={unplaced}
             insights={insights.data ?? []}
             catalog={CATALOG}
             library={library.data ?? []}
@@ -299,6 +663,52 @@ export function BoardPage({
           />
         )}
       </div>
+      {openSummary && (
+        <InsightDetailPanel summary={openSummary} onClose={() => setOpenSlug(null)} onToast={(text) => say('info', text)} />
+      )}
+      <BoardToasts
+        toast={toast}
+        onDismiss={() => setToast(null)}
+        onUndo={() => step('undo')}
+        saveFailed={saveStatus === 'failed'}
+        onRetry={retry}
+      />
+    </div>
+  );
+}
+
+// ─── Toasts ─────────────────────────────────────────────────────────────────
+
+function BoardToasts({ toast, onDismiss, onUndo, saveFailed, onRetry }: {
+  toast: Toast | null;
+  onDismiss: () => void;
+  onUndo: () => void;
+  saveFailed: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+  if (!toast && !saveFailed) return null;
+  return (
+    <div className="board-toasts" role="status" aria-live="polite">
+      {saveFailed && (
+        <div className="board-toast board-toast--error" data-lab-toast="save-failed">
+          <span>{t('lab.board.saveFailed')}</span>
+          <button type="button" className="board-btn board-btn--quiet" data-lab-toast-retry onClick={onRetry}>
+            {t('lab.board.retry')}
+          </button>
+        </div>
+      )}
+      {toast && (
+        <div key={toast.id} className="board-toast" data-lab-toast={toast.kind}>
+          <span>{toast.text}</span>
+          {toast.kind === 'undo' && (
+            <button type="button" className="board-btn board-btn--quiet" data-lab-toast-undo onClick={() => { onDismiss(); onUndo(); }}>
+              {t('lab.board.undo')}
+            </button>
+          )}
+          <button type="button" className="board-toast-close" aria-label={t('lab.board.close')} onClick={onDismiss}>×</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -434,6 +844,7 @@ function BoardTabs({
               role="tab"
               aria-selected={on}
               data-tab-id={b.slug}
+              data-lab-board-tab={b.slug}
               className={`board-tab${on ? ' board-tab--on' : ''}${b.error ? ' board-tab--error' : ''}`}
               onClick={() => onSelect(b.slug)}
               title={title(b)}
@@ -475,6 +886,7 @@ function BoardTabs({
               key={b.slug}
               type="button"
               role="menuitemradio"
+              data-lab-board-tab={b.slug}
               aria-checked={b.slug === active}
               tabIndex={-1}
               title={title(b)}

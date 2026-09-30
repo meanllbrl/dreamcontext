@@ -3,7 +3,7 @@ import { LabAppFrame } from './LabAppFrame';
 
 /**
  * The board card's body for `render: app` (chartRegistry.ts's `app` entry,
- * and the first branch InsightCard's `app -> html -> typed` ternary reaches
+ * and the first branch InsightBlock's `app -> html -> typed` ternary reaches
  * when `cache.app` is present).
  *
  * Card mode only: previews the `spec.card ?? spec.entry` page in the

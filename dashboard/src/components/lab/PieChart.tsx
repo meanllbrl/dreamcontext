@@ -15,7 +15,7 @@ import { ChartEmpty, type ChartBodyProps } from './chartBody';
  *  (BarList.tsx — the same component the `bar` render draws). */
 
 /** Reserved strip above the pie for the absolutely-positioned readout: the card
- *  body clips its overflow (InsightCard.css), so the bubble must stay inside. */
+ *  body clips its overflow (board.css, .board-card), so the bubble must stay inside. */
 const READOUT_GUTTER = 32;
 
 type Slice = BarRow;

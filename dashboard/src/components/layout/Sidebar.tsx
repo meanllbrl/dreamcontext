@@ -81,7 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
       { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
-      { page: 'lab', labelKey: 'nav.labpage', maturity: 'alpha' },
+      { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'council', labelKey: 'nav.council', maturity: 'alpha' },
     ],
   },

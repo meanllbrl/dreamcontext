@@ -6,6 +6,7 @@ import { blockRenderKey } from '../blocks/htmlBlockBridge';
 import {
   activeFilterFor, filterTarget, setActiveFilter, shapeBlockFrame, type ActiveFilter,
 } from '../blocks/frameShape';
+import type { CardSyncState, FreshReason } from './boardSync';
 import type { Block, BlockProps, BlockRenderer, Card, Frame } from './boardTypes';
 import './board.css';
 
@@ -13,11 +14,14 @@ import './board.css';
  * ONE CARD ON A BOARD: a title, a freshness line, and its blocks.
  *
  * The card never knows what a block looks like. It draws each one through the
- * injected `renderBlock` (the block registry, wired by the page), handing it
+ * injected `renderBlock` (the block registry, handed in by the page), giving it
  * the block's frame already shaped by the shared `frameOps` (static where/sort/
- * limit/series, then this card's interactive filter). The default renderer is
- * a neutral placeholder so the grid and page can be built and seen without the
- * block library.
+ * limit/series, then this card's interactive filter).
+ *
+ * The freshness line says how old the data is and, when the last check did not
+ * fetch, why: still inside its refresh window (`ttl`) or the upstream said
+ * nothing changed. The source's own `freshnessNote` follows as plain text.
+ * While a job covers the card it says "Syncing" or "Queued" instead.
  *
  * FILTERS are card-local: a `filter` block publishes `{dim, value}` for the
  * insight + dataset its own frame reads (`frameShape`), and only siblings whose
@@ -52,12 +56,7 @@ export function tabChildPath(tabsPath: readonly number[], rel: readonly number[]
   return [...tabsPath, ...rel];
 }
 
-/** The neutral stand-in until the block registry is wired: the block's type, nothing else. */
-export const placeholderRenderBlock: BlockRenderer = (block) => (
-  <div className="board-block-placeholder" data-block-type={block.type}>{block.type}</div>
-);
-
-type FreshnessKey = 'never' | 'failed' | 'stale' | 'fresh';
+export type FreshnessKey = 'never' | 'failed' | 'stale' | 'fresh';
 
 function freshnessOf(summary: InsightSummary | undefined): FreshnessKey | null {
   if (!summary) return null;
@@ -79,6 +78,28 @@ function ago(iso: string, locale: string): string {
   return rtf.format(Math.round(s / 86400), 'day');
 }
 
+/** The freshness line's words: live job state first, then age (+ the skip reason when known). */
+export function freshnessText(
+  t: (key: string) => string,
+  locale: string,
+  summary: InsightSummary | undefined,
+  fresh: FreshnessKey | null,
+  syncState: CardSyncState,
+  reason: FreshReason | null,
+): string {
+  if (syncState) return t(`lab.board.fresh.${syncState}`);
+  if (!summary || !fresh) return '';
+  if (fresh === 'never' || fresh === 'failed') return t(`lab.board.fresh.${fresh}`);
+  const updated = ago(summary.fetchedAt as string, locale);
+  if (fresh === 'fresh' && reason === 'upstream-unchanged') {
+    return t('lab.board.fresh.upstream')
+      .replace('{ago}', updated)
+      .replace('{checked}', summary.checkedAt ? ago(summary.checkedAt, locale) : updated);
+  }
+  if (fresh === 'fresh' && reason === 'ttl') return t('lab.board.fresh.ttl').replace('{ago}', updated);
+  return t(`lab.board.fresh.${fresh}`).replace('{ago}', updated);
+}
+
 export interface BoardCardProps {
   card: Card;
   /** Frames for this board, keyed by `frameKey`. */
@@ -87,16 +108,22 @@ export interface BoardCardProps {
   summaries: Record<string, InsightSummary>;
   /** Whole caches for legacy `insight` blocks (the bulk caches request). */
   caches?: Record<string, InsightCache | null>;
-  /** The block renderer (the registry); a neutral placeholder by default. */
-  renderBlock?: BlockRenderer;
+  /** The block renderer (the block registry). */
+  renderBlock: BlockRenderer;
   /** The primary insight no longer exists. */
   missing?: boolean;
   /** Remove this card (offered on a missing-insight card). Absent = no Remove. */
   onRemove?: () => void;
+  /** The card's ⋯ menu (the page builds it: it owns the board edits). */
+  menu?: ReactNode;
+  /** A running or queued sync job covers this card's insight. */
+  syncState?: CardSyncState;
+  /** Why the data is current without a fetch, when known. */
+  freshReason?: FreshReason | null;
 }
 
 export function BoardCard({
-  card, frames, summaries, caches, renderBlock = placeholderRenderBlock, missing = false, onRemove,
+  card, frames, summaries, caches, renderBlock, missing = false, onRemove, menu, syncState = null, freshReason = null,
 }: BoardCardProps) {
   const { t, locale } = useI18n();
   const [filters, setFilters] = useState<ActiveFilter[]>([]);
@@ -124,19 +151,25 @@ export function BoardCard({
       // full path (index.tab.child), so the tabs block's own path is prefixed here.
       renderChild: block.type === 'tabs' ? (child, rel) => draw(child, tabChildPath(path, rel)) : undefined,
     };
-    return renderBlock(block, props);
+    const node = renderBlock(block, props);
+    // A tabs child gets its own hook box (a top-level block's is the card's block row).
+    return path.length > 1
+      ? <div className="board-block-child" data-lab-block={block.type} data-lab-block-path={path.join('.')}>{node}</div>
+      : node;
   }, [card.id, card.insight, frames, filters, summaries, caches, renderBlock]);
 
   if (missing) {
     return (
-      <article className="board-card board-card--missing" data-card-id={card.id}>
+      <article className="board-card board-card--missing" data-card-id={card.id} data-lab-card-missing>
         <header className="board-card-head">
-          <h3 className="board-card-title">{title}</h3>
+          <div className="board-card-head-row">
+            <h3 className="board-card-title">{title}</h3>
+          </div>
         </header>
         <div className="board-card-missing">
           <p>{t('lab.board.card.missing').replace('{slug}', card.insight ?? '')}</p>
           {onRemove && (
-            <button type="button" className="board-btn" onClick={onRemove}>{t('lab.board.card.remove')}</button>
+            <button type="button" className="board-btn" data-lab-card-remove onClick={onRemove}>{t('lab.board.card.remove')}</button>
           )}
         </div>
       </article>
@@ -145,14 +178,23 @@ export function BoardCard({
 
   return (
     <article className="board-card" data-card-id={card.id}>
-      {(title || fresh) && (
+      {(title || fresh || menu) && (
         <header className="board-card-head">
-          {title && <h3 className="board-card-title" title={title}>{title}</h3>}
-          {fresh && (
-            <p className={`board-card-fresh board-card-fresh--${fresh}`}>
-              {fresh === 'fresh' || fresh === 'stale'
-                ? t(`lab.board.fresh.${fresh}`).replace('{ago}', ago(primary!.fetchedAt as string, locale))
-                : t(`lab.board.fresh.${fresh}`)}
+          <div className="board-card-head-row">
+            <h3 className="board-card-title" title={title}>{title}</h3>
+            {menu}
+          </div>
+          {(fresh || syncState) && (
+            <p
+              className={`board-card-fresh board-card-fresh--${syncState ?? fresh}`}
+              data-lab-freshness
+              data-lab-sync-queued={syncState === 'queued' ? true : undefined}
+              title={fresh === 'failed' ? primary?.error ?? undefined : undefined}
+            >
+              {freshnessText(t, locale, primary, fresh, syncState, freshReason)}
+              {primary?.freshnessNote && !syncState && (
+                <span className="board-card-note">{primary.freshnessNote}</span>
+              )}
             </p>
           )}
         </header>
@@ -160,7 +202,14 @@ export function BoardCard({
       <div className="board-card-body">
         {/* Keyed by card id + path + (html) content hash: an edited html block remounts (D4). */}
         {blocks.map((block, i) => (
-          <div key={blockRenderKey(card.id, [i], block)} className="board-card-block">{draw(block, [i])}</div>
+          <div
+            key={blockRenderKey(card.id, [i], block)}
+            className="board-card-block"
+            data-lab-block={block.type}
+            data-lab-block-path={String(i)}
+          >
+            {draw(block, [i])}
+          </div>
         ))}
       </div>
     </article>
