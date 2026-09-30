@@ -433,6 +433,12 @@
   box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
 }
 
+/*
+ * The body never scrolls: it hands its height down a flex column so every block gets the
+ * cell's remaining space (min-height 0 all the way). Charts draw to that box; a table or pivot
+ * scrolls inside its own block with a sticky header. Content-sized blocks (text, filter) take
+ * their own height first and the charts share the rest.
+ */
 .board-card-body {
   flex: 1;
   min-height: 0;
@@ -440,19 +446,57 @@
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  overflow: auto;
+  overflow: hidden;
 }
 
-.board-card-block {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-}
-
+.board-card-block,
 .board-block-child {
-  height: 100%;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
+}
+
+/* Chart blocks are size containers: a chart may size itself with cqw / cqh as well as measure. */
+.board-card-block:is([data-lab-block='line'], [data-lab-block='bar'], [data-lab-block='stacked'], [data-lab-block='pie'], [data-lab-block='heatmap'], [data-lab-block='stat'], [data-lab-block='funnel']),
+.board-block-child:is([data-lab-block='line'], [data-lab-block='bar'], [data-lab-block='stacked'], [data-lab-block='pie'], [data-lab-block='heatmap'], [data-lab-block='stat'], [data-lab-block='funnel']) {
+  container-type: size;
+  overflow: hidden;
+}
+
+.board-card-block:is([data-lab-block='text'], [data-lab-block='filter']),
+.board-block-child:is([data-lab-block='text'], [data-lab-block='filter']) {
+  flex: 0 1 auto;
+}
+
+/* ─── Section heading card (a derived group heading: one text block, no title) ─── */
+
+.board-card--heading {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+  border-color: transparent;
+  border-bottom-color: var(--color-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.board-card--heading > .board-card-block {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.board-grid--editing .board-card--heading {
+  border-color: var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.board-card-heading-menu {
+  flex: none;
+  display: flex;
+  align-items: center;
 }
 
 .board-card--missing {

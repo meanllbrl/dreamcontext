@@ -30,6 +30,7 @@ export function TabsBlock({ block, renderChild }: BlockViewProps) {
             data-lab-tab={i}
             className="lab-block-tab"
             aria-selected={i === current}
+            title={tb.label}
             onClick={() => setActive(i)}
           >{tb.label}</button>
         ))}

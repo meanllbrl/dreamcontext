@@ -122,8 +122,9 @@ describe('type change in place', () => {
   it('keeps the binding and the options the new type accepts, drops the rest', () => {
     const bar = changeType(catalog, { type: 'line', data: 'x/ds', options: { area: true, color: 3, limit: 10 } }, 'bar');
     expect(bar).toEqual({ type: 'bar', data: 'x/ds', options: { color: 3, limit: 10 } });
-    const pie = changeType(catalog, bar, 'pie');
-    expect(pie).toEqual({ type: 'pie', data: 'x/ds', options: { limit: 10 } });
+    // Pie takes color (its color start) and limit, not orientation.
+    const pie = changeType(catalog, { ...bar, options: { ...bar.options, orientation: 'v' } }, 'pie');
+    expect(pie).toEqual({ type: 'pie', data: 'x/ds', options: { color: 3, limit: 10 } });
     expect(changeType(catalog, { type: 'text', options: { markdown: '# Hi' } }, 'callout'))
       .toEqual({ type: 'callout', options: { markdown: '# Hi' } });
   });

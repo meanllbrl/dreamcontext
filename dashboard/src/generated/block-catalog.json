@@ -96,6 +96,31 @@
             "en": "Series",
             "tr": "Seriler"
           }
+        },
+        {
+          "key": "size",
+          "type": "enum",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ],
+          "default": "md",
+          "labelKey": "lab.block.opt.size",
+          "label": {
+            "en": "Size",
+            "tr": "Boyut"
+          }
+        },
+        {
+          "key": "goal",
+          "type": "number",
+          "default": null,
+          "labelKey": "lab.block.opt.goal",
+          "label": {
+            "en": "Goal",
+            "tr": "Hedef"
+          }
         }
       ]
     },
@@ -160,6 +185,129 @@
           "label": {
             "en": "Row limit",
             "tr": "Satır sınırı"
+          }
+        },
+        {
+          "key": "curve",
+          "type": "enum",
+          "enum": [
+            "linear",
+            "smooth",
+            "step"
+          ],
+          "default": "linear",
+          "labelKey": "lab.block.opt.curve",
+          "label": {
+            "en": "Curve",
+            "tr": "Eğri"
+          }
+        },
+        {
+          "key": "points",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.points",
+          "label": {
+            "en": "Points",
+            "tr": "Noktalar"
+          }
+        },
+        {
+          "key": "yMin",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "zero"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.yMin",
+          "label": {
+            "en": "Y axis starts at",
+            "tr": "Y ekseni başlangıcı"
+          }
+        },
+        {
+          "key": "reference",
+          "type": "number",
+          "default": null,
+          "labelKey": "lab.block.opt.reference",
+          "label": {
+            "en": "Reference line",
+            "tr": "Referans çizgisi"
+          }
+        },
+        {
+          "key": "referenceLabel",
+          "type": "string",
+          "default": "",
+          "labelKey": "lab.block.opt.referenceLabel",
+          "label": {
+            "en": "Reference label",
+            "tr": "Referans etiketi"
+          }
+        },
+        {
+          "key": "legend",
+          "type": "enum",
+          "enum": [
+            "top",
+            "bottom",
+            "right",
+            "none"
+          ],
+          "default": "bottom",
+          "labelKey": "lab.block.opt.legend",
+          "label": {
+            "en": "Legend",
+            "tr": "Açıklama"
+          }
+        },
+        {
+          "key": "axes",
+          "type": "enum",
+          "enum": [
+            "both",
+            "x",
+            "y",
+            "none"
+          ],
+          "default": "both",
+          "labelKey": "lab.block.opt.axes",
+          "label": {
+            "en": "Axes",
+            "tr": "Eksenler"
+          }
+        },
+        {
+          "key": "grid",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.grid",
+          "label": {
+            "en": "Gridlines",
+            "tr": "Kılavuz çizgileri"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
           }
         }
       ]
@@ -234,6 +382,7 @@
         {
           "key": "sort",
           "type": "sort",
+          "default": null,
           "labelKey": "lab.block.opt.sort",
           "label": {
             "en": "Sort by",
@@ -258,6 +407,101 @@
           "label": {
             "en": "Series",
             "tr": "Seriler"
+          }
+        },
+        {
+          "key": "valueLabels",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.valueLabels",
+          "label": {
+            "en": "Value labels",
+            "tr": "Değer etiketleri"
+          }
+        },
+        {
+          "key": "topN",
+          "type": "number",
+          "min": 1,
+          "max": 50,
+          "default": null,
+          "labelKey": "lab.block.opt.topN",
+          "label": {
+            "en": "Top N, rest as Other",
+            "tr": "İlk N, kalanı Diğer"
+          }
+        },
+        {
+          "key": "group",
+          "type": "enum",
+          "enum": [
+            "grouped",
+            "stacked"
+          ],
+          "default": "grouped",
+          "labelKey": "lab.block.opt.group",
+          "label": {
+            "en": "Several series",
+            "tr": "Birden çok seri"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
+          }
+        },
+        {
+          "key": "axes",
+          "type": "enum",
+          "enum": [
+            "both",
+            "x",
+            "y",
+            "none"
+          ],
+          "default": "both",
+          "labelKey": "lab.block.opt.axes",
+          "label": {
+            "en": "Axes",
+            "tr": "Eksenler"
+          }
+        },
+        {
+          "key": "grid",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.grid",
+          "label": {
+            "en": "Gridlines",
+            "tr": "Kılavuz çizgileri"
+          }
+        },
+        {
+          "key": "legend",
+          "type": "enum",
+          "enum": [
+            "top",
+            "bottom",
+            "right",
+            "none"
+          ],
+          "default": "bottom",
+          "labelKey": "lab.block.opt.legend",
+          "label": {
+            "en": "Legend",
+            "tr": "Açıklama"
           }
         }
       ]
@@ -324,6 +568,89 @@
             "en": "Row limit",
             "tr": "Satır sınırı"
           }
+        },
+        {
+          "key": "mode",
+          "type": "enum",
+          "enum": [
+            "bar",
+            "area"
+          ],
+          "default": "bar",
+          "labelKey": "lab.block.opt.mode",
+          "label": {
+            "en": "Shape",
+            "tr": "Biçim türü"
+          }
+        },
+        {
+          "key": "normalize",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.normalize",
+          "label": {
+            "en": "Show as 100%",
+            "tr": "%100 olarak göster"
+          }
+        },
+        {
+          "key": "legend",
+          "type": "enum",
+          "enum": [
+            "top",
+            "bottom",
+            "right",
+            "none"
+          ],
+          "default": "bottom",
+          "labelKey": "lab.block.opt.legend",
+          "label": {
+            "en": "Legend",
+            "tr": "Açıklama"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
+          }
+        },
+        {
+          "key": "axes",
+          "type": "enum",
+          "enum": [
+            "both",
+            "x",
+            "y",
+            "none"
+          ],
+          "default": "both",
+          "labelKey": "lab.block.opt.axes",
+          "label": {
+            "en": "Axes",
+            "tr": "Eksenler"
+          }
+        },
+        {
+          "key": "grid",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.grid",
+          "label": {
+            "en": "Gridlines",
+            "tr": "Kılavuz çizgileri"
+          }
         }
       ]
     },
@@ -371,6 +698,7 @@
         {
           "key": "sort",
           "type": "sort",
+          "default": null,
           "labelKey": "lab.block.opt.sort",
           "label": {
             "en": "Sort by",
@@ -386,6 +714,73 @@
           "label": {
             "en": "Row limit",
             "tr": "Satır sınırı"
+          }
+        },
+        {
+          "key": "centerTotal",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.centerTotal",
+          "label": {
+            "en": "Total in the center",
+            "tr": "Ortada toplam"
+          }
+        },
+        {
+          "key": "labels",
+          "type": "enum",
+          "enum": [
+            "legend",
+            "outside",
+            "inside",
+            "none"
+          ],
+          "default": "legend",
+          "labelKey": "lab.block.opt.labels",
+          "label": {
+            "en": "Slice labels",
+            "tr": "Dilim etiketleri"
+          }
+        },
+        {
+          "key": "topN",
+          "type": "number",
+          "min": 1,
+          "max": 50,
+          "default": null,
+          "labelKey": "lab.block.opt.topN",
+          "label": {
+            "en": "Top N, rest as Other",
+            "tr": "İlk N, kalanı Diğer"
+          }
+        },
+        {
+          "key": "color",
+          "type": "number",
+          "min": 1,
+          "max": 8,
+          "default": 1,
+          "labelKey": "lab.block.opt.color",
+          "label": {
+            "en": "Color",
+            "tr": "Renk"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
           }
         }
       ]
@@ -433,6 +828,7 @@
         {
           "key": "sort",
           "type": "sort",
+          "default": null,
           "labelKey": "lab.block.opt.sort",
           "label": {
             "en": "Sort by",
@@ -448,6 +844,57 @@
           "label": {
             "en": "Row limit",
             "tr": "Satır sınırı"
+          }
+        },
+        {
+          "key": "density",
+          "type": "enum",
+          "enum": [
+            "compact",
+            "comfortable"
+          ],
+          "default": "compact",
+          "labelKey": "lab.block.opt.density",
+          "label": {
+            "en": "Density",
+            "tr": "Yoğunluk"
+          }
+        },
+        {
+          "key": "bars",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.bars",
+          "label": {
+            "en": "Data bars",
+            "tr": "Veri çubukları"
+          }
+        },
+        {
+          "key": "deltaColor",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.deltaColor",
+          "label": {
+            "en": "Color the change",
+            "tr": "Değişimi renklendir"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
           }
         }
       ]
@@ -494,6 +941,47 @@
             "en": "Only rows where",
             "tr": "Yalnızca şu satırlar"
           }
+        },
+        {
+          "key": "scale",
+          "type": "enum",
+          "enum": [
+            "sequential",
+            "diverging"
+          ],
+          "default": "sequential",
+          "labelKey": "lab.block.opt.scale",
+          "label": {
+            "en": "Color scale",
+            "tr": "Renk ölçeği"
+          }
+        },
+        {
+          "key": "cellLabels",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.cellLabels",
+          "label": {
+            "en": "Values in cells",
+            "tr": "Hücrelerde değerler"
+          }
+        },
+        {
+          "key": "format",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "number",
+            "compact",
+            "percent",
+            "currency"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.format",
+          "label": {
+            "en": "Format",
+            "tr": "Biçim"
+          }
         }
       ]
     },
@@ -526,6 +1014,16 @@
           "label": {
             "en": "Compact",
             "tr": "Sıkı"
+          }
+        },
+        {
+          "key": "showConversion",
+          "type": "boolean",
+          "default": true,
+          "labelKey": "lab.block.opt.showConversion",
+          "label": {
+            "en": "Conversion rates",
+            "tr": "Dönüşüm oranları"
           }
         }
       ]
@@ -794,6 +1292,214 @@
       "options": []
     }
   ],
+  "enumLabels": {
+    "format": {
+      "auto": {
+        "en": "Automatic",
+        "tr": "Otomatik"
+      },
+      "number": {
+        "en": "Number",
+        "tr": "Sayı"
+      },
+      "compact": {
+        "en": "Compact",
+        "tr": "Kısa"
+      },
+      "percent": {
+        "en": "Percent",
+        "tr": "Yüzde"
+      },
+      "currency": {
+        "en": "Currency",
+        "tr": "Para birimi"
+      }
+    },
+    "legend": {
+      "top": {
+        "en": "Top",
+        "tr": "Üstte"
+      },
+      "bottom": {
+        "en": "Bottom",
+        "tr": "Altta"
+      },
+      "right": {
+        "en": "Right",
+        "tr": "Sağda"
+      },
+      "none": {
+        "en": "Hidden",
+        "tr": "Gizli"
+      }
+    },
+    "axes": {
+      "both": {
+        "en": "X and Y",
+        "tr": "X ve Y"
+      },
+      "x": {
+        "en": "X only",
+        "tr": "Yalnızca X"
+      },
+      "y": {
+        "en": "Y only",
+        "tr": "Yalnızca Y"
+      },
+      "none": {
+        "en": "Hidden",
+        "tr": "Gizli"
+      }
+    },
+    "delta": {
+      "none": {
+        "en": "None",
+        "tr": "Yok"
+      },
+      "prev": {
+        "en": "Previous period",
+        "tr": "Önceki dönem"
+      }
+    },
+    "size": {
+      "sm": {
+        "en": "Small",
+        "tr": "Küçük"
+      },
+      "md": {
+        "en": "Medium",
+        "tr": "Orta"
+      },
+      "lg": {
+        "en": "Large",
+        "tr": "Büyük"
+      }
+    },
+    "curve": {
+      "linear": {
+        "en": "Straight",
+        "tr": "Düz"
+      },
+      "smooth": {
+        "en": "Smooth",
+        "tr": "Yumuşak"
+      },
+      "step": {
+        "en": "Steps",
+        "tr": "Basamak"
+      }
+    },
+    "points": {
+      "auto": {
+        "en": "Automatic",
+        "tr": "Otomatik"
+      },
+      "always": {
+        "en": "Always",
+        "tr": "Her zaman"
+      },
+      "never": {
+        "en": "Never",
+        "tr": "Hiçbir zaman"
+      }
+    },
+    "yMin": {
+      "auto": {
+        "en": "Automatic",
+        "tr": "Otomatik"
+      },
+      "zero": {
+        "en": "Zero",
+        "tr": "Sıfır"
+      }
+    },
+    "orientation": {
+      "h": {
+        "en": "Horizontal",
+        "tr": "Yatay"
+      },
+      "v": {
+        "en": "Vertical",
+        "tr": "Dikey"
+      }
+    },
+    "group": {
+      "grouped": {
+        "en": "Side by side",
+        "tr": "Yan yana"
+      },
+      "stacked": {
+        "en": "Stacked",
+        "tr": "Üst üste"
+      }
+    },
+    "mode": {
+      "bar": {
+        "en": "Bars",
+        "tr": "Çubuklar"
+      },
+      "area": {
+        "en": "Areas",
+        "tr": "Alanlar"
+      }
+    },
+    "labels": {
+      "legend": {
+        "en": "Legend",
+        "tr": "Açıklama"
+      },
+      "outside": {
+        "en": "Outside",
+        "tr": "Dışarıda"
+      },
+      "inside": {
+        "en": "Inside",
+        "tr": "İçeride"
+      },
+      "none": {
+        "en": "Hidden",
+        "tr": "Gizli"
+      }
+    },
+    "density": {
+      "compact": {
+        "en": "Compact",
+        "tr": "Sıkı"
+      },
+      "comfortable": {
+        "en": "Comfortable",
+        "tr": "Rahat"
+      }
+    },
+    "scale": {
+      "sequential": {
+        "en": "Low to high",
+        "tr": "Düşükten yükseğe"
+      },
+      "diverging": {
+        "en": "Around a midpoint",
+        "tr": "Orta nokta etrafında"
+      }
+    },
+    "tone": {
+      "info": {
+        "en": "Info",
+        "tr": "Bilgi"
+      },
+      "success": {
+        "en": "Success",
+        "tr": "Başarı"
+      },
+      "warning": {
+        "en": "Warning",
+        "tr": "Uyarı"
+      },
+      "danger": {
+        "en": "Danger",
+        "tr": "Tehlike"
+      }
+    }
+  },
   "renderDefaultSpan": {
     "number": 1,
     "line": 1,

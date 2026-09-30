@@ -79,6 +79,27 @@ describe('deriveBoardsFromLegacy (pure)', () => {
     expect(board.spec.cards.map((c) => c.id)).toEqual(['h-growth-activation', 'c-m', 'h-growth-ungrouped', 'c-z']);
   });
 
+  it('a heading card carries its text: untitled, no insight, ONE one-line heading block (the dashboard draws it as a section heading)', () => {
+    const [board] = deriveBoardsFromLegacy([
+      ins('z', { category: 'Growth' }),
+      ins('m', { category: 'Growth', group: 'Activation' }),
+      ins('k', { category: 'Growth', group: 'Retention' }),
+    ]);
+    const headings = board.spec.cards.filter((c) => c.id.startsWith('h-'));
+    expect(headings.length).toBe(3);
+    for (const h of headings) {
+      expect(h.title).toBeUndefined();
+      expect(h.insight).toBeUndefined();
+      expect(h.blocks).toHaveLength(1);
+      const md = h.blocks![0].options.markdown;
+      expect(typeof md).toBe('string');
+      // TextBlock's heading rule: one `#`..`######` line with non-empty text.
+      const m = /^\s*#{1,6}[ \t]+([^\n]*?)[ \t#]*$/.exec((md as string).trim());
+      expect(m?.[1].trim()).toBeTruthy();
+    }
+    expect(headings.map((h) => (h.blocks![0].options.markdown as string).replace(/^#+\s*/, ''))).toEqual(['Activation', 'Retention', 'Ungrouped']);
+  });
+
   it('adds no heading when a category has only ungrouped insights', () => {
     const [board] = deriveBoardsFromLegacy([ins('a', { category: 'Solo' })]);
     expect(board.spec.cards.map((c) => c.id)).toEqual(['c-a']);

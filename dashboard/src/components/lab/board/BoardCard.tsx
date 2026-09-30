@@ -3,6 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import type { InsightCache, InsightSummary } from '../../../hooks/useLab';
 import { frameKey } from '../../../generated/frameOps';
 import { blockRenderKey } from '../blocks/htmlBlockBridge';
+import { headingText } from '../blocks/TextBlock';
 import {
   activeFilterFor, filterTarget, setActiveFilter, shapeBlockFrame, type ActiveFilter,
 } from '../blocks/frameShape';
@@ -39,6 +40,19 @@ import './board.css';
 export function cardBlocks(card: Card): Block[] {
   if (card.blocks && card.blocks.length > 0) return card.blocks;
   return card.insight ? [{ type: 'insight', data: card.insight, options: {} }] : [];
+}
+
+/**
+ * A section heading card: untitled, no freshness line, and ONE text block whose markdown is a
+ * one-line heading (what TextBlock draws as a heading; a derived `h-*` group heading is one).
+ * Keyed on the content, not the `h-` id, so a heading authored by hand gets the same chrome,
+ * and any other untitled text card (a multi-paragraph note) keeps the card box and its
+ * scrolling body.
+ */
+export function isHeadingCard(blocks: readonly Block[], title: string, hasStatusLine: boolean): boolean {
+  if (title || hasStatusLine || blocks.length !== 1 || blocks[0].type !== 'text') return false;
+  const md = blocks[0].options.markdown;
+  return typeof md === 'string' && headingText(md) !== null;
 }
 
 /** Frames of an html block's declared inputs, by input name. */
@@ -131,6 +145,8 @@ export function BoardCard({
   const title = card.title ?? primary?.title ?? card.insight ?? '';
   const fresh = freshnessOf(primary);
   const blocks = useMemo(() => cardBlocks(card), [card]);
+  // A section heading card: no title row, no card box, just the heading; the menu floats at the end.
+  const heading = isHeadingCard(blocks, title, !!fresh || !!syncState);
 
   const draw = useCallback((block: Block, path: number[]): ReactNode => {
     const key = frameKey(card.id, path);
@@ -172,6 +188,22 @@ export function BoardCard({
             <button type="button" className="board-btn" data-lab-card-remove onClick={onRemove}>{t('lab.board.card.remove')}</button>
           )}
         </div>
+      </article>
+    );
+  }
+
+  if (heading) {
+    return (
+      <article className="board-card board-card--heading" data-card-id={card.id} data-lab-card-heading>
+        <div
+          key={blockRenderKey(card.id, [0], blocks[0])}
+          className="board-card-block"
+          data-lab-block="text"
+          data-lab-block-path="0"
+        >
+          {draw(blocks[0], [0])}
+        </div>
+        {menu && <div className="board-card-heading-menu">{menu}</div>}
       </article>
     );
   }

@@ -20,6 +20,11 @@
   min-height: 0;
 }
 
+/* A chart never scrolls inside its cell: it draws to the box it is given. */
+.lab-block:is(.lab-block--line, .lab-block--bar, .lab-block--stacked, .lab-block--pie, .lab-block--heatmap, .lab-block--stat, .lab-block--funnel) {
+  overflow: hidden;
+}
+
 .lab-block-scroll {
   flex: 1 1 auto;
   min-width: 0;
@@ -113,17 +118,26 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
+/* The bar never gives up height to the panel (it used to shrink and clip its labels). */
 .lab-block-tabs-bar {
+  flex: none;
   display: flex;
+  align-items: stretch;
   gap: var(--space-1);
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .lab-block-tab {
   flex: 0 0 auto;
+  margin-bottom: -1px;
+  line-height: var(--line-height-normal);
+  white-space: nowrap;
   padding: var(--space-2) var(--space-3);
   border: none;
   border-bottom: 2px solid transparent;
@@ -153,14 +167,15 @@
   flex: 1 1 auto;
   min-height: 0;
   padding-top: var(--space-3);
-  overflow: auto;
+  overflow: hidden;
 }
 
 .lab-block-tabs-child {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
+  min-width: 0;
 }
 
 /* ── callout ────────────────────────────────────────────────────────── */
@@ -197,6 +212,29 @@
 .lab-block-text {
   font-size: var(--font-size-sm);
   color: var(--color-text);
+}
+
+/* Board text and callouts sit on the card: none of the markdown page's own box. */
+.lab-block-text .md-preview,
+.lab-block-callout .md-preview {
+  padding: 0;
+  overflow: visible;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* A one-line heading block: a section heading on the 12/14 ladder, semibold, one line. */
+.lab-block-heading {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── funnel ─────────────────────────────────────────────────────────── */

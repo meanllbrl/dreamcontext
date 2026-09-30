@@ -4,12 +4,17 @@
  * A FRAME is what a data-bound block draws: the resolved slice of one insight's
  * cache (`frames.ts` builds them from the hardened readers). The server returns
  * frames UN-limited; every static option (`where`, `sort`, `limit`, series
- * pick) and the interactive `filter` block run HERE, in this fixed order:
+ * pick, `topN`, `normalize`) and the interactive `filter` block run HERE, in
+ * this fixed order:
  *
- *   where -> interactive filter -> sort -> limit
+ *   tables: where -> interactive filter -> sort -> topN -> limit -> normalize
+ *   series: pick -> limit -> topN -> normalize
  *
  * and a table's `total` is computed after filtering, before the limit, so a
- * filtered board never shows the total of a pre-cut list. `lab board show` and
+ * filtered board never shows the total of a pre-cut list. `topN` keeps the N
+ * largest and folds the rest into ONE row/series named `Other` that carries
+ * `other: <how many it folds>`; `normalize` turns each bucket into shares of
+ * 100 (the unit becomes `%`) and runs last, so the visible parts sum to 100. `lab board show` and
  * the dashboard run this same code, so they print the same values.
  *
  * PURE and SELF-CONTAINED: no imports, types declared inline, ES2020 only.
@@ -35,6 +40,8 @@ export interface FramePoint {
 export interface FrameSeries {
   name: string;
   points: FramePoint[];
+  /** Set on the `Other` series `topN` folds: how many series it holds. */
+  other?: number;
 }
 
 export interface SeriesFrame {
@@ -55,6 +62,8 @@ export interface TableRow {
   v: number | null;
   n?: number | null;
   prev?: number | null;
+  /** Set on the `Other` row `topN` folds: how many rows it holds. */
+  other?: number;
 }
 
 /** A table's total as the block shows it: rows and sums AFTER filtering, BEFORE the limit. */
@@ -140,7 +149,14 @@ export interface FrameOps {
   limit?: number | null;
   /** Series names kept, in the given order (series frames). */
   series?: string[] | null;
+  /** Keep the N largest rows/series by value; the rest fold into one `Other`. */
+  topN?: number | null;
+  /** Each bucket as shares of 100 (stacked `normalize`). */
+  normalize?: boolean;
 }
+
+/** The name `topN` gives the folded remainder (the dashboard shows its own word for it). */
+export const OTHER_NAME = 'Other';
 
 /** Engine cap on rows a frame may carry (the same 400 the dataset parser applies). */
 export const FRAME_ROW_CAP = 400;
@@ -160,11 +176,15 @@ function stringList(v: unknown): string[] | null {
   return out.length > 0 ? out : null;
 }
 
-/** LENIENT sort parse: `"-v"` (desc), `"label"` (asc) or `{by, dir}`. */
+/**
+ * LENIENT sort parse: `"-v"` (desc), `"label"` (asc) or `{by, dir}`. The chart
+ * shorthands sort by value: `"desc"`, `"asc"`; `"none"` keeps the source order.
+ */
 export function parseSort(v: unknown): FrameSort | null {
   if (typeof v === 'string') {
     const s = v.trim();
-    if (!s || s === '-') return null;
+    if (!s || s === '-' || s === 'none') return null;
+    if (s === 'desc' || s === 'asc') return { by: 'v', dir: s };
     return s.startsWith('-') ? { by: s.slice(1), dir: 'desc' } : { by: s, dir: 'asc' };
   }
   const r = asRecord(v);
@@ -191,6 +211,9 @@ export function frameOpsFromOptions(options: Record<string, unknown> | null | un
   if (Number.isFinite(limit) && limit >= 1) ops.limit = Math.min(FRAME_ROW_CAP, Math.floor(limit));
   const series = stringList(o.series);
   if (series) ops.series = series;
+  const topN = typeof o.topN === 'number' ? o.topN : Number.NaN;
+  if (Number.isFinite(topN) && topN >= 1) ops.topN = Math.min(FRAME_ROW_CAP, Math.floor(topN));
+  if (o.normalize === true) ops.normalize = true;
   return ops;
 }
 
@@ -263,10 +286,83 @@ export function distinctValues(frame: Frame, dim: string, where?: Record<string,
   return seen;
 }
 
+function num(v: number | null | undefined): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+/** Indexes of the `n` largest `values` (nulls lowest, ties to the earlier one). */
+function largest(values: ReadonlyArray<number | null>, n: number): Set<number> {
+  const ranked = values
+    .map((v, idx) => ({ v: typeof v === 'number' && Number.isFinite(v) ? v : -Infinity, idx }))
+    .sort((a, b) => (b.v !== a.v ? b.v - a.v : a.idx - b.idx));
+  return new Set(ranked.slice(0, n).map((e) => e.idx));
+}
+
+/** The N largest rows by `v` in their current order, then ONE `Other` row summing the rest. */
+function topRows(rows: TableRow[], dims: readonly TableDim[], n: number): TableRow[] {
+  if (rows.length <= n) return rows;
+  const keep = largest(rows.map((r) => r.v), n);
+  const kept = rows.filter((_, i) => keep.has(i));
+  const rest = rows.filter((_, i) => !keep.has(i));
+  const d: Record<string, string> = {};
+  for (const dim of dims) d[dim.key] = OTHER_NAME;
+  const other: TableRow = { d, v: sumOf(rest.map((r) => r.v)), other: rest.length };
+  const sn = sumOf(rest.map((r) => r.n));
+  if (sn !== null) other.n = sn;
+  const sp = sumOf(rest.map((r) => r.prev));
+  if (sp !== null) other.prev = sp;
+  return [...kept, other];
+}
+
+/** The N largest series by their summed points, in order, then ONE `Other` series (pointwise sum). */
+function topSeries(series: FrameSeries[], n: number): FrameSeries[] {
+  if (series.length <= n) return series;
+  const keep = largest(series.map((s) => sumOf(s.points.map((p) => p.v))), n);
+  const kept = series.filter((_, i) => keep.has(i));
+  const rest = series.filter((_, i) => !keep.has(i));
+  const order: string[] = [];
+  const sums = new Map<string, number>();
+  for (const s of rest) {
+    for (const p of s.points) {
+      if (!sums.has(p.t)) order.push(p.t);
+      sums.set(p.t, (sums.get(p.t) ?? 0) + num(p.v));
+    }
+  }
+  order.sort();
+  return [...kept, { name: OTHER_NAME, points: order.map((t) => ({ t, v: sums.get(t) as number })), other: rest.length }];
+}
+
+/** A share of 100, or 0 when the bucket sums to nothing. */
+function share(v: number, total: number): number {
+  return total > 0 ? (v / total) * 100 : 0;
+}
+
 /**
- * Shape a frame for one block. Tables: where -> filter -> sort -> limit, with
- * `total` recomputed after the filter and before the limit. Series: pick, then
- * keep the last `limit` points. Other kinds pass through untouched.
+ * Table rows as shares of 100: per value of the FIRST dim when the table has two
+ * or more (the bucket a stacked chart draws), else of the whole table.
+ */
+function normalizeRows(rows: TableRow[], dims: readonly TableDim[]): TableRow[] {
+  const bucketOf = (r: TableRow) => (dims.length >= 2 ? r.d[dims[0].key] ?? '' : '');
+  const totals = new Map<string, number>();
+  for (const r of rows) totals.set(bucketOf(r), (totals.get(bucketOf(r)) ?? 0) + Math.max(0, num(r.v)));
+  return rows.map((r) => ({ ...r, v: r.v === null ? null : share(Math.max(0, r.v), totals.get(bucketOf(r)) as number) }));
+}
+
+/** Series as shares of 100 of every series' total at the same `t`. */
+function normalizeSeries(series: FrameSeries[]): FrameSeries[] {
+  const totals = new Map<string, number>();
+  for (const s of series) for (const p of s.points) totals.set(p.t, (totals.get(p.t) ?? 0) + Math.max(0, num(p.v)));
+  return series.map((s) => ({
+    ...s,
+    points: s.points.map((p) => ({ t: p.t, v: share(Math.max(0, num(p.v)), totals.get(p.t) as number) })),
+  }));
+}
+
+/**
+ * Shape a frame for one block. Tables: where -> filter -> sort -> topN ->
+ * limit -> normalize, with `total` recomputed after the filter and before the
+ * limit (and before normalize: it stays in the source unit). Series: pick,
+ * keep the last `limit` points, topN, normalize. Other kinds pass through.
  */
 export function applyFrameOps(frame: Frame, ops: FrameOps): Frame {
   if (frame.kind === 'table') {
@@ -282,7 +378,9 @@ export function applyFrameOps(frame: Frame, ops: FrameOps): Frame {
     }
     const total = tableTotal(rows, frame.sourceTotal, rows.length !== before);
     if (ops.sort) rows = sortRows(rows, ops.sort);
+    if (typeof ops.topN === 'number' && ops.topN >= 1) rows = topRows(rows, frame.dims, Math.floor(ops.topN));
     if (typeof ops.limit === 'number' && ops.limit >= 1) rows = rows.slice(0, Math.floor(ops.limit));
+    if (ops.normalize) return { ...frame, rows: normalizeRows(rows, frame.dims), total, unit: '%' };
     return { ...frame, rows, total };
   }
   if (frame.kind === 'series') {
@@ -293,8 +391,10 @@ export function applyFrameOps(frame: Frame, ops: FrameOps): Frame {
     }
     if (typeof ops.limit === 'number' && ops.limit >= 1) {
       const keep = Math.floor(ops.limit);
-      series = series.map((s) => ({ name: s.name, points: s.points.slice(-keep) }));
+      series = series.map((s) => ({ ...s, points: s.points.slice(-keep) }));
     }
+    if (typeof ops.topN === 'number' && ops.topN >= 1) series = topSeries(series, Math.floor(ops.topN));
+    if (ops.normalize) return { ...frame, series: normalizeSeries(series), unit: '%' };
     return { ...frame, series };
   }
   return frame;

@@ -101,13 +101,61 @@ const opt = (
   extra: Partial<Pick<BlockOptionSchema, 'enum' | 'default' | 'min' | 'max'>> = {},
 ): BlockOptionSchema => ({ key, type, ...extra, labelKey: `lab.block.opt.${key}`, label: { en, tr } });
 
+/**
+ * EN/TR copy of every enum value, by option key then value: one label per key across blocks,
+ * like the option labels. The dashboard shows it under `lab.editor.enum.<key>.<value>`
+ * (I18nContext holds the same copy; tests/unit/lab-catalog-options.test.ts compares them).
+ */
+export const OPTION_ENUM_LABELS: Record<string, Record<string, LocalizedText>> = {};
+
+/** An `enum` option whose every value carries its EN/TR label: `[value, en, tr]`. */
+const choice = (
+  key: string,
+  en: string,
+  tr: string,
+  values: ReadonlyArray<readonly [string, string, string]>,
+  def: string,
+): BlockOptionSchema => {
+  const labels = (OPTION_ENUM_LABELS[key] ??= {});
+  for (const [v, ven, vtr] of values) labels[v] = { en: ven, tr: vtr };
+  return opt(key, 'enum', en, tr, { enum: values.map((v) => v[0]), default: def });
+};
+
 // Shared option definitions: one label per key across every block that uses it.
 const COLOR = opt('color', 'number', 'Color', 'Renk', { min: 1, max: 8, default: 1 });
 const WHERE = opt('where', 'where', 'Only rows where', 'Yalnızca şu satırlar');
-const SORT = opt('sort', 'sort', 'Sort by', 'Sıralama');
+// `sort` stays the free `sort` type (`-v`, `country`, `{by, dir}`) so written boards keep
+// validating; the shorthands `none`, `desc` and `asc` (by value) are what the charts offer.
+const SORT = opt('sort', 'sort', 'Sort by', 'Sıralama', { default: null });
 const LIMIT = opt('limit', 'number', 'Row limit', 'Satır sınırı', { min: 1, max: 400 });
 const SERIES = opt('series', 'string-list', 'Series', 'Seriler');
 const MARKDOWN = opt('markdown', 'markdown', 'Text', 'Metin', { default: '' });
+
+const FORMAT_VALUES = [
+  ['auto', 'Automatic', 'Otomatik'],
+  ['number', 'Number', 'Sayı'],
+  ['compact', 'Compact', 'Kısa'],
+  ['percent', 'Percent', 'Yüzde'],
+  ['currency', 'Currency', 'Para birimi'],
+] as const;
+/** Chart number format: `auto` is today's look (the unit decides). */
+const FORMAT = choice('format', 'Format', 'Biçim', FORMAT_VALUES, 'auto');
+/** The stat keeps its own set and default (`number`), as written boards expect. */
+const STAT_FORMAT = choice('format', 'Format', 'Biçim', FORMAT_VALUES.slice(1), 'number');
+const LEGEND = choice('legend', 'Legend', 'Açıklama', [
+  ['top', 'Top', 'Üstte'],
+  ['bottom', 'Bottom', 'Altta'],
+  ['right', 'Right', 'Sağda'],
+  ['none', 'Hidden', 'Gizli'],
+], 'bottom');
+const AXES = choice('axes', 'Axes', 'Eksenler', [
+  ['both', 'X and Y', 'X ve Y'],
+  ['x', 'X only', 'Yalnızca X'],
+  ['y', 'Y only', 'Yalnızca Y'],
+  ['none', 'Hidden', 'Gizli'],
+], 'both');
+const GRID = opt('grid', 'boolean', 'Gridlines', 'Kılavuz çizgileri', { default: true });
+const TOP_N = opt('topN', 'number', 'Top N, rest as Other', 'İlk N, kalanı Diğer', { min: 1, max: 50, default: null });
 
 const entry = (
   type: BlockType,
@@ -137,11 +185,13 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     { en: 'One number with its change and a sparkline.', tr: 'Değişimi ve küçük grafiğiyle tek bir sayı.' },
     { w: 3, h: 3 },
     [
-      opt('delta', 'enum', 'Change', 'Değişim', { enum: ['none', 'prev'], default: 'none' }),
+      choice('delta', 'Change', 'Değişim', [['none', 'None', 'Yok'], ['prev', 'Previous period', 'Önceki dönem']], 'none'),
       opt('spark', 'boolean', 'Sparkline', 'Küçük grafik', { default: false }),
       opt('unit', 'string', 'Unit', 'Birim'),
-      opt('format', 'enum', 'Format', 'Biçim', { enum: ['number', 'compact', 'percent', 'currency'], default: 'number' }),
+      STAT_FORMAT,
       SERIES,
+      choice('size', 'Size', 'Boyut', [['sm', 'Small', 'Küçük'], ['md', 'Medium', 'Orta'], ['lg', 'Large', 'Büyük']], 'md'),
+      opt('goal', 'number', 'Goal', 'Hedef', { default: null }),
     ],
   ),
   line: entry(
@@ -149,7 +199,21 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     { en: 'Line', tr: 'Çizgi' },
     { en: 'Series over time.', tr: 'Zaman içindeki seriler.' },
     { w: 6, h: 4 },
-    [opt('area', 'boolean', 'Fill area', 'Alanı doldur', { default: false }), COLOR, SERIES, LIMIT],
+    [
+      opt('area', 'boolean', 'Fill area', 'Alanı doldur', { default: false }),
+      COLOR,
+      SERIES,
+      LIMIT,
+      choice('curve', 'Curve', 'Eğri', [['linear', 'Straight', 'Düz'], ['smooth', 'Smooth', 'Yumuşak'], ['step', 'Steps', 'Basamak']], 'linear'),
+      choice('points', 'Points', 'Noktalar', [['auto', 'Automatic', 'Otomatik'], ['always', 'Always', 'Her zaman'], ['never', 'Never', 'Hiçbir zaman']], 'auto'),
+      choice('yMin', 'Y axis starts at', 'Y ekseni başlangıcı', [['auto', 'Automatic', 'Otomatik'], ['zero', 'Zero', 'Sıfır']], 'auto'),
+      opt('reference', 'number', 'Reference line', 'Referans çizgisi', { default: null }),
+      opt('referenceLabel', 'string', 'Reference label', 'Referans etiketi', { default: '' }),
+      LEGEND,
+      AXES,
+      GRID,
+      FORMAT,
+    ],
   ),
   bar: entry(
     'bar', 'binding', ['table', 'series'],
@@ -157,13 +221,20 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     { en: 'Values side by side.', tr: 'Yan yana değerler.' },
     { w: 6, h: 4 },
     [
-      opt('orientation', 'enum', 'Orientation', 'Yön', { enum: ['h', 'v'], default: 'h' }),
+      choice('orientation', 'Orientation', 'Yön', [['h', 'Horizontal', 'Yatay'], ['v', 'Vertical', 'Dikey']], 'h'),
       COLOR,
       opt('comparePrev', 'boolean', 'Compare with previous period', 'Önceki dönemle karşılaştır', { default: false }),
       WHERE,
       SORT,
       LIMIT,
       SERIES,
+      opt('valueLabels', 'boolean', 'Value labels', 'Değer etiketleri', { default: true }),
+      TOP_N,
+      choice('group', 'Several series', 'Birden çok seri', [['grouped', 'Side by side', 'Yan yana'], ['stacked', 'Stacked', 'Üst üste']], 'grouped'),
+      FORMAT,
+      AXES,
+      GRID,
+      LEGEND,
     ],
   ),
   stacked: entry(
@@ -171,35 +242,79 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     { en: 'Stacked', tr: 'Yığılmış' },
     { en: 'Parts of a whole over time.', tr: 'Zaman içinde bütünün parçaları.' },
     { w: 6, h: 4 },
-    [COLOR, WHERE, SERIES, LIMIT],
+    [
+      COLOR,
+      WHERE,
+      SERIES,
+      LIMIT,
+      choice('mode', 'Shape', 'Biçim türü', [['bar', 'Bars', 'Çubuklar'], ['area', 'Areas', 'Alanlar']], 'bar'),
+      opt('normalize', 'boolean', 'Show as 100%', '%100 olarak göster', { default: false }),
+      LEGEND,
+      FORMAT,
+      AXES,
+      GRID,
+    ],
   ),
   pie: entry(
     'pie', 'binding', ['table', 'series'],
     { en: 'Pie', tr: 'Pasta' },
     { en: 'Shares of a total. Seven or more slices draw as bars.', tr: 'Toplamın payları. Yedi ve daha fazla dilim çubuk olarak çizilir.' },
     { w: 4, h: 4 },
-    [opt('donut', 'boolean', 'Donut', 'Halka', { default: false }), WHERE, SORT, LIMIT],
+    [
+      opt('donut', 'boolean', 'Donut', 'Halka', { default: false }),
+      WHERE,
+      SORT,
+      LIMIT,
+      opt('centerTotal', 'boolean', 'Total in the center', 'Ortada toplam', { default: false }),
+      choice('labels', 'Slice labels', 'Dilim etiketleri', [
+        ['legend', 'Legend', 'Açıklama'],
+        ['outside', 'Outside', 'Dışarıda'],
+        ['inside', 'Inside', 'İçeride'],
+        ['none', 'Hidden', 'Gizli'],
+      ], 'legend'),
+      TOP_N,
+      COLOR,
+      FORMAT,
+    ],
   ),
   table: entry(
     'table', 'binding', ['table', 'series'],
     { en: 'Table', tr: 'Tablo' },
     { en: 'Rows and columns of numbers.', tr: 'Sayılardan oluşan satırlar ve sütunlar.' },
     { w: 8, h: 6 },
-    [opt('columns', 'string-list', 'Columns', 'Sütunlar'), WHERE, SORT, LIMIT],
+    [
+      opt('columns', 'string-list', 'Columns', 'Sütunlar'),
+      WHERE,
+      SORT,
+      LIMIT,
+      choice('density', 'Density', 'Yoğunluk', [['compact', 'Compact', 'Sıkı'], ['comfortable', 'Comfortable', 'Rahat']], 'compact'),
+      opt('bars', 'boolean', 'Data bars', 'Veri çubukları', { default: false }),
+      opt('deltaColor', 'boolean', 'Color the change', 'Değişimi renklendir', { default: true }),
+      FORMAT,
+    ],
   ),
   heatmap: entry(
     'heatmap', 'binding', ['table', 'series'],
     { en: 'Heatmap', tr: 'Isı haritası' },
     { en: 'Intensity across two axes.', tr: 'İki eksen boyunca yoğunluk.' },
     { w: 6, h: 5 },
-    [COLOR, WHERE],
+    [
+      COLOR,
+      WHERE,
+      choice('scale', 'Color scale', 'Renk ölçeği', [['sequential', 'Low to high', 'Düşükten yükseğe'], ['diverging', 'Around a midpoint', 'Orta nokta etrafında']], 'sequential'),
+      opt('cellLabels', 'boolean', 'Values in cells', 'Hücrelerde değerler', { default: false }),
+      FORMAT,
+    ],
   ),
   funnel: entry(
     'funnel', 'binding', ['funnel'],
     { en: 'Funnel', tr: 'Huni' },
     { en: 'Step by step conversion.', tr: 'Adım adım dönüşüm.' },
     { w: 8, h: 6 },
-    [opt('compact', 'boolean', 'Compact', 'Sıkı', { default: false })],
+    [
+      opt('compact', 'boolean', 'Compact', 'Sıkı', { default: false }),
+      opt('showConversion', 'boolean', 'Conversion rates', 'Dönüşüm oranları', { default: true }),
+    ],
   ),
   pivot: entry(
     'pivot', 'binding', ['table'],
@@ -220,7 +335,15 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
     { en: 'Callout', tr: 'Vurgu' },
     { en: 'A highlighted note.', tr: 'Öne çıkarılmış bir not.' },
     { w: 6, h: 2 },
-    [opt('tone', 'enum', 'Tone', 'Ton', { enum: ['info', 'success', 'warning', 'danger'], default: 'info' }), MARKDOWN],
+    [
+      choice('tone', 'Tone', 'Ton', [
+        ['info', 'Info', 'Bilgi'],
+        ['success', 'Success', 'Başarı'],
+        ['warning', 'Warning', 'Uyarı'],
+        ['danger', 'Danger', 'Tehlike'],
+      ], 'info'),
+      MARKDOWN,
+    ],
   ),
   tabs: entry(
     'tabs', 'none', [],
@@ -290,10 +413,12 @@ export function blockCatalogMirror(): {
   blocks: BlockCatalogEntry[];
   renderDefaultSpan: Record<Render, 1 | 2 | 3>;
   htmlInputDefaultFrames: readonly FrameKind[];
+  enumLabels: Record<string, Record<string, LocalizedText>>;
 } {
   return {
     types: BLOCK_TYPES,
     blocks: listBlockCatalog(),
+    enumLabels: OPTION_ENUM_LABELS,
     renderDefaultSpan: RENDER_DEFAULT_SPAN,
     htmlInputDefaultFrames: HTML_INPUT_DEFAULT_FRAMES,
   };
