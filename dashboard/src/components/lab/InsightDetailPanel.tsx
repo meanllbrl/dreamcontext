@@ -24,6 +24,19 @@ interface Props {
   onToast: (msg: string) => void;
 }
 
+/**
+ * The scaffold's `## Meaning` placeholder (src/lib/lab/store.ts `createInsight`), mirrored:
+ * the dashboard cannot import the engine. Matched whitespace-insensitively.
+ */
+const MEANING_PLACEHOLDER = '(What does this number MEAN? Why does it matter, and how should a reader interpret a move?)';
+
+/** The `## Meaning` prose, or '' when there is none: empty, or still the scaffold's placeholder. */
+export function meaningText(raw: string | null | undefined): string {
+  const text = (raw ?? '').replace(/^##\s*Meaning\s*/i, '').trim();
+  const squash = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  return squash(text) === squash(MEANING_PLACEHOLDER) ? '' : text;
+}
+
 function fmtWhen(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, {
@@ -102,7 +115,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   const manifest = detail.data?.insight ?? null;
   const cache = detail.data?.cache ?? null;
   const series = cache?.series ?? [];
-  const meaning = (detail.data?.meaning ?? '').replace(/^##\s*Meaning\s*/i, '').trim();
+  const meaning = meaningText(detail.data?.meaning);
   const resolvedTweaks = detail.data?.resolvedTweaks ?? {};
   // Newest first — the reader wants "what happened last", not the epoch.
   // Array.isArray: the cache file is user-editable JSON; a malformed history

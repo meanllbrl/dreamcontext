@@ -6,8 +6,8 @@ import { chartHeight, otherLabel, type ShareRow } from './BarList';
 import { degradesToBars, toBarRows } from './barRows';
 import { ChartEmpty, type ChartBodyProps } from './chartBody';
 import {
-  ChartFrame, colorScale, formatNumber, formatValue, truncateToWidth, useChartSize, useMarkHover, useSeriesToggle,
-  type ChartFormat, type Measure, type TooltipSpec,
+  ChartFrame, chartSizeClass, colorScale, formatNumber, formatValue, truncateToWidth, useChartSize, useMarkHover,
+  useSeriesToggle, type ChartFormat, type Measure, type TooltipSpec,
 } from './chart';
 import { entityDomain } from './LineChart';
 import './lab-bar-pie-heat.css';
@@ -219,6 +219,64 @@ export function pieGeometry({ slices, hidden, width, height, fontPx, measure, ho
   return { cx, cy, r, ri, total, arcs, outside, inside };
 }
 
+/** The surface gap between strip segments (the same 2px the slices are split by). */
+const STRIP_GAP = 2;
+/** Thickest a share strip gets (a bar: thin mark). */
+const STRIP_MAX = 24;
+
+export interface StripSegment {
+  id: string;
+  index: number;
+  value: number;
+  share: number;
+  x: number;
+  w: number;
+  /** Text inside the segment: "name share", the share alone, or nothing, whichever fits. */
+  label: string | null;
+}
+
+/**
+ * A compact frame's pie: the same shares as ONE horizontal 100% strip (the
+ * part-to-whole form a wide, short cell can hold; dataviz), segments in slice
+ * order split by a 2px surface gap, each labelled inside only where the text
+ * fits (the tooltip reads the rest). Pure.
+ */
+export function pieStripGeometry({ slices, hidden, width, height, fontPx, measure, locale }: Omit<PieGeometryInput, 'hole' | 'labels'>): {
+  top: number;
+  thickness: number;
+  total: number;
+  segments: StripSegment[];
+} {
+  const shown = slices.filter((s) => !hidden?.has(s.id) && s.value > 0);
+  const total = shown.reduce((a, s) => a + s.value, 0);
+  const thickness = Math.max(4, Math.min(STRIP_MAX, height - 2));
+  const top = (height - thickness) / 2;
+  const room = Math.max(0, width - STRIP_GAP * Math.max(0, shown.length - 1));
+  const textFits = thickness >= fontPx + 2;
+  let x = 0;
+  const segments = shown.map((s) => {
+    const share = total > 0 ? s.value / total : 0;
+    const w = share * room;
+    const pct = shareText(share, locale);
+    const both = `${s.label} ${pct}`;
+    const label = !textFits ? null : measure(both) + 8 <= w ? both : measure(pct) + 8 <= w ? pct : null;
+    const seg = { id: s.id, index: slices.indexOf(s), value: s.value, share, x, w, label };
+    x += w + STRIP_GAP;
+    return seg;
+  });
+  return { top, thickness, total, segments };
+}
+
+/**
+ * Whether the donut's centre text fits its hole: the figure needs its width
+ * inside ~85% of the hole's diameter, the caption a second line under it.
+ */
+export function centerTextFit(ri: number, value: string, fontPx: number, centerFont: number, measure: Measure): { value: boolean; caption: boolean } {
+  const valueW = measure(value) * (centerFont / fontPx);
+  const fitsValue = ri > 0 && valueW <= ri * 1.7 && ri >= fontPx * 1.2;
+  return { value: fitsValue, caption: fitsValue && ri >= fontPx * 2.4 };
+}
+
 /** The label ink for text inside a slice of this colour (see lab-bar-pie-heat.css). */
 function insideInk(slot: number | null): string {
   return slot === null ? 'var(--lab-other-ink)' : `var(--lab-cat-ink-${slot + 1})`;
@@ -319,12 +377,20 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
     [ids, slices, colorIndex, colorDomain],
   );
   const toggle = useSeriesToggle(ids);
-  const geo = useMemo(() => (size.ready
+  // Too short for a readable pie (chart/fit.ts compact): the shares as one strip, no legend.
+  const sizeClass = box.ready ? chartSizeClass(box.width, box.height, size.fontPx) : 'regular';
+  const compact = sizeClass === 'compact';
+  const geo = useMemo(() => (size.ready && !compact
     ? pieGeometry({ slices, hidden: toggle.hidden, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure, hole, labels, locale })
-    : null), [size.ready, size.width, size.height, size.fontPx, size.measure, slices, toggle.hidden, hole, labels, locale]);
+    : null), [size.ready, compact, size.width, size.height, size.fontPx, size.measure, slices, toggle.hidden, hole, labels, locale]);
   const hover = useMarkHover(size.ref, size.width, size.height);
   const fmt = { format, unit, locale };
-  const active = geo && hover.active !== null ? geo.arcs.find((a) => a.index === hover.active) ?? null : null;
+  const strip = useMemo(() => (compact && size.ready
+    ? pieStripGeometry({ slices, hidden: toggle.hidden, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure, locale })
+    : null), [compact, size.ready, size.width, size.height, size.fontPx, size.measure, slices, toggle.hidden, locale]);
+  const activeSeg = strip && hover.active !== null ? strip.segments.find((g) => g.index === hover.active) ?? null : null;
+  const arcActive = geo && hover.active !== null ? geo.arcs.find((a) => a.index === hover.active) ?? null : null;
+  const active = strip ? activeSeg : arcActive;
   const activeSlice = active ? slices[active.index] : null;
 
   const tooltip: TooltipSpec | null = active && activeSlice && hover.anchor ? {
@@ -350,7 +416,7 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
   const fitted = legendPos === 'right' && box.ready
     ? fitLegend(legendItems, pieLegendCapacity(box.height, size.fontPx))
     : { shown: legendItems, more: 0 };
-  const legend = labels === 'legend' && geo
+  const legend = labels === 'legend' && geo && !compact
     ? {
         position: legendPos,
         items: fitted.more > 0
@@ -363,7 +429,10 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
 
   // The centre figure scales with the hole; its caption sits one line under it, the pair centred.
   const centerFont = geo ? Math.max(size.fontPx + 1, Math.min(28, geo.ri * 0.38)) : 0;
-  const centerY = geo ? geo.cy + centerFont * 0.35 - size.fontPx * 0.6 : 0;
+  const centerValue = geo ? formatValue(activeSlice && arcActive ? arcActive.value : geo.total, fmt) : '';
+  const centerFit = geo ? centerTextFit(geo.ri, centerValue, size.fontPx, centerFont, size.measure) : { value: false, caption: false };
+  // A lone figure centres on the hole; with its caption the pair centres together.
+  const centerY = geo ? (centerFit.caption ? geo.cy + centerFont * 0.35 - size.fontPx * 0.6 : geo.cy + centerFont * 0.35) : 0;
 
   return (
     <div ref={box.ref} className="lab-pie-frame">
@@ -373,10 +442,62 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
       data-chart="pie"
       data-labels={labels}
       data-hover-index={hover.active ?? ''}
+      data-pie-form={compact ? 'strip' : 'pie'}
+      data-size={sizeClass}
+      fit={compact ? { size: 'compact', legend: 'none', form: 'wrap', capacity: 0 } : null}
       legend={legend}
       tooltip={tooltip}
     >
-      {geo && (
+      {strip && (
+        <svg
+          className="lab-chart-svg"
+          width={size.width}
+          height={size.height}
+          viewBox={`0 0 ${size.width} ${size.height}`}
+          role="img"
+          aria-label={t(hole ? 'lab.chart.donut.aria' : 'lab.chart.pie.aria')}
+          data-pie-strip=""
+        >
+          <g className="lab-pie-slices">
+            {strip.segments.map((g) => {
+              const s = slices[g.index];
+              return (
+                <rect
+                  key={g.id}
+                  className="lab-pie-slice lab-pie-strip-seg"
+                  x={g.x}
+                  y={strip.top}
+                  width={Math.max(1, g.w)}
+                  height={strip.thickness}
+                  rx={Math.min(3, g.w / 2)}
+                  fill={colors.color(s.id)}
+                  data-slice={s.label}
+                  data-share={g.share.toFixed(4)}
+                  data-other={s.other ? 'true' : undefined}
+                  data-dim={hover.active !== null && hover.active !== g.index ? 'true' : undefined}
+                  aria-label={`${s.label}: ${formatValue(g.value, fmt)}, ${shareText(g.share, locale)}`}
+                  {...hover.bind(g.index)}
+                />
+              );
+            })}
+          </g>
+          {strip.segments.map((g) => (g.label ? (
+            <text
+              key={`l-${g.id}`}
+              className="lab-pie-inside"
+              data-pie-label="inside"
+              x={g.x + g.w / 2}
+              y={strip.top + strip.thickness / 2}
+              dy="0.32em"
+              textAnchor="middle"
+              fill={insideInk(colors.slot(slices[g.index].id))}
+            >
+              {g.label}
+            </text>
+          ) : null))}
+        </svg>
+      )}
+      {geo && !strip && (
         <svg
           className="lab-chart-svg"
           width={size.width}
@@ -425,14 +546,16 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
               </text>
             );
           })}
-          {centerTotal && geo.ri > 0 && (
+          {centerTotal && geo.ri > 0 && centerFit.value && (
             <g data-center-total="">
               <text className="lab-pie-center-value" x={geo.cx} y={centerY} textAnchor="middle" style={{ fontSize: centerFont }}>
-                {formatValue(activeSlice && active ? active.value : geo.total, fmt)}
+                {centerValue}
               </text>
-              <text className="lab-pie-center-label" x={geo.cx} y={centerY + size.fontPx * 1.4} textAnchor="middle">
-                {truncateToWidth(activeSlice ? activeSlice.label : t('lab.chart.totalCaption'), geo.ri * 1.6, size.measure)}
-              </text>
+              {centerFit.caption && (
+                <text className="lab-pie-center-label" x={geo.cx} y={centerY + size.fontPx * 1.4} textAnchor="middle">
+                  {truncateToWidth(activeSlice ? activeSlice.label : t('lab.chart.totalCaption'), geo.ri * 1.6, size.measure)}
+                </text>
+              )}
             </g>
           )}
         </svg>

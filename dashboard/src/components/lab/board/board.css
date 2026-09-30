@@ -199,10 +199,18 @@
   border-color: var(--color-border);
 }
 
+/*
+ * A board name reads whole up to ~30 characters; past that it ellipsizes and the tab's title
+ * and accessible name carry the full name. The active tab is the one being read: it gets more.
+ */
 .board-tab-label {
-  max-width: var(--space-28);
+  max-width: calc(var(--space-28) + var(--space-24));
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.board-tab--on .board-tab-label {
+  max-width: calc(var(--space-28) * 2 + var(--space-10));
 }
 
 .board-tabs-menu {
@@ -394,6 +402,49 @@
   color: var(--color-text);
 }
 
+/*
+ * Short cards (3-4 rows): the freshness sits beside the title on its row instead of taking a
+ * line of its own (a quarter of a 4x4 card); the title keeps its width first, the freshness
+ * ellipsizes into the rest and carries the whole line as its tooltip.
+ */
+.board-card--compact .board-card-title {
+  flex: 0 1 auto;
+}
+
+.board-card-fresh--compact {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * A 2-row card is a strip: title only, the freshness folded into the title's tooltip (the element
+ * stays, visually hidden, for screen readers), and a tighter inset so a chart keeps its height.
+ */
+.board-card--short {
+  position: relative;
+}
+
+.board-card--short .board-card-head {
+  padding-top: var(--space-2);
+}
+
+.board-card--short .board-card-body {
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.board-card-fresh--short {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* The source's own note, plain text after the freshness sentence. */
 .board-card-note {
   margin-left: var(--space-2);
@@ -431,6 +482,40 @@
 .board-card-menu:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/*
+ * An untitled card has no header row: the content starts at the card's top inset and the menu
+ * floats over the top corner, on the card surface so it never reads over a chart line. It shows
+ * on hover, keyboard focus, while open and while editing; a touch screen always shows it.
+ */
+.board-card--untitled {
+  position: relative;
+}
+
+.board-card-float-menu {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 2;
+  display: flex;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.board-card--untitled:hover > .board-card-float-menu,
+.board-card-float-menu:focus-within,
+.board-card-float-menu:has([aria-expanded='true']),
+.board-grid--editing .board-card-float-menu {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .board-card-float-menu {
+    opacity: 1;
+  }
 }
 
 /*

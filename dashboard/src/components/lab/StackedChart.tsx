@@ -2,14 +2,14 @@ import { useMemo } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { ChartEmpty, type ChartBodyProps } from './chartBody';
 import {
-  Axis, ChartFrame, Crosshair, Grid, HitArea, bandScale, cartesianLayout, colorScale, formatValue, keyGrain,
-  timeTickFormatter, useChartHover, useChartSize, useSeriesToggle,
-  type AxisTick, type CartesianLayout, type ChartFormat, type LegendItem, type LegendPosition, type Measure, type Rect,
-  type TooltipRow,
+  Axis, ChartFrame, Crosshair, EndLabelMarks, Grid, HitArea, bandScale, cartesianLayout, chartFit, colorScale,
+  compactEndLabels, formatValue, keyGrain, linearScale, timeTickFormatter, useChartHover, useChartSize, useSeriesToggle,
+  type AxisTick, type CartesianLayout, type ChartFormat, type EndLabelItem, type EndLabels, type LegendItem,
+  type LegendPosition, type Measure, type Rect, type TooltipRow,
 } from './chart';
 import {
-  axesShown, edgePadding, entityDomain, pointXTicks, seriesLabel, valueTicks, xDomainOf, xPositionsOf, xTitle,
-  type AxesMode, type ChartSeries, type XDomain,
+  NO_AXIS, axesShown, compactPlot, edgePadding, entityDomain, lastPoint, pointXTicks, seriesLabel, valueTicks, xDomainOf,
+  xPositionsOf, xTitle, type AxesMode, type ChartSeries, type XDomain,
 } from './LineChart';
 
 /**
@@ -97,6 +97,8 @@ export interface StackedGeometry {
   /** area mode: one band per visible series. */
   bands: { name: string; color: string; d: string; top: string }[];
   bandwidth: number;
+  /** Compact mode: the direct end labels (null otherwise). */
+  ends: EndLabels | null;
 }
 
 const n1 = (v: number) => (Math.round(v * 10) / 10).toString();
@@ -132,6 +134,9 @@ export function stackedGeometry(input: {
   format: ChartFormat;
   unit: string | null;
   locale?: string;
+  /** Compact (fit.ts): the stack fills the frame (no axes, no grid) beside direct end labels from `endItems`. */
+  compact?: boolean;
+  endItems?: readonly EndLabelItem[];
 }): StackedGeometry | null {
   const { domain, fontPx, mode } = input;
   if (domain.keys.length === 0 || input.width <= 0 || input.height <= 0) return null;
@@ -139,7 +144,11 @@ export function stackedGeometry(input: {
   const totals = columns.map((c) => c.total);
   const fmt = { zero: true, format: input.format, unit: input.unit, locale: input.locale, fixed: input.normalized ? [0, 100] as [number, number] : undefined };
   const band = (w: number) => bandScale(domain.keys.length, [0, w], { maxBandwidth: MAX_COLUMN });
-  const layout = cartesianLayout({
+  let ends: EndLabels | null = null;
+  const layout: CartesianLayout = input.compact ? (() => {
+    ends = compactEndLabels(input.endItems ?? [], { width: input.width, height: input.height, fontPx, measure: input.measure });
+    return { plot: compactPlot(input.width, input.height, ends), x: NO_AXIS, y: NO_AXIS };
+  })() : cartesianLayout({
     width: input.width,
     height: input.height,
     fontPx,
@@ -156,7 +165,10 @@ export function stackedGeometry(input: {
     },
   });
   const { plot } = layout;
-  const { y } = valueTicks(totals, plot.height, fontPx, fmt);
+  // Compact: the stack spends the frame's few pixels on its own range (from zero; shares 0-100).
+  const y = input.compact
+    ? linearScale(fmt.fixed ?? totals, { range: [plot.height, 0], nice: false, zero: true })
+    : valueTicks(totals, plot.height, fontPx, fmt).y;
   const baseline = Math.min(plot.height, Math.max(0, y(0)));
   const segments: StackedGeometry['segments'] = [];
   const bands: StackedGeometry['bands'] = [];
@@ -194,7 +206,7 @@ export function stackedGeometry(input: {
       });
     });
   }
-  return { layout, plot, xs, yOf: y, baseline, columns, segments, bands, bandwidth };
+  return { layout, plot, xs, yOf: y, baseline, columns, segments, bands, bandwidth, ends };
 }
 
 /** Registry body (`stacked`). A host with a definite box passes `height`: the chart fills it. */
@@ -229,6 +241,8 @@ export function StackedChart({
 }) {
   const { t, locale } = useI18n();
   const size = useChartSize();
+  // The whole frame (legend included) decides what yields as the cell shrinks (chart/fit.ts).
+  const frame = useChartSize();
   const colors = useMemo(
     () => colorScale(entityDomain(colorDomain, series.map((s) => s.name)), {
       start: colorIndex, other: series.filter((s) => typeof s.other === 'number').map((s) => s.name),
@@ -243,22 +257,36 @@ export function StackedChart({
   // Shares read as shares: 25%, never 0.25 or 2,500%.
   const shareUnit = normalized ? '%' : unit;
   const shareFormat: ChartFormat = normalized ? 'number' : format;
+  const byName = new Map(series.map((s) => [s.name, s] as [string, ChartSeries]));
+  const label = (name: string) => {
+    const s = byName.get(name);
+    return s ? seriesLabel(s, t) : name;
+  };
+  const legendItems: LegendItem[] = series.map((s) => ({ id: s.name, label: label(s.name), color: colors.color(s.name), shape: 'rect' as const }));
+  const fit = chartFit({
+    width: frame.width, height: frame.height, fontPx: frame.fontPx, measure: frame.measure,
+    legend, labels: series.length > 1 ? legendItems.map((it) => it.label) : [],
+  });
+  const compact = fit.size === 'compact';
+  // Compact: each visible layer's latest value, named when there is more than one layer (a unit other than % stays in the title).
+  const endItems = useMemo<EndLabelItem[]>(() => (compact ? visible.flatMap((s) => {
+    const last = lastPoint(s, domain);
+    return last ? [{
+      id: s.name, color: colors.color(s.name), shape: 'rect' as const, name: series.length > 1 ? seriesLabel(s, t) : '',
+      value: formatValue(last.v, { format: shareFormat, unit: shareUnit?.trim() === '%' ? shareUnit : null, locale, ...(normalized ? { maxDecimals: 1 } : {}) }),
+    }] : [];
+  }) : []), [compact, visible, domain, colors, series.length, t, shareFormat, shareUnit, locale, normalized]);
 
   const geo = useMemo(() => (size.ready ? stackedGeometry({
     visible, domain, mode, normalized, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure,
-    color: colors.color, showX, showY, format: shareFormat, unit: shareUnit, locale,
-  }) : null), [size.ready, size.width, size.height, size.fontPx, size.measure, visible, domain, mode, normalized, colors, showX, showY, shareFormat, shareUnit, locale]);
+    color: colors.color, showX, showY, format: shareFormat, unit: shareUnit, locale, compact, endItems,
+  }) : null), [size.ready, size.width, size.height, size.fontPx, size.measure, visible, domain, mode, normalized, colors, showX, showY, shareFormat, shareUnit, locale, compact, endItems]);
 
   const hover = useChartHover({ positions: geo?.xs ?? [], plotWidth: geo?.plot.width ?? 0, plotHeight: geo?.plot.height ?? 0 });
   const hi = hover.index;
 
   if (domain.keys.length === 0) return <ChartEmpty hint={emptyHint} />;
 
-  const byName = new Map(series.map((s) => [s.name, s] as [string, ChartSeries]));
-  const label = (name: string) => {
-    const s = byName.get(name);
-    return s ? seriesLabel(s, t) : name;
-  };
   const column = geo && hi !== null ? geo.columns[hi] ?? null : null;
   const readout = column ? stackedTooltip(column, { color: colors.color, label, format: shareFormat, unit: shareUnit, locale }) : null;
   const tooltip = geo && hi !== null && column && readout ? {
@@ -274,11 +302,11 @@ export function StackedChart({
       </span>
     ) : undefined,
   } : null;
-  const legendItems: LegendItem[] = series.map((s) => ({ id: s.name, label: label(s.name), color: colors.color(s.name), shape: 'rect' as const }));
-
   const chart = (
     <ChartFrame
       plotRef={size.ref}
+      frameRef={frame.ref}
+      fit={fit}
       data-chart="stacked"
       data-mode={mode}
       data-normalized={normalized ? 'true' : 'false'}
@@ -296,8 +324,8 @@ export function StackedChart({
           aria-label={ariaLabel ?? t('lab.chart.stacked')}
           {...hover.focusProps}
         >
-          {grid && <Grid plot={geo.plot} y={geo.layout.y.ticks} dpr={size.dpr} />}
-          {showY && <Axis orientation="y" axis={geo.layout.y} plot={geo.plot} dpr={size.dpr} />}
+          {grid && !compact && <Grid plot={geo.plot} y={geo.layout.y.ticks} dpr={size.dpr} />}
+          {showY && !compact && <Axis orientation="y" axis={geo.layout.y} plot={geo.plot} dpr={size.dpr} />}
           {geo.bands.map((b) => (
             <g key={b.name} data-series={b.name} pointerEvents="none">
               <path data-band="" d={b.d} fill={b.color} fillOpacity={0.35} stroke="none" />
@@ -316,7 +344,7 @@ export function StackedChart({
               pointerEvents="none"
             />
           ))}
-          <Axis orientation="x" axis={geo.layout.x} plot={geo.plot} baseline={showX ? geo.baseline : null} dpr={size.dpr} />
+          {!compact && <Axis orientation="x" axis={geo.layout.x} plot={geo.plot} baseline={showX ? geo.baseline : null} dpr={size.dpr} />}
           {hi !== null && mode === 'area' && <Crosshair plot={geo.plot} x={geo.xs[hi]} dpr={size.dpr} />}
           {hi !== null && mode === 'area' && column && column.spans.map((s) => (s.hi > s.lo ? (
             <circle
@@ -324,13 +352,14 @@ export function StackedChart({
               data-hover-point=""
               cx={geo.plot.left + geo.xs[hi]}
               cy={geo.plot.top + geo.yOf(s.hi)}
-              r={4}
+              r={compact ? 3 : 4}
               fill={colors.color(s.name)}
               stroke="var(--viz-surface)"
-              strokeWidth={2}
+              strokeWidth={compact ? 1 : 2}
               pointerEvents="none"
             />
           ) : null))}
+          {geo.ends && <EndLabelMarks labels={geo.ends} />}
           <HitArea plot={geo.plot} {...hover.hitProps} />
         </svg>
       )}

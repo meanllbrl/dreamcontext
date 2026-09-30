@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
@@ -7,7 +7,9 @@ import { resolveChatKitTokens } from '../../sleepy/chat/chatHtmlKit';
 import { mintAppNonce } from '../labAppRuntime';
 import type { Frame, LibraryBlock } from '../board/boardTypes';
 import { stringOption, type BlockViewProps } from './blockCommon';
-import { buildHtmlBlockSrcdoc, createHtmlBlockHost, declaredInputNames, htmlBlockHash } from './htmlBlockBridge';
+import {
+  buildHtmlBlockSrcdoc, createHtmlBlockHost, currentInputs, declaredInputNames, htmlBlockHash, inputsCurrent, inputsFingerprint,
+} from './htmlBlockBridge';
 
 /**
  * `html`: the author's own markup in the network-less sandbox, with the full
@@ -34,16 +36,62 @@ export function HtmlBlock({ block, inputs }: BlockViewProps) {
   const declared = declaredInputNames(block, library.entry);
 
   return (
-    <HtmlBlockFrame
+    <HtmlBlockBody
       key={`${htmlBlockHash(block, html)}:${declared.join(',')}`}
       html={html}
       declared={declared}
+      bindings={inputsRecord(block.options.inputs)}
       inputs={inputs}
       lang={locale}
       title={library.entry?.title ?? t('lab.blocks.html.title')}
+      waitingText={t('lab.blocks.html.waiting')}
       stoppedText={t('lab.blocks.html.stopped')}
     />
   );
+}
+
+/** How long an input may wait for its frames (a save in flight) before the block asks anyway. */
+const INPUT_WAIT_MS = 10_000;
+
+function inputsRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/**
+ * Mounts the frame only once every declared input holds the frame of its
+ * CURRENT binding. A block added or rebound in the editor is drawn at once,
+ * but its frames come with the save's response; an iframe mounted before that
+ * asked `lab.data()` too early, got "No data" (or the old binding's data) and
+ * never asked again. Mounted under hash(html, inputs) by HtmlBlock, and the
+ * frame under the frames' own hash, so their arrival (and any later refresh)
+ * remounts it with the data. A save that never lands
+ * stops the wait after INPUT_WAIT_MS, and the block reports what it lacks
+ * (the frame is handed `currentInputs` only, never a previous binding's).
+ */
+function HtmlBlockBody({ bindings, waitingText, ...frame }: {
+  html: string;
+  declared: string[];
+  bindings: Record<string, unknown> | null;
+  inputs: Record<string, Frame> | undefined;
+  lang: string;
+  title: string;
+  waitingText: string;
+  stoppedText: string;
+}) {
+  const current = inputsCurrent(frame.declared, bindings, frame.inputs);
+  const [gaveUp, setGaveUp] = useState(false);
+  useEffect(() => {
+    setGaveUp(false);
+    if (current) return;
+    const timer = window.setTimeout(() => setGaveUp(true), INPUT_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [current]);
+
+  // Only frames of the CURRENT bindings ever reach the iframe: after a give-up, a frame left from
+  // the previous binding is dropped and `lab.data()` for it answers "No data", never old data.
+  const inputs = useMemo(() => currentInputs(frame.declared, bindings, frame.inputs), [frame.declared, bindings, frame.inputs]);
+  if (!current && !gaveUp) return <div className="lab-block-empty" data-lab-html-waiting>{waitingText}</div>;
+  return <HtmlBlockFrame key={inputsFingerprint(frame.declared, inputs)} {...frame} inputs={inputs} />;
 }
 
 /** The library entry a `ref` names, from the same query the board page lists the library with. */

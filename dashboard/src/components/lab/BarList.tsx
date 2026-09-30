@@ -2,10 +2,11 @@ import { useMemo, type CSSProperties } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { rankRows, ROW_CAP, type BarRow } from './barRows';
 import {
-  Axis, ChartFrame, Grid, HitArea, OTHER_COLOR, bandScale, cartesianLayout, colorScale, crisp, formatNumber, formatValue,
-  linearScale, tickCountFor, tickFormatter, truncateToWidth, useChartHover, useChartSize, useSeriesToggle,
-  type AxisTick, type CartesianLayout, type ChartFormat, type LegendItem, type LegendPosition, type Measure, type Rect,
-  type TooltipRow, type TooltipSpec,
+  Axis, COMPACT_PAD, ChartFrame, EndLabelMarks, Grid, HitArea, OTHER_COLOR, bandScale, cartesianLayout, chartFit, colorScale,
+  compactEndLabels, crisp, formatNumber, formatValue, linearScale, tickCountFor, tickFormatter, truncateToWidth,
+  useChartHover, useChartSize, useSeriesToggle,
+  type AxisTick, type CartesianLayout, type ChartFormat, type EndLabels, type LegendItem, type LegendPosition, type Measure,
+  type Rect, type TooltipRow, type TooltipSpec,
 } from './chart';
 import { entityDomain } from './LineChart';
 import './lab-bar-pie-heat.css';
@@ -71,6 +72,29 @@ export interface BarPlotOptions {
    * colours key on it, so a survivor keeps its hue. Absent = the drawn series.
    */
   colorDomain?: readonly string[] | null;
+  /**
+   * Compact frame (chart/fit.ts): columns fill the frame with no axes, grid or
+   * value labels (series named on the right when there are several); rows
+   * keep their names and values but drop the value axis, and draw only the
+   * rows that fit, "+N" for the rest (the order is the caller's: a ranked list
+   * keeps its biggest).
+   */
+  compact?: boolean;
+  /**
+   * Small frame (chart/fit.ts): rows (horizontal bars) likewise draw only the
+   * ones that fit with a readable name, "+N" for the rest, and drop the value
+   * axis when value labels already carry every number.
+   */
+  small?: boolean;
+}
+
+/**
+ * Rows a compact or small horizontal bar frame of `height` px draws: one per
+ * ~1.6 font heights (the band's padding included, so every row keeps its
+ * name), at least one.
+ */
+export function compactRowCount(height: number, fontPx: number): number {
+  return Math.max(1, Math.floor((height - 4) / (fontPx * 1.6)));
 }
 
 /** Thickest a bar may be (dataviz: thin marks; the slot's leftover is air). */
@@ -161,6 +185,8 @@ export interface BarLayout {
   /** Gridline positions along the value axis (drawn even when the axis labels are hidden). */
   gridTicks: { pos: number }[];
   colors: Map<string, string>;
+  /** Compact mode: the end labels (series names) or the "+N" of rows left out; null otherwise. */
+  ends: EndLabels | null;
 }
 
 /**
@@ -186,19 +212,48 @@ function markColor(colors: Map<string, string>, series: BarSeries, cat: BarCateg
  * bar/segment/ghost, the value labels that fit. Exported for the unit tests
  * (the component is this plus hover and chrome).
  */
-export function layoutBars({ model, hidden, opts, width, height, fontPx, measure, locale }: BarLayoutInput): BarLayout {
+export function layoutBars({ model: fullModel, hidden, opts, width, height, fontPx, measure, locale }: BarLayoutInput): BarLayout {
   const orientation = opts.orientation ?? 'h';
   const vertical = orientation === 'v';
+  const compact = !!opts.compact;
+  const smallRows = !compact && !!opts.small && !vertical;
+  const valueLabelsAsked = opts.valueLabels ?? true;
+  // With labels at the tips, a small frame's value axis only repeats them: its band goes to the rows.
+  const dropValueAxis = compact || (smallRows && valueLabelsAsked);
+  // Compact and small rows: only the ones that fit (the caller's order), the rest a "+N".
+  const rowCap = (compact || smallRows) && !vertical
+    ? compactRowCount(height - (dropValueAxis ? 0 : Math.ceil(fontPx * 1.25) + 6), fontPx)
+    : Infinity;
+  const leftOut = Math.max(0, fullModel.categories.length - rowCap);
+  const model: BarModel = leftOut > 0
+    ? {
+        categories: fullModel.categories.slice(0, rowCap),
+        series: fullModel.series.map((s) => ({ ...s, values: s.values.slice(0, rowCap), prev: s.prev ? s.prev.slice(0, rowCap) : s.prev })),
+      }
+    : fullModel;
   const shown = model.series.filter((s) => !hidden?.has(s.id));
   const single = model.series.length === 1;
   const stacked = (opts.group ?? 'grouped') === 'stacked' && shown.length > 1;
   const compare = !!opts.comparePrev && shown.some((s) => s.prev?.some((v) => typeof v === 'number'));
-  const valueLabels = opts.valueLabels ?? true;
+  const valueLabels = (opts.valueLabels ?? true) && !(compact && vertical);
   const fmt = { format: opts.format ?? 'auto', unit: opts.unit ?? null, locale };
-  const showX = opts.showX ?? true;
-  const showY = opts.showY ?? true;
+  // Tight rows spend their width on the bar: a unit other than % stays in the title (the tooltip keeps it).
+  const labelFmt = (compact || smallRows) && fmt.unit?.trim() !== '%' ? { ...fmt, unit: null } : fmt;
+  const showX = (opts.showX ?? true) && !dropValueAxis;
+  const showY = (opts.showY ?? true) && !(compact && vertical);
   const colors = barColors(model, opts.colorStart ?? 1, opts.colorDomain);
   const nCat = model.categories.length;
+  let ends: EndLabels | null = null;
+  if (compact && vertical && !single) {
+    ends = compactEndLabels(
+      shown.map((s) => ({ id: s.id, color: colors.get(s.id) ?? OTHER_COLOR, shape: 'rect' as const, name: s.label, value: '' })),
+      { width, height, fontPx, measure },
+    );
+  } else if (leftOut > 0) {
+    const w = measure(`+${leftOut}`);
+    ends = { placed: [], more: leftOut, moreAt: { x: width - w - 2, y: height - 2 - fontPx * 0.7 }, width: w + 10 };
+  }
+  const endsW = ends?.width ?? 0;
 
   const num = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
   // Every value the value axis must hold: bars, stack ends, ghosts.
@@ -227,7 +282,7 @@ export function layoutBars({ model, hidden, opts, width, height, fontPx, measure
   }
 
   // The value labels' text, so their room can be reserved before the layout runs.
-  const labelText = (v: number) => formatValue(v, fmt);
+  const labelText = (v: number) => formatValue(v, labelFmt);
   const labelled: number[] = [];
   if (valueLabels) {
     for (let c = 0; c < nCat; c++) {
@@ -241,9 +296,15 @@ export function layoutBars({ model, hidden, opts, width, height, fontPx, measure
   }
   const widestLabel = labelled.reduce((m, v) => Math.max(m, measure(labelText(v))), 0);
   const hasNegative = extent.some((v) => v < 0);
-  const padding = vertical
-    ? { top: valueLabels ? Math.ceil(fontPx * 1.4) + 2 : Math.ceil(fontPx / 2) + 2, bottom: hasNegative && valueLabels ? Math.ceil(fontPx * 1.4) : 2 }
-    : { right: valueLabels ? Math.ceil(widestLabel) + 10 : 8 };
+  const padding = compact
+    ? vertical
+      ? { top: COMPACT_PAD, bottom: COMPACT_PAD, left: COMPACT_PAD, right: COMPACT_PAD + endsW }
+      : { top: 2, bottom: 2, right: (valueLabels ? Math.ceil(widestLabel) + 10 : 8) + endsW }
+    : smallRows && endsW > 0
+      ? { right: (valueLabels ? Math.ceil(widestLabel) + 10 : 8) + endsW }
+      : vertical
+      ? { top: valueLabels ? Math.ceil(fontPx * 1.4) + 2 : Math.ceil(fontPx / 2) + 2, bottom: hasNegative && valueLabels ? Math.ceil(fontPx * 1.4) : 2 }
+      : { right: valueLabels ? Math.ceil(widestLabel) + 10 : 8 };
 
   // Category labels: long names are truncated to a share of the cell, never allowed to eat the plot.
   const catLabelMax = Math.max(fontPx * 4, width * (vertical ? 0.5 : 0.34));
@@ -279,6 +340,8 @@ export function layoutBars({ model, hidden, opts, width, height, fontPx, measure
   const scale = valueScale(valLen);
   const zero = scale(0);
   const centers = model.categories.map((_, i) => b.center(i));
+  // The "+N" of rows left out reads on the last drawn row's line.
+  if (ends && leftOut > 0 && ends.moreAt && centers.length > 0) ends.moreAt = { x: ends.moreAt.x, y: plot.top + centers[centers.length - 1] };
   const slotFull = b.step * (1 - SLOT_PADDING);
 
   // Bars per category slot: grouped series side by side, each with its ghost when comparing.
@@ -353,7 +416,7 @@ export function layoutBars({ model, hidden, opts, width, height, fontPx, measure
   let crowded = false;
   if (valueLabels) {
     const gap = 4;
-    const right = width - 2;
+    const right = width - 2 - endsW;
     for (let c = 0; c < nCat; c++) {
       const own = marks.filter((m) => m.cat === c && !m.ghost);
       if (own.length === 0) continue;
@@ -385,7 +448,7 @@ export function layoutBars({ model, hidden, opts, width, height, fontPx, measure
   }
 
   if (vertical && crowded) labels = [];
-  return { layout, plot, centers, slot: b.step, marks, labels, zero, reach, colors, gridTicks: scale.ticks.map((v) => ({ pos: scale(v) })) };
+  return { layout, plot, centers, slot: b.step, marks, labels, zero, reach, colors, gridTicks: scale.ticks.map((v) => ({ pos: scale(v) })), ends };
 }
 
 /** "+10 (+25%)": the change from `prev` to `cur`, signed, formatted like the values. */
@@ -474,16 +537,48 @@ export interface BarPlotProps extends BarPlotOptions {
 export function BarPlot({ model, ariaLabel, chart = 'bar', ...opts }: BarPlotProps) {
   const { t, locale } = useI18n();
   const size = useChartSize();
+  // The whole frame (legend included) decides what yields as the cell shrinks (chart/fit.ts).
+  const frame = useChartSize();
   const vertical = (opts.orientation ?? 'h') === 'v';
   const ids = useMemo(() => model.series.map((s) => s.id), [model]);
   const toggle = useSeriesToggle(ids);
   const hidden = toggle.hidden;
+  const legendColors = barColors(model, opts.colorStart ?? 1, opts.colorDomain);
+  const copy: BarTooltipCopy = {
+    current: t('lab.blocks.compare.current'),
+    previous: t('lab.blocks.compare.prev'),
+    total: t('lab.chart.totalCaption'),
+    vsPrev: t('lab.chart.vsPrev'),
+    share: t('lab.chart.share'),
+  };
+  const single = model.series.length === 1;
+  const legendItems: LegendItem[] = single
+    ? []
+    : model.series.map((s) => ({ id: s.id, label: s.label, color: legendColors.get(s.id) ?? OTHER_COLOR, shape: 'rect' as const }));
+  const compareLegend = single && opts.comparePrev && model.series[0].prev?.some((v) => typeof v === 'number');
+  const legendPos = opts.legend ?? 'bottom';
+  const legend = legendItems.length > 1
+    ? { position: legendPos, items: legendItems, hidden, onToggle: toggle.toggle }
+    : compareLegend
+      ? {
+          position: legendPos,
+          items: [
+            { id: 'current', label: copy.current, color: legendColors.get(model.series[0].id) ?? OTHER_COLOR, shape: 'rect' as const },
+            { id: 'prev', label: copy.previous, color: ghostColor(legendColors.get(model.series[0].id) ?? OTHER_COLOR), shape: 'rect' as const },
+          ],
+        }
+      : null;
+  const fit = chartFit({
+    width: frame.width, height: frame.height, fontPx: frame.fontPx, measure: frame.measure,
+    legend: legendPos, labels: legend ? legend.items.map((it) => it.label) : [],
+  });
+  const compact = fit.size === 'compact';
 
   const geo = useMemo(() => {
     if (!size.ready || model.categories.length === 0) return null;
-    return layoutBars({ model, hidden, opts, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure, locale });
+    return layoutBars({ model, hidden, opts: { ...opts, compact, small: fit.size === 'small' }, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure, locale });
     // opts is spread fresh each render; its fields are listed instead.
-  }, [size.ready, size.width, size.height, size.fontPx, size.measure, model, hidden, locale, // eslint-disable-line react-hooks/exhaustive-deps
+  }, [size.ready, size.width, size.height, size.fontPx, size.measure, model, hidden, locale, compact, fit.size, // eslint-disable-line react-hooks/exhaustive-deps
     opts.orientation, opts.group, opts.valueLabels, opts.comparePrev, opts.format, opts.unit, opts.colorStart, opts.colorDomain, opts.showX, opts.showY]);
 
   const hover = useChartHover({
@@ -493,14 +588,7 @@ export function BarPlot({ model, ariaLabel, chart = 'bar', ...opts }: BarPlotPro
     axis: vertical ? 'x' : 'y',
   });
   const hi = hover.index;
-  const colors = geo?.colors ?? barColors(model, opts.colorStart ?? 1, opts.colorDomain);
-  const copy: BarTooltipCopy = {
-    current: t('lab.blocks.compare.current'),
-    previous: t('lab.blocks.compare.prev'),
-    total: t('lab.chart.totalCaption'),
-    vsPrev: t('lab.chart.vsPrev'),
-    share: t('lab.chart.share'),
-  };
+  const colors = geo?.colors ?? legendColors;
 
   let tooltip: TooltipSpec | null = null;
   if (geo && hi !== null) {
@@ -512,23 +600,6 @@ export function BarPlot({ model, ariaLabel, chart = 'bar', ...opts }: BarPlotPro
     tooltip = { anchor, ...barTooltipContent(model, hi, opts, colors, copy, hidden, locale) };
   }
 
-  const single = model.series.length === 1;
-  const legendItems: LegendItem[] = single
-    ? []
-    : model.series.map((s) => ({ id: s.id, label: s.label, color: colors.get(s.id) ?? OTHER_COLOR, shape: 'rect' as const }));
-  const compareLegend = single && opts.comparePrev && model.series[0].prev?.some((v) => typeof v === 'number');
-  const legendPos = opts.legend ?? 'bottom';
-  const legend = legendItems.length > 1
-    ? { position: legendPos, items: legendItems, hidden, onToggle: toggle.toggle }
-    : compareLegend
-      ? {
-          position: legendPos,
-          items: [
-            { id: 'current', label: copy.current, color: colors.get(model.series[0].id) ?? OTHER_COLOR, shape: 'rect' as const },
-            { id: 'prev', label: copy.previous, color: ghostColor(colors.get(model.series[0].id) ?? OTHER_COLOR), shape: 'rect' as const },
-          ],
-        }
-      : null;
 
   const slotRect = (i: number) => {
     if (!geo) return null;
@@ -542,6 +613,8 @@ export function BarPlot({ model, ariaLabel, chart = 'bar', ...opts }: BarPlotPro
   return (
     <ChartFrame
       plotRef={size.ref}
+      frameRef={frame.ref}
+      fit={fit}
       className="lab-bar-chart"
       data-chart={chart}
       data-orientation={vertical ? 'v' : 'h'}
@@ -560,7 +633,7 @@ export function BarPlot({ model, ariaLabel, chart = 'bar', ...opts }: BarPlotPro
           aria-label={ariaLabel ?? t('lab.chart.bar.aria')}
           {...hover.focusProps}
         >
-          {(opts.grid ?? true) && (vertical
+          {(opts.grid ?? true) && !compact && (vertical
             ? <Grid plot={geo.plot} y={geo.gridTicks} dpr={size.dpr} />
             : <Grid plot={geo.plot} x={geo.gridTicks} dpr={size.dpr} />)}
           {hoverSlot && <rect className="lab-bar-hover" data-hover-slot="" {...hoverSlot} />}
@@ -595,6 +668,7 @@ export function BarPlot({ model, ariaLabel, chart = 'bar', ...opts }: BarPlotPro
               {l.text}
             </text>
           ))}
+          {geo.ends && <EndLabelMarks labels={geo.ends} />}
           <HitArea plot={geo.plot} {...hover.hitProps} />
         </svg>
       )}

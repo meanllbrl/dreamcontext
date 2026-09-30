@@ -729,7 +729,8 @@ function BoardTabs({
   // the set of boards changes; a resize re-fits from the cache. Tabs are `flex: none`.
   const rowRef = useRef<HTMLDivElement>(null);
   const widths = useRef(new Map<string, number>());
-  const signature = boards.map((b) => `${b.slug}:${title(b)}`).join('|');
+  // The active tab is drawn wider (board.css): a new active tab is a new measurement.
+  const signature = `${active}|${boards.map((b) => `${b.slug}:${title(b)}`).join('|')}`;
   const [measuredSig, setMeasuredSig] = useState<string | null>(null);
   const measuring = measuredSig !== signature;
   const [fit, setFit] = useState(boards.length);
@@ -848,6 +849,7 @@ function BoardTabs({
               className={`board-tab${on ? ' board-tab--on' : ''}${b.error ? ' board-tab--error' : ''}`}
               onClick={() => onSelect(b.slug)}
               title={title(b)}
+              aria-label={title(b)}
             >
               <span className="board-tab-label">{title(b)}</span>
             </button>

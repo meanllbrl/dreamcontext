@@ -109,6 +109,21 @@ export interface HtmlBlockSrcdocInput {
   lang?: string;
 }
 
+/**
+ * A board cell is already a card: the chrome draws the border, the radius, the
+ * surface and the inset. Markup written for Chat usually wraps itself in ONE
+ * root `dc-card`, which inside a cell drew a second bordered box. That root box
+ * dissolves into the chrome (its content keeps the kit's rhythm); a markup with
+ * several root cards (a deliberate grid of boxes) is left alone.
+ */
+export const HTML_BLOCK_CELL_CSS = `body:not(:has(> .dc-card ~ .dc-card)) > .dc-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}`;
+
 /** The complete srcdoc of one html block instance. */
 export function buildHtmlBlockSrcdoc(input: HtmlBlockSrcdocInput): string {
   const { html, tokens, scheme, nonce, inputs, lang } = input;
@@ -116,7 +131,7 @@ export function buildHtmlBlockSrcdoc(input: HtmlBlockSrcdocInput): string {
   const configScript = `window.__LAB_BLOCK__ = ${escapeForInlineScript(JSON.stringify(config))};`;
   const doc = buildSandboxSrcdoc({
     html,
-    css: CHAT_HTML_KIT_CSS,
+    css: `${CHAT_HTML_KIT_CSS}\n${HTML_BLOCK_CELL_CSS}`,
     tokens,
     scheme,
     headScript: `${configScript}\n${HTML_BLOCK_RUNTIME_JS}\n${KIT_BEHAVIOUR}`,
@@ -147,6 +162,65 @@ export function declaredInputNames(block: Block, library: LibraryBlock | null): 
     return library ? library.inputs.map((i) => i.name).filter(isInputName) : [];
   }
   return Object.keys(asRecord(block.options.inputs) ?? {}).filter(isInputName);
+}
+
+// ─── Frames that match the bindings ─────────────────────────────────────────
+
+/**
+ * Is `frame` the server's answer for `binding`? An edit is laid over the board
+ * the moment it is made, but its frames only arrive with the save's response:
+ * until then an input either has no frame or still holds the PREVIOUS
+ * binding's. Every data frame names its insight and an empty frame carries the
+ * binding as written, so the two are told apart without a round trip.
+ */
+export function frameMatchesBinding(frame: Frame, binding: unknown): boolean {
+  if (typeof binding !== 'string') return frame.kind === 'empty';
+  if (frame.kind === 'empty') return frame.ref === binding;
+  const s = binding.trim();
+  const slash = s.indexOf('/');
+  return frame.insight === (slash === -1 ? s : s.slice(0, slash));
+}
+
+/** Every declared input holds a frame resolved for its current binding (the iframe may ask now). */
+export function inputsCurrent(
+  declared: readonly string[],
+  bindings: Record<string, unknown> | null,
+  inputs: Record<string, Frame> | undefined,
+): boolean {
+  const bound = bindings ?? {};
+  return declared.every((name) => {
+    if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, name)) return false;
+    return frameMatchesBinding(inputs[name], Object.prototype.hasOwnProperty.call(bound, name) ? bound[name] : null);
+  });
+}
+
+/**
+ * Only the declared inputs whose frame was resolved for their CURRENT binding. What the iframe
+ * is ever handed: a frame left over from a previous binding (a rebind whose save never landed)
+ * is dropped, so `lab.data()` for it is an error, never the old insight's data.
+ */
+export function currentInputs(
+  declared: readonly string[],
+  bindings: Record<string, unknown> | null,
+  inputs: Record<string, Frame> | undefined,
+): Record<string, Frame> {
+  const bound = bindings ?? {};
+  const out: Record<string, Frame> = {};
+  for (const name of declared) {
+    if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, name)) continue;
+    const binding = Object.prototype.hasOwnProperty.call(bound, name) ? bound[name] : null;
+    if (frameMatchesBinding(inputs[name], binding)) out[name] = inputs[name];
+  }
+  return out;
+}
+
+/**
+ * hash(the declared inputs' frames). Part of the frame's remount key: the
+ * iframe reads its data once, on load, so new data (a rebinding's frames
+ * landing, a sync) is a fresh document, never a stale one.
+ */
+export function inputsFingerprint(declared: readonly string[], inputs: Record<string, Frame> | undefined): string {
+  return hashString(JSON.stringify(declared.map((name) => inputs?.[name] ?? null)));
 }
 
 // ─── Remount key ────────────────────────────────────────────────────────────

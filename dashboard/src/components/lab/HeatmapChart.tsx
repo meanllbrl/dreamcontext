@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import {
-  ChartFrame, cartesianLayout, divergingColor, divergingScale, formatTimeKey, formatValue, keyGrain, parseTimeKey,
+  ChartFrame, cartesianLayout, chartSizeClass, divergingColor, divergingScale, formatTimeKey, formatValue, keyGrain, parseTimeKey,
   sequentialColor, sequentialScale, timeTickFormatter, truncateToWidth, useChartSize, useMarkHover, allTimeKeys,
   DIVERGING_STEPS, SEQUENTIAL_STEPS,
   Axis, type AxisTick, type ChartFormat, type Measure, type TooltipSpec, type ValueColorScale,
@@ -232,19 +232,48 @@ export function tableHeatData(
   };
 }
 
+/**
+ * Every cell of a grid as ONE strip in row order (row 1's columns, then row
+ * 2's...): what a compact frame draws for a table heatmap, too short for its
+ * rows. No value is combined; each cell keeps its tooltip title and label.
+ */
+export function flattenHeat(data: HeatData): HeatData {
+  const cells = [...data.cells].sort((p, q) => p.row - q.row || p.col - q.col);
+  return {
+    rows: [{ key: '', label: '' }],
+    cols: cells.map((c, i) => ({ key: String(i), label: c.title })),
+    cells: cells.map((c, i) => ({ ...c, row: 0, col: i })),
+    timeCols: false,
+  };
+}
+
 export interface HeatLayoutInput {
   data: HeatData;
   width: number;
   height: number;
   fontPx: number;
   measure: Measure;
+  /** Compact frame (chart/fit.ts): the cells fill it, no axes, no scale legend (the tooltip reads each cell). */
+  compact?: boolean;
+  /** Draw the scale legend (default); a small frame gives its band to the cells (the tooltip reads values). */
+  scaleLegend?: boolean;
 }
 
+/** A heat row shorter than this (px) no longer reads as a row: a small frame switches to the time strip. */
+export const MIN_HEAT_ROW = 8;
+
 /** Pure heat geometry: the axes (collision-free), the cell size, the legend's band. */
-export function layoutHeat({ data, width, height, fontPx, measure }: HeatLayoutInput) {
+export function layoutHeat({ data, width, height, fontPx, measure, compact = false, scaleLegend = true }: HeatLayoutInput) {
   const nR = Math.max(1, data.rows.length);
   const nC = Math.max(1, data.cols.length);
-  const legendBand = Math.ceil(fontPx * 1.25) + 8;
+  if (compact) {
+    const plot = { left: 1, top: 1, width: Math.max(1, width - 2), height: Math.max(1, height - 2) };
+    const cellW = Math.min(CELL_MAX_W, plot.width / nC);
+    const cellH = Math.min(CELL_MAX_H, plot.height / nR);
+    const none = { ticks: [], labels: [], rotate: false, band: 0 };
+    return { layout: { plot, x: none, y: none }, cellW, cellH, gridW: cellW * nC, gridH: cellH * nR, legendBand: 0, legendY: height, compact };
+  }
+  const legendBand = scaleLegend ? Math.ceil(fontPx * 1.25) + 8 : 0;
   const cw = (w: number) => Math.min(CELL_MAX_W, w / nC);
   const ch = (h: number) => Math.min(CELL_MAX_H, h / nR);
   const showY = data.rows.some((r) => r.label !== '');
@@ -261,11 +290,13 @@ export function layoutHeat({ data, width, height, fontPx, measure }: HeatLayoutI
   const gridH = cellH * nR;
   // The scale legend sits right under the column labels (a capped grid leaves room below it), never past the cell.
   const underAxis = layout.plot.top + gridH + layout.x.band + 6;
-  return { layout, cellW, cellH, gridW: cellW * nC, gridH, legendBand, legendY: Math.min(height - legendBand + 4, underAxis) };
+  return { layout, cellW, cellH, gridW: cellW * nC, gridH, legendBand, legendY: Math.min(height - legendBand + 4, underAxis), compact };
 }
 
 interface HeatGridProps {
   data: HeatData;
+  /** What a compact frame draws instead (a weekday grid's days as one strip in time order); absent = `data`. */
+  compactData?: HeatData | null;
   unit: string | null;
   scale?: HeatScale;
   colorIndex?: number;
@@ -274,15 +305,25 @@ interface HeatGridProps {
   chart: string;
 }
 
-function HeatGrid({ data, unit, scale = 'sequential', colorIndex = 1, cellLabels = false, format = 'auto', chart }: HeatGridProps) {
+function HeatGrid({ data: fullData, compactData = null, unit, scale = 'sequential', colorIndex = 1, cellLabels = false, format = 'auto', chart }: HeatGridProps) {
   const { t, locale } = useI18n();
   const size = useChartSize();
+  // The frame IS the plot (no series legend), so its size class decides: compact = cells only;
+  // small = the scale legend yields its band, and a weekday grid whose rows would be too thin
+  // to read becomes the same days as one strip (axes kept).
+  const sizeClass = size.ready ? chartSizeClass(size.width, size.height, size.fontPx) : 'regular';
+  const compact = sizeClass === 'compact';
+  const scaleLegend = sizeClass === 'regular';
+  const rowRoom = size.height - (Math.ceil(size.fontPx * 1.25) + 6) - (Math.ceil(size.fontPx / 2) + 4);
+  const cramped = sizeClass === 'small' && rowRoom / Math.max(1, fullData.rows.length) < MIN_HEAT_ROW;
+  // Only a TIME strip keeps readable axis labels in a small frame; a flattened table strip is compact-only.
+  const data = compactData && (compact || (cramped && compactData.timeCols)) ? compactData : fullData;
   const hover = useMarkHover(size.ref, size.width, size.height);
   const values = useMemo(() => data.cells.map((c) => c.v).filter((v): v is number => v !== null), [data]);
   const colors = useMemo(() => heatColor(values, scale, colorIndex), [values, scale, colorIndex]);
   const geo = useMemo(
-    () => (size.ready ? layoutHeat({ data, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure }) : null),
-    [size.ready, size.width, size.height, size.fontPx, size.measure, data],
+    () => (size.ready ? layoutHeat({ data, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure, compact, scaleLegend }) : null),
+    [size.ready, size.width, size.height, size.fontPx, size.measure, data, compact, scaleLegend],
   );
   const fmt = { format, unit, locale };
   const active = hover.active !== null ? data.cells[hover.active] ?? null : null;
@@ -303,7 +344,17 @@ function HeatGrid({ data, unit, scale = 'sequential', colorIndex = 1, cellLabels
   const xAxisPlot = geo ? { ...geo.layout.plot, height: geo.gridH } : null;
 
   return (
-    <ChartFrame plotRef={size.ref} className="lab-heat-chart" data-chart={chart} data-scale={scale} data-hover-index={hover.active ?? ''} tooltip={tooltip}>
+    <ChartFrame
+      plotRef={size.ref}
+      className="lab-heat-chart"
+      data-chart={chart}
+      data-scale={scale}
+      data-hover-index={hover.active ?? ''}
+      data-size={sizeClass}
+      data-heat-form={data === fullData ? 'grid' : 'strip'}
+      fit={compact ? { size: 'compact', legend: 'none', form: 'wrap', capacity: 0 } : null}
+      tooltip={tooltip}
+    >
       {geo && xAxisPlot && (
         <svg
           className="lab-chart-svg"
@@ -319,8 +370,10 @@ function HeatGrid({ data, unit, scale = 'sequential', colorIndex = 1, cellLabels
             {data.cells.map((c, i) => {
               const x = geo.layout.plot.left + c.col * geo.cellW;
               const y = geo.layout.plot.top + c.row * geo.cellH;
-              const w = Math.max(1, geo.cellW - CELL_GAP);
-              const h = Math.max(1, geo.cellH - CELL_GAP);
+              // Tiny cells (a compact strip of many days) keep a 1px gap so the fill still reads.
+              const gap = Math.min(geo.cellW, geo.cellH) < 8 ? 1 : CELL_GAP;
+              const w = Math.max(1, geo.cellW - gap);
+              const h = Math.max(1, geo.cellH - gap);
               return (
                 <rect
                   key={`${c.row}:${c.col}`}
@@ -329,8 +382,8 @@ function HeatGrid({ data, unit, scale = 'sequential', colorIndex = 1, cellLabels
                   data-value={c.v ?? ''}
                   data-empty={c.v === null ? 'true' : undefined}
                   data-active={hover.active === i ? 'true' : undefined}
-                  x={x + CELL_GAP / 2}
-                  y={y + CELL_GAP / 2}
+                  x={x + gap / 2}
+                  y={y + gap / 2}
                   width={w}
                   height={h}
                   rx={Math.min(3, w / 4, h / 4)}
@@ -361,7 +414,7 @@ function HeatGrid({ data, unit, scale = 'sequential', colorIndex = 1, cellLabels
               </text>
             );
           })}
-          <HeatLegend colors={colors} x={geo.layout.plot.left} y={geo.legendY} width={Math.min(geo.gridW, size.width - geo.layout.plot.left - 2)} fontPx={size.fontPx} measure={size.measure} fmt={fmt} />
+          {!geo.compact && scaleLegend && <HeatLegend colors={colors} x={geo.layout.plot.left} y={geo.legendY} width={Math.min(geo.gridW, size.width - geo.layout.plot.left - 2)} fontPx={size.fontPx} measure={size.measure} fmt={fmt} />}
         </svg>
       )}
     </ChartFrame>
@@ -431,10 +484,12 @@ export function HeatmapChart({ series, unit, granularity, emptyHint, height, ful
 } & HeatOptions) {
   const { locale } = useI18n();
   const data = useMemo(() => seriesHeatData(series, granularity, locale), [series, granularity, locale]);
+  // A compact frame has no room for seven weekday rows: the same days as one strip in time order.
+  const strip = useMemo(() => (data && data.rows.length > 1 ? seriesHeatData(series, null, locale) : null), [data, series, locale]);
   if (!data) return <ChartEmpty hint={emptyHint} />;
   return (
     <div className="lab-heat-box" style={chartHeight(height)}>
-      <HeatGrid data={data} unit={unit} chart="heatmap" {...opts} />
+      <HeatGrid data={data} compactData={strip} unit={unit} chart="heatmap" {...opts} />
     </div>
   );
 }
@@ -450,10 +505,12 @@ export function HeatmapMatrix({ dims, rows, unit, emptyHint, height, ...opts }: 
   emptyHint?: string;
 } & HeatOptions) {
   const data = useMemo(() => tableHeatData(dims, rows), [dims, rows]);
+  // A compact frame has no room for the rows: every cell as one strip in row order.
+  const strip = useMemo(() => (data && data.rows.length > 1 ? flattenHeat(data) : null), [data]);
   if (!data) return <ChartEmpty hint={emptyHint} />;
   return (
     <div className="lab-heat-box" style={chartHeight(height)}>
-      <HeatGrid data={data} unit={unit} chart="heatmap-matrix" {...opts} />
+      <HeatGrid data={data} compactData={strip} unit={unit} chart="heatmap-matrix" {...opts} />
     </div>
   );
 }

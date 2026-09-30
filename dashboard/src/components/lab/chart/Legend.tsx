@@ -23,6 +23,10 @@ export interface LegendProps {
   hidden?: ReadonlySet<string>;
   /** Click / Enter / Space on an item. Omit for a static legend. */
   onToggle?(id: string): void;
+  /** Items left out for room (fit.ts): a static "+N" entry after the drawn ones. */
+  more?: number;
+  /** Layout the size policy picked: wrapping rows, one row, or a column. */
+  form?: 'wrap' | 'row' | 'column';
 }
 
 /**
@@ -31,10 +35,10 @@ export interface LegendProps {
  * series keeps its row, struck through with a faded key (state is never colour
  * alone). The key mirrors the mark; the label wears a text token.
  */
-export function Legend({ items, hidden, onToggle }: LegendProps) {
+export function Legend({ items, hidden, onToggle, more = 0, form = 'wrap' }: LegendProps) {
   if (items.length === 0) return null;
   return (
-    <ul className="lab-chart-legend" data-chart-legend="">
+    <ul className="lab-chart-legend" data-chart-legend="" data-form={form}>
       {items.map((it) => {
         const on = !hidden?.has(it.id);
         const key = <span className="lab-chart-key" data-shape={it.shape ?? 'rect'} style={{ color: it.color }} aria-hidden="true" />;
@@ -61,6 +65,9 @@ export function Legend({ items, hidden, onToggle }: LegendProps) {
           </li>
         );
       })}
+      {more > 0 && (
+        <li className="lab-chart-legend-more" data-legend-more="">{`+${more}`}</li>
+      )}
     </ul>
   );
 }

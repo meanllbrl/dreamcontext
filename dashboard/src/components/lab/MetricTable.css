@@ -7,6 +7,11 @@
  * to its content and scrolls only past the cell. Numbers are tabular and right
  * aligned; the data bar is the chart palette's slot 1 (var(--viz-cat-1), validated
  * with the dataviz palette) beside the number, never under text.
+ *
+ * Width: the table never scrolls sideways. MetricTable.tsx fits the columns to the
+ * box (fitTable: the bar shrinks, then secondary columns drop, figures go compact);
+ * nothing is ellipsized. Compact
+ * rows are tight so a default card shows four rows between the header and total.
  */
 
 .lab-table-wrap {
@@ -22,21 +27,22 @@
 
 .lab-table {
   width: 100%;
+  line-height: var(--line-height-heading-sm);
   border-collapse: separate;
   border-spacing: 0;
   color: var(--color-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-normal);
-  line-height: var(--line-height-normal);
 }
 
 .lab-table--comfortable {
   font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
 }
 
 .lab-table th,
 .lab-table td {
-  padding: var(--space-1) var(--space-2);
+  padding: calc(var(--space-1) / 2) var(--space-2);
   border-bottom: 1px solid var(--color-border);
   text-align: left;
   vertical-align: middle;
@@ -78,7 +84,7 @@
   align-items: center;
   gap: var(--space-1);
   width: 100%;
-  padding: var(--space-1) var(--space-2);
+  padding: calc(var(--space-1) / 2) var(--space-2);
   border: none;
   background: none;
   color: inherit;
@@ -95,7 +101,7 @@
 
 .lab-table-static {
   display: block;
-  padding: var(--space-1) var(--space-2);
+  padding: calc(var(--space-1) / 2) var(--space-2);
 }
 
 .lab-table-num .lab-table-sort {
@@ -134,11 +140,13 @@
 }
 
 .lab-table-text {
-  max-width: 0;
-  min-width: var(--space-16);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The whole ladder was not enough: the label wraps rather than the table scrolling. */
+.lab-table[data-fit='wrap'] .lab-table-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .lab-table tr[data-other] .lab-table-text {
@@ -154,17 +162,18 @@
   vertical-align: middle;
 }
 
-/* Data bar: a track and a fill to the left of the figure, the figure keeps its column. */
+/* Data bar: a track and a fill to the left of the figure, the figure keeps its column.
+   The track starts at the cell's left edge in every row, so the bars line up whatever
+   the figure's width; it keeps the width the fit gave it and grows into spare room. */
 .lab-table-barcell {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--space-2);
 }
 
 .lab-table-bar {
   flex: 1 1 auto;
-  min-width: var(--space-8);
   height: var(--space-2);
   overflow: hidden;
   border-radius: var(--radius-sm);

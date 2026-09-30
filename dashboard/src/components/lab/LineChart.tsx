@@ -3,11 +3,11 @@ import type { Series } from '../../hooks/useLab';
 import { useI18n } from '../../context/I18nContext';
 import { ChartEmpty, type ChartBodyProps } from './chartBody';
 import {
-  Axis, ChartFrame, Crosshair, Grid, HitArea, cartesianLayout, colorScale, formatTimeKey, formatValue, keyGrain,
-  linearScale, allTimeKeys, parseTimeKey, pointPositions, tickCountFor, tickFormatter, timeScale, timeTickFormatter,
-  timeTicks, useChartHover, useChartSize, useSeriesToggle,
-  type AxisTick, type CartesianLayout, type ChartFormat, type LegendItem, type LegendPosition, type Measure, type Rect,
-  type TooltipRow, type TooltipSpec,
+  Axis, COMPACT_PAD, ChartFrame, Crosshair, EndLabelMarks, Grid, HitArea, cartesianLayout, chartFit, colorScale,
+  compactEndLabels, formatTimeKey, formatValue, keyGrain, linearScale, allTimeKeys, parseTimeKey, pointPositions,
+  tickCountFor, tickFormatter, timeScale, timeTickFormatter, timeTicks, useChartHover, useChartSize, useSeriesToggle,
+  type AxisTick, type CartesianLayout, type ChartFormat, type EndLabelItem, type EndLabels, type LegendItem,
+  type LegendPosition, type Measure, type Rect, type ResolvedAxis, type TooltipRow, type TooltipSpec,
 } from './chart';
 
 /**
@@ -256,6 +256,33 @@ export function seriesColor(i: number, colorIndex = 1): string {
   return colorScale(Array.from({ length: i + 1 }, (_, k) => String(k)), { start: colorIndex }).color(String(i));
 }
 
+/** A series' latest finite value in x order (a compact chart's end label reads it), or null. */
+export function lastPoint(s: ChartSeries, domain: XDomain): { t: string; v: number } | null {
+  const order = new Map(domain.keys.map((k, i) => [k, i] as [string, number]));
+  let best: { t: string; v: number } | null = null;
+  for (const p of s.points) {
+    if (!Number.isFinite(p.v) || !order.has(p.t)) continue;
+    if (!best || (order.get(p.t) as number) > (order.get(best.t) as number)) best = p;
+  }
+  return best;
+}
+
+/** No axis at all (a compact chart). */
+export const NO_AXIS: ResolvedAxis = { ticks: [], labels: [], rotate: false, band: 0 };
+
+/**
+ * A compact frame's plot: the whole frame, inset by COMPACT_PAD (an end dot's
+ * room), less the end labels' column on the right.
+ */
+export function compactPlot(width: number, height: number, ends: EndLabels): Rect {
+  return {
+    left: COMPACT_PAD,
+    top: COMPACT_PAD,
+    width: Math.max(1, width - ends.width - COMPACT_PAD * 2),
+    height: Math.max(1, height - COMPACT_PAD * 2),
+  };
+}
+
 /** Points are drawn in `auto` mode when neighbours sit at least this many tick-font heights apart. */
 const AUTO_POINT_SPACING = 2.5;
 
@@ -268,6 +295,8 @@ export interface LineGeometry {
   showPoints: boolean;
   lines: { name: string; color: string; d: string; area: string; dots: { x: number; y: number }[] }[];
   reference: { y: number; label: string } | null;
+  /** Compact mode: the direct end labels (null otherwise). */
+  ends: EndLabels | null;
 }
 
 /** All of the chart's hover-independent geometry for one measured size. Pure. */
@@ -290,9 +319,17 @@ export function lineGeometry(input: {
   format: ChartFormat;
   unit: string | null;
   locale?: string;
+  /**
+   * Compact (fit.ts): a sparkline-style mark filling the frame (no axes, no
+   * grid, no reference, the data's own range, an end dot per line) beside
+   * direct end labels built from `endItems`.
+   */
+  compact?: boolean;
+  endItems?: readonly EndLabelItem[];
 }): LineGeometry | null {
   const { visible, domain, fontPx } = input;
   if (domain.keys.length === 0 || input.width <= 0 || input.height <= 0) return null;
+  if (input.compact) return compactLineGeometry(input);
   const values = visible.flatMap((s) => s.points.map((p) => p.v));
   if (input.reference !== null) values.push(input.reference);
   const fmt = { zero: input.zero, format: input.format, unit: input.unit, locale: input.locale };
@@ -335,7 +372,34 @@ export function lineGeometry(input: {
     const value = formatValue(input.reference, { format: input.format, unit: input.unit, locale: input.locale });
     reference = { y: y(input.reference), label: input.referenceLabel ? `${input.referenceLabel} ${value}` : value };
   }
-  return { layout, plot, xs, yOf: y, baseline, showPoints, lines, reference };
+  return { layout, plot, xs, yOf: y, baseline, showPoints, lines, reference, ends: null };
+}
+
+function compactLineGeometry(input: Parameters<typeof lineGeometry>[0]): LineGeometry {
+  const { visible, domain, fontPx } = input;
+  const ends = compactEndLabels(input.endItems ?? [], { width: input.width, height: input.height, fontPx, measure: input.measure });
+  const plot = compactPlot(input.width, input.height, ends);
+  // No nice rounding: a sparkline spends all of its few pixels on the data's own range.
+  const y = linearScale(visible.flatMap((s) => s.points.map((p) => p.v)), { range: [plot.height, 0], nice: false, zero: input.zero });
+  const xs = xPositionsOf(domain, plot.width, 0);
+  const indexOf = new Map(domain.keys.map((k, i) => [k, i] as [string, number]));
+  const baseline = Math.min(plot.height, Math.max(0, y(Math.max(0, y.domain[0]))));
+  const lines = visible.map((s) => {
+    const pts = s.points
+      .filter((p) => indexOf.has(p.t) && Number.isFinite(p.v))
+      .map((p) => [plot.left + xs[indexOf.get(p.t) as number], plot.top + y(p.v)] as const)
+      .sort((a, b) => a[0] - b[0]);
+    const last = pts[pts.length - 1];
+    return {
+      name: s.name,
+      color: input.color(s.name),
+      d: curvePath(pts, input.curve),
+      area: input.area ? areaPath(pts, input.curve, plot.top + baseline) : '',
+      // The end dot marks the value its label reads.
+      dots: last ? [{ x: last[0], y: last[1] }] : [],
+    };
+  });
+  return { layout: { plot, x: NO_AXIS, y: NO_AXIS }, plot, xs, yOf: y, baseline, showPoints: false, lines, reference: null, ends };
 }
 
 export function LineChart({
@@ -345,6 +409,8 @@ export function LineChart({
 }: Props) {
   const { t, locale } = useI18n();
   const size = useChartSize();
+  // The whole frame (legend included) decides what yields as the cell shrinks (chart/fit.ts).
+  const frame = useChartSize();
   const series = useMemo(() => pickSeries(allSeries, seriesFilter), [allSeries, seriesFilter]);
   // Colours follow the entity over EVERY series (the raw frame's, before a block pick or filter,
   // then before this chart's pick and the legend hide any), so none of them repaints a survivor.
@@ -360,19 +426,33 @@ export function LineChart({
   const domain = useMemo(() => xDomainOf(series), [series]);
   const { showX, showY } = axesShown(axes);
   const ref = typeof reference === 'number' && Number.isFinite(reference) ? reference : null;
+  const label = (s: ChartSeries) => seriesLabel(s, t);
+  const legendItems: LegendItem[] = series.map((s) => ({ id: s.name, label: label(s), color: colors.color(s.name), shape: 'line' as const }));
+  const fit = chartFit({
+    width: frame.width, height: frame.height, fontPx: frame.fontPx, measure: frame.measure,
+    legend, labels: series.length > 1 ? legendItems.map((it) => it.label) : [],
+  });
+  const compact = fit.size === 'compact';
+  // Compact: each visible line's last value, named when there is more than one series (a unit other than % stays in the title).
+  const endItems = useMemo<EndLabelItem[]>(() => (compact ? visible.flatMap((s) => {
+    const last = lastPoint(s, domain);
+    return last ? [{
+      id: s.name, color: colors.color(s.name), shape: 'line' as const, name: series.length > 1 ? seriesLabel(s, t) : '',
+      value: formatValue(last.v, { format, unit: unit?.trim() === '%' ? unit : null, locale }),
+    }] : [];
+  }) : []), [compact, visible, domain, colors, series.length, t, format, unit, locale]);
 
   const geo = useMemo(() => (size.ready ? lineGeometry({
     visible, domain, width: size.width, height: size.height, fontPx: size.fontPx, measure: size.measure,
     color: colors.color, curve, points, area, zero: yMin === 'zero', reference: ref, referenceLabel,
-    showX, showY, format, unit, locale,
-  }) : null), [size.ready, size.width, size.height, size.fontPx, size.measure, visible, domain, colors, curve, points, area, yMin, ref, referenceLabel, showX, showY, format, unit, locale]);
+    showX, showY, format, unit, locale, compact, endItems,
+  }) : null), [size.ready, size.width, size.height, size.fontPx, size.measure, visible, domain, colors, curve, points, area, yMin, ref, referenceLabel, showX, showY, format, unit, locale, compact, endItems]);
 
   const hover = useChartHover({ positions: geo?.xs ?? [], plotWidth: geo?.plot.width ?? 0, plotHeight: geo?.plot.height ?? 0 });
   const hi = hover.index;
 
   if (series.every((s) => s.points.length === 0)) return <ChartEmpty hint={emptyHint} />;
 
-  const label = (s: ChartSeries) => seriesLabel(s, t);
   const hoverKey = hi !== null ? domain.keys[hi] ?? null : null;
   const hoverDots = geo && hoverKey !== null
     ? visible.flatMap((s) => {
@@ -390,11 +470,13 @@ export function LineChart({
       rows: lineTooltipRows(visible, hoverKey, { color: colors.color, label, format, unit, locale }),
     };
   }
-  const legendItems: LegendItem[] = series.map((s) => ({ id: s.name, label: label(s), color: colors.color(s.name), shape: 'line' as const }));
+  const markR = compact ? 3 : 4;
 
   const chart = (
     <ChartFrame
       plotRef={size.ref}
+      frameRef={frame.ref}
+      fit={fit}
       data-chart="line"
       data-curve={curve}
       data-hover-index={hi ?? ''}
@@ -411,9 +493,9 @@ export function LineChart({
           aria-label={ariaLabel ?? t('lab.chart.line')}
           {...hover.focusProps}
         >
-          {grid && <Grid plot={geo.plot} y={geo.layout.y.ticks} dpr={size.dpr} />}
-          {showY && <Axis orientation="y" axis={geo.layout.y} plot={geo.plot} dpr={size.dpr} />}
-          <Axis orientation="x" axis={geo.layout.x} plot={geo.plot} baseline={showX ? geo.baseline : null} dpr={size.dpr} />
+          {grid && !compact && <Grid plot={geo.plot} y={geo.layout.y.ticks} dpr={size.dpr} />}
+          {showY && !compact && <Axis orientation="y" axis={geo.layout.y} plot={geo.plot} dpr={size.dpr} />}
+          {!compact && <Axis orientation="x" axis={geo.layout.x} plot={geo.plot} baseline={showX ? geo.baseline : null} dpr={size.dpr} />}
           {geo.reference && (
             <ReferenceMark plot={geo.plot} y={geo.reference.y} label={geo.reference.label} fontPx={size.fontPx} />
           )}
@@ -439,10 +521,10 @@ export function LineChart({
               data-point=""
               cx={d.x}
               cy={d.y}
-              r={4}
+              r={markR}
               fill={l.color}
               stroke="var(--viz-surface)"
-              strokeWidth={2}
+              strokeWidth={compact ? 1 : 2}
               pointerEvents="none"
             />
           )))}
@@ -453,13 +535,14 @@ export function LineChart({
               data-hover-point=""
               cx={geo.plot.left + geo.xs[hi]}
               cy={d.y}
-              r={4.5}
+              r={markR + 0.5}
               fill={d.color}
               stroke="var(--viz-surface)"
-              strokeWidth={2}
+              strokeWidth={compact ? 1 : 2}
               pointerEvents="none"
             />
           ))}
+          {geo.ends && <EndLabelMarks labels={geo.ends} />}
           <HitArea plot={geo.plot} {...hover.hitProps} />
         </svg>
       )}

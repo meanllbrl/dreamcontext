@@ -10,10 +10,16 @@
  *   <Grid> <Axis> <Crosshair> <HitArea>                                 SVG chrome
  *   useChartHover() / useMarkHover()                                   pointer -> datum
  *   <ChartFrame legend tooltip>                                         fill the cell, never scroll
+ *   chartFit() / compactEndLabels() / <EndLabelMarks>                  what yields as the cell shrinks
  *   colorScale() / sequentialScale() / divergingScale()                colour by job
  */
 export { Axis, Crosshair, Grid, HitArea } from './Axis';
 export { ChartFrame, type ChartFrameProps } from './ChartFrame';
+export { EndLabelMarks } from './EndLabels';
+export {
+  COMPACT_PAD, chartFit, chartSizeClass, compactEndLabels, endLabelText, legendColumnCapacity, legendRowCapacity,
+  type ChartFit, type ChartSizeClass, type EndLabelItem, type EndLabels, type LegendForm, type PlacedEndLabel,
+} from './fit';
 export {
   CHART_FORMATS, currencyCode, formatNumber, formatTimeKey, formatValue, resolveFormat, stepDecimals, tickFormatter,
   timeTickFormatter, toChartFormat, unitSuffix, type ChartFormat, type FormatOptions,

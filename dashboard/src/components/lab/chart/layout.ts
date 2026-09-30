@@ -142,6 +142,14 @@ function resolveY(ticks: AxisTick[], fontPx: number, measure: Measure): Resolved
       last = t.pos;
     }
   }
+  // One lone VALUE label names no scale (a single "0" reads as a flat line at zero): keep the
+  // two extreme ticks when they sit far enough apart, otherwise none (the tooltip reads values).
+  // Category ticks (no `value`: bar rows, heat rows) keep their one label: it names the row.
+  if (labels.length === 1 && ticks.every((t) => typeof t.value === 'number')) {
+    labels.length = 0;
+    const ends = ticks.length > 1 ? [ticks[0], ticks[ticks.length - 1]] : [];
+    if (ends.length === 2 && Math.abs(ends[1].pos - ends[0].pos) >= minSpacing) labels.push(...ends.map((t) => ({ ...t, dx: 0 })));
+  }
   const widest = labels.reduce((m, l) => Math.max(m, measure(l.label)), 0);
   return { ticks, labels, rotate: false, band: labels.length ? Math.ceil(widest) + TICK_GAP + 2 : 0 };
 }

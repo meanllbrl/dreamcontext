@@ -1,10 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Series } from '../../hooks/useLab';
 import { useI18n } from '../../context/I18nContext';
 import { ROW_CAP } from './barRows';
 import { Sparkline } from './Sparkline';
 import { ChartEmpty, DeltaMark, latestPoint, type ChartBodyProps } from './chartBody';
-import { OTHER_COLOR, colorScale, formatNumber, formatValue, type ChartFormat } from './chart';
+import { OTHER_COLOR, colorScale, formatNumber, formatValue, unitSuffix, type ChartFormat } from './chart';
 import './MetricTable.css';
 
 /**
@@ -118,11 +118,18 @@ function SortHeader({ label, colKey, numeric, sort, onSort }: {
 }
 
 /** The value cell's inline bar: magnitude against the largest shown value, beside (never under) the number. */
-function BarCell({ value, max, other, children }: { value: number | null; max: number; other?: boolean; children: ReactNode }) {
+function BarCell({ value, max, other, width, children }: {
+  value: number | null;
+  max: number;
+  other?: boolean;
+  /** The bar's least width (px), from the table's fit. */
+  width: number;
+  children: ReactNode;
+}) {
   const frac = value === null || !(max > 0) ? 0 : Math.min(1, Math.abs(value) / max);
   return (
     <span className="lab-table-barcell">
-      <span className="lab-table-bar" aria-hidden="true">
+      <span className="lab-table-bar" aria-hidden="true" style={{ minWidth: `${width}px` }}>
         <span
           className="lab-table-bar-fill"
           data-bar-frac={frac.toFixed(3)}
@@ -141,6 +148,220 @@ function useTableSort(): [TableSort | null, (key: string, numeric: boolean) => v
 
 function tableClass(density: TableDensity): string {
   return `lab-table lab-table--${density}`;
+}
+
+// ─── Fitting the width ──────────────────────────────────────────────────────
+
+/**
+ * One rung of the ladder a table climbs down when its columns do not fit:
+ * drop a column, write the figures compact, or take the data bar away.
+ */
+export type FitStep = { drop: string } | { compact: true } | { noBar: true };
+
+/** What one column needs, padding included (px): its header, its widest cell full and compact. */
+export interface ColumnWidth { header: number; cell: number; compact: number }
+
+export interface FitSpec {
+  /** The columns in display order. */
+  columns: readonly string[];
+  widths: Readonly<Record<string, ColumnWidth>>;
+  /** The data bar: the column it sits in and the width it wants and needs at least (gap included). */
+  bar?: { column: string; ideal: number; min: number } | null;
+  /** What gives way, in order. A step naming a column that is not shown is skipped. */
+  ladder: readonly FitStep[];
+}
+
+export interface TableFit {
+  columns: string[];
+  dropped: string[];
+  compact: boolean;
+  /** The data bar's width (px); 0 = no bar. */
+  bar: number;
+  /** False when the whole ladder was not enough: the label then wraps instead of the table scrolling. */
+  fits: boolean;
+}
+
+/**
+ * The columns a table shows in `avail` px. The data bar shrinks first (down to
+ * its minimum), then the ladder's rungs apply one at a time until the columns
+ * fit. An unmeasured width (0 or less: server render, first paint) shows
+ * everything at the bar's ideal width.
+ */
+export function fitTable(spec: FitSpec, avail: number): TableFit {
+  const bar = spec.bar && spec.columns.includes(spec.bar.column) ? spec.bar : null;
+  if (!(avail > 0)) {
+    return { columns: [...spec.columns], dropped: [], compact: false, bar: bar ? bar.ideal : 0, fits: true };
+  }
+  const dropped = new Set<string>();
+  let compact = false;
+  let barOn = bar !== null;
+  const need = (key: string, barWidth: number): number => {
+    const w = spec.widths[key] ?? { header: 0, cell: 0, compact: 0 };
+    return Math.max(w.header, (compact ? w.compact : w.cell) + barWidth);
+  };
+  /** The bar width that fits now (0 without a bar), or null when nothing fits. */
+  const attempt = (): number | null => {
+    const shown = spec.columns.filter((c) => !dropped.has(c));
+    if (!barOn || !bar) return shown.reduce((s, c) => s + need(c, 0), 0) <= avail ? 0 : null;
+    const rest = shown.filter((c) => c !== bar.column).reduce((s, c) => s + need(c, 0), 0);
+    if (rest + need(bar.column, bar.min) > avail) return null;
+    const w = spec.widths[bar.column];
+    const room = avail - rest - (w ? (compact ? w.compact : w.cell) : 0);
+    return Math.max(bar.min, Math.min(bar.ideal, Math.floor(room)));
+  };
+  const result = (barWidth: number, fits: boolean): TableFit => ({
+    columns: spec.columns.filter((c) => !dropped.has(c)),
+    dropped: spec.columns.filter((c) => dropped.has(c)),
+    compact,
+    bar: barWidth,
+    fits,
+  });
+
+  let got = attempt();
+  if (got !== null) return result(got, true);
+  for (const step of spec.ladder) {
+    if ('drop' in step) {
+      if (!spec.columns.includes(step.drop) || dropped.has(step.drop)) continue;
+      dropped.add(step.drop);
+    } else if ('compact' in step) {
+      if (compact) continue;
+      compact = true;
+    } else {
+      if (!barOn) continue;
+      barOn = false;
+    }
+    got = attempt();
+    if (got !== null) return result(got, true);
+  }
+  return result(0, false);
+}
+
+/** Header padding plus the sort icon and its gap, and a cell's side padding, per density (MetricTable.css). */
+const CELL_PAD: Record<TableDensity, number> = { compact: 16, comfortable: 24 };
+const SORT_ICON = 14;
+/** The change mark's arrow and its gap (chartBody.css .lab-delta). */
+const DELTA_ICON = 14;
+/** A little air per column, so rounding and tabular digits never tip a fit into a scroll. */
+const FIT_SLACK = 4;
+/** The data bar: the width it grows to, the least it keeps, and its gap to the figure. */
+const BAR_IDEAL = 120;
+const BAR_MIN = 24;
+const BAR_GAP = 8;
+/** The trend sparkline's width (the MetricTable draws it at 56px). */
+const TREND_WIDTH = 56;
+
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+
+/** Text width in the table's own font (a canvas measure; 7px a character without a canvas). */
+function textWidth(text: string, font: string): number {
+  if (measureCtx === undefined) {
+    measureCtx = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+  }
+  if (!measureCtx) return text.length * 7;
+  measureCtx.font = font;
+  return measureCtx.measureText(text).width;
+}
+
+/** The texts a column shows: its header, its cells full and compact, and any icon beside a cell. */
+interface ColumnTexts { header: string; cells: string[]; compact: string[]; icon?: number }
+
+function measureColumns(
+  table: HTMLElement,
+  density: TableDensity,
+  texts: Readonly<Record<string, ColumnTexts>>,
+): Record<string, ColumnWidth> {
+  const cs = getComputedStyle(table);
+  const th = table.querySelector('th');
+  const headWeight = th ? getComputedStyle(th).fontWeight : '600';
+  const body = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const head = `${headWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const pad = CELL_PAD[density] + FIT_SLACK;
+  const widest = (list: string[]) => list.reduce((m, s) => Math.max(m, textWidth(s, body)), 0);
+  const out: Record<string, ColumnWidth> = {};
+  for (const [key, c] of Object.entries(texts)) {
+    const icon = c.icon ?? 0;
+    out[key] = {
+      header: Math.ceil(textWidth(c.header, head) + SORT_ICON + pad),
+      cell: Math.ceil(widest(c.cells) + icon + pad),
+      compact: Math.ceil(widest(c.compact) + icon + pad),
+    };
+  }
+  return out;
+}
+
+/**
+ * The table's scroll box and the width inside it (scrollbar excluded), read
+ * before paint and followed on resize. 0 until mounted.
+ */
+function useInnerWidth(): [(el: HTMLDivElement | null) => void, number, HTMLDivElement | null] {
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (!el) return;
+    const read = () => setWidth((prev) => (prev === el.clientWidth ? prev : el.clientWidth));
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [el]);
+  return [setEl, width, el];
+}
+
+/**
+ * The fit for the table in `wrap`: measures every column's texts in the
+ * rendered font and walks the ladder. Everything shows until measured.
+ */
+function useTableFit(
+  wrap: HTMLDivElement | null,
+  avail: number,
+  density: TableDensity,
+  columns: readonly string[],
+  texts: () => Record<string, ColumnTexts>,
+  bar: string | null,
+  ladder: readonly FitStep[],
+  deps: readonly unknown[],
+): TableFit {
+  const table = wrap?.querySelector('table') ?? null;
+  // A web font that lands after the first measure changes every width: measure again then.
+  const [fontsReady, setFontsReady] = useState(() => typeof document === 'undefined' || document.fonts?.status !== 'loading');
+  useEffect(() => {
+    if (fontsReady) return;
+    let live = true;
+    void document.fonts.ready.then(() => { if (live) setFontsReady(true); });
+    return () => { live = false; };
+  }, [fontsReady]);
+  // Texts are measured once per data, format and font; a resize only re-walks the ladder.
+  const widths = useMemo(
+    () => (table && avail > 0 ? measureColumns(table, density, texts()) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [table, avail > 0, density, fontsReady, ...deps],
+  );
+  const spec: FitSpec = {
+    columns,
+    widths: widths ?? {},
+    bar: bar ? { column: bar, ideal: BAR_IDEAL + BAR_GAP, min: BAR_MIN + BAR_GAP } : null,
+    ladder,
+  };
+  const fit = fitTable(spec, widths ? avail : 0);
+  return { ...fit, bar: fit.bar > 0 ? fit.bar - BAR_GAP : 0 };
+}
+
+/** A figure's unit when it is a word ("users"): written once in the value header, never per cell. */
+function wordUnit(format: ChartFormat, unit: string | null): string | null {
+  const suffix = unitSuffix(format, unit);
+  return suffix.startsWith(' ') ? suffix.trim() : null;
+}
+
+/** The format a narrow table writes figures in: compact where the format allows it. */
+function compactFormat(format: ChartFormat): ChartFormat {
+  return format === 'auto' || format === 'number' || format === 'compact' ? 'compact' : format;
+}
+
+/** The row's tooltip when columns gave way: the label, then each dropped column and its value. */
+function rowTitle(label: string, dropped: readonly { header: string; text: string }[]): string | undefined {
+  if (dropped.length === 0) return undefined;
+  return [label, ...dropped.map((d) => `${d.header}: ${d.text}`)].join(' · ');
 }
 
 // ─── MetricTable (series) ───────────────────────────────────────────────────
@@ -169,6 +390,9 @@ export function pickMetricColumns(columns: readonly string[] | null | undefined)
   return kept.length > 0 ? kept : [...METRIC_COLUMNS];
 }
 
+/** What gives way in a narrow metric table: the trend first, then compact figures, the bar, the change. */
+const METRIC_LADDER: readonly FitStep[] = [{ drop: 'trend' }, { compact: true }, { noBar: true }, { drop: 'delta' }];
+
 export function MetricTable({
   series, unit, full = false, emptyHint, columns, density = 'compact', bars = false, deltaColor = true, format = 'number',
 }: {
@@ -181,6 +405,7 @@ export function MetricTable({
 } & TableOptions) {
   const { t, locale } = useI18n();
   const [sort, onSort] = useTableSort();
+  const [wrapRef, avail, wrap] = useInnerWidth();
   const show = new Set<MetricColumn>(pickMetricColumns(columns));
   // Colour follows the series over the FULL list, so a sort never repaints a trend.
   const colors = colorScale(series.filter((s) => s.other === undefined).map((s) => s.name));
@@ -198,8 +423,6 @@ export function MetricTable({
     };
   });
 
-  if (rows.length === 0) return <ChartEmpty hint={emptyHint} />;
-
   // Snapshot honesty: single-point series have no move and no trend; a column
   // of '-' and flat sparklines reads as "broken", so those columns step aside.
   const hasHistory = series.some((s) => s.points.length >= 2);
@@ -209,40 +432,76 @@ export function MetricTable({
   const shown = full ? sorted : sorted.slice(0, ROW_CAP);
   const hidden = sorted.length - shown.length;
   const max = Math.max(0, ...shown.map((r) => Math.abs(r.latest ?? 0)));
-  const fmt = (v: number) => formatValue(v, { format, unit, locale });
-  const fmtAbs = (v: number) => formatNumber(v, { format, unit, locale });
+  // A word unit ("users") is written once, in the latest header; a symbol (%) stays on the figure.
+  const headUnit = wordUnit(format, unit);
+  const opts = (compact: boolean) => ({ format: compact ? compactFormat(format) : format, unit, locale });
+  const fmt = (v: number, compact = false) => (headUnit ? formatNumber(v, opts(compact)) : formatValue(v, opts(compact)));
+  const fmtAbs = (v: number, compact = false) => formatNumber(v, opts(compact));
+  const signed = (d: number | null, compact = false) => (d === null ? '-' : `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmtAbs(Math.abs(d), compact)}`);
 
   const label: Record<MetricColumn, string> = {
     series: t('lab.blocks.table.series'),
-    latest: t('lab.blocks.table.latest'),
+    latest: headUnit ? `${t('lab.blocks.table.latest')} (${headUnit})` : t('lab.blocks.table.latest'),
     delta: t('lab.blocks.table.change'),
     trend: t('lab.blocks.table.trend'),
   };
 
+  const fit = useTableFit(wrap, avail, density, cols, () => {
+    const texts: Record<string, ColumnTexts> = {};
+    for (const c of cols) {
+      const list = (compact: boolean) => shown.map((r) => (c === 'series' ? r.name : c === 'latest' ? (r.latest !== null ? fmt(r.latest, compact) : '-') : c === 'delta' ? signed(r.delta, compact) : ''));
+      texts[c] = {
+        header: label[c],
+        cells: list(false),
+        compact: list(true),
+        icon: c === 'delta' ? DELTA_ICON : c === 'trend' ? TREND_WIDTH : 0,
+      };
+    }
+    return texts;
+  }, bars ? 'latest' : null, METRIC_LADDER, [series, cols.join(','), format, unit, locale, full]);
+
+  if (rows.length === 0) return <ChartEmpty hint={emptyHint} />;
+  const view = fit.columns as MetricColumn[];
+  const fullText = (row: MetricRow, c: MetricColumn): string => (c === 'latest'
+    ? (row.latest !== null ? formatValue(row.latest, opts(false)) : '-')
+    : c === 'delta' ? signed(row.delta) : '');
+
   return (
-    <div className="lab-table-wrap">
-      <table className={tableClass(density)} data-density={density} data-bars={bars ? '' : undefined} data-columns={cols.join(',')}>
+    <div className="lab-table-wrap" ref={wrapRef}>
+      <table
+        className={tableClass(density)}
+        data-density={density}
+        data-bars={bars ? '' : undefined}
+        data-columns={view.join(',')}
+        data-dropped={fit.dropped.length > 0 ? fit.dropped.join(',') : undefined}
+        data-compact={fit.compact ? '' : undefined}
+        data-fit={fit.fits ? undefined : 'wrap'}
+      >
         <thead className="lab-table-head">
           <tr>
-            {cols.map((c) => (c === 'trend'
+            {view.map((c) => (c === 'trend'
               ? <th key={c} scope="col" className="lab-table-num" data-col={c}><span className="lab-table-static">{label[c]}</span></th>
               : <SortHeader key={c} label={label[c]} colKey={c} numeric={c !== 'series'} sort={sort} onSort={onSort} />))}
           </tr>
         </thead>
         <tbody>
           {shown.map((row) => (
-            <tr key={row.name} data-other={row.other !== undefined ? '' : undefined}>
-              {cols.map((c) => {
+            <tr
+              key={row.name}
+              data-other={row.other !== undefined ? '' : undefined}
+              title={rowTitle(row.name, (fit.dropped as MetricColumn[]).filter((c) => c !== 'trend').map((c) => ({ header: label[c], text: fullText(row, c) })))}
+            >
+              {view.map((c) => {
                 if (c === 'series') return <td key={c} className="lab-table-text" title={row.name}>{row.name}</td>;
                 if (c === 'latest') {
-                  const text = row.latest !== null ? fmt(row.latest) : '-';
+                  const text = row.latest !== null ? fmt(row.latest, fit.compact) : '-';
                   return (
                     <td key={c} className="lab-table-num">
-                      {bars ? <BarCell value={row.latest} max={max} other={row.other !== undefined}>{text}</BarCell> : text}
+                      {bars && fit.bar > 0 ? <BarCell value={row.latest} max={max} other={row.other !== undefined} width={fit.bar}>{text}</BarCell> : text}
                     </td>
                   );
                 }
-                if (c === 'delta') return <td key={c} className="lab-table-num"><DeltaMark delta={row.delta} format={fmtAbs} colored={deltaColor} /></td>;
+                if (c === 'delta') return <td key={c} className="lab-table-num"><DeltaMark delta={row.delta} format={(v) => fmtAbs(v, fit.compact)} colored={deltaColor} /></td>;
                 return (
                   <td key={c} className="lab-table-num lab-table-trend">
                     <Sparkline points={row.points.slice(-24)} width={56} height={16} color={row.color} />
@@ -253,7 +512,7 @@ export function MetricTable({
           ))}
           {hidden > 0 && (
             <tr className="lab-table-more">
-              <td colSpan={Math.max(1, cols.length)}>{t('lab.blocks.table.more').replace('{n}', String(hidden))}</td>
+              <td colSpan={Math.max(1, view.length)}>{t('lab.blocks.table.more').replace('{n}', String(hidden))}</td>
             </tr>
           )}
         </tbody>
@@ -302,10 +561,25 @@ function rowDelta(row: FrameTableRow): number | null {
 }
 
 /**
+ * What gives way in a narrow table frame, first to last: the count, then the
+ * figures go compact, then the previous value, the data bar, the change, and
+ * the dims after the first (last first). The first dim and the value stay.
+ */
+export function frameLadder(columns: readonly string[]): FitStep[] {
+  const isValue = (c: string) => (FRAME_VALUE_COLUMNS as readonly string[]).includes(c);
+  const dims = columns.filter((c) => !isValue(c));
+  return [
+    { drop: 'n' }, { compact: true }, { drop: 'prev' }, { noBar: true }, { drop: 'delta' },
+    ...dims.slice(1).reverse().map((d) => ({ drop: d })),
+  ];
+}
+
+/**
  * The board `table` block over a TABLE frame: one row per frame row, dims as
  * text columns, values as numbers, and the frame's own total (after filters,
  * before the limit) as a sticky footer. Headers are localized here; `labels`
- * overrides them.
+ * overrides them. The columns fit the cell's width (`frameLadder`): what gives
+ * way stays in the row's tooltip.
  */
 export function FrameTable({
   dims, rows, unit, columns, total, labels, emptyHint, density = 'compact', bars = false, deltaColor = true, format = 'auto',
@@ -320,8 +594,10 @@ export function FrameTable({
 } & TableOptions) {
   const { t, locale } = useI18n();
   const [sort, onSort] = useTableSort();
-  if (rows.length === 0 && !total?.count) return <ChartEmpty hint={emptyHint} />;
+  const [wrapRef, avail, wrap] = useInnerWidth();
 
+  // A word unit ("users") is written once, in the value header; a symbol (%) stays on the figure.
+  const headUnit = wordUnit(format, unit);
   const L = {
     v: labels?.v ?? t('lab.blocks.table.value'),
     n: labels?.n ?? t('lab.blocks.table.n'),
@@ -330,47 +606,90 @@ export function FrameTable({
     total: labels?.total ?? t('lab.blocks.table.total'),
     rows: labels?.rows ?? t('lab.blocks.table.rows'),
   };
-  const cols = pickFrameColumns(dims, rows, columns);
-  const firstDim = cols.find((c) => !(FRAME_VALUE_COLUMNS as readonly string[]).includes(c)) ?? null;
+  const picked = pickFrameColumns(dims, rows, columns);
   const isValue = (key: string) => (FRAME_VALUE_COLUMNS as readonly string[]).includes(key);
+  const firstDim = picked.find((c) => !isValue(c)) ?? null;
+  const unitCol = picked.includes('v') ? 'v' : picked.includes('prev') ? 'prev' : null;
   const dimLabel = (key: string) => dims.find((d) => d.key === key)?.label ?? key;
-  const headerFor = (key: string) => (isValue(key) ? L[key as keyof typeof L] : dimLabel(key));
-  const fmtOpts = { format, unit, locale };
+  const headerFor = (key: string) => {
+    const base = isValue(key) ? L[key as keyof typeof L] : dimLabel(key);
+    return headUnit && key === unitCol ? `${base} (${headUnit})` : base;
+  };
+  const opts = (compact: boolean) => ({ format: compact ? compactFormat(format) : format, unit, locale });
+  const fmtV = (v: number, compact = false) => (headUnit ? formatNumber(v, opts(compact)) : formatValue(v, opts(compact)));
   // Counts are whole things: they keep the grouping (or compaction) but never a currency or percent.
-  const countFormat: ChartFormat = format === 'compact' || format === 'auto' ? format : 'number';
-  const fmtCount = (n: number) => formatNumber(n, { format: countFormat, locale, maxDecimals: 0 });
-  const fmtAbs = (v: number) => formatNumber(v, fmtOpts);
+  const countFormat = (compact: boolean): ChartFormat => (compact || format === 'compact' ? 'compact' : format === 'auto' ? 'auto' : 'number');
+  const fmtCount = (n: number, compact = false) => formatNumber(n, { format: countFormat(compact), locale, maxDecimals: 0 });
+  const fmtAbs = (v: number, compact = false) => formatNumber(v, opts(compact));
+  const signed = (d: number | null, compact = false) => (d === null ? '-' : `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmtAbs(Math.abs(d), compact)}`);
+  const otherLabel = (row: FrameTableRow) => t('lab.blocks.otherCount').replace('{n}', String(row.other));
+  const totalLabel = total ? `${L.total} (${total.count.toLocaleString(locale)} ${L.rows})` : '';
 
-  const valueOf = (row: FrameTableRow, key: string): number | string | null => {
+  /** A cell as plain text (the fit measures it, the tooltip quotes it). */
+  const text = (row: FrameTableRow, key: string, compact = false): string => {
+    if (key === 'v') return typeof row.v === 'number' ? fmtV(row.v, compact) : '';
+    if (key === 'n') return typeof row.n === 'number' ? fmtCount(row.n, compact) : '';
+    if (key === 'prev') return typeof row.prev === 'number' ? fmtV(row.prev, compact) : '';
+    if (key === 'delta') return signed(rowDelta(row), compact);
+    // The fold's label goes in the first text column; the other dims stay blank.
+    if (row.other !== undefined) return key === firstDim ? otherLabel(row) : '';
+    return row.d[key] ?? '';
+  };
+
+  const fit = useTableFit(wrap, avail, density, picked, () => {
+    const texts: Record<string, ColumnTexts> = {};
+    const leadLabels = total && picked.findIndex(isValue) === 1 ? [totalLabel] : [];
+    for (const key of picked) {
+      const list = (compact: boolean) => [
+        ...rows.map((r) => text(r, key, compact)),
+        ...(key === firstDim ? leadLabels : []),
+        ...(total && key === 'v' && total.v !== null ? [fmtV(total.v, compact)] : []),
+        ...(total && key === 'n' && total.n !== null ? [fmtCount(total.n, compact)] : []),
+      ];
+      texts[key] = { header: headerFor(key), cells: list(false), compact: list(true), icon: key === 'delta' ? DELTA_ICON : 0 };
+    }
+    return texts;
+  }, bars ? 'v' : null, frameLadder(picked), [rows, picked.join(','), format, unit, locale, total, labels]);
+
+  if (rows.length === 0 && !total?.count) return <ChartEmpty hint={emptyHint} />;
+
+  const cols = fit.columns;
+  const sorted = sortRows(rows, sort, (row, key) => {
     if (key === 'v') return row.v;
     if (key === 'n') return typeof row.n === 'number' ? row.n : null;
     if (key === 'prev') return typeof row.prev === 'number' ? row.prev : null;
     if (key === 'delta') return rowDelta(row);
     return row.d[key] ?? null;
-  };
-  const sorted = sortRows(rows, sort, valueOf, (r) => r.other !== undefined);
+  }, (r) => r.other !== undefined);
   const max = Math.max(0, ...rows.map((r) => Math.abs(r.v ?? 0)));
   const lead = Math.max(0, cols.findIndex(isValue) === -1 ? cols.length : cols.findIndex(isValue));
-  const totalLabel = total ? `${L.total} (${total.count.toLocaleString(locale)} ${L.rows})` : '';
-  const otherLabel = (row: FrameTableRow) => t('lab.blocks.otherCount').replace('{n}', String(row.other));
+  // The tooltip quotes a dropped figure in full, unit and all.
+  const titleText = (row: FrameTableRow, key: string): string => {
+    if ((key === 'v' || key === 'prev') && typeof row[key] === 'number') return formatValue(row[key] as number, opts(false));
+    return text(row, key);
+  };
+  const rowLabel = (row: FrameTableRow) => (firstDim ? text(row, firstDim) : '') || cols.filter((c) => !isValue(c)).map((c) => text(row, c)).join(' ');
 
   const cell = (row: FrameTableRow, key: string): ReactNode => {
-    const other = row.other !== undefined;
     if (key === 'v') {
-      const text = typeof row.v === 'number' ? formatValue(row.v, fmtOpts) : '';
-      return bars ? <BarCell value={row.v} max={max} other={other}>{text}</BarCell> : text;
+      const s = text(row, key, fit.compact);
+      return bars && fit.bar > 0 ? <BarCell value={row.v} max={max} other={row.other !== undefined} width={fit.bar}>{s}</BarCell> : s;
     }
-    if (key === 'n') return typeof row.n === 'number' ? fmtCount(row.n) : '';
-    if (key === 'prev') return typeof row.prev === 'number' ? formatValue(row.prev, fmtOpts) : '';
-    if (key === 'delta') return <DeltaMark delta={rowDelta(row)} format={fmtAbs} colored={deltaColor} />;
-    // The fold's label goes in the first text column; the other dims stay blank.
-    if (other) return key === firstDim ? otherLabel(row) : '';
-    return row.d[key] ?? '';
+    if (key === 'delta') return <DeltaMark delta={rowDelta(row)} format={(v) => fmtAbs(v, fit.compact)} colored={deltaColor} />;
+    return text(row, key, fit.compact);
   };
 
   return (
-    <div className="lab-table-wrap">
-      <table className={tableClass(density)} data-density={density} data-bars={bars ? '' : undefined} data-columns={cols.join(',')}>
+    <div className="lab-table-wrap" ref={wrapRef}>
+      <table
+        className={tableClass(density)}
+        data-density={density}
+        data-bars={bars ? '' : undefined}
+        data-columns={cols.join(',')}
+        data-dropped={fit.dropped.length > 0 ? fit.dropped.join(',') : undefined}
+        data-compact={fit.compact ? '' : undefined}
+        data-fit={fit.fits ? undefined : 'wrap'}
+      >
         <thead className="lab-table-head">
           <tr>
             {cols.map((key) => (
@@ -380,15 +699,15 @@ export function FrameTable({
         </thead>
         <tbody>
           {sorted.map((row, i) => (
-            <tr key={i} data-other={row.other !== undefined ? '' : undefined}>
+            <tr
+              key={i}
+              data-other={row.other !== undefined ? '' : undefined}
+              title={rowTitle(rowLabel(row), fit.dropped.map((key) => ({ header: headerFor(key), text: titleText(row, key) })))}
+            >
               {cols.map((key) => {
                 const content = cell(row, key);
                 return (
-                  <td
-                    key={key}
-                    className={isValue(key) ? 'lab-table-num' : 'lab-table-text'}
-                    title={!isValue(key) && typeof content === 'string' ? content : undefined}
-                  >{content}</td>
+                  <td key={key} className={isValue(key) ? 'lab-table-num' : 'lab-table-text'} title={!isValue(key) && typeof content === 'string' ? content : undefined}>{content}</td>
                 );
               })}
             </tr>
@@ -401,8 +720,8 @@ export function FrameTable({
               {lead > 0 && <td colSpan={lead} className="lab-table-total-label">{totalLabel}</td>}
               {cols.slice(lead).map((key, i) => (
                 <td key={key} className={isValue(key) ? 'lab-table-num' : 'lab-table-text'}>
-                  {key === 'v' ? (total.v !== null ? formatValue(total.v, fmtOpts) : '')
-                    : key === 'n' ? (total.n !== null ? fmtCount(total.n) : '')
+                  {key === 'v' ? (total.v !== null ? fmtV(total.v, fit.compact) : '')
+                    : key === 'n' ? (total.n !== null ? fmtCount(total.n, fit.compact) : '')
                       : lead === 0 && i === 0 ? totalLabel : ''}
                 </td>
               ))}

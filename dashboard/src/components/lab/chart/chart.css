@@ -205,6 +205,12 @@
   color: var(--color-text-secondary);
 }
 
+.lab-chart-tooltip[data-floating='true'] {
+  position: fixed;
+  z-index: 70;
+  max-width: calc(var(--space-20) * 4);
+}
+
 .lab-chart-tooltip-title {
   margin-bottom: var(--space-1);
   color: var(--color-text-secondary);
@@ -284,6 +290,48 @@
   justify-content: center;
   max-width: 34%;
   max-height: none;
+}
+
+/* Size policy (fit.ts): a small frame's legend is ONE row (the items fit.ts counted, then
+   "+N"), or a column beside the plot holding as many rows as the frame is tall. */
+.lab-chart-legend[data-form='row'] {
+  flex-wrap: nowrap;
+  max-height: none;
+}
+
+.lab-chart-legend[data-form='row'] > li {
+  flex: 0 1 auto;
+}
+
+.lab-chart-legend[data-form='column'] {
+  overflow: hidden;
+}
+
+.lab-chart-legend-more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 0 var(--space-1);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A compact frame: no gap to spend on a legend that is not there. */
+.lab-chart[data-size='compact'] {
+  gap: 0;
+}
+
+/* ── Compact end labels: key in the series colour, name secondary, last value strong. */
+.lab-chart-end-label {
+  fill: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.lab-chart-end-value {
+  fill: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
 }
 
 .lab-chart-legend-item {

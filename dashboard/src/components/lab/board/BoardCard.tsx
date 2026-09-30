@@ -70,6 +70,18 @@ export function tabChildPath(tabsPath: readonly number[], rel: readonly number[]
   return [...tabsPath, ...rel];
 }
 
+/**
+ * How much header a card can afford, by its grid height in rows. A 2-row card (a sparkline strip)
+ * keeps only its title; a 3-4 row card sets the freshness beside the title instead of under it.
+ */
+export type CardDensity = 'short' | 'compact' | 'full';
+
+export function cardDensity(rows: number | undefined): CardDensity {
+  if (typeof rows !== 'number' || !Number.isFinite(rows)) return 'full';
+  if (rows <= 2) return 'short';
+  return rows <= 4 ? 'compact' : 'full';
+}
+
 export type FreshnessKey = 'never' | 'failed' | 'stale' | 'fresh';
 
 function freshnessOf(summary: InsightSummary | undefined): FreshnessKey | null {
@@ -210,27 +222,44 @@ export function BoardCard({
     );
   }
 
+  // An untitled card with no status line has no header row at all (an empty title row read as a
+  // gap above the content): its menu floats over the top corner instead.
+  const headed = !!title || !!fresh || !!syncState;
+  const density = cardDensity(card.at?.h);
+  const freshLine = fresh || syncState ? freshnessText(t, locale, primary, fresh, syncState, freshReason) : '';
+  const freshTip = [freshLine, !syncState ? primary?.freshnessNote : null, fresh === 'failed' ? primary?.error : null]
+    .filter(Boolean).join('\n');
+  // Full: the line under the title. Compact: beside the title, ellipsized. Short: folded into the
+  // title's tooltip, the element kept (visually hidden) for screen readers and the verify hooks.
+  const freshEl = (fresh || syncState) && (
+    <p
+      className={`board-card-fresh board-card-fresh--${syncState ?? fresh}${density === 'full' ? '' : ` board-card-fresh--${density}`}`}
+      data-lab-freshness
+      data-lab-sync-queued={syncState === 'queued' ? true : undefined}
+      title={density === 'full' ? (fresh === 'failed' ? primary?.error ?? undefined : undefined) : freshTip || undefined}
+    >
+      {freshLine}
+      {primary?.freshnessNote && !syncState && (
+        <span className="board-card-note">{primary.freshnessNote}</span>
+      )}
+    </p>
+  );
+  const titleTip = density === 'short' && freshTip ? `${title}\n${freshTip}` : title;
+
   return (
-    <article className="board-card" data-card-id={card.id}>
-      {(title || fresh || menu) && (
+    <article
+      className={`board-card${headed ? '' : ' board-card--untitled'}${density === 'full' ? '' : ` board-card--${density}`}`}
+      data-card-id={card.id}
+    >
+      {!headed && menu && <div className="board-card-float-menu">{menu}</div>}
+      {headed && (
         <header className="board-card-head">
           <div className="board-card-head-row">
-            <h3 className="board-card-title" title={title}>{title}</h3>
+            <h3 className="board-card-title" title={titleTip}>{title}</h3>
+            {density !== 'full' && freshEl}
             {menu}
           </div>
-          {(fresh || syncState) && (
-            <p
-              className={`board-card-fresh board-card-fresh--${syncState ?? fresh}`}
-              data-lab-freshness
-              data-lab-sync-queued={syncState === 'queued' ? true : undefined}
-              title={fresh === 'failed' ? primary?.error ?? undefined : undefined}
-            >
-              {freshnessText(t, locale, primary, fresh, syncState, freshReason)}
-              {primary?.freshnessNote && !syncState && (
-                <span className="board-card-note">{primary.freshnessNote}</span>
-              )}
-            </p>
-          )}
+          {density === 'full' && freshEl}
         </header>
       )}
       <div className="board-card-body">
