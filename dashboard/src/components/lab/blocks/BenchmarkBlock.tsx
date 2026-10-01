@@ -1,4 +1,4 @@
-import { useState, type FocusEvent, type PointerEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type FocusEvent, type PointerEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { formatNumber, linearScale, Tooltip, useChartSize, type LinearScale, type Measure, type TooltipRow } from '../chart';
 import { useMeasured } from '../chartBody';
@@ -128,19 +128,43 @@ const tier = (mode: 'full' | 'compact', labels: boolean, sources: boolean, legen
  * plus a "+N more" line. A narrow block keeps the ruler on its own line while
  * that fits. `sources` = any row has a source to print. It never scrolls.
  */
-export function benchmarkFit(rowCount: number, height: number, noteLines: number, sources: boolean, width = 0): BenchmarkFit {
+export function benchmarkFit(
+  rowCount: number,
+  height: number,
+  noteLines: number,
+  sources: boolean,
+  width = 0,
+  unmeasured: readonly number[] = [],
+  skip = 0,
+): BenchmarkFit {
   if (!(height > 0) || rowCount === 0) return { ...tier('full', true, sources, true), count: rowCount };
   const avail = height - noteLines * BENCH_PX.note;
-  const need = (t: FitTier, n: number) => n * benchRowPx(t.mode, t.labels, t.sources) + (t.legend ? BENCH_PX.legend : 0);
+  // An unmeasured row wraps its reason: beside the label on a one-line row, under it on a full row.
+  const wrapPx = (mode: 'full' | 'compact', n: number) => unmeasured.slice(0, n).reduce((px, chars) => px + BENCH_PX.line
+    * (mode === 'full' ? reasonLines(chars, width) : reasonLines(chars, width * 0.6) - 1), 0);
+  const need = (t: FitTier, n: number) => n * benchRowPx(t.mode, t.labels, t.sources) + wrapPx(t.mode, n) + (t.legend ? BENCH_PX.legend : 0);
   const narrow = width > 0 && width < BENCH_NARROW_PX;
   const tiers: FitTier[] = narrow
     ? [tier('full', true, sources, true), tier('full', true, false, true), tier('full', false, false, true), tier('full', false, false, false), tier('compact', false, false, false)]
     : [tier('full', true, sources, true), tier('compact', true, sources, true), tier('compact', true, false, true), tier('compact', false, false, true), tier('compact', false, false, false)];
-  for (const t of tiers) if (need(t, rowCount) <= avail) return { ...t, count: rowCount };
+  // `skip`: tiers the rendered block already proved too tall (the estimate was short), never tried again.
+  for (const t of tiers.slice(Math.min(skip, tiers.length))) if (need(t, rowCount) <= avail) return { ...t, count: rowCount };
   const last = tier('compact', false, false, false);
-  let count = rowCount;
+  let count = rowCount - Math.max(0, skip - tiers.length);
   while (count > 1 && need(last, count) + BENCH_PX.note > avail) count--;
-  return { ...last, count };
+  return { ...last, count: Math.max(1, count) };
+}
+
+/** Lines an unmeasured row's "Not measured: reason" wraps to at `width` px (at most 3; the title has the rest). */
+export function reasonLines(chars: number, width: number): number {
+  if (!(width > 0)) return 1;
+  return Math.min(3, Math.max(1, Math.ceil((chars * 6.5) / width)));
+}
+
+/** The card-level inherited note: only when EVERY banded row inherits the set's band. */
+export function allRowsInherit(rows: readonly Pick<BenchmarkRow, 'floor' | 'target' | 'inherited'>[]): boolean {
+  const banded = rows.filter((r) => r.floor !== null || r.target !== null);
+  return banded.length > 0 && banded.every((r) => r.inherited);
 }
 
 /** Lines a note takes at `width` px (about 6.5px a character at the 12px size); 1 before the block is measured. */
@@ -173,6 +197,22 @@ function metricKeysFor(frame: FunnelFrame, slice: FunnelSlice, picked: string[] 
 export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
   const { t, locale } = useI18n();
   const [measure, box] = useMeasured<HTMLDivElement>();
+  const root = useRef<HTMLDivElement | null>(null);
+  const [shrink, setShrink] = useState<{ key: string; skip: number }>({ key: '', skip: 0 });
+  const ref = (el: HTMLDivElement | null) => { root.current = el; measure(el); };
+  const pendingKey = useRef('');
+  useLayoutEffect(() => {
+    const el = root.current;
+    const key = pendingKey.current;
+    if (!el || !key || !(box.height > 0)) return;
+    if (el.scrollHeight > el.clientHeight + 1) {
+      setShrink((prev) => {
+        const skip = prev.key === key ? prev.skip + 1 : 1;
+        return skip > 12 ? prev : { key, skip };
+      });
+    }
+  });
+  pendingKey.current = '';
   const drawable = drawableFrame(frame, ['funnel'] as const);
   if ('empty' in drawable) return <BlockEmpty reason={drawable.empty} />;
   const f = drawable.frame;
@@ -195,18 +235,23 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
   if (slice.measured && slice.lowSample) {
     notes.push({ key: 'low', attr: 'data-lab-low-sample', text: t('lab.blocks.explorer.lowSample').replace('{n}', formatNumber(slice.users, { maxDecimals: 0, locale })) });
   }
-  const inherited = rows.some((r) => r.inherited);
-  const anySource = sources && rows.some((r) => r.floorSource || r.targetSource);
+  const inherited = allRowsInherit(rows);
+  const anySource = sources && rows.some((r) => r.floorSource || r.targetSource || r.inherited);
   const inheritedText = t('lab.blocks.benchmark.inherited');
   const lines = notes.reduce((n, x) => n + noteLines(x.text, box.width), 0) + (inherited ? noteLines(inheritedText, box.width) : 0);
-  const fit = benchmarkFit(rows.length, box.height, lines, anySource, box.width);
+  const unmeasuredChars = rows.filter((r) => r.current === null).map((r) => notMeasuredText(t, r.reason).length);
+  // The estimate plans the tier; the rendered block has the last word: if it still overflows, step down a tier.
+  const fitKey = `${box.width}x${box.height}|${rows.map((r) => r.key).join(',')}|${lines}|${comparePrev}|${sources}`;
+  const skip = shrink.key === fitKey ? shrink.skip : 0;
+  const fit = benchmarkFit(rows.length, box.height, lines, anySource, box.width, unmeasuredChars, skip);
   const shown = rows.slice(0, Math.max(1, fit.count));
   const more = rows.length - shown.length;
+  pendingKey.current = fitKey;
 
   // Cells mode sums step users for a selection; rates cannot be summed, so a selection has none by design.
   if (cellsNoRates(f, slice)) {
     return (
-      <div ref={measure} className="lab-bench" data-lab-benchmark="" data-measured="true">
+      <div ref={ref} className="lab-bench" data-lab-benchmark="" data-measured="true">
         {notes.map((n) => <div key={n.key} className="lab-bench-note" {...{ [n.attr]: '' }}>{n.text}</div>)}
         <div className="lab-bench-note" data-lab-bench-cells-no-rates="" role="note">{t('lab.blocks.benchmark.cellsNoRates')}</div>
       </div>
@@ -215,7 +260,7 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
 
   if (rows.length === 0) {
     return (
-      <div ref={measure} className="lab-bench" data-lab-benchmark="">
+      <div ref={ref} className="lab-bench" data-lab-benchmark="">
         {notes.map((n) => <div key={n.key} className="lab-bench-note" {...{ [n.attr]: '' }}>{n.text}</div>)}
         <BlockEmpty message={slice.measured ? undefined : notMeasuredText(t, slice.reason)} />
       </div>
@@ -225,7 +270,7 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
   const anyRuler = shown.some((r) => r.current !== null);
   return (
     <div
-      ref={measure}
+      ref={ref}
       className="lab-bench"
       data-lab-benchmark=""
       data-mode={fit.mode}
@@ -289,6 +334,17 @@ function BenchRowView({ row, labels, showSources, comparePrev, sources, t, local
   const showDelta = comparePrev && row.delta !== null && row.trend !== null;
   const glyph = row.delta === null ? null : row.delta > 0 ? TREND_GLYPH.up : row.delta < 0 ? TREND_GLYPH.down : TREND_GLYPH.flat;
   const signed = showDelta ? formatMetric(row.delta as number, row.format, locale, true) : '';
+  const sourceLine = sources && showSources && (sourceParts.length > 0 || row.inherited);
+  const mark = row.inherited ? (
+    <span
+      className="lab-bench-inherit"
+      data-inherited=""
+      title={t('lab.blocks.benchmark.inheritedTitle')}
+      aria-label={t('lab.blocks.benchmark.inheritedTitle')}
+    >
+      {t('lab.blocks.benchmark.inheritedMark')}
+    </span>
+  ) : null;
 
   return (
     <li
@@ -297,6 +353,7 @@ function BenchRowView({ row, labels, showSources, comparePrev, sources, t, local
       data-status={row.status}
       data-trend={showDelta ? row.trend ?? undefined : undefined}
       data-better={row.better}
+      title={measured ? undefined : notMeasuredText(t, row.reason)}
     >
       <span className="lab-bench-label" title={row.label}>{row.label}</span>
       {measured ? (
@@ -317,14 +374,22 @@ function BenchRowView({ row, labels, showSources, comparePrev, sources, t, local
               </span>
             )}
           </span>
-          {statusWord && (
-            <span className="lab-bench-status" data-tone={row.status} data-lab-bench-status="">
-              <span className="lab-bench-status-word">{statusWord}</span>
+          {(statusWord || (mark && !sourceLine)) && (
+            <span className="lab-bench-side">
+              {!sourceLine && mark}
+              {statusWord && (
+                <span className="lab-bench-status" data-tone={row.status} data-lab-bench-status="">
+                  <span className="lab-bench-status-word">{statusWord}</span>
+                </span>
+              )}
             </span>
           )}
           <BenchRuler row={row} comparePrev={comparePrev} labels={labels} fmt={fmt} t={t} />
-          {sources && showSources && sourceParts.length > 0 && (
-            <span className="lab-bench-sources" data-lab-bench-source="">{sourceParts.join(' · ')}</span>
+          {sourceLine && (
+            <span className="lab-bench-sources-line">
+              {sourceParts.length > 0 && <span className="lab-bench-sources" data-lab-bench-source="">{sourceParts.join(' · ')}</span>}
+              {mark}
+            </span>
           )}
         </>
       ) : (

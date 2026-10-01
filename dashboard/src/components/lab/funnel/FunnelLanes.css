@@ -45,7 +45,8 @@
   width: var(--space-5);
   height: var(--space-5);
   border-radius: var(--radius-full);
-  background: var(--color-accent-soft);
+  /* The breakdown lane badges' pair: the strong accent carries white text at >= 4.5:1 in both themes. */
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;

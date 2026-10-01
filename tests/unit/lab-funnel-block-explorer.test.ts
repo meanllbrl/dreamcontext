@@ -361,6 +361,15 @@ describe('Lanes at the 8x7 Steps card (fix round): rows never collapse', () => {
     expect(render(lookupFrame(), {}, { lanes: LANES })).toContain('title="Lane 1: Meta Ads · 600"');
   });
 
+  it('lane-head numbers use the breakdown lane badges\' pair: white on the strong accent (5.64:1), never on accent-soft', () => {
+    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const at = css.indexOf('.funnel-lanes-num {');
+    const rule = css.slice(at, css.indexOf('}', at));
+    expect(rule).toContain('background: var(--color-accent-strong)');
+    expect(rule).toContain('color: var(--color-accent-text)');
+    expect(rule).not.toContain('accent-soft');
+  });
+
   it('narrow lanes drop the users first, then the share; the bar and the drop stay', () => {
     const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
     const mid = css.slice(css.indexOf('@container lane (max-width: 190px)'), css.indexOf('@container lane (max-width: 120px)'));

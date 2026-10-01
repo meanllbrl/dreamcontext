@@ -61,7 +61,9 @@ vi.mock('../../dashboard/node_modules/react/index.js', async (orig) => {
   };
 });
 
-const { BreakdownBlock, selectionLabel, pickAxes, pinBlock, chipTipLeft, fitsAgain, overflows, MAX_LANES } = await import(
+const {
+  BreakdownBlock, selectionLabel, pickAxes, pinBlock, chipTipLeft, fitsAgain, overflows, tooBig, BREAKDOWN_MAX_SHARE, MAX_LANES,
+} = await import(
   '../../dashboard/src/components/lab/blocks/BreakdownBlock.js'
 );
 
@@ -428,9 +430,42 @@ describe('W5: the small-cell form cuts nothing', () => {
   it('the fit decision: compact when clipped, back only when the room it lacked returns or the width changes', () => {
     expect(overflows(180, 104)).toBe(true);
     expect(overflows(104.5, 104)).toBe(false);
-    const memo = { need: 180, room: 104, outer: 120, cross: 300 };
+    const memo = { need: 180, room: 104, outer: 120, cross: 300, share: null };
     expect(fitsAgain(memo, 150, 300)).toBe(false);
     expect(fitsAgain(memo, 196, 300)).toBe(true);
     expect(fitsAgain(memo, 120, 640)).toBe(true);
+  });
+
+  it('sharing the card, the chips go compact past their share of the body (a 6x6 benchmark card), not on a big preset or an 8x7 card', () => {
+    expect(BREAKDOWN_MAX_SHARE).toBeGreaterThan(0.5);
+    expect(BREAKDOWN_MAX_SHARE).toBeLessThan(2 / 3);
+    // 6x6 breakdown + benchmark: ~170 px of chips in a ~248 px body. Not clipped, but over its share.
+    expect(tooBig(170, 170, 248, BREAKDOWN_MAX_SHARE)).toBe(true);
+    // Alone in the same card: only clipping counts.
+    expect(tooBig(170, 170, 248, null)).toBe(false);
+    // 8x7 breakdown + steps (~149 px, ~170 with a wrapped lanes hint, in ~304 px) and the 12x12 preset (~580 px): chips.
+    expect(tooBig(149, 149, 304, BREAKDOWN_MAX_SHARE)).toBe(false);
+    expect(tooBig(170, 170, 304, BREAKDOWN_MAX_SHARE)).toBe(false);
+    expect(tooBig(170, 170, 580, BREAKDOWN_MAX_SHARE)).toBe(false);
+    // Clipped is always too big.
+    expect(tooBig(170, 120, 900, BREAKDOWN_MAX_SHARE)).toBe(true);
+  });
+
+  it('back to chips from a share decision only when the grown body holds them within the share (fullscreen does)', () => {
+    const memo = { need: 170, room: 170, outer: 248, cross: 700, share: BREAKDOWN_MAX_SHARE };
+    expect(fitsAgain(memo, 248, 700)).toBe(false);
+    expect(fitsAgain(memo, 260, 700)).toBe(false);
+    expect(fitsAgain(memo, 820, 700)).toBe(true);
+  });
+
+  it('the block asks for the share; the hook applies it only when another block shares the card body', () => {
+    const src = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/blocks/BreakdownBlock.tsx'), 'utf8');
+    expect(src).toMatch(/useCompactFit<HTMLDivElement>\(\s*'height',[\s\S]*?BREAKDOWN_MAX_SHARE,\s*\)/);
+    expect(src).toContain("body.querySelectorAll(':scope > .board-card-block').length > 1");
+  });
+
+  it('the compact form carries no lanes hint sentence', () => {
+    expect(renderToStaticMarkup(tree({ lanes: [] }, true))).not.toContain('data-lab-lanes-hint');
+    expect(html({ lanes: [] })).toContain('data-lab-lanes-hint');
   });
 });

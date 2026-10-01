@@ -248,8 +248,15 @@
   white-space: nowrap;
 }
 
-.lab-bench-sources {
+.lab-bench-sources-line {
   grid-area: sources;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lab-bench-sources {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-secondary);
@@ -257,13 +264,44 @@
   white-space: nowrap;
 }
 
+/* The figures' neighbour on the right: the inherited mark (when no sources line carries it) and the status pill. */
+.lab-bench-side {
+  grid-area: status;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* A row whose band is the whole funnel's: a small muted mark, its meaning in the title. */
+.lab-bench-inherit {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  line-height: calc(var(--space-4) - 2px);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Not measured: the reason wraps between words (up to 3 lines; the row's title has the rest), never an ellipsis. */
 .lab-bench-unmeasured {
   grid-column: 2 / -1;
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* A full row has room under its label: the reason takes the whole width there. */
+.lab-bench[data-mode='full'] .lab-bench-unmeasured {
+  grid-column: 1 / -1;
 }
 
 /* ── legend ─────────────────────────────────────────────────────────── */

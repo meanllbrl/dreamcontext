@@ -100,6 +100,49 @@
  *      tab carries it in title + aria-label); the detail panel never shows the
  *      scaffold's "(What does this number MEAN? ...)" placeholder.
  *
+ * The funnel explorer (task "every page a bindable block, and the whole
+ * explorer as one interactive page"), on the `explorer-demo` board built
+ * through the CLI (`add-card --preset funnel-explorer` + `--block` cards) from
+ * the synthetic fixture scripts/verify/fixtures/funnel-explorer-demo.mjs; every
+ * expected number is read from that fixture's own payload, never from the UI:
+ *
+ *  21. SETUP, PAYLOAD, PRIVACY: the preset card is breakdown + tabs Daily,
+ *      Benchmark, Flow, Steps and one Segments tab per dim; the board GET is
+ *      <= 300 KB and only trend frames carry daily; no locally registered
+ *      project name in the fixtures, the preset card, the board GET or the
+ *      skill's explorer docs.
+ *  22. LOOKUP + NOT MEASURED: a one-axis and a platform x language selection
+ *      draw exactly the fixture's own path (never a sum); an unmeasured chip is
+ *      aria-disabled, its reason shows on hover and on focus, a click changes
+ *      nothing; an unmeasured metric reads "Not measured: reason" with no
+ *      ruler marker; no 0 or 0% for either.
+ *  23. ONE INTERACTIVE PAGE: the selection holds on every preset tab (each
+ *      page's numbers are the selected path's); a same-insight table narrows
+ *      and its total follows, a table without the dim says "Not split by";
+ *      chip and tab clicks send ZERO sync requests.
+ *  24. EVERY PAGE A BLOCK: the separate cards draw; the inspector's pick
+ *      fields list the frame's funnels, dims and metrics, and a pick edits
+ *      the board file and the render.
+ *  25. LANES: 3 pinned lanes side by side, each lane's users and drops from
+ *      its own path, a missing step is a dash, the 5th pin is disabled.
+ *  26. BENCHMARK, FLOW, SEGMENTS, TREND: the current marker within 1px of its
+ *      scale position, delta, status (better: lower flips it), sources,
+ *      inherited band; flow stages proportional within 1%, one badge per link,
+ *      the worst drop as stepDrops computes; segment rows per value under the
+ *      cross-selection with tone washes, a faded low-sample row, sortable;
+ *      trend hover shows the slice's exact daily value at 2 dates, the metric
+ *      switch changes the series.
+ *  27. FULLSCREEN: from the card menu, >= 95% of the viewport, selection and
+ *      tab kept both ways, closes on Esc / exit / Back, reopens from
+ *      ?card=<id>, an app card has ONE iframe.
+ *  28. V1 APP + CLI PARITY + PRESET: nav:false is today's card, `page` pins a
+ *      page, nav:true pills and in-frame lab.navigate both switch pages (a
+ *      fresh frame); `lab board show --select` equals the DOM; the dashboard's
+ *      add-card preset and `add-card --preset` write deep-equal blocks.
+ * Plus: section 5/11 cases for every new option value and section 12 fit
+ * cases for breakdown, trend, benchmark, segments and the flow layout.
+ * Explorer screenshots (both themes) go to `--explorer-shots=<dir>` too.
+ *
  * Same harness contract as the other verify scripts: real server, isolated
  * fake HOME, COLLECT-DON'T-FAIL-FAST (every section runs and reports; a
  * thrown section is one FAIL line, not an abort). Screenshots, both themes,
@@ -173,6 +216,44 @@
  *   card-in-card      bundle: the html cell's root-card rule is dropped. Must
  *                     fail: "finding 4: a single root dc-card dissolves into the
  *                     cell (0 padding, 0 border)".
+ *   filter-syncs      (also) the breakdown chip is wired to the network. Must fail:
+ *                     "explorer: breakdown chip and tab clicks send ZERO sync requests".
+ *   lookup-sums       bundle: frameOps never takes the lookup branch (the
+ *                     `segmentMode === "lookup"` literal), so a lookup set is summed
+ *                     like cells. Must fail: the "lookup never sums" path checks.
+ *   unmeasured-zero   bundle: an unmeasured chip is enabled and clickable, and an
+ *                     unmeasured benchmark row draws "0%". Must fail: the chip's
+ *                     aria-disabled / click checks and the "Not measured" row checks.
+ *   state-per-tab     bundle: switching a tab clears the card's selection and lanes
+ *                     (cardViewState setTab). Must fail: "one page: the selection
+ *                     holds on every tab".
+ *   lane-spine        bundle: a lane's drops are computed on the spine with 0 for a
+ *                     step the lane lacks. Must fail: the lanes own-path + dash checks.
+ *   fullscreen-remount bundle: the fullscreen card gets no held view (a fresh card
+ *                     state). Must fail: the fullscreen keeps-selection / keeps-tab checks.
+ *   ruler-shift       stylesheet: the benchmark's current marker shifted 12px. Must
+ *                     fail: "benchmark: the current marker sits within 1px of its
+ *                     scale position".
+ *   app-nav-pinned    bundle: the app card ignores page switches (the pinned page
+ *                     stays). Must fail: the pill and lab.navigate page-switch checks.
+ *   chip-contrast     stylesheet: an active chip's label is white again (the pre-fix ink).
+ *                     Must fail: "breakdown: an active chip's label is readable (... light)".
+ *   breakdown-band    stylesheet: the breakdown block takes a flex share of the card again.
+ *                     Must fail: both "the tabs start right under the chips" checks.
+ *   bench-fit         bundle: the benchmark plans with 40px lines, so it falls to its lower
+ *                     tiers. Must fail: the preset prints / 6x6 shows all 5 rows checks.
+ *   lanes-squeeze     stylesheet: lane cells capped at 4px. Must fail: the 8x7 lanes check.
+ *   flow-squeeze      stylesheet: flow stages capped at 3px. Must fail: the flow fit checks.
+ *   breakdown-no-compact bundle: the small-cell selects never replace the chips. Must
+ *                     fail: "breakdown (small): every row of controls lies inside the cell".
+ *   trend-no-select   bundle: the narrow metric select never replaces the buttons. Must
+ *                     fail: "trend (small): the metric switch never ellipsizes a label".
+ *   seg-wrap          stylesheet: segment cells wrap anywhere in a fixed table. Must fail:
+ *                     "segments (small): no word is broken mid-word".
+ *   seg-sticky-lost   stylesheet: the value column is not sticky. Must fail: the small
+ *                     segments' last-column / sticky check.
+ *   seg-tint          stylesheet: a dark tint under the figures. Must fail: the light
+ *                     band-tint contrast check.
  *
  * A mutation run uses its own port and scratch dir, so several can run at once.
  */
@@ -182,9 +263,10 @@ import {
   cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildSync } from 'esbuild';
 import matter from 'gray-matter';
 import { webkit } from 'playwright';
 
@@ -210,13 +292,20 @@ const LEAK = 987654;
 
 /** A second home for the screenshots (the owner's review folder). A mutation run never writes there. */
 const SHOTS_OUT = MUTATION ? null : ((process.argv.find((a) => a.startsWith('--shots=')) ?? '').slice('--shots='.length) || null);
+/** The funnel explorer's screenshots only (sections 21-28), for the owner's review. Never on a mutation run. */
+const EXPLORER_SHOTS_OUT = MUTATION ? null : ((process.argv.find((a) => a.startsWith('--explorer-shots=')) ?? '').slice('--explorer-shots='.length) || null);
+/** A development aid: run only the sections whose name matches this regex (setup always runs). */
+const ONLY = (() => {
+  const s = (process.argv.find((a) => a.startsWith('--only=')) ?? '').slice('--only='.length);
+  return s ? new RegExp(s) : null;
+})();
 
 /** name -> the assertion names that MUST fail under it. */
 const MUTATIONS = {
   'sidebar-alpha': ['sidebar shows Insights as Beta'],
   'put-lies': ['first UI edit materializes every derived board', 'drag persists to the board file', 'resize persists to the board file'],
   'symlink-follow': ['board GET: symlinked cache yields no data', 'board GET: the symlinked html input is an empty frame', 'lab board show: symlinked cache yields no data', 'html block: symlinked input yields no data'],
-  'filter-syncs': ['filter clicks send ZERO sync requests'],
+  'filter-syncs': ['filter clicks send ZERO sync requests', 'explorer: breakdown chip and tab clicks send ZERO sync requests'],
   'placeholder-slot': ['no data-lab-placeholder element (inspector open)'],
   'chart-overflow': ['line (small) fits its cell, no inner scroll', 'line (large) fits its cell, no inner scroll',
     'bar (small) fits its cell, no inner scroll', 'bar (large) fits its cell, no inner scroll',
@@ -241,6 +330,26 @@ const MUTATIONS = {
   'table-padding': ['finding 3: the 4x4 table shows >= 4 full rows between header and total'],
   'table-prefix': ['finding 3: no table cell cuts its text (4x4)', 'finding 3: the 4x4 table has no horizontal scroll'],
   'card-in-card': ['finding 4: a single root dc-card dissolves into the cell (0 padding, 0 border)'],
+  'lookup-sums': ['lookup never sums: platform=Meta Ads draws the fixture\'s own path',
+    'lookup never sums: the benchmark for platform x language reads the intersection\'s own metrics'],
+  'unmeasured-zero': ['not measured: an unmeasured chip is aria-disabled', 'not measured: clicking an unmeasured chip changes nothing',
+    'not measured: an unmeasured metric reads "Not measured: reason" with no ruler marker', 'not measured: no 0 or 0% is drawn for an unmeasured metric'],
+  'state-per-tab': ['one page: the selection holds on every tab'],
+  'lane-spine': ["lanes: each lane's users and drops come from its own path", 'lanes: a missing step shows a dash (Unattributed has no email step)'],
+  'fullscreen-remount': ['fullscreen keeps the breakdown selection', 'fullscreen keeps the active tab', 'closing fullscreen keeps the tab changed inside it'],
+  'ruler-shift': ['benchmark: the current marker sits within 1px of its scale position'],
+  'app-nav-pinned': ['app card: a pill click switches the page in the card (a fresh frame)',
+    'app card: an in-frame lab.navigate switches the page in the card (a fresh frame)'],
+  'chip-contrast': ["breakdown: an active chip's label is readable (contrast >= 4.5:1, light)"],
+  'breakdown-band': ['one page: the tabs start right under the chips (no blank band > 24px)', 'fullscreen: the tabs start right under the chips (no blank band > 24px)'],
+  'bench-fit': ["benchmark: the preset card prints every row's sources and its floor / target / previous numbers", 'benchmark: the 6x6 card shows all 5 rows (no "+N more"), no clipped text'],
+  'lanes-squeeze': ['lanes: every users and % cell is >= 10px tall with its text painted, no clipped text (the 8x7 Steps card)'],
+  'flow-squeeze': ['flow (small): every stage label and users figure is visible', 'flow (large): every stage label and users figure is visible'],
+  'breakdown-no-compact': ['breakdown (small): every row of controls lies inside the cell (nothing cut)'],
+  'trend-no-select': ['trend (small): the metric switch never ellipsizes a label', 'trend (small): no clipped text'],
+  'seg-wrap': ['segments (small): no word is broken mid-word'],
+  'seg-sticky-lost': ['segments (small): the last column is reachable by scrolling and the value column stays stuck'],
+  'seg-tint': ['segments: every band-tinted figure reads at >= 4.5:1 (light)'],
 };
 if (MUTATION && !MUTATIONS[MUTATION]) {
   console.error(`unknown mutation "${MUTATION}"; known: ${Object.keys(MUTATIONS).join(', ')}`);
@@ -249,15 +358,19 @@ if (MUTATION && !MUTATIONS[MUTATION]) {
 
 const results = [];
 const ok = (name, cond, detail = '') => {
-  results.push({ name, pass: !!cond, detail: cond ? '' : String(detail) });
+  results.push({ name, pass: !!cond, detail: cond ? '' : String(detail), measured: String(detail) });
   return !!cond;
 };
 /** Run one section; a throw is ONE failure line, never an abort. */
+/** The page under test, once the browser is up: a thrown section leaves a screenshot of it. */
+let sectionPage = null;
 async function section(name, fn) {
+  if (ONLY && !ONLY.test(name)) return;
   try {
     await fn();
   } catch (e) {
     ok(`${name} (section threw)`, false, (e && e.stack) ? e.stack.split('\n').slice(0, 3).join(' | ') : String(e));
+    if (sectionPage) await sectionPage.screenshot({ path: join(SHOTS, `threw-${name.replace(/[^a-z0-9]+/gi, '-')}.png`) }).catch(() => {});
   }
 }
 
@@ -266,7 +379,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function dc(args, { cwd = PROJ, allowFail = false } = {}) {
   try {
     return execFileSync('node', [ENTRY, ...args], {
-      cwd, env: { ...process.env, HOME, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd, env: { ...process.env, HOME, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024,
     }).toString();
   } catch (e) {
     if (allowFail) return `${e.stdout ?? ''}${e.stderr ?? ''}`;
@@ -275,6 +388,23 @@ function dc(args, { cwd = PROJ, allowFail = false } = {}) {
 }
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
+
+/** The funnel explorer's insights (created by the "explorer fixtures via CLI" section, before any board names them). */
+const EXPLORER = 'acme-funnel-explorer';
+/** The same script plus a platform x language table and a higher low-sample line (narrowing + faded rows). */
+const EXPLORER_PLUS = 'acme-explorer-plus';
+/** The synthetic 3-page app/v1 insight. */
+const APP = 'acme-onboarding-app';
+const EXPLORER_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'funnel-explorer-demo.mjs');
+const APP_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'acme-onboarding-app.mjs');
+/**
+ * The dashboard's own generated frameOps (TypeScript, bundled here on the fly):
+ * the board GET sends identical funnel frames once, and `expandFrames(frames,
+ * frameAliases)` is how the client gets every key back.
+ */
+const { expandFrames } = await import(`data:text/javascript;base64,${Buffer.from(buildSync({
+  entryPoints: [join(REPO, 'dashboard', 'src', 'generated', 'frameOps.ts')], bundle: true, format: 'esm', write: false, platform: 'neutral',
+}).outputFiles[0].text).toString('base64')}`);
 
 const DAYS_HELPER = `
 function days(n) {
@@ -501,10 +631,40 @@ function setup() {
 
 // ─── Mutations applied to the artifact under test ────────────────────────────
 
-/** Bundle (JS asset) string mutations: [regex, replacement]. */
+/**
+ * Bundle (JS asset) string mutations: [regex, replacement], or a list of such
+ * pairs (each pair must apply somewhere, or the run says the mutation missed).
+ */
 const BUNDLE_MUTATIONS = {
   'sidebar-alpha': [/(labelKey:"nav\.labpage",maturity:)"beta"/, '$1"alpha"'],
-  'filter-syncs': [/(className:"lab-block-chip",)/g, '$1onMouseDown:()=>fetch("/api/lab/sync-jobs",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}),'],
+  'filter-syncs': [/(className:"lab-(?:block|breakdown)-chip",)/g, '$1onMouseDown:()=>fetch("/api/lab/sync-jobs",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}),'],
+  // frameOps funnelSlice / cellsNoRates: the lookup branch is never taken, so a lookup set is summed like cells.
+  'lookup-sums': [/segmentMode(===|!==)"lookup"/g, 'segmentMode$1"__lookup_off"'],
+  'unmeasured-zero': [
+    // BreakdownBlock: an unmeasured chip is neither aria-disabled nor inert.
+    [/"aria-disabled":([\w$]+)\.enabled\?void 0:!0,("aria-describedby":[^,]+,onClick:\(\)=>\{)\1\.enabled&&/, '"aria-disabled":void 0,$2!0&&'],
+    // BenchmarkBlock: an unmeasured row draws a zero value instead of "Not measured: reason".
+    [/([\w$]+)\.jsx\("span",\{className:"lab-bench-unmeasured","data-lab-bench-unmeasured":"",children:[\w$]+\([\w$]+,[\w$]+\.reason\)\}\)/,
+      '$1.jsx("span",{className:"lab-bench-value","data-lab-bench-value":"",children:"0%"})'],
+  ],
+  // cardViewState setTab: a tab switch also drops the selection and the lanes.
+  'state-per-tab': [/\{\.\.\.([\w$]+),tabs:\{\.\.\.\1\.tabs,\[([\w$]+)\]:([\w$]+)\}\}/, '{...$1,selection:{},lanes:{},tabs:{...$1.tabs,[$2]:$3}}'],
+  // FunnelLanes laneModel: a lane's drops run over the spine, a step the lane lacks counted as 0 users.
+  'lane-spine': [/(spine:[\w$]+\(\[\{steps:([\w$]+)\},\.\.\.[\w$]+\.map\([\w$]+=>\(\{steps:[\w$]+\.slice\.steps\}\)\)\]\),lanes:[\w$]+\.map\(([\w$]+)=>\{var [\w$]+;const [\w$]+=\3\.slice\.measured\?([\w$]+)\()\3\.slice\.steps\)/,
+    '$1$2.map(q=>({...q,users:($3.slice.steps.find(w=>w.key===q.key)||{users:0}).users})))'],
+  // BoardPage cardNode: the fullscreen copy of a card gets no held view (it starts from a fresh state).
+  'fullscreen-remount': [/view:([\w$]+)\[([\w$]+)\.id\],onView:([\w$]+)\?([\w$]+)=>([\w$]+)\(\{type:"update",board:\3,card:\2\.id,fn:\4\}\):void 0,fullscreen:([\w$]+),/,
+    'view:$6?void 0:$1[$2.id],onView:$6?void 0:$3?$4=>$5({type:"update",board:$3,card:$2.id,fn:$4}):void 0,fullscreen:$6,'],
+  // BenchmarkBlock BENCH_PX: a row line 40px instead of 16, so the fit ladder drops to its lower tiers.
+  'bench-fit': [/\{pad:7,line:16,gap:4,legend:20,note:20\}/, '{pad:7,line:40,gap:4,legend:20,note:20}'],
+  // BreakdownBlock: the small-cell form (selects) is never drawn; the chip rows stay at any size.
+  'breakdown-no-compact': [/return ([\w$]+)\?([\w$]+)\.jsxs\("div",\{ref:([\w$]+),className:"lab-block-fill lab-breakdown lab-breakdown--compact"/,
+    'return !1?$2.jsxs("div",{ref:$3,className:"lab-block-fill lab-breakdown lab-breakdown--compact"'],
+  // TrendBlock: the narrow-cell metric select is never drawn; the segmented buttons stay at any width.
+  'trend-no-select': [/([\w$]+)&&([\w$]+)\?([\w$]+)\.jsx\("select",\{className:"lab-trend-select"/, '$1&&!1?$3.jsx("select",{className:"lab-trend-select"'],
+  // LabAppBody go(): a page switch (pill or lab.navigate) is swallowed; the pinned page stays.
+  'app-nav-pinned': [/([\w$]+)=([\w$]+)=>\{\2!==[\w$]+&&\([\w$]+\?[\w$]+\(\2\):[\w$]+\(\2\)\)\}(,[\w$]+=![\w$]+&&[\w$]+\?[\w$]+\.jsx\("p",\{className:"lab-app-card-note")/,
+    '$1=$2=>{}$3'],
   'placeholder-slot': [/("data-lab-inspector":!0)/, '$1,"data-lab-placeholder":!0'],
   // hover.ts nearestIndex: `return x - positions[lo] <= positions[hi] - x ? lo : hi` answers one index later.
   'hover-offset': [/return (\w+)-(\w+)\[(\w+)\]<=\2\[(\w+)\]-\1\?\3:\4\}/, 'return Math.min($2.length-1,($1-$2[$3]<=$2[$4]-$1?$3:$4)+1)}'],
@@ -536,6 +696,14 @@ const CSS_MUTATIONS = {
   // MetricTable.css before finding 3: the text column squeezed and ellipsized (with the bundle half above).
   'table-prefix': '.lab-table-text{max-width:0!important;min-width:var(--space-16)!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}',
   'table-padding': '.lab-table th,.lab-table td,.lab-table-sort,.lab-table-static{padding:var(--space-1) var(--space-2)!important}.lab-table{line-height:var(--line-height-normal)!important}',
+  'ruler-shift': '.lab-bench-current{margin-left:12px!important}',
+  'chip-contrast': ".lab-breakdown-chip[aria-pressed='true'],.lab-breakdown-chip[aria-pressed='true'] .lab-breakdown-chip-value{color:#fff!important}",
+  'breakdown-band': ".board-card-block[data-lab-block='breakdown']{flex:1 1 0!important}",
+  'lanes-squeeze': '.funnel-lanes-cell{max-height:4px!important;overflow:hidden!important}',
+  'flow-squeeze': '.funnel-flow-stage{max-height:3px!important;overflow:hidden!important}',
+  'seg-wrap': '.lab-seg-table{width:100%!important;table-layout:fixed!important}.lab-seg-table th,.lab-seg-table td{white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-all!important}',
+  'seg-sticky-lost': '.lab-seg-table .lab-seg-value,.lab-seg-table thead th:first-child{position:static!important}',
+  'seg-tint': '.lab-seg-table td[data-tone]{background:rgb(52,52,60)!important;box-shadow:none!important}',
 };
 
 /** Server mutation: a scratch copy of dist/ with the store's containment removed. */
@@ -592,6 +760,14 @@ function readBoard(slug) {
 const fileCard = (slug, id) => readBoard(slug)?.cards?.find((c) => c.id === id) ?? null;
 const boardFiles = () => (existsSync(BOARDS) ? readdirSync(BOARDS).filter((f) => f.endsWith('.md')).sort() : []);
 
+/** The first line where two signatures differ (for a failure's detail). */
+function sigDiff(a, b) {
+  const x = String(a ?? '').split('\n');
+  const y = String(b ?? '').split('\n');
+  const i = x.findIndex((l, k) => l !== y[k]);
+  return i < 0 ? `lengths ${x.length} vs ${y.length}` : `line ${i}: ${x[i]} ≠ ${y[i]}`;
+}
+
 /**
  * A render's geometry + paint signature, relative to the block root: what a
  * user can SEE (boxes, colors, svg shapes, text), never data-* attributes
@@ -605,6 +781,11 @@ function signatureInPage(root) {
   const walk = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
+    // A `display: contents` element draws no box of its own (its rect is the viewport origin): its children only.
+    if (cs.display === 'contents') {
+      for (const c of el.children) walk(c);
+      return;
+    }
     const r = el.getBoundingClientRect();
     const parts = [el.tagName, Math.round(r.x - r0.x), Math.round(r.y - r0.y), Math.round(r.width), Math.round(r.height),
       cs.color, cs.backgroundColor, cs.fill, cs.stroke, cs.borderLeftColor, cs.borderTopColor, cs.opacity, cs.fontWeight];
@@ -663,6 +844,34 @@ const OPTION_CASES = [
   ['callout', { markdown: 'Heads up' }, { tone: 'danger' }],
   ['callout', { markdown: 'Heads up' }, { markdown: 'A different note, longer than the first one.' }],
   ['filter', { data: 'plans', dim: 'plan' }, { dim: 'country' }],
+  // The funnel explorer blocks (bound to the synthetic explorer; the ladder funnel has other steps, dims and metrics).
+  ['funnel', { data: 'funnels' }, { funnel: 'f2' }],
+  ['funnel', { data: 'funnels' }, { layout: 'flow' }],
+  ['funnel', { data: 'funnels' }, { markWorst: true }],
+  ['breakdown', { data: EXPLORER }, { funnel: 'activation-ladder' }],
+  ['breakdown', { data: EXPLORER }, { dims: ['language', 'platform'] }],
+  ['breakdown', { data: EXPLORER }, { counts: true }],
+  ['breakdown', { data: EXPLORER }, { lanes: false }],
+  ['trend', { data: EXPLORER }, { funnel: 'activation-ladder' }],
+  ['trend', { data: EXPLORER }, { metrics: ['conversion', 'visit_to_lead'] }],
+  ['trend', { data: EXPLORER }, { chart: 'bar' }],
+  ['trend', { data: EXPLORER }, { switch: false }],
+  ['trend', { data: EXPLORER, switch: false }, { legend: 'top' }],
+  ['trend', { data: EXPLORER }, { axes: 'x' }],
+  ['trend', { data: EXPLORER }, { grid: false }],
+  ['trend', { data: EXPLORER }, { format: 'percent' }],
+  ['benchmark', { data: EXPLORER }, { funnel: 'activation-ladder' }],
+  ['benchmark', { data: EXPLORER }, { metrics: ['conversion', 'cost_per_lead'] }],
+  ['benchmark', { data: EXPLORER }, { comparePrev: false }],
+  // One metric: its row is drawn in full (the source line shows) at the catalog size.
+  ['benchmark', { data: EXPLORER, metrics: ['conversion'] }, { sources: false }],
+  ['segments', { data: EXPLORER }, { funnel: 'activation-ladder' }],
+  ['segments', { data: EXPLORER }, { by: 'language' }],
+  ['segments', { data: EXPLORER }, { metrics: ['conversion'] }],
+  ['segments', { data: EXPLORER }, { bands: false }],
+  ['segments', { data: EXPLORER }, { sort: '-users' }],
+  ['segments', { data: EXPLORER }, { limit: 2 }],
+  ['segments', { data: EXPLORER }, { density: 'comfortable' }],
 ];
 /** type -> option keys proven by a dedicated section instead of a signature pair. */
 const COVERED_ELSEWHERE = {
@@ -893,6 +1102,19 @@ const OPTION_VALUE_CASES = [
   ['funnel', { data: 'funnels' }, { showConversion: false }],
   ['callout', { markdown: 'Heads up' }, { tone: 'success' }],
   ['callout', { markdown: 'Heads up' }, { tone: 'warning' }],
+
+  // Trend: every non-default enum value (the multi-series base, so a legend has entries to place).
+  ['trend', { data: EXPLORER, switch: false }, { legend: 'right' }],
+  ['trend', { data: EXPLORER, switch: false }, { legend: 'none' }],
+  ['trend', { data: EXPLORER, switch: false }, { axes: 'y' }],
+  ['trend', { data: EXPLORER, switch: false }, { axes: 'none' }],
+  ['trend', { data: EXPLORER_PLUS, funnel: 'traffic' }, { format: 'number' }, { hover: true }],
+  ['trend', { data: EXPLORER, switch: false }, { format: 'compact' }, { hover: true }],
+  ['trend', { data: EXPLORER, switch: false }, { format: 'currency' }],
+  ['funnel', { data: EXPLORER }, { layout: 'flow' }],
+  // The v1 app insight: `nav` adds the page pills; `page` pins a page (the selected pill moves).
+  ['insight', { data: APP }, { nav: true }],
+  ['insight', { data: APP, nav: true }, { page: 'pricing' }],
 ];
 
 /** One board per block type: every baseline beside its twin, then one card per option value. */
@@ -929,7 +1151,7 @@ function optionBoardSpecs() {
   });
 }
 
-/** The chart types that must fit their cell, each at a large and a small size: [type, block options]. */
+/** The chart types that must fit their cell, each at a large and a small size: [type, block options, key (default the type)]. */
 const FIT_CASES = [
   ['line', { data: 'trend' }],
   ['stacked', { data: 'trend' }],
@@ -938,17 +1160,29 @@ const FIT_CASES = [
   ['heatmap', { data: 'grid2', cellLabels: true }],
   ['stat', { data: 'big-trend', series: ['enterprise'], spark: true, delta: 'prev', goal: 150000 }],
   ['funnel', { data: 'funnels' }],
+  // The funnel explorer blocks and the flow layout (segments scrolls with a sticky header instead).
+  ['breakdown', { data: EXPLORER, counts: true }],
+  ['trend', { data: EXPLORER }],
+  ['benchmark', { data: EXPLORER }],
+  ['segments', { data: EXPLORER, by: 'country' }],
+  ['funnel', { data: EXPLORER, layout: 'flow', markWorst: true }, 'flow'],
 ];
 const FIT_SIZES = { large: { w: 8, h: 6 }, small: { w: 3, h: 3 } };
+/** Explorer blocks whose small cell may scroll inside the block (a table), with the header on top. */
+const FIT_SCROLLERS = new Set(['segments']);
+/** The explorer fit cases: also checked for clipped text, and shot for the owner. */
+const EXPLORER_FIT = new Set(['breakdown', 'trend', 'benchmark', 'segments', 'flow']);
+const fitKey = ([type, , key]) => key ?? type;
 
 function fitBoardSpec() {
   const cards = [];
   let y = 0;
-  for (const [type, opts] of FIT_CASES) {
+  for (const c of FIT_CASES) {
+    const [type, opts] = c;
     const { data, ...rest } = opts;
     const block = { [type]: { data, ...rest } };
-    cards.push({ id: `m-${type}-large`, title: `${type} large`, at: { x: 0, y, ...FIT_SIZES.large }, blocks: [block] });
-    cards.push({ id: `m-${type}-small`, title: `${type} small`, at: { x: 8, y, ...FIT_SIZES.small }, blocks: [block] });
+    cards.push({ id: `m-${fitKey(c)}-large`, title: `${fitKey(c)} large`, at: { x: 0, y, ...FIT_SIZES.large }, blocks: [block] });
+    cards.push({ id: `m-${fitKey(c)}-small`, title: `${fitKey(c)} small`, at: { x: 8, y, ...FIT_SIZES.small }, blocks: [block] });
     y += FIT_SIZES.large.h;
   }
   // Scrolling blocks: a short cell so they must scroll, and the header must stay on top.
@@ -1176,6 +1410,144 @@ function tableFitInPage(cardEl) {
   };
 }
 
+// ─── Funnel explorer fixtures (sections 21-28) ───────────────────────────────
+
+/** Signups by platform x language (the plus insight's own table): the selection narrows it, its total follows. */
+const BY_PLATFORM = [
+  ['Meta Ads', 'EN', 4210], ['Meta Ads', 'ES', 1880], ['Meta Ads', 'DE', 1270], ['Meta Ads', 'PT', 790],
+  ['TikTok Ads', 'EN', 3150], ['TikTok Ads', 'ES', 1420], ['TikTok Ads', 'DE', 880], ['TikTok Ads', 'PT', 610],
+  ['Unattributed', 'EN', 1040], ['Unattributed', 'ES', 420], ['Unattributed', 'DE', 310], ['Unattributed', 'PT', 190],
+];
+/** The plus insight's low-sample line: the Unattributed x EN path (about 2,000 users) falls under it, the others do not. */
+const PLUS_LOW_SAMPLE = 2500;
+/**
+ * The plus insight: the demo script as-is (imported beside it), one more table,
+ * a higher low-sample line, and a third funnel whose daily metric runs in the
+ * tens of thousands (where a trend's `number` format differs from `auto`).
+ */
+const PLUS_SCRIPT = `import demo from './${EXPLORER}.mjs';
+const ROWS = ${JSON.stringify(BY_PLATFORM.map(([platform, language, v]) => ({ d: { platform, language }, v })))};
+const DAYS = Array.from({ length: 14 }, (_, i) => new Date(Date.UTC(2026, 8, 15 + i)).toISOString().slice(0, 10));
+export default async function () {
+  const out = await demo();
+  out.data.funnel.low_sample_threshold = ${PLUS_LOW_SAMPLE};
+  out.data.funnel.funnels.push({
+    id: 'traffic', name: 'Store traffic',
+    steps: [{ key: 'visit', label: 'Visit', users: 48200 }, { key: 'browse', label: 'Browse', users: 31900 }],
+    metrics: { visits: { v: 48200, prev: 45100, format: 'count', label: 'Visits' } },
+    daily: DAYS.map((t, i) => ({ t, m: { visits: 41000 + i * 530 + (i % 3) * 1210 } })),
+  });
+  out.data.datasets.push({
+    key: 'by_platform', label: 'Signups by platform', unit: 'signups',
+    dims: [{ key: 'platform', label: 'Platform' }, { key: 'language', label: 'Language' }],
+    rows: ROWS, total: { v: ROWS.reduce((s, r) => s + r.v, 0) },
+  });
+  return out;
+}`;
+
+/** The preset's tab labels (EN), in order: the pages, then one segments tab per client dim. */
+const PRESET_TABS = ['Daily', 'Benchmark', 'Flow', 'Steps', 'Platform', 'Language', 'Country'];
+
+/**
+ * The demo board's separate cards (the plan's W4 setup), added one by one with
+ * `lab board add-card --block` (a card of several blocks gets its first block
+ * there and the rest through `lab board set`: add-card writes one block per
+ * card). `explorer-proof` holds the extra cards some checks need, so the demo
+ * board itself is exactly the plan's (its GET size is a criterion).
+ */
+const EXPLORER_CARDS = [
+  { board: 'explorer-demo', id: 'x-steps', title: 'Steps', at: '0,12,8,7', blocks: [{ breakdown: { data: EXPLORER } }, { funnel: { data: EXPLORER, layout: 'bars', markWorst: true } }] },
+  { board: 'explorer-demo', id: 'x-bench', title: 'Benchmark', at: '0,19,6,6', blocks: [{ breakdown: { data: EXPLORER } }, { benchmark: { data: EXPLORER } }] },
+  { board: 'explorer-demo', id: 'x-countries', title: 'Countries', at: '6,19,6,6', blocks: [{ segments: { data: EXPLORER, by: 'country' } }] },
+  // Payment: loss reasons as tables of the same insight (a stat reads value/series frames, not tables).
+  { board: 'explorer-demo', id: 'x-payment', title: 'Payment', at: '0,25,6,6', blocks: [{ filter: { data: `${EXPLORER}/declines`, dim: 'cohort' } }, { bar: { data: `${EXPLORER}/declines` } }, { table: { data: `${EXPLORER}/decline_rate` } }] },
+  { board: 'explorer-demo', id: 'x-daily', title: 'Daily', at: '6,25,6,4', blocks: [{ trend: { data: EXPLORER } }] },
+  { board: 'explorer-demo', id: 'x-app', title: 'Onboarding app', at: '0,31,6,8', blocks: [{ insight: { data: APP, nav: true, page: 'overview' } }] },
+  { board: 'explorer-proof', id: 'x-trend', title: 'Conversion trend', at: '0,0,6,4', blocks: [{ trend: { data: EXPLORER, metrics: ['conversion', 'visit_to_lead'] } }] },
+  { board: 'explorer-proof', id: 'x-app-plain', title: 'App card', at: '6,0,3,4', blocks: [{ insight: { data: APP } }] },
+  { board: 'explorer-proof', id: 'x-app-pinned', title: 'App pinned', at: '9,0,3,4', blocks: [{ insight: { data: APP, page: 'pricing' } }] },
+  { board: 'explorer-proof', id: 'x-plus', title: 'Signups and declines', at: '0,4,12,14', blocks: [
+    { breakdown: { data: EXPLORER_PLUS } },
+    { segments: { data: EXPLORER_PLUS, by: 'platform' } },
+    { table: { data: `${EXPLORER_PLUS}/by_platform` } },
+    { table: { data: `${EXPLORER_PLUS}/declines`, limit: 4 } },
+  ] },
+];
+
+const sameDims = (a, b) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => a[k] === b[k]);
+/** The fixture's own path for a selection (lookup: exact match), or null. */
+const fixtureSegment = (funnel, dims) => (Object.keys(dims).length === 0
+  ? { dims: {}, users: funnel.steps[0].users, steps: funnel.steps, metrics: funnel.metrics, daily: funnel.daily, measured: true }
+  : funnel.segments.find((s) => sameDims(s.dims, dims)) ?? null);
+/** stepDrops, recomputed here from the fixture (never the UI's maths): dropPct per step, the worst the first max. */
+function fixtureDrops(steps) {
+  const out = steps.map((s, i) => ({ key: s.key, users: s.users, dropPct: i === 0 || !steps[i - 1].users ? null : (1 - s.users / steps[i - 1].users) * 100 }));
+  let worst = null;
+  for (const d of out) if (d.dropPct !== null && (worst === null || d.dropPct > worst.dropPct)) worst = d;
+  return { drops: out, worst: worst?.key ?? null };
+}
+/** A band status as frameOps defines it, `better` deciding which way is good. */
+function fixtureStatus(v, band) {
+  if (v === null || v === undefined) return 'unmeasured';
+  if (!band || (band.floor == null && band.target == null)) return 'no-band';
+  const worse = (a, b) => (band.better === 'lower' ? a > b : a < b);
+  if (band.floor != null && worse(v, band.floor)) return 'below';
+  if (band.target != null && !worse(v, band.target)) return 'above';
+  return 'between';
+}
+/** A shown number equals `want` at the precision it is shown with ("12.3%" vs 12.34). */
+function shownEquals(text, want) {
+  const s = String(text ?? '').replace(/ /g, ' ').replace('−', '-');
+  const m = /(-?[\d,]*\.?\d+)\s*([KMB])?/i.exec(s);
+  if (!m || want === null || want === undefined) return false;
+  const k = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] ?? '').toUpperCase()] ?? 1;
+  const decimals = (m[1].split('.')[1] ?? '').length;
+  return Number(m[1].replace(/,/g, '')) === Number((want / k).toFixed(decimals));
+}
+/** A stored block, in either spelling ({type, data, options, tabs} or the short {type: {...}}), as one shape. */
+function normBlock(b) {
+  if (!b || typeof b !== 'object') return b;
+  let type;
+  let data;
+  let options;
+  let tabs;
+  if (typeof b.type === 'string') {
+    ({ type, data } = b);
+    options = { ...(b.options ?? {}) };
+    tabs = b.tabs ?? options.tabs;
+  } else {
+    [type] = Object.keys(b);
+    const { data: d, tabs: t, ...rest } = b[type] ?? {};
+    data = d;
+    tabs = t;
+    options = rest;
+  }
+  delete options.tabs;
+  const out = { type, data: data ?? null, options: Object.fromEntries(Object.entries(options).sort(([a], [z]) => a.localeCompare(z))) };
+  if (tabs) out.tabs = tabs.map((tb) => ({ label: tb.label, blocks: (tb.blocks ?? []).map(normBlock) }));
+  return out;
+}
+/** The block at a frame path ("1.3.0" = block 1, tab 3, child 0) of a stored card. */
+function blockAtPath(cardData, path) {
+  const [i, tab, child] = path.split('.').map(Number);
+  const b = normBlock(cardData?.blocks?.[i]);
+  if (tab === undefined) return b;
+  return b?.tabs?.[tab]?.blocks?.[child] ?? null;
+}
+
+/** The project names registered on THIS machine (outside the repo): none may appear in what the explorer publishes. */
+function registeredVaultNames() {
+  const registry = join(homedir(), '.dreamcontext', 'vaults.json');
+  if (!existsSync(registry)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(registry, 'utf8'));
+    return (parsed.vaults ?? []).map((v) => v.name)
+      .filter((n) => typeof n === 'string' && n.length > 2 && !['dreamcontext', 'proj', 'empty'].includes(n.toLowerCase()));
+  } catch {
+    return [];
+  }
+}
+
 // ─── In-page measurement (run inside the page; no closures over this module) ──
 
 /** A point where the mark is really under the pointer (elementFromPoint), scanning its box; else its centre. */
@@ -1263,6 +1635,429 @@ function measureCardInPage(cardEl) {
     fill = u.r > u.l ? { w: (u.r - u.l) / br.width, h: (u.b - u.t) / br.height } : { w: 0, h: 0 };
   }
   return { scroll, overlaps, outside, fill, ticks: cardEl.querySelectorAll('[data-axis] .lab-chart-tick').length, size: [Math.round(c.width), Math.round(c.height)] };
+}
+
+/**
+ * Every painted text in a card that is CUT: a text box reaching past an
+ * ancestor that clips (overflow other than visible, up to the card), or an
+ * element whose own text overflows its box while it clips (ellipsis). Hidden
+ * text (screen-reader only, display none, a closed tooltip) is not painted.
+ * Text inside a scrolling box is exempt on the axis it scrolls: a table
+ * scrolls by design (its rows and columns are reached by scrolling, not cut).
+ */
+function clippedTextInPage(cardEl) {
+  const out = [];
+  const hidden = (el) => {
+    for (let e = el; e && e !== cardEl.parentElement; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return true;
+      if (/inset\(50%\)/.test(cs.clipPath) || /rect\(0/.test(cs.clip) || (cs.position === 'absolute' && e.clientWidth <= 1 && e.clientHeight <= 1)) return true;
+    }
+    return false;
+  };
+  const walker = document.createTreeWalker(cardEl, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n.parentElement;
+    if (!n.textContent.trim() || !el || hidden(el) || el.closest('svg')) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const r = range.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+    const label = `"${n.textContent.trim().slice(0, 28)}"`;
+    const ownCs = getComputedStyle(el);
+    if (ownCs.overflowX !== 'visible' && el.scrollWidth > el.clientWidth + 1) {
+      out.push(`${label} overflows its ${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]} ${el.scrollWidth}>${el.clientWidth}`);
+      continue;
+    }
+    // A text range's box is the font's whole content area (ascent + descent), taller than its ink and
+    // than a tight line box: vertically, only what reaches past that half-leading counts as cut.
+    const slackY = Math.max(1, (r.height - parseFloat(ownCs.fontSize)) / 2 + 1);
+    // Past a box that scrolls on an axis, that axis is reached by scrolling: outer clips no longer cut it.
+    let viaScrollX = false;
+    let viaScrollY = false;
+    for (let a = el; a && a !== cardEl.parentElement; a = a.parentElement) {
+      const cs = getComputedStyle(a);
+      const clipsX = cs.overflowX !== 'visible' && !viaScrollX;
+      const clipsY = cs.overflowY !== 'visible' && !viaScrollY;
+      if (!clipsX && !clipsY) continue;
+      const scrollsY = /(auto|scroll)/.test(cs.overflowY);
+      const scrollsX = /(auto|scroll)/.test(cs.overflowX);
+      const ar = a.getBoundingClientRect();
+      const bx = a.clientLeft;
+      const by = a.clientTop;
+      const cutX = clipsX && !scrollsX && (r.left < ar.left + bx - 1 || r.right > ar.left + bx + a.clientWidth + 1);
+      const cutY = clipsY && !scrollsY && (r.top < ar.top + by - slackY || r.bottom > ar.top + by + a.clientHeight + slackY);
+      if (cutX || cutY) {
+        out.push(`${label} cut by ${a.tagName.toLowerCase()}.${String(a.className).split(' ')[0]} (${cutX ? 'x' : ''}${cutY ? 'y' : ''}) text ${Math.round(r.left - ar.left)},${Math.round(r.top - ar.top)} ${Math.round(r.width)}x${Math.round(r.height)} in ${a.clientWidth}x${a.clientHeight}`);
+        break;
+      }
+      viaScrollX = viaScrollX || scrollsX;
+      viaScrollY = viaScrollY || scrollsY;
+    }
+  }
+  return out;
+}
+
+/**
+ * What the funnel explorer blocks under `root` SHOW: text, geometry and aria
+ * state read from the rendered DOM (the data-* hooks only locate things; the
+ * numbers compared are the painted ones).
+ */
+function explorerInPage(root) {
+  const num = (s) => {
+    const m = /-?[\d,]*\.?\d+/.exec(String(s ?? '').replace(/−/g, '-'));
+    return m ? Number(m[0].replace(/,/g, '')) : null;
+  };
+  const ownText = (el) => [...(el?.childNodes ?? [])].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim();
+  const visible = (el) => {
+    for (let e = el; e && e !== root.parentElement; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    }
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const center = (el, ref) => {
+    const r = el.getBoundingClientRect();
+    return r.left + r.width / 2 - ref.left;
+  };
+  const q = (sel) => [...root.querySelectorAll(sel)].filter(visible);
+
+  const chips = q('[data-lab-breakdown-chip]').map((c) => ({
+    dim: c.closest('[data-lab-breakdown-dim]')?.getAttribute('data-lab-breakdown-dim') ?? null,
+    value: c.getAttribute('data-lab-breakdown-chip'),
+    pressed: c.getAttribute('aria-pressed') === 'true',
+    disabled: c.getAttribute('aria-disabled') === 'true',
+    text: c.innerText.trim(),
+  }));
+  const fx = root.querySelector('[data-lab-funnel-explorer]');
+  const bars = q('.funnel-bars-row').map((r) => ({
+    label: r.querySelector('.funnel-bars-label')?.textContent.trim() ?? '',
+    users: num(ownText(r.querySelector('.funnel-bars-value'))),
+    worst: r.hasAttribute('data-lab-worst'),
+  }));
+  const flowEl = q('[data-lab-flow]')[0];
+  const flow = flowEl ? {
+    stages: [...flowEl.querySelectorAll('[data-lab-flow-stage]')].map((s) => {
+      const track = s.querySelector('.funnel-flow-track').getBoundingClientRect();
+      const shape = s.querySelector('.funnel-flow-shape').getBoundingClientRect();
+      return {
+        key: s.getAttribute('data-lab-flow-stage'), label: s.querySelector('.funnel-flow-label')?.textContent.trim() ?? '',
+        users: num(ownText(s.querySelector('.funnel-flow-value'))), widthPct: track.width > 0 ? (shape.width / track.width) * 100 : null,
+      };
+    }),
+    links: [...flowEl.querySelectorAll('[data-lab-drop]')].map((l) => ({
+      key: l.getAttribute('data-lab-drop'), badges: l.querySelectorAll('.funnel-flow-badge').length,
+      badge: l.querySelector('.funnel-flow-badge-pct')?.textContent.trim() ?? '', worst: l.hasAttribute('data-lab-worst'),
+      worstWord: l.querySelector('.funnel-flow-worst')?.textContent.trim() ?? '',
+    })),
+  } : null;
+  const lanesEl = q('[data-lab-lanes]').find((e) => e.classList.contains('funnel-lanes'));
+  const lanes = lanesEl ? {
+    n: Number(lanesEl.getAttribute('data-lab-lanes')),
+    heads: [...lanesEl.querySelectorAll('.funnel-lanes-head')].map((h) => {
+      const r = h.getBoundingClientRect();
+      return { lane: Number(h.getAttribute('data-lab-lane')), name: h.querySelector('.funnel-lanes-name')?.textContent.trim() ?? '', left: r.left, top: r.top };
+    }),
+    cells: [...lanesEl.querySelectorAll('.funnel-lanes-cell')].map((c) => ({
+      lane: Number(c.getAttribute('data-lane')), missing: c.getAttribute('data-lab-lane-missing'),
+      users: c.hasAttribute('data-lab-lane-missing') ? null : num(ownText(c.querySelector('.funnel-lanes-value'))), text: c.innerText.trim(),
+    })),
+    spine: [...lanesEl.querySelectorAll('[data-lab-lane-step]')].map((s) => s.getAttribute('data-lab-lane-step')),
+    drops: [...lanesEl.querySelectorAll('.funnel-lanes-drop[data-lab-drop]')].map((d) => ({
+      lane: Number(d.getAttribute('data-lane')), key: d.getAttribute('data-lab-drop'), text: d.textContent.trim(), worst: d.hasAttribute('data-lab-worst'),
+    })),
+  } : null;
+  const bench = q('[data-lab-bench-row]').map((row) => {
+    const ruler = row.querySelector('[data-lab-bench-ruler]');
+    const rr = ruler ? ruler.getBoundingClientRect() : null;
+    const mark = (sel) => {
+      const el = ruler?.querySelector(sel);
+      return el && rr ? center(el, rr) : null;
+    };
+    return {
+      key: row.getAttribute('data-lab-bench-row'), status: row.getAttribute('data-status'), better: row.getAttribute('data-better'),
+      trend: row.getAttribute('data-trend'), label: row.querySelector('.lab-bench-label')?.textContent.trim() ?? '',
+      value: row.querySelector('[data-lab-bench-value]')?.textContent.trim() ?? null,
+      delta: row.querySelector('.lab-bench-delta-text')?.textContent.trim() ?? null,
+      trendWord: row.querySelector('.lab-bench-trend')?.textContent.trim() ?? null,
+      statusWord: row.querySelector('.lab-bench-status-word')?.textContent.trim() ?? null,
+      sources: row.querySelector('[data-lab-bench-source]')?.textContent.trim() ?? null,
+      unmeasured: row.querySelector('[data-lab-bench-unmeasured]')?.textContent.trim() ?? null,
+      markers: { floor: mark('[data-lab-bench-floor]'), target: mark('[data-lab-bench-target]'), current: mark('[data-lab-bench-current]'), prev: mark('[data-lab-bench-prev]') },
+      anyMarker: !!row.querySelector('.lab-bench-mark'),
+      boundLabels: { floor: row.querySelector('[data-lab-bench-bound-label="floor"]')?.textContent.trim() ?? null, target: row.querySelector('[data-lab-bench-bound-label="target"]')?.textContent.trim() ?? null },
+      prevValue: row.querySelector('[data-lab-bench-prev-value]')?.textContent.trim() ?? null,
+      // A per-row inherited mark: an attribute on the row or inside it, or the word in the row's own text.
+      inheritedMark: row.hasAttribute('data-inherited') || !!row.querySelector('[data-inherited], [data-lab-bench-inherited]') || /inherit|whole funnel/i.test(row.innerText),
+      text: row.innerText.replace(/\s+/g, ' ').trim(),
+    };
+  });
+  const segEl = q('[data-lab-segments]')[0];
+  const seg = segEl ? {
+    by: segEl.getAttribute('data-by'),
+    headers: [...segEl.querySelectorAll('thead th')].map((th) => ({ col: th.getAttribute('data-col'), sort: th.getAttribute('aria-sort'), text: th.textContent.trim() })),
+    rows: [...segEl.querySelectorAll('tbody tr')].map((tr) => {
+      const tds = [...tr.querySelectorAll('td')];
+      return {
+        value: tr.getAttribute('data-lab-segment-row'), active: tr.hasAttribute('data-active'), low: tr.hasAttribute('data-lab-low-sample'),
+        unmeasured: tr.hasAttribute('data-lab-unmeasured'), opacity: Number(getComputedStyle(tr).opacity) * Number(getComputedStyle(tds[0] ?? tr).opacity),
+        users: tds[1]?.querySelector('[data-lab-seg-unmeasured]') ? null : num(tds[1]?.textContent),
+        usersText: tds[1]?.innerText.trim() ?? '',
+        cells: Object.fromEntries([...tr.querySelectorAll('td[data-metric]')].map((td) => [td.getAttribute('data-metric'), {
+          text: td.querySelector('.lab-seg-v')?.textContent.trim() ?? null, dash: !!td.querySelector('[data-lab-seg-unmeasured]'),
+          tone: td.getAttribute('data-tone'), bg: getComputedStyle(td).backgroundColor,
+        }])),
+      };
+    }),
+    notes: [...segEl.querySelectorAll('.lab-seg-note')].map((n) => n.textContent.trim()),
+  } : null;
+  const trendEl = q('[data-lab-trend]')[0];
+  const trend = trendEl ? {
+    state: trendEl.getAttribute('data-state'),
+    series: trendEl.querySelector('[data-lab-trend-series]')?.getAttribute('data-lab-trend-series') ?? null,
+    metrics: [...trendEl.querySelectorAll('[data-lab-trend-metric]')].map((b) => ({ key: b.getAttribute('data-lab-trend-metric'), on: b.getAttribute('aria-checked') === 'true' })),
+    paths: [...trendEl.querySelectorAll('path[data-series]')].map((p) => p.getAttribute('d')).join('|'),
+  } : null;
+  return {
+    chips, bars, flow, lanes, bench, seg, trend,
+    funnel: fx ? { layout: fx.getAttribute('data-lab-funnel-explorer'), id: fx.getAttribute('data-lab-funnel'), selection: fx.getAttribute('data-lab-selection'), measured: fx.getAttribute('data-lab-measured') } : null,
+    notMeasured: q('[data-lab-not-measured]').map((e) => e.textContent.trim()),
+    notSplit: q('[data-lab-not-split]').map((e) => e.textContent.trim()),
+    worstNote: root.querySelector('[data-lab-worst-note]')?.getAttribute('data-lab-worst-note') ?? null,
+    pin: (() => { const p = root.querySelector('[data-lab-lane-pin]'); return p ? { disabled: p.disabled, blocked: p.getAttribute('data-blocked') } : null; })(),
+    laneChips: q('[data-lab-breakdown-lanes] [data-lab-lane]').length,
+    benchMore: (() => { const e = q('.lab-bench-more')[0]; return e ? num(e.textContent) : 0; })(),
+  };
+}
+
+/**
+ * The explorer card's chrome as a user sees it: every pressed breakdown chip's
+ * label contrast (its colour over its own background composited on the first
+ * opaque ancestor), and the blank band between the breakdown's painted content
+ * and the next block.
+ */
+function chipsAndBandInPage(cardEl) {
+  const parse = (c) => {
+    const m = /rgba?\(([^)]+)\)/.exec(c);
+    if (m) {
+      const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    }
+    const s = /color\(srgb ([^)]+)\)/.exec(c);
+    if (s) {
+      const p = s[1].split(/[\s/]+/).filter(Boolean).map(Number);
+      return { r: p[0] * 255, g: p[1] * 255, b: p[2] * 255, a: p.length > 3 ? p[3] : 1 };
+    }
+    return null;
+  };
+  const over = (top, under) => ({ r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a), b: top.b * top.a + under.b * (1 - top.a), a: 1 });
+  const lum = (c) => {
+    const f = (v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const backdrop = (el) => {
+    const layers = [];
+    for (let e = el; e; e = e.parentElement) {
+      const c = parse(getComputedStyle(e).backgroundColor);
+      if (c && c.a > 0) { layers.push(c); if (c.a >= 1) break; }
+    }
+    let out = { r: 255, g: 255, b: 255, a: 1 };
+    for (const l of layers.reverse()) out = over(l, out);
+    return out;
+  };
+  const chips = [...cardEl.querySelectorAll('[data-lab-breakdown-chip][aria-pressed="true"], [data-lab-breakdown-all][aria-pressed="true"]')].map((c) => {
+    const label = c.querySelector('.lab-breakdown-chip-value') ?? c;
+    const fg = parse(getComputedStyle(label).color);
+    const bg = backdrop(c);
+    if (!fg) return { value: c.textContent.trim(), ratio: null, fg: getComputedStyle(label).color };
+    const ink = fg.a < 1 ? over(fg, bg) : fg;
+    const [hi, lo] = [lum(ink), lum(bg)].sort((a, b) => b - a);
+    return { value: c.textContent.trim(), ratio: Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100, fg: getComputedStyle(label).color, bg: `rgb(${Math.round(bg.r)}, ${Math.round(bg.g)}, ${Math.round(bg.b)})` };
+  });
+  const blk = cardEl.querySelector('.board-card-block[data-lab-block="breakdown"]');
+  let band = null;
+  if (blk && blk.nextElementSibling) {
+    let bottom = -Infinity;
+    for (const el of blk.querySelectorAll('*')) {
+      if (el.children.length > 0) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) bottom = Math.max(bottom, r.bottom);
+    }
+    const next = blk.nextElementSibling.getBoundingClientRect();
+    band = Math.round(next.top - bottom);
+  }
+  return { chips, band };
+}
+
+/**
+ * Small-cell legibility of one card's explorer block: every box a user must see
+ * (flow stage labels and users, breakdown selects / chips / pins) has a real
+ * size and lies inside the card, with no clipping ancestor cutting it.
+ */
+function smallFormInPage(cardEl) {
+  const c = cardEl.getBoundingClientRect();
+  const problems = [];
+  const visibleBox = (el, minH) => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return 'hidden';
+    if (r.height < minH || r.width < 4) return `${Math.round(r.width)}x${Math.round(r.height)}px`;
+    if (r.left < c.left - 1 || r.right > c.right + 1 || r.top < c.top - 1 || r.bottom > c.bottom + 1) return `outside the card at ${Math.round(r.left - c.left)},${Math.round(r.top - c.top)} ${Math.round(r.width)}x${Math.round(r.height)} in ${Math.round(c.width)}x${Math.round(c.height)}`;
+    for (let a = el.parentElement; a && a !== cardEl.parentElement; a = a.parentElement) {
+      const as = getComputedStyle(a);
+      if (as.overflowX === 'visible' && as.overflowY === 'visible') continue;
+      const ar = a.getBoundingClientRect();
+      if (r.left < ar.left - 1 || r.right > ar.right + 1 || r.top < ar.top - 1 || r.bottom > ar.bottom + 1) return `cut by ${a.className.split(' ')[0]}`;
+    }
+    return null;
+  };
+  const flow = cardEl.querySelector('[data-lab-flow]');
+  const stages = flow ? [...flow.querySelectorAll('[data-lab-flow-stage]')] : [];
+  for (const st of stages) {
+    for (const [what, el] of [['label', st.querySelector('.funnel-flow-label')], ['users', st.querySelector('.funnel-flow-value')]]) {
+      const bad = el ? visibleBox(el, 8) : 'missing';
+      if (bad) problems.push(`flow ${st.getAttribute('data-lab-flow-stage')} ${what}: ${bad}`);
+    }
+  }
+  const bd = cardEl.querySelector('[data-lab-breakdown]');
+  const controls = bd ? [...bd.querySelectorAll('[data-lab-breakdown-select], [data-lab-breakdown-chip], [data-lab-breakdown-all], [data-lab-lane-pin], .lab-breakdown-dim-label')] : [];
+  for (const el of controls) {
+    const bad = visibleBox(el, 8);
+    if (bad) problems.push(`breakdown ${el.getAttribute('data-lab-breakdown-select') ?? el.getAttribute('data-lab-breakdown-chip') ?? el.className.split(' ')[0]}: ${bad}`);
+  }
+  return {
+    problems,
+    flowMode: flow?.getAttribute('data-flow-mode') ?? null,
+    stages: stages.length,
+    breakdownCompact: bd?.getAttribute('data-compact') === 'true',
+    selects: bd ? bd.querySelectorAll('[data-lab-breakdown-select]').length : 0,
+    chips: bd ? bd.querySelectorAll('[data-lab-breakdown-chip]').length : 0,
+  };
+}
+
+/**
+ * Every trend metric switch under `root`: segmented buttons must show their
+ * whole label (no ellipsis); a select must be wide enough for its selected
+ * label (measured in the select's own font, minus its padding and arrow).
+ */
+function trendSwitchInPage(root) {
+  const out = [];
+  const ctx = document.createElement('canvas').getContext('2d');
+  for (const sw of root.querySelectorAll('[data-lab-trend-switch]')) {
+    if (sw.tagName === 'SELECT') {
+      const cs = getComputedStyle(sw);
+      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const label = sw.options[sw.selectedIndex]?.textContent ?? '';
+      const room = sw.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const need = ctx.measureText(label).width;
+      out.push({ form: 'select', label, cut: need > room + 0.5, need: Math.round(need), room: Math.round(room) });
+    } else {
+      // A button cut by the switch row (it overflows the row's box) is as unreadable as an ellipsized one.
+      const row = sw.getBoundingClientRect();
+      for (const b of sw.querySelectorAll('[data-lab-trend-metric]')) {
+        const r = b.getBoundingClientRect();
+        const outside = r.left < row.left - 1 || r.right > row.right + 1;
+        out.push({ form: 'buttons', label: b.textContent, cut: b.scrollWidth > b.clientWidth + 1 || outside, need: b.scrollWidth, room: b.clientWidth, outside });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The segments table as a reader meets it: words broken across lines (a word
+ * whose text spans 2 line boxes), the value column stuck on the left and the
+ * last column reachable after scrolling the table to its end, and every
+ * band-tinted cell's figure contrast over its composited tint.
+ */
+async function segmentsTableInPage(cardEl) {
+  const wrap = cardEl.querySelector('[data-lab-segments] .lab-table-wrap');
+  const table = wrap?.querySelector('table');
+  if (!wrap || !table) return null;
+  const broken = [];
+  for (const cell of table.querySelectorAll('th, td')) {
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = n.textContent;
+      const re = /\S+/g;
+      let m;
+      while ((m = re.exec(text))) {
+        const range = document.createRange();
+        range.setStart(n, m.index);
+        range.setEnd(n, m.index + m[0].length);
+        const tops = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top)));
+        if (tops.size > 1) broken.push(m[0]);
+      }
+    }
+  }
+  const parse = (c) => {
+    const m = /rgba?\(([^)]+)\)/.exec(c);
+    if (m) { const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; }
+    const s = /color\(srgb ([^)]+)\)/.exec(c);
+    if (s) { const p = s[1].split(/[\s/]+/).filter(Boolean).map(Number); return { r: p[0] * 255, g: p[1] * 255, b: p[2] * 255, a: p.length > 3 ? p[3] : 1 }; }
+    return null;
+  };
+  const over = (t, u) => ({ r: t.r * t.a + u.r * (1 - t.a), g: t.g * t.a + u.g * (1 - t.a), b: t.b * t.a + u.b * (1 - t.a), a: 1 });
+  const lum = (c) => { const f = (v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const backdrop = (el) => {
+    const layers = [];
+    for (let e = el; e; e = e.parentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c && c.a > 0) { layers.push(c); if (c.a >= 1) break; } }
+    let o = { r: 255, g: 255, b: 255, a: 1 };
+    for (const l of layers.reverse()) o = over(l, o);
+    return o;
+  };
+  const tints = [...table.querySelectorAll('td[data-tone]')].map((td) => {
+    const fig = td.querySelector('.lab-seg-v') ?? td;
+    const fg = parse(getComputedStyle(fig).color);
+    const bg = backdrop(td);
+    const ink = fg && fg.a < 1 ? over(fg, bg) : fg;
+    const [hi, lo] = ink ? [lum(ink), lum(bg)].sort((a, b) => b - a) : [0, 0];
+    return { tone: td.getAttribute('data-tone'), ratio: ink ? Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100 : null };
+  });
+  const scrolls = wrap.scrollWidth > wrap.clientWidth + 1;
+  const firstHead = table.querySelector('thead th');
+  const lastHead = [...table.querySelectorAll('thead th')].pop();
+  const firstLeft0 = firstHead.getBoundingClientRect().left;
+  wrap.scrollLeft = wrap.scrollWidth;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const w = wrap.getBoundingClientRect();
+  const lr = lastHead.getBoundingClientRect();
+  const fr = firstHead.getBoundingClientRect();
+  const firstCell = table.querySelector('tbody td');
+  const fc = firstCell?.getBoundingClientRect();
+  const hitFirst = fc ? document.elementFromPoint(fc.left + Math.min(8, fc.width / 2), fc.top + fc.height / 2) : null;
+  const hitLast = document.elementFromPoint(Math.max(lr.left + 2, lr.right - 6), lr.top + lr.height / 2);
+  return {
+    broken, tints, scrolls, scrolled: wrap.scrollLeft,
+    lastVisible: lr.right <= w.right + 1 && lr.left >= fr.right - 1 && !!hitLast && (hitLast === lastHead || lastHead.contains(hitLast)),
+    stickyFirst: Math.abs(fr.left - firstLeft0) <= 1 && !!hitFirst && (hitFirst === firstCell || firstCell.contains(hitFirst)),
+    lastLabel: lastHead.textContent.trim(),
+  };
+}
+
+/** The text contrast of every element matching `selector` under `root` (its ink over its composited backdrop). */
+function contrastInPage(root, selector) {
+  const parse = (c) => {
+    const m = /rgba?\(([^)]+)\)/.exec(c);
+    if (m) { const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; }
+    const s = /color\(srgb ([^)]+)\)/.exec(c);
+    if (s) { const p = s[1].split(/[\s/]+/).filter(Boolean).map(Number); return { r: p[0] * 255, g: p[1] * 255, b: p[2] * 255, a: p.length > 3 ? p[3] : 1 }; }
+    return null;
+  };
+  const over = (t, u) => ({ r: t.r * t.a + u.r * (1 - t.a), g: t.g * t.a + u.g * (1 - t.a), b: t.b * t.a + u.b * (1 - t.a), a: 1 });
+  const lum = (c) => { const f = (v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  return [...root.querySelectorAll(selector)].map((el) => {
+    const layers = [];
+    for (let e = el; e; e = e.parentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c && c.a > 0) { layers.push(c); if (c.a >= 1) break; } }
+    let bg = { r: 255, g: 255, b: 255, a: 1 };
+    for (const l of layers.reverse()) bg = over(l, bg);
+    const fg = parse(getComputedStyle(el).color);
+    if (!fg) return { text: el.textContent.trim(), ratio: null };
+    const ink = fg.a < 1 ? over(fg, bg) : fg;
+    const [hi, lo] = [lum(ink), lum(bg)].sort((a, b) => b - a);
+    return { text: el.textContent.trim(), ratio: Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100, fg: getComputedStyle(el).color };
+  });
 }
 
 /** Scroll a card's scrolling block to its end; the header cell must still sit at the scroller's top, on top. */
@@ -1356,6 +2151,12 @@ async function main() {
     /upstream-unchanged|upstream unchanged/i.test(probeOut), probeOut.slice(0, 400));
   ok('setup: the broken insight failed its first sync (recently-errored fixture)', /broken-metric/.test(syncOut), syncOut.slice(0, 300));
   const catalog = JSON.parse(dc(['lab', 'block', 'list', '--json'])).catalog;
+  /** The explorer fixture's own payload: every expected explorer number comes from here, never from the UI. */
+  const demo = await (await import(pathToFileURL(EXPLORER_FIXTURE).href)).default();
+  const quiz = demo.data.funnel.funnels.find((f) => f.id === 'quiz-checkout');
+  const setBands = demo.data.funnel.benchmarks;
+  const stepLabel = (key) => quiz.steps.find((s) => s.key === key)?.label ?? key;
+  const pathOf = (seg) => (seg?.steps ?? []).map((s) => [stepLabel(s.key), s.users]);
 
   // Another checkout's verify run on this port would be tested instead of ours: refuse.
   const taken = await fetch(`${BASE}/api/lab`).then(() => true, () => false);
@@ -1371,6 +2172,7 @@ async function main() {
     const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
+    sectionPage = page;
     // The What's New modal can open at any point after load; dismiss it whenever it covers an action.
     await page.addLocatorHandler(page.locator('.announcements-modal-scrim'), async () => {
       const gotIt = page.getByRole('button', { name: /^got it$/i });
@@ -1381,12 +2183,19 @@ async function main() {
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
 
     const bundle = BUNDLE_MUTATIONS[MUTATION];
+    const bundlePairs = bundle ? (Array.isArray(bundle[0]) ? bundle : [bundle]) : [];
+    const pairHits = bundlePairs.map(() => 0);
     let bundlePatched = 0;
     if (bundle) {
       await page.route(/\/assets\/.*\.js(\?.*)?$/, async (route) => {
         const res = await route.fetch();
         const body = await res.text();
-        const next = body.replace(bundle[0], bundle[1]);
+        let next = body;
+        bundlePairs.forEach(([re, rep], i) => {
+          const after = next.replace(re, rep);
+          if (after !== next) pairHits[i] += 1;
+          next = after;
+        });
         if (next !== body) bundlePatched += 1;
         await route.fulfill({ response: res, body: next });
       });
@@ -1426,11 +2235,25 @@ async function main() {
       await take(join(SHOTS, name));
       if (SHOTS_OUT) cpSync(join(SHOTS, name), join(SHOTS_OUT, name));
     };
+    if (EXPLORER_SHOTS_OUT) mkdirSync(EXPLORER_SHOTS_OUT, { recursive: true });
+    /** A funnel explorer shot: the scratch dir (prefixed), --shots, and --explorer-shots when given. */
+    const saveExplorerShot = async (name, take) => {
+      await saveShot(`explorer-${name}`, take);
+      if (EXPLORER_SHOTS_OUT) cpSync(join(SHOTS, `explorer-${name}`), join(EXPLORER_SHOTS_OUT, name));
+    };
+    /** An explorer shot in both themes: `<name>-light.png`, `<name>-dark.png`. */
+    const explorerShotBoth = async (name, take) => {
+      for (const theme of ['light', 'dark']) {
+        await setTheme(theme);
+        await saveExplorerShot(`${name}-${theme}.png`, take);
+      }
+      await setTheme('light');
+    };
     /**
      * Both themes. The board scrolls inside the app shell (a fullPage shot is just
      * the viewport), so the viewport grows to the board's height for the shot.
      */
-    const shoot = async (name) => {
+    const shoot = async (name, { explorer = false } = {}) => {
       // The page's main scroller: the tallest scrolling box around or inside the board (a table's own scroller is small).
       const need = await page.evaluate(() => {
         const b = document.querySelector('[data-lab-board]');
@@ -1448,7 +2271,8 @@ async function main() {
       if (tall > 1000) { await page.setViewportSize({ width: 1600, height: tall }); await sleep(500); }
       for (const theme of ['light', 'dark']) {
         await setTheme(theme);
-        await saveShot(`${name}-${theme}.png`, (path) => page.screenshot({ path }));
+        if (explorer) await saveExplorerShot(`${name}-${theme}.png`, (path) => page.screenshot({ path }));
+        else await saveShot(`${name}-${theme}.png`, (path) => page.screenshot({ path }));
       }
       await setTheme('light');
       if (tall > 1000) { await page.setViewportSize({ width: 1600, height: 1000 }); await sleep(300); }
@@ -1511,6 +2335,9 @@ async function main() {
       const c = document.querySelector(`[data-lab-card="${cid}"]`);
       return c ? c.getBoundingClientRect().height / Number(c.getAttribute('data-lab-card-h')) : 0;
     }, id);
+
+    // A partial (--only) run skips the section that first opens the page.
+    if (ONLY && !ONLY.test('legacy open')) await gotoInsights().catch(() => {});
 
     // ── 1. Legacy open: derived boards, nothing written, zero sync ─────────────
     const labBefore = hashTree(LAB);
@@ -1676,6 +2503,28 @@ async function main() {
       await editMode(false);
     });
 
+    // ── The funnel explorer's insights (the catalog, option and fit boards bind them too) ──
+    let explorerSynced = false;
+    await section('explorer fixtures via CLI', async () => {
+      const make = (slug, title, render, script) => {
+        dc(['lab', 'create', slug, '--title', title, '--render', render, '--adapter', 'script', '--no-board']);
+        writeFileSync(join(LAB, 'scripts', `${slug}.mjs`), script, 'utf-8');
+        const out = dc(['lab', 'sync', slug, '--force'], { allowFail: true });
+        const path = join(LAB, 'cache', `${slug}.json`);
+        const cache = existsSync(path) ? JSON.parse(readFileSync(path, 'utf-8')) : null;
+        ok(`explorer fixture ${slug} synced`, !!cache && !cache.error, `${out.slice(0, 300)} ${cache?.error ?? ''}`);
+        return cache;
+      };
+      const c = make(EXPLORER, 'Acme funnel explorer', 'funnel', readFileSync(EXPLORER_FIXTURE, 'utf-8'));
+      ok('the explorer bundle writes both cache.datasets and cache.funnel',
+        (c?.funnel?.set?.funnels?.length ?? 0) === 2 && (c?.datasets?.bundle?.datasets?.length ?? 0) === 2 && (c?.funnelHistory?.length ?? 0) > 0,
+        JSON.stringify(Object.keys(c ?? {})));
+      make(EXPLORER_PLUS, 'Acme explorer plus', 'funnel', PLUS_SCRIPT);
+      const a = make(APP, 'Acme onboarding app', 'app', readFileSync(APP_FIXTURE, 'utf-8'));
+      ok('the app fixture declares 3 pages', a?.app?.spec?.pages?.length === 3, JSON.stringify(a?.app?.spec?.pages?.map((p) => p.id)));
+      explorerSynced = true;
+    });
+
     // ── The catalog, hazard and reuse boards (CLI writes, boards now materialized)
     const { spec, baseList, variants } = catalogBoardSpec();
     const catalogFile = join(SCRATCH, 'catalog.json');
@@ -1757,7 +2606,7 @@ async function main() {
       for (const b of baseList) {
         baseSig[b.id] = await sigOf(b.id);
         const twin = await sigOf(`${b.id}-twin`);
-        ok(`control: ${b.id} and its twin render identically`, twin === baseSig[b.id], 'signature is unstable; option comparisons for this type are meaningless');
+        ok(`control: ${b.id} and its twin render identically`, twin === baseSig[b.id], `signature is unstable; option comparisons for this type are meaningless; ${sigDiff(baseSig[b.id], twin)}`);
       }
       for (const v of variants) {
         const s = await sigOf(v.id);
@@ -2057,15 +2906,56 @@ async function main() {
       if (!chartBoardsReady) throw new Error('chart boards were not created');
       await openBoard('fit');
       await sleep(1500);
-      for (const [type] of FIT_CASES) {
+      for (const c of FIT_CASES) {
+        const [type] = c;
+        const key = fitKey(c);
         for (const size of Object.keys(FIT_SIZES)) {
-          const id = `m-${type}-${size}`;
+          const id = `m-${key}-${size}`;
           await card(id).scrollIntoViewIfNeeded();
           await sleep(150);
           const m = await card(id).evaluate(measureCardInPage);
-          ok(`${type} (${size}) fits its cell, no inner scroll`, m.scroll.length === 0, `${m.size.join('x')}: ${m.scroll.join(' | ')}`);
-          ok(`axis tick labels never overlap: ${type} (${size})`, m.overlaps.length === 0, m.overlaps.join(' | '));
-          ok(`chart labels stay inside the card: ${type} (${size})`, m.outside.length === 0, m.outside.slice(0, 6).join(' | '));
+          if (FIT_SCROLLERS.has(key)) {
+            // A table block: only its own table box may scroll (never the card, body or block), with the header on top.
+            const outer = m.scroll.filter((s) => !/lab-table-wrap/.test(s));
+            ok(`${key} (${size}) fits its cell, only its table scrolls`, outer.length === 0, `${m.size.join('x')}: ${m.scroll.join(' | ')}`);
+            const st = await card(id).evaluate(stickyInPage);
+            if (st.scrolls) {
+              ok(`${key} (${size}): the sticky header stays at the top after scrolling`, st.header && st.scrolled > 0 && Math.abs(st.after - st.before) <= 1 && st.onTop, JSON.stringify(st));
+            }
+          } else {
+            ok(`${key} (${size}) fits its cell, no inner scroll`, m.scroll.length === 0, `${m.size.join('x')}: ${m.scroll.join(' | ')}`);
+          }
+          if (EXPLORER_FIT.has(key)) {
+            const clip = await card(id).evaluate(clippedTextInPage);
+            ok(`${key} (${size}): no clipped text`, clip.length === 0, clip.slice(0, 6).join(' | '));
+            const sf = await card(id).evaluate(smallFormInPage);
+            if (key === 'flow') {
+              ok(`flow (${size}): every stage label and users figure is visible`, sf.stages === quiz.steps.length && sf.problems.length === 0,
+                `${sf.flowMode} ${sf.stages} stages; ${sf.problems.slice(0, 6).join(' | ')}`);
+            }
+            if (key === 'breakdown') {
+              ok(`breakdown (${size}): every row of controls lies inside the cell (nothing cut)`, (sf.selects + sf.chips) > 0 && sf.problems.length === 0,
+                `${sf.breakdownCompact ? 'compact' : 'chips'} ${sf.selects} selects ${sf.chips} chips; ${sf.problems.slice(0, 6).join(' | ')}`);
+            }
+            if (key === 'trend') {
+              const sw = await card(id).evaluate(trendSwitchInPage);
+              ok(`trend (${size}): the metric switch never ellipsizes a label`, sw.length > 0 && sw.every((x) => !x.cut), `${sw[0]?.form}: ${sw.map((x) => `${x.label} ${x.need}/${x.room}px${x.cut ? ' CUT' : ''}`).join(', ')}`);
+            }
+            if (key === 'segments') {
+              const st = await card(id).evaluate(segmentsTableInPage);
+              ok(`segments (${size}): no word is broken mid-word`, !!st && st.broken.length === 0, JSON.stringify(st?.broken.slice(0, 8)));
+              if (st?.scrolls) {
+                ok(`segments (${size}): the last column is reachable by scrolling and the value column stays stuck`, st.lastVisible && st.stickyFirst,
+                  JSON.stringify({ last: st.lastLabel, lastVisible: st.lastVisible, stickyFirst: st.stickyFirst, scrolled: st.scrolled }));
+              }
+              if (size === 'small') ok('segments (small): the table needs a sideways scroll at 3x3 (precondition)', !!st?.scrolls, JSON.stringify(st));
+              if (size === 'small' && st?.scrolls) await explorerShotBoth('segments-scrolled', (path) => card(id).screenshot({ path }));
+            }
+            await saveExplorerShot(`fit-${key}-${size}.png`, (path) => card(id).screenshot({ path }));
+            if (size === 'small' && ['flow', 'breakdown', 'trend'].includes(key)) await explorerShotBoth(`${key}-3x3`, (path) => card(id).screenshot({ path }));
+          }
+          ok(`axis tick labels never overlap: ${key} (${size})`, m.overlaps.length === 0, m.overlaps.join(' | '));
+          ok(`chart labels stay inside the card: ${key} (${size})`, m.outside.length === 0, m.outside.slice(0, 6).join(' | '));
           if (['line', 'stacked', 'bar', 'pie', 'heatmap'].includes(type)) {
             // A chart fills its cell: its drawing spans >= 85% of the block on one axis and >= 60% on the other
             // (a pie is round, so a wide cell leaves it width to spare).
@@ -2556,6 +3446,888 @@ async function main() {
       await editMode(false);
     });
 
+    // ── 21-28. The funnel explorer ────────────────────────────────────────────
+    const X = 'explorer-demo';
+    const XP = 'explorer-proof';
+    /** The selection the one-page and parity checks use: a measured platform x language path. */
+    const SEL = { platform: 'TikTok Ads', language: 'EN' };
+    const selSeg = fixtureSegment(quiz, SEL);
+    let explorerReady = false;
+    const xin = (loc) => loc.evaluate(explorerInPage);
+    const chip = (scope, dim, value) => scope.locator(`[data-lab-breakdown-dim="${dim}"] [data-lab-breakdown-chip="${value}"]`).first();
+    /** Set a scope's breakdown selection to exactly `sel` through the chips (All traffic first). */
+    const selectChips = async (scope, sel) => {
+      await scope.locator('[data-lab-breakdown-all]').first().click();
+      await sleep(200);
+      for (const [dim, value] of Object.entries(sel)) {
+        await chip(scope, dim, value).click();
+        await sleep(250);
+      }
+    };
+    const tabBtn = (scope, label) => scope.locator('[data-lab-tab]').nth(PRESET_TABS.indexOf(label));
+    const openTab = async (scope, label) => {
+      await tabBtn(scope, label).click();
+      await sleep(450);
+    };
+    const pressed = (m) => Object.fromEntries(m.chips.filter((c) => c.pressed).map((c) => [c.dim, c.value]));
+    const users = (rows) => rows.map((r) => r.users);
+    /** The x of each dated label on the trend's line (two labelled days fix the linear time axis), and a y to hover at. */
+    const trendAxis = (loc) => loc.evaluate((el) => {
+      const svg = el.querySelector('[data-lab-trend] [data-chart="line"] svg');
+      const hit = el.querySelector('[data-lab-trend] [data-chart-hit]');
+      if (!svg || !hit) return null;
+      const s = svg.getBoundingClientRect();
+      const h = hit.getBoundingClientRect();
+      return { ticks: [...svg.querySelectorAll('[data-axis="x"] .lab-chart-tick')].map((t) => ({ text: t.textContent, x: s.left + Number(t.getAttribute('x')) })), midY: h.top + h.height / 2 };
+    });
+    /** The trend tooltip's first value with the real pointer on `date` (positioned from the rendered axis labels). */
+    const trendTipAt = async (scope, date) => {
+      const axis = await trendAxis(scope);
+      const known = (axis?.ticks ?? []).map((t) => ({ ...t, key: parseDayTick(t.text) })).filter((t) => t.key);
+      const inner = known.length >= 4 ? known.slice(1, -1) : known;
+      if (inner.length < 2) return { value: null, detail: `no dated x labels: ${JSON.stringify(axis?.ticks)}` };
+      const [a, b] = [inner[0], inner[inner.length - 1]];
+      const x = a.x + ((dayMs(date) - dayMs(a.key)) / (dayMs(b.key) - dayMs(a.key))) * (b.x - a.x);
+      await page.mouse.move(x, axis.midY, { steps: 4 });
+      const tip = await until(() => scope.evaluate((el) => {
+        const t = el.querySelector('[data-lab-trend] [data-chart-tooltip]');
+        if (!t || getComputedStyle(t).visibility === 'hidden') return null;
+        return { value: t.querySelector('[data-series] [data-value]')?.textContent ?? null, title: t.querySelector('.lab-chart-tooltip-title')?.textContent ?? '' };
+      }), 2000);
+      await page.mouse.move(1, 1);
+      await sleep(120);
+      return { value: tip?.value ?? null, detail: `pointer x ${Math.round(x)}: tooltip ${JSON.stringify(tip)}` };
+    };
+    /** Close any open fullscreen card (a thrown check must not leave the overlay over the next section). */
+    const closeOverlay = async () => {
+      for (let i = 0; i < 3 && await page.locator('[data-lab-fullscreen]').count(); i++) {
+        if (await page.locator('[data-lab-card-exit]').count()) await page.locator('[data-lab-card-exit]').first().click().catch(() => {});
+        else await page.keyboard.press('Escape');
+        await sleep(400);
+      }
+    };
+    /** Two interior dates of a daily list. */
+    const twoDates = (daily) => [daily[Math.floor(daily.length / 3)].t, daily[Math.floor((daily.length * 2) / 3)].t];
+    /** A table block's rows and total inside a card (by block path). */
+    const tableAt = (loc, path) => loc.evaluate((el, p) => {
+      const blk = el.querySelector(`.board-card-block[data-lab-block-path="${p}"]`);
+      const foot = blk?.querySelector('tfoot tr[data-total-count]');
+      return blk ? {
+        rows: [...blk.querySelectorAll('tbody tr')].map((tr) => tr.innerText.replace(/\s+/g, ' ').trim()),
+        count: foot ? Number(foot.getAttribute('data-total-count')) : null,
+        total: foot?.innerText.replace(/\s+/g, ' ').trim() ?? '',
+        notSplit: blk.querySelector('[data-lab-not-split]')?.textContent.trim() ?? null,
+      } : null;
+    }, String(path));
+
+    // ── 21. Setup through the CLI, payload, privacy ────────────────────────────
+    await section('explorer: board via CLI, payload, privacy', async () => {
+      if (!explorerSynced) throw new Error('the explorer fixtures were not synced');
+      if (!page.url().startsWith(BASE)) await gotoInsights();
+      dc(['lab', 'board', 'create', X, '--title', 'Funnel explorer demo']);
+      dc(['lab', 'board', 'create', XP, '--title', 'Explorer proof cards']);
+      const presetOut = dc(['lab', 'board', 'add-card', X, '--preset', 'funnel-explorer', '--insight', EXPLORER, '--id', 'x-explorer'], { allowFail: true });
+      ok('lab board add-card --preset funnel-explorer adds the explorer card', /card "x-explorer" added/.test(presetOut), presetOut.slice(0, 300));
+      for (const c of EXPLORER_CARDS) {
+        const out = dc(['lab', 'board', 'add-card', c.board, '--id', c.id, '--at', c.at, '--block', JSON.stringify(c.blocks[0])], { allowFail: true });
+        ok(`lab board add-card --block adds ${c.id}`, out.includes(`card "${c.id}" added`), out.slice(0, 300));
+      }
+      // The rest of each multi-block card, and every card's title, through `lab board set`.
+      for (const slug of [X, XP]) {
+        const data = readBoard(slug);
+        const spec = {
+          title: data.title, ...(data.order !== undefined ? { order: data.order } : {}),
+          cards: data.cards.map((cd) => {
+            const c = EXPLORER_CARDS.find((x) => x.id === cd.id);
+            return c ? { ...cd, title: c.title, blocks: [...(cd.blocks ?? []), ...c.blocks.slice(1)] } : cd;
+          }),
+        };
+        const file = join(SCRATCH, `${slug}.json`);
+        writeFileSync(file, JSON.stringify(spec));
+        const setOut = dc(['lab', 'board', 'set', slug, '--file', file], { allowFail: true });
+        ok(`lab board set completes the multi-block cards (${slug})`, /Board saved/.test(setOut), setOut.slice(0, 600));
+      }
+
+      // The preset card: breakdown + tabs (the pages, then one segments tab per dim), 12x12.
+      const pc = fileCard(X, 'x-explorer');
+      const blocks = (pc?.blocks ?? []).map(normBlock);
+      const tabs = blocks[1]?.tabs ?? [];
+      ok('the preset card is a breakdown over tabs Daily, Benchmark, Flow, Steps and one Segments tab per dim',
+        blocks[0]?.type === 'breakdown' && blocks[1]?.type === 'tabs' && JSON.stringify(tabs.map((t) => t.label)) === JSON.stringify(PRESET_TABS),
+        JSON.stringify(blocks).slice(0, 600));
+      const kinds = tabs.map((t) => t.blocks.map((b) => `${b.type}${b.options.layout ? `:${b.options.layout}` : ''}${b.options.by ? `:${b.options.by}` : ''}`).join('+'));
+      ok('the preset pages are trend, benchmark, funnel flow, funnel bars and segments by each dim',
+        JSON.stringify(kinds) === JSON.stringify(['trend', 'benchmark', 'funnel:flow', 'funnel:bars', 'segments:platform', 'segments:language', 'segments:country']), JSON.stringify(kinds));
+      ok('the preset card is 12x12 and bound to the insight', pc?.at?.w === 12 && pc?.at?.h === 12 && pc?.insight === EXPLORER, JSON.stringify(pc?.at));
+
+      // Refusals: --preset with --block, and an insight with no funnel yet.
+      const both = dc(['lab', 'board', 'add-card', X, '--preset', 'funnel-explorer', '--insight', EXPLORER, '--block', '{"text": {"markdown": "x"}}'], { allowFail: true });
+      ok('add-card refuses --preset together with --block', /mutually exclusive/i.test(both), both.slice(0, 200));
+      dc(['lab', 'create', 'acme-unsynced', '--title', 'Acme unsynced', '--render', 'funnel', '--adapter', 'script', '--no-board']);
+      const unsynced = dc(['lab', 'board', 'add-card', X, '--preset', 'funnel-explorer', '--insight', 'acme-unsynced'], { allowFail: true });
+      ok('add-card --preset refuses an unsynced insight ("sync <slug> first")', /sync acme-unsynced first/.test(unsynced), unsynced.slice(0, 200));
+      ok('the refused preset calls wrote nothing', (readBoard(X)?.cards ?? []).length === EXPLORER_CARDS.filter((c) => c.board === X).length + 1, String((readBoard(X)?.cards ?? []).length));
+
+      // The board GET: <= 300 KB; per-block projection keeps daily only where a trend draws it.
+      const getBoard = (slug) => page.evaluate(async (sl) => {
+        const r = await fetch(`/api/lab/boards/${sl}`);
+        const text = await r.text();
+        return { status: r.status, bytes: new TextEncoder().encode(text).length, text };
+      }, slug);
+      const res = await getBoard(X);
+      const body = JSON.parse(res.text);
+      const frames = expandFrames(body.frames ?? {}, body.frameAliases);
+      const stored = readBoard(X);
+      const bySize = Object.entries(body.frames ?? {}).map(([key, f]) => {
+        const [cardId, path] = key.split(':');
+        return `${key} ${blockAtPath(stored.cards.find((cd) => cd.id === cardId), path)?.type} ${Math.round(JSON.stringify(f).length / 1024)}KB`;
+      });
+      ok('explorer: the demo board GET is <= 300 KB', res.status === 200 && res.bytes <= 300 * 1024,
+        `${res.status} ${Math.round(res.bytes / 1024)} KB; frames: ${bySize.join(', ')}`);
+      const withDaily = [];
+      const trendNoDaily = [];
+      const missingFrames = [];
+      for (const cd of stored.cards) {
+        const walk = (b, path) => {
+          const nb = normBlock(b);
+          if (nb.tabs) nb.tabs.forEach((tb, ti) => tb.blocks.forEach((c, ci) => walk(c, `${path}.${ti}.${ci}`)));
+          // An insight block reads the insight's cache, not a frame.
+          else if (nb.data && nb.type !== 'insight' && !frames[`${cd.id}:${path}`]) missingFrames.push(`${cd.id}:${path}`);
+        };
+        (cd.blocks ?? []).forEach((b, i) => walk(b, String(i)));
+      }
+      ok('explorer: every bound block has its frame once the GET\'s aliases are expanded (expandFrames)', missingFrames.length === 0, missingFrames.join(', '));
+      for (const [key, frame] of Object.entries(frames)) {
+        if (frame?.kind !== 'funnel') continue;
+        const [cardId, path] = key.split(':');
+        const blk = blockAtPath(stored.cards.find((cd) => cd.id === cardId), path);
+        const has = frame.funnels.some((fn) => (fn.daily?.length ?? 0) > 0 || (fn.segments ?? []).some((s) => (s.daily?.length ?? 0) > 0));
+        if (blk?.type === 'trend' && !has) trendNoDaily.push(key);
+        if (blk?.type !== 'trend' && has) withDaily.push(`${key} (${blk?.type})`);
+      }
+      ok('explorer: only trend frames carry daily in the board GET', withDaily.length === 0 && trendNoDaily.length === 0,
+        `non-trend with daily: ${withDaily.join(', ')}; trend without: ${trendNoDaily.join(', ')}`);
+
+      // Privacy: no project registered on this machine is named by what the explorer publishes.
+      const names = registeredVaultNames();
+      const doc = readFileSync(join(REPO, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+      const from = doc.indexOf('### Funnel explorer');
+      const docSection = from >= 0 ? doc.slice(from, doc.indexOf('\n### ', from + 10)) : '';
+      ok('the skill docs have a Funnel explorer section', docSection.length > 200, String(docSection.length));
+      const published = {
+        'explorer fixture': readFileSync(EXPLORER_FIXTURE, 'utf-8'), 'app fixture': readFileSync(APP_FIXTURE, 'utf-8'),
+        'preset card': JSON.stringify(pc), 'board GET': res.text, 'proof board GET': (await getBoard(XP)).text, 'skill docs (Funnel explorer)': docSection,
+      };
+      const leaks = [];
+      for (const [what, text] of Object.entries(published)) {
+        for (const n of names) if (text.toLowerCase().includes(n.toLowerCase())) leaks.push(`${what}: a registered project name (${n.length} chars)`);
+      }
+      ok(`privacy: no locally registered project name in the explorer fixtures, preset, board GET or docs (${names.length} names checked)`, leaks.length === 0, leaks.join(' | '));
+      explorerReady = true;
+    });
+
+    // ── 22. Lookup never sums; not measured is not zero ────────────────────────
+    await section('explorer: lookup + not measured', async () => {
+      if (!explorerReady) throw new Error('the explorer board was not built');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('[data-lab-board]').first().waitFor({ timeout: 20000 });
+      await openBoard(X);
+      await sleep(1200);
+      const steps = card('x-steps');
+      await steps.scrollIntoViewIfNeeded();
+      await selectChips(steps, { platform: 'Meta Ads' });
+      let m = await xin(steps);
+      const meta = fixtureSegment(quiz, { platform: 'Meta Ads' });
+      ok("lookup never sums: platform=Meta Ads draws the fixture's own path",
+        JSON.stringify(m.bars.map((b) => [b.label, b.users])) === JSON.stringify(pathOf(meta)), `${JSON.stringify(m.bars)} vs ${JSON.stringify(pathOf(meta))}`);
+      await selectChips(steps, { platform: 'Meta Ads', language: 'EN' });
+      m = await xin(steps);
+      const metaEn = fixtureSegment(quiz, { platform: 'Meta Ads', language: 'EN' });
+      ok("lookup never sums: platform x language draws the fixture's intersection path",
+        JSON.stringify(m.bars.map((b) => [b.label, b.users])) === JSON.stringify(pathOf(metaEn)), `${JSON.stringify(m.bars)} vs ${JSON.stringify(pathOf(metaEn))}`);
+
+      // Meta Ads x PT has no measured path: its chip.
+      await selectChips(steps, { platform: 'Meta Ads' });
+      m = await xin(steps);
+      const pt = m.chips.find((c) => c.dim === 'language' && c.value === 'PT');
+      const ptSeg = fixtureSegment(quiz, { platform: 'Meta Ads', language: 'PT' });
+      ok('fixture precondition: Meta Ads x PT is not measured', ptSeg && ptSeg.measured === false, JSON.stringify(ptSeg));
+      ok('not measured: an unmeasured chip is aria-disabled', pt?.disabled === true, JSON.stringify(pt));
+      const tip = page.locator('[data-lab-chip-reason]');
+      await chip(steps, 'language', 'PT').hover();
+      await sleep(300);
+      const hovered = await tip.count() ? { visible: await tip.first().isVisible(), text: await tip.first().innerText() } : null;
+      ok("not measured: the chip's reason shows on hover", !!hovered?.visible && hovered.text.includes(ptSeg.reason), JSON.stringify(hovered));
+      // The shot: the card and the floating reason under it.
+      const box = await steps.boundingBox();
+      if (box) {
+        await explorerShotBoth('disabled-chip-reason', async (path) => {
+          await chip(steps, 'language', 'PT').hover();
+          await sleep(250);
+          await page.screenshot({ path, clip: { x: Math.max(0, box.x - 8), y: Math.max(0, box.y - 8), width: Math.min(1600 - box.x, box.width + 16), height: Math.min(1000 - box.y, box.height + 80) } });
+        });
+      }
+      await page.mouse.move(1, 1);
+      await sleep(250);
+      await chip(steps, 'language', 'PT').focus();
+      await sleep(300);
+      const focused = await tip.count() ? { visible: await tip.first().isVisible(), text: await tip.first().innerText() } : null;
+      ok("not measured: the chip's reason shows on keyboard focus", !!focused?.visible && focused.text.includes(ptSeg.reason), JSON.stringify(focused));
+      const before = { sel: pressed(m), funnel: m.funnel?.selection, bars: JSON.stringify(m.bars) };
+      // aria-disabled keeps the chip focusable and clickable for a pointer: the click must do nothing.
+      await chip(steps, 'language', 'PT').click({ force: true });
+      await sleep(400);
+      const after = await xin(steps);
+      ok('not measured: clicking an unmeasured chip changes nothing',
+        JSON.stringify(pressed(after)) === JSON.stringify(before.sel) && after.funnel?.selection === before.funnel && JSON.stringify(after.bars) === before.bars,
+        `${JSON.stringify(before.sel)} ${before.funnel} -> ${JSON.stringify(pressed(after))} ${after.funnel?.selection}`);
+      const zero = /(^|[^\d.,])0(?:[.,]0+)?\s*%?(?![\d.,])/;
+      ok('not measured: the unmeasured chip draws no 0', !zero.test(pt?.text ?? ''), pt?.text);
+      await steps.locator('[data-lab-breakdown-all]').first().click();
+
+      // An unmeasured metric on the benchmark ruler (all traffic: checkout_to_purchase has a broken denominator),
+      // on the preset card's Benchmark page (every row drawn in full there).
+      const bench = card('x-explorer');
+      await bench.scrollIntoViewIfNeeded();
+      await selectChips(bench, {});
+      await openTab(bench, 'Benchmark');
+      const b = await xin(bench);
+      const row = b.bench.find((r) => r.key === 'checkout_to_purchase');
+      const want = `Not measured: ${quiz.metrics.checkout_to_purchase.reason}`;
+      ok('not measured: an unmeasured metric reads "Not measured: reason" with no ruler marker',
+        row?.unmeasured === want && row?.anyMarker === false && row?.status === 'unmeasured', JSON.stringify(row));
+      ok('not measured: no 0 or 0% is drawn for an unmeasured metric', !!row && !zero.test(row.text.replace(row.label, '')), row?.text);
+
+      // Lookup: the benchmark of a platform x language path reads THAT path's metrics (a sum has none).
+      await selectChips(bench, SEL);
+      const bs = await xin(bench);
+      const measuredKeys = Object.entries(selSeg.metrics).filter(([, v]) => v.v !== null && v.measured !== false).map(([k]) => k);
+      const wrong = measuredKeys.filter((k) => !shownEquals(bs.bench.find((r) => r.key === k)?.value, selSeg.metrics[k].v));
+      ok("lookup never sums: the benchmark for platform x language reads the intersection's own metrics", measuredKeys.length >= 3 && wrong.length === 0,
+        `wrong: ${wrong.map((k) => `${k} shows ${bs.bench.find((r) => r.key === k)?.value} want ${selSeg.metrics[k].v}`).join('; ')} rows ${JSON.stringify(bs.bench.map((r) => [r.key, r.value]))}`);
+    });
+
+    // ── 23. One interactive page: the preset card ──────────────────────────────
+    await section('explorer: one interactive page', async () => {
+      if (!explorerReady) throw new Error('the explorer board was not built');
+      await openBoard(X);
+      const ex = card('x-explorer');
+      await ex.scrollIntoViewIfNeeded();
+      await sleep(400);
+      const labels = await ex.locator('[data-lab-tab]').allInnerTexts();
+      ok('one page: the preset card shows its tabs in order', JSON.stringify(labels.map((l) => l.trim())) === JSON.stringify(PRESET_TABS), JSON.stringify(labels));
+      const t0 = Date.now();
+      await selectChips(ex, SEL);
+      const bad = [];
+      let chipTabSyncs = [];
+      for (const label of PRESET_TABS) {
+        await openTab(ex, label);
+        const m = await xin(ex);
+        const chipsKept = JSON.stringify(pressed(m)) === JSON.stringify(SEL);
+        let drew = false;
+        let detail = '';
+        if (label === 'Daily') {
+          const date = twoDates(selSeg.daily)[0];
+          const key = m.trend?.metrics.find((x) => x.on)?.key ?? Object.keys(selSeg.metrics)[0];
+          const tip = await trendTipAt(ex, date);
+          const want = selSeg.daily.find((d) => d.t === date)?.m[key];
+          drew = m.trend?.state === 'ok' && shownEquals(tip.value, want);
+          detail = `${key} ${date}: ${tip.detail} want ${want}`;
+        } else if (label === 'Benchmark') {
+          const r = m.bench.find((x) => x.key === 'visit_to_lead');
+          drew = shownEquals(r?.value, selSeg.metrics.visit_to_lead.v);
+          detail = `visit_to_lead shows ${r?.value} want ${selSeg.metrics.visit_to_lead.v}`;
+        } else if (label === 'Flow') {
+          drew = JSON.stringify(users(m.flow?.stages ?? [])) === JSON.stringify(selSeg.steps.map((s) => s.users));
+          detail = `${JSON.stringify(users(m.flow?.stages ?? []))} want ${JSON.stringify(selSeg.steps.map((s) => s.users))}`;
+        } else if (label === 'Steps') {
+          drew = JSON.stringify(m.bars.map((b) => [b.label, b.users])) === JSON.stringify(pathOf(selSeg));
+          detail = `${JSON.stringify(m.bars.map((b) => b.users))} want ${JSON.stringify(pathOf(selSeg).map((p) => p[1]))}`;
+        } else if (label === 'Platform' || label === 'Language') {
+          const dim = label.toLowerCase();
+          const active = m.seg?.rows.find((r) => r.active);
+          drew = active?.value === SEL[dim] && shownEquals(active?.usersText, selSeg.users);
+          detail = `active ${JSON.stringify(active)} want ${SEL[dim]} ${selSeg.users}`;
+        } else {
+          // Country under platform x language: no such path in the fixture, so every row is unmeasured (dashes, no 0).
+          drew = (m.seg?.rows.length ?? 0) === 8 && m.seg.rows.every((r) => r.unmeasured && r.users === null);
+          detail = JSON.stringify(m.seg?.rows.map((r) => [r.value, r.usersText]));
+        }
+        ok(`one page: the ${label} tab draws the selected path`, chipsKept && drew, `chips ${JSON.stringify(pressed(m))}; ${detail}`);
+        const clip = await ex.evaluate(clippedTextInPage);
+        ok(`one page: the ${label} tab has no clipped text (12x12 preset card)`, clip.length === 0, clip.slice(0, 5).join(' | '));
+        if (!(chipsKept && drew)) bad.push(label);
+        await explorerShotBoth(`tab-${label.toLowerCase()}`, (path) => ex.screenshot({ path }));
+      }
+      ok('one page: the selection holds on every tab', bad.length === 0, `tabs that lost it: ${bad.join(', ')}`);
+      for (const theme of ['light', 'dark']) {
+        await setTheme(theme);
+        const cb = await ex.evaluate(chipsAndBandInPage);
+        ok(`breakdown: an active chip's label is readable (contrast >= 4.5:1, ${theme})`, cb.chips.length >= 2 && cb.chips.every((c) => c.ratio !== null && c.ratio >= 4.5),
+          cb.chips.map((c) => `${c.value} ${c.ratio}:1`).join(', '));
+        if (theme === 'light') {
+          ok('one page: the tabs start right under the chips (no blank band > 24px)', cb.band !== null && cb.band <= 24, `blank band ${cb.band}px`);
+        }
+      }
+      await setTheme('light');
+      await openTab(ex, 'Daily');
+      ok('one page: back on the first tab the chips still hold the selection', JSON.stringify(pressed(await xin(ex))) === JSON.stringify(SEL));
+      chipTabSyncs = syncReqs.filter((r) => r.at >= t0);
+
+      // Same-insight tables: the one split by the dim narrows (its total follows), the other says so.
+      await openBoard(XP);
+      const plus = card('x-plus');
+      await plus.scrollIntoViewIfNeeded();
+      const t1 = await tableAt(plus, 2);
+      const t3 = Date.now();
+      await selectChips(plus, { language: 'EN' });
+      const t2 = await tableAt(plus, 2);
+      chipTabSyncs = [...chipTabSyncs, ...syncReqs.filter((r) => r.at >= t3)];
+      const en = BY_PLATFORM.filter((r) => r[1] === 'EN');
+      const enSum = en.reduce((s, r) => s + r[2], 0);
+      ok('one page: a same-insight table narrows by the selection and its total follows',
+        t1?.count === BY_PLATFORM.length && t2?.rows.length === en.length && t2?.count === en.length
+          && (t2.total.replace(/[^\d]/g, '').includes(String(enSum)) || new RegExp(`${(enSum / 1000).toFixed(1)}\\s?K`, 'i').test(t2.total)),
+        `before ${JSON.stringify(t1)} after ${JSON.stringify(t2)} want ${en.length} rows, total ${enSum}`);
+      const d = await tableAt(plus, 3);
+      ok('one page: a table without the dim says "Not split by language"', /not split/i.test(d?.notSplit ?? '') && /language/i.test(d?.notSplit ?? '') && d?.count === 15,
+        JSON.stringify(d));
+      ok('explorer: breakdown chip and tab clicks send ZERO sync requests', chipTabSyncs.length === 0, JSON.stringify(chipTabSyncs));
+    });
+
+    // ── 24. Every page a bindable block: the separate cards + the inspector's picks ──
+    await section('explorer: every page a block', async () => {
+      if (!explorerReady) throw new Error('the explorer board was not built');
+      await openBoard(X);
+      const drawn = {};
+      for (const id of ['x-steps', 'x-daily', 'x-bench', 'x-countries', 'x-payment']) {
+        await card(id).scrollIntoViewIfNeeded();
+        await sleep(150);
+        drawn[id] = await xin(card(id));
+      }
+      ok('every page: the Steps card draws funnel bars with the worst drop marked', drawn['x-steps'].funnel?.layout === 'bars' && drawn['x-steps'].bars.length >= 2 && drawn['x-steps'].bars.filter((b) => b.worst).length === 1,
+        JSON.stringify(drawn['x-steps'].bars));
+      ok('every page: the Daily card draws a trend', drawn['x-daily'].trend?.state === 'ok' && drawn['x-daily'].trend.paths.length > 0, JSON.stringify(drawn['x-daily'].trend));
+      // A 6x6 card draws what fits and counts the rest in words ("+N more"), never a scroll.
+      const bm = drawn['x-bench'];
+      ok('every page: the Benchmark card accounts for every metric (rows drawn + "+N more")', bm.bench.length >= 1 && bm.bench.length + (bm.benchMore ?? 0) === Object.keys(quiz.metrics).length,
+        `${JSON.stringify(bm.bench.map((r) => r.key))} + ${bm.benchMore}`);
+      const countries = demo.data.funnel.dimensions.find((dm) => dm.key === 'country').values.map((v) => v.value);
+      const cRows = drawn['x-countries'].seg?.rows ?? [];
+      const cWrong = countries.filter((c) => !shownEquals(cRows.find((r) => r.value === c)?.usersText, fixtureSegment(quiz, { country: c }).users));
+      ok("every page: the Countries card lists one row per country (none folded into Other), each the fixture's own users",
+        cRows.length === countries.length && !cRows.some((r) => /other/i.test(r.value)) && cWrong.length === 0, `${JSON.stringify(cRows.map((r) => [r.value, r.usersText]))} wrong ${cWrong}`);
+      const pay = await card('x-payment').evaluate((el) => ({
+        chips: el.querySelectorAll('[data-lab-filter-chip]').length, bars: el.querySelectorAll('[data-bar]').length, rows: el.querySelectorAll('tbody tr').length,
+      }));
+      ok('every page: the Payment card draws its cohort filter, decline bars and rate table', pay.chips >= 3 && pay.bars > 0 && pay.rows === 3, JSON.stringify(pay));
+      await shoot('explorer-demo', { explorer: true });
+      await openBoard(XP);
+      const xt = (await xin(card('x-trend'))).trend;
+      ok('every page: a trend with a metrics pick draws those metrics', (xt?.metrics ?? []).map((x) => x.key).join(',') === 'conversion,visit_to_lead', JSON.stringify(xt));
+      await shoot('explorer-proof', { explorer: true });
+      await openBoard(X);
+
+      // The inspector: pick fields list the frame's funnels, dims and metrics; a pick edits file + render.
+      await editMode(true);
+      const cc = card('x-countries');
+      await cc.scrollIntoViewIfNeeded();
+      await cc.locator('[data-lab-card-menu]').first().click();
+      await page.locator('[data-lab-menu-item="edit-blocks"]').first().click();
+      const insp = page.locator('[data-lab-inspector]').first();
+      await insp.waitFor({ timeout: 8000 });
+      if (await insp.locator('[data-lab-inspector-block="0"]').count()) await insp.locator('[data-lab-inspector-block="0"]').first().click();
+      await sleep(400);
+      const opts = (field) => insp.locator(`select[data-lab-field="${field}"] option`).evaluateAll((els) => els.map((e) => e.value).filter(Boolean));
+      const checks = (field) => insp.locator(`[data-lab-field="${field}"] input[type="checkbox"]`).evaluateAll((els) => els.map((e) => e.value));
+      const funnels = await opts('funnel');
+      const dims = await opts('by');
+      const metrics = await checks('metrics');
+      ok("inspector: the funnel pick lists the frame's funnels", JSON.stringify(funnels) === JSON.stringify(demo.data.funnel.funnels.map((f) => f.id)), JSON.stringify(funnels));
+      ok("inspector: the by pick lists the frame's dims", JSON.stringify(dims) === JSON.stringify(demo.data.funnel.dimensions.map((dm) => dm.key)), JSON.stringify(dims));
+      ok("inspector: the metrics pick lists the funnel's metrics", JSON.stringify(metrics) === JSON.stringify(Object.keys(quiz.metrics)), JSON.stringify(metrics));
+      await explorerShotBoth('inspector-picks', (path) => page.screenshot({ path }));
+      await insp.locator('select[data-lab-field="by"]').first().selectOption('language');
+      const saved = await until(() => normBlock(fileCard(X, 'x-countries')?.blocks?.[0])?.options?.by === 'language', 5000);
+      await sleep(600);
+      const langRows = (await xin(cc)).seg?.rows.map((r) => r.value) ?? [];
+      ok('inspector: picking by=language writes the board file and the card splits by language',
+        !!saved && JSON.stringify(langRows) === JSON.stringify(demo.data.funnel.dimensions.find((dm) => dm.key === 'language').values.map((v) => v.value)),
+        `${JSON.stringify(fileCard(X, 'x-countries')?.blocks?.[0])} rows ${JSON.stringify(langRows)}`);
+      await insp.locator('select[data-lab-field="by"]').first().selectOption('country');
+      await until(() => normBlock(fileCard(X, 'x-countries')?.blocks?.[0])?.options?.by === 'country', 5000);
+      await page.keyboard.press('Escape');
+      await editMode(false);
+    });
+
+    // ── 25. Lanes ──────────────────────────────────────────────────────────────
+    await section('explorer: lanes', async () => {
+      if (!explorerReady) throw new Error('the explorer board was not built');
+      await openBoard(X);
+      const steps = card('x-steps');
+      await steps.scrollIntoViewIfNeeded();
+      if (await steps.locator('[data-lab-lanes-clear]').count()) await steps.locator('[data-lab-lanes-clear]').first().click();
+      const picks = [{ platform: 'Meta Ads' }, { platform: 'TikTok Ads' }, { platform: 'Unattributed' }];
+      for (const sel of picks) {
+        await selectChips(steps, sel);
+        await steps.locator('[data-lab-lane-pin]').first().click();
+        await sleep(300);
+      }
+      const m = await xin(steps);
+      const heads = m.lanes?.heads ?? [];
+      ok('lanes: 3 pinned lanes draw side by side on one step spine',
+        m.lanes?.n === 3 && heads.length === 3 && heads.every((h, i) => i === 0 || (Math.abs(h.top - heads[0].top) < 2 && h.left > heads[i - 1].left))
+          && JSON.stringify(m.lanes.spine) === JSON.stringify(quiz.steps.map((s) => s.key)),
+        JSON.stringify({ n: m.lanes?.n, heads, spine: m.lanes?.spine }));
+      const n = m.lanes?.n ?? 0;
+      const problems = [];
+      picks.forEach((sel, li) => {
+        const seg = fixtureSegment(quiz, sel);
+        const own = fixtureDrops(seg.steps);
+        (m.lanes?.spine ?? []).forEach((key, si) => {
+          const cell = m.lanes.cells[si * n + li];
+          const st = seg.steps.find((s) => s.key === key);
+          if (st ? cell?.users !== st.users : cell?.missing !== key) problems.push(`lane ${li + 1} ${key}: ${JSON.stringify(cell)} want ${st?.users ?? 'dash'}`);
+        });
+        for (const d of own.drops.filter((x) => x.dropPct !== null)) {
+          const shown = m.lanes.drops.find((x) => x.lane === li + 1 && x.key === d.key);
+          const a = Math.abs(d.dropPct);
+          const want = `${d.dropPct < 0 ? '▲' : '▼'} ${a.toFixed(a >= 10 ? 0 : 1)}%`;
+          if (shown?.text !== want) problems.push(`lane ${li + 1} drop ${d.key}: ${shown?.text} want ${want}`);
+        }
+        const worst = m.lanes.drops.filter((x) => x.lane === li + 1 && x.worst).map((x) => x.key);
+        if (JSON.stringify(worst) !== JSON.stringify([own.worst])) problems.push(`lane ${li + 1} worst ${worst} want ${own.worst}`);
+      });
+      ok("lanes: each lane's users and drops come from its own path", problems.length === 0, problems.slice(0, 6).join(' | '));
+      const dash = m.lanes?.cells.find((c) => c.lane === 3 && c.missing === 'email');
+      ok('lanes: a missing step shows a dash (Unattributed has no email step)', dash?.text === '—' && !m.lanes.cells.some((c) => c.lane === 3 && c.users === 0),
+        JSON.stringify(m.lanes?.cells.filter((c) => c.lane === 3)));
+      const laneClip = await steps.evaluate(clippedTextInPage);
+      // Every users-and-% cell: >= 10px tall, its users figure and a percent painted (a visible box, not hidden).
+      const unpainted = await steps.evaluate((el) => {
+        const shown = (e) => {
+          if (!e) return false;
+          for (let a = e; a && a !== el; a = a.parentElement) {
+            const cs = getComputedStyle(a);
+            if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false;
+          }
+          const r = e.getBoundingClientRect();
+          return r.width > 0 && r.height >= 8;
+        };
+        return [...el.querySelectorAll('.funnel-lanes-cell:not(.funnel-lanes-cell--missing)')].flatMap((c) => {
+          const h = c.getBoundingClientRect().height;
+          const users = shown(c.querySelector('.funnel-lanes-value'));
+          const pct = [...c.querySelectorAll('.funnel-lanes-pct, .funnel-lanes-share')].some(shown);
+          return h >= 10 && users && pct ? [] : [`lane ${c.getAttribute('data-lane')} "${c.textContent.trim().slice(0, 16)}" ${Math.round(h)}px users ${users} pct ${pct}`];
+        });
+      });
+      ok('lanes: every users and % cell is >= 10px tall with its text painted, no clipped text (the 8x7 Steps card)', laneClip.length === 0 && unpainted.length === 0,
+        `${unpainted.length} bad cells: ${unpainted.slice(0, 5).join(', ')} | ${laneClip.slice(0, 4).join(' | ')}`);
+      await explorerShotBoth('3-lanes', (path) => steps.screenshot({ path }));
+      await explorerShotBoth('lanes-8x7', (path) => steps.screenshot({ path }));
+      for (const theme of ['light', 'dark']) {
+        await setTheme(theme);
+        const nums = await steps.evaluate(contrastInPage, '.funnel-lanes-num, .lab-breakdown-lane-num');
+        ok(`lanes: every lane number reads at >= 4.5:1 (${theme})`, nums.length >= 6 && nums.every((x) => x.ratio !== null && x.ratio >= 4.5), nums.map((x) => `${x.text} ${x.ratio}:1`).join(', '));
+      }
+      await setTheme('light');
+      await selectChips(steps, { language: 'EN' });
+      await steps.locator('[data-lab-lane-pin]').first().click();
+      await sleep(300);
+      await selectChips(steps, { language: 'ES' });
+      const full = await xin(steps);
+      ok('lanes: the 5th pin is disabled', full.lanes?.n === 4 && full.pin?.disabled === true && full.pin?.blocked === 'full', JSON.stringify({ n: full.lanes?.n, pin: full.pin }));
+      await steps.locator('[data-lab-lane-pin]').first().click({ force: true }).catch(() => {});
+      await sleep(250);
+      ok('lanes: a click on the disabled 5th pin adds nothing', (await xin(steps)).lanes?.n === 4);
+      if (await steps.locator('[data-lab-lanes-clear]').count()) await steps.locator('[data-lab-lanes-clear]').first().click();
+      await selectChips(steps, {});
+    });
+
+    // ── 26. Benchmark ruler, flow, segments, trend ─────────────────────────────
+    await section('explorer: benchmark, flow, segments, trend', async () => {
+      if (!explorerReady) throw new Error('the explorer board was not built');
+      await closeOverlay();
+      await openBoard(X);
+      // The preset card's Benchmark page: every row in full (the ruler, delta, status, sources).
+      const bench = card('x-explorer');
+      await bench.scrollIntoViewIfNeeded();
+      await openTab(bench, 'Benchmark');
+      const offsets = [];
+      for (const sel of [{}, { platform: 'TikTok Ads' }]) {
+        await selectChips(bench, sel);
+        const rows = (await xin(bench)).bench;
+        const seg = fixtureSegment(quiz, sel);
+        for (const r of rows) {
+          const band = sel.platform ? (seg.benchmarks ?? {})[r.key] : setBands[r.key];
+          const v = seg.metrics[r.key]?.v;
+          if (!band || band.floor == null || band.target == null || v == null || r.markers.floor === null || r.markers.target === null) continue;
+          const want = r.markers.floor + ((v - band.floor) * (r.markers.target - r.markers.floor)) / (band.target - band.floor);
+          offsets.push({ sel: JSON.stringify(sel), key: r.key, off: r.markers.current === null ? Infinity : Math.abs(r.markers.current - want) });
+        }
+      }
+      ok('benchmark: the current marker sits within 1px of its scale position', offsets.length >= 4 && offsets.every((o) => o.off <= 1),
+        JSON.stringify(offsets.map((o) => [o.sel, o.key, Number.isFinite(o.off) ? o.off.toFixed(2) : 'none'])));
+
+      // TikTok Ads: its own band (sources own p25/p75 and book), cost per lead better: lower.
+      const tik = fixtureSegment(quiz, { platform: 'TikTok Ads' });
+      const rows = (await xin(bench)).bench;
+      const deltaBad = [];
+      const statusBad = [];
+      for (const r of rows) {
+        const mv = tik.metrics[r.key];
+        // Per-metric inheritance: a metric without its own band reads the set's band.
+        const want = fixtureStatus(mv.measured === false ? null : mv.v, (tik.benchmarks ?? {})[r.key] ?? setBands[r.key]);
+        if (r.status !== want) statusBad.push(`${r.key} ${r.status} want ${want}`);
+        if (mv.v == null || mv.prev == null) continue;
+        const delta = mv.v - mv.prev;
+        const signOk = delta > 0 ? /\+/.test(r.delta ?? '') : delta < 0 ? /[−-]/.test(r.delta ?? '') : true;
+        if (!signOk || !shownEquals(r.delta, Math.abs(delta))) deltaBad.push(`${r.key} "${r.delta}" want ${delta.toFixed(3)}`);
+      }
+      ok("benchmark: the delta vs the previous window is the fixture's current minus previous", deltaBad.length === 0 && rows.some((r) => r.delta), deltaBad.join(' | '));
+      ok('benchmark: each status is the band status of the fixture value', statusBad.length === 0, statusBad.join(' | '));
+      const cpl = rows.find((r) => r.key === 'cost_per_lead');
+      const cplHigher = fixtureStatus(tik.metrics.cost_per_lead.v, { ...tik.benchmarks.cost_per_lead, better: 'higher' });
+      ok('benchmark: better: lower flips the status (cost per lead)', cpl?.better === 'lower' && cpl?.status === 'between' && cplHigher === 'below' && /between/i.test(cpl?.statusWord ?? ''),
+        `${JSON.stringify(cpl)} (as higher-is-better it would read ${cplHigher})`);
+      const cplDelta = tik.metrics.cost_per_lead.v - tik.metrics.cost_per_lead.prev;
+      const cplTrend = cplDelta < 0 ? 'improving' : cplDelta > 0 ? 'worsening' : 'flat';
+      ok('benchmark: better: lower flips the trend word', cpl?.trend === cplTrend && (cpl?.trendWord ?? '').toLowerCase().includes(cplTrend), `${cpl?.trend} "${cpl?.trendWord}" want ${cplTrend} (delta ${cplDelta.toFixed(2)})`);
+      // The preset card itself (12x12): every row prints its sources, its floor / target numbers and the previous window.
+      const printBad = [];
+      for (const r of rows) {
+        const mv = tik.metrics[r.key];
+        if (mv.v == null || mv.measured === false) continue;
+        const band = (tik.benchmarks ?? {})[r.key] ?? setBands[r.key];
+        if (band?.floor != null && !shownEquals(r.boundLabels.floor, band.floor)) printBad.push(`${r.key} floor label "${r.boundLabels.floor}" want ${band.floor}`);
+        if (band?.target != null && !shownEquals(r.boundLabels.target, band.target)) printBad.push(`${r.key} target label "${r.boundLabels.target}" want ${band.target}`);
+        if (mv.prev != null && !shownEquals(r.prevValue, mv.prev)) printBad.push(`${r.key} previous "${r.prevValue}" want ${mv.prev}`);
+        const srcs = [band?.floor_source, band?.target_source].filter(Boolean);
+        if (srcs.some((src) => !(r.sources ?? '').includes(src))) printBad.push(`${r.key} sources "${r.sources}" want ${srcs.join(' + ')}`);
+      }
+      const presetMode = await bench.locator('[data-lab-benchmark]').first().getAttribute('data-mode');
+      ok('benchmark: the preset card prints every row\'s sources and its floor / target / previous numbers',
+        printBad.length === 0 && rows.length === Object.keys(quiz.metrics).length, `mode ${presetMode}; ${printBad.join(' | ')}`);
+
+      // Per-metric inheritance: TikTok Ads has its own band for 2 metrics; the other banded rows inherit the set's,
+      // and each row says which (the card, and `lab board show --select` the same).
+      const ownKeys = Object.keys(tik.benchmarks ?? {});
+      const inheritKeys = Object.keys(setBands).filter((k) => !ownKeys.includes(k) && tik.metrics[k]?.measured !== false && tik.metrics[k]?.v != null);
+      const markBad = rows.filter((r) => (inheritKeys.includes(r.key) && !r.inheritedMark) || (ownKeys.includes(r.key) && r.inheritedMark)).map((r) => `${r.key} marked ${r.inheritedMark}`);
+      const cardNote = await bench.locator('[data-lab-bench-inherited]').allInnerTexts();
+      ok('benchmark: each inheriting row is marked inherited, each own-band row is not (TikTok Ads, per metric)', markBad.length === 0 && inheritKeys.length >= 1,
+        `inherit ${inheritKeys.join(',')}; own ${ownKeys.join(',')}; wrong ${markBad.join(' | ') || '-'}; card note ${JSON.stringify(cardNote)}`);
+      const tikView = JSON.parse(dc(['lab', 'board', 'show', X, '--select', 'platform=TikTok Ads', '--json']));
+      const cliRows = tikView.cards.find((c) => c.id === 'x-explorer')?.blocks.find((bl) => bl.tab === 'Benchmark')?.explorer?.rows ?? [];
+      const cliBad = cliRows.filter((r) => r.inherited !== inheritKeys.includes(r.key)).map((r) => `${r.key} ${r.inherited}`);
+      ok('benchmark: lab board show --select marks the same rows inherited (per metric)', cliRows.length > 0 && cliBad.length === 0, cliBad.join(', '));
+      await explorerShotBoth('benchmark', (path) => bench.screenshot({ path }));
+
+      // Fullscreen: all 5 rows, nothing folded into "+N more", sources printed.
+      await bench.locator('[data-lab-card-menu]').first().click();
+      await page.locator('[data-lab-card-fullscreen="open"]').first().click();
+      const fsBench = page.locator('[data-lab-fullscreen="x-explorer"]');
+      await fsBench.waitFor({ timeout: 6000 }).catch(() => {});
+      await sleep(500);
+      const fsAll = (await fsBench.count()) ? await xin(fsBench) : null;
+      const fsRows = fsAll?.bench ?? [];
+      const vtl = fsRows.find((r) => r.key === 'visit_to_lead');
+      const cplFs = fsRows.find((r) => r.key === 'cost_per_lead');
+      ok('benchmark: fullscreen shows all 5 rows with their sources',
+        fsRows.length === Object.keys(quiz.metrics).length && (fsAll?.benchMore ?? 1) === 0
+          && /own p25 \(8 wk\)/.test(vtl?.sources ?? '') && /own p75 \(8 wk\)/.test(vtl?.sources ?? '') && /book/.test(cplFs?.sources ?? ''),
+        `${fsRows.length} rows + ${fsAll?.benchMore}; ${vtl?.sources} / ${cplFs?.sources}`);
+      await explorerShotBoth('benchmark-fullscreen', (path) => page.screenshot({ path }));
+      await closeOverlay();
+      await selectChips(bench, { platform: 'Meta Ads' });
+      ok('benchmark: an all-inherited selection (Meta Ads) notes its inherited band', await bench.locator('[data-lab-bench-inherited]').count() === 1);
+      await selectChips(bench, {});
+
+      // The plan's 6x6 Benchmark card (breakdown + benchmark) shows all 5 rows.
+      const b6 = card('x-bench');
+      await b6.scrollIntoViewIfNeeded();
+      await sleep(300);
+      const b6m = await xin(b6);
+      const b6clip = await b6.evaluate(clippedTextInPage);
+      ok('benchmark: the 6x6 card shows all 5 rows (no "+N more"), no clipped text', b6m.bench.length === Object.keys(quiz.metrics).length && b6m.benchMore === 0 && b6clip.length === 0,
+        `${b6m.bench.length} rows + ${b6m.benchMore}; ${b6clip.slice(0, 4).join(' | ')}`);
+      await explorerShotBoth('benchmark-6x6', (path) => b6.screenshot({ path }));
+
+      // Flow (the preset card's Flow page under the selection).
+      const ex = card('x-explorer');
+      await ex.scrollIntoViewIfNeeded();
+      await selectChips(ex, SEL);
+      await openTab(ex, 'Flow');
+      const f = (await xin(ex)).flow;
+      const max = Math.max(...selSeg.steps.map((s) => s.users));
+      const widthBad = (f?.stages ?? []).filter((s, i) => Math.abs(s.widthPct - (selSeg.steps[i].users / max) * 100) > 1);
+      ok('flow: stage widths are proportional to users within 1%', (f?.stages.length ?? 0) === selSeg.steps.length && widthBad.length === 0
+        && JSON.stringify(users(f.stages)) === JSON.stringify(selSeg.steps.map((s) => s.users)),
+        JSON.stringify((f?.stages ?? []).map((s, i) => [s.key, s.users, s.widthPct?.toFixed(2), ((selSeg.steps[i]?.users ?? 0) / max * 100).toFixed(2)])));
+      ok('flow: one drop badge per link', (f?.links.length ?? 0) === selSeg.steps.length - 1 && f.links.every((l) => l.badges === 1), JSON.stringify(f?.links));
+      const worstWant = fixtureDrops(selSeg.steps).worst;
+      const worstShown = (f?.links ?? []).filter((l) => l.worst);
+      ok('flow: the worst drop is marked as stepDrops computes it', worstShown.length === 1 && worstShown[0].key === worstWant && worstShown[0].worstWord !== '',
+        `${JSON.stringify(worstShown)} want ${worstWant}`);
+      await openTab(ex, 'Daily');
+
+      // Trend: the slice's exact daily value at 2 dates (the preset's Daily page under the selection).
+      const trendKey = (await xin(ex)).trend?.metrics.find((x) => x.on)?.key ?? 'visit_to_lead';
+      for (const date of twoDates(selSeg.daily)) {
+        const tip = await trendTipAt(ex, date);
+        const want = selSeg.daily.find((d) => d.t === date)?.m[trendKey];
+        ok(`trend: hover shows the slice's exact daily value (${date})`, shownEquals(tip.value, want), `${trendKey}: ${tip.detail} want ${want}`);
+      }
+      // The metric switch changes the series (the Daily card: the funnel level).
+      const daily = card('x-daily');
+      await daily.scrollIntoViewIfNeeded();
+      const t1 = (await xin(daily)).trend;
+      await daily.locator('[data-lab-trend-metric="conversion"]').first().click();
+      await sleep(400);
+      const t2 = (await xin(daily)).trend;
+      const date = twoDates(quiz.daily)[1];
+      const tip = await trendTipAt(daily, date);
+      const want = quiz.daily.find((d) => d.t === date)?.m.conversion;
+      const sws = [...await daily.evaluate(trendSwitchInPage), ...await ex.evaluate(trendSwitchInPage)];
+      ok('trend: the Daily card and the preset Daily page never ellipsize a metric label', sws.length > 0 && sws.every((x) => !x.cut), JSON.stringify(sws.filter((x) => x.cut)));
+      ok('trend: the metric switch changes the series', t1?.series !== 'conversion' && t2?.series === 'conversion' && t1?.paths !== t2?.paths && shownEquals(tip.value, want),
+        `${t1?.series} -> ${t2?.series}; ${tip.detail} want ${want}`);
+
+      // Segments (the plus card: language=EN, platforms as rows, the Unattributed x EN path under the low-sample line).
+      await openBoard(XP);
+      const plus = card('x-plus');
+      await plus.scrollIntoViewIfNeeded();
+      await selectChips(plus, { language: 'EN' });
+      const s = (await xin(plus)).seg;
+      const platforms = demo.data.funnel.dimensions.find((dm) => dm.key === 'platform').values.map((v) => v.value);
+      const rowWrong = platforms.filter((p) => !shownEquals(s?.rows.find((r) => r.value === p)?.usersText, fixtureSegment(quiz, { platform: p, language: 'EN' })?.users));
+      ok("segments: one row per platform under language=EN, each the intersection's own users", s?.rows.length === platforms.length && rowWrong.length === 0,
+        `${JSON.stringify(s?.rows.map((r) => [r.value, r.usersText]))} wrong ${rowWrong}`);
+      const toned = (s?.rows ?? []).flatMap((r) => Object.values(r.cells)).filter((c) => c.tone);
+      const byTone = {};
+      for (const c of toned) (byTone[c.tone] ??= new Set()).add(c.bg);
+      const tones = Object.keys(byTone);
+      ok('segments: band tones wash the cells (a tinted background per tone)', toned.length > 0 && toned.every((c) => !transparent(c.bg))
+        && (tones.length < 2 || tones.every((t, i) => i === 0 || [...byTone[t]].every((bg) => !byTone[tones[0]].has(bg)))),
+        JSON.stringify(Object.fromEntries(tones.map((t) => [t, [...byTone[t]]]))));
+      const low = (s?.rows ?? []).filter((r) => r.low);
+      const lowWant = platforms.filter((p) => (fixtureSegment(quiz, { platform: p, language: 'EN' })?.users ?? Infinity) < PLUS_LOW_SAMPLE);
+      ok('segments: a low-sample row is faded, the others are not',
+        JSON.stringify(low.map((r) => r.value)) === JSON.stringify(lowWant) && low.every((r) => r.opacity < 0.95) && s.rows.filter((r) => !r.low).every((r) => r.opacity > 0.99),
+        JSON.stringify(s?.rows.map((r) => [r.value, r.low, r.opacity])));
+      for (const theme of ['light', 'dark']) {
+        await setTheme(theme);
+        const st = await plus.evaluate(segmentsTableInPage);
+        ok(`segments: every band-tinted figure reads at >= 4.5:1 (${theme})`, !!st && st.tints.length > 0 && st.tints.every((x) => x.ratio !== null && x.ratio >= 4.5),
+          `${st?.tints.length} tinted cells, lowest ${Math.min(...(st?.tints ?? []).map((x) => x.ratio ?? 0))}:1; failing ${JSON.stringify(st?.tints.filter((x) => !(x.ratio >= 4.5)).slice(0, 6))}`);
+        ok(`segments: no word is broken mid-word (the plus card, ${theme})`, !!st && st.broken.length === 0, JSON.stringify(st?.broken.slice(0, 8)));
+        await plus.evaluate((el) => { const w = el.querySelector('[data-lab-segments] .lab-table-wrap'); if (w) w.scrollLeft = 0; });
+      }
+      await setTheme('light');
+      await explorerShotBoth('segments', (path) => plus.screenshot({ path }));
+      const head = plus.locator('.board-card-block[data-lab-block="segments"] thead th[data-col="__users"] button').first();
+      await head.click();
+      await sleep(250);
+      const s1 = (await xin(plus)).seg;
+      await head.click();
+      await sleep(250);
+      const s2 = (await xin(plus)).seg;
+      const u1 = s1.rows.map((r) => r.users);
+      const u2 = s2.rows.map((r) => r.users);
+      const sortedDesc = (a) => a.every((v, i) => i === 0 || a[i - 1] >= v);
+      const sortedAsc = (a) => a.every((v, i) => i === 0 || a[i - 1] <= v);
+      const st1 = s1.headers.find((h) => h.col === '__users')?.sort;
+      const st2 = s2.headers.find((h) => h.col === '__users')?.sort;
+      ok('segments: a header click sorts the rows, a second click flips the order',
+        st1 !== 'none' && st2 !== 'none' && st1 !== st2 && ((sortedDesc(u1) && sortedAsc(u2)) || (sortedAsc(u1) && sortedDesc(u2))) && JSON.stringify(u1) !== JSON.stringify(u2),
+        `${st1} ${JSON.stringify(u1)} / ${st2} ${JSON.stringify(u2)}`);
+      await selectChips(plus, {});
+    });
+
+    // ── 27. Fullscreen ─────────────────────────────────────────────────────────
+    await section('explorer: fullscreen', async () => {
+      if (!explorerReady) throw new Error('the explorer board was not built');
+      await closeOverlay();
+      await openBoard(X);
+      const ex = card('x-explorer');
+      await ex.scrollIntoViewIfNeeded();
+      await selectChips(ex, SEL);
+      await openTab(ex, 'Steps');
+      const overlay = page.locator('[data-lab-fullscreen]');
+      const openFs = async (loc) => {
+        await loc.scrollIntoViewIfNeeded();
+        await loc.locator('[data-lab-card-menu]').first().click();
+        await page.locator('[data-lab-card-fullscreen="open"]').first().click();
+        await overlay.first().waitFor({ timeout: 6000 }).catch(() => {});
+        await sleep(500);
+      };
+      await openFs(ex);
+      const ov = page.locator('[data-lab-fullscreen="x-explorer"]');
+      const geo = await ov.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { w: r.width, h: r.height, vw: window.innerWidth, vh: window.innerHeight, role: el.getAttribute('role'), modal: el.getAttribute('aria-modal') };
+      }).catch(() => null);
+      ok('fullscreen opens from the card menu at >= 95% of the viewport (a modal dialog)',
+        !!geo && geo.w >= geo.vw * 0.95 && geo.h >= geo.vh * 0.95 && geo.role === 'dialog' && geo.modal === 'true', JSON.stringify(geo));
+      ok('fullscreen puts ?card=<id> in the address', new URL(page.url()).searchParams.get('card') === 'x-explorer', page.url());
+      ok('fullscreen: the grid slot is an empty lifted box (one live copy)',
+        await page.locator('[data-lab-card-lifted="x-explorer"]').count() === 1 && await ex.locator('[data-lab-block]').count() === 0);
+      const fm = geo ? await xin(ov) : null;
+      const fsBand = geo ? (await ov.evaluate(chipsAndBandInPage)).band : null;
+      ok('fullscreen: the tabs start right under the chips (no blank band > 24px)', fsBand !== null && fsBand <= 24, `blank band ${fsBand}px`);
+      ok('fullscreen keeps the breakdown selection', !!fm && JSON.stringify(pressed(fm)) === JSON.stringify(SEL), JSON.stringify(fm && pressed(fm)));
+      ok('fullscreen keeps the active tab', geo !== null && await tabBtn(ov, 'Steps').getAttribute('aria-selected') === 'true');
+      if (geo) {
+        await explorerShotBoth('fullscreen', (path) => page.screenshot({ path }));
+        await tabBtn(ov, 'Flow').click();
+        await sleep(300);
+      }
+      await page.keyboard.press('Escape');
+      await sleep(500);
+      ok('fullscreen closes on Esc', await overlay.count() === 0);
+      ok('closing fullscreen keeps the tab changed inside it', await tabBtn(ex, 'Flow').getAttribute('aria-selected') === 'true');
+      await openFs(ex);
+      await page.locator('[data-lab-card-exit]').first().click();
+      await sleep(500);
+      ok('fullscreen closes on its exit button', await overlay.count() === 0);
+      await openFs(ex);
+      const wasOpen = await overlay.count() === 1;
+      await page.goBack();
+      await sleep(700);
+      ok('fullscreen closes on browser Back', wasOpen && await overlay.count() === 0 && !new URL(page.url()).searchParams.has('card'), page.url());
+      const url = new URL(page.url());
+      url.searchParams.set('card', 'x-explorer');
+      await page.goto(url.toString(), { waitUntil: 'domcontentloaded' });
+      await page.locator('[data-lab-fullscreen="x-explorer"]').waitFor({ timeout: 20000 }).catch(() => {});
+      ok('fullscreen reopens from ?card=<id>', await page.locator('[data-lab-fullscreen="x-explorer"]').count() === 1, page.url());
+      if (await page.locator('[data-lab-card-exit]').count()) await page.locator('[data-lab-card-exit]').first().click();
+      await sleep(500);
+      // An app card: ONE iframe while fullscreen (the grid slot is lifted, never a second frame).
+      const app = card('x-app');
+      await openFs(app);
+      const frames = await page.evaluate(() => ({
+        overlay: document.querySelectorAll('[data-lab-fullscreen="x-app"] iframe').length,
+        slot: document.querySelectorAll('[data-lab-card="x-app"] iframe').length,
+      }));
+      ok('fullscreen: an app card has exactly one iframe', frames.overlay === 1 && frames.slot === 0, JSON.stringify(frames));
+      if (await page.locator('[data-lab-card-exit]').count()) await page.locator('[data-lab-card-exit]').first().click();
+      await sleep(400);
+    });
+
+    // ── 28. The v1 app insight on a board; CLI parity; the preset both ways ────
+    await section('explorer: app card, CLI parity, preset', async () => {
+      if (!explorerReady) throw new Error('the explorer board was not built');
+      await closeOverlay();
+      await openBoard(X);
+      const inFrame = async (loc) => {
+        const h = await loc.locator('iframe').first().elementHandle({ timeout: 8000 }).catch(() => null);
+        return h ? h.contentFrame() : null;
+      };
+      const framePage = async (loc) => {
+        const f = await inFrame(loc);
+        return f ? until(() => f.evaluate(() => document.getElementById('page')?.dataset.page ?? null), 8000) : null;
+      };
+      await openBoard(XP);
+      const plain = card('x-app-plain');
+      await plain.scrollIntoViewIfNeeded();
+      const plainState = await plain.evaluate((el) => ({ nav: el.querySelectorAll('[data-lab-app-nav]').length, pills: el.querySelectorAll('[data-lab-app-pill]').length, frames: el.querySelectorAll('iframe').length }));
+      const plainPage = await framePage(plain);
+      ok("app card: nav:false keeps today's card (no pills, one frame, the app's card page)", plainState.nav === 0 && plainState.pills === 0 && plainState.frames === 1 && plainPage === 'overview',
+        `${JSON.stringify(plainState)} page ${plainPage}`);
+      const pinnedPage = await framePage(card('x-app-pinned'));
+      ok('app card: the page option pins an app page', pinnedPage === 'pricing', String(pinnedPage));
+      await openBoard(X);
+
+      const app = card('x-app');
+      await app.scrollIntoViewIfNeeded();
+      const pills = await app.locator('[data-lab-app-pill]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-lab-app-pill'), e.getAttribute('aria-selected')]));
+      ok('app card: nav:true shows one pill per page, the pinned page selected',
+        JSON.stringify(pills) === JSON.stringify([['overview', 'true'], ['pricing', 'false'], ['activation', 'false']]), JSON.stringify(pills));
+      const f0 = await inFrame(app);
+      const first = await framePage(app);
+      if (f0) await f0.evaluate(() => { window.__verifyMark = 'first-frame'; });
+      await app.locator('[data-lab-app-pill="pricing"]').click();
+      await until(async () => (await app.locator('[data-lab-app-nav]').getAttribute('data-lab-app-page')) === 'pricing', 5000);
+      await sleep(400);
+      const f1 = await inFrame(app);
+      const second = await framePage(app);
+      const fresh1 = f1 ? await f1.evaluate(() => window.__verifyMark === undefined).catch(() => false) : false;
+      ok('app card: a pill click switches the page in the card (a fresh frame)', first === 'overview' && second === 'pricing' && fresh1,
+        `${first} -> ${second}, fresh ${fresh1}`);
+      await explorerShotBoth('app-page-2', (path) => app.screenshot({ path }));
+      if (f1) await f1.evaluate(() => { window.__verifyMark = 'second-frame'; }).catch(() => {});
+      // The page's own button calls lab.navigate('activation') (a real click inside the frame).
+      let clickErr = null;
+      if (f1) await f1.locator('#next').click({ timeout: 5000 }).catch((e) => { clickErr = String(e).split('\n').slice(0, 4).join(' | '); });
+      await until(async () => (await app.locator('[data-lab-app-nav]').getAttribute('data-lab-app-page')) === 'activation', 5000);
+      await sleep(400);
+      const f2 = await inFrame(app);
+      const third = await framePage(app);
+      const fresh2 = f2 ? await f2.evaluate(() => window.__verifyMark === undefined).catch(() => false) : false;
+      ok('app card: an in-frame lab.navigate switches the page in the card (a fresh frame)', third === 'activation' && fresh2,
+        `${second} -> ${third}, fresh ${fresh2}${clickErr ? `; click: ${clickErr}` : ''}`);
+
+      // CLI parity: the preset card under SEL, DOM vs `lab board show --select`.
+      const ex = card('x-explorer');
+      await ex.scrollIntoViewIfNeeded();
+      await selectChips(ex, SEL);
+      await openTab(ex, 'Benchmark');
+      const domBench = (await xin(ex)).bench;
+      await openTab(ex, 'Steps');
+      const domSteps = await xin(ex);
+      await openTab(ex, 'Platform');
+      const domSeg = (await xin(ex)).seg;
+      const selArg = Object.entries(SEL).map(([k, v]) => `${k}=${v}`).join(',');
+      const view = JSON.parse(dc(['lab', 'board', 'show', X, '--select', selArg, '--json']));
+      const cliBlocks = view.cards.find((c) => c.id === 'x-explorer')?.blocks ?? [];
+      const cliOf = (tab) => cliBlocks.find((b) => b.tab === tab)?.explorer ?? null;
+      const cb = cliOf('Benchmark');
+      const benchPairs = (cb?.rows ?? []).map((r) => [r.key, r.status, domBench.find((d) => d.key === r.key)]);
+      ok('CLI parity: --select benchmark rows equal the DOM',
+        benchPairs.length === domBench.length && benchPairs.length > 0
+          && benchPairs.every(([k, st, d]) => d && d.status === st && (d.value === null ? cb.rows.find((r) => r.key === k).current === null : shownEquals(d.value, cb.rows.find((r) => r.key === k).current))),
+        JSON.stringify(benchPairs.map(([k, st, d]) => [k, st, d?.status, d?.value, cb.rows.find((r) => r.key === k)?.current])));
+      const cs = cliOf('Steps');
+      ok('CLI parity: --select step users equal the DOM', JSON.stringify((cs?.slice?.steps ?? []).map((s) => s.users)) === JSON.stringify(domSteps.bars.map((b) => b.users)),
+        `${JSON.stringify(cs?.slice?.steps?.map((s) => s.users))} vs ${JSON.stringify(domSteps.bars.map((b) => b.users))}`);
+      const cliWorst = cs?.drops?.find((d) => d.worst)?.key ?? null;
+      const domWorst = quiz.steps.find((s) => s.label === domSteps.bars.find((b) => b.worst)?.label)?.key ?? null;
+      ok('CLI parity: --select worst step equals the DOM', cliWorst !== null && cliWorst === domWorst, `${cliWorst} vs ${domWorst}`);
+      const cg = cliOf('Platform');
+      const segPairs = (cg?.rows ?? []).map((r, i) => [r, domSeg?.rows[i]]);
+      ok('CLI parity: --select segment rows equal the DOM',
+        segPairs.length > 0 && segPairs.length === (domSeg?.rows.length ?? -1)
+          && segPairs.every(([c, d]) => d && c.value === d.value && (c.measured ? shownEquals(d.usersText, c.users) : d.users === null)),
+        `${JSON.stringify(cg?.rows?.map((r) => [r.value, r.users, r.measured]))} vs ${JSON.stringify(domSeg?.rows.map((r) => [r.value, r.usersText]))}`);
+      await openTab(ex, 'Daily');
+
+      // The preset from the dashboard's add-card menu deep-equals the CLI's.
+      dc(['lab', 'board', 'create', 'explorer-ui', '--title', 'Explorer from the menu']);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('[data-lab-board]').first().waitFor({ timeout: 20000 });
+      await openBoard('explorer-ui');
+      await editMode(true);
+      const opener = page.locator('[data-lab-add-card-open], [data-lab-add-first-card]').first();
+      await opener.click();
+      const menu = page.locator('[data-lab-add-card]').first();
+      await menu.waitFor({ timeout: 6000 });
+      await menu.locator('[data-lab-field="bind-to"]').selectOption(EXPLORER);
+      const presetBtn = menu.locator('[data-lab-add-preset="funnel-explorer"]').first();
+      await presetBtn.waitFor({ timeout: 8000 }).catch(() => {});
+      const offered = await presetBtn.count() === 1;
+      ok('the add-card menu offers the Funnel explorer preset for a funnel insight', offered);
+      if (offered) await presetBtn.click();
+      const made = await until(() => (readBoard('explorer-ui')?.cards ?? []).length === 1, 8000);
+      const ui = readBoard('explorer-ui')?.cards?.[0];
+      const cli = fileCard(X, 'x-explorer');
+      ok('preset: the dashboard add-card entry and lab board add-card --preset write deep-equal blocks',
+        !!made && JSON.stringify((ui?.blocks ?? []).map(normBlock)) === JSON.stringify((cli?.blocks ?? []).map(normBlock))
+          && ui.at.w === cli.at.w && ui.at.h === cli.at.h && ui.insight === cli.insight,
+        `ui ${JSON.stringify(ui).slice(0, 400)} | cli ${JSON.stringify(cli).slice(0, 400)}`);
+      await page.keyboard.press('Escape');
+      await editMode(false);
+    });
+
     // ── 14. Defects: heading text, tab labels ─────────────────────────────────
     await section('defects: headings + tabs', async () => {
       const found = [];
@@ -2608,7 +4380,10 @@ async function main() {
       ok('the new board opens', await until(async () => (await page.locator('[data-lab-board]').count()) > 0, 5000));
     });
 
-    if (bundle) ok(`mutation ${MUTATION} was applied to the served bundle`, bundlePatched > 0, 'pattern not found in any JS asset');
+    if (bundle) {
+      ok(`mutation ${MUTATION} was applied to the served bundle`, bundlePatched > 0 && pairHits.every((n) => n > 0),
+        `patched assets ${bundlePatched}; hits per pattern ${JSON.stringify(pairHits)}`);
+    }
     const pageErrors = consoleErrors.filter((e) => !/favicon|ResizeObserver loop|net::ERR_ABORTED|Failed to load resource/i.test(e));
     if (pageErrors.length) console.log(`console errors (informational):\n  ${pageErrors.slice(0, 12).join('\n  ')}`);
   } finally {
@@ -2617,6 +4392,10 @@ async function main() {
   }
 
   for (const r of results) console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
+  // The measured value behind every passing demo-finding check (a PASS line alone does not show it).
+  const MEASURED = /board GET|active chip|blank band|benchmark:|lanes:|flow \(|breakdown \(|trend \(|trend:|segments/;
+  console.log('\nmeasured (passing demo-finding checks):');
+  for (const r of results) if (r.pass && MEASURED.test(r.name) && r.measured) console.log(`  ${r.name} — ${r.measured.slice(0, 260)}`);
   console.log(`shots: ${SHOTS}`);
   const fails = results.filter((r) => !r.pass);
   if (!MUTATION) {

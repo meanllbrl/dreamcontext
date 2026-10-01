@@ -67,16 +67,35 @@ export interface FitMemo {
   /** The watched container's size on the axis then, and across it (a cross change re-measures). */
   outer: number;
   cross: number;
+  /** The most of the container the full form may take (it shares the card with other blocks), or null. */
+  share: number | null;
+}
+
+/**
+ * The most of a card body a breakdown's chip form may take when other blocks
+ * share the card: past it the chips go compact so the page under them (a
+ * benchmark, the steps) keeps its room. A 12x12 preset card's chips take about
+ * a quarter of its body and an 8x7 card's about half (both stay chips); a 6x6
+ * card's take over two thirds (compact: the page under it gets its rows back).
+ */
+export const BREAKDOWN_MAX_SHARE = 0.62;
+
+/** Is the full form too big: clipped, or (sharing the container) over its share of it? */
+export function tooBig(need: number, room: number, outer: number, share: number | null): boolean {
+  return overflows(need, room) || (share !== null && outer > 0 && need > share * outer + 1);
 }
 
 /**
  * Back to the full form? Only when the container grew by at least what the
- * full form lacked, so the two forms never flip back and forth; a change
- * across the axis (a wider card wraps chips differently) re-measures.
+ * full form lacked (and, sharing it, the form fits its share), so the two
+ * forms never flip back and forth; a change across the axis (a wider card
+ * wraps chips differently) re-measures.
  */
 export function fitsAgain(memo: FitMemo, outer: number, cross: number): boolean {
   if (Math.abs(cross - memo.cross) > 1) return true;
-  return memo.room + (outer - memo.outer) >= memo.need;
+  const room = memo.room + (outer - memo.outer);
+  const cap = memo.share === null ? Infinity : memo.share * outer;
+  return Math.min(room, cap) >= memo.need;
 }
 
 /** True when a box's content is larger than the box on the axis (the full form is clipped). */
@@ -84,15 +103,29 @@ export function overflows(need: number, room: number): boolean {
   return need > room + 1;
 }
 
+/** A watched container's size along and across the axis (a card body: its content box). */
+function measureOuter(outer: HTMLElement, axis: 'height' | 'width'): [number, number] {
+  const box = outer.getBoundingClientRect();
+  if (axis === 'width') return [box.width, box.height];
+  const cs = typeof getComputedStyle === 'function' ? getComputedStyle(outer) : null;
+  const pad = cs ? (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) : 0;
+  return [Math.max(0, outer.clientHeight - pad), box.width];
+}
+
 /**
  * The full form until it does not fit, then the compact form until the room
  * the full form needed comes back. Measured before paint (no flash): on
- * `height` the ref'd box is a content-height block the card shrank; on
- * `width` it is a row whose items must never truncate. The container watched
- * for room is the card body (height) or the ref'd box's parent (width).
- * `resetKey` (what the full form draws) forgets the measure.
+ * `height` the ref'd box is a content-height block in a card body (too big =
+ * clipped, or over `maxShare` of the body when another block shares the
+ * card); on `width` it is a row whose items must never truncate. The
+ * container watched for room is the card body (height) or the ref'd box's
+ * parent (width). `resetKey` (what the full form draws) forgets the measure.
  */
-export function useCompactFit<T extends HTMLElement>(axis: 'height' | 'width', resetKey: string): [RefObject<T | null>, boolean] {
+export function useCompactFit<T extends HTMLElement>(
+  axis: 'height' | 'width',
+  resetKey: string,
+  maxShare: number | null = null,
+): [RefObject<T | null>, boolean] {
   const ref = useRef<T | null>(null);
   const [compact, setCompact] = useState(false);
   const memo = useRef<{ fit: FitMemo; outer: HTMLElement } | null>(null);
@@ -108,13 +141,14 @@ export function useCompactFit<T extends HTMLElement>(axis: 'height' | 'width', r
     if (!el || compact) return;
     const need = axis === 'height' ? el.scrollHeight : el.scrollWidth;
     const room = axis === 'height' ? el.clientHeight : el.clientWidth;
-    if (!overflows(need, room)) return;
-    const outer = (axis === 'height' ? el.closest<HTMLElement>('.board-card-body') : null) ?? el.parentElement ?? el;
-    const box = outer.getBoundingClientRect();
-    memo.current = {
-      fit: { need, room, outer: axis === 'height' ? box.height : box.width, cross: axis === 'height' ? box.width : box.height },
-      outer,
-    };
+    const body = axis === 'height' ? el.closest<HTMLElement>('.board-card-body') : null;
+    const outer = body ?? el.parentElement ?? el;
+    const [along, cross] = measureOuter(outer, axis);
+    // The share applies only when another block shares the card body with this one.
+    const shared = !!body && body.querySelectorAll(':scope > .board-card-block').length > 1;
+    const share = shared ? maxShare : null;
+    if (!tooBig(need, room, along, share)) return;
+    memo.current = { fit: { need, room, outer: along, cross, share }, outer };
     setCompact(true);
   });
 
@@ -122,8 +156,7 @@ export function useCompactFit<T extends HTMLElement>(axis: 'height' | 'width', r
     const m = memo.current;
     if (!compact || !m || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      const box = m.outer.getBoundingClientRect();
-      const [along, cross] = axis === 'height' ? [box.height, box.width] : [box.width, box.height];
+      const [along, cross] = measureOuter(m.outer, axis);
       // A width axis only cares about width: its cross (the chart's height) never re-measures.
       if (fitsAgain(m.fit, along, axis === 'height' ? cross : m.fit.cross)) {
         memo.current = null;
@@ -152,6 +185,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
   const [fitRef, compact] = useCompactFit<HTMLDivElement>(
     'height',
     `${JSON.stringify(options)}|${selectionKey(selection ?? {})}|${lanes?.length ?? 0}`,
+    BREAKDOWN_MAX_SHARE,
   );
   const drawable = drawableFrame(frame, ['funnel'] as const);
   if ('empty' in drawable) return <div className="lab-block-fill"><BlockEmpty reason={drawable.empty} /></div>;

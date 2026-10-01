@@ -29,6 +29,8 @@ const COPY: Record<string, string> = {
   'lab.blocks.benchmark.noBand': 'No band set',
   'lab.blocks.benchmark.notMeasured': 'Not measured: {reason}',
   'lab.blocks.benchmark.inherited': 'Band from the whole funnel (this selection has none of its own)',
+  'lab.blocks.benchmark.inheritedMark': 'Inherited',
+  'lab.blocks.benchmark.inheritedTitle': "This metric has no band of its own for this selection: it uses the whole funnel's band.",
   'lab.blocks.benchmark.source': '{bound} from {source}',
   'lab.blocks.benchmark.improving': 'Improving',
   'lab.blocks.benchmark.worsening': 'Worsening',
@@ -68,7 +70,7 @@ vi.mock('../../dashboard/src/components/lab/chartBody.js', async (orig) => {
   return { ...real, useMeasured: () => [() => {}, { ...BOX }] };
 });
 
-const { BenchmarkBlock, benchmarkFit, benchRowPx, boundLabels, formatMetric, noteLines, rulerScale, rulerZones, toneOf, BENCH_PX } = await import(
+const { BenchmarkBlock, allRowsInherit, reasonLines, benchmarkFit, benchRowPx, boundLabels, formatMetric, noteLines, rulerScale, rulerZones, toneOf, BENCH_PX } = await import(
   '../../dashboard/src/components/lab/blocks/BenchmarkBlock.js'
 );
 
@@ -314,6 +316,41 @@ describe('benchmark: change, status word, sources', () => {
     expect(html).toContain('data-lab-bench-current');
   });
 
+  it('each inheriting row carries its own visible inherited mark (meaning in title and aria); own-band rows carry none', () => {
+    const f = frame();
+    // TikTok Ads: its own band on lead_rate, the set's band on cost_per_lead (per metric).
+    f.funnels[0].segments![1].metrics!.cost_per_lead = m(9, 10, { format: 'usd' });
+    const html = render({}, { platform: 'TikTok Ads' }, f);
+    const cost = row(html, 'cost_per_lead');
+    expect(cost).toContain('class="lab-bench-inherit" data-inherited=""');
+    expect(cost).toContain('>Inherited</span>');
+    expect(cost).toContain('title="This metric has no band of its own for this selection: it uses the whole funnel&#x27;s band."');
+    expect(cost).toContain('aria-label="This metric has no band of its own');
+    expect(row(html, 'lead_rate')).not.toContain('data-inherited');
+    // Not every row inherits: no card-level note.
+    expect(html).not.toContain('data-lab-bench-inherited');
+  });
+
+  it('the mark sits on the sources line when it is drawn, else beside the status pill', () => {
+    const f = frame();
+    f.funnels[0].segments![1].metrics!.cost_per_lead = m(9, 10, { format: 'usd' });
+    const full = row(render({}, { platform: 'TikTok Ads' }, f), 'cost_per_lead');
+    expect(full).toMatch(/class="lab-bench-sources-line">.*data-lab-bench-source="">Floor from book<\/span><span class="lab-bench-inherit"/);
+    const quiet = row(render({ sources: false }, { platform: 'TikTok Ads' }, f), 'cost_per_lead');
+    expect(quiet).not.toContain('lab-bench-sources-line');
+    expect(quiet).toMatch(/class="lab-bench-side"><span class="lab-bench-inherit"/);
+  });
+
+  it('the card-level note appears only when every banded row inherits', () => {
+    const r = (floor: number | null, inherited: boolean) => ({ floor, target: null, inherited });
+    expect(allRowsInherit([r(1, true), r(2, true), r(null, false)])).toBe(true);
+    expect(allRowsInherit([r(1, true), r(2, false)])).toBe(false);
+    expect(allRowsInherit([r(null, false)])).toBe(false);
+    const meta = render({}, { platform: 'Meta Ads' });
+    expect((meta.match(/data-lab-bench-inherited=""/g) ?? []).length).toBe(1);
+    expect((meta.match(/data-inherited=""/g) ?? []).length).toBe(2);
+  });
+
   it('notes an inherited band only when the selection has none of its own', () => {
     expect(render()).not.toContain('data-lab-bench-inherited');
     expect(render({}, { platform: 'Meta Ads' })).toContain('Band from the whole funnel');
@@ -336,7 +373,7 @@ describe('benchmark: not measured is not zero', () => {
   it('an unmeasured selection lists every metric as Not measured with the slice reason, no 0 anywhere', () => {
     const html = render({}, { platform: 'Meta Ads', language: 'ES' });
     expect(html).toContain('data-measured="false"');
-    expect((html.match(new RegExp(`Not measured: ${FEW}`, 'g')) ?? []).length).toBe(3);
+    expect((html.match(new RegExp(`data-lab-bench-unmeasured="">Not measured: ${FEW}<`, 'g')) ?? []).length).toBe(3);
     expect(html).not.toContain('data-lab-bench-current');
     expect(html).not.toMatch(/>0%?</);
     expect(html).not.toContain('$0');
@@ -416,6 +453,28 @@ describe('benchmark: fits its cell without scrolling', () => {
     expect(benchmarkFit(5, 320, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: false, legend: true, count: 5 });
     expect(benchmarkFit(5, 400, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: true });
     expect(benchmarkFit(5, 240, 0, true, 300)).toMatchObject({ mode: 'full', labels: false, sources: false, legend: true });
+  });
+
+  it('an unmeasured reason wraps (at most 3 lines) and the fit pays for its lines', () => {
+    expect(reasonLines(40, 0)).toBe(1);
+    expect(reasonLines(40, 300)).toBe(1);
+    expect(reasonLines(60, 200)).toBe(2);
+    expect(reasonLines(500, 100)).toBe(3);
+    expect(benchmarkFit(5, 125, 0, false, 480)).toMatchObject({ mode: 'compact', count: 5 });
+    const wrapped = benchmarkFit(5, 125, 0, false, 480, [200]);
+    expect(wrapped.legend).toBe(false);
+    const css = readFileSync(join(__dirname, '../../dashboard/src/components/lab/blocks/benchmark.css'), 'utf8');
+    const at = css.indexOf('.lab-bench-unmeasured {');
+    const rule = css.slice(at, css.indexOf('}', at));
+    expect(rule).toContain('white-space: normal');
+    expect(rule).toContain('-webkit-line-clamp: 3');
+    expect(rule).not.toContain('text-overflow: ellipsis');
+  });
+
+  it('a tier the rendered block proved too tall is skipped, and past the last tier rows fold into +N more', () => {
+    expect(benchmarkFit(5, 400, 0, true, 800).mode).toBe('full');
+    expect(benchmarkFit(5, 400, 0, true, 800, [], 1)).toMatchObject({ mode: 'compact', labels: true });
+    expect(benchmarkFit(5, 400, 0, true, 800, [], 6).count).toBe(4);
   });
 
   it('notes cost their wrapped lines', () => {
