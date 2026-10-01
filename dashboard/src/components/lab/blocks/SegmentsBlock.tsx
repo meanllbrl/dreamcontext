@@ -146,7 +146,7 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
                     data-active={active === row.value ? '' : undefined}
                     title={low ?? undefined}
                   >
-                    <td className="lab-table-text lab-seg-value">
+                    <td className="lab-table-text lab-seg-value" title={row.value}>
                       <span className="lab-seg-value-text">{row.value}</span>
                     </td>
                     <td className="lab-table-num">
@@ -193,7 +193,7 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
 /** An unmeasured cell: a dash (never a 0) whose reason shows on hover and on keyboard focus. */
 function Dash({ reason }: { reason: string }) {
   return (
-    <span className="lab-seg-dash" tabIndex={0} role="img" aria-label={reason} data-lab-seg-unmeasured="">
+    <span className="lab-seg-dash" tabIndex={0} role="img" aria-label={reason} data-lab-seg-unmeasured="" title={reason}>
       <span aria-hidden="true">–</span>
       <span className="lab-seg-reason" data-lab-seg-reason="" aria-hidden="true">{reason}</span>
     </span>

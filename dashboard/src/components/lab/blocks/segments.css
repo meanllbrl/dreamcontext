@@ -3,10 +3,17 @@
  * lab table classes (MetricTable.css: wrapper scroll box, sticky header,
  * density). Tokens only: no literal colours, sizes, weights or durations.
  *
- * Band tone is a wash behind the figure, the tinted-surface pattern: the status
- * hue colour-mixed into the card surface, the figure keeps --color-text, so a
- * washed cell reads like any other in light and dark. A low-sample row fades;
- * an unmeasured cell is a dash whose reason shows on hover and on focus.
+ * Nothing breaks inside a word: every cell keeps its content on one line and
+ * the table takes the width its content needs (never less than the box). When
+ * the columns do not fit, the wrapper scrolls sideways with the value column
+ * stuck on the left; a very long value ellipsizes past a cap, its full text in
+ * the cell's title (the last resort).
+ *
+ * Band tone is a LIGHT wash behind the figure, the tinted-surface pattern: the
+ * status hue mixed a little way into the card surface, the figure keeps
+ * --color-text (tested >= 4.5:1 on every tint, light and dark), and a 2px edge
+ * in the hue carries the tone the pale fill gave up. A low-sample row fades; an
+ * unmeasured cell is a dash whose reason shows on hover and on focus.
  */
 
 .lab-seg {
@@ -18,15 +25,37 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
-.lab-seg-value-text {
-  overflow-wrap: anywhere;
+.lab-seg-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.lab-seg-table th,
+.lab-seg-table td {
+  white-space: nowrap;
+}
+
+/* The value column stays put while the metrics scroll under it. */
+.lab-seg-table .lab-seg-value,
+.lab-seg-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  border-right: 1px solid var(--color-border);
 }
 
 .lab-seg-table .lab-seg-value {
-  white-space: normal;
+  z-index: 1;
+  max-width: var(--space-28);
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+  text-overflow: ellipsis;
+}
+
+.lab-seg-table thead th:first-child {
+  z-index: 2;
 }
 
 .lab-seg-table tr[data-active] .lab-seg-value {
@@ -36,7 +65,6 @@
 
 .lab-seg-figure {
   display: inline-flex;
-  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: baseline;
   column-gap: var(--space-1);
@@ -47,15 +75,18 @@
 }
 
 .lab-seg-table[data-bands] td[data-tone='below'] {
-  background: color-mix(in srgb, var(--color-error) 14%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-error) 9%, var(--color-bg-secondary));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-error) 70%, var(--color-bg-secondary));
 }
 
 .lab-seg-table[data-bands] td[data-tone='between'] {
-  background: color-mix(in srgb, var(--color-warning) 14%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--color-bg-secondary));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-warning) 70%, var(--color-bg-secondary));
 }
 
 .lab-seg-table[data-bands] td[data-tone='above'] {
-  background: color-mix(in srgb, var(--color-success) 14%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-success) 9%, var(--color-bg-secondary));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-success) 70%, var(--color-bg-secondary));
 }
 
 /* A small sample is shown, not hidden, but it steps back. */
@@ -85,7 +116,7 @@
   position: absolute;
   top: 100%;
   right: 0;
-  z-index: 2;
+  z-index: 3;
   display: none;
   width: max-content;
   max-width: calc(var(--space-28) + var(--space-16));

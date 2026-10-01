@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type FocusEvent, type MouseEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import {
@@ -58,6 +58,85 @@ export function pinBlock(sel: Selection, lanes: readonly Selection[], measured: 
   return null;
 }
 
+/** What a fit measure records when the full form stopped fitting. */
+export interface FitMemo {
+  /** The full form's natural size on the axis. */
+  need: number;
+  /** The room it had then (its own clipped box). */
+  room: number;
+  /** The watched container's size on the axis then, and across it (a cross change re-measures). */
+  outer: number;
+  cross: number;
+}
+
+/**
+ * Back to the full form? Only when the container grew by at least what the
+ * full form lacked, so the two forms never flip back and forth; a change
+ * across the axis (a wider card wraps chips differently) re-measures.
+ */
+export function fitsAgain(memo: FitMemo, outer: number, cross: number): boolean {
+  if (Math.abs(cross - memo.cross) > 1) return true;
+  return memo.room + (outer - memo.outer) >= memo.need;
+}
+
+/** True when a box's content is larger than the box on the axis (the full form is clipped). */
+export function overflows(need: number, room: number): boolean {
+  return need > room + 1;
+}
+
+/**
+ * The full form until it does not fit, then the compact form until the room
+ * the full form needed comes back. Measured before paint (no flash): on
+ * `height` the ref'd box is a content-height block the card shrank; on
+ * `width` it is a row whose items must never truncate. The container watched
+ * for room is the card body (height) or the ref'd box's parent (width).
+ * `resetKey` (what the full form draws) forgets the measure.
+ */
+export function useCompactFit<T extends HTMLElement>(axis: 'height' | 'width', resetKey: string): [RefObject<T | null>, boolean] {
+  const ref = useRef<T | null>(null);
+  const [compact, setCompact] = useState(false);
+  const memo = useRef<{ fit: FitMemo; outer: HTMLElement } | null>(null);
+  const lastKey = useRef(resetKey);
+  if (lastKey.current !== resetKey) {
+    lastKey.current = resetKey;
+    memo.current = null;
+    if (compact) setCompact(false);
+  }
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || compact) return;
+    const need = axis === 'height' ? el.scrollHeight : el.scrollWidth;
+    const room = axis === 'height' ? el.clientHeight : el.clientWidth;
+    if (!overflows(need, room)) return;
+    const outer = (axis === 'height' ? el.closest<HTMLElement>('.board-card-body') : null) ?? el.parentElement ?? el;
+    const box = outer.getBoundingClientRect();
+    memo.current = {
+      fit: { need, room, outer: axis === 'height' ? box.height : box.width, cross: axis === 'height' ? box.width : box.height },
+      outer,
+    };
+    setCompact(true);
+  });
+
+  useEffect(() => {
+    const m = memo.current;
+    if (!compact || !m || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      const box = m.outer.getBoundingClientRect();
+      const [along, cross] = axis === 'height' ? [box.height, box.width] : [box.width, box.height];
+      // A width axis only cares about width: its cross (the chart's height) never re-measures.
+      if (fitsAgain(m.fit, along, axis === 'height' ? cross : m.fit.cross)) {
+        memo.current = null;
+        setCompact(false);
+      }
+    });
+    observer.observe(m.outer);
+    return () => observer.disconnect();
+  }, [compact, axis]);
+
+  return [ref, compact];
+}
+
 interface Tip {
   id: string;
   title: string;
@@ -70,6 +149,10 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
   const { t, locale } = useI18n();
   const uid = useId();
   const [tip, setTip] = useState<Tip | null>(null);
+  const [fitRef, compact] = useCompactFit<HTMLDivElement>(
+    'height',
+    `${JSON.stringify(options)}|${selectionKey(selection ?? {})}|${lanes?.length ?? 0}`,
+  );
   const drawable = drawableFrame(frame, ['funnel'] as const);
   if ('empty' in drawable) return <div className="lab-block-fill"><BlockEmpty reason={drawable.empty} /></div>;
   const f = drawable.frame;
@@ -133,8 +216,95 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
   // A tip outlives nothing: once its chip is enabled (or gone) it closes.
   const tipLive = !!tip && axes.some((a) => a.chips.some((c) => !c.enabled && tip.id === `${uid}-tip-${a.key}-${c.value}`));
 
+  const pinText = t('lab.blocks.breakdown.pin').replace('{sel}', `'${labelOf(current.selection)}'`);
+  const pin = () => {
+    if (blocked === null) onLanes?.([...pinned, current.selection]);
+  };
+  const laneBadges = pinned.map((lane, i) => (
+    <span key={selectionKey(lane) || `all-${i}`} className="lab-breakdown-lane" data-lab-lane={i + 1} title={compact ? labelOf(lane) : undefined}>
+      <span className="lab-breakdown-lane-num" data-lane={i + 1} aria-hidden="true">{i + 1}</span>
+      {compact
+        ? <span className="lab-breakdown-sr">{labelOf(lane)}</span>
+        : <span className="lab-breakdown-lane-label">{labelOf(lane)}</span>}
+      <button
+        type="button"
+        className="lab-breakdown-lane-remove"
+        data-lab-lane-remove={i + 1}
+        aria-label={t('lab.blocks.breakdown.removeLane').replace('{n}', String(i + 1))}
+        onClick={() => onLanes?.(pinned.filter((_, j) => j !== i))}
+      >
+        <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+          <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
+    </span>
+  ));
+  const plus = (
+    <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+      <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+
+  if (compact) {
+    // The small-cell form: one select per dimension, lanes as numbered badges and an icon pin. Nothing is cut.
+    return (
+      <div ref={fitRef} className="lab-block-fill lab-breakdown lab-breakdown--compact" data-lab-breakdown="" data-compact="true">
+        {notes}
+        <div className="lab-breakdown-compact-row">
+          {axes.map((axis) => (
+            <span key={axis.key} className="lab-breakdown-select" data-lab-breakdown-dim={axis.key} data-active={sel[axis.key] !== undefined ? 'true' : undefined}>
+              <select
+                aria-label={axis.label}
+                data-lab-breakdown-select={axis.key}
+                value={sel[axis.key] ?? ''}
+                onChange={(e) => {
+                  const next: Selection = { ...sel };
+                  if (e.target.value === '') delete next[axis.key];
+                  else next[axis.key] = e.target.value;
+                  onSelection?.(next);
+                }}
+              >
+                <option value="">{t('lab.blocks.breakdown.anyValue').replace('{dim}', axis.label)}</option>
+                {axis.chips.map((chip) => (
+                  <option
+                    key={chip.value}
+                    value={chip.value}
+                    disabled={!chip.enabled}
+                    title={chip.enabled ? undefined : reasonText(chip.reason)}
+                    data-lab-breakdown-option={chip.value}
+                  >
+                    {!chip.enabled
+                      ? t('lab.blocks.breakdown.optionUnmeasured').replace('{value}', chip.value)
+                      : counts && chip.users !== null ? `${chip.value} · ${users(chip.users)}` : chip.value}
+                  </option>
+                ))}
+              </select>
+            </span>
+          ))}
+          {showLanes && (
+            <span className="lab-breakdown-lane-list" data-lab-breakdown-lanes={pinned.length}>
+              {laneBadges}
+              <button
+                type="button"
+                className="lab-breakdown-pin lab-breakdown-pin--icon"
+                data-lab-lane-pin=""
+                data-blocked={blocked ?? undefined}
+                disabled={blocked !== null}
+                aria-label={pinText}
+                title={pinText}
+                onClick={pin}
+              >
+                {plus}
+              </button>
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="lab-block-fill lab-breakdown" data-lab-breakdown="" data-counts={counts ? 'true' : undefined}>
+    <div ref={fitRef} className="lab-block-fill lab-breakdown" data-lab-breakdown="" data-counts={counts ? 'true' : undefined}>
       {notes}
       <div className="lab-breakdown-axes">
         <div className="lab-breakdown-all-row">
@@ -193,37 +363,17 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
         <div className="lab-breakdown-lanes" data-lab-breakdown-lanes={pinned.length}>
           <span className="lab-breakdown-dim-label">{t('lab.blocks.breakdown.lanes')}</span>
           <div className="lab-breakdown-lane-list">
-            {pinned.map((lane, i) => (
-              <span key={selectionKey(lane) || `all-${i}`} className="lab-breakdown-lane" data-lab-lane={i + 1}>
-                <span className="lab-breakdown-lane-num" data-lane={i + 1} aria-hidden="true">{i + 1}</span>
-                <span className="lab-breakdown-lane-label">{labelOf(lane)}</span>
-                <button
-                  type="button"
-                  className="lab-breakdown-lane-remove"
-                  data-lab-lane-remove={i + 1}
-                  aria-label={t('lab.blocks.breakdown.removeLane').replace('{n}', String(i + 1))}
-                  onClick={() => onLanes?.(pinned.filter((_, j) => j !== i))}
-                >
-                  <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
-                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                </button>
-              </span>
-            ))}
+            {laneBadges}
             <button
               type="button"
               className="lab-breakdown-pin"
               data-lab-lane-pin=""
               data-blocked={blocked ?? undefined}
               disabled={blocked !== null}
-              onClick={() => {
-                if (blocked === null) onLanes?.([...pinned, current.selection]);
-              }}
+              onClick={pin}
             >
-              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
-                <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              <span>{t('lab.blocks.breakdown.pin').replace('{sel}', `'${labelOf(current.selection)}'`)}</span>
+              {plus}
+              <span>{pinText}</span>
             </button>
             {pinned.length >= 2 && (
               <button type="button" className="lab-breakdown-clear" data-lab-lanes-clear="" onClick={() => onLanes?.([])}>

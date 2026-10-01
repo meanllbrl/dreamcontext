@@ -1,147 +1,137 @@
 /*
- * The board `benchmark` block (BenchmarkBlock.tsx): one row per metric, floor /
- * now / target on one ruler. Tokens only: no literal colours, sizes, weights or
- * durations.
+ * The board `benchmark` block (BenchmarkBlock.tsx): one strip per metric,
+ * floor / now / target on one ruler. Tokens only: no literal colours, sizes,
+ * weights or durations.
  *
- * Tone follows the tinted-surface pattern: a status pill and the band's zones
+ * Every row is built on a 16px line so the fit (BENCH_PX) can plan it: the
+ * figures line, the ruler band, the bound labels under it and the sources line
+ * are each one line; a row adds 3px padding top and bottom and a hairline.
+ *
+ * Tone follows the tinted-surface pattern: the status pill and the band's zones
  * are the status hue colour-mixed into a theme surface, text stays
- * --color-text, so light and dark read alike. The trend word is TEXT and takes
- * the -ink tokens; its arrow carries the sign, the colour carries goodness
- * (better: lower flips the colour, never the arrow).
+ * --color-text. The status pill says where NOW sits against the band; the
+ * trend word says which way it moved since the previous window. Two different
+ * questions, so the pill carries a word, never a bare coloured dot.
  *
- * The block fills its cell and never scrolls: BenchmarkFit picks full rows,
- * one-line compact rows, or as many compact rows as fit plus a "+N more" line.
+ * The block fills its cell and never scrolls; narrower blocks drop secondary
+ * text first (the previous value, then the trend word), never the figure.
  */
 
 .lab-bench {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  container: bench / inline-size;
   color: var(--color-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-normal);
+  line-height: var(--space-4);
 }
 
 .lab-bench-rows {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
   min-height: 0;
+  border-top: 1px solid var(--color-border);
 }
 
 .lab-bench-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    'label status'
-    'figures figures'
-    'ruler ruler'
-    'sources sources';
+    'label figures status'
+    'ruler ruler ruler'
+    'sources sources sources';
   align-items: center;
-  column-gap: var(--space-2);
-  row-gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
+  column-gap: var(--space-3);
+  padding: calc(var(--space-1) - 1px) var(--space-1);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .lab-bench-label {
   grid-area: label;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   font-weight: var(--font-weight-semibold);
-}
-
-/* ── status pill ────────────────────────────────────────────────────── */
-
-.lab-bench-status {
-  grid-area: status;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  justify-self: end;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
-  line-height: var(--line-height-normal);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.lab-bench-status-dot {
-  flex: none;
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-text-tertiary);
-}
-
-.lab-bench-status[data-tone='below'] {
-  background: color-mix(in srgb, var(--color-error) 14%, var(--color-bg-tertiary));
-  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));
-}
-
-.lab-bench-status[data-tone='between'] {
-  background: color-mix(in srgb, var(--color-warning) 14%, var(--color-bg-tertiary));
-  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
-}
-
-.lab-bench-status[data-tone='above'] {
-  background: color-mix(in srgb, var(--color-success) 14%, var(--color-bg-tertiary));
-  border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
-}
-
-.lab-bench-status[data-tone='below'] .lab-bench-status-dot { background: var(--color-error); }
-.lab-bench-status[data-tone='between'] .lab-bench-status-dot { background: var(--color-warning); }
-.lab-bench-status[data-tone='above'] .lab-bench-status-dot { background: var(--color-success); }
-
-.lab-bench-status[data-tone='no-band'] {
-  color: var(--color-text-secondary);
-}
-
-/* ── figures ────────────────────────────────────────────────────────── */
+/* ── figures: now, the signed change, the previous value, the trend ─── */
 
 .lab-bench-figures {
   grid-area: figures;
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
   column-gap: var(--space-2);
   min-width: 0;
+  white-space: nowrap;
 }
 
 .lab-bench-value {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .lab-bench-delta {
   display: inline-flex;
-  flex-wrap: wrap;
   align-items: baseline;
   column-gap: var(--space-2);
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
+.lab-bench-delta-text {
+  color: var(--color-text);
+}
+
 .lab-bench-trend {
-  white-space: nowrap;
   color: var(--color-text-secondary);
 }
 
 .lab-bench-trend[data-trend='improving'] { color: var(--color-success-ink); }
 .lab-bench-trend[data-trend='worsening'] { color: var(--color-error-ink); }
+
+/* ── status pill: where now sits against the band, in words ─────────── */
+
+.lab-bench-status {
+  grid-area: status;
+  justify-self: end;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  line-height: calc(var(--space-4) - 2px);
+  white-space: nowrap;
+}
+
+.lab-bench-status[data-tone='below'] {
+  background: color-mix(in srgb, var(--color-error) 12%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));
+}
+
+.lab-bench-status[data-tone='between'] {
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+}
+
+.lab-bench-status[data-tone='above'] {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+}
+
+.lab-bench-status[data-tone='no-band'] {
+  color: var(--color-text-secondary);
+}
 
 /* ── ruler ──────────────────────────────────────────────────────────── */
 
@@ -149,9 +139,17 @@
   grid-area: ruler;
   position: relative;
   min-width: 0;
-  height: calc(var(--space-8) + var(--space-1));
+  height: var(--space-4);
   border-radius: var(--radius-sm);
   outline: none;
+}
+
+.lab-bench-ruler[data-labels] {
+  height: var(--space-8);
+}
+
+.lab-bench[data-mode='full'] .lab-bench-ruler {
+  margin-top: var(--space-1);
 }
 
 .lab-bench-ruler:focus-visible {
@@ -160,10 +158,10 @@
 
 .lab-bench-track {
   position: absolute;
-  top: var(--space-2);
+  top: calc(var(--space-1) + 1px);
   right: 0;
   left: 0;
-  height: var(--space-2);
+  height: calc(var(--space-1) + 2px);
   overflow: hidden;
   border-radius: var(--radius-full);
   background: var(--color-bg-tertiary);
@@ -175,9 +173,9 @@
   bottom: 0;
 }
 
-.lab-bench-zone[data-tone='below'] { background: color-mix(in srgb, var(--color-error) 30%, var(--color-bg-tertiary)); }
-.lab-bench-zone[data-tone='between'] { background: color-mix(in srgb, var(--color-warning) 30%, var(--color-bg-tertiary)); }
-.lab-bench-zone[data-tone='above'] { background: color-mix(in srgb, var(--color-success) 30%, var(--color-bg-tertiary)); }
+.lab-bench-zone[data-tone='below'] { background: color-mix(in srgb, var(--color-error) 32%, var(--color-bg-tertiary)); }
+.lab-bench-zone[data-tone='between'] { background: color-mix(in srgb, var(--color-warning) 32%, var(--color-bg-tertiary)); }
+.lab-bench-zone[data-tone='above'] { background: color-mix(in srgb, var(--color-success) 32%, var(--color-bg-tertiary)); }
 
 /* Every marker is centred on its scale position: `left` is the x, the translate centres it. */
 .lab-bench-mark {
@@ -186,23 +184,35 @@
 }
 
 .lab-bench-bound {
-  top: var(--space-1);
+  top: 1px;
   width: 2px;
-  height: var(--space-4);
+  height: calc(var(--space-3) + 2px);
   border-radius: var(--radius-full);
   background: var(--color-text-secondary);
 }
 
+/* The target carries a small flag, so floor and target read apart without their labels. */
+.lab-bench-bound--target::before,
+.lab-bench-key-mark--target::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: calc(var(--space-1) + 1px);
+  height: var(--space-1);
+  background: inherit;
+}
+
 .lab-bench-link {
   position: absolute;
-  top: calc(var(--space-3) - 1px);
+  top: calc(var(--space-2) - 1px);
   height: 2px;
   background: var(--color-text-tertiary);
   opacity: 0.6;
 }
 
-.lab-bench-prev {
-  top: calc(var(--space-2) - 1px);
+.lab-bench-prev,
+.lab-bench-key-mark--prev {
   box-sizing: border-box;
   width: calc(var(--space-2) + 2px);
   height: calc(var(--space-2) + 2px);
@@ -211,8 +221,12 @@
   background: var(--color-bg-secondary);
 }
 
-.lab-bench-current {
-  top: calc(var(--space-1) + 1px);
+.lab-bench-prev {
+  top: 3px;
+}
+
+.lab-bench-current,
+.lab-bench-key-mark--current {
   box-sizing: border-box;
   width: var(--space-3);
   height: var(--space-3);
@@ -222,26 +236,71 @@
   box-shadow: 0 0 0 1px var(--color-text);
 }
 
+.lab-bench-current {
+  top: 2px;
+}
+
 .lab-bench-bound-label {
   position: absolute;
-  top: calc(var(--space-5) + 1px);
+  top: var(--space-4);
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
-  line-height: var(--line-height-heading-sm);
   white-space: nowrap;
 }
 
 .lab-bench-sources {
   grid-area: sources;
   min-width: 0;
+  overflow: hidden;
   color: var(--color-text-secondary);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lab-bench-unmeasured {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-text-secondary);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── legend ─────────────────────────────────────────────────────────── */
+
+.lab-bench-legend {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  height: var(--space-4);
+  overflow: hidden;
+  color: var(--color-text-secondary);
+}
+
+.lab-bench-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.lab-bench-key-mark {
+  position: relative;
+  flex: none;
+}
+
+.lab-bench-key-mark--floor,
+.lab-bench-key-mark--target {
+  width: 2px;
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-text-secondary);
+}
+
+.lab-bench-key-mark--target {
+  margin-right: var(--space-1);
 }
 
 /* ── notes ──────────────────────────────────────────────────────────── */
@@ -250,35 +309,39 @@
 .lab-bench-more {
   flex: none;
   color: var(--color-text-secondary);
-  line-height: var(--line-height-normal);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
-/* ── compact: one line per metric ───────────────────────────────────── */
-
-.lab-bench[data-mode='compact'] .lab-bench-rows {
-  gap: var(--space-2);
-}
+/* ── compact: one line per metric, the ruler inline ─────────────────── */
 
 .lab-bench[data-mode='compact'] .lab-bench-row {
-  grid-template-columns: minmax(0, 1fr) auto minmax(var(--space-16), 1.4fr) auto;
-  grid-template-areas: 'label figures ruler status';
-  padding: calc(var(--space-1) / 2) var(--space-2);
+  grid-template-columns: minmax(var(--space-16), max-content) auto minmax(var(--space-16), 1fr) auto;
+  column-gap: var(--space-2);
+  grid-template-areas:
+    'label figures ruler status'
+    'sources sources sources sources';
+  align-items: start;
 }
 
-.lab-bench[data-mode='compact'] .lab-bench-ruler {
-  height: var(--space-6);
+/* ── narrow: secondary text goes first, the figure and the status stay ─ */
+
+/* One-line rows share their line with the ruler: the trend word yields first (its arrow stays). */
+@container bench (max-width: 720px) {
+  .lab-bench[data-mode='compact'] .lab-bench-trend-word { display: none; }
 }
 
-.lab-bench[data-mode='compact'] .lab-bench-delta-text,
-.lab-bench[data-mode='compact'] .lab-bench-status-word {
-  display: none;
+@container bench (max-width: 560px) {
+  .lab-bench-prev-value { display: none; }
 }
 
-.lab-bench[data-mode='compact'] .lab-bench-status {
-  padding: var(--space-1);
+@container bench (max-width: 440px) {
+  .lab-bench-trend-word { display: none; }
 }
 
-.lab-bench[data-mode='compact'] .lab-bench-unmeasured {
-  grid-column: 2 / -1;
+@container bench (max-width: 400px) {
+  .lab-bench[data-mode='compact'] .lab-bench-status { display: none; }
+}
+
+@container bench (max-width: 300px) {
+  .lab-bench-status { display: none; }
 }

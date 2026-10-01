@@ -126,6 +126,29 @@ describe('funnelSlice (lookup never sums)', () => {
     expect(s.steps.map((x) => x.key)).toEqual(['visit', 'lead']);
   });
 
+  it('band inheritance is per metric: a path banding some metrics inherits the set band for the rest', () => {
+    const f = lookupFrame();
+    // TikTok Ads bands lead_rate itself, not cost_per_lead.
+    f.funnels[0].segments![1].metrics!.cost_per_lead = metric(14, 11, { format: 'usd' });
+    const s = funnelSlice(f, null, { platform: 'TikTok Ads' });
+    expect(s.bandsInherited).toBe(false);
+    expect(s.inheritedBands).toEqual(['cost_per_lead']);
+    expect(s.bands.cost_per_lead).toEqual(f.bands!.cost_per_lead);
+    const rows = benchmarkRows(s, ['lead_rate', 'cost_per_lead']);
+    expect(rows[0]).toMatchObject({ key: 'lead_rate', floor: 20, target: 28, inherited: false, status: 'between' });
+    // Not 'no-band': the set band applies (lower is better, 14 > floor 12), marked inherited on this row only.
+    expect(rows[1]).toMatchObject({ key: 'cost_per_lead', floor: 12, target: 6, floorSource: 'book', better: 'lower', inherited: true, status: 'below', trend: 'worsening' });
+    // segments tone the inherited metric by the set band as well.
+    const seg = segmentRows(f, null, 'platform', {}, ['cost_per_lead']).find((r) => r.value === 'TikTok Ads')!;
+    expect(seg.cells.cost_per_lead.tone).toBe('below');
+    // A path with no bands of its own inherits them all; the funnel level inherits none.
+    expect(funnelSlice(f, null, { platform: 'Meta Ads' })).toMatchObject({ bandsInherited: true, inheritedBands: ['lead_rate', 'cost_per_lead'] });
+    expect(funnelSlice(f, null, {}).inheritedBands).toEqual([]);
+    // A slice built without the per-metric list keeps the slice-level answer.
+    const legacy = { ...funnelSlice(f, null, { platform: 'Meta Ads' }), inheritedBands: undefined };
+    expect(benchmarkRows(legacy, ['lead_rate'])[0].inherited).toBe(true);
+  });
+
   it('unmeasured or absent combos are not zero: measured false, reason, no steps', () => {
     const un = funnelSlice(lookupFrame(), 'quiz', { platform: 'TikTok Ads', language: 'ES' });
     expect(un).toMatchObject({ measured: false, reason: 'fewer than 300 users in the window', steps: [], metrics: {}, daily: [] });
@@ -311,6 +334,75 @@ describe('projectFunnelFrame', () => {
     expect(f.funnels[0].daily).toHaveLength(2);
     expect(f.bands).toBeDefined();
     expect(f.funnels[0].segments![0].metrics).toBeDefined();
+  });
+});
+
+describe('projectFunnelFrame: each block type gets only what it reads', () => {
+  it('one-funnel blocks keep the shown funnel in full and the rest as id, name, steps', () => {
+    const f = lookupFrame();
+    for (const type of ['breakdown', 'trend', 'benchmark', 'segments']) {
+      const p = projectFunnelFrame(f, type, {});
+      expect(p.funnels.map((x) => x.id), type).toEqual(['quiz', 'activation']);
+      expect(p.funnels[1], type).toEqual({ id: 'activation', name: 'Activation ladder', steps: f.funnels[1].steps });
+      expect(p.funnels[0].segments!.length, type).toBeGreaterThan(0);
+    }
+    // An unknown pick falls back to the first, like funnelSlice.
+    expect(projectFunnelFrame(f, 'benchmark', { funnel: 'nope' }).funnels[0].metrics).toBeDefined();
+    // The funnel block draws every funnel when nothing is picked: all stay whole.
+    expect(projectFunnelFrame(f, 'funnel', {}).funnels[1]).toEqual(f.funnels[1]);
+  });
+
+  it('trend: metrics without bands, days trimmed to its metrics pick, null entries dropped where the level names the metric', () => {
+    const f = lookupFrame();
+    f.funnels[0].segments![0].metrics!.cost_per_lead = metric(9, 8, { format: 'usd' });
+    f.funnels[0].segments![0].daily = [{ t: '2026-09-01', m: { lead_rate: 49, cost_per_lead: null } }];
+    const all = projectFunnelFrame(f, 'trend', {});
+    expect(all.bands).toBeUndefined();
+    expect(all.funnels[0].segments!.some((s) => s.bands)).toBe(false);
+    // cost_per_lead is null on day 1 and the funnel names it: the entry goes, the metric stays known.
+    expect(all.funnels[0].daily![0]).toEqual({ t: '2026-09-01', m: { lead_rate: 38 } });
+    expect(all.funnels[0].segments![0].daily).toEqual([{ t: '2026-09-01', m: { lead_rate: 49 } }]);
+    for (const sel of [{}, { platform: 'Meta Ads' }]) {
+      expect(dailySeries(funnelSlice(all, null, sel), null)).toEqual(dailySeries(funnelSlice(f, null, sel), null));
+    }
+    const picked = projectFunnelFrame(f, 'trend', { metrics: ['cost_per_lead'] });
+    expect(picked.funnels[0].daily!.map((d) => Object.keys(d.m))).toEqual([[], ['cost_per_lead']]);
+    expect(Object.keys(picked.funnels[0].segments![0].metrics!)).toEqual(['cost_per_lead']);
+    // The funnel level keeps every metric (the inspector lists them from the frame).
+    expect(Object.keys(picked.funnels[0].metrics!)).toEqual(['lead_rate', 'cost_per_lead']);
+    expect(dailySeries(funnelSlice(picked, null, {}), ['cost_per_lead'])).toEqual(dailySeries(funnelSlice(f, null, {}), ['cost_per_lead']));
+  });
+
+  it('trend: a comma-separated metrics string picks each metric (as the blocks and the CLI read it)', () => {
+    const f = lookupFrame();
+    f.funnels[0].segments![0].metrics!.cost_per_lead = metric(9, 8, { format: 'usd' });
+    f.funnels[0].segments![0].daily = [{ t: '2026-09-01', m: { lead_rate: 49, cost_per_lead: 7 } }];
+    const keys = ['lead_rate', 'cost_per_lead'];
+    const fromString = projectFunnelFrame(f, 'trend', { metrics: ' lead_rate , cost_per_lead,' });
+    // The same projection as the list form, never "one key named 'lead_rate,cost_per_lead'".
+    expect(fromString).toEqual(projectFunnelFrame(f, 'trend', { metrics: keys }));
+    expect(Object.keys(fromString.funnels[0].segments![0].metrics!)).toEqual(keys);
+    for (const sel of [{}, { platform: 'Meta Ads' }]) {
+      const series = dailySeries(funnelSlice(fromString, null, sel), keys);
+      expect(series).toEqual(dailySeries(funnelSlice(f, null, sel), keys));
+      expect(series.series.every((s) => s.points.length > 0)).toBe(true);
+    }
+    // A blank string is no pick: every metric's days stay.
+    expect(projectFunnelFrame(f, 'trend', { metrics: ' , ' })).toEqual(projectFunnelFrame(f, 'trend', {}));
+  });
+
+  it('segments keeps only the paths naming its by dim (the option, else the first dim)', () => {
+    const f = lookupFrame();
+    const byLang = projectFunnelFrame(f, 'segments', { by: 'language' });
+    expect(byLang.funnels[0].segments!.every((s) => s.dims.language !== undefined)).toBe(true);
+    expect(byLang.funnels[0].segments).toHaveLength(3);
+    const byDefault = projectFunnelFrame(f, 'segments', { by: 'nope' });
+    expect(byDefault.funnels[0].segments!.every((s) => s.dims.platform !== undefined)).toBe(true);
+    for (const sel of [{}, { platform: 'Meta Ads' }, { platform: 'TikTok Ads' }, { language: 'EN' }]) {
+      expect(segmentRows(byLang, null, 'language', sel, null)).toEqual(segmentRows(f, null, 'language', sel, null));
+      expect(segmentRows(byDefault, null, 'platform', sel, null)).toEqual(segmentRows(f, null, 'platform', sel, null));
+    }
+    expect(byLang.bands).toEqual(f.bands);
   });
 });
 

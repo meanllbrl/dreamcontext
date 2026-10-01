@@ -228,6 +228,86 @@ describe('segments: sort, limit, density, metrics', () => {
   });
 });
 
+describe('segments: readable table (no mid-word breaks, sideways scroll, light tints)', () => {
+  const CSS = readFileSync(join(__dirname, '../../dashboard/src/components/lab/blocks/segments.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (sel: string) => {
+    const i = CSS.indexOf(`${sel} {`);
+    expect(i, sel).toBeGreaterThan(-1);
+    return CSS.slice(i, CSS.indexOf('}', i));
+  };
+
+  it('never breaks inside a word: every cell stays on one line, nothing asks for anywhere-wrapping', () => {
+    expect(CSS).not.toContain('overflow-wrap: anywhere');
+    expect(CSS).not.toContain('word-break');
+    expect(rule('.lab-seg-table th,\n.lab-seg-table td')).toContain('white-space: nowrap');
+  });
+
+  it('the table takes the width its content needs and scrolls sideways under a sticky value column', () => {
+    expect(rule('.lab-seg-table')).toMatch(/width: max-content;\s*min-width: 100%/);
+    expect(rule('.lab-seg-table .lab-seg-value,\n.lab-seg-table thead th:first-child')).toMatch(/position: sticky;\s*left: 0/);
+    // The stuck column paints the card surface, so scrolled cells pass under it, not through it.
+    expect(rule('.lab-seg-table .lab-seg-value')).toContain('background: var(--color-bg-secondary)');
+  });
+
+  it('a long value ellipsizes only past a cap, with its full text in the title', () => {
+    const f = frame();
+    f.dimensions![0].values = ['United Kingdom of Acme and the Northern Isles', 'Meta Ads'];
+    const html = render({ by: 'platform' }, {}, f);
+    expect(html).toContain('title="United Kingdom of Acme and the Northern Isles"');
+    expect(rule('.lab-seg-table .lab-seg-value')).toContain('text-overflow: ellipsis');
+    expect(rule('.lab-seg-table .lab-seg-value')).toMatch(/max-width: var\(--space-/);
+  });
+
+  it('every figure cell writes value and change on one line (no flex-wrap)', () => {
+    expect(rule('.lab-seg-figure')).not.toContain('flex-wrap');
+  });
+
+  // Tints: the tone mixed a little into the card surface; body text on it must read >= 4.5:1 in light AND dark.
+  const tokens = readFileSync(join(__dirname, '../../dashboard/src/styles/tokens.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const darkAt = tokens.indexOf("[data-theme='dark']");
+  const decls = (text: string) => Object.fromEntries([...text.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const light = decls(tokens.slice(0, darkAt));
+  const dark = { ...light, ...decls(tokens.slice(darkAt)) };
+  const resolve = (map: Record<string, string>, v: string): string => {
+    const m = /^var\((--[\w-]+)\)$/.exec(v.trim());
+    return m ? resolve(map, map[m[1]]) : v.trim();
+  };
+  const rgb = (c: string): [number, number, number] => {
+    let m = /^#([0-9a-f]{6})$/i.exec(c);
+    if (m) return [0, 2, 4].map((i) => parseInt(m![1].slice(i, i + 2), 16)) as [number, number, number];
+    m = /^hsl\(([\d.]+)\s+([\d.]+)%\s+([\d.]+)%\)$/i.exec(c);
+    if (m) {
+      const [h, sat, l] = [Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100];
+      const k = (n: number) => (n + h / 30) % 12;
+      const a = sat * Math.min(l, 1 - l);
+      const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+      return [f(0), f(8), f(4)].map((x) => Math.round(x * 255)) as [number, number, number];
+    }
+    throw new Error(`colour not parsed: ${c}`);
+  };
+  const lum = ([r, g, b]: number[]) => {
+    const ch = (x: number) => { const s = x / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+  };
+  const contrast = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+
+  for (const [tone, token] of [['below', '--color-error'], ['between', '--color-warning'], ['above', '--color-success']] as const) {
+    it(`the ${tone} tint is light and keeps body text >= 4.5:1 in both themes`, () => {
+      const r = rule(`.lab-seg-table[data-bands] td[data-tone='${tone}']`);
+      const m = new RegExp(`background: color-mix\\(in srgb, var\\(${token}\\) (\\d+)%, var\\(--color-bg-secondary\\)\\)`).exec(r);
+      expect(m, r).not.toBeNull();
+      const pct = Number(m![1]) / 100;
+      expect(pct).toBeLessThanOrEqual(0.12);
+      for (const map of [light, dark]) {
+        const hue = rgb(resolve(map, map[token]));
+        const surface = rgb(resolve(map, map['--color-bg-secondary']));
+        const tint = hue.map((c, i) => c * pct + surface[i] * (1 - pct));
+        expect(contrast(rgb(resolve(map, map['--color-text'])), tint)).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  }
+});
+
 describe('segments.css speaks only in tokens', () => {
   it('no literal colours, sizes off the 12/14 ladder, weights off 400/600 or literal durations', () => {
     const css = readFileSync(join(__dirname, '../../dashboard/src/components/lab/blocks/segments.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

@@ -14,6 +14,7 @@ import {
   type BoardResponse,
 } from '../../lib/lab/boards.js';
 import { resolveBoardFrames } from '../../lib/lab/frames.js';
+import { shareFrames } from '../../lib/lab/frameOps.js';
 import {
   getLibraryBlock,
   listLibraryBlocks,
@@ -33,6 +34,7 @@ import { toSummary, withoutHistoryTrails } from './lab.js';
  *   GET    /api/lab/boards              every board (derived, materialized, error boards) + unplaced
  *   POST   /api/lab/boards              { title, slug? } -> a new empty board
  *   GET    /api/lab/boards/:slug        BoardResponse: spec + frames + summaries + unplaced
+ *                                       (identical funnel frames once + `frameAliases`, see shareFrames)
  *   PUT    /api/lab/boards/:slug        { rev, spec } -> strict-validated, rev-checked write
  *   DELETE /api/lab/boards/:slug[?rev=] delete (materializes the others first when derived)
  *   GET    /api/lab/caches?slugs=a,b    summaries + caches (no history trails), <= 60 slugs
@@ -95,12 +97,20 @@ function boardSummaries(contextRoot: string, board: Pick<Board, 'cards'>): Board
   return out;
 }
 
-/** The whole board response for one board (what GET and a successful PUT return). */
-export function buildBoardResponse(contextRoot: string, board: Board): BoardResponse {
+/** A board response as it travels: identical funnel frames sent once (see `shareFrames`). */
+export type BoardWireResponse = BoardResponse & {
+  /** frame key -> the key holding its identical copy; the client restores it with `expandFrames`. */
+  frameAliases?: Record<string, string>;
+};
+
+/** The whole board response for one board (what GET, a successful PUT and a create return). */
+export function buildBoardResponse(contextRoot: string, board: Board): BoardWireResponse {
   const { boards, derived } = listBoards(contextRoot);
+  const { frames, aliases } = shareFrames(resolveBoardFrames(contextRoot, board));
   return {
     board,
-    frames: resolveBoardFrames(contextRoot, board),
+    frames,
+    ...(Object.keys(aliases).length > 0 ? { frameAliases: aliases } : {}),
     summaries: boardSummaries(contextRoot, board),
     unplaced: derived ? [] : unplacedInsights(contextRoot, boards),
   };

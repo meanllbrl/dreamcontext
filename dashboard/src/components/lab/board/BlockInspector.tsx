@@ -10,7 +10,7 @@ import {
   addBlock, addTab, canRemoveBlock, cardProblems, changeType, datasetKeys, effectiveBlocks, entryOf, enumLabelKey,
   escapeHtml, fieldsFor, formatListField, formatSortField, formatWhereField, getBlock, inlineToRef, inputRows,
   inputsRecord, moveBlock, movedPath, moveTab, newBlock, parseBinding, parseListField, parseNumberField,
-  parseSortField, parseWhereField, pathKey, pickChoices, pickRows, refBlock, refToInline, removeBlock, removeTab, renameTab, setBinding,
+  parseSortField, parseWhereField, pathKey, pickChoices, pickRows, pickValues, refBlock, refToInline, removeBlock, removeTab, renameTab, setBinding,
   setInputs, setOption, togglePick, typeChoices, updateBlock, type EditorProblem, type FieldSpec,
 } from './editorModel';
 import { SaveToLibraryDialog } from './SaveToLibraryDialog';
@@ -622,7 +622,7 @@ function PickField({
   const empty = choices.length === 0;
 
   if (spec.control === 'pick-list') {
-    const picked = new Set(Array.isArray(value) ? value : []);
+    const picked = new Set(pickValues(value));
     return (
       <>
         <div role="group" aria-label={t(spec.labelKey)} data-lab-field={key} data-lab-pick={schema.from} aria-disabled={empty || undefined}>
@@ -651,7 +651,8 @@ function PickField({
         data-lab-field={key}
         data-lab-pick={schema.from}
         value={current}
-        disabled={empty}
+        // A stale saved name keeps the select live, so it can always go back to Automatic.
+        disabled={empty && current === ''}
         onChange={(e) => onSet(e.target.value || undefined)}
       >
         <option value="">{t('lab.editor.pick.auto')}</option>

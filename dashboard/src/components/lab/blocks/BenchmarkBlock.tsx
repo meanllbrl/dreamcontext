@@ -86,27 +86,67 @@ export function rulerZones(row: BenchmarkRow, scale: LinearScale): { tone: Tone;
   return out;
 }
 
-/** Natural row heights (px, benchmark.css) the fit plans with. */
-const FULL_ROW_PX = 102;
-const SOURCE_LINE_PX = 18;
-const COMPACT_ROW_PX = 30;
-const ROW_GAP_PX = 8;
-const NOTE_PX = 20;
+/**
+ * Natural heights (px, benchmark.css) the fit plans with. Rows are one-line
+ * strips split by hairlines: padding + border, a 16px text line, the ruler
+ * (16px track band, plus 16px for the bound labels under it when details are
+ * shown) and a 16px sources line.
+ */
+export const BENCH_PX = { pad: 7, line: 16, gap: 4, legend: 20, note: 20 } as const;
+/** Below this width a one-line row leaves the ruler too short: the ruler takes its own line. */
+export const BENCH_NARROW_PX = 380;
+
+export interface BenchmarkFit {
+  /** full = the ruler on its own line under the figures; compact = one line with the ruler inline. */
+  mode: 'full' | 'compact';
+  /** Bound labels ("Floor 20%") under the ruler. */
+  labels: boolean;
+  /** The sources line under each row. */
+  sources: boolean;
+  /** The floor / target / now / previous key above the rows. */
+  legend: boolean;
+  count: number;
+}
+
+type FitTier = Omit<BenchmarkFit, 'count'>;
+
+/** The px one row takes in a mode, with its bound labels and (when any row has one) its sources line. */
+export function benchRowPx(mode: 'full' | 'compact', labels: boolean, sources: boolean): number {
+  const { pad, line, gap } = BENCH_PX;
+  const ruler = line + (labels ? line : 0);
+  const body = mode === 'full' ? line + gap + ruler : Math.max(line, ruler);
+  return pad + body + (sources ? line : 0);
+}
+
+const tier = (mode: 'full' | 'compact', labels: boolean, sources: boolean, legend: boolean): FitTier => ({ mode, labels, sources, legend });
 
 /**
- * What the block draws in a cell `height` px tall (0 = not measured yet: full
- * rows): full rows when they all fit, else one-line compact rows, else as many
- * compact rows as fit plus a "+N more" line. The block never scrolls.
+ * What the block draws in a cell `height` x `width` px (0 = not measured yet:
+ * everything). The first tier whose rows all fit wins: full rows with labels,
+ * sources and the legend; one-line rows keeping labels and sources; then
+ * labels only; then neither; then no legend; then as many one-line rows as fit
+ * plus a "+N more" line. A narrow block keeps the ruler on its own line while
+ * that fits. `sources` = any row has a source to print. It never scrolls.
  */
-export function benchmarkFit(rowCount: number, height: number, notes: number, sources: boolean): { mode: 'full' | 'compact'; count: number } {
-  if (!(height > 0) || rowCount === 0) return { mode: 'full', count: rowCount };
-  const avail = height - notes * NOTE_PX;
-  const need = (row: number, n: number) => n * row + Math.max(0, n - 1) * ROW_GAP_PX;
-  if (need(FULL_ROW_PX + (sources ? SOURCE_LINE_PX : 0), rowCount) <= avail) return { mode: 'full', count: rowCount };
-  if (need(COMPACT_ROW_PX, rowCount) <= avail) return { mode: 'compact', count: rowCount };
+export function benchmarkFit(rowCount: number, height: number, noteLines: number, sources: boolean, width = 0): BenchmarkFit {
+  if (!(height > 0) || rowCount === 0) return { ...tier('full', true, sources, true), count: rowCount };
+  const avail = height - noteLines * BENCH_PX.note;
+  const need = (t: FitTier, n: number) => n * benchRowPx(t.mode, t.labels, t.sources) + (t.legend ? BENCH_PX.legend : 0);
+  const narrow = width > 0 && width < BENCH_NARROW_PX;
+  const tiers: FitTier[] = narrow
+    ? [tier('full', true, sources, true), tier('full', true, false, true), tier('full', false, false, true), tier('full', false, false, false), tier('compact', false, false, false)]
+    : [tier('full', true, sources, true), tier('compact', true, sources, true), tier('compact', true, false, true), tier('compact', false, false, true), tier('compact', false, false, false)];
+  for (const t of tiers) if (need(t, rowCount) <= avail) return { ...t, count: rowCount };
+  const last = tier('compact', false, false, false);
   let count = rowCount;
-  while (count > 1 && need(COMPACT_ROW_PX, count) + ROW_GAP_PX + NOTE_PX > avail) count--;
-  return { mode: 'compact', count };
+  while (count > 1 && need(last, count) + BENCH_PX.note > avail) count--;
+  return { ...last, count };
+}
+
+/** Lines a note takes at `width` px (about 6.5px a character at the 12px size); 1 before the block is measured. */
+export function noteLines(text: string, width: number): number {
+  if (!(width > 0)) return 1;
+  return Math.max(1, Math.ceil((text.length * 6.5) / width));
 }
 
 /** A measured cells-mode selection: its steps are a sum of cells, so it carries no rates by design. */
@@ -157,7 +197,9 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
   }
   const inherited = rows.some((r) => r.inherited);
   const anySource = sources && rows.some((r) => r.floorSource || r.targetSource);
-  const fit = benchmarkFit(rows.length, box.height, notes.length + (inherited ? 1 : 0), anySource);
+  const inheritedText = t('lab.blocks.benchmark.inherited');
+  const lines = notes.reduce((n, x) => n + noteLines(x.text, box.width), 0) + (inherited ? noteLines(inheritedText, box.width) : 0);
+  const fit = benchmarkFit(rows.length, box.height, lines, anySource, box.width);
   const shown = rows.slice(0, Math.max(1, fit.count));
   const more = rows.length - shown.length;
 
@@ -180,25 +222,56 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
     );
   }
 
+  const anyRuler = shown.some((r) => r.current !== null);
   return (
-    <div ref={measure} className="lab-bench" data-lab-benchmark="" data-mode={fit.mode} data-measured={slice.measured ? 'true' : 'false'}>
+    <div
+      ref={measure}
+      className="lab-bench"
+      data-lab-benchmark=""
+      data-mode={fit.mode}
+      data-labels={fit.labels ? '' : undefined}
+      data-sources={fit.sources ? '' : undefined}
+      data-measured={slice.measured ? 'true' : 'false'}
+    >
       {notes.map((n) => <div key={n.key} className="lab-bench-note" {...{ [n.attr]: '' }}>{n.text}</div>)}
+      {fit.legend && anyRuler && <BenchLegend t={t} comparePrev={comparePrev} />}
       <ul className="lab-bench-rows">
         {shown.map((row) => (
-          <BenchRowView key={row.key} row={row} mode={fit.mode} comparePrev={comparePrev} sources={sources} t={t} locale={locale} />
+          <BenchRowView key={row.key} row={row} labels={fit.labels} showSources={fit.sources} comparePrev={comparePrev} sources={sources} t={t} locale={locale} />
         ))}
       </ul>
       {more > 0 && <div className="lab-bench-more">{t('lab.blocks.benchmark.more').replace('{n}', String(more))}</div>}
-      {inherited && <div className="lab-bench-note lab-bench-inherited" data-lab-bench-inherited="">{t('lab.blocks.benchmark.inherited')}</div>}
+      {inherited && <div className="lab-bench-note lab-bench-inherited" data-lab-bench-inherited="">{inheritedText}</div>}
+    </div>
+  );
+}
+
+/** The ruler's key: the same marks the ruler draws, each named. */
+function BenchLegend({ t, comparePrev }: { t: Translate; comparePrev: boolean }) {
+  const items: { key: string; label: string }[] = [
+    { key: 'floor', label: t('lab.blocks.benchmark.floor') },
+    { key: 'target', label: t('lab.blocks.benchmark.target') },
+    { key: 'current', label: t('lab.blocks.benchmark.current') },
+    ...(comparePrev ? [{ key: 'prev', label: t('lab.blocks.benchmark.prev') }] : []),
+  ];
+  return (
+    <div className="lab-bench-legend" data-lab-bench-legend="">
+      {items.map((it) => (
+        <span key={it.key} className="lab-bench-key" data-key={it.key}>
+          <span className={`lab-bench-key-mark lab-bench-key-mark--${it.key}`} aria-hidden="true" />
+          {it.label}
+        </span>
+      ))}
     </div>
   );
 }
 
 const TREND_GLYPH = { up: '▲', down: '▼', flat: '▬' } as const;
 
-function BenchRowView({ row, mode, comparePrev, sources, t, locale }: {
+function BenchRowView({ row, labels, showSources, comparePrev, sources, t, locale }: {
   row: BenchmarkRow;
-  mode: 'full' | 'compact';
+  labels: boolean;
+  showSources: boolean;
   comparePrev: boolean;
   sources: boolean;
   t: Translate;
@@ -215,6 +288,7 @@ function BenchRowView({ row, mode, comparePrev, sources, t, locale }: {
   ].filter((s): s is string => s !== null);
   const showDelta = comparePrev && row.delta !== null && row.trend !== null;
   const glyph = row.delta === null ? null : row.delta > 0 ? TREND_GLYPH.up : row.delta < 0 ? TREND_GLYPH.down : TREND_GLYPH.flat;
+  const signed = showDelta ? formatMetric(row.delta as number, row.format, locale, true) : '';
 
   return (
     <li
@@ -224,30 +298,32 @@ function BenchRowView({ row, mode, comparePrev, sources, t, locale }: {
       data-trend={showDelta ? row.trend ?? undefined : undefined}
       data-better={row.better}
     >
-      <span className="lab-bench-label">{row.label}</span>
+      <span className="lab-bench-label" title={row.label}>{row.label}</span>
       {measured ? (
         <>
-          {statusWord && (
-            <span className="lab-bench-status" data-tone={row.status} data-lab-bench-status="" title={mode === 'compact' ? statusWord : undefined}>
-              <span className="lab-bench-status-dot" aria-hidden="true" />
-              <span className="lab-bench-status-word">{statusWord}</span>
-            </span>
-          )}
           <span className="lab-bench-figures">
             <span className="lab-bench-value" data-lab-bench-value="">{fmt(row.current as number)}</span>
             {showDelta && (
-              <span className="lab-bench-delta" data-lab-bench-delta="">
-                <span className="lab-bench-delta-text">
-                  {t('lab.blocks.benchmark.delta').replace('{delta}', formatMetric(row.delta as number, row.format, locale, true))}
-                </span>
+              <span className="lab-bench-delta" data-lab-bench-delta="" title={t('lab.blocks.benchmark.delta').replace('{delta}', signed)}>
+                <span className="lab-bench-delta-text">{signed}</span>
+                {row.prev !== null && (
+                  <span className="lab-bench-prev-value" data-lab-bench-prev-value="">
+                    {t('lab.blocks.benchmark.prev')} {fmt(row.prev)}
+                  </span>
+                )}
                 <span className="lab-bench-trend" data-trend={row.trend ?? undefined}>
-                  <span aria-hidden="true">{glyph}</span> {t(`lab.blocks.benchmark.${row.trend}`)}
+                  <span aria-hidden="true">{glyph}</span> <span className="lab-bench-trend-word">{t(`lab.blocks.benchmark.${row.trend}`)}</span>
                 </span>
               </span>
             )}
           </span>
-          <BenchRuler row={row} comparePrev={comparePrev} compact={mode === 'compact'} fmt={fmt} t={t} />
-          {sources && mode === 'full' && sourceParts.length > 0 && (
+          {statusWord && (
+            <span className="lab-bench-status" data-tone={row.status} data-lab-bench-status="">
+              <span className="lab-bench-status-word">{statusWord}</span>
+            </span>
+          )}
+          <BenchRuler row={row} comparePrev={comparePrev} labels={labels} fmt={fmt} t={t} />
+          {sources && showSources && sourceParts.length > 0 && (
             <span className="lab-bench-sources" data-lab-bench-source="">{sourceParts.join(' · ')}</span>
           )}
         </>
@@ -258,24 +334,36 @@ function BenchRowView({ row, mode, comparePrev, sources, t, locale }: {
   );
 }
 
-/** A bound's value label beside its tick: pushed apart from the other bound, kept inside the ruler. */
-function boundLabels(xs: { key: 'floor' | 'target'; x: number; text: string }[], width: number, measure: Measure): Record<string, { left: number }> {
-  const out: Record<string, { left: number }> = {};
-  const sorted = [...xs].sort((a, b) => a.x - b.x);
-  sorted.forEach((b, i) => {
-    const w = measure(b.text);
-    // Two bounds: the left one's label ends at its tick, the right one's starts at it.
-    let left = sorted.length === 2 ? (i === 0 ? b.x - w - 3 : b.x + 3) : b.x - w / 2;
-    left = Math.max(0, Math.min(width - w, left));
-    out[b.key] = { left };
-  });
-  return out;
+/**
+ * The bound labels under the ruler ("Floor 20%", "Target 30%"), each at its
+ * tick: with two bounds the left label ends at its tick and the right one
+ * starts at it, so they never overlap; all kept inside the ruler. When the
+ * worded labels do not fit side by side they fall back to the bare numbers,
+ * and to nothing when even those do not (the tooltip still names them).
+ */
+export function boundLabels(
+  bounds: readonly { key: 'floor' | 'target'; x: number; word: string; value: string }[],
+  width: number,
+  measure: Measure,
+): { key: 'floor' | 'target'; left: number; text: string }[] {
+  const sorted = [...bounds].sort((a, b) => a.x - b.x);
+  const place = (texts: string[]) => {
+    const out = sorted.map((b, i) => {
+      const w = measure(texts[i]);
+      let left = sorted.length === 2 ? (i === 0 ? b.x - w - 4 : b.x + 4) : b.x - w / 2;
+      left = Math.max(0, Math.min(width - w, left));
+      return { key: b.key, left, right: left + w, text: texts[i] };
+    });
+    const clash = out.length === 2 && out[0].right + 6 > out[1].left;
+    return clash || out.some((o) => o.right - o.left > width) ? null : out.map(({ key, left, text }) => ({ key, left, text }));
+  };
+  return place(sorted.map((b) => `${b.word} ${b.value}`)) ?? place(sorted.map((b) => b.value)) ?? [];
 }
 
-function BenchRuler({ row, comparePrev, compact, fmt, t }: {
+function BenchRuler({ row, comparePrev, labels, fmt, t }: {
   row: BenchmarkRow;
   comparePrev: boolean;
-  compact: boolean;
+  labels: boolean;
   fmt: (v: number) => string;
   t: Translate;
 }) {
@@ -285,16 +373,17 @@ function BenchRuler({ row, comparePrev, compact, fmt, t }: {
   const zones = scale ? rulerZones(row, scale) : [];
   const x = (v: number | null) => (scale && v !== null ? scale(v) : null);
   const xs = { floor: x(row.floor), target: x(row.target), current: x(row.current), prev: comparePrev ? x(row.prev) : null };
+  const words = { floor: t('lab.blocks.benchmark.floor'), target: t('lab.blocks.benchmark.target') };
   const bounds = ([['floor', row.floor], ['target', row.target]] as const)
     .filter(([key, v]) => v !== null && xs[key] !== null)
-    .map(([key, v]) => ({ key, x: xs[key] as number, text: fmt(v as number) }));
-  const labels = !compact && scale ? boundLabels(bounds, size.width, size.measure) : {};
+    .map(([key, v]) => ({ key, x: xs[key] as number, word: words[key], value: fmt(v as number) }));
+  const placed = labels && scale ? boundLabels(bounds, size.width, size.measure) : [];
 
   const rows: TooltipRow[] = [
     { id: 'current', label: t('lab.blocks.benchmark.current'), value: fmt(row.current as number) },
     ...(comparePrev && row.prev !== null ? [{ id: 'prev', label: t('lab.blocks.benchmark.prev'), value: fmt(row.prev) }] : []),
-    ...(row.floor !== null ? [{ id: 'floor', label: row.floorSource ? `${t('lab.blocks.benchmark.floor')} (${row.floorSource})` : t('lab.blocks.benchmark.floor'), value: fmt(row.floor) }] : []),
-    ...(row.target !== null ? [{ id: 'target', label: row.targetSource ? `${t('lab.blocks.benchmark.target')} (${row.targetSource})` : t('lab.blocks.benchmark.target'), value: fmt(row.target) }] : []),
+    ...(row.floor !== null ? [{ id: 'floor', label: row.floorSource ? `${words.floor} (${row.floorSource})` : words.floor, value: fmt(row.floor) }] : []),
+    ...(row.target !== null ? [{ id: 'target', label: row.targetSource ? `${words.target} (${row.targetSource})` : words.target, value: fmt(row.target) }] : []),
   ];
   const show = (e: PointerEvent<HTMLDivElement> | FocusEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -306,6 +395,7 @@ function BenchRuler({ row, comparePrev, compact, fmt, t }: {
       ref={size.ref}
       className="lab-bench-ruler"
       data-lab-bench-ruler=""
+      data-labels={labels ? '' : undefined}
       tabIndex={0}
       aria-label={rows.map((r) => `${r.label} ${r.value}`).join(', ')}
       onPointerEnter={show}
@@ -320,8 +410,8 @@ function BenchRuler({ row, comparePrev, compact, fmt, t }: {
       </div>
       {scale && (
         <>
-          {xs.floor !== null && <span className="lab-bench-mark lab-bench-bound" data-lab-bench-floor="" data-x={xs.floor.toFixed(2)} style={{ left: `${xs.floor}px` }} aria-hidden="true" />}
-          {xs.target !== null && <span className="lab-bench-mark lab-bench-bound" data-lab-bench-target="" data-x={xs.target.toFixed(2)} style={{ left: `${xs.target}px` }} aria-hidden="true" />}
+          {xs.floor !== null && <span className="lab-bench-mark lab-bench-bound lab-bench-bound--floor" data-lab-bench-floor="" data-x={xs.floor.toFixed(2)} style={{ left: `${xs.floor}px` }} aria-hidden="true" />}
+          {xs.target !== null && <span className="lab-bench-mark lab-bench-bound lab-bench-bound--target" data-lab-bench-target="" data-x={xs.target.toFixed(2)} style={{ left: `${xs.target}px` }} aria-hidden="true" />}
           {xs.prev !== null && xs.current !== null && (
             <span
               className="lab-bench-link"
@@ -331,8 +421,8 @@ function BenchRuler({ row, comparePrev, compact, fmt, t }: {
           )}
           {xs.prev !== null && <span className="lab-bench-mark lab-bench-prev" data-lab-bench-prev="" data-x={xs.prev.toFixed(2)} style={{ left: `${xs.prev}px` }} aria-hidden="true" />}
           {xs.current !== null && <span className="lab-bench-mark lab-bench-current" data-lab-bench-current="" data-x={xs.current.toFixed(2)} style={{ left: `${xs.current}px` }} aria-hidden="true" />}
-          {bounds.map((b) => labels[b.key] && (
-            <span key={b.key} className="lab-bench-bound-label" data-bound={b.key} style={{ left: `${labels[b.key].left}px` }} aria-hidden="true">{b.text}</span>
+          {placed.map((b) => (
+            <span key={b.key} className="lab-bench-bound-label" data-bound={b.key} data-lab-bench-bound-label={b.key} style={{ left: `${b.left}px` }} aria-hidden="true">{b.text}</span>
           ))}
         </>
       )}

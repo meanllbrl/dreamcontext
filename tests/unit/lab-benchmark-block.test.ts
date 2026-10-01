@@ -61,7 +61,14 @@ vi.mock('../../dashboard/src/components/lab/chart/useChartSize.js', async (orig)
   };
 });
 
-const { BenchmarkBlock, benchmarkFit, formatMetric, rulerScale, rulerZones, toneOf } = await import(
+/** The block's measured box (the static render has none): 0 = not measured, the options alone decide. */
+const BOX = { width: 0, height: 0 };
+vi.mock('../../dashboard/src/components/lab/chartBody.js', async (orig) => {
+  const real = (await orig()) as Record<string, unknown>;
+  return { ...real, useMeasured: () => [() => {}, { ...BOX }] };
+});
+
+const { BenchmarkBlock, benchmarkFit, benchRowPx, boundLabels, formatMetric, noteLines, rulerScale, rulerZones, toneOf, BENCH_PX } = await import(
   '../../dashboard/src/components/lab/blocks/BenchmarkBlock.js'
 );
 
@@ -188,10 +195,89 @@ describe('benchmark: one row per metric on one ruler', () => {
   });
 });
 
+describe('benchmark: the ruler explains itself', () => {
+  it('a legend names every mark: floor, target, now and previous (previous only when compared)', () => {
+    const html = render();
+    const legend = html.slice(html.indexOf('data-lab-bench-legend'), html.indexOf('<ul'));
+    for (const word of ['Floor', 'Target', 'Now', 'Previous']) expect(legend).toContain(`</span>${word}</span>`);
+    expect(legend).toContain('lab-bench-key-mark--current');
+    expect(render({ comparePrev: false })).not.toContain('lab-bench-key-mark--prev');
+  });
+
+  it('floor and target carry their numbers under the ruler, at their ticks', () => {
+    const lead = row(render(), 'lead_rate');
+    expect(lead).toContain('data-lab-bench-bound-label="floor"');
+    expect(lead).toContain('>Floor 30%</span>');
+    expect(lead).toContain('>Target 45%</span>');
+  });
+
+  it('bound labels never overlap: the left one ends at its tick, the right one starts at it; too close = numbers only; no room = none', () => {
+    const measure = (s: string) => s.length * 7;
+    const two = boundLabels([
+      { key: 'floor', x: 100, word: 'Floor', value: '30%' },
+      { key: 'target', x: 200, word: 'Target', value: '45%' },
+    ], 300, measure);
+    expect(two.map((b) => b.text)).toEqual(['Floor 30%', 'Target 45%']);
+    expect(two[0].left + measure(two[0].text)).toBeLessThanOrEqual(100);
+    expect(two[1].left).toBeGreaterThanOrEqual(200);
+    const close = boundLabels([
+      { key: 'floor', x: 140, word: 'Floor', value: '30%' },
+      { key: 'target', x: 160, word: 'Target', value: '45%' },
+    ], 200, measure);
+    expect(close.map((b) => b.text)).toEqual(['30%', '45%']);
+    expect(boundLabels([
+      { key: 'floor', x: 10, word: 'Floor', value: '30%' },
+      { key: 'target', x: 20, word: 'Target', value: '45%' },
+    ], 30, measure)).toEqual([]);
+  });
+
+  it('the previous window is a number too, next to the signed change', () => {
+    const lead = row(render(), 'lead_rate');
+    expect(lead).toMatch(/class="lab-bench-delta-text">\+5%<\/span>/);
+    expect(lead).toContain('Previous 35%');
+    expect(lead).toContain('title="+5% vs previous window"');
+  });
+
+  it('the status is a word in a tinted pill, never a bare coloured dot', () => {
+    const html = render();
+    expect(html).not.toContain('lab-bench-status-dot');
+    expect(row(html, 'lead_rate')).toMatch(/data-lab-bench-status=""><span class="lab-bench-status-word">Between floor and target</);
+  });
+
+  it('a mid-height cell draws one-line rows but keeps bound labels and sources', () => {
+    Object.assign(BOX, { width: 800, height: 3 * benchRowPx('compact', true, true) + BENCH_PX.legend + BENCH_PX.note });
+    try {
+      const html = render();
+      expect(html).toContain('data-mode="compact"');
+      expect(html).toContain('data-labels=""');
+      expect(html).toContain('data-sources=""');
+      expect(html).toContain('data-lab-bench-source');
+      expect(html).toContain('data-lab-bench-bound-label');
+      expect(html).toContain('data-lab-bench-legend');
+    } finally {
+      Object.assign(BOX, { width: 0, height: 0 });
+    }
+  });
+
+  it('a short cell keeps every metric as a one-line row before any "+N more"', () => {
+    Object.assign(BOX, { width: 800, height: 3 * benchRowPx('compact', false, false) });
+    try {
+      const html = render();
+      expect(html).toContain('data-mode="compact"');
+      expect(html).not.toContain('data-labels');
+      expect(html).not.toContain('data-lab-bench-bound-label');
+      expect([...html.matchAll(/data-lab-bench-row=/g)]).toHaveLength(3);
+      expect(html).not.toContain('lab-bench-more');
+    } finally {
+      Object.assign(BOX, { width: 0, height: 0 });
+    }
+  });
+});
+
 describe('benchmark: change, status word, sources', () => {
   it('prints the delta vs the previous window and the status and trend words', () => {
     const lead = row(render(), 'lead_rate');
-    expect(lead).toContain('+5% vs previous window');
+    expect(lead).toContain('title="+5% vs previous window"');
     expect(lead).toContain('data-status="between"');
     expect(lead).toContain('Between floor and target');
     expect(lead).toContain('Improving');
@@ -200,7 +286,7 @@ describe('benchmark: change, status word, sources', () => {
 
   it('better: lower flips it: a falling cost is improving, a rising one above the floor is worsening and below', () => {
     const down = row(render(), 'cost_per_lead');
-    expect(down).toContain('−$2.00 vs previous window');
+    expect(down).toContain('title="−$2.00 vs previous window"');
     expect(down).toContain('Improving');
     const up = row(render({}, { platform: 'Meta Ads' }), 'cost_per_lead');
     expect(up).toContain('data-status="below"');
@@ -301,14 +387,41 @@ describe('benchmark: options and notes', () => {
 });
 
 describe('benchmark: fits its cell without scrolling', () => {
-  it('full rows when they fit, compact rows when not, then as many compact rows as fit', () => {
-    expect(benchmarkFit(3, 0, 0, true)).toEqual({ mode: 'full', count: 3 });
-    expect(benchmarkFit(3, 600, 0, true)).toEqual({ mode: 'full', count: 3 });
-    expect(benchmarkFit(3, 200, 0, true)).toEqual({ mode: 'compact', count: 3 });
-    const tight = benchmarkFit(8, 120, 0, true);
-    expect(tight.mode).toBe('compact');
+  it('tiers: full rows with details and legend, then one-line rows keeping labels and sources, then no details, no legend, then +N more', () => {
+    const W = 800;
+    expect(benchmarkFit(5, 0, 0, true)).toEqual({ mode: 'full', labels: true, sources: true, legend: true, count: 5 });
+    expect(benchmarkFit(5, 400, 0, true, W)).toEqual({ mode: 'full', labels: true, sources: true, legend: true, count: 5 });
+    expect(benchmarkFit(5, 300, 0, true, W)).toEqual({ mode: 'compact', labels: true, sources: true, legend: true, count: 5 });
+    // The 12x12 preset tab (about 230px): one-line rows keep the bound labels, the sources yield.
+    expect(benchmarkFit(5, 230, 0, true, W)).toEqual({ mode: 'compact', labels: true, sources: false, legend: true, count: 5 });
+    expect(benchmarkFit(5, 140, 0, true, W)).toEqual({ mode: 'compact', labels: false, sources: false, legend: true, count: 5 });
+    expect(benchmarkFit(5, 120, 0, true, W)).toEqual({ mode: 'compact', labels: false, sources: false, legend: false, count: 5 });
+    const tight = benchmarkFit(5, 80, 0, true, W);
+    expect(tight).toMatchObject({ mode: 'compact', labels: false, sources: false, legend: false });
     expect(tight.count).toBeGreaterThanOrEqual(1);
-    expect(tight.count).toBeLessThan(8);
+    expect(tight.count).toBeLessThan(5);
+  });
+
+  it('5 metrics fit a 6x6 benchmark card: one-line rows are 23px, so 5 need 115px', () => {
+    expect(benchRowPx('compact', true, false)).toBe(39);
+    expect(benchRowPx('compact', false, false)).toBe(23);
+    expect(5 * benchRowPx('compact', false, false)).toBeLessThanOrEqual(120);
+    // Details cost one line for the bound labels and one for the sources.
+    expect(benchRowPx('compact', true, true)).toBe(23 + 2 * BENCH_PX.line);
+    expect(benchRowPx('compact', true, false)).toBe(23 + BENCH_PX.line);
+    expect(benchRowPx('full', true, true)).toBeGreaterThan(benchRowPx('compact', true, true));
+  });
+
+  it('a narrow block keeps the ruler on its own line while that fits', () => {
+    expect(benchmarkFit(5, 320, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: false, legend: true, count: 5 });
+    expect(benchmarkFit(5, 400, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: true });
+    expect(benchmarkFit(5, 240, 0, true, 300)).toMatchObject({ mode: 'full', labels: false, sources: false, legend: true });
+  });
+
+  it('notes cost their wrapped lines', () => {
+    expect(noteLines('x'.repeat(100), 0)).toBe(1);
+    expect(noteLines('x'.repeat(100), 325)).toBe(2);
+    expect(benchmarkFit(5, 140, 1, true, 800).legend).toBe(false);
   });
 
   it('formats every metric format', () => {

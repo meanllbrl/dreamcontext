@@ -723,7 +723,8 @@ function presetProblem(opts: { insight?: string; block?: string; preset?: string
 
 /**
  * `add-card --preset funnel-explorer`: the insight's funnel frame decides the
- * segments tabs (its client dimensions), so an unsynced insight is refused.
+ * segments tabs (its client dimensions), so an unsynced insight is refused,
+ * and a synced one without a funnel set is told it has no funnel data.
  * The blocks come from presets.ts, the same function the dashboard's add-card
  * entry calls, so both produce the same card.
  */
@@ -735,6 +736,10 @@ async function addPresetCard(
   opts: { at?: string; id?: string },
 ): Promise<Board> {
   const frame = resolveFrame(root, insight, ['funnel']);
+  if (frame.kind === 'empty' && frame.reason === 'kind-mismatch') {
+    // Synced, but its cache carries no funnel set: syncing again would not help.
+    throw new LabError(`${insight} has no funnel data: the preset needs a funnel-set (funnel member).`);
+  }
   if (frame.kind !== 'funnel') {
     throw new LabError(`sync ${insight} first: the preset needs its funnel dimensions (\`dreamcontext lab sync ${insight}\`).`);
   }

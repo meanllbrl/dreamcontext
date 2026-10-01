@@ -32,9 +32,20 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   I18nProvider: ({ children }: { children: unknown }) => children,
 }));
 
+/** The measured box every block and layout sees (the static render has none): 0 = not measured. */
+const BOX = { width: 0, height: 0 };
+vi.mock('../../dashboard/src/components/lab/chartBody.js', async (orig) => {
+  const real = (await orig()) as Record<string, unknown>;
+  return { ...real, useMeasured: () => [() => {}, { ...BOX }] };
+});
+function inBox<T>(width: number, height: number, fn: () => T): T {
+  Object.assign(BOX, { width, height });
+  try { return fn(); } finally { Object.assign(BOX, { width: 0, height: 0 }); }
+}
+
 const { FunnelBlock, explorerView } = await import('../../dashboard/src/components/lab/blocks/FunnelBlock.js');
-const { stageWidthPct, dropBadgeText } = await import('../../dashboard/src/components/lab/funnel/FunnelFlow.js');
-const { laneModel } = await import('../../dashboard/src/components/lab/funnel/FunnelLanes.js');
+const { stageWidthPct, dropBadgeText, flowMode, flowTight, FLOW_PX } = await import('../../dashboard/src/components/lab/funnel/FunnelFlow.js');
+const { laneModel, lanesDense, laneTextWidths, LANE_PX } = await import('../../dashboard/src/components/lab/funnel/FunnelLanes.js');
 const model = await import('../../dashboard/src/components/lab/funnel/funnelModel.js');
 
 const LOW = 'fewer than 300 users in the window';
@@ -259,6 +270,106 @@ describe('Lanes', () => {
     const html = render(lookupFrame(), {}, { lanes: five });
     expect(html).toContain('data-lab-lanes="4"');
     expect(html).toContain('>All traffic</span>');
+  });
+});
+
+describe('Flow at small sizes (fix round): labels and users never vanish', () => {
+  it('flowMode: full when every stage and link row fits, else one line per step', () => {
+    expect(flowMode(4, 0)).toBe('full');
+    expect(flowMode(4, 4 * FLOW_PX.stage + 3 * FLOW_PX.link)).toBe('full');
+    expect(flowMode(7, 100)).toBe('compact');
+    expect(flowMode(4, 4 * FLOW_PX.stage + 3 * FLOW_PX.link - 1)).toBe('compact');
+  });
+
+  it('a 3x3 cell draws the compact flow: every stage keeps its label, users and shape, the drop badge inline', () => {
+    const html = inBox(240, 90, () => render(lookupFrame(), { layout: 'flow', markWorst: true }));
+    expect(html).toContain('data-flow-mode="compact"');
+    expect(count(html, 'data-lab-flow-stage=')).toBe(4);
+    for (const s of STEPS) {
+      expect(html).toMatch(new RegExp(`data-lab-flow-stage="${s.key}"[^>]*><span class="funnel-flow-label">${s.label}</span>`));
+      expect(html).toContain(`width:${(s.users / 1000) * 100}%`);
+    }
+    for (const users of ['1,000', '400', '200', '100']) expect(html).toMatch(new RegExp(`class="funnel-flow-value">${users}`));
+    expect(count(html, 'data-lab-drop=')).toBe(3);
+    expect(count(html, 'funnel-flow-link--inline')).toBe(4);
+    expect(count(html, 'data-lab-worst=')).toBe(1);
+    // Rows have a readable floor: no row may collapse to 0px.
+    expect(html).toContain(`grid-template-rows:${Array(4).fill(`minmax(${FLOW_PX.line}px, 1fr)`).join(' ')}`);
+    expect(html).not.toContain('minmax(0, 1fr)');
+  });
+
+  it('a cell too short even for 16px lines tightens to 12px lines, never to 0', () => {
+    expect(flowTight(7, 0)).toBe(false);
+    expect(flowTight(7, 7 * FLOW_PX.line)).toBe(false);
+    expect(flowTight(7, 84)).toBe(true);
+    const html = inBox(240, 50, () => render(lookupFrame(), { layout: 'flow' }));
+    expect(html).toContain('data-flow-tight=""');
+    expect(html).toContain(`grid-template-rows:${Array(4).fill(`minmax(${FLOW_PX.tight}px, 1fr)`).join(' ')}`);
+    expect(count(html, 'class="funnel-flow-label"')).toBe(4);
+  });
+
+  it('the full flow keeps a readable floor on its stage rows too', () => {
+    const html = render(lookupFrame(), { layout: 'flow' });
+    expect(html).toContain('data-flow-mode="full"');
+    expect(html).not.toContain('minmax(0, 1fr)');
+  });
+});
+
+describe('Lanes at the 8x7 Steps card (fix round): rows never collapse', () => {
+  const LANES = [{ platform: 'Meta Ads' }, { platform: 'TikTok Ads', language: 'EN' }, { platform: 'Meta Ads', language: 'ES' }];
+
+  it('one row per step with a readable minimum height (no separate drop rows, no 0px rows)', () => {
+    const html = render(lookupFrame(), { markWorst: true }, { lanes: LANES });
+    expect(html).toContain(`grid-template-rows:auto ${Array(4).fill(`minmax(${LANE_PX.row}px, 1fr)`).join(' ')}"`);
+    expect(html).not.toContain('funnel-lanes-gap');
+  });
+
+  it('each cell carries its bar, "users · share", the share alone (for narrow lanes) and the drop into the step', () => {
+    const html = render(lookupFrame(), { markWorst: true }, { lanes: LANES });
+    const i = html.indexOf('title="Meta Ads · Lead: 300 · 50%"');
+    const cell = html.slice(i, html.indexOf('</span></span></span>', html.indexOf('data-lab-drop="lead" data-lane="1"')));
+    expect(cell).toContain('class="funnel-lanes-track"');
+    expect(cell).toContain('class="funnel-lanes-value">300<span class="funnel-lanes-pct"> · 50%</span>');
+    expect(cell).toContain('class="funnel-lanes-share" aria-hidden="true">50%');
+    expect(cell).toContain('data-lab-drop="lead" data-lane="1"');
+    expect(cell).toContain('▼ 50%');
+  });
+
+  it('a lane keeps one text width down its rows, so bars compare down the lane', () => {
+    const m = laneModel([{ slice: sliceOf({ platform: 'Meta Ads' }), label: 'Meta Ads' }], STEPS);
+    const w = laneTextWidths(m.lanes[0]);
+    expect(w.value).toBe('600 · 100%'.length);
+    expect(w.share).toBe('100%'.length);
+    const html = render(lookupFrame(), {}, { lanes: LANES });
+    // Every drawn cell of a lane carries the lane's one width (lane 1: 4 steps, lane 2: 3 of its own).
+    expect(count(html, 'data-lane="1" data-users=')).toBe(4);
+    expect(count(html, '--lane-value-w:10ch')).toBe(7);
+  });
+
+  it('a short block turns the lane heads to one line', () => {
+    expect(lanesDense(7, 0)).toBe(false);
+    expect(lanesDense(7, 400)).toBe(false);
+    expect(lanesDense(7, 150)).toBe(true);
+    expect(inBox(600, 120, () => render(lookupFrame(), {}, { lanes: LANES }))).toMatch(/class="funnel-lanes"[^>]*data-dense=""/);
+  });
+
+  it('a narrow one-line lane head keeps the name and lets the users go (they stay in the title)', () => {
+    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const q = css.slice(css.indexOf('@container lanehead'));
+    expect(q).toContain('.funnel-lanes[data-dense] .funnel-lanes-users { display: none; }');
+    expect(q.slice(0, q.indexOf('\n}'))).not.toContain('.funnel-lanes-name');
+    expect(render(lookupFrame(), {}, { lanes: LANES })).toContain('title="Lane 1: Meta Ads · 600"');
+  });
+
+  it('narrow lanes drop the users first, then the share; the bar and the drop stay', () => {
+    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const mid = css.slice(css.indexOf('@container lane (max-width: 190px)'), css.indexOf('@container lane (max-width: 120px)'));
+    const narrow = css.slice(css.indexOf('@container lane (max-width: 120px)'));
+    expect(mid).toContain('.funnel-lanes-value { display: none; }');
+    expect(mid).toContain('.funnel-lanes-share { display: inline; }');
+    expect(narrow).toContain('.funnel-lanes-text { display: none; }');
+    expect(narrow).not.toContain('.funnel-lanes-drop');
+    expect(narrow).not.toContain('.funnel-lanes-track');
   });
 });
 

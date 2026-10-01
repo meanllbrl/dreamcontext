@@ -8,6 +8,8 @@
  * direct call (with a tiny hook harness) shows what reaches the chart.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createElement, isValidElement, type ReactElement, type ReactNode } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import type { FunnelFrame, FunnelFrameMetric, SeriesFrame, TableFrame } from '../../dashboard/src/generated/frameOps.js';
@@ -23,6 +25,7 @@ const COPY: Record<string, string> = {
   'lab.blocks.explorer.unknownMetrics': 'Not in the data: {keys}',
   'lab.blocks.trend.noDaily': 'No daily values for this selection.',
   'lab.blocks.trend.metric': 'Metric',
+  'lab.blocks.breakdown.optionUnmeasured': '{value} (not measured)',
   'lab.blocks.trend.metricNotMeasured': '{metric} is not measured: {reason}',
 };
 
@@ -31,7 +34,7 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   I18nProvider: ({ children }: { children: unknown }) => children,
 }));
 
-/** Direct calls get a slot-backed useState (slot 0 = the switch's picked metric); renders keep React's. */
+/** Direct calls get a slot-backed useState (slot 0 = the picked metric, slot 1 = the compact switch) and no effects; renders keep React's. */
 const H: { on: boolean; slots: unknown[]; i: number; set: (i: number, v: unknown) => void } = {
   on: false, slots: [], i: 0, set: () => {},
 };
@@ -46,6 +49,8 @@ vi.mock('../../dashboard/node_modules/react/index.js', async (orig) => {
       return [v, (next: unknown) => H.set(k, next)];
     },
     useRef: <T,>(v: T) => (H.on ? { current: v } : real.useRef(v)),
+    useEffect: (...a: Parameters<typeof real.useEffect>) => (H.on ? undefined : real.useEffect(...a)),
+    useLayoutEffect: (...a: Parameters<typeof real.useLayoutEffect>) => (H.on ? undefined : real.useLayoutEffect(...a)),
   };
 });
 
@@ -281,5 +286,34 @@ describe('script strings render as text, never HTML', () => {
     const out = html({ frame: f, selection: { platform: 'TikTok Ads' } });
     expect(out).not.toContain('<script>');
     expect(out).toContain('&lt;script&gt;x()&lt;/script&gt;');
+  });
+});
+
+describe('W5: a narrow cell never truncates a metric name', () => {
+  it('the compact form is a select naming every metric in full, the active one chosen', () => {
+    const root = tree({}, [null, true]);
+    expect(findAll(root, (e) => e.props.role === 'radio')).toHaveLength(0);
+    const out = renderToStaticMarkup(root);
+    expect(out).toMatch(/<select[^>]*aria-label="Metric"[^>]*data-lab-trend-switch=""[^>]*data-compact="true"/);
+    expect(out).toContain('<option value="lead_rate" data-lab-trend-metric="lead_rate" selected="">Lead rate</option>');
+    expect(out).toContain('>Cost per lead<');
+    expect(out).toContain('>Checkout to purchase (not measured)<');
+  });
+
+  it('choosing in the select switches the metric', () => {
+    const set = vi.fn();
+    const select = findAll(tree({}, [null, true], set), (e) => e.props['data-compact'] === 'true')[0];
+    (select.props.onChange as (e: unknown) => void)({ target: { value: 'cost_per_lead' } });
+    expect(set).toHaveBeenCalledWith(0, 'cost_per_lead');
+    expect(seriesOf(tree({}, ['cost_per_lead', true]))?.[0].name).toBe('Cost per lead');
+  });
+
+  it('switch options never shrink or ellipsize, so a label that does not fit is an overflow the block measures', () => {
+    const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/blocks/breakdown.css'), 'utf8');
+    const rule = css.slice(css.indexOf('.lab-trend-switch-option {'), css.indexOf('}', css.indexOf('.lab-trend-switch-option {')));
+    expect(rule).toContain('flex: none;');
+    expect(rule).not.toContain('text-overflow');
+    const src = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/blocks/TrendBlock.tsx'), 'utf8');
+    expect(src).toMatch(/useCompactFit<HTMLDivElement>\(\s*'width'/);
   });
 });

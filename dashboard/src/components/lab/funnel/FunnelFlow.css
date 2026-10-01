@@ -90,12 +90,14 @@
 
 .funnel-flow {
   display: grid;
-  grid-template-columns: minmax(64px, 26%) minmax(0, 1fr) auto;
+  grid-template-columns: fit-content(34%) minmax(var(--space-6), 1fr) auto;
   column-gap: var(--space-3);
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  container: flow / inline-size;
+  line-height: var(--space-4);
 }
 
 .funnel-flow-stage,
@@ -237,4 +239,67 @@
 
 .funnel-flow[data-dense] .funnel-flow-shape {
   min-height: 0;
+}
+
+/* ── Compact flow: one line per step (a small cell) ─────────────────────
+   The label, the stage shape (still proportional to users), the users and
+   the drop into the step, all on one 16px line: labels and users never
+   vanish into a row squeezed to nothing. */
+
+.funnel-flow[data-flow-mode='compact'] {
+  grid-template-columns: fit-content(40%) minmax(var(--space-6), 1fr) auto auto;
+  column-gap: var(--space-2);
+}
+
+.funnel-flow[data-flow-mode='compact'] .funnel-flow-shape {
+  max-height: var(--space-3);
+  min-height: var(--space-1);
+}
+
+.funnel-flow-link--inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  grid-column: auto;
+  padding: 0;
+  background: none;
+}
+
+.funnel-flow-link--inline .funnel-flow-badge {
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.funnel-flow-link--inline .funnel-flow-worst {
+  display: none;
+}
+
+.funnel-flow-stage[data-worst] {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.funnel-flow[data-flow-mode='compact'] .funnel-flow-pct {
+  display: none;
+}
+
+/* A very short cell: 12px lines, the badge loses its outline so it fits the line. */
+.funnel-flow[data-flow-tight] {
+  line-height: var(--space-3);
+}
+
+.funnel-flow[data-flow-tight] .funnel-flow-shape {
+  max-height: var(--space-2);
+}
+
+.funnel-flow[data-flow-tight] .funnel-flow-badge {
+  border-color: transparent;
+  background: none;
+  line-height: var(--space-3);
+}
+
+@container flow (min-width: 420px) {
+  .funnel-flow[data-flow-mode='compact'] .funnel-flow-pct { display: inline; }
+  .funnel-flow-link--inline .funnel-flow-worst { display: inline; }
 }

@@ -172,9 +172,24 @@ export interface PickRow extends PickChoice {
   stale: boolean;
 }
 
+/**
+ * The names a saved pick holds: a list, or a string (a multi pick written as
+ * `a,b`, the form the blocks and the CLI also read, is split on commas).
+ */
+export function pickValues(current: unknown): string[] {
+  const raw = Array.isArray(current) ? current : typeof current === 'string' ? current.split(',') : [];
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== 'string') continue;
+    const s = v.trim();
+    if (s !== '' && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
 /** The control's rows: every choice, then each current value not among them, marked stale. */
 export function pickRows(choices: readonly PickChoice[], current: unknown): PickRow[] {
-  const values = (Array.isArray(current) ? current : [current]).filter((v): v is string => typeof v === 'string' && v !== '');
+  const values = pickValues(current);
   const known = new Set(choices.map((c) => c.value));
   const stale = [...new Set(values.filter((v) => !known.has(v)))];
   return [
@@ -185,7 +200,7 @@ export function pickRows(choices: readonly PickChoice[], current: unknown): Pick
 
 /** A checklist tick: `value` on or off, the list kept in the rows' order; empty = unset. */
 export function togglePick(rows: readonly PickRow[], current: unknown, value: string, on: boolean): string[] | undefined {
-  const picked = new Set(Array.isArray(current) ? current.filter((v): v is string => typeof v === 'string') : []);
+  const picked = new Set(pickValues(current));
   if (on) picked.add(value);
   else picked.delete(value);
   const out = rows.map((r) => r.value).filter((v) => picked.has(v));

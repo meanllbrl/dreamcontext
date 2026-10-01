@@ -29,6 +29,8 @@ const COPY: Record<string, string> = {
   'lab.blocks.breakdown.unmeasured': 'Not measured: {reason}',
   'lab.blocks.breakdown.noPath': 'No measured path for this combination.',
   'lab.blocks.breakdown.noDims': 'NO DIMS',
+  'lab.blocks.breakdown.anyValue': '{dim}: all',
+  'lab.blocks.breakdown.optionUnmeasured': '{value} (not measured)',
   'lab.blocks.explorer.unknownFunnel': 'Funnel {id} is not in the data. Showing {name}.',
   'lab.blocks.explorer.unknownMetrics': 'Not in the data: {keys}',
 };
@@ -38,19 +40,28 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   I18nProvider: ({ children }: { children: unknown }) => children,
 }));
 
-/** Direct calls (outside a React render) get stateless hooks; renders keep the real ones. */
-const H = { on: false };
+/**
+ * Direct calls (outside a React render) get slot-backed state (slot 0 = the chip tip, slot 1 =
+ * the compact form) and no effects; renders keep React's own hooks.
+ */
+const H: { on: boolean; slots: unknown[]; i: number } = { on: false, slots: [], i: 0 };
 vi.mock('../../dashboard/node_modules/react/index.js', async (orig) => {
   const real = (await orig()) as typeof import('react');
   return {
     ...real,
-    useState: <T,>(init: T) => (H.on ? [typeof init === 'function' ? (init as () => T)() : init, () => {}] : real.useState(init)),
+    useState: <T,>(init: T) => {
+      if (!H.on) return real.useState(init);
+      const k = H.i++;
+      return [k < H.slots.length ? H.slots[k] : typeof init === 'function' ? (init as () => T)() : init, () => {}];
+    },
     useId: () => (H.on ? 'uid' : real.useId()),
     useRef: <T,>(v: T) => (H.on ? { current: v } : real.useRef(v)),
+    useEffect: (...a: Parameters<typeof real.useEffect>) => (H.on ? undefined : real.useEffect(...a)),
+    useLayoutEffect: (...a: Parameters<typeof real.useLayoutEffect>) => (H.on ? undefined : real.useLayoutEffect(...a)),
   };
 });
 
-const { BreakdownBlock, selectionLabel, pickAxes, pinBlock, chipTipLeft, MAX_LANES } = await import(
+const { BreakdownBlock, selectionLabel, pickAxes, pinBlock, chipTipLeft, fitsAgain, overflows, MAX_LANES } = await import(
   '../../dashboard/src/components/lab/blocks/BreakdownBlock.js'
 );
 
@@ -101,9 +112,9 @@ function props(p: Props): BlockProps & { block: Block } {
 }
 const html = (p: Props) => renderToStaticMarkup(createElement(BreakdownBlock as never, props(p) as never) as ReactElement);
 
-/** The element tree a direct call returns (child components are not expanded). */
-function tree(p: Props): ReactElement {
-  H.on = true;
+/** The element tree a direct call returns (child components are not expanded); `compact` = the small-cell form. */
+function tree(p: Props, compact = false): ReactElement {
+  Object.assign(H, { on: true, i: 0, slots: [null, compact] });
   try {
     return (BreakdownBlock as (x: unknown) => ReactElement)(props(p));
   } finally {
@@ -306,5 +317,120 @@ describe('breakdown.css speaks only in tokens', () => {
       || (prop === 'font-weight' && !/^(400|600|inherit|var\(--font-weight-(normal|semibold)\))$/.test(value))
       || (/^(transition|animation)/.test(prop) && (value.match(/(?<![\w-])\d*\.?\d+m?s\b/g) ?? []).some((x) => parseFloat(x) !== 0)));
     expect(bad).toEqual([]);
+  });
+});
+
+describe('W5: the active chip reads >= 4.5:1 in both themes', () => {
+  const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/blocks/breakdown.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const tokens = readFileSync(join(import.meta.dirname, '../../dashboard/src/styles/tokens.css'), 'utf8');
+  const darkAt = tokens.indexOf("[data-theme='dark']");
+  const light = tokens.slice(0, darkAt);
+  const dark = tokens.slice(darkAt);
+  const raw = (part: string, name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(part)?.[1].trim() ?? null;
+  /** A token in a theme: its own value, else the light one; `var(--x)` resolved the same way. */
+  const tok = (part: string, name: string): string => {
+    const v = raw(part, name) ?? raw(light, name);
+    if (!v) throw new Error(`no ${name}`);
+    const ref = /^var\((--[a-z-]+)\)$/.exec(v);
+    return ref ? tok(part, ref[1]) : v;
+  };
+  const rgba = (v: string): [number, number, number, number] => {
+    const hex = /^#([0-9a-f]{6})$/i.exec(v);
+    if (hex) return [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16)).concat(1) as [number, number, number, number];
+    const m = /rgba?\(([^)]+)\)/.exec(v);
+    if (!m) throw new Error(`colour ${v}`);
+    const [r, g, b, a = '1'] = m[1].split(',').map((x) => x.trim());
+    return [Number(r), Number(g), Number(b), Number(a)];
+  };
+  const lum = ([r, g, b]: number[]) => {
+    const c = [r, g, b].map((x) => { const s = x / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const contrast = (part: string) => {
+    const [tr, tg, tb, ta] = rgba(tok(part, '--color-accent-soft'));
+    const base = rgba(tok(part, '--color-bg'));
+    const bg = [tr, tg, tb].map((x, i) => x * ta + base[i] * (1 - ta));
+    const [l1, l2] = [lum(rgba(tok(part, '--color-accent-ink'))), lum(bg)].sort((a, b) => b - a);
+    return (l1 + 0.05) / (l2 + 0.05);
+  };
+
+  it('the pressed chip (All traffic too) and a chosen compact select wear accent ink on the tint over the canvas', () => {
+    for (const sel of [".lab-breakdown-chip[aria-pressed='true'] {", ".lab-breakdown-select[data-active='true'] select {"]) {
+      const rule = css.slice(css.indexOf(sel), css.indexOf('}', css.indexOf(sel)));
+      expect(rule, sel).toContain('color: var(--color-accent-ink)');
+      expect(rule, sel).toContain('background: linear-gradient(var(--color-accent-soft), var(--color-accent-soft)), var(--color-bg)');
+      expect(rule, sel).not.toContain('--color-accent-text');
+    }
+  });
+
+  it('measured from the tokens: light and dark both clear AA', () => {
+    expect(contrast(light)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(dark)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe('W5: the breakdown takes its content height, the tabs take the rest', () => {
+  const board = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/board/board.css'), 'utf8');
+  it('breakdown joins the content-height blocks (text, filter) in a card and inside tabs', () => {
+    const m = /([^}]*\[data-lab-block='breakdown'\][^{]*)\{\s*flex: 0 1 auto;\s*\}/.exec(board);
+    expect(m).not.toBeNull();
+    expect(m![1]).toContain('.board-card-block:is(');
+    expect(m![1]).toContain('.board-block-child:is(');
+    // Every other block keeps the flexible share, so the tabs panel grows into the room.
+    expect(board).toMatch(/\.board-card-block,\s*\.board-block-child \{\s*flex: 1 1 0;/);
+  });
+});
+
+describe('W5: the small-cell form cuts nothing', () => {
+  const small = (p: Props) => renderToStaticMarkup(tree(p, true));
+
+  it('full chips by default; the compact form is one labelled select per dim, no chip rows', () => {
+    expect(html({})).not.toContain('data-compact');
+    const out = small({ options: { counts: true } });
+    expect(out).toContain('data-compact="true"');
+    expect(out).not.toContain('data-lab-breakdown-chip=');
+    expect(out.match(/data-lab-breakdown-select="/g)).toHaveLength(2);
+    expect(out).toContain('aria-label="Platform"');
+    expect(out).toMatch(/<option value=""[^>]*>Platform: all<\/option>/);
+    expect(out).toContain('Meta Ads · 600');
+  });
+
+  it('an unmeasured value is a disabled option saying so, with its reason, never a count', () => {
+    const out = small({ selection: { platform: 'TikTok Ads' }, options: { counts: true } });
+    const es = out.match(/<option[^>]*data-lab-breakdown-option="ES"[^>]*>[^<]*<\/option>/)?.[0] ?? '';
+    expect(es).toContain('disabled=""');
+    expect(es).toContain('title="Not measured: fewer than 300 users in the window"');
+    expect(es).toContain('>ES (not measured)<');
+    expect(out).toMatch(/data-active="true"[^>]*><select[^>]*data-lab-breakdown-select="platform"/);
+  });
+
+  it('a select sets its dim, and its "all" option clears only that dim', () => {
+    const onSelection = vi.fn();
+    const root = tree({ selection: { platform: 'Meta Ads' }, onSelection }, true);
+    const select = (dim: string) => findAll(root, (e) => e.props['data-lab-breakdown-select'] === dim)[0];
+    (select('language').props.onChange as (e: unknown) => void)({ target: { value: 'EN' } });
+    expect(onSelection).toHaveBeenLastCalledWith({ platform: 'Meta Ads', language: 'EN' });
+    (select('platform').props.onChange as (e: unknown) => void)({ target: { value: '' } });
+    expect(onSelection).toHaveBeenLastCalledWith({});
+  });
+
+  it('lanes stay usable: numbered badges and an icon pin named by its action', () => {
+    const onLanes = vi.fn();
+    const out = small({ selection: { platform: 'Meta Ads' }, lanes: [{ language: 'EN' }] });
+    expect(out).toContain('data-lab-lane="1"');
+    expect(out).toContain('aria-label="Pin &#x27;Meta Ads&#x27; as a lane"');
+    expect(out).not.toContain('data-lab-lanes-hint');
+    click(findAll(tree({ selection: { platform: 'Meta Ads' }, lanes: [], onLanes }, true), (e) => e.props['data-lab-lane-pin'] === '')[0]);
+    expect(onLanes).toHaveBeenLastCalledWith([{ platform: 'Meta Ads' }]);
+  });
+
+  it('the fit decision: compact when clipped, back only when the room it lacked returns or the width changes', () => {
+    expect(overflows(180, 104)).toBe(true);
+    expect(overflows(104.5, 104)).toBe(false);
+    const memo = { need: 180, room: 104, outer: 120, cross: 300 };
+    expect(fitsAgain(memo, 150, 300)).toBe(false);
+    expect(fitsAgain(memo, 196, 300)).toBe(true);
+    expect(fitsAgain(memo, 120, 640)).toBe(true);
   });
 });

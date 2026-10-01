@@ -1,13 +1,13 @@
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import {
-  dailySeries, funnelSlice,
+  dailySeries, funnelSlice, selectionKey,
   type FunnelFrame, type FunnelSlice, type SeriesFrame, type TableFrame, type TableRow,
 } from '../../../generated/frameOps';
 import { BarBlock } from './BarBlock';
 import { LineBlock } from './LineBlock';
 import { BlockEmpty, boolOption, drawableFrame, stringListOption, stringOption, type BlockViewProps } from './blockCommon';
-import { selectionLabel, unknownFunnelPick } from './BreakdownBlock';
+import { selectionLabel, unknownFunnelPick, useCompactFit } from './BreakdownBlock';
 import './breakdown.css';
 
 /**
@@ -85,7 +85,11 @@ function shortDay(key: string, locale: string): string {
 export function TrendBlock({ frame, options, selection, block }: BlockViewProps) {
   const { t, locale } = useI18n();
   const [picked, setPicked] = useState<string | null>(null);
-  const switchRef = useRef<HTMLDivElement>(null);
+  // The segmented switch until a label would not fit its width, then a select (a name is never truncated).
+  const [switchRef, compactSwitch] = useCompactFit<HTMLDivElement>(
+    'width',
+    `${JSON.stringify(options)}|${selectionKey(selection ?? {})}`,
+  );
   const drawable = drawableFrame(frame, ['funnel'] as const);
   if ('empty' in drawable) return <div className="lab-block-fill"><BlockEmpty reason={drawable.empty} /></div>;
   const f: FunnelFrame = drawable.frame;
@@ -158,7 +162,22 @@ export function TrendBlock({ frame, options, selection, block }: BlockViewProps)
     switchRef.current?.querySelector<HTMLButtonElement>(`[data-lab-trend-metric="${CSS.escape(next)}"]`)?.focus();
   };
 
-  const metricSwitch = useSwitch && (
+  const metricSwitch = useSwitch && compactSwitch ? (
+    <select
+      className="lab-trend-select"
+      aria-label={t('lab.blocks.trend.metric')}
+      data-lab-trend-switch=""
+      data-compact="true"
+      value={active ?? ''}
+      onChange={(e) => setPicked(e.target.value)}
+    >
+      {keys.map((k) => (
+        <option key={k} value={k} data-lab-trend-metric={k}>
+          {hasTrend(slice, k) ? labelOf(k) : t('lab.blocks.breakdown.optionUnmeasured').replace('{value}', labelOf(k))}
+        </option>
+      ))}
+    </select>
+  ) : useSwitch && (
     <div
       ref={switchRef}
       className="lab-trend-switch"

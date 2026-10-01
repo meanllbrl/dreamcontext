@@ -171,7 +171,10 @@ export interface FunnelSlice {
   steps: FunnelFrameStep[];
   metrics: Record<string, FunnelFrameMetric>;
   bands: Record<string, FunnelFrameBand>;
+  /** True only when every band came from the set (the path has none of its own). */
   bandsInherited: boolean;
+  /** Metric keys whose band came from the set, per metric (a path may band some metrics itself). Absent = all when `bandsInherited`. */
+  inheritedBands?: string[];
   daily: FunnelFrameDay[];
   lowSample: boolean;
   ignored: string[];
@@ -625,6 +628,7 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
     metrics: {},
     bands: frameBands,
     bandsInherited: true,
+    inheritedBands: Object.keys(frameBands),
     daily: [],
     lowSample: false,
     ignored,
@@ -644,6 +648,7 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
       metrics: f.metrics ?? {},
       bands: frameBands,
       bandsInherited: false,
+      inheritedBands: [],
       daily: f.daily ?? [],
       lowSample: lowSampleOf(frame, users),
       ignored,
@@ -656,7 +661,9 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
   if (frame.segmentMode === 'lookup') {
     const seg = segments.find((s) => sameSelection(s.dims, effective));
     if (!seg || !seg.measured) return unmeasured(seg ? seg.reason : null);
+    // Per metric: the path's own band, else the set's (marked inherited for that metric).
     const own = seg.bands && Object.keys(seg.bands).length > 0 ? seg.bands : null;
+    const bands: Record<string, FunnelFrameBand> = { ...frameBands, ...(own ?? {}) };
     return {
       funnelId: f.id,
       funnelName: f.name,
@@ -666,8 +673,9 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
       users: seg.users,
       steps: seg.steps.map((s) => ({ key: s.key, label: labelOf(s.key), users: s.users })),
       metrics: seg.metrics ?? {},
-      bands: own ?? frameBands,
+      bands,
       bandsInherited: own === null,
+      inheritedBands: Object.keys(frameBands).filter((k) => !own || !own[k]),
       daily: seg.daily ?? [],
       lowSample: lowSampleOf(frame, seg.users),
       ignored,
@@ -695,6 +703,7 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
     metrics: {},
     bands: frameBands,
     bandsInherited: true,
+    inheritedBands: Object.keys(frameBands),
     daily: [],
     lowSample: lowSampleOf(frame, users),
     ignored,
@@ -773,7 +782,9 @@ function finite(v: number | null | undefined): number | null {
 /**
  * One benchmark row per metric (the slice's own keys, or `metricKeys` in that
  * order). A key the slice lacks is skipped on a measured slice and reads as
- * unmeasured (with the slice's reason) on an unmeasured one.
+ * unmeasured (with the slice's reason) on an unmeasured one. `inherited` is
+ * per metric: a path that bands some metrics itself inherits the set's band
+ * for each metric it lacks, and only those rows say so.
  */
 export function benchmarkRows(slice: FunnelSlice, metricKeys: readonly string[] | null): BenchmarkRow[] {
   const keys = metricKeys ?? Object.keys(slice.metrics);
@@ -804,7 +815,7 @@ export function benchmarkRows(slice: FunnelSlice, metricKeys: readonly string[] 
       status,
       trend: delta === null ? null : delta === 0 ? 'flat' : (delta > 0) === (better === 'higher') ? 'improving' : 'worsening',
       reason: measured ? null : m ? m.reason : slice.reason,
-      inherited: !!band && slice.bandsInherited,
+      inherited: !!band && (slice.inheritedBands ? slice.inheritedBands.indexOf(key) !== -1 : slice.bandsInherited),
     });
   }
   return rows;
@@ -887,11 +898,65 @@ export function dailySeries(slice: FunnelSlice, metricKeys: readonly string[] | 
   };
 }
 
+/** Block types that draw ONE funnel (the pick, else the first): the others travel as id, name and steps only. */
+const ONE_FUNNEL_BLOCKS = ['breakdown', 'trend', 'benchmark', 'segments'];
+
+/** A funnel's other levels stripped: what a pick list and the unknown-pick note read. */
+function funnelHead(f: FunnelFrameFunnel): FunnelFrameFunnel {
+  return { id: f.id, name: f.name, steps: f.steps };
+}
+
 /**
- * The part of a funnel frame one block needs (bounds the board response): a
- * `funnel` pick keeps only that funnel (an unknown pick keeps all, the block
- * notes the fallback); daily trends travel only to `trend`; metrics and bands
- * are dropped for `funnel` and `breakdown`, which draw neither.
+ * Days trimmed to what a trend draws: only `keys` (when the block picks
+ * metrics), and no null entry for a metric the level itself lists (a null day
+ * is a gap either way, and the key stays known through `metrics`).
+ */
+function trimDaily(
+  days: readonly FunnelFrameDay[],
+  keys: readonly string[] | null,
+  known: Record<string, FunnelFrameMetric> | undefined,
+): FunnelFrameDay[] {
+  return days.map((day) => {
+    const m: Record<string, number | null> = {};
+    for (const k of Object.keys(day.m)) {
+      if (keys && keys.indexOf(k) === -1) continue;
+      if (day.m[k] === null && known && known[k]) continue;
+      m[k] = day.m[k];
+    }
+    return { t: day.t, m };
+  });
+}
+
+/** The `metrics` pick as the blocks read it (`stringListOption`): a list, or one comma-separated string. */
+function pickMetricKeys(options: Record<string, unknown> | null | undefined): string[] | null {
+  const raw = options ? options.metrics : undefined;
+  const list = typeof raw === 'string' ? raw.split(',') : Array.isArray(raw) ? raw.filter((k): k is string => typeof k === 'string') : [];
+  const keys = list.map((k) => k.trim()).filter((k) => k !== '');
+  return keys.length > 0 ? keys : null;
+}
+
+function keepMetrics(metrics: Record<string, FunnelFrameMetric>, keys: readonly string[]): Record<string, FunnelFrameMetric> {
+  const out: Record<string, FunnelFrameMetric> = {};
+  for (const k of keys) if (metrics[k]) out[k] = metrics[k];
+  return out;
+}
+
+/**
+ * The part of a funnel frame one block reads (bounds the board response; every
+ * selection still resolves on the client, so a chip click needs no request):
+ *   - a known `funnel` pick keeps only that funnel; a one-funnel block
+ *     (breakdown, trend, benchmark, segments) without one keeps the first in
+ *     full and the rest as id, name and steps (an unknown pick falls back to
+ *     the first, the block notes it);
+ *   - daily trends travel only to `trend`, trimmed to its `metrics` pick and
+ *     without null entries the level's metrics already name;
+ *   - metrics go only to trend, benchmark and segments; bands only to
+ *     benchmark and segments (the two that tone by them);
+ *   - a segments block keeps only the paths that name its `by` dim (the
+ *     option, else the first dim): the only ones its rows look up.
+ * `funnelSlice` and the view functions give the same answers on the projected
+ * frame as on the full one for the block's own options (`segmentRows` for
+ * the block's `by`).
  */
 export function projectFunnelFrame(
   frame: FunnelFrame,
@@ -900,29 +965,89 @@ export function projectFunnelFrame(
 ): FunnelFrame {
   const pick = options && typeof options.funnel === 'string' ? options.funnel.trim() : '';
   const picked = pick !== '' ? frame.funnels.filter((f) => f.id === pick) : [];
-  const funnels = picked.length > 0 ? picked : frame.funnels;
-  const keepDaily = blockType === 'trend';
-  const keepRates = blockType !== 'funnel' && blockType !== 'breakdown';
-  const out: FunnelFrame = {
-    ...frame,
-    funnels: funnels.map((f) => {
-      const next: FunnelFrameFunnel = { ...f };
-      if (!keepDaily) delete next.daily;
-      if (!keepRates) delete next.metrics;
-      if (f.segments) {
-        next.segments = f.segments.map((seg) => {
-          const s: FunnelFrameSegment = { ...seg };
-          if (!keepDaily) delete s.daily;
-          if (!keepRates) {
-            delete s.metrics;
-            delete s.bands;
-          }
-          return s;
-        });
-      }
-      return next;
-    }),
+  const oneFunnel = ONE_FUNNEL_BLOCKS.indexOf(blockType) !== -1;
+  const shown = picked.length > 0 ? picked[0] : oneFunnel ? frame.funnels[0] ?? null : null;
+  const isTrend = blockType === 'trend';
+  const keepRates = isTrend || blockType === 'benchmark' || blockType === 'segments';
+  const keepBands = blockType === 'benchmark' || blockType === 'segments';
+  const trendKeys = isTrend ? pickMetricKeys(options) : null;
+  // A segments block only ever looks up paths that name its `by` dim (the option, else the first dim).
+  const dims = frame.dimensions ?? [];
+  const byOpt = blockType === 'segments' && options && typeof options.by === 'string' ? options.by.trim() : '';
+  const by = blockType !== 'segments' ? null : dims.some((d) => d.key === byOpt) ? byOpt : dims[0]?.key ?? null;
+
+  const full = (f: FunnelFrameFunnel): FunnelFrameFunnel => {
+    const next: FunnelFrameFunnel = { ...f };
+    if (!isTrend || !f.daily) delete next.daily;
+    else next.daily = trimDaily(f.daily, trendKeys, f.metrics);
+    if (!keepRates) delete next.metrics;
+    if (f.segments) {
+      const reachable = by === null ? f.segments : f.segments.filter((seg) => seg.dims[by] !== undefined);
+      next.segments = reachable.map((seg) => {
+        const s: FunnelFrameSegment = { ...seg };
+        if (!isTrend || !seg.daily) delete s.daily;
+        else s.daily = trimDaily(seg.daily, trendKeys, seg.metrics);
+        if (!keepRates) delete s.metrics;
+        else if (trendKeys && seg.metrics) s.metrics = keepMetrics(seg.metrics, trendKeys);
+        if (!keepBands) delete s.bands;
+        return s;
+      });
+    }
+    return next;
   };
-  if (!keepRates) delete out.bands;
+
+  const funnels = picked.length > 0
+    ? picked.map(full)
+    : frame.funnels.map((f) => (shown === null || f === shown ? full(f) : funnelHead(f)));
+  const out: FunnelFrame = { ...frame, funnels };
+  if (!keepBands) delete out.bands;
+  return out;
+}
+
+// ─── Shared frames (board response) ─────────────────────────────────────────
+
+/** A board response's frames with identical funnel frames sent once: `aliases[key]` names the key holding the copy. */
+export interface SharedFrames {
+  frames: Record<string, Frame>;
+  aliases: Record<string, string>;
+}
+
+/**
+ * Identical funnel frames (the heavy kind: blocks of one insight with the same
+ * projection) travel once; every other key names the first key that carries
+ * the copy. `expandFrames` restores every key, so a block reads its frame as
+ * before. Other kinds are small and always sent as they are.
+ */
+export function shareFrames(frames: Record<string, Frame>): SharedFrames {
+  const out: Record<string, Frame> = {};
+  const aliases: Record<string, string> = {};
+  const seen = new Map<string, string>();
+  for (const key of Object.keys(frames)) {
+    const frame = frames[key];
+    if (frame.kind !== 'funnel') {
+      out[key] = frame;
+      continue;
+    }
+    const sig = JSON.stringify(frame);
+    const first = seen.get(sig);
+    if (first !== undefined) aliases[key] = first;
+    else {
+      seen.set(sig, key);
+      out[key] = frame;
+    }
+  }
+  return { frames: out, aliases };
+}
+
+/** Every key of a shared response back (an alias whose copy is missing stays absent: the block reads no frame). */
+export function expandFrames(frames: Record<string, Frame>, aliases: Record<string, string> | null | undefined): Record<string, Frame> {
+  if (!aliases) return frames;
+  const keys = Object.keys(aliases);
+  if (keys.length === 0) return frames;
+  const out: Record<string, Frame> = { ...frames };
+  for (const key of keys) {
+    const copy = frames[aliases[key]];
+    if (copy && !Object.prototype.hasOwnProperty.call(frames, key)) out[key] = copy;
+  }
   return out;
 }

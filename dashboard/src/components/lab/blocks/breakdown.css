@@ -131,13 +131,16 @@
 
 .lab-breakdown-chip[aria-pressed='true'] {
   border-color: var(--color-accent);
-  background: var(--color-accent-soft);
-  color: var(--color-accent-text);
+  /* The tint laid over the canvas (not over whatever card is behind), so the text contrast is
+     fixed: accent ink on it reads >= 4.5:1 in both themes (--color-accent-text is white, for
+     text on a SOLID accent fill; on this tint it was 1.15:1 in light). */
+  background: linear-gradient(var(--color-accent-soft), var(--color-accent-soft)), var(--color-bg);
+  color: var(--color-accent-ink);
   font-weight: var(--font-weight-semibold);
 }
 
 .lab-breakdown-chip[aria-pressed='true'] .lab-breakdown-chip-count {
-  color: var(--color-accent-text);
+  color: var(--color-accent-ink);
 }
 
 /* Not measured is not zero: a dashed, quiet chip that still takes focus (its reason shows). */
@@ -300,6 +303,75 @@
   line-height: 1.4;
 }
 
+/* ─── Compact form (the chip rows would be cut): one select per dimension ─── */
+
+.lab-breakdown-compact-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.lab-breakdown-select {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lab-breakdown-select select,
+.lab-trend-select {
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.lab-breakdown-select select:hover,
+.lab-trend-select:hover {
+  border-color: var(--color-border-hover);
+}
+
+.lab-breakdown-select select:focus-visible,
+.lab-trend-select:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* A chosen value reads like the active chip: accent ink on the tint. */
+.lab-breakdown-select[data-active='true'] select {
+  border-color: var(--color-accent);
+  background: linear-gradient(var(--color-accent-soft), var(--color-accent-soft)), var(--color-bg);
+  color: var(--color-accent-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-breakdown-select option,
+.lab-trend-select option {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-breakdown--compact .lab-breakdown-lane {
+  padding-right: 0;
+}
+
+.lab-breakdown-pin--icon {
+  justify-content: center;
+  width: var(--space-6);
+  padding: 0;
+}
+
 /* A narrow cell stacks each dimension's label over its chips. */
 @container (max-width: 420px) {
   .lab-breakdown-axes {
@@ -338,7 +410,9 @@
 }
 
 .lab-trend-switch-option {
-  flex: 0 1 auto;
+  /* Never shrinks: a label that does not fit overflows the switch, and the block measures that
+     and swaps in the compact select (a truncated metric name is never drawn). */
+  flex: none;
   min-width: 0;
   height: var(--space-6);
   padding: 0 var(--space-2);
@@ -349,8 +423,6 @@
   font: inherit;
   font-size: var(--font-size-xs);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
 }
 

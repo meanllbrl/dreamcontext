@@ -548,8 +548,9 @@
   overflow: hidden;
 }
 
-.board-card-block:is([data-lab-block='text'], [data-lab-block='filter']),
-.board-block-child:is([data-lab-block='text'], [data-lab-block='filter']) {
+/* Content-height blocks: they take what they draw, the flexible blocks (tabs, charts) take the rest. */
+.board-card-block:is([data-lab-block='text'], [data-lab-block='filter'], [data-lab-block='breakdown']),
+.board-block-child:is([data-lab-block='text'], [data-lab-block='filter'], [data-lab-block='breakdown']) {
   flex: 0 1 auto;
 }
 

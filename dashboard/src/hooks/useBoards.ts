@@ -6,6 +6,7 @@ import type { InsightCache, InsightSummary } from './useLab';
 import type {
   Board, BoardListResponse, BoardResponse, BoardSpec, Card, LibraryBlock,
 } from '../components/lab/board/boardTypes';
+import { expandFrames } from '../generated/frameOps';
 
 /**
  * Boards over `/api/lab/boards`: list, show, save, and the bulk cache read the
@@ -276,6 +277,17 @@ export function useBoards() {
 }
 
 /**
+ * The board response as the page reads it: the server sends identical funnel
+ * frames once (`frameAliases`), every frame key is restored here, before
+ * anything reads a frame.
+ */
+export function boardFromWire(r: BoardResponse & { frameAliases?: Record<string, string> }): BoardResponse {
+  if (!r || !r.frameAliases) return r;
+  const { frameAliases, ...rest } = r;
+  return { ...rest, frames: expandFrames(r.frames, frameAliases) };
+}
+
+/**
  * One board: spec + frames + summaries. Unsaved edits are laid over the
  * server's spec, so a refetch mid-save (a sync invalidating `['lab']`) never
  * snaps a card back to where it was before the drag.
@@ -285,7 +297,7 @@ export function useBoard(slug: string | null) {
   const saver = useBoardSaver();
   const query = useQuery({
     queryKey: boardKey(slug ?? ''),
-    queryFn: () => api.get<BoardResponse>(`/lab/boards/${encodeURIComponent(slug as string)}`),
+    queryFn: () => api.get<BoardResponse>(`/lab/boards/${encodeURIComponent(slug as string)}`).then(boardFromWire),
     enabled: !!slug,
     retry: 0,
   });
@@ -353,7 +365,7 @@ function useBoardSaver(): BoardSaver {
       // The queue outlives any one component, so it keeps the client it was born with.
       // The PUT answers with the whole BoardResponse (frames re-resolved for the new spec).
       put: (slug, spec, rev) =>
-        api.put<BoardResponse>(`/lab/boards/${encodeURIComponent(slug)}`, { rev, spec }).then((r) => {
+        api.put<BoardResponse>(`/lab/boards/${encodeURIComponent(slug)}`, { rev, spec }).then(boardFromWire).then((r) => {
           queryClient.setQueryData(boardKey(slug), r);
           return r.board;
         }),
@@ -430,7 +442,7 @@ export function useFetchBoard() {
   const queryClient = useQueryClient();
   return useCallback((slug: string) => queryClient.fetchQuery({
     queryKey: boardKey(slug),
-    queryFn: () => api.get<BoardResponse>(`/lab/boards/${encodeURIComponent(slug)}`),
+    queryFn: () => api.get<BoardResponse>(`/lab/boards/${encodeURIComponent(slug)}`).then(boardFromWire),
     staleTime: 0,
   }), [api, queryClient]);
 }
@@ -440,7 +452,7 @@ export function useCreateBoard() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (title: string) => api.post<BoardResponse>('/lab/boards', { title }),
+    mutationFn: (title: string) => api.post<BoardResponse>('/lab/boards', { title }).then(boardFromWire),
     onSuccess: (r) => {
       queryClient.setQueryData(boardKey(r.board.slug), r);
       // A derived vault materialized every board with this create: every rev moved.
