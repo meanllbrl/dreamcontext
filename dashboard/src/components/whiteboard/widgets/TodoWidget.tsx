@@ -15,14 +15,14 @@ import type { WidgetProps } from './types';
  * Inactive, it shows as many rows as its size holds and says "+N more" for the rest (A17);
  * active, the whole list scrolls, so every item can be ticked.
  */
-export function TodoWidget({ elementId, payload, active, size }: WidgetProps) {
+export function TodoWidget({ elementId, payload, active, size, height }: WidgetProps) {
   const tx = useWbText();
   const host = useWhiteboardHost();
   const [draft, setDraft] = useState('');
   const items = payload.items ?? [];
   const doneCount = items.filter((it) => it.done).length;
   const title = payload.title || tx('whiteboard.kind.todo', 'Todo');
-  const { shown, hidden } = active ? { shown: items, hidden: 0 } : clipTodoItems(items, todoCapacity(size));
+  const { shown, hidden } = active ? { shown: items, hidden: 0 } : clipTodoItems(items, todoCapacity(size, height));
 
   const add = () => {
     const text = draft.trim();

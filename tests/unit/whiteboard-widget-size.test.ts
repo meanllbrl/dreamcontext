@@ -58,20 +58,23 @@ describe('snapAfterGesture', () => {
     expect(snapAfterGesture(at, { ...at, x: 420, y: 250 }, 'm')).toEqual({ x: 392, y: 196, width: 376, height: 180, size: 'm' });
   });
 
-  it('a resize from the bottom-right snaps to the NEAREST preset, top-left kept', () => {
-    expect(snapAfterGesture(at, { ...at, width: 400, height: 350 }, 'm')).toEqual({ x: 196, y: 196, width: 376, height: 376, size: 'l' });
-    expect(snapAfterGesture(at, { ...at, width: 700, height: 360 }, 'm')).toEqual({ x: 196, y: 196, width: 768, height: 376, size: 'xl' });
-    expect(snapAfterGesture(at, { ...at, width: 200, height: 170 }, 'm')).toEqual({ x: 196, y: 196, width: 180, height: 180, size: 's' });
+  it('a resize keeps the dragged box (on the 4px step) and records the NEAREST preset', () => {
+    // A phone-width web widget: free-form, not pulled back to a preset.
+    expect(snapAfterGesture(at, { ...at, width: 391, height: 843 }, 'm')).toEqual({ x: 196, y: 196, width: 392, height: 844, size: 'l' });
+    expect(snapAfterGesture(at, { ...at, width: 700, height: 360 }, 'm')).toEqual({ x: 196, y: 196, width: 700, height: 360, size: 'xl' });
+  });
+
+  it('a resize never goes below the minimum box', () => {
+    expect(snapAfterGesture(at, { ...at, width: 20, height: 10 }, 'm')).toEqual({ x: 196, y: 196, width: 120, height: 96, size: 's' });
   });
 
   it('a resize from the left handle keeps the right edge', () => {
-    // The right edge sits at 572. The left edge dragged out to -188 (a 760-wide box, nearest XL):
-    // the right edge stays, so x = 572 - 768 = -196.
+    // The right edge sits at 572; the left edge dragged out to -188 gives a 760-wide box.
     expect(snapAfterGesture(at, { x: -188, y: 196, width: 760, height: 180 }, 'm'))
-      .toEqual({ x: -196, y: 196, width: 768, height: 376, size: 'xl' });
-    // Not far enough for another preset (482 wide is still nearest M): it springs back in place.
-    expect(snapAfterGesture(at, { x: 90, y: 196, width: 482, height: 180 }, 'm'))
-      .toEqual({ x: 196, y: 196, width: 376, height: 180, size: 'm' });
+      .toEqual({ x: -188, y: 196, width: 760, height: 180, size: 'xl' });
+    // Clamped at the minimum, the right edge still holds: x = 572 - 120.
+    expect(snapAfterGesture(at, { x: 562, y: 196, width: 10, height: 180 }, 'm'))
+      .toEqual({ x: 452, y: 196, width: 120, height: 180, size: 's' });
   });
 
   it('records dc.size on a Phase-1 widget it moves', () => {
@@ -92,7 +95,7 @@ describe('snapAfterGesture', () => {
   it('snapMove:false leaves a move alone (it also carried free drawing) but still snaps a resize', () => {
     expect(snapAfterGesture(at, { ...at, x: 430 }, 'm', { snapMove: false })).toBeNull();
     expect(snapAfterGesture(at, { ...at, width: 390, height: 360 }, 'm', { snapMove: false }))
-      .toEqual({ x: 196, y: 196, width: 376, height: 376, size: 'l' });
+      .toEqual({ x: 196, y: 196, width: 392, height: 360, size: 'l' });
   });
 });
 
@@ -102,6 +105,11 @@ describe('todo rows per size', () => {
     expect(todoCapacity('m')).toBe(4);
     expect(todoCapacity('l')).toBe(11);
     expect(todoCapacity('xl')).toBe(22);
+  });
+
+  it('a free-form box counts rows from its real height', () => {
+    expect(todoCapacity('m', 600)).toBe(19);
+    expect(todoCapacity('m', 96)).toBe(1);
   });
 
   it('clips with a "+N more" row only when the list overflows', () => {

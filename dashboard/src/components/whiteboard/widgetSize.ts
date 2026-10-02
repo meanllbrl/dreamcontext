@@ -26,6 +26,22 @@ export interface WidgetGeometry {
   height: number;
 }
 
+/** A free-form resize rounds the box to this step, so sizes stay tidy without forcing a preset. */
+export const RESIZE_STEP = 4;
+
+/** The smallest box a resize leaves a widget: below it the header and one row no longer fit. */
+export const MIN_WIDGET_BOX = { width: 120, height: 96 } as const;
+
+function snapToStep(v: number): number {
+  return Math.round(v / RESIZE_STEP) * RESIZE_STEP;
+}
+
+/** True when the box is exactly a preset's box: the size control shows that preset as current. */
+export function isPresetBox(width: number, height: number, size: WidgetSize): boolean {
+  const [pw, ph] = WIDGET_SIZES[size];
+  return width === pw && height === ph;
+}
+
 /** The nearest grid line to a scene coordinate. */
 export function snapToGrid(v: number): number {
   // `|| 0` folds the -0 that rounding a small negative gives.
@@ -52,8 +68,10 @@ export function resizeInPlace(geom: WidgetGeometry, size: WidgetSize): WidgetGeo
  * What a widget snaps to after a gesture took it from `before` to `after`, or null when the
  * gesture did not move or resize it, or when it already sits exactly where it would snap to.
  *
- * - A resize snaps to the NEAREST preset. The edge the user did not drag stays put: a drag of
- *   the left (or top) handle keeps the right (or bottom) edge, then the corner goes to the grid.
+ * - A resize is free-form: the box keeps the size the user dragged it to (a phone-width web
+ *   widget, a tall checklist), rounded to the fine `RESIZE_STEP` (every preset and the grid pitch are multiples of it) and held to `MIN_WIDGET_BOX`.
+ *   The edge the user did not drag stays put. `dc.size` records the NEAREST preset, which only
+ *   picks the content layout; the S / M / L / XL control snaps the box back to a preset.
  * - A move keeps the widget's size and puts its top-left on the grid.
  * - `snapMove: false` skips the move snap (the gesture also moved free drawing, whose relative
  *   placement to the widget must not change); a resize still snaps.
@@ -71,13 +89,13 @@ export function snapAfterGesture(
 
   let next: WidgetGeometry & { size: WidgetSize };
   if (resized) {
-    const size = nearestWidgetSize(after.width, after.height);
-    const { width, height } = sizeBox(size);
+    const width = Math.max(MIN_WIDGET_BOX.width, snapToStep(after.width));
+    const height = Math.max(MIN_WIDGET_BOX.height, snapToStep(after.height));
     const leftDragged = after.x !== before.x;
     const topDragged = after.y !== before.y;
-    const x = leftDragged ? after.x + after.width - width : after.x;
-    const y = topDragged ? after.y + after.height - height : after.y;
-    next = { x: snapToGrid(x), y: snapToGrid(y), width, height, size };
+    const x = leftDragged ? before.x + before.width - width : before.x;
+    const y = topDragged ? before.y + before.height - height : before.y;
+    next = { x, y, width, height, size: nearestWidgetSize(width, height) };
   } else {
     const size = widgetSizeOf(recorded, after.width, after.height);
     next = { x: snapToGrid(after.x), y: snapToGrid(after.y), width: after.width, height: after.height, size };
@@ -98,14 +116,15 @@ export function placeNewWidget(at: { x: number; y: number }, size: WidgetSize): 
 
 /**
  * How many todo rows an INACTIVE widget of `size` shows before it says "+N more". Derived from
- * the preset box, not measured, so the cut is the same on every machine and every zoom:
- * the body is the box minus the header and padding, a row is 28px. XL lays rows in two columns.
+ * the box height (the preset's when none is given), not measured, so the cut is the same on
+ * every machine and every zoom: the body is the box minus the header and padding, a row is
+ * 28px. XL lays rows in two columns.
  */
 export const TODO_ROW_PX = 28;
 const TODO_CHROME_PX = 60;
 
-export function todoCapacity(size: WidgetSize): number {
-  const rows = Math.max(1, Math.floor((WIDGET_SIZES[size][1] - TODO_CHROME_PX) / TODO_ROW_PX));
+export function todoCapacity(size: WidgetSize, height: number = WIDGET_SIZES[size][1]): number {
+  const rows = Math.max(1, Math.floor((height - TODO_CHROME_PX) / TODO_ROW_PX));
   return size === 'xl' ? rows * 2 : rows;
 }
 

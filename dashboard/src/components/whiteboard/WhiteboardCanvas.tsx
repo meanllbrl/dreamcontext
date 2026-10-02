@@ -20,7 +20,7 @@ import {
   WIDGET_STROKE, hasWidgetStroke, isWidgetLink, newElementId, readWidgetPayload, selectionIsOnlyWidgets, widgetLink,
 } from './widgetModel';
 import {
-  placeNewWidget, placeSizePicker, resizeInPlace, snapAfterGesture, widgetSizeOf, type WidgetGeometry,
+  isPresetBox, placeNewWidget, placeSizePicker, resizeInPlace, snapAfterGesture, widgetSizeOf, type WidgetGeometry,
 } from './widgetSize';
 import { WidgetSizePicker } from './WidgetSizePicker';
 import { WhiteboardHostContext, useDataTheme, useWbText, type WhiteboardHost } from './whiteboardHost';
@@ -73,6 +73,8 @@ interface SizePickerState {
   left: number;
   top: number;
   size: WidgetSize;
+  /** The box was dragged to a free-form size: no preset is current, and every one applies. */
+  custom: boolean;
 }
 
 /** An element's box and version at pointer-down: what a gesture is measured against. */
@@ -180,7 +182,7 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
   const handleApi = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
     unsubscribers.current.forEach((off) => off());
-    unsubscribers.current = subscribeWidgetSnapping(api);
+    unsubscribers.current = [...subscribeWidgetSnapping(api), ...subscribeWidgetActivation(api)];
     onApiRef.current?.({
       excalidraw: api,
       applyRemoteElements: (remote) => {
@@ -461,7 +463,7 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
     const size = widgetSizeOf(payload.size, element.width, element.height);
     // Keyed by what makes a widget a different thing, so e.g. a web widget whose URL changed
     // under it does not keep the previous URL's "loaded" state.
-    return <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} />;
+    return <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} height={element.height} />;
   }, []);
 
   const renderTopRightUI = useCallback(() => (
@@ -489,6 +491,7 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
             left={sizePicker.left}
             top={sizePicker.top}
             size={sizePicker.size}
+            custom={sizePicker.custom}
             onPick={(size) => setWidgetSize(sizePicker.id, size)}
           />
         )}
@@ -558,6 +561,53 @@ function snapWidgets(api: ExcalidrawImperativeAPI, before: GestureSnapshot): voi
   });
 }
 
+/**
+ * One click to interact (A18): Excalidraw activates an embeddable only on a click in its centre
+ * third, and that click never reaches the card, so ticking a todo took two clicks. Here a plain
+ * click anywhere on an inactive widget (no drag, no resize handle, no modifier) activates it,
+ * then the same click is handed to whatever sits under the pointer: a checkbox ticks, a button
+ * fires, a field takes focus. The hand-off waits out Excalidraw's own centre-click activation
+ * (a 100ms timer holding the element it hit), so a tick that replaces the element is not undone.
+ */
+const CLICK_FORWARD_DELAY_MS = 120;
+
+function subscribeWidgetActivation(api: ExcalidrawImperativeAPI): (() => void)[] {
+  let timer = 0;
+  const off = api.onPointerUp((activeTool, pointerDownState, event) => {
+    if (activeTool.type !== 'selection' || event.button !== 0) return;
+    if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (pointerDownState.drag.hasOccurred || pointerDownState.resize.handleType || pointerDownState.boxSelection.hasOccurred) return;
+    const hitId = pointerDownState.hit.element?.id;
+    if (!hitId) return;
+    const el = api.getSceneElements().find((e) => e.id === hitId);
+    if (!el || el.type !== 'embeddable' || el.angle || !readWidgetPayload(el)) return;
+    const current = api.getAppState().activeEmbeddable;
+    if (current?.element.id === el.id && current.state === 'active') return;
+    api.updateScene({
+      appState: {
+        activeEmbeddable: { element: el as NonDeleted<ExcalidrawEmbeddableElement>, state: 'active' },
+        selectedElementIds: { [el.id]: true },
+      },
+    });
+    const { clientX, clientY } = event;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => forwardClick(clientX, clientY), CLICK_FORWARD_DELAY_MS);
+  });
+  return [off, () => window.clearTimeout(timer)];
+}
+
+/** Hands an activating click to the widget control under the pointer. A field takes focus;
+ *  anything else inside a widget card gets a click (a label ticks its checkbox). */
+function forwardClick(clientX: number, clientY: number): void {
+  const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+  if (!target || !target.closest('.wb-widget') || target.tagName === 'IFRAME') return;
+  if (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== 'checkbox' && target.type !== 'radio')) {
+    target.focus();
+    return;
+  }
+  target.click();
+}
+
 /** Where the size control goes: under the one selected, unrotated widget, and nowhere while a
  *  drag, resize or rotation is in progress. */
 function sizePickerFor(elements: readonly OrderedExcalidrawElement[], appState: AppState): SizePickerState | null {
@@ -580,11 +630,12 @@ function sizePickerFor(elements: readonly OrderedExcalidrawElement[], appState: 
     { width: appState.width, height: appState.height },
     SIZE_PICKER_GAP,
   );
-  return { id: el.id, ...at, size: widgetSizeOf(payload.size, el.width, el.height) };
+  const size = widgetSizeOf(payload.size, el.width, el.height);
+  return { id: el.id, ...at, size, custom: !isPresetBox(el.width, el.height, size) };
 }
 
 function samePicker(a: SizePickerState | null, b: SizePickerState | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return a.id === b.id && a.left === b.left && a.top === b.top && a.size === b.size;
+  return a.id === b.id && a.left === b.left && a.top === b.top && a.size === b.size && a.custom === b.custom;
 }

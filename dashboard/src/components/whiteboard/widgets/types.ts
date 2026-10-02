@@ -9,4 +9,6 @@ export interface WidgetProps {
   active: boolean;
   /** The grid preset the widget renders to (A17): `dc.size`, or the one nearest its box. */
   size: WidgetSize;
+  /** The box height in scene px: a free-form resize can make it differ from the preset's. */
+  height?: number;
 }

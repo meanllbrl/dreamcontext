@@ -12,11 +12,15 @@ const NAME: Record<WidgetSize, string> = { s: 'Small', m: 'Medium', l: 'Large', 
  * Excalidraw hands pointer events to an embeddable only while it is active, and a size change
  * must work on a merely selected widget too. Positioned in the wrapper's pixel space by the
  * canvas, which hides it during a drag or resize.
+ *
+ * A widget dragged to a free-form size (`custom`) has no current preset; any segment snaps it
+ * back to that preset's box.
  */
-export function WidgetSizePicker({ left, top, size, onPick }: {
+export function WidgetSizePicker({ left, top, size, custom, onPick }: {
   left: number;
   top: number;
   size: WidgetSize;
+  custom: boolean;
   onPick: (size: WidgetSize) => void;
 }) {
   const tx = useWbText();
@@ -29,19 +33,22 @@ export function WidgetSizePicker({ left, top, size, onPick }: {
       onPointerDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {WIDGET_SIZE_ORDER.map((s) => (
-        <button
-          key={s}
-          type="button"
-          role="radio"
-          aria-checked={s === size}
-          className={`wb-size-option${s === size ? ' is-current' : ''}`}
-          title={tx(`whiteboard.size.${s}`, NAME[s])}
-          onClick={() => { if (s !== size) onPick(s); }}
-        >
-          {LABEL[s]}
-        </button>
-      ))}
+      {WIDGET_SIZE_ORDER.map((s) => {
+        const current = !custom && s === size;
+        return (
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            aria-checked={current}
+            className={`wb-size-option${current ? ' is-current' : ''}`}
+            title={tx(`whiteboard.size.${s}`, NAME[s])}
+            onClick={() => { if (!current) onPick(s); }}
+          >
+            {LABEL[s]}
+          </button>
+        );
+      })}
     </div>
   );
 }
