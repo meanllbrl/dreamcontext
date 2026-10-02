@@ -1,6 +1,27 @@
 [
   {
     "date": "2026-09-30",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Insights v2, promoted to Beta. The Insights page is now a set of boards (lab/boards/<slug>.md): cards on a 12-column grid, dragged and resized in Edit mode, each card a stack of blocks from a 15-type catalog (stat, line, bar, stacked, pie, table, heatmap, funnel, pivot, text, callout, tabs, filter, html, insight) whose every option visibly changes the render, edited in an inspector with undo. Custom HTML blocks run in the network-less sandbox with the full dc- kit and receive only their declared inputs; they can be saved to a per-vault block library (lab/blocks/<slug>.md) and reused by ref. Agents read and write the same boards with lab board list|show|create|add-card|set|validate|remove-card|delete and lab block list|save; lab board show prints the values the dashboard draws. A legacy vault opens with one board per category and writes nothing until the first edit, which materializes every board atomically; boards merge card by card on brain sync (lab-board class) and a conflict-marked board is a read-only error board. Sync only pays for change: automatic / user / hard force levels, an optional refresh.freshness probe (same-origin credentials only) that skips an unchanged source as upstream-unchanged, per-machine probe times in state/.lab-freshness.json, error backoff for automatic runs, a queued follow-up job, lab sync --force-hard and --dry-run (zero requests). Reports, the window cache and AI commentary are removed; html/v1 and app/v1 bodies keep rendering through the insight block. Built on branch feat/insights-v2 (e6fbba98..885e1701), in review pending owner sign-off in the installed app.",
+    "breaking": true,
+    "summary": "Insights v2 (Beta): boards of data-bound blocks, custom HTML blocks + library, Reports removed, sync only pays for change",
+    "references": [
+      "commit:885e1701",
+      "file:src/lib/lab/boards.ts",
+      "file:src/lib/lab/blocks.ts",
+      "file:src/server/routes/lab-boards.ts",
+      "file:dashboard/src/components/lab/board/BoardPage.tsx",
+      "file:scripts/verify/lab-boards.mjs",
+      "task:insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change",
+      "feature:lab-analytics-insights"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-09-30",
     "type": "fix",
     "scope": "cli",
     "description": "Fix the approve screen printing [object Object] for the Flow graph; it now renders the graph as JSON and warns when the approved prompt's propose calls would be refused.",

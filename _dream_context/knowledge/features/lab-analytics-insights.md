@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-09-10'
+updated: '2026-09-30'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -34,14 +34,22 @@ related_tasks:
   - neonbi-request-diyeti-source-freshness-aware-sync-insight-report
   - >-
     lab-request-budget-an-upstream-freshness-gate-so-insights-and-reports-stop-re-querying-data-that-has-not-changed
+  - >-
+    insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change
+  - >-
+    insights-v2-blocks-reach-a-polished-fully-customizable-chart-standard-axes-correct-hover-charts-that-fit-their-cell
+  - >-
+    insights-v2-funnel-explorer-every-page-a-bindable-block-and-the-whole-explorer-as-one-interactive-page
 type: feature
 name: lab-analytics-insights
 description: >-
-  Lab (dashboard: "Insights") — curated analytics metrics synced from HTTP or
-  script sources into the brain: manifest + bounded cache, TTL sync, a redacting
-  credential layer, roadmap KR binding, snapshot/recall surfacing, and a Lab page
-  whose cards resolve through a chart registry. Also dataset/v1 rows, app/v1
-  apps, html/v1 cards and My Reports.
+  Lab (dashboard: "Insights", Beta) — curated analytics metrics synced from HTTP
+  or script sources into the brain: manifest + bounded cache, a sync that only
+  pays for change (TTL + upstream freshness probe), a redacting credential
+  layer, roadmap KR binding, snapshot/recall surfacing, and boards: cards of
+  data-bound blocks on a 12-column grid, custom HTML blocks and a per-vault
+  block library, shared with agents through `lab board`/`lab block`. Legacy
+  dataset/v1 rows, app/v1 apps and html/v1 cards keep rendering.
 pinned: false
 date: '2026-07-05'
 ---
@@ -57,6 +65,19 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 **Naming note:** The user-facing dashboard page is labeled "Insights" (flask icon); "Lab" is the internal/CLI/technical name. This PRD uses "Lab" to match the codebase and CLI surface.
 
 ## User Stories
+
+### Insights v2: boards of blocks (Beta, 2026-09-29)
+
+- [ ] As a user, the Insights page is a set of **boards** I switch between with tabs; each board is cards on a 12-column grid that I drag and resize in Edit mode, and the layout is saved to the vault so my team and agents see the same board.
+- [ ] As a user, a card is a stack of **blocks** from a built-in catalog (stat, line, bar, stacked, pie, table, heatmap, funnel, pivot, text, callout, tabs, filter, html, insight), and every block option (color, area, orientation, donut, compare with previous, sort, limit, columns, ...) visibly changes the drawing, so I customize a chart instead of accepting the one render an insight shipped with.
+- [ ] As a user, I change a block's type, data and options in an **inspector** without writing code, and ⌘Z undoes it.
+- [ ] As a user, a **filter** block narrows the sibling blocks bound to the same dataset instantly, without a sync, and the table total follows the filter.
+- [ ] As a user, a **tabs** block keeps several views in one card, one visible at a time.
+- [ ] As a user or agent, I write a **custom HTML block** with the dashboard's `dc-` kit, bind it to the data it needs, save it to the vault's **block library**, and reuse it on another card by name.
+- [ ] As an agent, I read a board's resolved values with `lab board show` (the same numbers the dashboard draws) and edit boards with `lab board ...`, and an invalid spec is refused with a diagnostic naming the card, the block path and the fix.
+- [ ] As an existing user, my vault opens on v2 with one board per category in my saved order, every insight present and drawn as before, and nothing is written until my first edit.
+- [ ] As a user, opening a board whose data is fresh costs zero upstream requests, and a card tells me why it did not refetch ("upstream unchanged").
+- [ ] As a teammate, two people editing the same board on two machines merge card by card on brain sync; a board file left with conflict markers opens as a read-only error board, never a silent overwrite.
 
 - [x] As a PO, I can define a curated insight (e.g., "Weekly Active Users") backed by a PostHog or custom API endpoint, so my team's agents see live business metrics without me pasting stale numbers into task notes. *(M1 shipped: `lab create`, generic-HTTP adapter)*
 - [x] As an agent, every session I see the latest cached value + staleness of bound insights in my SessionStart snapshot, so I can reason about current-vs-target progress without asking the user "what's the latest WAU?". *(M1 shipped: SessionStart Lab section)*
@@ -112,13 +133,17 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] As an agent or script, I can read an app body I didn't author with `dreamcontext lab body <slug> [--page <id>] [--format text|md|html]` (the CLI renders what a page actually shows — as readable text, markdown, or raw HTML) and query its numbers with `dreamcontext lab query <slug> [--where k=v] [--group-by k] [--top N]` (slices the cached dataset bundle, never fetches).
 - [x] As a security-conscious user, the app bridge prevents the frame from navigating itself away via detect-and-cut (load-count teardown + per-instance nonce), not prevention — because no sandbox token stops self-navigation — and the blast radius is honestly bounded: the HTML author IS the script author (same file, same trust domain), so the bridge moves data the author already owns.
 
-### My Reports (native composition layer, in_review 2026-08-25)
+### RETIRED (Insights v2, 2026-09-29): My Reports (native composition layer, in_review 2026-08-25)
+
+> Removed with Insights v2: boards replace Reports; the text below is history, not current behaviour.
 
 - [x] As a report consumer, I can define a My Report (`lab/reports/<slug>.md`) that composes existing insights into sections, navigate it by date (daily/weekly/monthly), and see every insight's as-of timestamp — honest-nothing when no snapshot exists for that date.
 - [x] As a report consumer, opening a report triggers a scoped sync-job (only the insights that report uses) with progressive section fill, so I'm not waiting for the whole board to sync before seeing my daily report.
 - [x] As a report consumer, I can print a report to PDF or export it as single-file HTML (with inlined CSS and data) or copy the whole thing as Markdown.
 
-### Reports template + AI commentary (v0.27.0, shipped 2026-09-06)
+### RETIRED (Insights v2, 2026-09-29): Reports template + AI commentary (v0.27.0, shipped 2026-09-06)
+
+> Removed with Insights v2: boards replace Reports; the text below is history, not current behaviour.
 
 - [x] As a report reader, every item names the measurement window its numbers cover next to the as-of stamp ("7-day · Aug 25 – Sep 1"), says "no declared window" when the source declared none, and "window unknown" for a dated series event — so I never read a 7-day tile and a 30-day tile as if they were the same thing.
 - [x] As a report reader, a section whose items mix ≥2 distinct windows shows a warning strip naming them, instead of silently composing incomparable tiles.
@@ -136,6 +161,22 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] As a script author, the `data` is MANDATORY (typed `dataset/v1` — dimensional row model with `dims[]` + `rows[]` + `total`, carrying 1+ named datasets), and `app` declares pages as `{id, label?, html, defaultDataset?}` — the platform handles routing, the script owns presentation.
 
 ## Acceptance Criteria
+
+### Insights v2 (boards, blocks, library, freshness gate)
+
+Task `insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change` (absorbs `lab-request-budget-an-upstream-freshness-gate-so-insights-and-reports-stop-re-querying-data-that-has-not-changed`). Validation: unit tests + `scripts/verify/lab-boards.mjs` (real server, WebKit, isolated HOME, mutation-checked) + owner sign-off in the installed .app.
+
+- [ ] Boards: `lab/boards/<slug>.md` (frontmatter = spec, body = prose); cards on a 12-column grid (`at: {x,y,w,h}`, row 56 px); card id unique per board; absent `blocks` = one legacy `insight` block.
+- [ ] Block catalog: `src/lib/lab/blocks.ts` is the single source (types, accepted frame kinds, options schema, EN/TR labels, default size); the dashboard reads the generated `block-catalog.json`; `blockRegistry.ts` is a `Record<BlockType, ...>`; drift tests.
+- [ ] Frames + frame ops: `frames.ts` resolves bindings (`<insight>` or `<insight>/<dataset>`) to series | table | funnel | value | empty{reason}; `frameOps.ts` runs where → interactive filter → sort → limit with the total computed after filtering, before the limit; byte-mirrored into the dashboard; `lab board show` and the dashboard print the same values.
+- [ ] Migration: no `lab/boards/` = boards derived one per category (order from `.lab-prefs.json`), groups become heading cards, nothing written until the first edit; the first edit (UI or CLI) materializes ALL boards atomically (staging dir + one rename, shared board lock); deterministic ids (`c-<insight>`, `h-<board>-<group>`) and slugs across machines.
+- [ ] Editing: drag + resize persist and survive reload; one in-flight PUT per board (a drag burst never 409s); an external change → 409 → reload toast; a failed PUT keeps edits pending with a Retry toast; inspector edits type/data/options with undo.
+- [ ] HTML blocks + library: sandboxed with the full `dc-` kit, fill their grid cell, answer `lab.data(name)` only for declared inputs; `lab/blocks/<slug>.md` library reusable by `ref`; symlinked cache / `../` / `%2F` binding = no data at board GET, `lab board show` and the block.
+- [ ] Freshness gate: force split (absent = automatic, `user`, `hard`; `true` read as `user` for one release); `refresh.freshness` probe with the same-origin credential rule after placeholder resolution; `sourceFreshness` marker + `queryKey` in the cache, `checkedAt` in the machine-local `state/.lab-freshness.json`; unchanged marker + queryKey under `user` = 1 probe 0 fetches; all-fresh board open = 0 jobs; automatic runs back off on recent errors; queued follow-up job; skip reason on card and CLI; `--force-hard`; `--dry-run` = zero requests.
+- [ ] Reports removed (lockstep test): report files, `/api/lab/reports*`, `lab report`, the window cache and AI commentary gone; user-vault `lab/reports/**` left untouched.
+- [ ] Brain sync: `lab-board` merge class (union by card id, changed-on-both = ours, deleted-vs-changed = kept and reported, overlaps resolved); conflict-marked board = error board, PUT refused (423); `lab/blocks/*.md` stays on the prose path.
+- [ ] `.lab-prefs.json` keeps `order`, `catOrder`, `category`, `collapsed`, `columns`; gains `activeBoard` (falls back to the first board).
+- [ ] Sidebar: Insights entry is `maturity: 'beta'`.
 
 *(From task `feat-lab-analytics-insights-subsystem` — validated plan v3, converged via goal-skill with 3 reviewers over 3 iterations.)*
 
@@ -178,7 +219,9 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] `POST /api/lab/sync {all:true}` stays for CLI/API parity and scripted callers.
 - [x] Full existing test suite stays green; `npm run build` clean.
 
-### Category organization (v0.21.0)
+### RETIRED (Insights v2, 2026-09-29): Category organization (v0.21.0)
+
+> Removed with Insights v2: categories and groups are now the derivation input for boards, not a UI.
 
 - [x] `category: string|null` is a first-class manifest frontmatter field (`InsightManifest` in types.ts, read/create in store.ts, exposed via `/api/lab` summary + public manifest).
 - [x] `dreamcontext lab create --category <name>` sets the category at creation; editing the manifest changes it live.
@@ -212,7 +255,9 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] C5. Security proof: unit tests pin sandbox/CSP/srcdoc attrs (13/13); runtime verify (`scripts/verify/lab-breakdown-reports.mjs`) proves fixture html's fetch + img beacons produce ZERO network requests in real Chromium while inline script demonstrably runs (kit usable).
 - [x] C6. Skill docs: html/v1 contract + "typed-first, html when vocabulary doesn't fit" rule + `lab-html-kit.css` class-kit reference. Marker tests green.
 
-### My Reports (native composition layer, in_review 2026-08-25)
+### RETIRED (Insights v2, 2026-09-29): My Reports (native composition layer, in_review 2026-08-25)
+
+> Removed with Insights v2: boards replace Reports; the text below is history, not current behaviour.
 
 - [x] B1. `lab/reports/<slug>.md` entity: frontmatter `{title, description, date_nav: none|daily|weekly|monthly, sections:[{title, prose?, items:[{insight, view?, breakdown?}]}]}` + `## Notes`. `reports-store.ts` (lenient read / strict write). Report owns NO data — composes existing insight caches + dated matrix snapshots.
 - [x] B2. API: `GET /api/lab/reports`, `GET /api/lab/reports/:slug?date=YYYY-MM-DD` (resolves as-of = newest snapshot at/before end of date per source; honest empty when none qualifies). CLI: `lab report create|list|show`.
@@ -238,7 +283,9 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] G6 — **Skill docs (same change)**. SKILL.md Entity Router gained app-insight litmus tests ("multi-page dashboard", "let the script build its own UI"), cli-reference.md `lab body`/`lab query` verbs, tasks-and-features.md § App insights (the authoring contract this pattern secures — data mandatory, app optional, bridge API, security bound). Marker tests green.
 - [x] G7 — **Validation**. `tests/unit/lab-app.test.ts` (payload validation, caps, cache write, legacy series synth), `lab-app-body.test.ts` (srcdoc builder, shim injection order, CSP), `lab-app-route.test.ts` (routing, page resolution), `lab-app-query.test.ts` (WHERE/GROUP-BY/TOP query algebra). Runtime: `scripts/verify/lab-app-insight.mjs` (app routes, pages nav, `lab.navigate` works, `lab.data` returns numbers, full-screen toggle, `lab body`/`lab query` CLI, self-navigation teardown). Full suite green.
 
-### Reports template + window honesty (v0.27.0, task `reports-become-a-branded-dreamcontext-template-window-honest-items-designed-sections-native-export`)
+### RETIRED (Insights v2, 2026-09-29): Reports template + window honesty (v0.27.0, task `reports-become-a-branded-dreamcontext-template-window-honest-items-designed-sections-native-export`)
+
+> Removed with Insights v2: boards replace Reports; the text below is history, not current behaviour.
 
 - [x] W1. `ResolvedReportItem` gains `window: {fromISO,toISO}|null` + `rangeKey: string|null` — live: matrix/funnel/datasets/app cache range, else derived from cache tweaks anchored at `fetchedAt`, NEVER the 30-day engine default; dated: snapshot range only, series events = null (a changed tweak must not relabel history). Flows into `lab report show --json`; text mode prints it too.
 - [x] W2. Every report item surface shows its window next to as-of — "7-day · Aug 25 – Sep 1", explicit "no declared window", dated series "window unknown".
@@ -250,7 +297,9 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] P1. `lab-reports` 22 + `lab-reports-ui` 15 + full suite 7760 green; new window/mix/markdown unit tests; dashboard `tsc -b` + CLI tsc clean; `npm run build` clean.
 - [x] P2. Runtime proof: `verify:lab-report-template` 21/21 (NEW, registered in package.json) + `verify:lab-breakdown-reports` 29/29 (no regression) + real-vault `calbuddy-marketing-haftalik` screenshots light+dark (24 window chips, 2 mixed-window warnings on real data) — `tmp/report-template-proof/`.
 
-### AI commentary (v0.27.0, task `reports-gain-an-optional-button-triggered-ai-commentary-layer-pure-text-headless-claude`)
+### RETIRED (Insights v2, 2026-09-29): AI commentary (v0.27.0, task `reports-gain-an-optional-button-triggered-ai-commentary-layer-pure-text-headless-claude`)
+
+> Removed with Insights v2: boards replace Reports; the text below is history, not current behaviour.
 
 *(That task shipped with no Acceptance Criteria section — these are reconstructed from its changelog evidence and re-verified against the code on 2026-09-07.)*
 
@@ -282,6 +331,16 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### Insights v2: boards of data-bound blocks replace categories, groups and Reports; sync only pays for change (2026-09-29, Beta)
+
+- **Owner, 2026-09-29:** the Insights screen was not good enough. React chart cards could not be customized; `html/v1` and `app/v1` cards looked different every time and could not bind data. The ask: lego. A pre-defined dreamcontext block library plus custom HTML blocks, boards the team and agents share, easy placement with menus, Reports removed, and a sync that stops re-querying unchanged data. Then promote Insights to **beta**, like Automations v2 (redesigned in place, no toggle; beta = the `maturity` field on the Sidebar entry `page: 'lab'`).
+- **Boards replace categories, groups AND Reports.** Reports and AI commentary are deleted, not hidden: their surface was a second composition layer beside the board, with its own window cache and job path. A board is the one composition layer. `lab/reports/**` and `lab/cache/.windows/**` in user vaults are left untouched.
+- **The engine catalog is the single source.** `src/lib/lab/blocks.ts` drives strict validation, frame resolution, `lab block list` and (through a generated mirror) the dashboard. Adding a block type cannot compile without a component.
+- **Non-destructive migration.** A legacy vault is DERIVED, never rewritten on open; the first edit materializes every board at once so two machines never see half a migration.
+- **HTML blocks get only declared, already-synced data.** They have no script-hash tripwire (they run on open), so the host answers `lab.data` only for declared inputs, from the hardened readers. `REACH_BRIDGE` deliberately not added (see the sandboxed-app-bridge pattern §8).
+- **The freshness gate is absorbed**: a sync skips as `upstream-unchanged` only when marker AND request fingerprint match; probe checks are per machine (`state/.lab-freshness.json`, gitignored) so an unchanged probe never dirties the synced cache.
+- **Out of scope** (explicit): board-level date filter, `row` block and nested tabs, boards in Chat `dream-view`, snapshot changes, converting legacy html/v1/app/v1 to blocks, per-board permissions, PNG/PDF export, merging `lk-` into `dc-`, REACH_BRIDGE in html blocks, the product-vault `lib-neonbi.mjs` edit (a follow-up `peer send`).
 
 ### An html/v1 card body sizes to its content, and the 320px cap belongs to the GRID (2026-09-08, `776e8cba`)
 
@@ -417,6 +476,16 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 - **[2026-07-05]** **Out of scope / v2.** ~~Roadmap-side provenance chip~~ (shipped 2026-07-07 as the objective-side InsightPicker + `lab bind`); ready-made PostHog/Google-Sheets adapters (expressible via generic HTTP or scripts); JS-expression extraction (JSON-path only in MVP); range tweak TYPE (enum|date|string only); sourceHash/request-level cache invalidation (staleness is TTL-only); objective-side metric time-series/trendline; `useLabPrefs` persistence; sleep-driven sync; insight federation; lab-adapter-builder sub-agent; script sandboxing beyond tripwire+docs; init scaffolding/migration for `lab/` (store creates dirs lazily like objectives).
 
 ## Technical Details
+
+### Insights v2 (2026-09-29, feat/insights-v2)
+
+- **Engine** `src/lib/lab/`: `boards.ts` (store: lenient read with geometry clamp + in-memory overlap resolution, strict `validateBoardSpec` with card id + block path + fix diagnostics, rev-checked atomic writes under `state/.locks/lab-boards.lock`, derivation `deriveBoardsFromLegacy`, atomic materialize via `lab/.boards-staging-<pid>-<random>/`, error boards for unparseable/conflict-marked files), `blocks.ts` (catalog), `frames.ts` (binding → frame through the hardened readers), `frameOps.ts` + `grid.ts` (pure, self-contained, byte-mirrored to `dashboard/src/generated/` by `scripts/gen-lab-mirrors.mjs`, drift test), `block-library.ts` (`lab/blocks/<slug>.md`, safe-schema frontmatter). `store.ts` readers (`readCache`, `getInsight`, `listInsights`) go through `resolveContainedLabFile` (slug regex, lstat symlink refusal, realpath containment); reserved insight slugs `b, boards, blocks, caches, sync, sync-jobs, credentials, reports`.
+- **Sync** `sync.ts` / `lab-sync-job.ts`: `force: 'user' | 'hard' | undefined` (`true` → `'user'` for one release); `refresh.freshness` http probe (5 s budget, `redirect: 'manual'`, credentials same-origin only after placeholder resolution) or a script `freshness(ctx)`; cache `sourceFreshness {marker, asOf, note, queryKey}`; sidecar `state/.lab-freshness.json` (merge-on-write) for `checkedAt`; max age max(24 h, 10×TTL); automatic error backoff max(TTL, 15 min); job store `{running, queued}` with a queued follow-up that starts in the running job's `finally`. Window override code (`window-cache.ts`, job `windows`) deleted with Reports.
+- **Server** `src/server/routes/lab-boards.ts`: `GET/POST /api/lab/boards`, `GET/PUT/DELETE /api/lab/boards/:slug` (PUT rev-checked, 409 on a moved rev, 423 on an error board, 503 on a busy lock), `GET /api/lab/caches?slugs=` (≤60, seeds the per-slug query cache), `GET/PUT /api/lab/blocks[/:slug]`; registered before `/api/lab/:slug`; every param slug-validated after decoding.
+- **CLI** `lab board list|show|create|add-card|set|validate|remove-card|delete`, `lab block list|save`, `lab sync --force-hard|--dry-run|--json`, `lab create --board|--no-board`.
+- **Brain sync** `semantic-merge.ts` `lab-board` class; `state/.lab-freshness.json` and `lab/.boards-staging-*` in both ignore lists of `brain-repo.ts`.
+- **Dashboard** `components/lab/board/` (`BoardPage`, `BoardGrid`, `BoardCard`, `BlockInspector`, `AddCardMenu`, `boardTypes.ts`), `components/lab/blocks/` (one component per catalog row, `HtmlBlock` + `htmlBlockBridge.ts`), `hooks/useBoards.ts`; `LabBoard.tsx` deleted; `labRoute.ts` gains `/lab/b/<board>`; `.lab-prefs.json` adds `activeBoard`; Sidebar `page: 'lab'` → `maturity: 'beta'`.
+- **Verify** `npm run verify:lab-boards` (`scripts/verify/lab-boards.mjs`, WebKit, isolated HOME, mutation-checked); `verify:lab-board` and `verify:lab-html-height` retired.
 
 **Architecture (plan v3, converged 2026-07-05 — 3 reviewers SOLID).** Lab mirrors the objectives subsystem (the load-bearing precedent). Markdown-first storage: manifest per insight at `_dream_context/lab/insights/<slug>.md` (frontmatter config + `## Meaning` prose, recall-indexed), cache snapshot at `_dream_context/lab/cache/<slug>.json` (post-rollup series + `fetchedAt` + `scriptHash`), gitignored `_dream_context/lab/credentials.json` written ONLY via gitignore-first CLI. Pure store reads/writes manifests; sync engine resolves tweaks → adapter (generic-HTTP | custom-script) → granularity-capped rollup → cache write → optional bound-objective `metric.current` write via existing `updateObjectiveMetric`. CLI and `/api/lab*` routes call the same engine. Agents: SessionStart snapshot section + `insight` recall corpus type + `lab show --json` (cache only, no fetch). Dashboard: Lab page whose cards resolve their body through a chart registry (ten renders as of 2026-08-08), a shared date-range control on every windowed insight, per-insight + sync-all refresh, generic typed tweak editing, manifest-declared grouping and card size. Sleep does NOT run lab sync. Three security nets: gitignore-first credential writes + doctor FAIL self-heal, end-to-end secret redaction of every error/log/cache string, script-hash change tripwire.
 
@@ -573,7 +642,9 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 **Tests (tests/unit/):** `lab-app` (22 — payload validation, caps, cache write, series synth), `lab-app-body` (18 — srcdoc builder, shim prepend order, CSP attrs, theme injection, nonce + teardown), `lab-app-route` (14 — routing, page resolution, URL codec), `lab-app-query` (19 — WHERE exact-match + multi-key AND, GROUP-BY aggregation, TOP cap, missing dataset). Runtime: `scripts/verify/lab-app-insight.mjs` (app routes, page nav pills work, `lab.navigate` switches pages, `lab.data` returns numbers, full-screen toggle, `lab body --page` prints text/md/html, `lab query --where` filters, self-navigation triggers teardown and stops the bridge). Full suite green.
 
-### Reports template + window honesty + AI commentary (v0.27.0, 2026-09-06)
+### RETIRED (Insights v2, 2026-09-29): Reports template + window honesty + AI commentary (v0.27.0, 2026-09-06)
+
+> Removed with Insights v2: boards replace Reports; the text below is history, not current behaviour.
 
 **Where the report surface lives now.** `dashboard/src/components/lab/reports/{ReportPage.tsx, ReportPage.css, reportModel.ts}` — the page and its pure export builders moved out of `dashboard/src/pages/` (the 2026-08-25 note above records the old path). Routing is unchanged (`labRoute.ts`, `/lab/reports/<slug>`).
 
@@ -589,6 +660,13 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-09-29 — Insights v2 (Beta): boards of data-bound blocks replace categories and Reports, and sync only pays for change
+
+- **Consolidates task** `insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change` (absorbs the freshness-gate task).
+- **Shipped:** boards (`lab/boards/<slug>.md`) of cards on a 12-column grid; a 15-type block catalog with per-option rendering; inspector + undo; drag/resize with single-flight rev-checked saves; custom HTML blocks with the `dc-` kit and a declared-input allow-list; the per-vault block library (`lab/blocks/`); `lab board` / `lab block` CLI; non-destructive derivation + atomic materialize-all; the `lab-board` brain-sync merge class; the upstream freshness gate (force split, probe, per-machine sidecar, dry run, error backoff, queued follow-up job).
+- **Removed:** Reports, the window cache and AI commentary; the category side menu and group sections (`LabBoard.tsx`).
+- **Beta:** the Sidebar's Insights entry.
 
 ### 2026-09-07 — Reports become the dreamcontext Reports template, with window honesty and optional AI commentary (v0.27.0)
 

@@ -1,11 +1,11 @@
 ---
 id: sandboxed-app-bridge-pattern
 name: "Sandboxed App Bridge (host<->iframe postMessage under an opaque-origin sandbox)"
-description: "How to let untrusted-authored markup become a full two-way interactive surface — multi-page, host-served data, live theme — without relaxing the network-less sandbox that makes it safe to draw in the first place. The host<->iframe bridge, the identity gate, the self-navigation hole and its detect-and-cut mitigation, the input dead zone (a click and a chord inside the frame reach the app over nothing else), and the honest bound on what the bridge may carry."
+description: "How to let untrusted-authored markup become a full two-way interactive surface — multi-page, host-served data, live theme — without relaxing the network-less sandbox that makes it safe to draw in the first place. The host<->iframe bridge, the identity gate, the self-navigation hole and its detect-and-cut mitigation, the input dead zone (a click and a chord inside the frame reach the app over nothing else), and the honest bound on what the bridge may carry. Insights v2 board html blocks executed the §4 revisit condition: a per-block allow-list of declared inputs."
 tags: ["domain:security", "layer:frontend", "topic:lab", "topic:dashboard", "kind:pattern"]
 pinned: true
 date: "2026-08-26"
-updated: "2026-09-13"
+updated: "2026-09-30"
 ---
 
 ## Why This Exists
@@ -49,7 +49,7 @@ Detect-and-cut limits how long a navigated-away document can keep talking; it do
 
 **The html author IS the script author.** In this system, an `app/v1` page's markup and the script that produces the data it can ask for live in the same file (`lab/scripts/<slug>.mjs`), already documented and accepted as running locally, with credentials, with full filesystem and network access. Anyone who can write the interactive page could, in the same file, already send the same numbers anywhere they liked at sync time — more easily, and without a browser in the loop at all. **The bridge does not widen the trust boundary; it moves data the author already owns across a line that was already crossable.** That is the actual safety argument once detect-and-cut is in place — not "the frame can't misbehave" (it can, briefly, by design of self-navigation being unstoppable), but "misbehaving here tells the author nothing they didn't already know."
 
-**Named revisit condition.** This bound holds only as long as the html author and the data author are the same trust principal. **If page bodies ever become shareable or installable independently of the script that produces their data** — a marketplace of bodies, an imported page from a different insight or a different vault — the bound breaks: a body could then ask the host for data its own author never had, and detect-and-cut alone stops being sufficient. The fix at that point is to restrict what a page may ask for to what it was explicitly given (a per-page allow-list of dataset keys, checked host-side before answering), not to try to harden the navigation mitigation further. Flag this pattern for revision the day that separation is proposed.
+**Named revisit condition (FIRED 2026-09-29, see §8).** This bound holds only as long as the html author and the data author are the same trust principal. For `app/v1` pages and `html/v1` bodies it still does: the body and the data come out of the same `lab/scripts/<slug>.mjs`. Insights v2 board **`html` blocks** broke the assumption on purpose: a block's markup lives in the board file or in the vault library (`lab/blocks/<slug>.md`), written by whoever authored the card or the library entry, decoupled from any script. The fix this paragraph prescribed is what shipped: a per-block allow-list of declared inputs, checked host-side before answering. §8 records it.
 
 ### 5. A data-request handle can read anything in its bundle, not only what's currently on screen
 
@@ -83,11 +83,25 @@ The fix is a second, smaller leg on the same bridge, and the shape generalizes:
 
 **Verifying it needs a NATIVE-DELIVERY CONTROL, or the pass means nothing.** Driving ⌘D with a real keyboard and watching the pane split proves the bridge only if the browser did not deliver that chord to the parent anyway. `scripts/verify/chat-html.mjs` § 9 counts `e.isTrusted` chords in the top document from an init script: it must stay at ZERO while the split still happens. A plain `d` is the second control (it must reach no app chord at all), and every substantive check in that section was mutation-proved to fail with the bridge stripped from the srcdoc.
 
+### 8. When the body and the data have different authors: the allow-list, executed (2026-09-29, Insights v2)
+
+The §4 bound was "the html author IS the script author". Board `html` blocks separate them: a card's author binds data, a library entry's author (possibly a teammate, possibly an agent, possibly months earlier) wrote the markup. So the bridge answers by a different rule:
+
+- **Declared inputs only.** A block declares `inputs: {name: <insight>[/<dataset>]}` (inline html), or a library entry declares `inputs: [{name, kind}]` and the card binds each name. `lab.data(name)` is answered ONLY for a declared name for which the host holds a frame; any other name gets an error result, never data. The shim exposes `lab.inputs` (the declared names) and nothing else: no `navigate`, no bundle-wide `lab.data(key)` (the §5 "reads anything in its bundle" behaviour does NOT carry over to blocks).
+- **The allow-list separates a library body's author from the card's author.** A library body can read only what the card that uses it bound, so reusing someone else's block never hands it data its card author did not choose to show.
+- **Frames come from the hardened readers.** The server resolves every declared input through the same cache reader the board uses: slug regex before any path is built, `lstat` rejects a symlink, realpath must stay inside `lab/cache/`. A symlinked cache, a `../` or a `%2F` in a binding resolves to an empty frame, never to data.
+- **Remount, never swap.** The block's React key is card id + block path + hash(html, inputs); an inspector edit, a move into or out of `tabs`, or a library update remounts it with a fresh nonce and load counter. `srcDoc` is never replaced in place, so the load-count teardown of §3 keeps its meaning.
+- **Same containment, unchanged.** `sandboxHtml.ts` (`SANDBOX_GRANT`, `SANDBOX_ALLOW`, `SANDBOX_CSP`), the nonce envelope and `escapeForInlineScript` from `labAppRuntime.ts`, the `event.source` identity gate. No height bridge: a block fills its grid cell and scrolls inside it.
+
+**The corrected trust statement (say THIS, not "the block is safe"):** caches already sync with the brain, so a declared input exposes nothing a teammate does not already have; the allow-list separates a library body's author from the card's author; local-only material (credentials, `state/.secrets*`, anything outside `lab/cache/`) must never reach a frame, and the hardened readers are what guarantee it. HTML blocks have NO script-hash tripwire (they run the moment a board opens, with no "this changed since last run" notice), and that is exactly why they get only declared, already-synced data and never anything a sync script could reach.
+
+**The input dead zone (§7) is NOT bridged for blocks.** `REACH_BRIDGE` was deliberately left out of board html blocks: while a block holds focus, app shortcuts do not work (click outside the block first). It is a known, accepted gap, not an oversight. If it is added later it must reuse `readChordMessage` and its refused-chord set, never a new chord channel.
+
 ## When To Reach For This
 
 Any time untrusted-or-semi-trusted markup needs to become genuinely interactive against a host application — not just render — while the host wants to keep the strongest available containment (no `allow-same-origin`, no CSP relaxation). The four moves generalize past this one bridge: postMessage-not-fetch as the channel, identity-not-origin as the gate, detect-and-cut-not-prevent for the one guarantee sandboxing cannot give you (self-navigation), and an explicit, named statement of whose data the channel may carry and why that's still safe — checked again the moment the authorship assumption changes.
 
 ## Related
 
-- The concrete implementation: `dashboard/src/components/lab/labAppRuntime.ts` (protocol + srcdoc builder), `LabAppFrame.tsx` (the host half — gates, load-count teardown, nonce). Delegates its CSP/sandbox primitives to the shared `dashboard/src/lib/sandboxHtml.ts`, which also backs the Chat surface's `dream-html` block and the Lab's single-page `html/v1` card. The `html/v1` card carries no bridge; Chat's block carries the smallest possible one — the height handshake of §6, in `chatHtmlKit.ts` (child) and `HtmlView.tsx` (host).
+- The concrete implementations: `dashboard/src/components/lab/labAppRuntime.ts` (protocol + srcdoc builder), `LabAppFrame.tsx` (the app/v1 host half: gates, load-count teardown, nonce), and `dashboard/src/components/lab/blocks/htmlBlockBridge.ts` + `HtmlBlock.tsx` (the board html block: the declared-input allow-list of §8, unit-tested in `tests/unit/lab-html-block-bridge.test.ts`, driven end to end by `scripts/verify/lab-boards.mjs`). All delegate their CSP/sandbox primitives to the shared `dashboard/src/lib/sandboxHtml.ts`, which also backs the Chat surface's `dream-html` block and the Lab's single-page `html/v1` card. The `html/v1` card carries no bridge; Chat's block carries the smallest possible one, the height handshake of §6, in `chatHtmlKit.ts` (child) and `HtmlView.tsx` (host).
 - `skill/references/tasks-and-features.md` § App insights — the authoring contract this pattern secures.
