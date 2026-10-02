@@ -93,6 +93,8 @@ export function toSummary(contextRoot: string, m: InsightManifest) {
     error: cache?.error ?? null,
     errorAt: cache?.errorAt ?? null,
     ttlMinutes: m.refresh.ttl_minutes,
+    /** False = an open board never syncs it on its own (manifest `refresh.auto: false`). */
+    autoSync: m.refresh.auto !== false,
     staleMinutes,
     stale,
     /** This machine's last "unchanged upstream" confirmation, or null. */
@@ -216,10 +218,19 @@ export async function handleLabSyncJobStart(
         return;
       }
     }
-    const { job, started, queued, running, pending } = startLabSyncJob(contextRoot, {
-      force: normalizeSyncForce(body.force),
-      slugs,
-    });
+    const force = normalizeSyncForce(body.force);
+    // An automatic job (no force) never touches a manual-only insight (`refresh.auto: false`),
+    // whatever the client asked: the client filters too, this holds an older or other client.
+    if (!force && slugs) {
+      slugs = slugs.filter((s) => getInsight(contextRoot, s)?.refresh.auto !== false);
+      if (slugs.length === 0) {
+        // Nothing to start: report the slots as they are, so the client's progress chip is unchanged.
+        const { running, queued } = labSyncJobSlots(contextRoot);
+        sendJson(res, 200, { job: running, started: false, queued: false, running, pending: queued });
+        return;
+      }
+    }
+    const { job, started, queued, running, pending } = startLabSyncJob(contextRoot, { force, slugs });
     sendJson(res, 200, { job, started, queued, running, pending });
   } catch (err) {
     console.error('[lab] sync job start failed:', err);

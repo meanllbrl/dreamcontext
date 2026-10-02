@@ -228,6 +228,22 @@ describe('lab board add-card --preset funnel-explorer', () => {
     expect(getBoard(root, 'ops')!.cards).toHaveLength(0);
   });
 
+  it('tells a v1 app explorer with no funnel member exactly how to convert, and writes nothing', async () => {
+    createInsight(root, { slug: 'acme-app-explorer', title: 'Acme app explorer', category: 'Growth' });
+    writeCache(root, 'acme-app-explorer', {
+      slug: 'acme-app-explorer', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: null, unit: null,
+      series: [], latest: null, error: null, errorAt: null, scriptHash: null,
+      app: { spec: { kind: 'app/v1', entry: 'daily', pages: [{ id: 'daily', title: 'Daily', html: '<p>x</p>' }] } },
+    } as unknown as InsightCache);
+    await run(['lab', 'board', 'create', 'ops', '--title', 'Ops']);
+    const { code, out } = await run(['lab', 'board', 'add-card', 'ops', '--preset', 'funnel-explorer', '--insight', 'acme-app-explorer']);
+    expect(code).toBe(1);
+    expect(out).toContain('acme-app-explorer is an app insight with no funnel data');
+    expect(out).toContain('`data.funnel`');
+    expect(out).toContain('dreamcontext lab sync acme-app-explorer');
+    expect(getBoard(root, 'ops')!.cards).toHaveLength(0);
+  });
+
   it('refuses --preset with --block, an unknown preset, and a missing --insight', async () => {
     await run(['lab', 'board', 'create', 'ops', '--title', 'Ops']);
     const both = await run(['lab', 'board', 'add-card', 'ops', '--preset', 'funnel-explorer', '--insight', SLUG, '--block', '{"line": {}}']);

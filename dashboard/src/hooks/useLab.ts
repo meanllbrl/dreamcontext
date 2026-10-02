@@ -49,6 +49,8 @@ export interface InsightSummary {
   error: string | null;
   errorAt: string | null;
   ttlMinutes: number;
+  /** False = an open board never syncs it on its own (manifest `refresh.auto: false`). Absent (older server) = true. */
+  autoSync?: boolean;
   staleMinutes: number | null;
   stale: boolean | null;
   /** This machine's last "upstream unchanged" confirmation (staleness counts from the newer of this and fetchedAt). */

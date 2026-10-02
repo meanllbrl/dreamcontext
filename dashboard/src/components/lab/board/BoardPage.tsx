@@ -591,6 +591,8 @@ export function BoardPage({
         renderBlock={renderBlock}
         missing={missing}
         onRemove={missing && writable && board ? () => writeCards(removeCard(board.cards, card.id)) : undefined}
+        // A plain-surface click opens what the menu's Open detail opens (edit mode: the grid's handle takes it).
+        onOpen={card.insight && primary && !missing ? () => openInsight(card.insight as string) : undefined}
         syncState={cardSyncState(card.insight, running, pending)}
         freshReason={freshReason(primary, card.insight ? lastResults.get(card.insight) : null)}
         menu={(

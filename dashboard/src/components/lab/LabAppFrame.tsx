@@ -260,9 +260,9 @@ export function LabAppFrame({
     : {
         ...baseStyle,
         height: height ?? (mode === 'card' ? CARD_MIN_HEIGHT : PAGE_MIN_HEIGHT),
-        // Card mode is a preview and a single click target (the card's own
-        // click handler opens the app) — the iframe never intercepts the click.
-        pointerEvents: mode === 'card' ? 'none' : 'auto',
+        // Interactive in every mode: a page's own buttons and inputs work in the card
+        // too. Opening the app is the card's job, on its surface outside the frame
+        // (BoardCard's click), never a click swallowed from the author's controls.
       };
 
   return (

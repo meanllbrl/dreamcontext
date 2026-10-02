@@ -738,7 +738,12 @@ async function addPresetCard(
   const frame = resolveFrame(root, insight, ['funnel']);
   if (frame.kind === 'empty' && frame.reason === 'kind-mismatch') {
     // Synced, but its cache carries no funnel set: syncing again would not help.
-    throw new LabError(`${insight} has no funnel data: the preset needs a funnel-set (funnel member).`);
+    throw new LabError(
+      readCache(root, insight)?.app
+        // A hand-built v1 explorer: its pages work, but the preset reads the funnel member its data lacks.
+        ? `${insight} is an app insight with no funnel data. To convert it, make its script return \`data.funnel\` (a \`funnel-set/v1\`) next to the dataset bundle (the app pages keep working), run \`dreamcontext lab sync ${insight}\`, then add the preset again. Recipe: the skill reference, "Converting a v1 app explorer".`
+        : `${insight} has no funnel data: the preset needs a funnel-set (funnel member).`,
+    );
   }
   if (frame.kind !== 'funnel') {
     throw new LabError(`sync ${insight} first: the preset needs its funnel dimensions (\`dreamcontext lab sync ${insight}\`).`);

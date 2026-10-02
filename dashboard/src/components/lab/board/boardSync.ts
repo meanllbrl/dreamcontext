@@ -17,6 +17,9 @@ import type { InsightSummary, LabSyncJob, SyncResult } from '../../../hooks/useL
  * not asked again within that same window (the server may have had a reason
  * to skip it that the summary does not show).
  *
+ * An insight whose manifest says `refresh.auto: false` (a slow or paid source)
+ * is never in an automatic job; only a person syncs it.
+ *
  * Automatic requests carry NO `force`: absent is what tells the server this is
  * not a person asking. Sync board and ↻ send `'user'`; that is not decided here.
  */
@@ -77,6 +80,7 @@ export function expiredSlugs(
   if (busy === 'all') return [];
   const out: string[] = [];
   for (const [slug, s] of Object.entries(summaries)) {
+    if (s.autoSync === false) continue; // manual-only: a person syncs it (Refresh, Sync board)
     if (!isExpired(s, now) || inErrorBackoff(s, now)) continue;
     if (busy?.has(slug)) continue;
     const asked = recent?.get(slug);
@@ -98,6 +102,29 @@ export function planAutomaticSync(
   opts: ExpiredOptions = {},
 ): { slugs: string[] } | null {
   return automaticSyncRequest(expiredSlugs(summaries, now, opts));
+}
+
+/**
+ * When the next automatic sync may run, for the card's tooltip: `'off'` (manual-only),
+ * `'backoff'` (a recent failure is being left alone until `at`), `'due'` (expired: the next
+ * check syncs it), or `'at'` (fresh until `at`, ms).
+ */
+export type NextAutoSync =
+  | { kind: 'off' }
+  | { kind: 'due' }
+  | { kind: 'at' | 'backoff'; at: number };
+
+export function nextAutoSync(
+  summary: Pick<InsightSummary, 'autoSync' | 'fetchedAt' | 'checkedAt' | 'ttlMinutes' | 'errorAt'>,
+  now: number,
+): NextAutoSync {
+  if (summary.autoSync === false) return { kind: 'off' };
+  const errorAt = time(summary.errorAt);
+  if (errorAt !== null && now - errorAt < backoffMs(summary)) return { kind: 'backoff', at: errorAt + backoffMs(summary) };
+  const at = lastConfirmedAt(summary);
+  if (at === null) return { kind: 'due' };
+  const until = at + Math.max(0, summary.ttlMinutes) * MINUTE;
+  return until > now ? { kind: 'at', at: until } : { kind: 'due' };
 }
 
 /** What a job covers: its slugs, or 'all' (unscoped). Settled jobs cover nothing. */

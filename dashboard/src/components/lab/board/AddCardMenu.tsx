@@ -34,6 +34,8 @@ export function AddCardMenu({ board, unplaced, insights, catalog, library, onAdd
   }, [choices, bindTo]);
   const bound = useInsightCache(bindTo || null);
   const funnelCache = bound.data?.cache?.funnel ? bound.data.cache : null;
+  // A v1 app insight (a hand-built explorer) without a funnel member: the preset is shown, off, saying how to convert.
+  const appWithoutFunnel = !funnelCache && !!bound.data?.cache?.app;
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => { searchRef.current?.focus(); }, []);
 
@@ -112,6 +114,21 @@ export function AddCardMenu({ board, unplaced, insights, catalog, library, onAdd
               >
                 <span className="lab-editor-item-name">{PRESET_LABELS['funnel-explorer'][locale === 'tr' ? 'tr' : 'en']}</span>
                 <span className="lab-editor-item-detail">{summaryOf(bindTo)?.title ?? bindTo}</span>
+              </button>
+            </li>
+          )}
+          {appWithoutFunnel && (
+            <li>
+              <button
+                type="button"
+                className="lab-editor-tile"
+                data-lab-add-preset="funnel-explorer"
+                data-lab-preset-needs-funnel
+                disabled
+                title={t('lab.editor.add.presetNeedsFunnel')}
+              >
+                <span className="lab-editor-item-name">{PRESET_LABELS['funnel-explorer'][locale === 'tr' ? 'tr' : 'en']}</span>
+                <span className="lab-editor-item-detail">{t('lab.editor.add.presetNeedsFunnel')}</span>
               </button>
             </li>
           )}

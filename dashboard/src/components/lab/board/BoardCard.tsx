@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import type { InsightCache, InsightSummary } from '../../../hooks/useLab';
 import { frameKey } from '../../../generated/frameOps';
@@ -7,7 +7,7 @@ import { headingText } from '../blocks/TextBlock';
 import {
   activeFilterFor, filterTarget, frameColorDomain, selectionIgnored, setActiveFilter, shapeBlockFrame,
 } from '../blocks/frameShape';
-import type { CardSyncState, FreshReason } from './boardSync';
+import { nextAutoSync, type CardSyncState, type FreshReason } from './boardSync';
 import {
   EMPTY_VIEW, pathKey, setAppPage, setFilters, setLanes, setSelection, setTab, type CardView,
 } from './cardViewState';
@@ -82,6 +82,31 @@ export function blockInsight(block: Block, card: Pick<Card, 'insight'>): string 
   return binding || card.insight || null;
 }
 
+/** What a card click must leave alone: anything a block offers as its own control. */
+const CONTROL_SELECTOR = [
+  'button', 'a[href]', 'input', 'select', 'textarea', 'label', 'summary', 'iframe',
+  '[role="button"]', '[role="tab"]', '[role="checkbox"]', '[role="option"]', '[role="slider"]',
+  '[role="menu"]', '[role="menuitem"]', '[role="toolbar"]', '[contenteditable="true"]', '[data-lab-control]',
+].join(',');
+
+/**
+ * A click at `target` belongs to a block's own control, not to the card: a control element, or
+ * anything between the target and the card that LOOKS clickable (`cursor: pointer`, the way a
+ * funnel step or a legend row says it). Only a click on the card's plain surface opens it.
+ */
+export function isCardControl(
+  target: Element | null,
+  card: Element,
+  cursorOf: (el: Element) => string = (el) => getComputedStyle(el).cursor,
+): boolean {
+  if (!target || !card.contains(target)) return true;
+  if (target.closest(CONTROL_SELECTOR) && card.contains(target.closest(CONTROL_SELECTOR))) return true;
+  for (let el: Element | null = target; el && el !== card; el = el.parentElement) {
+    if (cursorOf(el) === 'pointer') return true;
+  }
+  return false;
+}
+
 /** A tabs child's full block path: the tabs block's own path + TabsBlock's relative `[tab, child]`. */
 export function tabChildPath(tabsPath: readonly number[], rel: readonly number[]): number[] {
   return [...tabsPath, ...rel];
@@ -119,6 +144,21 @@ function ago(iso: string, locale: string): string {
   if (abs < 3600) return rtf.format(Math.round(s / 60), 'minute');
   if (abs < 86400) return rtf.format(Math.round(s / 3600), 'hour');
   return rtf.format(Math.round(s / 86400), 'day');
+}
+
+/** The tooltip line that says when an open board syncs this insight on its own (null = unknown). */
+export function autoSyncText(
+  t: (key: string) => string,
+  locale: string,
+  summary: InsightSummary | undefined,
+  now: number = Date.now(),
+): string | null {
+  if (!summary) return null;
+  const next = nextAutoSync(summary, now);
+  if (next.kind === 'off') return t('lab.board.fresh.autoOff');
+  if (next.kind === 'due') return t('lab.board.fresh.autoDue');
+  const when = ago(new Date(next.at).toISOString(), locale);
+  return t(next.kind === 'backoff' ? 'lab.board.fresh.autoBackoff' : 'lab.board.fresh.autoAt').replace('{when}', when);
 }
 
 /** The freshness line's words: live job state first, then age (+ the skip reason when known). */
@@ -171,11 +211,13 @@ export interface BoardCardProps {
   fullscreen?: boolean;
   /** Leave fullscreen (the exit button). */
   onExitFullscreen?: () => void;
+  /** Open the card's insight (its detail panel or routed page) from a click on its plain surface. Absent = not openable. */
+  onOpen?: () => void;
 }
 
 export function BoardCard({
   card, frames, summaries, caches, renderBlock, missing = false, onRemove, menu, syncState = null, freshReason = null,
-  view: heldView, onView, fullscreen = false, onExitFullscreen,
+  view: heldView, onView, fullscreen = false, onExitFullscreen, onOpen,
 }: BoardCardProps) {
   const { t, locale } = useI18n();
   const [ownView, setOwnView] = useState<CardView>(EMPTY_VIEW);
@@ -294,8 +336,12 @@ export function BoardCard({
     </button>
   ) : null;
   const freshLine = fresh || syncState ? freshnessText(t, locale, primary, fresh, syncState, freshReason) : '';
-  const freshTip = [freshLine, !syncState ? primary?.freshnessNote : null, fresh === 'failed' ? primary?.error : null]
-    .filter(Boolean).join('\n');
+  const freshTip = [
+    freshLine,
+    !syncState ? primary?.freshnessNote : null,
+    fresh === 'failed' ? primary?.error : null,
+    !syncState ? autoSyncText(t, locale, primary) : null,
+  ].filter(Boolean).join('\n');
   // Full: the line under the title. Compact: beside the title, ellipsized. Short: folded into the
   // title's tooltip, the element kept (visually hidden) for screen readers and the verify hooks.
   const freshEl = (fresh || syncState) && (
@@ -303,7 +349,7 @@ export function BoardCard({
       className={`board-card-fresh board-card-fresh--${syncState ?? fresh}${density === 'full' ? '' : ` board-card-fresh--${density}`}`}
       data-lab-freshness
       data-lab-sync-queued={syncState === 'queued' ? true : undefined}
-      title={density === 'full' ? (fresh === 'failed' ? primary?.error ?? undefined : undefined) : freshTip || undefined}
+      title={freshTip || undefined}
     >
       {freshLine}
       {primary?.freshnessNote && !syncState && (
@@ -312,18 +358,36 @@ export function BoardCard({
     </p>
   );
   const titleTip = density === 'short' && freshTip ? `${title}\n${freshTip}` : title;
+  // Fullscreen is already the opened view; everywhere else a plain-surface click opens the insight.
+  const open = !fullscreen ? onOpen : undefined;
+  const onCardClick = open ? (e: ReactMouseEvent<HTMLElement>) => {
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (window.getSelection()?.toString()) return; // selecting a number to copy is not a click
+    if (isCardControl(e.target as Element, e.currentTarget)) return;
+    open();
+  } : undefined;
 
   return (
     <article
-      className={`board-card${headed ? '' : ' board-card--untitled'}${density === 'full' ? '' : ` board-card--${density}`}${fullscreen ? ' board-card--fullscreen' : ''}`}
+      className={`board-card${headed ? '' : ' board-card--untitled'}${density === 'full' ? '' : ` board-card--${density}`}${fullscreen ? ' board-card--fullscreen' : ''}${open ? ' board-card--openable' : ''}`}
       data-card-id={card.id}
       data-lab-card-fullscreen-view={fullscreen ? true : undefined}
+      data-lab-card-openable={open ? true : undefined}
+      onClick={onCardClick}
     >
       {!headed && menu && <div className="board-card-float-menu">{menu}</div>}
       {headed && (
         <header className="board-card-head">
           <div className="board-card-head-row">
-            <h3 className="board-card-title" title={titleTip}>{title}</h3>
+            <h3
+              className="board-card-title"
+              title={titleTip}
+              // The keyboard twin of the surface click (the click itself lands on the article).
+              tabIndex={open ? 0 : undefined}
+              onKeyDown={open ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+              } : undefined}
+            >{title}</h3>
             {density !== 'full' && freshEl}
             {menu}
             {exit}

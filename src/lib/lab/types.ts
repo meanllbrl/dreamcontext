@@ -167,6 +167,12 @@ export interface HttpFreshnessProbe {
 /** The manifest's refresh policy. */
 export interface RefreshConfig {
   ttl_minutes: number;
+  /**
+   * `false` = an open board never syncs this insight on its own (a slow or paid
+   * source); only a person does (Refresh, Sync board, `lab sync --force`).
+   * Absent = automatic, as always.
+   */
+  auto?: false;
   /** Optional http freshness probe (see HttpFreshnessProbe), else absent. */
   freshness?: HttpFreshnessProbe | null;
 }

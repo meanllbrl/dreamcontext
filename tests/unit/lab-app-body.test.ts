@@ -343,10 +343,13 @@ describe('LabAppFrame.tsx (security pins — source-text, no jsdom harness in th
     expect(source).toMatch(/postToFrame\(\{\s*type: 'theme'/);
   });
 
-  it('card mode is a preview, not an interactive surface — pointerEvents none, height clamped 120-320', () => {
+  // Owner 2026-10-02: a page's own buttons must work in a board card. The card mode used to set
+  // pointer-events none and leave the click to a v1 card handler v2 never had, so the frame was
+  // dead. The sandbox (allow-scripts only, empty allow, CSP) is the boundary, never the cursor.
+  it('card mode is interactive (no pointer-events off), height clamped 120-320', () => {
     expect(source).toContain('const CARD_MIN_HEIGHT = 120;');
     expect(source).toContain('const CARD_MAX_HEIGHT = 320;');
-    expect(source).toContain("pointerEvents: mode === 'card' ? 'none' : 'auto'");
+    expect(source).not.toMatch(/pointerEvents:\s*mode === 'card'/);
   });
 
   it('page/full height clamps to 200-20000, and full mode ignores height messages entirely', () => {

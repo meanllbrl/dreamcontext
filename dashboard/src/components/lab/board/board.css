@@ -359,6 +359,25 @@
   background: var(--color-bg-secondary);
 }
 
+/*
+ * A card that opens on click says so with its border, never with cursor: pointer. The cursor is
+ * inherited, and BoardCard reads a pointer cursor as "this is a block's own control"
+ * (`isCardControl`), so a pointer card would make every child look like a control.
+ */
+.board-card--openable {
+  transition: border-color var(--transition-fast);
+}
+
+.board-card--openable:hover {
+  border-color: var(--color-border-hover);
+}
+
+.board-card--openable .board-card-title:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
 .board-card-head {
   flex: none;
   display: flex;

@@ -208,7 +208,7 @@ export function parseSource(v: unknown): InsightSource | null {
 }
 
 /**
- * LENIENT refresh parse: `ttl_minutes` (default 1440) plus the optional http
+ * LENIENT refresh parse: `ttl_minutes` (default 1440), `auto: false` (no board auto-sync), plus the optional http
  * `freshness` probe. A malformed probe block degrades to no probe (TTL-only),
  * never a throw. `extract` is a marker path string, or `{ marker, asOf?, note? }`.
  */
@@ -216,6 +216,7 @@ export function parseRefresh(v: unknown): RefreshConfig {
   const r = asRecord(v);
   const ttlRaw = r ? Number(r.ttl_minutes) : NaN;
   const out: RefreshConfig = { ttl_minutes: Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : DEFAULT_TTL_MINUTES };
+  if (r?.auto === false) out.auto = false;
   const f = r ? asRecord(r.freshness) : null;
   if (!f) return out;
   const url = typeof f.url === 'string' ? f.url.trim() : '';

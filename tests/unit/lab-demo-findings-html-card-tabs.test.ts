@@ -224,7 +224,8 @@ describe('short cards: the freshness line never eats the plot', () => {
     const out = at(2);
     expect(out).toContain('board-card--short');
     expect(out).toMatch(/class="board-card-fresh [^"]*board-card-fresh--short"[^>]*data-lab-freshness/);
-    expect(out).toMatch(/<h3 class="board-card-title" title="Daily active users\nlab\.board\.fresh\.fresh">/);
+    // The title tooltip carries the freshness line, then when the next automatic check is.
+    expect(out).toMatch(/<h3 class="board-card-title" title="Daily active users\nlab\.board\.fresh\.fresh\nlab\.board\.fresh\.auto(At|Due)"/);
   });
 
   it('a 4-row card sets the freshness beside the title; a tall card under it', () => {
