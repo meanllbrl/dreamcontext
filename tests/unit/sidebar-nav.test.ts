@@ -269,7 +269,8 @@ describe('sidebar rail — the Workspace entry is Whiteboard, the settings group
     // The page id is persisted nav state and the chat's appNav target: only the label moved.
     expect(board?.labelKey).toBe('nav.whiteboard');
     expect(board?.maturity).toBe('alpha');
-    expect(items.findIndex((i) => i.page === 'whiteboards')).toBe(items.findIndex((i) => i.page === 'automations') + 1);
+    // Alpha pages close the Workspace list (owner, 2026-10-02): Whiteboard sits between them.
+    expect(items.findIndex((i) => i.page === 'whiteboards')).toBe(items.findIndex((i) => i.page === 'hypotheses') + 1);
     const en = read(I18N);
     // The feature is "Whiteboard" (owner, 2026-09-30); "Control Panel" is only the default board.
     expect(en).toContain("'nav.whiteboard': 'Whiteboard',");
@@ -299,10 +300,22 @@ describe('sidebar rail — the Workspace entry is Whiteboard, the settings group
   });
 });
 
+describe('sidebar rail — Workspace order (owner, 2026-10-02)', () => {
+  it('reads Chat, Tasks, Automations, Insights, Roadmap, then the alpha pages last', () => {
+    const block = navGroupsBlock(read(SIDEBAR_TSX));
+    const workspace = block.slice(0, block.indexOf("'nav.group.memory'"));
+    const rows = [...workspace.matchAll(/\{\s*(?:page|launch):\s*'([^']+)'([^}]*)\}/g)].map((m) => ({ id: m[1], maturity: /maturity:\s*'([^']+)'/.exec(m[2])?.[1] }));
+    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'council']);
+    // No beta or stable row may sit below an alpha one.
+    const firstAlpha = rows.findIndex((r) => r.maturity === 'alpha');
+    expect(rows.slice(firstAlpha).every((r) => r.maturity === 'alpha')).toBe(true);
+  });
+});
+
 describe('sidebar rail — the hero row (C5)', () => {
   it('puts Automations right after Tasks in Workspace, at beta, flagged hero', () => {
     const items = navItems(read(SIDEBAR_TSX));
-    // Chat (a launcher row, not a page) leads; Tasks then Automations follow (owner, 2026-09-29).
+    // Chat (a launcher row, not a page) leads; Tasks then Automations follow (owner, 2026-10-02).
     expect(items[0].page).toBe('tasks');
     expect(items[1].page).toBe('automations');
     expect(items[1].maturity).toBe('beta');

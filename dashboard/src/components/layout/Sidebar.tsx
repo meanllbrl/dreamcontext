@@ -73,19 +73,20 @@ const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.group.workspace',
     hue: '--nav-hue-workspace',
     items: [
-      // Chat first, then Tasks, then Automations (owner, 2026-09-29): what you drive yourself
-      // leads, what runs without you follows. "Agents" is retired as a rail word — next to
-      // Chat it read as the same thing twice. Automations keeps the hero weight, not position.
+      // Chat, Tasks, Automations (owner, 2026-10-02): what you drive yourself leads, what
+      // runs without you follows. "Agents" is retired as a rail word — next to Chat it read
+      // as the same thing twice. Automations keeps the hero weight, not position.
+      // Then the beta pages (Insights, Roadmap), and the alpha ones last, so maturity reads
+      // top to bottom instead of alternating.
       { launch: 'chat', labelKey: 'nav.chat' },
       { page: 'tasks', labelKey: 'nav.tasks' },
       { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
-      // After Automations, not between it and Tasks: the rail test pins Tasks → Automations.
+      { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
+      { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
+      { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
       // "Whiteboard" opens the default board, "Control Panel", directly (A15). The page id
       // stays 'whiteboards': persisted nav state and the chat's appNav deep links carry it.
       { page: 'whiteboards', labelKey: 'nav.whiteboard', maturity: 'alpha' },
-      { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
-      { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
-      { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'council', labelKey: 'nav.council', maturity: 'alpha' },
     ],
   },
