@@ -20,6 +20,11 @@ function expectedScore(transcriptPath: string): number {
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 
+// Run from inside a desktop Chat tab, the suite would inherit that tab's markers and every
+// prompt hook would add the tab-naming reminder, so the "silent" cases could never be silent.
+delete process.env.DREAMCONTEXT_CHAT_TAB;
+delete process.env.DREAMCONTEXT_TAB_SESSION;
+
 /**
  * `user-prompt-submit` emits the sub-agent dispatch pre-authorization on every prompt it
  * actually processes (b233bae — Opus 5 injects a standing "don't spawn sub-agents unless
