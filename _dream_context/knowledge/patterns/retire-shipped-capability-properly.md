@@ -3,15 +3,15 @@ id: knowledge_retire_capability
 name: retire-shipped-capability-properly
 description: >-
   When retiring a shipped, documented capability (not refactoring, but DELETING
-  a whole subsystem): document what's being deleted and why, state what
-  replaces it, update all related docs/PRDs/references, delete code in the
-  right order (repoint importers first), and leave a clear trail so future
-  sessions understand the decision.
+  a whole subsystem): document what's being deleted and why, state what replaces
+  it, update all related docs/PRDs/references, delete code in the right order
+  (repoint importers first), and leave a clear trail so future sessions
+  understand the decision.
 type: knowledge
 tags:
-  - kind:pattern
+  - 'kind:pattern'
   - architecture
-  - documentation
+  - 'topic:docs'
 pinned: false
 created: '2026-08-11'
 ---

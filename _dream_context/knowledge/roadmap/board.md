@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-09-30'
+date: '2026-10-02'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-09-30 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-10-02 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/13 done (54%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -55,7 +55,7 @@ date: '2026-09-30'
   - sleep-connectors-pull-outside-sources-on-a-cadence-and-turn-them-into-knowledge-and-theses (completed) · BACKLOG · 2026-08-17 → 2026-08-24
   - sleep-cycle-bookmarks-its-own-sub-agent-briefs-and-reports-as-star-star-decision-entries-mis-linked-to-an-arbitrary-task (in_review) · BACKLOG
   - sleep-debt-counts-only-real-human-work-so-the-consolidation-warning-means-something-again (completed) · 2026-09-29 → 2026-09-29
-  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_review) · 2026-09-10 → …
+  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_review) · 0.30.0 · 2026-09-10 → …
   - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
   - sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
@@ -89,7 +89,7 @@ date: '2026-09-30'
   - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
   - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
 
-### 🔵 **simplified-ux** — Simplified UX · 80/116 done (69%) · target 2026-07-31 · forecast 2026-09-29 🔴 SLIPPING
+### 🔵 **simplified-ux** — Simplified UX · 80/117 done (68%) · target 2026-07-31 · forecast 2026-09-29 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-browser-run-shows-its-screenshots-in-chat-a-live-frame-while-it-runs-a-strip-when-it-lands (todo) · 0.28.0
   - a-declared-status-whose-key-collides-with-a-custom-field-is-accepted-by-the-settings-editor-then-silently-never-appears (todo) · 0.27.0
@@ -167,8 +167,9 @@ date: '2026-09-30'
   - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (completed) · 0.21.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (completed) · 0.18.0
   - insights-sync-all-make-bulk-insight-sync-a-background-job-with-bounded-concurrency (completed) · 0.23.0
-  - insights-v2-blocks-reach-a-polished-fully-customizable-chart-standard-axes-correct-hover-charts-that-fit-their-cell (in_progress) · 2026-09-30 → …
-  - insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change (in_review)
+  - insights-v2-blocks-reach-a-polished-fully-customizable-chart-standard-axes-correct-hover-charts-that-fit-their-cell (in_review) · 0.30.0 · 2026-09-30 → …
+  - insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change (in_review) · 0.30.0
+  - insights-v2-funnel-explorer-every-page-a-bindable-block-and-the-whole-explorer-as-one-interactive-page (in_review) · 0.30.0 · 2026-09-30 → …
   - install-manifest-gains-a-hash-and-an-owner-no-silent-overwrites-no-silent-pack-collisions (todo) · BACKLOG
   - j-a-r-v-i-s-mode-konusarak-sor-sesli-cevap-al-yapiyi-ekranda-gor (cancelled)
   - lab-funnel-analytics (completed) · 0.19.0
@@ -207,7 +208,7 @@ date: '2026-09-30'
   - two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file (completed) · 0.25.0 · 2026-08-23 → 2026-08-24
   - update-exits-0-when-no-platform-is-installed-so-scripts-read-the-no-op-as-success (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
   - whiteboard-faz-2-her-board-un-yaninda-o-board-u-goren-ve-duzenleyen-bir-asistan-paneli-acilir (todo)
-  - whiteboard-modulu-her-board-ajanin-ve-kullanicinin-birlikte-cizdigi-canli-widget-tasiyan-bir-excalidraw-kontrol-paneli-olur (in_progress) · 2026-09-29 → …
+  - whiteboard-modulu-her-board-ajanin-ve-kullanicinin-birlikte-cizdigi-canli-widget-tasiyan-bir-excalidraw-kontrol-paneli-olur (in_review) · 0.30.0 · 2026-09-29 → …
   - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim (in_progress) · 0.28.0
 
 ### 🔵 **make-it-a-business** — Make it a Business · $ 856/2000 MRR (43%) · target 2026-09-05 · forecast 2026-10-27 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready

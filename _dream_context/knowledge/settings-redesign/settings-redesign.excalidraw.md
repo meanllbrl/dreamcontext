@@ -8,7 +8,7 @@ description: >-
 tags:
   - design
   - 'topic:dashboard'
-  - settings
+  - 'topic:settings'
   - 'topic:excalidraw'
 excalidraw-plugin: parsed
 ---

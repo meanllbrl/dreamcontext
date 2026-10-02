@@ -6,10 +6,12 @@ tags:
   - domain:database
   - database
   - topic:schema
-updated: "2026-07-30"
----```sql
+updated: "2026-10-02"
+---
+
+```sql
 -- Data Structures — dreamcontext
--- Updated: 2026-07-30
+-- Updated: 2026-10-02
 --
 -- dreamcontext has no database. All data is stored as files in _dream_context/.
 -- This file documents the file-based data schemas instead.
@@ -235,4 +237,67 @@ updated: "2026-07-30"
 -- }]
 -- The ledger — not setupVersion — is the only honest answer to "what is left to
 -- do": unfinishedAgentTasks() requires a code/detected entry to exist and no
--- matching agent entry with the same step id.```
+-- matching agent entry with the same step id.
+
+-- ============================================================
+-- LAB BOARD: _dream_context/lab/boards/<slug>.md          (Insights v2, 0.30.0)
+-- Managed by: dreamcontext lab board ... / the dashboard board editor
+-- Lenient READ (a repair is a warning), STRICT WRITE (overlaps, duplicate card
+-- ids, unsafe slugs and bad options are refused with a diagnostic naming the
+-- card id, the block path and the fix). Every write is rev-checked, atomic
+-- (tmp + rename) and holds state/.locks/lab-boards.lock -- server and CLI take
+-- the same one. A conflict-marked file reads as an error board; PUT answers 423.
+-- ============================================================
+--
+-- FRONTMATTER = the spec; the markdown BODY is prose:
+-- title:      "Marketing"
+-- titleKey:   "lab.board.other"        -- i18n key, derived boards only
+-- order:      1                        -- tab order
+-- cards:
+--   - id:     "c-weekly-active-users"  -- unique per board: React key AND the
+--                                      -- brain-sync merge key (merge class
+--                                      -- `lab-board`, union by card id)
+--     at:     {x, y, w, h}             -- 12-column grid, row height 56px
+--     title:  "..."                    -- defaults to the primary insight title
+--     insight: "weekly-active-users"   -- primary: detail panel, refresh, range
+--     blocks:                          -- ABSENT = one legacy `insight` block
+--       - type:    "line"              -- 15+ catalog types; src/lib/lab/blocks.ts
+--                                      -- is the single source (options schema,
+--                                      -- EN/TR labels, default size)
+--         data:    "<insight>" | "<insight>/<datasetKey>"
+--         options: { ... }              -- validated against the catalog
+--         tabs:    [{label, blocks}]    -- `tabs` type only, never nested
+--
+-- With no lab/boards/ the boards are DERIVED from the legacy manifests (one per
+-- category, order from .lab-prefs.json) and NOTHING is written. The first edit
+-- materializes every board at once via lab/.boards-staging-<pid>-<rand>/ plus
+-- one directory rename; a lost rename discards the staging dir and re-applies.
+--
+-- BLOCK LIBRARY: _dream_context/lab/blocks/<slug>.md -- a reusable block (often
+-- a custom HTML block with the `dc-` kit) referenced from a card by `ref`.
+-- Stays on the prose git-sync path, not the lab-board merge class.
+
+-- ============================================================
+-- WHITEBOARD: _dream_context/whiteboards/<slug>/<slug>.excalidraw.md   (0.30.0)
+-- Managed by: dreamcontext whiteboard ... / /api/whiteboards
+-- Obsidian Excalidraw format with a PLAIN json fence (a compressed board is
+-- refused, never decompressed). Git-tracked; a nested .gitattributes
+-- (* merge=binary) routes every divergence to the `whiteboard-md` element-merge
+-- handler instead of a line splice; a nested .gitignore keeps .locks/ and *.tmp
+-- out. A board that does not parse is NEVER written over.
+-- ============================================================
+--
+-- Widgets are Excalidraw `embeddable` elements:
+--   link:            "dreamcontext://<kind>/<id>"   -- validateEmbeddable rejects
+--                                                   -- every other link, so the
+--                                                   -- native iframe embed never runs
+--   customData.dc:   { kind, ...payload, size }     -- kind: insight | knowledge |
+--                                                   -- task | todo | note | html | web
+--                                                   -- size: s | m | l | xl (180/16 grid)
+--   customData.dcTag: "<tag>"                       -- on a plain drawn element
+--
+-- Concurrency is Excalidraw's own per-element reconcile (higher `version`, then
+-- lower `versionNonce`); tombstones are kept forever in Phase 1. No `image`
+-- elements and no `files` key: the CLI, the PUT validator and `draw` refuse both.
+-- DELETE moves the board to whiteboards/.trash/<slug>-<ts>/.
+```

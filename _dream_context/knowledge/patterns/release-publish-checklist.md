@@ -3,13 +3,13 @@ id: knowledge_release_publish_checklist
 name: release-publish-checklist
 description: >-
   Publishing a dreamcontext release is an action an agent CAN take and should
-  offer — not something that waits to be asked. The full sequence: which gates
-  the agent runs unattended, which four steps are user-gated (npm login,
-  publish, tag push, GitHub Release), the five version surfaces that must move
-  together, and the four scars that produced this order — tag only AFTER the
-  registry confirms, never blind-run the diagram generator, a release record
-  flipped early becomes a lie, and a cut that skips this list becomes another
-  SUPERSEDED row.
+  offer. The sequence: the gates the agent runs unattended, the four user-gated
+  steps (npm login, publish, tag push, GitHub Release), the five version
+  surfaces that move together, the four scars behind the order (tag only after
+  the registry confirms; `released` means the registry has it; never blind-run
+  the diagram generator; a skipped list becomes a SUPERSEDED row), and three
+  non-code gates: the SKILL.md byte ceiling, a polluted Chat-tab shell, and
+  announcement shots from a synthetic vault.
 type: knowledge
 tags:
   - 'kind:pattern'
@@ -114,6 +114,14 @@ are all the same shape: real payload, no publish, overtaken by the next bump. Wh
 owner decides not to cut a version, that is a legitimate outcome — but say so on the
 record, because a `planning` row describing shipped work is scar 2 in slower motion.
 
+## Three gates that are not about the code (0.30.0)
+
+**A feature cut can fail on skill SIZE.** `skill/SKILL.md` has a hard **46,080-byte ceiling**, phrase-pinning tests that require specific sentences to be present, and a `.claude` mirror that must be **byte-identical**. A wave that documents itself (0.30.0's Insights v2 rows) pushes past the ceiling, and the gate that fails is a skill test, not a build. Budget the doc bytes with the feature, and re-run the mirror check after any SKILL.md edit.
+
+**Run the gates from a plain shell, not from inside a Chat tab.** A desktop Chat tab exports `DREAMCONTEXT_CHAT_TAB`, which the hook tests inherit — they then assert against a marker nobody set in the test. The variable is now scrubbed in the test setup, but the habit stands: a gate run inside an app surface is a gate run in a polluted environment.
+
+**Announcement shots need a synthetic vault, and some surfaces cannot be shot at all.** The 0.30.0 story was captured from the fictional **"orbit"** demo vault (`marketing/build-demo-vault-v2.sh`) plus a funnel fixture (`scripts/verify/fixtures/funnel-explorer-demo.mjs`), driven by `e2e/announce-shots-0-30.mjs`. The exception worth remembering: **agents-channel posts cannot be shot in an isolated home**, because `automations post` needs a real run behind it — plan a real-vault capture for those, or drop the claim per the step-4 rule.
+
 ## A local-only rollout is a different thing
 
 "Bump and install locally so I can test" is **not** a publish and must not touch the
@@ -140,5 +148,8 @@ trace to this checkout's `dist`, not a stale duplicate.
 
 ## Last Verified
 
-2026-08-26 (distilled from the 0.25.0 checklist run; the 0.26.0 local-only rollout
-followed the local-rollout section and stayed off the registry).
+2026-10-02 (the 0.30.0 cut followed this list: five version surfaces + both lockfiles moved
+together, `RELEASES.json` reconciled and left at `planning`, the What's New story authored
+from this build's own shots. The npm publish is the open user-gated step). Distilled
+originally from the 0.25.0 checklist run; the 0.26.0 local-only rollout stayed off the
+registry.

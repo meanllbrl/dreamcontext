@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-09-29'
+updated: '2026-10-02'
 released_version: 0.1.0
 tags:
   - architecture
@@ -78,6 +78,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 - `hook stop` reads session_id, transcript_path, and last_assistant_message from stdin JSON; analyzes transcript for Write/Edit tool uses; stores session record in `state/.sleep.json`.
 - `hook session-start` finds all sessions with `score: null` and analyzes their transcripts; adds computed scores to debt total.
+- [x] **Debt counts only real HUMAN work** (2026-09-30, `42ae4f24`, in 0.30.0, task `sleep-debt-counts-only-real-human-work-so-the-consolidation-warning-means-something-again`). A spawned session — a Develop builder, an automation run, a sub-agent — adds **no debt** and is never told to sleep. Agent-generated sessions had been inflating the number until "Must Sleep" meant nothing, and telling a headless run to consolidate is a directive nobody can act on. Must Sleep directives also name their tier, so the warning says which threshold it crossed.
 - Debt scoring: session score = `scoreSession(analysis)` — a log-compressed WEIGHTED SUM over four axes, rounded to an integer in 0..`SESSION_SCORE_MAX` (10). Axes and weights: novel tokens 4 · file changes 3 · tool calls 1.5 · substance 1.5.
 - Debt levels: 0-23 = Alert, 24-39 = Drowsy, 40-59 = Sleepy, 60+ = Must Sleep. Thresholds are named constants (`DEBT_DROWSY`/`DEBT_SLEEPY`/`DEBT_MUST_SLEEP`) in `sleep-consolidation.ts` — the single source of truth every directive/level derives from. Calibrated against measured DAILY volume so the busiest real day demands at most 3 consolidations.
 - `DEBT_DEEP_AUTHORITY` (90) is a SEPARATE constant gating `deep` (destructive knowledge ops) — reaching Must Sleep does NOT authorize destruction.
@@ -350,11 +351,16 @@ The legacy `scoreFromChangeCount` / `scoreFromToolCount` / `scoreFromSubstance` 
 - The **main agent** calls `dreamcontext sleep done "<summary>"` after all specialist reports return — not any specialist sub-agent. Specialists return reports; the main agent stitches and finalizes.
 
 ## Changelog
+<!-- LIFO: newest entry at top -->
+
+### 2026-10-02 — Debt counts only real human work (in 0.30.0)
+
+- `42ae4f24` (task `sleep-debt-counts-only-real-human-work-...`). A spawned session — builder, automation, sub-agent — no longer adds sleep debt and is no longer told to sleep; debt is computed from real human transcript records only, and a Must Sleep directive names the tier it crossed.
+- **Why it mattered:** the agent surfaces this project shipped over 0.27–0.30 (Chat builders, automations, sub-agent fan-out) each wrote session records, so the number climbed on work no human did. A warning that is always on is not a warning.
 
 ### 2026-09-11 - [unreleased] Fold by default, file by exception
 - Reconciled from task `sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception` (PLAN v2, 12 tasks / 4 waves, 4 review rounds). The filing bar gained a semantic neighbour gate and a declined-idea gate; `tasks decline|declined|undecline` and `--neighbor-checked` / `--declined-checked` shipped; `task-candidate:` flags defer indirect candidates; `agents/sleep-tasks.md` gained latest-session-wins, lands-in-THIS-project and the direct-evidence rubric.
 - **UNCOMMITTED and UNRELEASED at the time of writing** — the automated half passed (497 files / 9419 tests, e2e 32/32 with 6 model-gated cases proven non-vacuous), the W4 manual checklist was running on this very cycle. Four user stories and the AC block are unticked on purpose.
-<!-- LIFO: newest entry at top -->
 
 ### 2026-09-07 - v0.27.0 — the brain consolidates itself, on thresholds you set
 - Consolidates four completed tasks: `sleep-umbrella-tunable-settings-a-bar-against-junk-tasks-and-background-auto-sleep-with-two-writer-safety` (umbrella, 18 ACs), `sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models` (A), `sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist` (B), `sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging` (C+D). Landed on main as ff7aa67 (70 files, +15,737) + 8f84cbb (the verification cycle's own consolidation output); released 2026-09-06.

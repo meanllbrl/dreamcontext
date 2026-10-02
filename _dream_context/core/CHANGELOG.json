@@ -1,5 +1,117 @@
 [
   {
+    "date": "2026-10-02",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Auto mode reads classifier rules only from user, --settings or managed settings; a repo's own .claude/settings*.json is ignored as repo-controllable. Every chat spawn now passes one --settings file holding the carve-out (plus the mode-note hook when a resume needs it), extending $defaults and covering only the Develop recipe's builder launch shape.",
+    "breaking": false,
+    "summary": "App-spawned sessions carry an auto-mode carve-out, so Develop builders launch under auto",
+    "references": [
+      "commit:f4a8adeb"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-02",
+    "type": "feat",
+    "scope": "nav",
+    "description": "The agent overlay was reachable only from the corner FAB or its hotkey. Workspace now leads with a Chat row that expands the same always-mounted overlay (a launcher, never a route, so live PTYs and chat portals are not re-homed); it shows under the FAB's own gate (desktop + enabled in Settings), counts live sessions in a quiet pill that turns accent when one waits on you, and reads as the current place while the overlay is up. Naming: 'Agents' beside 'Chat' read as one thing twice, so the rail order is now Chat, Tasks, Automations, and the FAB, Settings section and refusal toasts all say Chat. The 'automations' route key and settings.agents.* i18n keys are unchanged.",
+    "breaking": false,
+    "summary": "Chat joins the Workspace rail as its own row, and the rail says Automations, not Agents",
+    "references": [
+      "commit:ad04364c"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-02",
+    "type": "fix",
+    "scope": "checklist",
+    "description": "Always-on-top alone only floats a window on the macOS Space it opened on, so the pinned checklist was left behind as soon as the user switched desktops or entered a full-screen app. A new set_pinned shell command also sets CanJoinAllSpaces + FullScreenAuxiliary (cleared on unpin), granted only to the checklist capability; the window pins itself on open, and an older .app without the command falls back to plain always-on-top.",
+    "breaking": false,
+    "summary": "The pinned checklist window stays on top across every Space and full-screen app, not just the one it opened on",
+    "references": [
+      "commit:990447d4"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-02",
+    "type": "chore",
+    "scope": "release",
+    "description": "Bumped all five version surfaces and both lockfiles to 0.30.0 and wrote the RELEASES.json record covering everything on main since the 0.28.0 publish (Insights v2 boards, funnel explorer, whiteboards, the agent instructions wave, and the 09-30 agents/chat fixes). Status stays planning: npm still serves 0.28.0, and npm publish, the v0.30.0 tag and the GitHub Release are user-gated steps, not done yet. The desktop app was built, ad-hoc signed and installed locally as 0.30.0, and main was pushed to GitHub at 9c04d809. The announcements story for 0.30.0 (Insights becomes boards you build, the funnel explorer, whiteboards with live widgets) was authored.",
+    "breaking": false,
+    "summary": "0.30.0 cut across all five version surfaces and both lockfiles, record left at status planning",
+    "references": [
+      "commit:296a4bdb",
+      "commit:36fbe10b",
+      "commit:9c04d809"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-02",
+    "type": "fix",
+    "scope": "skill",
+    "description": "The dreamcontext skill doc hit its hard 46080-byte ceiling (tests/unit/skill-md-structure.test.ts) once the Insights v2 board/block rows were added; trimmed elsewhere to fit, keeping the .claude/skills/dreamcontext mirror byte-identical. Separately, running the suite from inside a desktop Chat tab was leaking DREAMCONTEXT_CHAT_TAB into hook integration tests; hook.test.ts now scrubs it. Two unrelated tests (automations-cli, automations-process-group) were found to time out only under full-suite load, passing in isolation — not fixed this cycle, just identified.",
+    "breaking": false,
+    "summary": "SKILL.md back under its 46080-byte ceiling after the Insights v2 rows; hook tests stop inheriting a Chat tab's leaked env var",
+    "references": [
+      "commit:46e6b891",
+      "file:.claude/skills/dreamcontext/SKILL.md",
+      "file:tests/unit/skill-md-structure.test.ts",
+      "file:tests/integration/hook.test.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-02",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Landed the rest of the Insights v2 wave on top of the board engine shipped 2026-09-30: a measured chart foundation (nice-tick scales, axes, grid, pointer-true hover, legend) rebuilt every chart type (line, stacked, bar, pie, heatmap, tables, funnels); a block inspector and add-card menu for editing boards in place; a save-to-library flow and HTML block sandbox bridge; and the funnel explorer itself (lab board show --select, add-card --preset, breakdown/trend/benchmark/segments blocks, funnel flow with worst-step highlighting, page pin and tabs). Per-block projection cut a funnel board's payload from 447KB to 169KB. Lookup-path metrics are never summed, and unmeasured states read as honestly unmeasured rather than zero. Merged to main at 0a521b12.",
+    "breaking": false,
+    "summary": "Insights v2 ships a chart foundation, block inspector, HTML block library and the funnel explorer on top of boards",
+    "references": [
+      "commit:0a521b12",
+      "commit:6694a529",
+      "commit:7344d3ac",
+      "commit:cd2286c5",
+      "commit:968948e9",
+      "commit:aa00b042",
+      "commit:96c19852",
+      "feature:lab-analytics-insights"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-02",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Added editable Excalidraw-based whiteboards that host live data widgets instead of static drawings: a board switcher lets a user flip between boards, and widget frames follow a set of Apple-style preset sizes. HTML blocks render with one chart per large insight and titles on reference cards, with no inner frame crowding the content.",
+    "breaking": false,
+    "summary": "Excalidraw whiteboards become editable boards with live widgets, a board switcher and Apple-style sizes",
+    "references": [
+      "commit:86bff520",
+      "commit:8b00f332",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-09-30",
     "type": "feat",
     "scope": "lab",

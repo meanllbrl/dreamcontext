@@ -10,7 +10,7 @@ tags:
   - testing
   - 'topic:agents'
   - 'topic:recall'
-  - research
+  - 'topic:research'
   - decisions
 pinned: false
 date: '2026-09-22'

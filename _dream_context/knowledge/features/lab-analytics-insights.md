@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-09-30'
+updated: '2026-10-02'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -44,12 +44,12 @@ type: feature
 name: lab-analytics-insights
 description: >-
   Lab (dashboard: "Insights", Beta) — curated analytics metrics synced from HTTP
-  or script sources into the brain: manifest + bounded cache, a sync that only
-  pays for change (TTL + upstream freshness probe), a redacting credential
-  layer, roadmap KR binding, snapshot/recall surfacing, and boards: cards of
-  data-bound blocks on a 12-column grid, custom HTML blocks and a per-vault
-  block library, shared with agents through `lab board`/`lab block`. Legacy
-  dataset/v1 rows, app/v1 apps and html/v1 cards keep rendering.
+  or script sources into the brain, then drawn as boards: cards of data-bound
+  blocks on a 12-column grid, one shared chart layer with full per-option
+  control, a funnel explorer, custom HTML blocks and a per-vault block library.
+  Sync only pays for change; credentials are redacted; agents read the same
+  numbers through `lab board`/`lab block`. Legacy app/v1 and html/v1 keep
+  rendering.
 pinned: false
 date: '2026-07-05'
 ---
@@ -68,16 +68,36 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ### Insights v2: boards of blocks (Beta, 2026-09-29)
 
-- [ ] As a user, the Insights page is a set of **boards** I switch between with tabs; each board is cards on a 12-column grid that I drag and resize in Edit mode, and the layout is saved to the vault so my team and agents see the same board.
-- [ ] As a user, a card is a stack of **blocks** from a built-in catalog (stat, line, bar, stacked, pie, table, heatmap, funnel, pivot, text, callout, tabs, filter, html, insight), and every block option (color, area, orientation, donut, compare with previous, sort, limit, columns, ...) visibly changes the drawing, so I customize a chart instead of accepting the one render an insight shipped with.
-- [ ] As a user, I change a block's type, data and options in an **inspector** without writing code, and ⌘Z undoes it.
-- [ ] As a user, a **filter** block narrows the sibling blocks bound to the same dataset instantly, without a sync, and the table total follows the filter.
-- [ ] As a user, a **tabs** block keeps several views in one card, one visible at a time.
-- [ ] As a user or agent, I write a **custom HTML block** with the dashboard's `dc-` kit, bind it to the data it needs, save it to the vault's **block library**, and reuse it on another card by name.
-- [ ] As an agent, I read a board's resolved values with `lab board show` (the same numbers the dashboard draws) and edit boards with `lab board ...`, and an invalid spec is refused with a diagnostic naming the card, the block path and the fix.
-- [ ] As an existing user, my vault opens on v2 with one board per category in my saved order, every insight present and drawn as before, and nothing is written until my first edit.
-- [ ] As a user, opening a board whose data is fresh costs zero upstream requests, and a card tells me why it did not refetch ("upstream unchanged").
-- [ ] As a teammate, two people editing the same board on two machines merge card by card on brain sync; a board file left with conflict markers opens as a read-only error board, never a silent overwrite.
+- [x] As a user, the Insights page is a set of **boards** I switch between with tabs; each board is cards on a 12-column grid that I drag and resize in Edit mode, and the layout is saved to the vault so my team and agents see the same board.
+- [x] As a user, a card is a stack of **blocks** from a built-in catalog (stat, line, bar, stacked, pie, table, heatmap, funnel, pivot, text, callout, tabs, filter, html, insight), and every block option (color, area, orientation, donut, compare with previous, sort, limit, columns, ...) visibly changes the drawing, so I customize a chart instead of accepting the one render an insight shipped with.
+- [x] As a user, I change a block's type, data and options in an **inspector** without writing code, and ⌘Z undoes it.
+- [x] As a user, a **filter** block narrows the sibling blocks bound to the same dataset instantly, without a sync, and the table total follows the filter.
+- [x] As a user, a **tabs** block keeps several views in one card, one visible at a time.
+- [x] As a user or agent, I write a **custom HTML block** with the dashboard's `dc-` kit, bind it to the data it needs, save it to the vault's **block library**, and reuse it on another card by name.
+- [x] As an agent, I read a board's resolved values with `lab board show` (the same numbers the dashboard draws) and edit boards with `lab board ...`, and an invalid spec is refused with a diagnostic naming the card, the block path and the fix.
+- [x] As an existing user, my vault opens on v2 with one board per category in my saved order, every insight present and drawn as before, and nothing is written until my first edit.
+- [x] As a user, opening a board whose data is fresh costs zero upstream requests, and a card tells me why it did not refetch ("upstream unchanged").
+- [x] As a teammate, two people editing the same board on two machines merge card by card on brain sync; a board file left with conflict markers opens as a read-only error board, never a silent overwrite.
+
+### Insights v2: the chart standard (2026-09-30, in 0.30.0)
+
+- [x] As a user, every chart block (line, bar, stacked, pie, heatmap, stat, funnel) **fills its grid cell and never scrolls inside it** at any size the grid allows; only tables and pivots scroll, and they keep a sticky header.
+- [x] As a user, a line/stacked chart has **formatted x and y axes with recessive gridlines** and a hover that lands on the datum **under my pointer** at any cell width and at desktop zoom — not on the wrong point.
+- [x] As a user, every chart carries its full option set (curve, points, area, yMin, reference line, orientation, sort, top-N with Other, grouped vs stacked, normalize, donut, center total, label placement, density, data bars, delta colouring, goal/target, spark, number format, legend position, axes/grid toggles, colour) and **every option visibly changes the drawing**.
+- [x] As a user, chart colour follows the **entity**, so filtering a series never repaints the survivors, and the palette is validated in light and dark.
+- [x] As a user, charts stay legible at the grid's extremes — a 3×3 cell keeps a readable plot, a 2-row cell degrades to a compact sparkline form instead of a blank card — and one number style is used per axis/column/label set.
+
+### Insights v2: the funnel explorer (2026-10-01, in 0.30.0)
+
+- [x] As a funnel operator, the explorer is **one interactive card**: breakdown chips plus tabs (Daily, Benchmark, Flow, Steps, one Segments tab per dimension) that keep my selection across every tab, with **zero sync requests** while I click.
+- [x] As a user, **each explorer page is also a bindable block** — `breakdown`, `trend`, `benchmark`, `segments`, and `funnel` with `layout: bars|flow` + `markWorst` — so I can place any page as its own card and customize it in the inspector from the data itself.
+- [x] As a funnel operator, a lookup-mode breakdown **never sums paths**: a platform × language pick shows exactly that intersection, and a combination that was not measured reads "Not measured: &lt;reason&gt;" — never 0, never 0%.
+- [x] As a funnel operator, I pin up to 4 selections and read them as **side-by-side lanes on one step spine**, each lane's rates from its own path, a missing step a dash, the 5th pin disabled.
+- [x] As a funnel operator, the **benchmark ruler** puts floor / current / target on one line with the delta vs the previous window, a status word that `better: lower` flips, each bound's source printed, and an inherited band marked as inherited.
+- [x] As a user, any card opens **fullscreen** from its menu, keeps selection and active tab, closes on Esc / Back, and reopens from `?card=<id>`.
+- [x] As a user, a **v1 app insight on a v2 board** pins any page through the block's `page` option and, with `nav: true`, switches pages from pills in the card and from in-frame `lab.navigate`.
+- [x] As an agent, `lab board show --select 'dim=value,...'` prints the same benchmark rows, step users, worst step and segment rows the DOM draws, and `lab board add-card --preset funnel-explorer` produces blocks deep-equal to the dashboard's preset entry.
+- [x] As a user, the explorer cards read in **three levels** — metric name + value first, delta/previous second, sources/marks/legend muted third — with the ruler on its own line and breathing room between runs and rows.
 
 - [x] As a PO, I can define a curated insight (e.g., "Weekly Active Users") backed by a PostHog or custom API endpoint, so my team's agents see live business metrics without me pasting stale numbers into task notes. *(M1 shipped: `lab create`, generic-HTTP adapter)*
 - [x] As an agent, every session I see the latest cached value + staleness of bound insights in my SessionStart snapshot, so I can reason about current-vs-target progress without asking the user "what's the latest WAU?". *(M1 shipped: SessionStart Lab section)*
@@ -166,19 +186,54 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 Task `insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change` (absorbs `lab-request-budget-an-upstream-freshness-gate-so-insights-and-reports-stop-re-querying-data-that-has-not-changed`). Validation: unit tests + `scripts/verify/lab-boards.mjs` (real server, WebKit, isolated HOME, mutation-checked) + owner sign-off in the installed .app.
 
-- [ ] Boards: `lab/boards/<slug>.md` (frontmatter = spec, body = prose); cards on a 12-column grid (`at: {x,y,w,h}`, row 56 px); card id unique per board; absent `blocks` = one legacy `insight` block.
-- [ ] Block catalog: `src/lib/lab/blocks.ts` is the single source (types, accepted frame kinds, options schema, EN/TR labels, default size); the dashboard reads the generated `block-catalog.json`; `blockRegistry.ts` is a `Record<BlockType, ...>`; drift tests.
-- [ ] Frames + frame ops: `frames.ts` resolves bindings (`<insight>` or `<insight>/<dataset>`) to series | table | funnel | value | empty{reason}; `frameOps.ts` runs where → interactive filter → sort → limit with the total computed after filtering, before the limit; byte-mirrored into the dashboard; `lab board show` and the dashboard print the same values.
-- [ ] Migration: no `lab/boards/` = boards derived one per category (order from `.lab-prefs.json`), groups become heading cards, nothing written until the first edit; the first edit (UI or CLI) materializes ALL boards atomically (staging dir + one rename, shared board lock); deterministic ids (`c-<insight>`, `h-<board>-<group>`) and slugs across machines.
-- [ ] Editing: drag + resize persist and survive reload; one in-flight PUT per board (a drag burst never 409s); an external change → 409 → reload toast; a failed PUT keeps edits pending with a Retry toast; inspector edits type/data/options with undo.
-- [ ] HTML blocks + library: sandboxed with the full `dc-` kit, fill their grid cell, answer `lab.data(name)` only for declared inputs; `lab/blocks/<slug>.md` library reusable by `ref`; symlinked cache / `../` / `%2F` binding = no data at board GET, `lab board show` and the block.
-- [ ] Freshness gate: force split (absent = automatic, `user`, `hard`; `true` read as `user` for one release); `refresh.freshness` probe with the same-origin credential rule after placeholder resolution; `sourceFreshness` marker + `queryKey` in the cache, `checkedAt` in the machine-local `state/.lab-freshness.json`; unchanged marker + queryKey under `user` = 1 probe 0 fetches; all-fresh board open = 0 jobs; automatic runs back off on recent errors; queued follow-up job; skip reason on card and CLI; `--force-hard`; `--dry-run` = zero requests.
-- [ ] Reports removed (lockstep test): report files, `/api/lab/reports*`, `lab report`, the window cache and AI commentary gone; user-vault `lab/reports/**` left untouched.
-- [ ] Brain sync: `lab-board` merge class (union by card id, changed-on-both = ours, deleted-vs-changed = kept and reported, overlaps resolved); conflict-marked board = error board, PUT refused (423); `lab/blocks/*.md` stays on the prose path.
-- [ ] `.lab-prefs.json` keeps `order`, `catOrder`, `category`, `collapsed`, `columns`; gains `activeBoard` (falls back to the first board).
-- [ ] Sidebar: Insights entry is `maturity: 'beta'`.
+- [x] Boards: `lab/boards/<slug>.md` (frontmatter = spec, body = prose); cards on a 12-column grid (`at: {x,y,w,h}`, row 56 px); card id unique per board; absent `blocks` = one legacy `insight` block.
+- [x] Block catalog: `src/lib/lab/blocks.ts` is the single source (types, accepted frame kinds, options schema, EN/TR labels, default size); the dashboard reads the generated `block-catalog.json`; `blockRegistry.ts` is a `Record<BlockType, ...>`; drift tests.
+- [x] Frames + frame ops: `frames.ts` resolves bindings (`<insight>` or `<insight>/<dataset>`) to series | table | funnel | value | empty{reason}; `frameOps.ts` runs where → interactive filter → sort → limit with the total computed after filtering, before the limit; byte-mirrored into the dashboard; `lab board show` and the dashboard print the same values.
+- [x] Migration: no `lab/boards/` = boards derived one per category (order from `.lab-prefs.json`), groups become heading cards, nothing written until the first edit; the first edit (UI or CLI) materializes ALL boards atomically (staging dir + one rename, shared board lock); deterministic ids (`c-<insight>`, `h-<board>-<group>`) and slugs across machines.
+- [x] Editing: drag + resize persist and survive reload; one in-flight PUT per board (a drag burst never 409s); an external change → 409 → reload toast; a failed PUT keeps edits pending with a Retry toast; inspector edits type/data/options with undo.
+- [x] HTML blocks + library: sandboxed with the full `dc-` kit, fill their grid cell, answer `lab.data(name)` only for declared inputs; `lab/blocks/<slug>.md` library reusable by `ref`; symlinked cache / `../` / `%2F` binding = no data at board GET, `lab board show` and the block.
+- [x] Freshness gate: force split (absent = automatic, `user`, `hard`; `true` read as `user` for one release); `refresh.freshness` probe with the same-origin credential rule after placeholder resolution; `sourceFreshness` marker + `queryKey` in the cache, `checkedAt` in the machine-local `state/.lab-freshness.json`; unchanged marker + queryKey under `user` = 1 probe 0 fetches; all-fresh board open = 0 jobs; automatic runs back off on recent errors; queued follow-up job; skip reason on card and CLI; `--force-hard`; `--dry-run` = zero requests.
+- [x] Reports removed (lockstep test): report files, `/api/lab/reports*`, `lab report`, the window cache and AI commentary gone; user-vault `lab/reports/**` left untouched.
+- [x] Brain sync: `lab-board` merge class (union by card id, changed-on-both = ours, deleted-vs-changed = kept and reported, overlaps resolved); conflict-marked board = error board, PUT refused (423); `lab/blocks/*.md` stays on the prose path.
+- [x] `.lab-prefs.json` keeps `order`, `catOrder`, `category`, `collapsed`, `columns`; gains `activeBoard` (falls back to the first board).
+- [x] Sidebar: Insights entry is `maturity: 'beta'`.
 
 *(From task `feat-lab-analytics-insights-subsystem` — validated plan v3, converged via goal-skill with 3 reviewers over 3 iterations.)*
+
+### Insights v2: the chart standard (task `insights-v2-blocks-reach-a-polished-fully-customizable-chart-standard-axes-correct-hover-charts-that-fit-their-cell`, in_review 2026-09-30)
+
+Validation: unit tests + `scripts/verify/lab-boards.mjs` extended to MEASURE the rendered charts (inner scroll, tick overlap, tooltip value under the pointer, a DOM/geometry difference per option), plus light and dark shots of every block. Owner sign-off closes the task.
+
+- [x] Defects closed: a derived group heading card renders its heading text; tab labels are fully visible; every chart block fills its cell with `scrollHeight <= clientHeight` and `scrollWidth <= clientWidth` at two card sizes; table and pivot may scroll with a sticky header.
+- [x] Shared chart foundation (`dashboard/src/components/lab/chart/`): ResizeObserver sizing from the real cell, nice-tick scales, formatted axes with recessive gridlines, ONE axis (never dual), one hover model mapping the pointer to the nearest datum through the rendered bounding box, a token-styled tooltip with a coloured key, click-to-toggle legend, categorical colours in fixed order following the entity, palette validated with the dataviz validator in both themes.
+- [x] Per-block option sets shipped and each visibly changes the render: line (curve, points, area, yMin, reference line, legend position, axes/grid, format, series pick, colour), bar incl. compare/list (orientation, sort, value labels, top-N + Other, grouped vs stacked, comparePrev), stacked (area|bar, 100% normalize, colour start, crosshair tooltip with per-series values + total), pie (donut, center total, label placement, top-N + Other, sort; 7+ slices still degrade to bars), heatmap (sequential|diverging with neutral midpoint, cell labels), table (click-to-sort, sticky header, density, inline data bars, delta colouring with an icon — never colour alone, column pick, limit), stat (size, goal/target with progress, delta with arrow + sign, spark, unit, format).
+- [x] Every option lives in the engine catalog (`src/lib/lab/blocks.ts`, single source, EN+TR labels), appears in the inspector with no hand-listed field, and is honoured by `lab board show` wherever it changes VALUES (sort, top-N, normalize).
+- [x] Demo-round findings closed: a library-ref html block gets its declared inputs' data with no page reload; charts stay legible at 3×3 / 9×2 / 12×2 (compact mode, no clipped text, no inner scroll); a table at its default size shows ≥4 rows with no horizontal scroll or ellipsized cells; an html block never draws a card inside a card and an untitled card leaves no header gap; board tab names are readable and an empty Meaning never renders the manifest placeholder as content.
+- [x] Demo run 2: plot ≥40% of block height on a 3×3 vertical bar; small-size value axes end near the data max; ≥2 time labels at 3×3; one number style per axis/column/end-label set; big stats hide cents ≥1,000; the table total names how many source rows it covers; grid compacts upward on move/resize (rev-checked save, undo works); the "Board updated" toast auto-dismisses; a floating card menu never covers the markup's own controls; the detail panel shows a dataset table as its rows; the inspector title is the card title or insight name, never the raw id.
+- [x] No regression: tsc root + dashboard clean, full vitest with no new failures vs baseline, `verify:lab-boards` green, tokens-only CSS over every new file, all copy through `t()` EN+TR.
+- [ ] Owner sign-off on the light/dark screenshots of every block (the one open criterion — the owner closes the task, never the agent).
+
+### Insights v2: the funnel explorer (task `insights-v2-funnel-explorer-every-page-a-bindable-block-and-the-whole-explorer-as-one-interactive-page`, in_progress 2026-10-02)
+
+Validation: unit tests + `verify:lab-boards.mjs` sections 21–28 with mutations `lookup-sums`, `unmeasured-zero`, `state-per-tab`, `lane-spine`, `fullscreen-remount`, `ruler-shift`, `app-nav-pinned` (each caught), plus light/dark shots of the synthetic Acme explorer demo.
+
+- [x] Contract: a `dataset/v1` bundle carrying a `funnel-set/v1` `funnel` member writes BOTH `cache.datasets` and `cache.funnel` (with history); funnel-set gained optional `segment_mode: lookup|cells`, `measured`/`reason`, per-segment metrics/benchmarks/daily, `FunnelDef.daily`, band sources and `better: higher|lower`; a malformed member fails the sync and keeps the prior cache.
+- [x] Lookup never sums; a 12-value dim in lookup mode is not folded into Other.
+- [x] Not measured is not zero: an unmeasured chip is `aria-disabled` with its reason on hover/focus, clicks change nothing, an unmeasured metric reads "Not measured: &lt;reason&gt;" with no ruler marker, and no 0 or 0% is drawn for either.
+- [x] One interactive page: the funnel-explorer preset card keeps its selection across every tab; same-insight tables narrow by the selection with a following total and say "Not split by X" when they lack the dim; zero sync requests during chip/tab interaction.
+- [x] Every page a bindable block: `breakdown`, `trend`, `benchmark`, `segments` + funnel options `funnel` / `layout(bars|flow)` / `markWorst`, each working as its own card and customized in the inspector from pick fields listing the frame's funnels, dims and metrics.
+- [x] Lanes: up to 4 pins on one step spine, each lane's rates from its own path, missing step = dash, the 5th pin disabled.
+- [x] Benchmark: floor / current / target on one ruler (current marker within 1px of its scale position), delta vs previous window, status word with `better: lower` flipping it, each bound's source printed, inherited band noted.
+- [x] Flow layout: stage widths proportional to users within 1%, one drop badge per link, the worst drop marked as `stepDrops` computes.
+- [x] Segments and trend: one row per dim value under the cross-selection with band tone washes, faded low-sample rows, sortable; trend hover shows the slice's exact daily value and the metric switch changes the series.
+- [x] Fullscreen: any card opens ≥95% of the viewport from its menu, keeps selection and tab, closes on Esc / exit / Back, reopens from `?card=<id>`, one iframe only for app cards.
+- [x] A v1 app insight on a board: the insight block's `page` option pins any app page; `nav: true` shows page pills and both a pill click and in-frame `lab.navigate` switch pages on a fresh frame instance; `nav: false` keeps today's card.
+- [x] CLI parity: `lab board show --select 'dim=value,...'` prints what the DOM draws; `lab board add-card --preset funnel-explorer` and the dashboard entry produce deep-equal blocks.
+- [x] Fit, payload, privacy: the 4 new blocks and the flow layout have no inner scroll or clipped text at small and large sizes (segments scrolls with a sticky header); the demo board GET is ≤300 KB with `daily` stripped from non-trend frames (measured 447 KB → 169 KB via per-block projection + shared frames); fixtures, preset and docs use only the synthetic **Acme** vocabulary — no registered vault or product names.
+- [x] Demo-run findings (2026-10-01): active chips ≥4.5:1 contrast in both themes; ≤24px between chips and tabs in card and fullscreen; the ruler labels floor/target/previous with numbers, prints sources and a legend, and shows all 5 rows fullscreen; lanes keep users and % at 8×7; flow at 3×3 keeps labels and users; breakdown at 3×3 has a small-cell form; the trend switch never ellipsizes; the segments table never breaks a value mid-word nor clips its last column; a segment without its own band inherits the set band, marked inherited.
+- [x] Owner review 2026-10-01 ("textler cok yakin, cok karmasik, daha hiyerarsik, alan dar"): explorer cards read in three levels, benchmark rows put the ruler on its own line with labels that never touch other text, ≥8px between text runs and ≥12px between rows, a quieter chip header. *(Shipped `9e2ee8d0` "funnel explorer reads in three levels with room to breathe".)*
+- [ ] Owner sign-off on the demo shots closes the task.
+- [x] No regression: tsc root + dashboard clean, full vitest no new failures vs baseline, verify sections 1–20 green, the funnel block's default render unchanged, mirror/catalog/i18n drift tests green.
 
 ### Core engine + storage
 
@@ -331,6 +386,14 @@ Task `insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-report
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### The chart standard and the funnel explorer: the rules the drawing layer enforces (2026-09-30 / 2026-10-01, in 0.30.0)
+
+- **One value axis, never dual.** A second axis on the same plot invites a correlation the data does not support. Blocks that need two measures use two blocks.
+- **Colour follows the entity, not the position.** Series colour is assigned by the entity's identity, so hiding a series or applying a filter never repaints the survivors — the old index-based assignment made a filter look like a data change.
+- **A lookup path is never summed, and "not measured" is never zero.** In `segment_mode: lookup` a cross-selection reads the intersection row the source measured; there is no fallback to adding paths together. An unmeasured combination renders aria-disabled with its reason and draws no marker — a 0 or a 0% would be a fabricated measurement. Both rules are pinned by their own verify mutations (`lookup-sums`, `unmeasured-zero`), because both failure modes are silently plausible-looking.
+- **The board response is projected per block.** Each frame carries only the fields its block reads (`daily` stripped from non-trend frames) and frames are shared across cards: 447 KB → 169 KB on the demo board. A richer frame is cheaper to write and the thing that makes a board feel slow.
+- **An option that does not visibly change the drawing is not shipped.** Every catalog option is asserted by `verify:lab-boards` to produce a DOM or geometry difference — the honest definition of "customizable".
 
 ### Insights v2: boards of data-bound blocks replace categories, groups and Reports; sync only pays for change (2026-09-29, Beta)
 
@@ -530,6 +593,20 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 **Size/cut lines (if short).** (1) roadmap-side provenance chip — ALREADY cut to v2; (2) pie chart (degrade to number+line+raw; FLAG rather than silently drop); (3) lab tweak CLI verb (dashboard editing still satisfies checklist). NEVER cut: security nets (credentials writer ordering, doctor FAIL, redaction, tripwire), loud-failure/no-silent-sync, or metric-binding write. No migration, no new agent, no changes to `roadmap-model.ts`/`objectives-store.ts`.
 
+### Insights v2: chart foundation + funnel explorer (2026-09-30 / 2026-10-01, in 0.30.0)
+
+**Chart foundation.** `dashboard/src/components/lab/chart/` is now the single drawing layer every chart block sits on: measured sizing from the real grid cell (ResizeObserver — never viewBox stretching, which distorted label text), nice-tick scales, formatted axes with recessive gridlines, exactly ONE value axis by rule (a dual axis invites a false correlation), one pointer→nearest-datum hover model resolved through the rendered bounding box (the old per-chart hover mapped to the wrong point at narrow widths and at desktop zoom), a token-only tooltip with a coloured key, and a click-to-toggle legend. Categorical colour is assigned **by entity**, not by position, so filtering a series does not repaint the survivors; `--viz` palette validated in light and dark. Every chart was rebuilt on it (`6694a529`): axed line/stacked with a true crosshair, bar/pie/heatmap with per-mark hover, sortable sticky tables, goal-aware stats, fitted funnels; legacy v1 insight cards fill their cell too.
+
+**Options are catalog-driven.** `src/lib/lab/blocks.ts` carries the full option set with EN+TR labels; the inspector builds its fields from the generated `block-catalog.json` with nothing hand-listed, and `frameOps` gained sort / top-N + Other / normalize so `lab board show` returns the same values the DOM draws for the options that change VALUES rather than pixels. `scripts/verify/lab-boards.mjs` measures the result: every option value produces a DOM/geometry difference, fit at two sizes, pointer-true hover, entity colours, pie legend "+N", heatmap fills, sticky pivot header — mutation-checked.
+
+**Funnel explorer — data and state** (`96c19852`, `90f6d435`). A `dataset/v1` bundle may carry a `funnel-set/v1` member under `funnel`, so one insight writes both `cache.datasets` and `cache.funnel` (+history). The funnel-set contract grew `segment_mode: lookup|cells`, `measured`/`reason`, per-segment metrics/benchmarks/daily, `FunnelDef.daily`, band sources, and `better: higher|lower`. Two honesty rules are structural, each pinned by its own verify mutation: **a lookup path is never summed** (a platform × language pick reads the fixture's intersection row, and a 12-value dim is not folded into Other), and **not-measured is never zero** (the chip is `aria-disabled` with its reason; the metric reads "Not measured: &lt;reason&gt;" and draws no ruler marker). Card view state is lifted so fullscreen keeps the selection and the active tab.
+
+**Funnel explorer — blocks** (`aa00b042`, `968948e9`). Four new catalog blocks — `breakdown` (chips with honest unmeasured states), `trend` (daily, metric switch), `benchmark` (floor/current/target on one ruler with printed sources and inherited-band marks), `segments` (one row per dim value, band tone washes, faded low-sample rows, sortable) — plus funnel options `layout: bars|flow` and `markWorst`. Each is a bindable card on its own; the `funnel-explorer` preset composes them into one interactive card with breakdown chips and page tabs, available from both `lab board add-card --preset funnel-explorer` and the dashboard add-card menu, deep-equal. `lab board show --select 'dim=value,...'` is the agent's read of the same selection. A v1 app insight on a v2 board can pin a page (`page` option) and switch pages in the card (`nav: true`).
+
+**Payload discipline.** The first demo board GET was **447 KB**; per-block projection (each frame carries only what its block reads — `daily` stripped from non-trend frames) plus shared frames brought it to **169 KB**, under the 300 KB criterion (`8d7cbf54`). The remaining passes were legibility, not features: readable active chips, no blank band above the tabs, a labelled benchmark ruler with a legend, a segments table that never breaks words, lanes/flow/breakdown/trend legible at small sizes, per-metric band inheritance — then `9e2ee8d0` rebuilt the type hierarchy into three levels after the owner's "textler cok yakin, cok karmasik" review.
+
+**Synthetic vocabulary.** Every fixture, the preset and the docs use the invented **Acme** funnel vocabulary; no registered vault or product name appears in a published artifact (the `synthetic-fixtures-for-published-artifacts` pattern).
+
 ### Funnel analytics (2026-07-21, in_review)
 
 **Payload contract (`funnel-set/v1`).** New adapter payload kind for `render: funnel`; scripts/HTTP extract return:
@@ -660,6 +737,16 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-02 — The chart standard and the funnel explorer ship in 0.30.0
+
+- **Consolidates tasks** `insights-v2-blocks-reach-a-polished-fully-customizable-chart-standard-axes-correct-hover-charts-that-fit-their-cell` (in_review) and `insights-v2-funnel-explorer-every-page-a-bindable-block-and-the-whole-explorer-as-one-interactive-page` (in_progress). Merged as `0a521b12`; cut into 0.30.0 (npm publish still pending).
+- **Report (owner, 2026-09-30, on the Insights v2 screenshots):** three visible defects (empty group heading strips, charts overflowing and scrolling inside their cell, clipped tab labels) plus a quality bar — line charts had no axes, hover mapped to the wrong point, and every component had to be as customizable as possible. Beta shipping on unfinished charts would have undone the redesign.
+- **Shipped (chart standard):** one shared foundation under `dashboard/src/components/lab/chart/` (measured sizing, nice ticks, formatted axes, a single pointer→nearest-datum hover model, token tooltip, toggling legend, entity-keyed colours) with every chart rebuilt on it, the full per-block option set in the engine catalog with EN+TR labels and an inspector that hand-lists nothing, and `frameOps` sort / top-N+Other / normalize so `lab board show` answers with the same values.
+- **Shipped (funnel explorer):** a `funnel` member on `dataset/v1` bundles; four new bindable blocks (`breakdown`, `trend`, `benchmark`, `segments`) plus funnel `layout: bars|flow` and `markWorst`; the `funnel-explorer` preset as one interactive card with chips, page tabs and fullscreen; compare lanes up to 4 pins on one spine; a v1 app insight pinning and switching pages inside a v2 card; `lab board show --select` and `lab board add-card --preset` for parity.
+- **Three demo rounds, not one.** Every round was run against a synthetic Acme board and produced measured findings rather than impressions: round 1 fixed library-ref data without a reload, legibility at 3×3 / 9×2 / 12×2, fitted tables, card-in-card; round 2 fixed axis ranges that overshot the data, mixed number styles on one axis, upward grid compaction and a toast that never dismissed; round 3 cut the board payload 447 KB → 169 KB and then rebuilt the type hierarchy into three levels after the owner's *"textler cok yakin, cok karmasik, daha hiyerarsik, alan dar"*.
+- **Guards:** `scripts/verify/lab-boards.mjs` grew to sections 1–28 with 20+ mutations, and it MEASURES rather than inspects — inner scroll, tick overlap, the tooltip value under the pointer at 3 positions and 2 widths, a DOM/geometry difference per option value, and the two honesty mutations (`lookup-sums`, `unmeasured-zero`). Catalog docs generated; mirror/i18n drift tests green; tsc root + dashboard clean.
+- **PRD reconciliation:** v2 board stories and the 11 Insights v2 criteria ticked (the task's own 14 substantive criteria are ticked with evidence; only owner sign-off is open on both tasks). `updated` → 2026-10-02. `released_version` left at `v0.21.0` — 0.30.0 has not reached the registry, and setting a release is the user's call.
 
 ### 2026-09-29 — Insights v2 (Beta): boards of data-bound blocks replace categories and Reports, and sync only pays for change
 

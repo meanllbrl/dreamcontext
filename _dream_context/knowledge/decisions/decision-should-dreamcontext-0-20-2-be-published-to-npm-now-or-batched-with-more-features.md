@@ -17,7 +17,7 @@ created_at: '2026-07-23'
 updated_at: '2026-07-23'
 tags:
   - decision
-  - council
+  - 'topic:council'
 description: >-
   Council debate (2026-07-19): ship 0.20.2 to npm immediately or batch it with
   more features. Verdict and the reasoning each persona brought.

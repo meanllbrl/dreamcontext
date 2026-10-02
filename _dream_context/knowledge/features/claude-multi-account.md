@@ -422,6 +422,12 @@ account's usage".
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-10-02 - A signed-out connected account signs back in, into its own sandbox (in 0.30.0)
+
+- `c6524429` closes the re-login gap recorded as a criterion on 2026-09-30: `POST /api/agent/accounts/relogin` runs the CLI's own OAuth into THAT account's `CLAUDE_CONFIG_DIR` sandbox, refuses the machine's own account (`primary_account` keeps the terminal flow), refuses a sign-in that landed on another email (`wrong_account`), and updates the row in place so the drag order survives. Settings gained "Sign in again" on every connected row; Chat's sign-in banner names the signed-out account, signs it in through the same route and resumes.
+- **The bug was a wrong sandbox, not a missing button.** The old banner ran `claude auth login` in a plain shell, which signs into the machine's real `~/.claude` and never the sandbox the chat runs on — so Faruk's ten sign-ins (Slack 2026-09-30) all succeeded and the account still read "Signed out", while Add-an-account answered `already_connected`.
+- `updated` → 2026-09-30 by that cycle; `status` stays `in_review` (the owner's two-real-account checklist is still unticked in the source task) and `released_version` stays `0.27.0` — 0.30.0 has not reached the registry.
+
 ### 2026-09-07 - Reconciled for the 0.27.0 release
 - `released_version: 0.27.0` (released 2026-09-06). Consolidated the two now-completed tasks:
   `multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands`

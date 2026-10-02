@@ -2,7 +2,7 @@
 id: feat_I4gU7kKs
 status: active
 created: '2026-05-09'
-updated: '2026-08-01'
+updated: '2026-10-02'
 released_version: v0.23.0
 tags:
   - 'topic:agents'
@@ -10,7 +10,12 @@ tags:
 related_tasks: []
 type: feature
 name: sleep-fanout-architecture
-description: ''
+description: >-
+  Sleep consolidation is fanned out to 4 specialists (sleep-tasks, sleep-state,
+  sleep-product always/conditional, sleep-learn conditional), each owning a
+  non-overlapping file domain so nothing falls through the tail of one long
+  pass. Specialists load a 4.7 KB agent-core contract rather than the full
+  skill; the retired prompts' rationale and dated history live here.
 pinned: false
 date: '2026-05-09'
 ---
@@ -51,6 +56,15 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 - [x] Hook debt messages and SKILL.md point users at the SKILL.md fan-out flow as the only path; `dreamcontext-rem-sleep` no longer exists as a fallback.
 - [x] `npm run build` passes and `dreamcontext --version` reflects the new flow.
 - [ ] Live consolidation cycle completes without errors and produces a meaningful end-to-end report stitched from specialist reports.
+
+### A specialist loads a contract, not a manual (2026-09-30, `42ae4f24` + `521faeff`, in 0.30.0)
+
+- [x] The 24 sub-agents that preloaded the full 72 KB skill now load the **4.7 KB `dreamcontext-agent-core` skill** — the tool contract, recall-first, the entity router, paths and safety. Only the **4 conformance judges** keep the full skill, because judging conformance means reading the rules being judged.
+- [x] Specialist prompts carry their CONTRACT and nothing else: `sleep-tasks` / `sleep-product` / `sleep-state` went 42 / 40 / 32 KB → **23 / 22 / 18 KB**, and `skill/SKILL.md` 73.5 → 45.7 KB. The rationale moved to `skill/references/sleep-specialists.md` (itself 80.7 → 26.7 KB after the restatements and dated incidents were cut) and the dated history moved to this file's "Specialist prompt history" section.
+- [x] **Nothing is lost silently:** `eval/instructions-slim/nothing-lost.mjs` proves every unit of the old prompts was kept, reworded or **ledgered with the heading that now carries it** — 431 dropped units ledgered on the second pass. Slimming is only safe with a proof; otherwise it is deletion with a good story.
+- [x] `sleep-federation` is **retired properly**: the agent is deleted (archived in the brain), pruned on install **only when unedited**, dropped from the roster and from the dispatch authorization. The auto-sleep consent fingerprint deliberately keeps the six-name legacy roster so existing consent stays valid — a fingerprint change would have silently revoked every user's consent.
+- [x] One roster sentence (`SLEEP_ROSTER_CLAUSE`) is the single source on every surface, and `sleep-learn` is named everywhere (it was missing from some).
+- [x] `dreamcontext update` refreshes the managed CLAUDE.md block, but only when the block already exists: it never creates CLAUDE.md, never touches bytes outside the fences, never writes AGENTS.md (that template is gone — the CLAUDE.md template and `6.system_flow.md` tell the truth), refuses a symlink, and says what it did.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
@@ -163,6 +177,13 @@ The line ceiling tightened from 300 to 150 in v0.4.0+ because `dreamcontext memo
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-02 — Specialists get less but correct instructions; sleep-federation retired properly (in 0.30.0)
+
+- `42ae4f24` + `521faeff`. The `dreamcontext-agent-core` skill (4.7 KB) replaces the full 72 KB skill preload in 24 agents; only the 4 conformance judges keep the full skill. SKILL.md 73.5 → 45.7 KB; sleep-tasks/product/state 42/40/32 → 23/22/18 KB, with the rationale in `skill/references/sleep-specialists.md` and the dated history in this file.
+- **The slim is proven, not asserted:** `eval/instructions-slim/nothing-lost.mjs` requires every unit of the old prompts to be kept, reworded or ledgered under the heading that now carries it. The second pass ledgered 431 dropped units from the references file.
+- `sleep-federation` is gone from the roster, the dispatch authorization and the install (pruned only when unedited, archived in the brain) — while the auto-sleep consent fingerprint keeps the six-name legacy roster on purpose, so no user's existing consent is silently revoked.
+- Companion changes recorded elsewhere: the budgeted SubagentStart briefing in `context-snapshot`, and spawned sessions no longer adding sleep debt in `sleep-consolidation`.
 
 ### 2026-07-20 - sleep-learn specialist added (v0.19.0, proactive learning layer)
 - Fourth specialist `sleep-learn.md` added to the roster (conditional dispatch, only when `learning.enabled`). Owns `_dream_context/theses/*.md` exclusively — re-tests open theses against fresh evidence (Lab insights, roadmap, task outcomes, changelog), derives confidence, flips validated/invalidated with prediction checks, appends understanding changelog. Dispatched when learning is enabled AND (fresh evidence OR ≥2 sleeps cadence due). No-op cheap when nothing is due. See [proactive-learning-layer](proactive-learning-layer.md) for the full feature.

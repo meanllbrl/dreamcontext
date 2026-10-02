@@ -2,7 +2,7 @@
 id: feat_4NB3SlrK
 status: active
 created: '2026-02-25'
-updated: '2026-07-30'
+updated: '2026-10-02'
 released_version: 0.1.0
 tags:
   - architecture
@@ -68,6 +68,7 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 - Output is designed for `SessionStart` hook consumption — no chalk, no interactivity.
 - `hook subagent-start` outputs valid JSON `{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"..."}}` per Claude Code's SubagentStart hook spec. The briefing inside is ~25 lines: project summary, directory structure, active tasks, knowledge index, pinned knowledge, usage instructions.
 
+- [x] **The SubagentStart briefing has its own budget ladder, and it is HARD** (2026-09-30, `42ae4f24` + `521faeff`). Measured on this brain: the briefing rendered **91,984 chars**, so the harness cut it to a ~2 KB preview and sub-agents never saw the feature list and knowledge index the briefing orders them to check. The ladder demotes section by section to **9,475 chars** here, under a **12,000-char cap**; a demoted item is **named or counted, never silently dropped**, with a `_Budget note:` line saying which sections demoted and which command recovers the rest. The cap was test-only at first: the never-demoted blocks (the task-format override, linked repos) could push past it, so they are now **clipped at a line boundary with a pointer to the full text**.
 - [x] Snapshot token budget ladder: `src/lib/snapshot-budget.ts` enforces demotion waves (full→summaries→one-line references); never-evict tier (soul, user, warnings, reminders) is untouchable; stops demoting the moment the snapshot fits. Measured on this repo: 20,253→10,386 tokens. `DREAMCONTEXT_SNAPSHOT_BUDGET` env var configures budget; "0"/"off" disables (legacy unbounded).
 
 ## Constraints & Decisions
@@ -176,6 +177,12 @@ Doctor integration (`src/lib/core-index.ts`, `src/cli/commands/doctor.ts`, wave 
 - Snapshot size can grow large on projects with many pinned knowledge files. The recommendation is to pin sparingly — only files that are needed in nearly every session.
 
 ## Changelog
+
+### 2026-10-02 — The sub-agent briefing is budgeted, so a sub-agent actually sees the index (in 0.30.0)
+
+- `42ae4f24` + `521faeff`. **The failure was invisible:** the briefing told every sub-agent to check the feature list and knowledge index BEFORE searching code, and on this brain it rendered 91,984 chars — past the harness limit, which replaced the whole thing with a ~2 KB preview. The order survived; the content it pointed at did not.
+- The briefing now runs its own demotion ladder to 9,475 chars here under a 12,000-char cap, naming or counting everything it demotes plus the command that recovers it. The never-demoted blocks (task-format override, linked repos) are clipped at a line boundary rather than allowed to blow the cap, which was only test-enforced in the first pass.
+- Same wave, recorded in `sleep-fanout-architecture`: the 24 sub-agents that used to preload the full 72 KB skill now load the 4.7 KB `dreamcontext-agent-core` skill instead, so the briefing budget is not spent on a manual the agent is not going to read.
 
 ### 2026-08-01 - `doctor` stops billing the extended core tier every session (`e50935c`)
 - `checkCoreFileSizes` warned on every `core/[0-9]*.md` with ONE remedy — *"The SessionStart snapshot pays this every session; extract detail to knowledge/"* — but that is true only of the VERBATIM tier (core 0-2 + the active `people/*.md`). Everything from 3 up renders as the Extended Core Files INDEX: name, path, truncated first-sentence summary.

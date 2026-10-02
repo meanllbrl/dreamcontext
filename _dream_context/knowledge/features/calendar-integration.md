@@ -7,8 +7,8 @@ tags:
   - 'topic:agents'
   - backend
   - 'topic:cli'
-  - integration
-  - backlog
+  - 'topic:integrations'
+  - 'topic:pm'
 related_tasks: []
 type: feature
 name: calendar-integration

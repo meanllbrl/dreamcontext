@@ -9,7 +9,8 @@
       "domain:infrastructure",
       "domain:quality",
       "domain:engineering",
-      "domain:correctness"
+      "domain:correctness",
+      "domain:performance"
     ],
     "layer": [
       "layer:frontend",
@@ -62,7 +63,14 @@
       "topic:git",
       "topic:announcements",
       "topic:mobile",
-      "topic:release"
+      "topic:release",
+      "topic:integrations",
+      "topic:migrations",
+      "topic:setup",
+      "topic:docs",
+      "topic:research",
+      "topic:settings",
+      "topic:council"
     ]
   },
   "bareTags": [
@@ -128,6 +136,16 @@
     "topic:design": "kind:design",
     "validation": "kind:testing",
     "release": "topic:release",
-    "topic:publishing": "topic:release"
+    "topic:publishing": "topic:release",
+    "integration": "topic:integrations",
+    "kind:integration": "topic:integrations",
+    "documentation": "topic:docs",
+    "docs": "topic:docs",
+    "research": "topic:research",
+    "settings": "topic:settings",
+    "council": "topic:council",
+    "performance": "domain:performance",
+    "prioritization": "topic:pm",
+    "backlog": "topic:pm"
   }
 }

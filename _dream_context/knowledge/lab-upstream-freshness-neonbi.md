@@ -1,11 +1,13 @@
 ---
 name: lab-upstream-freshness-neonbi
-description: NeonBI's REST API exposes data-freshness fields enabling source-aware sync, implemented as an upstream freshness gate in Lab reports (2026-09-02)
+description: >-
+  NeonBI's REST API exposes data-freshness fields enabling source-aware sync,
+  implemented as an upstream freshness gate in Lab reports (2026-09-02)
 tags:
-  - topic:lab
-  - domain:database
+  - 'topic:lab'
+  - 'domain:database'
   - decisions
-  - kind:integration
+  - 'topic:integrations'
 pinned: false
 date: '2026-09-02'
 ---

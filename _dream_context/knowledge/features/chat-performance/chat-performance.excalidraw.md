@@ -11,7 +11,7 @@ description: >-
   frame rate instead of the token rate, permission cards still painting
   mid-stream, no dropped deltas.
 tags:
-  - performance
+  - 'domain:performance'
   - 'topic:agents'
   - frontend
   - 'topic:excalidraw'
