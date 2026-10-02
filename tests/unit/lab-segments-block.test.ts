@@ -308,6 +308,25 @@ describe('segments: readable table (no mid-word breaks, sideways scroll, light t
   }
 });
 
+describe('segments: three levels and row air (owner review)', () => {
+  const CSS = readFileSync(join(__dirname, '../../dashboard/src/components/lab/blocks/segments.css'), 'utf8');
+  const rule = (sel: string) => { const at = CSS.indexOf(`${sel} {`); expect(at, sel).toBeGreaterThan(-1); return CSS.slice(at, CSS.indexOf('}', at)); };
+
+  it('compact rows get 4px above and below a 16px line (not 2px)', () => {
+    const r = rule(".lab-seg-table[data-density='compact'] tbody td");
+    expect(r).toContain('padding-top: var(--space-1)');
+    expect(r).toContain('padding-bottom: var(--space-1)');
+    expect(r).toContain('line-height: var(--space-4)');
+  });
+
+  it('the change after a figure is tertiary and 8px away; users are secondary', () => {
+    expect(rule('.lab-seg-figure')).toContain('column-gap: var(--space-2)');
+    expect(rule('.lab-seg-delta')).toContain('color: var(--color-text-placeholder)');
+    expect(rule('.lab-seg-table td.lab-seg-users')).toContain('color: var(--color-text-secondary)');
+    expect(render({ by: 'platform' })).toContain('class="lab-table-num lab-seg-users"');
+  });
+});
+
 describe('segments.css speaks only in tokens', () => {
   it('no literal colours, sizes off the 12/14 ladder, weights off 400/600 or literal durations', () => {
     const css = readFileSync(join(__dirname, '../../dashboard/src/components/lab/blocks/segments.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

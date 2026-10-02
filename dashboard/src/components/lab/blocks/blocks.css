@@ -160,13 +160,14 @@
   font-weight: var(--font-weight-semibold);
 }
 
+/* 16px from the tab bar to its page: the bar is navigation, the page below is the content. */
 .lab-block-tabs-panel {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   flex: 1 1 auto;
   min-height: 0;
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
   overflow: hidden;
 }
 

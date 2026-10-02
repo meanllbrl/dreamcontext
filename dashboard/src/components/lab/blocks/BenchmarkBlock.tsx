@@ -87,12 +87,16 @@ export function rulerZones(row: BenchmarkRow, scale: LinearScale): { tone: Tone;
 }
 
 /**
- * Natural heights (px, benchmark.css) the fit plans with. Rows are one-line
- * strips split by hairlines: padding + border, a 16px text line, the ruler
- * (16px track band, plus 16px for the bound labels under it when details are
- * shown) and a 16px sources line.
+ * Natural heights (px, benchmark.css) the fit plans with, all on the 4px grid.
+ * A row is separated from the next by whitespace (`rowGap`, no hairline): its
+ * primary line (the metric name and the current value, 20px), the quiet
+ * secondary run (change, previous, trend; 16px), the ruler band (16px, plus
+ * 16px for the bound labels under it) and the tertiary sources line (16px),
+ * each `gap` apart. The legend is one tertiary line with 8px under it.
  */
-export const BENCH_PX = { pad: 7, line: 16, gap: 4, legend: 20, note: 20 } as const;
+export const BENCH_PX = { primary: 20, line: 16, gap: 4, rowGap: 12, legend: 24, note: 20 } as const;
+/** The row gaps a tier may use, roomiest first: the fit tightens the air before it drops a row. */
+export const BENCH_ROW_GAPS = [12, 8, 4] as const;
 /** Below this width a one-line row leaves the ruler too short: the ruler takes its own line. */
 export const BENCH_NARROW_PX = 380;
 
@@ -105,6 +109,8 @@ export interface BenchmarkFit {
   sources: boolean;
   /** The floor / target / now / previous key above the rows. */
   legend: boolean;
+  /** Whitespace between two rows (px): 12, tightened to 8 then 4 only to keep every row. */
+  rowGap: number;
   count: number;
 }
 
@@ -112,21 +118,25 @@ type FitTier = Omit<BenchmarkFit, 'count'>;
 
 /** The px one row takes in a mode, with its bound labels and (when any row has one) its sources line. */
 export function benchRowPx(mode: 'full' | 'compact', labels: boolean, sources: boolean): number {
-  const { pad, line, gap } = BENCH_PX;
+  const { primary, line, gap } = BENCH_PX;
   const ruler = line + (labels ? line : 0);
-  const body = mode === 'full' ? line + gap + ruler : Math.max(line, ruler);
-  return pad + body + (sources ? line : 0);
+  // Full: the primary line, the secondary run, then the ruler on its own line. Compact: one line, the ruler inline.
+  const body = mode === 'full' ? primary + gap + line + gap + ruler : Math.max(primary, ruler);
+  return body + (sources ? gap + line : 0);
 }
 
-const tier = (mode: 'full' | 'compact', labels: boolean, sources: boolean, legend: boolean): FitTier => ({ mode, labels, sources, legend });
+const tier = (mode: 'full' | 'compact', labels: boolean, sources: boolean, legend: boolean, rowGap: number = BENCH_PX.rowGap): FitTier => ({
+  mode, labels, sources, legend, rowGap,
+});
 
 /**
  * What the block draws in a cell `height` x `width` px (0 = not measured yet:
  * everything). The first tier whose rows all fit wins: full rows with labels,
  * sources and the legend; one-line rows keeping labels and sources; then
- * labels only; then neither; then no legend; then as many one-line rows as fit
- * plus a "+N more" line. A narrow block keeps the ruler on its own line while
- * that fits. `sources` = any row has a source to print. It never scrolls.
+ * labels only; then neither; then no legend; then the same one-line rows with
+ * 8px and 4px between them; then as many one-line rows as fit plus a "+N more"
+ * line. Air goes before rows; a narrow block keeps the ruler on its own line
+ * while that fits. `sources` = any row has a source to print. Never scrolls.
  */
 export function benchmarkFit(
   rowCount: number,
@@ -142,14 +152,16 @@ export function benchmarkFit(
   // An unmeasured row wraps its reason: beside the label on a one-line row, under it on a full row.
   const wrapPx = (mode: 'full' | 'compact', n: number) => unmeasured.slice(0, n).reduce((px, chars) => px + BENCH_PX.line
     * (mode === 'full' ? reasonLines(chars, width) : reasonLines(chars, width * 0.6) - 1), 0);
-  const need = (t: FitTier, n: number) => n * benchRowPx(t.mode, t.labels, t.sources) + wrapPx(t.mode, n) + (t.legend ? BENCH_PX.legend : 0);
+  const need = (t: FitTier, n: number) => n * benchRowPx(t.mode, t.labels, t.sources) + Math.max(0, n - 1) * t.rowGap
+    + wrapPx(t.mode, n) + (t.legend ? BENCH_PX.legend : 0);
   const narrow = width > 0 && width < BENCH_NARROW_PX;
+  const tight = BENCH_ROW_GAPS.slice(1).map((g) => tier('compact', false, false, false, g));
   const tiers: FitTier[] = narrow
-    ? [tier('full', true, sources, true), tier('full', true, false, true), tier('full', false, false, true), tier('full', false, false, false), tier('compact', false, false, false)]
-    : [tier('full', true, sources, true), tier('compact', true, sources, true), tier('compact', true, false, true), tier('compact', false, false, true), tier('compact', false, false, false)];
+    ? [tier('full', true, sources, true), tier('full', true, false, true), tier('full', false, false, true), tier('full', false, false, false), tier('compact', false, false, false), ...tight]
+    : [tier('full', true, sources, true), tier('compact', true, sources, true), tier('compact', true, false, true), tier('compact', false, false, true), tier('compact', false, false, false), ...tight];
   // `skip`: tiers the rendered block already proved too tall (the estimate was short), never tried again.
   for (const t of tiers.slice(Math.min(skip, tiers.length))) if (need(t, rowCount) <= avail) return { ...t, count: rowCount };
-  const last = tier('compact', false, false, false);
+  const last = tier('compact', false, false, false, BENCH_ROW_GAPS[BENCH_ROW_GAPS.length - 1]);
   let count = rowCount - Math.max(0, skip - tiers.length);
   while (count > 1 && need(last, count) + BENCH_PX.note > avail) count--;
   return { ...last, count: Math.max(1, count) };
@@ -276,6 +288,7 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
       data-mode={fit.mode}
       data-labels={fit.labels ? '' : undefined}
       data-sources={fit.sources ? '' : undefined}
+      data-row-gap={fit.rowGap}
       data-measured={slice.measured ? 'true' : 'false'}
     >
       {notes.map((n) => <div key={n.key} className="lab-bench-note" {...{ [n.attr]: '' }}>{n.text}</div>)}
@@ -358,28 +371,33 @@ function BenchRowView({ row, labels, showSources, comparePrev, sources, t, local
       <span className="lab-bench-label" title={row.label}>{row.label}</span>
       {measured ? (
         <>
-          <span className="lab-bench-figures">
-            <span className="lab-bench-value" data-lab-bench-value="">{fmt(row.current as number)}</span>
-            {showDelta && (
-              <span className="lab-bench-delta" data-lab-bench-delta="" title={t('lab.blocks.benchmark.delta').replace('{delta}', signed)}>
-                <span className="lab-bench-delta-text">{signed}</span>
-                {row.prev !== null && (
-                  <span className="lab-bench-prev-value" data-lab-bench-prev-value="">
-                    {t('lab.blocks.benchmark.prev')} {fmt(row.prev)}
-                  </span>
-                )}
-                <span className="lab-bench-trend" data-trend={row.trend ?? undefined}>
-                  <span aria-hidden="true">{glyph}</span> <span className="lab-bench-trend-word">{t(`lab.blocks.benchmark.${row.trend}`)}</span>
-                </span>
+          {/* Primary: the current value. Secondary: one quiet run for the change, the previous window and the trend. */}
+          <span className="lab-bench-value" data-lab-bench-value="">{fmt(row.current as number)}</span>
+          {showDelta && (
+            <span className="lab-bench-delta" data-lab-bench-delta="" title={t('lab.blocks.benchmark.delta').replace('{delta}', signed)}>
+              <span className="lab-bench-change" data-trend={row.trend ?? undefined}>
+                <span aria-hidden="true">{glyph}</span> <span className="lab-bench-delta-text">{signed}</span>
               </span>
-            )}
-          </span>
+              {row.prev !== null && (
+                <span className="lab-bench-prev-value" data-lab-bench-prev-value="">
+                  {t('lab.blocks.benchmark.prev')} {fmt(row.prev)}
+                </span>
+              )}
+              <span className="lab-bench-trend" data-trend={row.trend ?? undefined}>
+                <span className="lab-bench-trend-word">{t(`lab.blocks.benchmark.${row.trend}`)}</span>
+              </span>
+            </span>
+          )}
           {(statusWord || (mark && !sourceLine)) && (
             <span className="lab-bench-side">
               {!sourceLine && mark}
               {statusWord && (
-                <span className="lab-bench-status" data-tone={row.status} data-lab-bench-status="">
+                <span className="lab-bench-status" data-tone={row.status} data-lab-bench-status="" title={statusWord}>
                   <span className="lab-bench-status-word">{statusWord}</span>
+                  {/* One-line rows share their line with the ruler: they print the short word. */}
+                  <span className="lab-bench-status-short" aria-hidden="true">
+                    {row.status === 'no-band' ? statusWord : t(`lab.blocks.benchmark.statusShort.${row.status}`)}
+                  </span>
                 </span>
               )}
             </span>
@@ -419,7 +437,8 @@ export function boundLabels(
       left = Math.max(0, Math.min(width - w, left));
       return { key: b.key, left, right: left + w, text: texts[i] };
     });
-    const clash = out.length === 2 && out[0].right + 6 > out[1].left;
+    // Two text runs on one line keep at least 8px of air.
+    const clash = out.length === 2 && out[0].right + 8 > out[1].left;
     return clash || out.some((o) => o.right - o.left > width) ? null : out.map(({ key, left, text }) => ({ key, left, text }));
   };
   return place(sorted.map((b) => `${b.word} ${b.value}`)) ?? place(sorted.map((b) => b.value)) ?? [];

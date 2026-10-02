@@ -38,6 +38,19 @@
   white-space: nowrap;
 }
 
+/* Three levels and more air: rows breathe (4px above and below a 16px line instead of
+   2px), the dim value and the figures are the body ink, the users column is secondary, the
+   change after each figure is tertiary, 8px after it. Headers stay the table's secondary. */
+.lab-seg-table[data-density='compact'] tbody td {
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+  line-height: var(--space-4);
+}
+
+.lab-seg-table td.lab-seg-users {
+  color: var(--color-text-secondary);
+}
+
 /* The value column stays put while the metrics scroll under it. */
 .lab-seg-table .lab-seg-value,
 .lab-seg-table thead th:first-child {
@@ -67,11 +80,11 @@
   display: inline-flex;
   justify-content: flex-end;
   align-items: baseline;
-  column-gap: var(--space-1);
+  column-gap: var(--space-2);
 }
 
 .lab-seg-delta {
-  color: var(--color-text-secondary);
+  color: var(--color-text-placeholder);
 }
 
 .lab-seg-table[data-bands] td[data-tone='below'] {

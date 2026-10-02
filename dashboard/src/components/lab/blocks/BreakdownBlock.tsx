@@ -74,11 +74,12 @@ export interface FitMemo {
 /**
  * The most of a card body a breakdown's chip form may take when other blocks
  * share the card: past it the chips go compact so the page under them (a
- * benchmark, the steps) keeps its room. A 12x12 preset card's chips take about
- * a quarter of its body and an 8x7 card's about half (both stay chips); a 6x6
- * card's take over two thirds (compact: the page under it gets its rows back).
+ * benchmark, the steps) keeps its room. The chip flow (All traffic, then each
+ * dimension's group) takes about 15% of a 12x12 preset card's body and 30% of
+ * an 8x7 card's (both stay chips); in a 6x6 card the country chips wrap and it
+ * would take about 60% (compact: the page under it gets its rows back).
  */
-export const BREAKDOWN_MAX_SHARE = 0.62;
+export const BREAKDOWN_MAX_SHARE = 0.45;
 
 /** Is the full form too big: clipped, or (sharing the container) over its share of it? */
 export function tooBig(need: number, room: number, outer: number, share: number | null): boolean {
@@ -340,18 +341,18 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
   return (
     <div ref={fitRef} className="lab-block-fill lab-breakdown" data-lab-breakdown="" data-counts={counts ? 'true' : undefined}>
       {notes}
+      {/* One flow: "All traffic" leads, then each dimension as a group (quiet label + its chips);
+          whitespace, not rules, separates the groups. */}
       <div className="lab-breakdown-axes">
-        <div className="lab-breakdown-all-row">
-          <button
-            type="button"
-            className="lab-breakdown-chip lab-breakdown-all"
-            data-lab-breakdown-all=""
-            aria-pressed={allActive}
-            onClick={() => onSelection?.({})}
-          >
-            {allLabel}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="lab-breakdown-chip lab-breakdown-all"
+          data-lab-breakdown-all=""
+          aria-pressed={allActive}
+          onClick={() => onSelection?.({})}
+        >
+          <span className="lab-breakdown-chip-value">{allLabel}</span>
+        </button>
         {axes.map((axis) => {
           const labelId = `${uid}-dim-${axis.key}`;
           return (
@@ -404,6 +405,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
               data-lab-lane-pin=""
               data-blocked={blocked ?? undefined}
               disabled={blocked !== null}
+              title={hint}
               onClick={pin}
             >
               {plus}
@@ -415,7 +417,9 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
               </button>
             )}
           </div>
-          <span className="lab-breakdown-hint" data-lab-lanes-hint="">{hint}</span>
+          {/* Inline only where there is room (a wide card, the large preset) or when it says why the
+              pin is off (four lanes); otherwise it is the pin button's tooltip. */}
+          <span className="lab-breakdown-hint" data-lab-lanes-hint="" data-hint={pinned.length >= MAX_LANES ? 'always' : undefined}>{hint}</span>
         </div>
       )}
       {tip && tipLive && <ChipReason tip={tip} />}

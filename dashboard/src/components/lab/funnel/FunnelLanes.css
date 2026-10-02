@@ -17,6 +17,11 @@
   line-height: var(--space-4);
 }
 
+/* Room to spare (not dense): 4px between step rows, so the lines never touch. */
+.funnel-lanes:not([data-dense]) {
+  row-gap: var(--space-1);
+}
+
 .funnel-lanes > * {
   min-width: 0;
   overflow: hidden;
@@ -32,9 +37,8 @@
   grid-template-rows: auto auto;
   column-gap: var(--space-2);
   align-items: center;
-  padding-bottom: var(--space-1);
-  border-bottom: 1px solid var(--color-border);
-  margin-bottom: var(--space-1);
+  /* Whitespace, not a rule, separates the lane heads from the steps. */
+  margin-bottom: var(--space-2);
 }
 
 .funnel-lanes-num {
@@ -65,8 +69,10 @@
   color: var(--color-text);
 }
 
+/* Three levels: the lane name and each step's users are the body ink (primary), step labels
+   and drops secondary, shares and the head's user count tertiary (the quietest readable ink). */
 .funnel-lanes-users {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
   font-variant-numeric: tabular-nums;
 }
 
@@ -126,7 +132,7 @@
 
 .funnel-lanes-pct,
 .funnel-lanes-share {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
   font-variant-numeric: tabular-nums;
 }
 

@@ -437,16 +437,17 @@ describe('W5: the small-cell form cuts nothing', () => {
   });
 
   it('sharing the card, the chips go compact past their share of the body (a 6x6 benchmark card), not on a big preset or an 8x7 card', () => {
-    expect(BREAKDOWN_MAX_SHARE).toBeGreaterThan(0.5);
-    expect(BREAKDOWN_MAX_SHARE).toBeLessThan(2 / 3);
-    // 6x6 breakdown + benchmark: ~170 px of chips in a ~248 px body. Not clipped, but over its share.
-    expect(tooBig(170, 170, 248, BREAKDOWN_MAX_SHARE)).toBe(true);
+    // The quieter chip flow is shorter, so the share that separates the cards moved down with it.
+    expect(BREAKDOWN_MAX_SHARE).toBeGreaterThan(0.35);
+    expect(BREAKDOWN_MAX_SHARE).toBeLessThan(0.55);
+    // 6x6 breakdown + benchmark: the country chips wrap, ~150 px in a ~248 px body. Not clipped, but over its share.
+    expect(tooBig(150, 150, 248, BREAKDOWN_MAX_SHARE)).toBe(true);
     // Alone in the same card: only clipping counts.
-    expect(tooBig(170, 170, 248, null)).toBe(false);
-    // 8x7 breakdown + steps (~149 px, ~170 with a wrapped lanes hint, in ~304 px) and the 12x12 preset (~580 px): chips.
-    expect(tooBig(149, 149, 304, BREAKDOWN_MAX_SHARE)).toBe(false);
-    expect(tooBig(170, 170, 304, BREAKDOWN_MAX_SHARE)).toBe(false);
-    expect(tooBig(170, 170, 580, BREAKDOWN_MAX_SHARE)).toBe(false);
+    expect(tooBig(150, 150, 248, null)).toBe(false);
+    // 8x7 breakdown + steps (~88 px in ~304 px, ~120 with lanes pinned) and the 12x12 preset (~88 px in ~580 px): chips.
+    expect(tooBig(88, 88, 304, BREAKDOWN_MAX_SHARE)).toBe(false);
+    expect(tooBig(120, 120, 304, BREAKDOWN_MAX_SHARE)).toBe(false);
+    expect(tooBig(88, 88, 580, BREAKDOWN_MAX_SHARE)).toBe(false);
     // Clipped is always too big.
     expect(tooBig(170, 120, 900, BREAKDOWN_MAX_SHARE)).toBe(true);
   });
@@ -467,5 +468,75 @@ describe('W5: the small-cell form cuts nothing', () => {
   it('the compact form carries no lanes hint sentence', () => {
     expect(renderToStaticMarkup(tree({ lanes: [] }, true))).not.toContain('data-lab-lanes-hint');
     expect(html({ lanes: [] })).toContain('data-lab-lanes-hint');
+  });
+});
+
+describe('W8: a quieter, hierarchical chip header', () => {
+  const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/blocks/breakdown.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (sel: string) => {
+    const at = css.indexOf(`${sel} {`);
+    expect(at, sel).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  const tokens = readFileSync(join(import.meta.dirname, '../../dashboard/src/styles/tokens.css'), 'utf8');
+  const hex = (name: string, part: string) => new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i').exec(part)?.[1] ?? null;
+
+  it('"All traffic" leads the chip flow instead of sitting on its own row', () => {
+    const out = html({});
+    expect(out).not.toContain('lab-breakdown-all-row');
+    expect(out).toMatch(/class="lab-breakdown-axes"><button[^>]*data-lab-breakdown-all=""/);
+  });
+
+  it('three levels: muted regular dim labels, secondary chips, the pressed chip in accent ink and semibold', () => {
+    expect(rule('.lab-breakdown-dim-label')).toContain('color: var(--color-text-placeholder)');
+    expect(rule('.lab-breakdown-dim-label')).toContain('font-weight: var(--font-weight-normal)');
+    expect(rule('.lab-breakdown-chip')).toContain('color: var(--color-text-secondary)');
+    expect(rule(".lab-breakdown-chip[aria-pressed='true']")).toContain('font-weight: var(--font-weight-semibold)');
+    // The muted rung really is lighter than secondary in light (tertiary is darker there).
+    const lum = (h: string) => parseInt(h.slice(1, 3), 16) + parseInt(h.slice(3, 5), 16) + parseInt(h.slice(5, 7), 16);
+    expect(lum(hex('--color-text-placeholder', tokens)!)).toBeGreaterThan(lum('#646464'));
+    expect(lum('#474747')).toBeLessThan(lum('#646464'));
+  });
+
+  it('whitespace separates: 8px between chips, 12px between rows, 24px between groups, no rule above the lanes', () => {
+    expect(rule('.lab-breakdown-chips')).toContain('column-gap: var(--space-2)');
+    expect(rule('.lab-breakdown-chips')).toContain('row-gap: var(--space-3)');
+    expect(rule('.lab-breakdown-axes')).toContain('column-gap: var(--space-6)');
+    expect(rule('.lab-breakdown-axes')).toContain('row-gap: var(--space-3)');
+    expect(rule('.lab-breakdown')).toContain('gap: var(--space-3)');
+    expect(rule('.lab-breakdown-lanes')).not.toContain('border-top');
+    expect(rule('.lab-breakdown-chip')).toContain('height: var(--space-5)');
+  });
+
+  it('the lanes hint is the pin button tooltip; inline only on a wide card or when four lanes block the pin', () => {
+    const out = html({ lanes: [] });
+    expect(out).toMatch(/data-lab-lane-pin=""[^>]*title="HINT0"/);
+    expect(rule('.lab-breakdown-hint')).toContain('display: none');
+    expect(css).toMatch(/@container \(min-width: 1100px\) \{\s*\.lab-breakdown-hint \{\s*display: inline;/);
+    const full = html({ lanes: [{ platform: 'Meta Ads' }, { platform: 'TikTok Ads' }, { language: 'EN' }, { language: 'ES' }] });
+    expect(full).toMatch(/data-lab-lanes-hint=""[^>]*data-hint="always"/);
+    expect(html({ lanes: [] })).not.toContain('data-hint="always"');
+  });
+
+  it('a pin hover is accent ink, never the white on-fill text', () => {
+    expect(rule('.lab-breakdown-pin:hover:not(:disabled),\n.lab-breakdown-clear:hover')).toContain('color: var(--color-accent-ink)');
+  });
+
+  it('trend: axis ticks and legend muted, metric switch secondary, 12px between switch and chart', () => {
+    expect(rule('.lab-trend')).toContain('--viz-tick: var(--color-text-placeholder)');
+    expect(rule('.lab-trend')).toContain('gap: var(--space-3)');
+    expect(rule(".lab-trend .lab-chart-legend-item[aria-pressed='true']")).toContain('color: var(--color-text-placeholder)');
+    expect(rule('.lab-trend-switch-option')).toContain('color: var(--color-text-secondary)');
+    expect(rule(".lab-trend-switch-option[aria-checked='true']")).toContain('font-weight: var(--font-weight-semibold)');
+  });
+
+  it('tabs: secondary labels, the active one primary, 16px from the bar to the page', () => {
+    const blocks = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/lab/blocks/blocks.css'), 'utf8');
+    const at = (sel: string) => blocks.slice(blocks.indexOf(`${sel} {`), blocks.indexOf('}', blocks.indexOf(`${sel} {`)));
+    expect(at('.lab-block-tab')).toContain('color: var(--color-text-secondary)');
+    expect(at('.lab-block-tab')).toContain('font-weight: var(--font-weight-normal)');
+    expect(at(".lab-block-tab[aria-selected='true']")).toContain('font-weight: var(--font-weight-semibold)');
+    expect(at('.lab-block-tabs-panel')).toContain('padding-top: var(--space-4)');
   });
 });

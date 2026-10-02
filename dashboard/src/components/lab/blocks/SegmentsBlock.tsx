@@ -149,7 +149,7 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
                     <td className="lab-table-text lab-seg-value" title={row.value}>
                       <span className="lab-seg-value-text">{row.value}</span>
                     </td>
-                    <td className="lab-table-num">
+                    <td className="lab-table-num lab-seg-users">
                       {row.measured
                         ? formatNumber(row.users, { format: 'auto', maxDecimals: 0, locale })
                         : <Dash reason={unmeasured} />}

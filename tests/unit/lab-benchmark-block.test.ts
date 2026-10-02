@@ -243,11 +243,13 @@ describe('benchmark: the ruler explains itself', () => {
   it('the status is a word in a tinted pill, never a bare coloured dot', () => {
     const html = render();
     expect(html).not.toContain('lab-bench-status-dot');
-    expect(row(html, 'lead_rate')).toMatch(/data-lab-bench-status=""><span class="lab-bench-status-word">Between floor and target</);
+    expect(row(html, 'lead_rate')).toMatch(/data-lab-bench-status="" title="Between floor and target"><span class="lab-bench-status-word">Between floor and target</);
+    // A narrow one-line row prints the short word; the full words stay in the DOM and the title.
+    expect(row(html, 'lead_rate')).toContain('class="lab-bench-status-short" aria-hidden="true">lab.blocks.benchmark.statusShort.between<');
   });
 
   it('a mid-height cell draws one-line rows but keeps bound labels and sources', () => {
-    Object.assign(BOX, { width: 800, height: 3 * benchRowPx('compact', true, true) + BENCH_PX.legend + BENCH_PX.note });
+    Object.assign(BOX, { width: 800, height: 3 * benchRowPx('compact', true, true) + 2 * BENCH_PX.rowGap + BENCH_PX.legend });
     try {
       const html = render();
       expect(html).toContain('data-mode="compact"');
@@ -262,7 +264,7 @@ describe('benchmark: the ruler explains itself', () => {
   });
 
   it('a short cell keeps every metric as a one-line row before any "+N more"', () => {
-    Object.assign(BOX, { width: 800, height: 3 * benchRowPx('compact', false, false) });
+    Object.assign(BOX, { width: 800, height: 3 * benchRowPx('compact', false, false) + 2 * BENCH_PX.rowGap });
     try {
       const html = render();
       expect(html).toContain('data-mode="compact"');
@@ -424,35 +426,68 @@ describe('benchmark: options and notes', () => {
 });
 
 describe('benchmark: fits its cell without scrolling', () => {
-  it('tiers: full rows with details and legend, then one-line rows keeping labels and sources, then no details, no legend, then +N more', () => {
+  it('tiers: full rows, then one-line rows keeping labels and sources, then labels, then neither, no legend, then less air, then +N more', () => {
     const W = 800;
-    expect(benchmarkFit(5, 0, 0, true)).toEqual({ mode: 'full', labels: true, sources: true, legend: true, count: 5 });
-    expect(benchmarkFit(5, 400, 0, true, W)).toEqual({ mode: 'full', labels: true, sources: true, legend: true, count: 5 });
-    expect(benchmarkFit(5, 300, 0, true, W)).toEqual({ mode: 'compact', labels: true, sources: true, legend: true, count: 5 });
-    // The 12x12 preset tab (about 230px): one-line rows keep the bound labels, the sources yield.
-    expect(benchmarkFit(5, 230, 0, true, W)).toEqual({ mode: 'compact', labels: true, sources: false, legend: true, count: 5 });
-    expect(benchmarkFit(5, 140, 0, true, W)).toEqual({ mode: 'compact', labels: false, sources: false, legend: true, count: 5 });
-    expect(benchmarkFit(5, 120, 0, true, W)).toEqual({ mode: 'compact', labels: false, sources: false, legend: false, count: 5 });
+    const all = { mode: 'full', labels: true, sources: true, legend: true, rowGap: 12 };
+    expect(benchmarkFit(5, 0, 0, true)).toEqual({ ...all, count: 5 });
+    expect(benchmarkFit(5, 560, 0, true, W)).toEqual({ ...all, count: 5 });
+    expect(benchmarkFit(5, 340, 0, true, W)).toEqual({ mode: 'compact', labels: true, sources: true, legend: true, rowGap: 12, count: 5 });
+    expect(benchmarkFit(5, 240, 0, true, W)).toEqual({ mode: 'compact', labels: true, sources: false, legend: true, rowGap: 12, count: 5 });
+    expect(benchmarkFit(5, 180, 0, true, W)).toEqual({ mode: 'compact', labels: false, sources: false, legend: true, rowGap: 12, count: 5 });
+    expect(benchmarkFit(5, 150, 0, true, W)).toEqual({ mode: 'compact', labels: false, sources: false, legend: false, rowGap: 12, count: 5 });
+    // Air yields before a row does: 8px, then 4px between rows.
+    expect(benchmarkFit(5, 135, 0, true, W)).toMatchObject({ rowGap: 8, count: 5 });
+    expect(benchmarkFit(5, 120, 0, true, W)).toMatchObject({ rowGap: 4, count: 5 });
     const tight = benchmarkFit(5, 80, 0, true, W);
-    expect(tight).toMatchObject({ mode: 'compact', labels: false, sources: false, legend: false });
+    expect(tight).toMatchObject({ mode: 'compact', labels: false, sources: false, legend: false, rowGap: 4 });
     expect(tight.count).toBeGreaterThanOrEqual(1);
     expect(tight.count).toBeLessThan(5);
   });
 
-  it('5 metrics fit a 6x6 benchmark card: one-line rows are 23px, so 5 need 115px', () => {
-    expect(benchRowPx('compact', true, false)).toBe(39);
-    expect(benchRowPx('compact', false, false)).toBe(23);
-    expect(5 * benchRowPx('compact', false, false)).toBeLessThanOrEqual(120);
-    // Details cost one line for the bound labels and one for the sources.
-    expect(benchRowPx('compact', true, true)).toBe(23 + 2 * BENCH_PX.line);
-    expect(benchRowPx('compact', true, false)).toBe(23 + BENCH_PX.line);
-    expect(benchRowPx('full', true, true)).toBeGreaterThan(benchRowPx('compact', true, true));
+  it('rows sit on the 4px grid: a 20px primary line, 16px secondary / ruler / tertiary lines, 4px between them', () => {
+    expect(benchRowPx('compact', false, false)).toBe(BENCH_PX.primary);
+    expect(benchRowPx('compact', true, false)).toBe(2 * BENCH_PX.line);
+    expect(benchRowPx('compact', true, true)).toBe(2 * BENCH_PX.line + BENCH_PX.gap + BENCH_PX.line);
+    expect(benchRowPx('full', false, false)).toBe(BENCH_PX.primary + BENCH_PX.gap + BENCH_PX.line + BENCH_PX.gap + BENCH_PX.line);
+    expect(benchRowPx('full', true, true) % 4).toBe(0);
+    expect(BENCH_PX.rowGap).toBeGreaterThanOrEqual(12);
+  });
+
+  it('5 metrics still fit a 6x6 benchmark card: one-line rows with 12px of air need 148px, with 4px 116px', () => {
+    expect(5 * benchRowPx('compact', false, false) + 4 * 12).toBe(148);
+    expect(benchmarkFit(5, 148, 0, true, 480)).toMatchObject({ mode: 'compact', rowGap: 12, count: 5 });
+    expect(benchmarkFit(5, 116, 0, true, 480)).toMatchObject({ mode: 'compact', rowGap: 4, count: 5 });
   });
 
   it('a narrow block keeps the ruler on its own line while that fits', () => {
-    expect(benchmarkFit(5, 320, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: false, legend: true, count: 5 });
-    expect(benchmarkFit(5, 400, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: true });
-    expect(benchmarkFit(5, 240, 0, true, 300)).toMatchObject({ mode: 'full', labels: false, sources: false, legend: true });
+    expect(benchmarkFit(5, 460, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: false, legend: true, count: 5 });
+    expect(benchmarkFit(5, 560, 0, true, 300)).toMatchObject({ mode: 'full', labels: true, sources: true });
+    expect(benchmarkFit(5, 380, 0, true, 300)).toMatchObject({ mode: 'full', labels: false, sources: false, legend: true });
+  });
+
+  it('three type levels: value primary (14px semibold), name 14px regular muted, secondary run 12px, tertiary in the quietest ink', () => {
+    const css = readFileSync(join(__dirname, '../../dashboard/src/components/lab/blocks/benchmark.css'), 'utf8');
+    const rule = (sel: string) => { const at = css.indexOf(`${sel} {`); expect(at, sel).toBeGreaterThan(-1); return css.slice(at, css.indexOf('}', at)); };
+    expect(rule('.lab-bench-value')).toMatch(/font-size: var\(--font-size-sm\);\s*font-weight: var\(--font-weight-semibold\)/);
+    expect(rule('.lab-bench-label')).toContain('font-size: var(--font-size-sm)');
+    expect(rule('.lab-bench-label')).toContain('color: var(--color-text-secondary)');
+    expect(rule('.lab-bench-label')).not.toContain('semibold');
+    expect(rule('.lab-bench-delta')).not.toContain('font-size');
+    for (const sel of ['.lab-bench-sources-line', '.lab-bench-inherit', '.lab-bench-legend', '.lab-bench-bound-label']) {
+      expect(rule(sel)).toContain('color: var(--color-text-placeholder)');
+    }
+    // Whitespace separates rows, not hairlines.
+    expect(rule('.lab-bench-row')).not.toContain('border');
+    expect(rule('.lab-bench-rows')).toContain('gap: var(--space-3)');
+  });
+
+  it('bound labels keep at least 8px of air between them', () => {
+    const measure = (s: string) => s.length * 7;
+    const near = boundLabels([
+      { key: 'floor', x: 100, word: 'Floor', value: '30%' },
+      { key: 'target', x: 106, word: 'Target', value: '45%' },
+    ], 300, measure);
+    if (near.length === 2) expect(near[0].left + measure(near[0].text) + 8).toBeLessThanOrEqual(near[1].left);
   });
 
   it('an unmeasured reason wraps (at most 3 lines) and the fit pays for its lines', () => {
@@ -472,9 +507,10 @@ describe('benchmark: fits its cell without scrolling', () => {
   });
 
   it('a tier the rendered block proved too tall is skipped, and past the last tier rows fold into +N more', () => {
-    expect(benchmarkFit(5, 400, 0, true, 800).mode).toBe('full');
-    expect(benchmarkFit(5, 400, 0, true, 800, [], 1)).toMatchObject({ mode: 'compact', labels: true });
-    expect(benchmarkFit(5, 400, 0, true, 800, [], 6).count).toBe(4);
+    expect(benchmarkFit(5, 600, 0, true, 800).mode).toBe('full');
+    expect(benchmarkFit(5, 600, 0, true, 800, [], 1)).toMatchObject({ mode: 'compact', labels: true });
+    // 7 tiers (5 shapes + 2 tighter gaps); one more skip folds a row.
+    expect(benchmarkFit(5, 600, 0, true, 800, [], 8).count).toBe(4);
   });
 
   it('notes cost their wrapped lines', () => {

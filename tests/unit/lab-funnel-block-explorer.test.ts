@@ -370,6 +370,18 @@ describe('Lanes at the 8x7 Steps card (fix round): rows never collapse', () => {
     expect(rule).not.toContain('accent-soft');
   });
 
+  it('three levels and air: whitespace (not a rule) under the heads, 4px between rows with room, shares and head users tertiary', () => {
+    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const rule = (sel: string) => { const at = css.indexOf(`${sel} {`); expect(at, sel).toBeGreaterThan(-1); return css.slice(at, css.indexOf('}', at)); };
+    expect(rule('.funnel-lanes-head-row')).not.toContain('border');
+    expect(rule('.funnel-lanes-head-row')).toContain('margin-bottom: var(--space-2)');
+    expect(rule('.funnel-lanes:not([data-dense])')).toContain('row-gap: var(--space-1)');
+    expect(rule('.funnel-lanes-users')).toContain('color: var(--color-text-placeholder)');
+    expect(rule('.funnel-lanes-pct,\n.funnel-lanes-share')).toContain('color: var(--color-text-placeholder)');
+    // The non-dense threshold pays for those 4px gaps (a 16px row + 4px each).
+    expect(lanesDense(7, LANE_PX.head + 7 * (LANE_PX.row + 4))).toBe(false);
+  });
+
   it('narrow lanes drop the users first, then the share; the bar and the drop stay', () => {
     const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
     const mid = css.slice(css.indexOf('@container lane (max-width: 190px)'), css.indexOf('@container lane (max-width: 120px)'));

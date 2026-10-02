@@ -41,60 +41,73 @@
 
 /* ─── Breakdown chips ────────────────────────────────────────────────────── */
 
+/*
+ * The chip header is the quiet part of the explorer: it frames the page, it is not the page.
+ * Three levels: dimension labels tertiary (12, muted, regular), chips secondary (12, secondary
+ * ink, hairline), the pressed chip primary (accent ink, semibold). Groups are separated by
+ * whitespace (24 between groups, 8 between chips, 12 between wrapped rows), never by rules.
+ *
+ * "Muted" here is --color-text-placeholder: the one text token that is lighter than secondary
+ * in light (#757575, AA on white) and dimmer in dark (6.3:1). --color-text-tertiary is DARKER
+ * than secondary in light (#474747, a chip-text token), so it would invert the ladder.
+ */
 .lab-breakdown {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-height: 0;
   overflow: hidden;
   container-type: inline-size;
 }
 
 .lab-breakdown-axes {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  column-gap: var(--space-3);
-  row-gap: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: var(--space-6);
+  row-gap: var(--space-3);
   min-width: 0;
 }
 
-.lab-breakdown-all-row {
-  grid-column: 1 / -1;
-  display: flex;
-}
-
 .lab-breakdown-dim {
-  display: contents;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .lab-breakdown-dim-label {
-  color: var(--color-text-tertiary);
+  flex: none;
+  color: var(--color-text-placeholder);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.02em;
+  font-weight: var(--font-weight-normal);
+  /* One chip tall, so the label sits on the first chip row's centre line. */
+  line-height: var(--space-5);
   white-space: nowrap;
 }
 
 .lab-breakdown-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
   min-width: 0;
 }
 
 .lab-breakdown-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
   max-width: 100%;
-  height: var(--space-6);
+  height: var(--space-5);
   padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: transparent;
+  color: var(--color-text-secondary);
   font: inherit;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-normal);
@@ -111,13 +124,13 @@
 }
 
 .lab-breakdown-chip-count {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
   font-variant-numeric: tabular-nums;
 }
 
 .lab-breakdown-chip:hover {
   border-color: var(--color-border-hover);
-  background: var(--color-bg-secondary);
+  color: var(--color-text);
 }
 
 .lab-breakdown-chip:focus-visible,
@@ -147,7 +160,7 @@
 .lab-breakdown-chip[aria-disabled='true'] {
   border-style: dashed;
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
   cursor: not-allowed;
 }
 
@@ -180,29 +193,29 @@
 
 /* ─── Lanes ──────────────────────────────────────────────────────────────── */
 
+/* The lanes row: its own group, set apart by the block's 12px gap (no rule above it). */
 .lab-breakdown-lanes {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   column-gap: var(--space-3);
-  row-gap: var(--space-1);
+  row-gap: var(--space-3);
   min-width: 0;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
 }
 
 .lab-breakdown-lane-list {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
   min-width: 0;
 }
 
 .lab-breakdown-lane {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
   max-width: 100%;
   height: var(--space-6);
@@ -247,7 +260,7 @@
   border: 0;
   border-radius: var(--radius-full);
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
   cursor: pointer;
 }
 
@@ -283,7 +296,8 @@
 .lab-breakdown-pin:hover:not(:disabled),
 .lab-breakdown-clear:hover {
   border-color: var(--color-accent);
-  color: var(--color-accent-text);
+  /* Ink, not --color-accent-text: that is white, for text on a solid accent fill. */
+  color: var(--color-accent-ink);
 }
 
 .lab-breakdown-clear {
@@ -296,11 +310,26 @@
   cursor: not-allowed;
 }
 
+/*
+ * The lanes hint is tertiary and optional: inline only on a wide card (the large preset) or when
+ * it explains a disabled pin (four lanes); elsewhere it is the pin button's tooltip.
+ */
 .lab-breakdown-hint {
+  display: none;
   min-width: 0;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
   font-size: var(--font-size-xs);
   line-height: 1.4;
+}
+
+.lab-breakdown-hint[data-hint='always'] {
+  display: inline;
+}
+
+@container (min-width: 1100px) {
+  .lab-breakdown-hint {
+    display: inline;
+  }
 }
 
 /* ─── Compact form (the chip rows would be cut): one select per dimension ─── */
@@ -309,7 +338,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
   min-width: 0;
 }
 
@@ -374,27 +404,43 @@
 
 /* A narrow cell stacks each dimension's label over its chips. */
 @container (max-width: 420px) {
-  .lab-breakdown-axes {
-    grid-template-columns: minmax(0, 1fr);
+  .lab-breakdown-dim {
+    flex-direction: column;
+    gap: var(--space-1);
   }
 
-  .lab-breakdown-dim-label {
-    margin-top: var(--space-1);
-  }
-
-  .lab-breakdown-hint {
+  .lab-breakdown-hint[data-hint='always'] {
     display: none;
   }
 }
 
 /* ─── Trend ──────────────────────────────────────────────────────────────── */
 
+/*
+ * Trend hierarchy: the line and its end value are the content; the metric switch is secondary
+ * (12, secondary ink, the chosen metric semibold); axis ticks and legend are tertiary (muted).
+ */
 .lab-trend {
+  --viz-tick: var(--color-text-placeholder);
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-height: 0;
   overflow: hidden;
+}
+
+.lab-trend .lab-chart-legend-item[aria-pressed='true'] {
+  color: var(--color-text-placeholder);
+}
+
+/* A hidden series reads quieter still (the chart's own rule uses the darker tertiary token). */
+.lab-trend .lab-chart-legend-item[aria-pressed='false'] {
+  color: var(--color-text-placeholder);
+  opacity: 0.6;
+}
+
+.lab-trend .lab-chart-legend-item[aria-pressed='true']:hover {
+  color: var(--color-text);
 }
 
 .lab-trend-switch {
@@ -438,7 +484,7 @@
 }
 
 .lab-trend-switch-option[data-measured='false'] {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
   text-decoration: line-through dotted;
 }
 
