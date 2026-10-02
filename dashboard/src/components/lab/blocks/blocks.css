@@ -1,0 +1,266 @@
+/*
+ * Board blocks: the box every block draws in, and the few block surfaces that
+ * are not charts (filter chips, tabs, callouts, the html frame). Tokens only:
+ * no literal colors, sizes, weights or durations (Automations Elevated rules:
+ * 12/14 ladder, weights 400/600, one accent).
+ */
+
+.lab-block {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.lab-block-fill {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* A chart never scrolls inside its cell: it draws to the box it is given. */
+.lab-block:is(.lab-block--line, .lab-block--bar, .lab-block--stacked, .lab-block--pie, .lab-block--heatmap, .lab-block--stat, .lab-block--funnel, .lab-block--trend, .lab-block--benchmark) {
+  overflow: hidden;
+}
+
+.lab-block-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lab-block-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-height: var(--space-10);
+  padding: var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.lab-block-stat {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ── filter ─────────────────────────────────────────────────────────── */
+
+.lab-block-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-x: auto;
+  min-height: 0;
+  padding: var(--space-1) 0;
+}
+
+.lab-block-filter-label {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.lab-block-filter-total {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.lab-block-chip {
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.lab-block-chip:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.lab-block-chip[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-block-chip:focus-visible,
+.lab-block-tab:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* ── tabs ───────────────────────────────────────────────────────────── */
+
+.lab-block-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The bar never gives up height to the panel (it used to shrink and clip its labels). */
+.lab-block-tabs-bar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.lab-block-tab {
+  flex: 0 0 auto;
+  margin-bottom: -1px;
+  line-height: var(--line-height-normal);
+  white-space: nowrap;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.lab-block-tab:hover {
+  color: var(--color-text);
+}
+
+.lab-block-tab[aria-selected='true'] {
+  border-bottom-color: var(--color-accent);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* 16px from the tab bar to its page: the bar is navigation, the page below is the content. */
+.lab-block-tabs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: var(--space-4);
+  overflow: hidden;
+}
+
+.lab-block-tabs-child {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ── callout ────────────────────────────────────────────────────────── */
+
+.lab-block-callout {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.lab-block-callout--success {
+  border-left-color: var(--color-success);
+  background: var(--color-success-subtle);
+}
+
+.lab-block-callout--warning {
+  border-left-color: var(--color-warning);
+  background: var(--color-warning-subtle);
+}
+
+.lab-block-callout--danger {
+  border-left-color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+/* ── text ───────────────────────────────────────────────────────────── */
+
+.lab-block-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+/* Board text and callouts sit on the card: none of the markdown page's own box. */
+.lab-block-text .md-preview,
+.lab-block-callout .md-preview {
+  padding: 0;
+  overflow: visible;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* A one-line heading block: a section heading on the 12/14 ladder, semibold, one line. */
+.lab-block-heading {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── funnel ─────────────────────────────────────────────────────────── */
+
+.lab-block-funnel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.lab-block-funnel-name {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+/* ── html ───────────────────────────────────────────────────────────── */
+
+.lab-block-html-frame {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: none;
+  background: transparent;
+}

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { toBarRows } from './barRows';
 import { BarList } from './BarList';
 import { CHART_COLORS } from './chartColors';
-import { ChartEmpty, formatValue, type ChartBodyProps } from './chartBody';
+import { ChartEmpty, formatValue, useMeasured, type ChartBodyProps } from './chartBody';
 import {
   cellPrev,
   dimLabel,
@@ -17,6 +17,7 @@ import {
   type MatrixSet,
   type MatrixSnapshot,
 } from './matrixModel';
+import './BreakdownPivot.css';
 
 /**
  * `breakdown` render — the pivot over a `matrix/v1` payload (cache.matrix).
@@ -157,9 +158,10 @@ function PivotTable({ set, rowDim, colDim, filter, prevSnapshot, showDeltas, sor
   );
 
   return (
-    <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-        <thead>
+    // The wrapper is the table's scroll box; its header cells stick to its top (BreakdownPivot.css).
+    <div className="lab-pivot-scroll" style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12.5 }}>
+        <thead className="lab-pivot-head">
           <tr style={{ background: 'var(--color-bg-tertiary)' }}>
             {header(dimLabel(set.dims.find((d) => d.key === rowDim) ?? { key: rowDim }), null)}
             {colValues.map((colValue) => header(colValue, colValue))}
@@ -167,7 +169,7 @@ function PivotTable({ set, rowDim, colDim, filter, prevSnapshot, showDeltas, sor
         </thead>
         <tbody>
           {sorted.map(({ rowValue, cells }) => (
-            <tr key={rowValue} style={{ borderTop: '1px solid var(--color-border)' }}>
+            <tr key={rowValue} className="lab-pivot-row">
               <td style={{ padding: '5px 10px', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }} title={rowValue}>
                 {rowValue}
               </td>
@@ -201,13 +203,38 @@ function PivotTable({ set, rowDim, colDim, filter, prevSnapshot, showDeltas, sor
   );
 }
 
-function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full, pivot }: {
+/** Fit mode's plan (px at 100% zoom): the chips row and the total line with their margins
+ *  (until they are measured), and the least the table's scroll box needs (header + one row). */
+const FIT_CHIPS_PX = 33;
+const FIT_FOOT_PX = 25;
+const FIT_TABLE_MIN_PX = 64;
+/** The margin that sits between the table and the chips (below them) or the total (above it). */
+const FIT_GAP_PX = 8;
+
+/**
+ * What a fitted pivot keeps in a cell `height` px tall (0 = not measured: everything),
+ * given the room the chips row and the total line take (0 chips = the view has none).
+ * The table's scroll box comes first, so its sticky header always has room: the total
+ * line gives way first, then the filter chips (never while a filter is applied, or the
+ * rows would be filtered by a control nobody can see).
+ */
+export function pivotFit(height: number, chipsPx: number, footPx: number, filtering: boolean): { chips: boolean; foot: boolean } {
+  const hasChips = chipsPx > 0;
+  if (!(height > 0)) return { chips: hasChips, foot: true };
+  if (height - chipsPx - footPx >= FIT_TABLE_MIN_PX) return { chips: hasChips, foot: true };
+  if (height - chipsPx >= FIT_TABLE_MIN_PX || (hasChips && filtering)) return { chips: hasChips, foot: false };
+  return { chips: false, foot: false };
+}
+
+function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full, pivot, fit = false }: {
   matrix: MatrixCacheEntry;
   matrixHistory: MatrixSnapshot[] | undefined;
   fetchedAt: string;
   unit: string | null;
   full: boolean;
   pivot?: ChartBodyProps['pivot'];
+  /** Fill a board cell: chips and total stay put, only the table scrolls (sticky header). */
+  fit?: boolean;
 }) {
   const { set } = matrix;
   // Dim swap (detail): pivot axes in declared order until the user flips them.
@@ -223,6 +250,10 @@ function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full, pivot }: 
     () => (set.dims[2] && pivot?.filter ? pivot.filter[set.dims[2].key] ?? null : null),
   );
   const [copied, setCopied] = useState(false);
+  const [fitRef, fitBox] = useMeasured<HTMLDivElement>();
+  // The chips and total as last drawn (a hidden one keeps its last size), for the fit plan.
+  const [chipsRef, chipsBox] = useMeasured<HTMLDivElement>();
+  const [footRef, footBox] = useMeasured<HTMLDivElement>();
 
   const effectiveUnit = set.unit ?? unit;
   const [dim1, dim2, dim3] = set.dims;
@@ -254,10 +285,15 @@ function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full, pivot }: 
     } catch { /* clipboard denied — the button simply doesn't confirm */ }
   };
 
+  const hasChips = !!(dim3 || (full && dim2));
+  const chipsPx = !hasChips ? 0 : chipsBox.height > 0 ? chipsBox.height + FIT_GAP_PX : FIT_CHIPS_PX;
+  const footPx = footBox.height > 0 ? footBox.height + FIT_GAP_PX : FIT_FOOT_PX;
+  const show = fit ? pivotFit(fitBox.height, chipsPx, footPx, filterValue !== null) : { chips: hasChips, foot: true };
+
   return (
-    <div>
-      {(dim3 || (full && dim2)) && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+    <div ref={fit ? fitRef : undefined} className={fit ? 'lab-pivot lab-pivot--fit' : 'lab-pivot'}>
+      {show.chips && (
+        <div ref={chipsRef} className="lab-pivot-chips" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 }}>
           {dim3 && (
             <>
               <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{dimLabel(dim3)}:</span>
@@ -299,16 +335,18 @@ function BreakdownView({ matrix, matrixHistory, fetchedAt, unit, full, pivot }: 
         <OneDimBars set={set} unit={effectiveUnit} full={full} />
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8, fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
-        {set.total && set.total.v !== null && (
-          <span>Total: <strong style={{ color: 'var(--color-text)' }}>{formatValue(set.total.v, effectiveUnit)}</strong></span>
-        )}
-        {full && prevSnapshot && (
-          <span title="Δ chips compare against this snapshot (equal-length window).">
-            Δ vs {prevSnapshot.range.fromISO} → {prevSnapshot.range.toISO}
-          </span>
-        )}
-      </div>
+      {show.foot && (
+        <div ref={footRef} className="lab-pivot-foot" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8, fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+          {set.total && set.total.v !== null && (
+            <span>Total: <strong style={{ color: 'var(--color-text)' }}>{formatValue(set.total.v, effectiveUnit)}</strong></span>
+          )}
+          {full && prevSnapshot && (
+            <span title="Δ chips compare against this snapshot (equal-length window).">
+              Δ vs {prevSnapshot.range.fromISO} → {prevSnapshot.range.toISO}
+            </span>
+          )}
+        </div>
+      )}
       {full && matrix.notices.length > 0 && (
         <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--color-warning, var(--color-text-tertiary))' }}>
           {matrix.notices.map((notice, i) => <div key={i}>⚠ {notice}</div>)}
@@ -336,6 +374,55 @@ export function BreakdownBody({ summary, cache, series, full = false, emptyHint,
         unit={summary.unit}
         full={full}
         pivot={pivot}
+      />
+    </div>
+  );
+}
+
+/**
+ * A matrix set with its dims reordered so `rows` leads and `cols` follows
+ * (the rest keep their order and become filter chips). Unknown names are
+ * ignored, so a stale option degrades to the declared order.
+ */
+export function orderPivotDims(set: MatrixSet, rows?: string | null, cols?: string | null): MatrixSet {
+  const dims = [...set.dims];
+  const lead: typeof dims = [];
+  for (const key of [rows, cols]) {
+    if (!key) continue;
+    const at = dims.findIndex((d) => d.key === key);
+    if (at !== -1) lead.push(...dims.splice(at, 1));
+  }
+  return { ...set, dims: [...lead, ...dims] };
+}
+
+/**
+ * The pivot fed a dataset directly (board `pivot` block): a dataset/v1 table
+ * already IS a matrix set, so it skips the cache and goes straight to the
+ * breakdown view, with `rows`/`cols` choosing the axes. Keyed by the axes so
+ * a changed option starts a fresh view instead of keeping stale chip state.
+ */
+export function PivotBody({ set, unit, rows, cols, full = false, emptyHint, fit = false }: {
+  set: MatrixSet;
+  unit: string | null;
+  rows?: string | null;
+  cols?: string | null;
+  full?: boolean;
+  emptyHint?: string;
+  /** Fill the host's box (board `pivot` block): the table is the only thing that scrolls. */
+  fit?: boolean;
+}) {
+  if (set.dims.length === 0 || set.rows.length === 0) return <ChartEmpty hint={emptyHint} />;
+  const ordered = orderPivotDims(set, rows, cols);
+  return (
+    <div className={fit ? 'lab-pivot-host' : undefined} onClick={(e) => e.stopPropagation()}>
+      <BreakdownView
+        key={ordered.dims.map((d) => d.key).join('|')}
+        matrix={{ set: ordered, notices: [], range: { fromISO: '', toISO: '' } }}
+        matrixHistory={undefined}
+        fetchedAt=""
+        unit={unit}
+        full={full}
+        fit={fit}
       />
     </div>
   );

@@ -18,6 +18,15 @@ import { DEFAULT_STATUSES, pickMergedStatus, type StatusDef } from '../task-stat
 import { parseWhiteboard, serializeWhiteboard, type Whiteboard } from '../whiteboards/format.js';
 import { mergeElements, stripTombstones } from '../whiteboards/merge.js';
 import { WhiteboardCorruptError } from '../whiteboards/errors.js';
+import {
+  boardSpecToFile,
+  parseBoardText,
+  serializeBoardSpec,
+  validateBoardSpec,
+  type BoardSpec,
+  type Card,
+} from '../lab/boards.js';
+import { compact, findOverlaps } from '../lab/grid.js';
 
 /**
  * Deterministic merge engine for the brain-repo sync engine — see
@@ -38,6 +47,8 @@ export type MergeClass =
   | 'taxonomy-json'
   /** `whiteboards/<slug>/<slug>.excalidraw.md` — element-level merge (whiteboard D13). */
   | 'whiteboard-md'
+  /** `lab/boards/*.md`: union of cards by id (mergeLabBoard). `lab/blocks/*.md` stays on the prose path. */
+  | 'lab-board'
   | 'other'
   /**
    * full-repo only: a real project/code file (anything NOT under `_dream_context/`).
@@ -59,6 +70,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (/^knowledge\/features\//.test(norm)) return 'feature-md';
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
   if (/^whiteboards\/([^/]+)\/\1\.excalidraw\.md$/.test(norm)) return 'whiteboard-md';
+  if (/^lab\/boards\/[^/]+\.md$/.test(norm)) return 'lab-board';
   return 'other';
 }
 
@@ -424,6 +436,100 @@ export function mergeWhiteboardMd(base: string, ours: string, theirs: string): {
   return { merged: serializeWhiteboard(merged), needsAgent: false };
 }
 
+// ─── lab/boards/*.md — cards unioned by id, strictly validated ──────────────
+
+/**
+ * Board files get a deterministic merge (Insights v2, D7). The first edit on
+ * each machine materializes EVERY board, so two teammates whose first edits
+ * happen before a sync produce an add/add conflict on every board file: this
+ * class makes that routine instead of an agent hand-off.
+ *
+ * Rules (card ids are deterministic across machines: `c-<insight>`,
+ * `h-<board>-<group>`, so the same card on both sides has the same id):
+ *   - a missing (or unreadable) base is an EMPTY board;
+ *   - cards union by id: ours first in ours' order, then theirs-only cards;
+ *   - changed on one side only -> that side; changed on both -> ours;
+ *   - deleted on one side, unchanged on the other -> deleted;
+ *   - deleted on one side, CHANGED on the other -> kept, and reported;
+ *   - board fields (title, order, titleKey, body): the side that changed, ours on a tie;
+ *   - overlaps left by the union are resolved with `grid.ts` compaction;
+ *   - the result must pass the STRICT board validation, else ours is kept and reported;
+ *   - an unparseable side (conflict markers, bad YAML, a tagged fence) -> ours, reported.
+ *
+ * `lab/blocks/*.md` (library HTML) is NOT this class: its body is prose-like
+ * markup and stays on the `mergeMarkdownDoc` path.
+ */
+export function mergeLabBoard(base: string, ours: string, theirs: string, slug: string): { merged: string; notes: string[] } {
+  const notes: string[] = [];
+  if (ours.trim() === '' || theirs.trim() === '') {
+    // Modify/delete of the whole file: the kept side is the one with content.
+    const kept = ours.trim() === '' ? theirs : ours;
+    notes.push('the board was deleted on one side and changed on the other: kept.');
+    return { merged: kept, notes };
+  }
+  const read = (text: string): BoardSpec | null => {
+    const b = parseBoardText(slug, text);
+    return b.error ? null : b;
+  };
+  const o = read(ours);
+  const t = read(theirs);
+  if (!o || !t) {
+    notes.push(`${!o ? 'our' : 'their'} side is unreadable (merge conflict markers or bad YAML): kept ours; fix the file by hand.`);
+    return { merged: ours, notes };
+  }
+  const b = base.trim() === '' ? null : read(base);
+  if (base.trim() !== '' && !b) notes.push('the common base is unreadable: merged as if it were empty.');
+  const baseCards = new Map((b?.cards ?? []).map((c) => [c.id, c]));
+  const same = (x: Card | undefined, y: Card | undefined): boolean => JSON.stringify(x) === JSON.stringify(y);
+
+  const oursById = new Map(o.cards.map((c) => [c.id, c]));
+  const theirsById = new Map(t.cards.map((c) => [c.id, c]));
+  const ids = [...o.cards.map((c) => c.id), ...t.cards.map((c) => c.id).filter((id) => !oursById.has(id))];
+  const cards: Card[] = [];
+  for (const id of ids) {
+    const mine = oursById.get(id);
+    const yours = theirsById.get(id);
+    const was = baseCards.get(id);
+    if (mine && yours) {
+      if (same(mine, yours) || !same(yours, was)) {
+        // Both changed -> ours. An add/add with no base (two machines materializing) keeps ours quietly.
+        if (was && !same(mine, yours) && !same(mine, was)) notes.push(`card "${id}" changed on both sides: kept ours.`);
+        cards.push(same(mine, was) ? yours : mine);
+      } else {
+        cards.push(mine); // only ours changed
+      }
+      continue;
+    }
+    const only = (mine ?? yours)!;
+    if (!was) {
+      cards.push(only); // added on one side
+    } else if (same(only, was)) {
+      // deleted on the other side, unchanged here: deleted
+    } else {
+      notes.push(`card "${id}" was deleted on ${mine ? 'their' : 'our'} side and changed on ${mine ? 'ours' : 'theirs'}: kept.`);
+      cards.push(only);
+    }
+  }
+
+  const field = <K extends 'title' | 'order' | 'titleKey' | 'body'>(k: K): BoardSpec[K] =>
+    (b && o[k] === b[k] ? t[k] : o[k]);
+  const merged: BoardSpec = {
+    title: field('title'),
+    order: field('order'),
+    cards: findOverlaps(cards).length > 0 ? compact(cards) : cards,
+    body: field('body'),
+  };
+  const titleKey = field('titleKey');
+  if (titleKey) merged.titleKey = titleKey;
+
+  const check = validateBoardSpec(boardSpecToFile(merged), slug, { body: merged.body });
+  if (!check.ok) {
+    notes.push(`the merged board failed validation (${check.errors.map((e) => e.message).join('; ')}): kept ours.`);
+    return { merged: ours, notes };
+  }
+  return { merged: serializeBoardSpec(check.spec), notes };
+}
+
 // ─── knowledge/** (incl. knowledge/features/**) and anything unclassified ──
 
 /**
@@ -595,6 +701,12 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
           continue;
         }
         mergedContent = board.merged;
+        break;
+      }
+      case 'lab-board': {
+        const board = mergeLabBoard(base, ours, theirs, basename(relPath, '.md'));
+        mergedContent = board.merged;
+        for (const note of board.notes) notes.push(`${relPath}: ${note}`);
         break;
       }
       case 'knowledge-md':

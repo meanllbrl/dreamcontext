@@ -5,6 +5,7 @@ import { emitInstance, useInstanceEvent, useVault } from '../../../context/Vault
  * Multi-page insight routing (A2) — the minimal contract a render kind can
  * adopt to get routed pages instead of a slide-over:
  *
+ *   /lab/b/<board>             → a board (Insights v2; `b` is a reserved insight slug)
  *   /lab/<slug>                → the insight's page 1 (funnel: overview table; app: entry page)
  *   /lab/<slug>/f/<funnelId>   → funnel's page 2 (detail lane)
  *   /lab/<slug>/p/<pageId>     → an app/v1 insight's routed page
@@ -34,9 +35,8 @@ export interface LabRoute {
    *  grammar sibling). Mutually exclusive with `funnelId` — the path grammar
    *  only ever matches one of `f`/`p` per URL. */
   pageId: string | null;
-  /** `/lab/reports/<slug>` — the My Reports page. `reports` is a reserved
-   *  first segment (the API reserves it identically), never an insight slug. */
-  report: string | null;
+  /** `/lab/b/<board>`: the board to show. Mutually exclusive with `slug`. */
+  board: string | null;
 }
 
 /**
@@ -67,7 +67,7 @@ const parkedRoutes = new WeakMap<EventTarget, string>();
  * May this caller read and write the real URL?
  *
  * An ABSENT bus reads as "yes" on purpose. `pushLabPath` is also called from surfaces this
- * module cannot hand a bus to (`LabBoard`, `FunnelOverviewPage`), and every one of those call
+ * module cannot hand a bus to (`BoardPage`, `FunnelOverviewPage`), and every one of those call
  * sites is a click handler — a background instance is `hidden` + `inert`, so it takes no
  * pointer events and no focus, and a click is therefore proof that the caller IS the
  * foreground instance. See the note on `pushLabPath`.
@@ -114,11 +114,11 @@ function commit(target: string, mode: 'push' | 'replace', bus: EventTarget | und
 }
 
 export function parseLabPath(pathname: string): LabRoute {
-  const none: LabRoute = { slug: null, funnelId: null, pageId: null, report: null };
-  const report = /^\/lab\/reports\/([^/]+)\/?$/.exec(pathname);
-  if (report) {
+  const none: LabRoute = { slug: null, funnelId: null, pageId: null, board: null };
+  const b = /^\/lab\/b\/([^/]+)\/?$/.exec(pathname);
+  if (b) {
     try {
-      return { ...none, report: decodeURIComponent(report[1]) };
+      return { ...none, board: decodeURIComponent(b[1]) };
     } catch {
       return none;
     }
@@ -126,7 +126,7 @@ export function parseLabPath(pathname: string): LabRoute {
   // Group 2 is the segment kind (`f` funnel detail, `p` app page) — mutually
   // exclusive by construction, so at most one of funnelId/pageId is ever set.
   const m = /^\/lab\/([^/]+)(?:\/(f|p)\/([^/]+))?\/?$/.exec(pathname);
-  if (!m || m[1] === 'reports') return none;
+  if (!m) return none;
   try {
     const slug = decodeURIComponent(m[1]);
     const subId = m[3] ? decodeURIComponent(m[3]) : null;
@@ -148,6 +148,11 @@ export function labPath(slug: string | null, funnelId: string | null): string {
     : `/lab/${encodeURIComponent(slug)}`;
 }
 
+/** A board's address: `/lab/b/<board>`. */
+export function labBoardPath(board: string): string {
+  return `/lab/b/${encodeURIComponent(board)}`;
+}
+
 /** The `app/v1` sibling of {@link labPath} — `/lab/<slug>` (no page, or the
  *  entry page) vs `/lab/<slug>/p/<pageId>`. Kept as a separate builder rather
  *  than overloading `labPath`'s `f`/`p` choice implicitly: a caller should
@@ -158,25 +163,24 @@ export function labAppPath(slug: string, pageId: string | null): string {
     : `/lab/${encodeURIComponent(slug)}`;
 }
 
-export function labReportPath(slug: string): string {
-  return `/lab/reports/${encodeURIComponent(slug)}`;
-}
-
-/** Push the My Reports page for one report (same contract as pushLabPath). */
-export function pushLabReportPath(slug: string, bus?: EventTarget): void {
-  commit(labReportPath(slug) + splitTarget(currentTarget(bus)).search, 'push', bus);
-}
-
 /**
  * Push a new lab location (path change = a history entry the Back button pops).
  *
  * `bus` is optional ONLY because two click-driven callers outside this module's reach
- * (`LabBoard`, `FunnelOverviewPage`) cannot pass one; omitting it means "I am the foreground
+ * (`BoardPage`, `FunnelOverviewPage`) cannot pass one; omitting it means "I am the foreground
  * instance", which a click proves. Anything that can fire without a click — an effect, a
  * timer, a message — MUST pass its bus, or it will write over the visible project's URL.
  */
 export function pushLabPath(slug: string | null, funnelId: string | null, bus?: EventTarget): void {
   commit(labPath(slug, funnelId) + splitTarget(currentTarget(bus)).search, 'push', bus);
+}
+
+/**
+ * Show a board. `replace` for a board the page settled on by itself (the saved
+ * or first board), `push` for a tab the user clicked, so Back walks boards.
+ */
+export function pushLabBoardPath(board: string, mode: 'push' | 'replace' = 'push', bus?: EventTarget): void {
+  commit(labBoardPath(board) + splitTarget(currentTarget(bus)).search, mode, bus);
 }
 
 // ─── app/v1 navigate params (S2) ────────────────────────────────────────────

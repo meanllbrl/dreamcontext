@@ -84,7 +84,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Structured memory** | soul + the active person's constitution + memory + knowledge + tasks, auto-loaded each session | this file |
 | **Tasks** | Working documents: changelog, RICE, status lifecycle, dates, assignees, project-declared custom fields | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Roadmap / Objectives** | PO-authored OKR board in `core/objectives/`: many-to-many task links, dependency DAG, forecast and slip detection (`dreamcontext roadmap`) | [tasks-and-features.md](references/tasks-and-features.md) |
-| **Lab / Insights** | Curated analytics **metrics** synced from HTTP APIs or scripts into `lab/insights/`, cached every session, bindable to a Key Result. **Funnel analytics** (`--render funnel`) and multi-page app insights (`--render app`) included. **An insight is NOT a knowledge file**: create with `dreamcontext lab create`, never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Lab / Insights** | Curated analytics **metrics** synced from HTTP APIs or scripts into `lab/insights/`, cached every session, bindable to a Key Result. **Funnel analytics** (`--render funnel`) and multi-page app insights (`--render app`) included. **Boards (Beta)** compose them: `lab/boards/<slug>.md`, a 12-column grid of cards built from the block catalog (`lab block list`) plus saved HTML blocks (`lab/blocks/`). **An insight is NOT a knowledge file**: create with `dreamcontext lab create`, never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
@@ -130,7 +130,7 @@ Two routing rules that override surface reading:
 | User says… | Entity | What it IS | Create with |
 |---|---|---|---|
 | "create an insight", "track MRR", "funnel analizi", "which funnel is underperforming", "let the script build its own UI, don't write me a component", **or the problem-shape:** "a number that refreshes itself from an API" | **Insight** — `lab/insights/<slug>.md` | A **metric backed by an external source** that re-syncs (manifest, cache, TTL, optional KR binding). **Funnel analysis is an insight too** (`--render funnel`); a multi-page view is `--render app`. Never hand-build a dashboard for it | `dreamcontext lab create <slug> --title "…"` (offer-and-confirm protocol → [tasks-and-features.md](references/tasks-and-features.md)) |
-| "günlük ürün raporu / daily product report", "one view over metrics we already track, by day" | **Report** — `lab/reports/<slug>.md` | A **date-navigable document over EXISTING insights**; owns no data, never fetches | `dreamcontext lab report create <slug> --title "…" --insights a,b,c` (contract → [tasks-and-features.md](references/tasks-and-features.md) § Reports) |
+| "put these insights on one page", "an insights board / dashboard for growth", "günlük ürün panosu", "show MRR as a big number next to the signups line", **or the problem-shape:** "one composed view over metrics we already track" | **Board** — `lab/boards/<slug>.md` | A **composed page over EXISTING insights**: cards of catalog blocks (`stat`, `line`, `table`, `funnel`, `breakdown`, `benchmark`, `html`, …) bound to insight caches; owns no data, never fetches. Not a whiteboard (that is an editable canvas) | `dreamcontext lab board create <slug>` + `lab board add-card` (contract → [tasks-and-features.md](references/tasks-and-features.md)) |
 | "add an objective / goal / OKR", "put it on the roadmap", "we want X by Q4" | **Objective** — `core/objectives/<slug>.md` | A PO-authored **outcome** with target date, dependency DAG, optional Key-Result metric | `dreamcontext roadmap objective create` (ASK first — objectives are PO-owned) |
 | "I have a thesis: X improves Y", "track this hypothesis" | **Thesis** — `theses/<slug>.md` | A falsifiable OPTIMIZATION claim; confidence is DERIVED, never asserted | `dreamcontext theses create "<claim>"` (quality bar and offer-and-confirm first; layer off → offer `theses enable`, never capture silently → [learning.md](references/learning.md)) |
 | "document this", "write up the research / decision / how X works" | **Knowledge** — `knowledge/…` | Durable **prose**: research, decisions, rationale, domain context. It doesn't refresh itself and it isn't work to do | `dreamcontext knowledge create <name>` |
@@ -147,7 +147,7 @@ Two routing rules that override surface reading:
 **Litmus tests when unsure:**
 - Is it a **number/series that updates from a source**? → insight (`lab`).
 - Is it a **chart of data you already have, for THIS answer only**? → not an entity; it belongs to the surface. **SURFACE-GATED: emit a `dream-view` only when your system prompt carries a briefing that names it** (Chat view only); otherwise state the numbers in prose. The split from an insight is whether it must re-fetch later (→ [integrations.md](references/integrations.md)).
-- Is it a **composed page over metrics you ALREADY track, walkable by date**? → report (`lab report create`), not a new insight and not a hand-built dashboard.
+- Is it a **composed page over metrics you ALREADY track**? → board (`lab board create` + `lab board add-card`), not a new insight and not a hand-built dashboard.
 - Is it an **outcome with a committed date**? → objective (`roadmap`).
 - Is it **prose you write once and maintain**? → knowledge.
 - Is it **work to do**? → task.
@@ -423,6 +423,9 @@ _dream_context/
 ├── lab/                              ← Analytics insights (curated metrics — NOT knowledge)
 │   ├── insights/<slug>.md            ←   insight manifests (`dreamcontext lab create`)
 │   ├── cache/<slug>.json             ←   synced series snapshots (never hand-edit)
+│   ├── scripts/<slug>.mjs            ←   custom-script adapters (run locally with your credentials)
+│   ├── boards/<slug>.md              ←   Insights boards: cards of blocks on a 12-column grid (`lab board …`)
+│   ├── blocks/<slug>.md              ←   the vault's library of custom HTML blocks (`lab block save`)
 │   └── credentials.json              ←   gitignored; write ONLY via `lab credentials set`
 ├── overrides/task.md                 ← OPTIONAL: project task template + custom fields
 ├── state/

@@ -1,0 +1,75 @@
+/*
+ * A v1 app insight on a board card with in-card navigation (LabAppBody, `nav` on):
+ * page pills over an interactive frame that fills the rest of the block.
+ * Tokens only: no literal colours, sizes, weights or durations.
+ */
+
+.lab-app-card-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-app-card-pills {
+  flex: none;
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.lab-app-card-pill {
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.lab-app-card-pill:hover {
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+}
+
+.lab-app-card-pill[aria-selected='true'] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-app-card-pill:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* The frame (mode 'full', height 100%) needs a box of definite height: the rest of the block. */
+.lab-app-card-frame {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-app-card-note {
+  flex: none;
+  margin: 0 0 var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}

@@ -1,31 +1,37 @@
 import type { SeriesPoint } from '../../hooks/useLab';
+import { curvePath, xDomainOf, xPositionsOf, type LineCurve } from './LineChart';
+import { linearScale } from './chart';
 
 /**
- * A trend GLYPH, not a chart: no axes, no labels, no hover — just the shape of
+ * A trend GLYPH, not a chart: no axes, no labels, no hover, just the shape of
  * the last N points, sized to sit inline next to a number or in a table cell.
- * Anything that needs to be read precisely is what LineChart is for.
+ * It shares LineChart's x placement (dates spaced by time, other keys evenly)
+ * and the foundation's linear scale, so a sparkline and the line it summarises
+ * bend the same way. Anything that needs to be read precisely is LineChart's job.
  */
-export function Sparkline({ points, width = 68, height = 18, color = 'var(--chart-1)' }: {
+export function Sparkline({ points, width = 68, height = 18, color = 'var(--viz-cat-1)', dot = true, curve = 'linear' }: {
   points: SeriesPoint[];
   width?: number;
   height?: number;
   color?: string;
+  /** Mark the latest point (the value the number beside it reports). */
+  dot?: boolean;
+  curve?: LineCurve;
 }) {
-  // One point has no shape to draw — an empty glyph beats a misleading flat line.
+  // One point has no shape to draw: an empty glyph beats a misleading flat line.
   if (points.length < 2) return null;
 
-  const values = points.map((p) => p.v);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  // Inset by the dot radius so the end marker is never clipped by the viewBox.
+  // Inset by the dot radius (and the stroke) so neither end is clipped by the box.
   const pad = 2;
-  const innerW = width - pad * 2;
-  const innerH = height - pad * 2;
-  const xy = points.map((p, i) => [
-    pad + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW),
-    pad + innerH - ((p.v - min) / range) * innerH,
-  ]);
+  const domain = xDomainOf([{ name: '', points }]);
+  const xs = xPositionsOf(domain, width - pad * 2, 0);
+  const at = new Map(domain.keys.map((k, i) => [k, xs[i]] as [string, number]));
+  // No nice rounding: a glyph spends all of its few pixels on the data's own range.
+  const y = linearScale(points.map((p) => p.v), { range: [height - pad, pad], nice: false });
+  const xy = points
+    .filter((p) => Number.isFinite(p.v))
+    .map((p) => [pad + (at.get(p.t) ?? 0), y(p.v)] as const)
+    .sort((a, b) => a[0] - b[0]);
   const last = xy[xy.length - 1];
 
   return (
@@ -37,15 +43,8 @@ export function Sparkline({ points, width = 68, height = 18, color = 'var(--char
       aria-label="Trend"
       style={{ display: 'block', overflow: 'visible' }}
     >
-      <polyline
-        points={xy.map(([x, y]) => `${x},${y}`).join(' ')}
-        fill="none"
-        stroke={color}
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      <circle cx={last[0]} cy={last[1]} r={2} fill={color} />
+      <path d={curvePath(xy, curve)} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      {dot && last && <circle data-spark-dot="" cx={last[0]} cy={last[1]} r={2} fill={color} />}
     </svg>
   );
 }

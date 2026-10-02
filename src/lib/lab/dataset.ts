@@ -3,10 +3,12 @@ import {
   type Dataset,
   type DatasetBundle,
   type DatasetSnapshot,
+  type MatrixDim,
   type MatrixRow,
   type Series,
 } from './types.js';
-import { MATRIX_SET_KIND, MAX_MATRIX_BYTES, matrixLatest, matrixToSeries, parseMatrixSet } from './matrix.js';
+import { MATRIX_OTHER_VALUE, MATRIX_SET_KIND, MAX_MATRIX_BYTES, matrixLatest, matrixToSeries, parseMatrixSet } from './matrix.js';
+import { parseFunnelSet, type ParsedFunnelSet } from './funnel.js';
 
 /**
  * Dataset-bundle contract (`dataset/v1`) — validation, caps, lookup,
@@ -43,13 +45,77 @@ export const DATASET_HISTORY_MAX = 60;
 export const DATASET_HISTORY_MAX_BYTES = 1_000_000;
 
 export interface ParsedDatasetBundle {
+  /** The bundle WITHOUT its `funnel` member (that one is stored as cache.funnel). */
   bundle: DatasetBundle;
   /** Human-readable cap/coercion notices — surface them, never swallow. */
   notices: string[];
+  /** The optional `funnel` member (a funnel-set/v1), parsed by `parseFunnelSet`
+   *  with its own caps; its notices are also in `notices`, prefixed "funnel: ". */
+  funnel?: ParsedFunnelSet;
+}
+
+/** The optional `funnel` member: one funnel-set/v1 riding in a dataset bundle
+ *  (a funnel explorer needs step paths AND tables). Its caps are the funnel
+ *  contract's own; a malformed member fails the whole payload, never degrades. */
+function parseFunnelMember(raw: unknown, notices: string[]): ParsedFunnelSet {
+  let parsed: ParsedFunnelSet;
+  try {
+    parsed = parseFunnelSet(raw);
+  } catch (err) {
+    const msg = err instanceof LabError ? err.message : String(err);
+    throw new LabError(`Dataset payload's \`funnel\` member: ${msg}`);
+  }
+  if (parsed.set.funnels.length === 0) {
+    const why = parsed.notices.length > 0 ? ` (${parsed.notices.join(' ')})` : '';
+    throw new LabError(`Dataset payload's \`funnel\` member has no valid funnel${why}.`);
+  }
+  for (const notice of parsed.notices) notices.push(`funnel: ${notice}`);
+  return parsed;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * The ingestion caps (parseMatrixSet: top values per dim, then the row tail)
+ * fold source rows into `Other` rows but keep no count. Recount them from the
+ * raw rows and stamp each folding row with `other: <distinct source rows it
+ * holds>`, the same marker frameOps' `topN` sets, so every consumer reads an
+ * ingested cap and a block's topN the same way ("Other (3)", the Other grey).
+ * A source row that was itself named `Other` is not a fold and is not counted.
+ */
+function markFolded(rawRows: unknown, dims: readonly MatrixDim[], rows: MatrixRow[]): MatrixRow[] {
+  if (!Array.isArray(rawRows) || !rows.some((r) => dims.some((d) => r.d[d.key] === MATRIX_OTHER_VALUE))) return rows;
+  const coord = (d: Record<string, string>) => dims.map((dim) => `${dim.key}=${d[dim.key]}`).join('|');
+  const byCoord = new Map(rows.map((r) => [coord(r.d), r] as [string, MatrixRow]));
+  const kept = dims.map((dim) => new Set(rows.map((r) => r.d[dim.key])));
+  const allOther = coord(Object.fromEntries(dims.map((dim) => [dim.key, MATRIX_OTHER_VALUE])));
+  const folded = new Map<string, Set<string>>();
+  for (const raw of rawRows) {
+    if (!isRecord(raw) || !isRecord(raw.d)) continue;
+    const src = raw.d;
+    // The same coordinate parseMatrixSet gives the row (a blank dim is `Unknown`).
+    const own: Record<string, string> = {};
+    dims.forEach((dim) => {
+      const v = src[dim.key];
+      own[dim.key] = v === undefined || v === null || String(v).trim() === '' ? 'Unknown' : String(v);
+    });
+    const ownKey = coord(own);
+    if (byCoord.has(ownKey)) continue;
+    const mapped = coord(Object.fromEntries(dims.map((dim, i) => [dim.key, kept[i].has(own[dim.key]) ? own[dim.key] : MATRIX_OTHER_VALUE])));
+    // A coordinate the per-dim collapse kept but the row-tail cap merged lands in the all-Other row.
+    const target = byCoord.has(mapped) ? mapped : allOther;
+    if (!byCoord.has(target)) continue;
+    const set = folded.get(target) ?? new Set<string>();
+    set.add(ownKey);
+    folded.set(target, set);
+  }
+  if (folded.size === 0) return rows;
+  return rows.map((r) => {
+    const n = folded.get(coord(r.d))?.size ?? 0;
+    return n > 0 ? ({ ...r, other: n } as MatrixRow) : r;
+  });
 }
 
 /** Validate one dataset by delegating its dims/rows/total to `parseMatrixSet`
@@ -78,7 +144,7 @@ function parseDataset(raw: unknown, index: number, notices: string[]): Dataset {
   }
   for (const notice of parsed.notices) notices.push(`dataset "${key}": ${notice}`);
 
-  const dataset: Dataset = { key, dims: parsed.set.dims, rows: parsed.set.rows };
+  const dataset: Dataset = { key, dims: parsed.set.dims, rows: markFolded(raw.rows, parsed.set.dims, parsed.set.rows) };
   if (typeof raw.label === 'string' && raw.label.trim()) dataset.label = raw.label.trim();
   if (parsed.set.unit !== undefined) dataset.unit = parsed.set.unit;
   if (parsed.set.total) dataset.total = parsed.set.total;
@@ -90,7 +156,9 @@ function parseDataset(raw: unknown, index: number, notices: string[]): Dataset {
  * fundamentally not one (wrong kind, no usable datasets, over the dataset
  * count or byte cap) or when any one dataset fails `parseMatrixSet`;
  * individual malformed rows within a dataset degrade to notices exactly as
- * they do for a bare matrix/v1 payload.
+ * they do for a bare matrix/v1 payload. An optional `funnel` member is parsed
+ * by `parseFunnelSet` and returned beside the bundle (never inside it, so the
+ * bundle's byte cap covers only its tables); a malformed one throws.
  */
 export function parseDatasetBundle(raw: unknown): ParsedDatasetBundle {
   if (!isRecord(raw) || raw.kind !== DATASET_BUNDLE_KIND) {
@@ -125,6 +193,9 @@ export function parseDatasetBundle(raw: unknown): ParsedDatasetBundle {
     throw new LabError(`Dataset payload exceeds the ${MAX_MATRIX_BYTES}-byte cap even after per-dataset collapse — return fewer datasets/rows.`);
   }
 
+  if (raw.funnel !== undefined) {
+    return { bundle, notices, funnel: parseFunnelMember(raw.funnel, notices) };
+  }
   return { bundle, notices };
 }
 

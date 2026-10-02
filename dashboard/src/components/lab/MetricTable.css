@@ -1,0 +1,200 @@
+/*
+ * The lab tables (MetricTable.tsx: MetricTable + FrameTable). Tokens only: no
+ * literal colours, sizes, weights or durations.
+ *
+ * The wrapper is the table's own scroll box, so the header can stick to its top
+ * (and the total to its bottom) while the rows scroll; in a board cell it shrinks
+ * to its content and scrolls only past the cell. Numbers are tabular and right
+ * aligned; the data bar is the chart palette's slot 1 (var(--viz-cat-1), validated
+ * with the dataviz palette) beside the number, never under text.
+ *
+ * Width: the table never scrolls sideways. MetricTable.tsx fits the columns to the
+ * box (fitTable: the bar shrinks, then secondary columns drop, figures go compact);
+ * nothing is ellipsized. Compact
+ * rows are tight so a default card shows four rows between the header and total.
+ */
+
+.lab-table-wrap {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.lab-table {
+  width: 100%;
+  line-height: var(--line-height-heading-sm);
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-table--comfortable {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.lab-table th,
+.lab-table td {
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.lab-table--comfortable th,
+.lab-table--comfortable td {
+  padding: var(--space-2) var(--space-3);
+}
+
+.lab-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Sticky header: the cells stick (not the row group), which every engine honours. */
+.lab-table-head th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.lab-table-foot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  border-top: 1px solid var(--color-border);
+  border-bottom: none;
+  background: var(--color-bg-tertiary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-table-sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.lab-table--comfortable .lab-table-sort,
+.lab-table--comfortable .lab-table-static {
+  padding: var(--space-2) var(--space-3);
+}
+
+.lab-table-static {
+  display: block;
+  padding: calc(var(--space-1) / 2) var(--space-2);
+}
+
+.lab-table-num .lab-table-sort {
+  justify-content: flex-end;
+}
+
+.lab-table-sort:hover,
+.lab-table-sort[data-sorted] {
+  color: var(--color-text);
+}
+
+.lab-table-sort:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.lab-table-sort-icon {
+  flex: none;
+  fill: currentColor;
+  opacity: 0.35;
+}
+
+.lab-table-sort[data-sorted] .lab-table-sort-icon {
+  opacity: 1;
+}
+
+.lab-table-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-table th.lab-table-num,
+.lab-table td.lab-table-num {
+  text-align: right;
+}
+
+.lab-table-text {
+  white-space: nowrap;
+}
+
+/* The whole ladder was not enough: the label wraps rather than the table scrolling. */
+.lab-table[data-fit='wrap'] .lab-table-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.lab-table tr[data-other] .lab-table-text {
+  color: var(--color-text-secondary);
+}
+
+.lab-table-trend {
+  width: 1px;
+}
+
+.lab-table-trend > svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Data bar: a track and a fill to the left of the figure, the figure keeps its column.
+   The track starts at the cell's left edge in every row, so the bars line up whatever
+   the figure's width; it keeps the width the fit gave it and grows into spare room. */
+.lab-table-barcell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.lab-table-bar {
+  flex: 1 1 auto;
+  height: var(--space-2);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+
+.lab-table-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--viz-cat-1);
+}
+
+.lab-table-barvalue {
+  flex: none;
+}
+
+.lab-table-total-label {
+  white-space: nowrap;
+}
+
+.lab-table-more td {
+  color: var(--color-text-tertiary);
+}

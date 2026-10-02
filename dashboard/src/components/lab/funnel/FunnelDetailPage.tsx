@@ -36,6 +36,28 @@ import './FunnelDetailPage.css';
 
 const COMPACT_BREAKPOINT = 560;
 
+type SpineStep = { key: string; label: string; users: number };
+
+/**
+ * One breakdown lane's steps on the shared spine. In lookup mode a path that
+ * skips a step has no number there: the step is listed in `missing` and left
+ * out of the drawn lane (not measured, never 0). Cells mode keeps every step.
+ */
+export function laneStepsOf(
+  spine: readonly SpineStep[],
+  users: ReadonlyMap<string, number>,
+  mode: 'cells' | 'lookup',
+): { steps: SpineStep[]; missing: SpineStep[] } {
+  const steps: SpineStep[] = [];
+  const missing: SpineStep[] = [];
+  for (const s of spine) {
+    const v = users.get(s.key);
+    if (v === undefined && mode === 'lookup') missing.push(s);
+    else steps.push({ key: s.key, label: s.label, users: v ?? 0 });
+  }
+  return { steps, missing };
+}
+
 export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToast }: {
   slug: string;
   funnelId: string;
@@ -76,15 +98,19 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     return () => ro.disconnect();
   }, []);
 
-  // ── Filtered steps (client dims sum matching segment cells). ──
+  // ── Filtered steps: client dims sum matching segment cells, or (lookup mode)
+  // look up the one path measured for exactly this selection, never a sum. ──
+  const segmentMode = set?.segment_mode ?? 'cells';
   const activeClient = useMemo(() => set ? clientFilters(view.filters, set.dimensions) : {}, [set, view.filters]);
   const filtersActive = Object.keys(activeClient).length > 0;
   const filtered = useMemo(
-    () => funnel ? applyClientFilters(funnel, activeClient) : null,
-    [funnel, activeClient],
+    () => funnel ? applyClientFilters(funnel, activeClient, segmentMode) : null,
+    [funnel, activeClient, segmentMode],
   );
   const steps = filtered?.steps ?? funnel?.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })) ?? [];
   const filtersUnavailable = filtersActive && filtered === null;
+  /** The selection has no measured path: say so, draw nothing (not measured is not zero). */
+  const notMeasured = filtered !== null && !filtered.measured;
 
   // ── Significant-change collapse (user-set threshold, URL `clt`): runs of
   // sub-threshold change fold into one node showing start → end + a count. ──
@@ -150,8 +176,8 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
   // ── Breakdown (A10). ──
   const breakdownDim = set?.dimensions.find((d) => d.key === view.breakdown && d.mode === 'client') ?? null;
   const lanes = useMemo(
-    () => funnel && breakdownDim ? breakdownLanes(funnel, breakdownDim.key) : [],
-    [funnel, breakdownDim],
+    () => funnel && breakdownDim ? breakdownLanes(funnel, breakdownDim.key, undefined, segmentMode) : [],
+    [funnel, breakdownDim, segmentMode],
   );
   const legend = useMemo(
     () => lanes.map((lane, i) => ({
@@ -160,23 +186,31 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     })),
     [lanes],
   );
+  /** A lookup path that skips a step has no number there: it is left out (not measured), never drawn as 0. */
+  const hasStep = (lane: { steps: Map<string, number> }, key: string) => segmentMode !== 'lookup' || lane.steps.has(key);
   const bands = useMemo(() => {
     if (!breakdownDim || lanes.length === 0 || !funnel) return null;
     const map = new Map<string, { value: string; users: number }[]>();
     for (const step of funnel.steps) {
-      map.set(step.key, lanes.map((lane) => ({ value: lane.value, users: lane.steps.get(step.key) ?? 0 })));
+      map.set(step.key, lanes
+        .filter((lane) => lane.measured !== false && hasStep(lane, step.key))
+        .map((lane) => ({ value: lane.value, users: lane.steps.get(step.key) ?? 0 })));
     }
     return map;
-  }, [breakdownDim, lanes, funnel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [breakdownDim, lanes, funnel, segmentMode]);
 
   const arcDetail = useMemo(() => {
     if (!breakdownDim || lanes.length === 0) return undefined;
-    return (arc: LaneArc) => lanes.map((lane) => ({
-      value: lane.value,
-      from: lane.steps.get(arc.from) ?? 0,
-      to: lane.steps.get(arc.to) ?? 0,
-    }));
-  }, [breakdownDim, lanes]);
+    return (arc: LaneArc) => lanes
+      .filter((lane) => lane.measured !== false && hasStep(lane, arc.from) && hasStep(lane, arc.to))
+      .map((lane) => ({
+        value: lane.value,
+        from: lane.steps.get(arc.from) ?? 0,
+        to: lane.steps.get(arc.to) ?? 0,
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [breakdownDim, lanes, segmentMode]);
 
   /** True while the lane on screen does not yet answer for the chosen window. */
   const applying = applyTweaks.isPending;
@@ -365,6 +399,13 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
           This funnel's payload carries no segments — client-side filters can't apply here. Showing unfiltered steps.
         </div>
       )}
+      {notMeasured && (
+        <div className="funnel-det-warn" role="note" data-lab-not-measured="">
+          {filtered?.multiValue
+            ? 'Not measured for this selection: this funnel measures one path per exact selection, so pick one value per dimension (paths are never added up).'
+            : `Not measured for this selection: ${filtered?.reason ?? 'the payload carries no measured path for it.'}`}
+        </div>
+      )}
       {anchor && (
         <div className="funnel-det-hint" role="status">
           Arc anchor set on “{steps.find((s) => s.key === anchor)?.label ?? anchor}” — click a second step to draw the arrow, Esc to cancel.
@@ -372,24 +413,30 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
       )}
 
       <div className="funnel-det-body" ref={bodyRef}>
-        {narrow ? (
+        {notMeasured ? null : narrow ? (
           <FunnelBars steps={laneSteps} />
         ) : breakdownDim && view.breakdownMode === 'lanes' && lanes.length > 0 ? (
           <div className="funnel-det-multiples">
-            {lanes.map((lane, i) => (
-              <div key={lane.value} className="funnel-det-multiple">
-                <div className="funnel-det-multiple-head">
-                  <span className="funnel-det-swatch" style={{ background: legend[i].color }} aria-hidden />
-                  {lane.value}
-                  <span className="funnel-det-multiple-n">{lane.users.toLocaleString('en-US')} users</span>
+            {lanes.map((lane, i) => {
+              const own = laneStepsOf(laneSteps, lane.steps, segmentMode);
+              return (
+                <div key={lane.value} className="funnel-det-multiple">
+                  <div className="funnel-det-multiple-head">
+                    <span className="funnel-det-swatch" style={{ background: legend[i].color }} aria-hidden />
+                    {lane.value}
+                    <span className="funnel-det-multiple-n">
+                      {lane.measured === false ? `Not measured${lane.reason ? `: ${lane.reason}` : ''}` : `${lane.users.toLocaleString('en-US')} users`}
+                    </span>
+                    {lane.measured !== false && own.missing.length > 0 && (
+                      <span className="funnel-det-multiple-n" data-lab-lane-missing={own.missing.map((s) => s.key).join(',')}>
+                        – Not measured at {own.missing.map((s) => s.label).join(', ')}
+                      </span>
+                    )}
+                  </div>
+                  {lane.measured !== false && <FunnelLane compact steps={own.steps} volumeMax={laneMax} />}
                 </div>
-                <FunnelLane
-                  compact
-                  steps={laneSteps.map((s) => ({ key: s.key, label: s.label, users: lane.steps.get(s.key) ?? 0 }))}
-                  volumeMax={laneMax}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <FunnelLane
@@ -416,7 +463,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
           </div>
         )}
 
-        {showTable && (
+        {showTable && !notMeasured && (
           <div className="funnel-det-tablewrap">
             <FunnelStepTable
               steps={steps}

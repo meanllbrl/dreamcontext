@@ -21,8 +21,8 @@ import './InsightView.css';
  * controls stay live and win from the first click.
  */
 
-/** The board's own summary shape, rebuilt from the detail response. Mirrors ReportPage's
- *  `itemSummary` — the registry bodies read title/unit/slug/latest and little else. */
+/** The board's own summary shape, rebuilt from the detail response — the registry bodies
+ *  read title/unit/slug/latest and little else. */
 function toSummary(detail: NonNullable<ReturnType<typeof useLabInsight>['data']>): InsightSummary {
   const m = detail.insight;
   return {

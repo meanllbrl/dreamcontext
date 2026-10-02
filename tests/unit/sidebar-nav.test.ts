@@ -311,6 +311,13 @@ describe('sidebar rail — the hero row (C5)', () => {
     expect(items.filter((i) => i.hero)).toHaveLength(1);
   });
 
+  it('shows Insights (page: lab) at beta, like Automations v2 (Insights v2, owner 2026-09-29)', () => {
+    const lab = navItems(read(SIDEBAR_TSX)).find((i) => i.page === 'lab');
+    expect(lab, 'no Sidebar entry with page: \'lab\'').toBeTruthy();
+    expect(lab!.labelKey).toBe('nav.labpage');
+    expect(lab!.maturity).toBe('beta');
+  });
+
   it('emphasises the hero without spending a colour the other rows lack', () => {
     const css = read(SIDEBAR_CSS).replace(/\/\*[\s\S]*?\*\//g, '');
     const rule = /\.sidebar-item\[data-hero\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';

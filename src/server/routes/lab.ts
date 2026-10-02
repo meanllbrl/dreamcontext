@@ -9,12 +9,8 @@ import {
 } from '../../lib/lab/store.js';
 import { resolveTweaks } from '../../lib/lab/tweaks.js';
 import { computeFunnelPrev } from '../../lib/lab/funnel.js';
-import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
-import { currentLabSyncJob, startLabSyncJob } from '../lab-sync-job.js';
-import { currentLabCommentaryJob, startLabCommentaryJob } from '../lab-commentary-job.js';
-import { readReportCommentary, commentaryDateKey } from '../../lib/lab/report-commentary.js';
-import { getReport, listReports, resolveReport } from '../../lib/lab/reports-store.js';
-import { isValidWindow, type WindowRange } from '../../lib/lab/window-cache.js';
+import { bindInsight, lastCheckedAt, lastConfirmedMs, normalizeSyncForce, syncInsight, syncAll } from '../../lib/lab/sync.js';
+import { labSyncJobSlots, startLabSyncJob } from '../lab-sync-job.js';
 import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
 import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
 import { LabError, type Binding, type InsightCache, type InsightManifest } from '../../lib/lab/types.js';
@@ -62,17 +58,20 @@ function toPublicManifest(m: InsightManifest) {
   };
 }
 
-/** One row in GET /api/lab. */
-function toSummary(contextRoot: string, m: InsightManifest) {
+/**
+ * One row in GET /api/lab (and the board routes' `summaries`). Staleness is
+ * measured from the newest evidence the data is current: max(fetchedAt, this
+ * machine's last unchanged upstream probe), the same age the sync gate uses.
+ */
+export function toSummary(contextRoot: string, m: InsightManifest) {
   const cache = readCache(contextRoot, m.slug);
   let staleMinutes: number | null = null;
   let stale: boolean | null = null;
-  if (cache?.fetchedAt) {
-    const age = (Date.now() - Date.parse(cache.fetchedAt)) / 60_000;
-    if (Number.isFinite(age)) {
-      staleMinutes = Math.max(0, Math.round(age));
-      stale = age >= m.refresh.ttl_minutes;
-    }
+  const confirmedMs = lastConfirmedMs(contextRoot, m.slug, cache);
+  if (Number.isFinite(confirmedMs)) {
+    const age = (Date.now() - confirmedMs) / 60_000;
+    staleMinutes = Math.max(0, Math.round(age));
+    stale = age >= m.refresh.ttl_minutes;
   }
   return {
     slug: m.slug,
@@ -96,6 +95,10 @@ function toSummary(contextRoot: string, m: InsightManifest) {
     ttlMinutes: m.refresh.ttl_minutes,
     staleMinutes,
     stale,
+    /** This machine's last "unchanged upstream" confirmation, or null. */
+    checkedAt: lastCheckedAt(contextRoot, m.slug, cache),
+    /** The source's own plain-text note about its freshness, or null. */
+    freshnessNote: cache?.sourceFreshness?.note ?? null,
     tweaks: toPublicTweaks(m),
   };
 }
@@ -127,10 +130,10 @@ export async function handleLabList(
  * on every window change and every board invalidation. `datasetHistory` is
  * the same shape of cost for an `app` insight's dated trail — nothing in this
  * route (or the dashboard bridge, which reads `cache.datasets` for the CURRENT
- * bundle) needs it either; Reports reads it straight off disk via
- * `resolveReportItem` → `readCache`, never through this route.
+ * bundle) needs it either; `lab query --date` reads it straight off disk via
+ * `readCache`, never through this route.
  */
-function withoutHistoryTrails(cache: InsightCache | null): InsightCache | null {
+export function withoutHistoryTrails(cache: InsightCache | null): InsightCache | null {
   if (!cache) return null;
   if (cache.funnelHistory === undefined && cache.datasetHistory === undefined) return cache;
   const { funnelHistory: _dropFunnelHistory, datasetHistory: _dropDatasetHistory, ...rest } = cache;
@@ -169,7 +172,7 @@ export async function handleLabShow(
 }
 
 /**
- * POST /api/lab/sync-jobs { force? } — START a bulk sync and return immediately.
+ * POST /api/lab/sync-jobs { force?, slugs? } — START a bulk sync and return immediately.
  *
  * The dashboard's "Sync all" uses THIS, not `POST /api/lab/sync {all:true}`: the
  * server caps a request at 30s of socket inactivity, and a real board's full
@@ -178,7 +181,15 @@ export async function handleLabShow(
  * the UI polls `/api/lab/sync-jobs/current`.
  *
  * `started: false` means a job was already running and has been ADOPTED — a
- * second engine writing the same cache files is never the right answer.
+ * second engine writing the same cache files is never the right answer. A
+ * request the running job does not cover (other slugs, a stronger force) is
+ * QUEUED as one follow-up job instead: `queued: true`, and `job` is that
+ * follow-up. `running` / `pending` carry both slots (with their ids).
+ *
+ * `force`: ABSENT = automatic (TTL, error backoff, no retry pass: board open
+ * and timers send nothing); `'user'` = someone asked (Sync board, ↻);
+ * `'hard'` = skip the upstream probe too. `true` is read as `'user'` for one
+ * release (old clients and scripts).
  */
 export async function handleLabSyncJobStart(
   req: IncomingMessage,
@@ -192,8 +203,7 @@ export async function handleLabSyncJobStart(
     return;
   }
   try {
-    // Optional `slugs[]` scopes the run to a subset (the report page's
-    // progressive fill); absent = the whole board, as always.
+    // Optional `slugs[]` scopes the run to a subset; absent = the whole board, as always.
     let slugs: string[] | undefined;
     if (body.slugs !== undefined) {
       if (!Array.isArray(body.slugs) || body.slugs.some((s: unknown) => typeof s !== 'string')) {
@@ -206,192 +216,20 @@ export async function handleLabSyncJobStart(
         return;
       }
     }
-    // Optional `windows` maps slug → {fromISO,toISO}: those slugs sync into the
-    // TRANSIENT window cache (report window inheritance) — never the canonical
-    // one, never a KR. Shape-validated here; sync.ts re-validates the dates.
-    let windows: Record<string, WindowRange> | undefined;
-    if (body.windows !== undefined) {
-      const raw = body.windows;
-      const isRecord = raw && typeof raw === 'object' && !Array.isArray(raw);
-      const entries = isRecord ? Object.entries(raw as Record<string, unknown>) : [];
-      const valid = isRecord && entries.length > 0 && entries.every(([, w]) =>
-        w && typeof w === 'object'
-        && isValidWindow(w as WindowRange));
-      if (!valid) {
-        sendError(res, 400, 'invalid_windows', '`windows` must map insight slugs to { fromISO, toISO } day windows (from ≤ to).');
-        return;
-      }
-      windows = Object.fromEntries(entries.map(([slug, w]) => {
-        const win = w as WindowRange;
-        return [slug.trim(), { fromISO: win.fromISO, toISO: win.toISO }];
-      }));
-    }
-    // Default force:true — pressing Sync all IS the explicit "refetch now".
-    const { job, started } = startLabSyncJob(contextRoot, { force: body.force !== false, slugs, windows });
-    sendJson(res, 200, { job, started });
+    const { job, started, queued, running, pending } = startLabSyncJob(contextRoot, {
+      force: normalizeSyncForce(body.force),
+      slugs,
+    });
+    sendJson(res, 200, { job, started, queued, running, pending });
   } catch (err) {
     console.error('[lab] sync job start failed:', err);
     sendError(res, 500, 'sync_failed', 'Failed to start the insight sync.');
   }
 }
 
-// ─── Reports ("My Reports" — composition over insight caches, no data owned) ──
-
-/** GET /api/lab/reports — report list (slug/title/description/date_nav/section+item counts). */
-export async function handleLabReportsList(
-  _req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  try {
-    const reports = listReports(contextRoot).map((r) => ({
-      slug: r.slug,
-      title: r.title,
-      description: r.description,
-      date_nav: r.date_nav,
-      sections: r.sections.length,
-      items: r.sections.reduce((a, s) => a + s.items.length, 0),
-    }));
-    sendJson(res, 200, { reports });
-  } catch (err) {
-    console.error('[lab] reports list failed:', err);
-    sendError(res, 500, 'reports_failed', 'Failed to read reports.');
-  }
-}
-
-/** GET /api/lab/reports/:slug?date=YYYY-MM-DD — the report with every item
- *  resolved to the latest snapshot AT OR BEFORE the end of that date (omit
- *  `date` for live data). Honest: no snapshot → asOf:null, never interpolated. */
-export async function handleLabReportShow(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  try {
-    const report = getReport(contextRoot, params.slug);
-    if (!report) {
-      sendError(res, 404, 'not_found', `Report not found: ${params.slug}`);
-      return;
-    }
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const rawDate = url.searchParams.get('date');
-    let date: string | null = null;
-    if (rawDate !== null && rawDate !== '') {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate) || Number.isNaN(Date.parse(`${rawDate}T00:00:00Z`))) {
-        sendError(res, 400, 'invalid_date', '`date` must be a valid YYYY-MM-DD date.');
-        return;
-      }
-      date = rawDate;
-    }
-    // Optional free-range start: with the (date ?? today) anchor it forms an
-    // explicit from→to window for every non-pinned item.
-    const rawFrom = url.searchParams.get('from');
-    let from: string | null = null;
-    if (rawFrom !== null && rawFrom !== '') {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(rawFrom) || Number.isNaN(Date.parse(`${rawFrom}T00:00:00Z`))) {
-        sendError(res, 400, 'invalid_from', '`from` must be a valid YYYY-MM-DD date.');
-        return;
-      }
-      from = rawFrom;
-    }
-    sendJson(res, 200, {
-      report: {
-        slug: report.slug,
-        title: report.title,
-        description: report.description,
-        date_nav: report.date_nav,
-        notes: report.notes,
-        commentaryEnabled: report.commentary !== false,
-      },
-      date,
-      from,
-      sections: resolveReport(contextRoot, report, date, from),
-    });
-  } catch (err) {
-    console.error('[lab] report show failed:', err);
-    sendError(res, 500, 'report_failed', 'Failed to read the report.');
-  }
-}
-
-/** Parse + validate the optional `date` query/body value ('' → null). */
-function parseReportDate(raw: unknown): { ok: true; date: string | null } | { ok: false } {
-  if (raw === undefined || raw === null || raw === '') return { ok: true, date: null };
-  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw) || Number.isNaN(Date.parse(`${raw}T00:00:00Z`))) {
-    return { ok: false };
-  }
-  return { ok: true, date: raw };
-}
-
-/**
- * GET /api/lab/reports/:slug/commentary?date= — the stored commentary for that
- * report view (or null) plus the current generation job (or null).
- */
-export async function handleLabReportCommentaryGet(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  const report = getReport(contextRoot, params.slug);
-  if (!report) {
-    sendError(res, 404, 'not_found', `Report not found: ${params.slug}`);
-    return;
-  }
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  const parsed = parseReportDate(url.searchParams.get('date'));
-  if (!parsed.ok) {
-    sendError(res, 400, 'invalid_date', '`date` must be a valid YYYY-MM-DD date.');
-    return;
-  }
-  sendJson(res, 200, {
-    commentary: readReportCommentary(contextRoot, params.slug, commentaryDateKey(parsed.date)),
-    job: currentLabCommentaryJob(contextRoot, params.slug, parsed.date),
-  });
-}
-
-/**
- * POST /api/lab/reports/:slug/commentary { date? } — START (or adopt) a
- * commentary generation for that view. The run is a headless pure-text
- * `claude -p`; the server writes the dated commentary file. 409 when the
- * report opted out (`commentary: false` — non-AI reports are first-class).
- */
-export async function handleLabReportCommentaryStart(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  const report = getReport(contextRoot, params.slug);
-  if (!report) {
-    sendError(res, 404, 'not_found', `Report not found: ${params.slug}`);
-    return;
-  }
-  if (report.commentary === false) {
-    sendError(res, 409, 'commentary_disabled', 'This report has commentary disabled (commentary: false).');
-    return;
-  }
-  const body = await parseJsonBody(req);
-  if (!body) {
-    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
-    return;
-  }
-  const parsed = parseReportDate(body.date);
-  if (!parsed.ok) {
-    sendError(res, 400, 'invalid_date', '`date` must be a valid YYYY-MM-DD date.');
-    return;
-  }
-  const parsedFrom = parseReportDate(body.from);
-  if (!parsedFrom.ok) {
-    sendError(res, 400, 'invalid_from', '`from` must be a valid YYYY-MM-DD date.');
-    return;
-  }
-  const { job, started } = startLabCommentaryJob(contextRoot, params.slug, parsed.date, {}, parsedFrom.date);
-  sendJson(res, 200, { job, started });
-}
-
-/** GET /api/lab/sync-jobs/current — the live (or last settled) bulk-sync job, or null. */
+/** GET /api/lab/sync-jobs/current — the live (or last settled) bulk-sync job
+ *  (`job` = `running`, null when none), the queued follow-up (`pending`, or
+ *  null) and `queued: true` while one waits. Same slot names as the start response. */
 export async function handleLabSyncJobCurrent(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -399,7 +237,8 @@ export async function handleLabSyncJobCurrent(
   contextRoot: string,
 ): Promise<void> {
   try {
-    sendJson(res, 200, { job: currentLabSyncJob(contextRoot) });
+    const { running, queued } = labSyncJobSlots(contextRoot);
+    sendJson(res, 200, { job: running, running, pending: queued, queued: queued !== null });
   } catch (err) {
     console.error('[lab] sync job read failed:', err);
     sendError(res, 500, 'sync_job_failed', 'Failed to read the sync job.');
@@ -407,6 +246,7 @@ export async function handleLabSyncJobCurrent(
 }
 
 /** POST /api/lab/sync { slug? | all?, force? } — runs the same engine as the CLI.
+ *  `force` as for sync-jobs: absent = automatic, `'user'`/`true`, `'hard'`.
  *  `all` stays for CLI/API parity and scripted callers; the dashboard's bulk
  *  button uses the job routes above so it can outlive the request timeout. */
 export async function handleLabSync(
@@ -420,7 +260,7 @@ export async function handleLabSync(
     sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
     return;
   }
-  const force = body.force === true;
+  const force = normalizeSyncForce(body.force);
   try {
     if (body.all === true) {
       const { results, failed } = await syncAll(contextRoot, { force });

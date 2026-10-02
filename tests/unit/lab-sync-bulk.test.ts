@@ -71,7 +71,7 @@ afterEach(() => {
 
 describe('syncAll — every insight settles', () => {
   it('syncs EVERY insight when one of them fails, and reports each one', async () => {
-    for (const slug of ['a', 'b', 'c', 'd', 'e']) scriptInsight(slug, OK_SCRIPT);
+    for (const slug of ['a', 'bb', 'c', 'd', 'e']) scriptInsight(slug, OK_SCRIPT);
     scriptInsight('broken', 'export default async () => { throw new Error("nope"); };\n');
 
     const { results, failed } = await syncAll(root, { force: true });
@@ -81,7 +81,7 @@ describe('syncAll — every insight settles', () => {
     expect(failed.map((f) => f.slug)).toEqual(['broken']);
     // The five healthy insights wrote real caches — a neighbour's failure never
     // costs another insight its sync.
-    for (const slug of ['a', 'b', 'c', 'd', 'e']) {
+    for (const slug of ['a', 'bb', 'c', 'd', 'e']) {
       expect(readCache(root, slug)?.latest).toBe(1);
     }
   });
@@ -98,16 +98,16 @@ describe('syncAll — every insight settles', () => {
 
   it('honours the `only` filter (the job layer\'s retry pass)', async () => {
     scriptInsight('a', OK_SCRIPT);
-    scriptInsight('b', OK_SCRIPT);
+    scriptInsight('bb', OK_SCRIPT);
     scriptInsight('c', OK_SCRIPT);
 
-    const { results } = await syncAll(root, { force: true, only: ['b'] });
-    expect(results.map((r) => r.slug)).toEqual(['b']);
+    const { results } = await syncAll(root, { force: true, only: ['bb'] });
+    expect(results.map((r) => r.slug)).toEqual(['bb']);
     expect(readCache(root, 'a')).toBeNull();
   });
 
   it('emits one progress event per settled insight, counting up to the total', async () => {
-    for (const slug of ['a', 'b', 'c']) scriptInsight(slug, OK_SCRIPT);
+    for (const slug of ['a', 'bb', 'c']) scriptInsight(slug, OK_SCRIPT);
 
     const events: LabSyncProgress[] = [];
     await syncAll(root, { force: true, concurrency: 2, onProgress: (ev) => events.push(ev) });
@@ -115,11 +115,11 @@ describe('syncAll — every insight settles', () => {
     expect(events).toHaveLength(3);
     expect(events.map((e) => e.done)).toEqual([1, 2, 3]);
     expect(events.every((e) => e.total === 3)).toBe(true);
-    expect(new Set(events.map((e) => e.slug))).toEqual(new Set(['a', 'b', 'c']));
+    expect(new Set(events.map((e) => e.slug))).toEqual(new Set(['a', 'bb', 'c']));
   });
 
   it('a throwing progress callback does NOT abort the run', async () => {
-    for (const slug of ['a', 'b', 'c']) scriptInsight(slug, OK_SCRIPT);
+    for (const slug of ['a', 'bb', 'c']) scriptInsight(slug, OK_SCRIPT);
 
     const { results } = await syncAll(root, {
       force: true,
@@ -135,7 +135,7 @@ describe('syncAll — bounded concurrency', () => {
     // Four ~200ms scripts at concurrency 4 must overlap: sequential would be
     // ~800ms, and the assertion is deliberately loose so a slow CI box still
     // proves overlap rather than timing precision.
-    for (const slug of ['a', 'b', 'c', 'd']) scriptInsight(slug, slowScript(200));
+    for (const slug of ['a', 'bb', 'c', 'd']) scriptInsight(slug, slowScript(200));
 
     const started = Date.now();
     const { results } = await syncAll(root, { force: true, concurrency: 4 });
@@ -146,7 +146,7 @@ describe('syncAll — bounded concurrency', () => {
   });
 
   it('never EXCEEDS the ceiling — 4 insights at concurrency 2 run as two waves', async () => {
-    for (const slug of ['a', 'b', 'c', 'd']) scriptInsight(slug, slowScript(200));
+    for (const slug of ['a', 'bb', 'c', 'd']) scriptInsight(slug, slowScript(200));
 
     const started = Date.now();
     const { results } = await syncAll(root, { force: true, concurrency: 2 });
@@ -159,7 +159,7 @@ describe('syncAll — bounded concurrency', () => {
   });
 
   it('clamps a bogus concurrency to at least one worker', async () => {
-    for (const slug of ['a', 'b']) scriptInsight(slug, OK_SCRIPT);
+    for (const slug of ['a', 'bb']) scriptInsight(slug, OK_SCRIPT);
     const { results } = await syncAll(root, { force: true, concurrency: 0 });
     expect(results).toHaveLength(2);
     expect(results.every((r) => r.status === 'ok')).toBe(true);
@@ -207,7 +207,7 @@ describe('lab sync job — the run belongs to the server, not the request', () =
   }
 
   it('starts immediately and settles with every insight reported', async () => {
-    for (const slug of ['a', 'b', 'c']) scriptInsight(slug, OK_SCRIPT);
+    for (const slug of ['a', 'bb', 'c']) scriptInsight(slug, OK_SCRIPT);
 
     const { job, started } = startLabSyncJob(root);
     expect(started).toBe(true);
@@ -239,7 +239,9 @@ describe('lab sync job — the run belongs to the server, not the request', () =
     scriptInsight('ok', OK_SCRIPT);
     scriptInsight('broken', 'export default async () => { throw new Error("nope"); };\n');
 
-    startLabSyncJob(root);
+    // Only a run someone asked for retries; an automatic one backs off instead
+    // (lab-sync-job-queue.test.ts).
+    startLabSyncJob(root, { force: 'user' });
     const settled = await settle();
 
     // Individual insight failures are reported per tile — the JOB still
@@ -266,14 +268,14 @@ describe('mergeLabResults', () => {
   it('lets the retry pass overwrite a slug while keeping first-pass order', () => {
     const first = [
       { slug: 'a', status: 'ok' as const },
-      { slug: 'b', status: 'failed' as const, error: 'boom' },
+      { slug: 'bb', status: 'failed' as const, error: 'boom' },
       { slug: 'c', status: 'ok' as const },
     ];
-    const retry = [{ slug: 'b', status: 'ok' as const, latest: 7 }];
+    const retry = [{ slug: 'bb', status: 'ok' as const, latest: 7 }];
 
     const merged = mergeLabResults(first, retry);
-    expect(merged.map((r) => r.slug)).toEqual(['a', 'b', 'c']);
-    expect(merged[1]).toEqual({ slug: 'b', status: 'ok', latest: 7 });
+    expect(merged.map((r) => r.slug)).toEqual(['a', 'bb', 'c']);
+    expect(merged[1]).toEqual({ slug: 'bb', status: 'ok', latest: 7 });
   });
 
   it('appends slugs the first pass never saw', () => {

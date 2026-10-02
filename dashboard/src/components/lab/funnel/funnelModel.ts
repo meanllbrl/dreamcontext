@@ -18,6 +18,15 @@ export interface FunnelMetricValue {
   format: FunnelMetricFormat;
   label?: string;
   prev?: number | null;
+  /** False when the value could not be measured (a broken denominator). Default true. */
+  measured?: boolean;
+  reason?: string;
+}
+
+/** One day of a funnel's (or segment's) metric trend. */
+export interface FunnelDay {
+  t: string;
+  m: Record<string, number | null>;
 }
 
 export interface FunnelStep {
@@ -32,6 +41,12 @@ export interface FunnelSegment {
   dims: Record<string, string>;
   users: number;
   steps: { key: string; users: number }[];
+  /** False = not measured, which is not zero: never summed, never drawn as 0. Default true. */
+  measured?: boolean;
+  reason?: string;
+  metrics?: Record<string, FunnelMetricValue>;
+  benchmarks?: Record<string, FunnelBenchmark>;
+  daily?: FunnelDay[];
 }
 
 export interface FunnelDimension {
@@ -49,12 +64,20 @@ export interface FunnelDef {
   metrics: Record<string, FunnelMetricValue>;
   steps: FunnelStep[];
   segments?: FunnelSegment[];
+  daily?: FunnelDay[];
 }
 
 export interface FunnelBenchmark {
   floor?: number;
   target?: number;
+  floor_source?: string;
+  target_source?: string;
+  better?: 'higher' | 'lower';
 }
+
+/** `cells` (default): disjoint cells, summed for a selection. `lookup`: each segment
+ *  is its own measured path for one exact selection, looked up and never summed. */
+export type FunnelSegmentMode = 'cells' | 'lookup';
 
 export interface FunnelSet {
   kind: 'funnel-set/v1';
@@ -63,6 +86,7 @@ export interface FunnelSet {
   primary?: string;
   low_sample_threshold?: number;
   benchmarks?: Record<string, FunnelBenchmark>;
+  segment_mode?: FunnelSegmentMode;
 }
 
 export interface FunnelCacheEntry {
@@ -266,23 +290,45 @@ export function clientFilters(filters: FilterState, dimensions: FunnelDimension[
 }
 
 export interface FilteredFunnel {
-  /** Steps with users summed over the matching segment cells. */
+  /** Steps with users summed over the matching segment cells (cells), or the one
+   *  looked-up path (lookup). Empty when the selection is not measured. */
   steps: { key: string; label: string; users: number }[];
   /** Top-step users after filtering. */
   users: number;
+  /** False = no measured path answers this selection: not zero, nothing to draw. */
+  measured: boolean;
+  /** The payload's reason when it named one. */
+  reason: string | null;
+  /** Lookup mode with two or more values on one dim: paths cannot be added up. */
+  multiValue?: boolean;
 }
 
 /**
- * Apply client-dim filters to one funnel by summing its matching segment cells.
+ * Apply client-dim filters to one funnel. `cells`: sum the matching MEASURED
+ * cells (an unmeasured cell never adds). `lookup`: each segment is its own path
+ * for one exact selection, so the filters must name one value per dim and the
+ * segment whose dims equal them exactly answers; nothing is ever summed.
  * Null when the funnel carries no segments (client filtering impossible) —
  * callers must surface that, not silently show unfiltered data.
  */
-export function applyClientFilters(funnel: FunnelDef, filters: FilterState): FilteredFunnel | null {
+export function applyClientFilters(funnel: FunnelDef, filters: FilterState, mode: FunnelSegmentMode = 'cells'): FilteredFunnel | null {
   const active = Object.entries(filters).filter(([, values]) => values.length > 0);
   if (active.length === 0) {
-    return { steps: funnel.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })), users: funnel.steps[0]?.users ?? 0 };
+    return { steps: funnel.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })), users: funnel.steps[0]?.users ?? 0, measured: true, reason: null };
   }
   if (!funnel.segments || funnel.segments.length === 0) return null;
+  const unmeasured = (reason: string | null, multiValue = false): FilteredFunnel =>
+    ({ steps: [], users: 0, measured: false, reason, ...(multiValue ? { multiValue } : {}) });
+
+  if (mode === 'lookup') {
+    if (active.some(([, values]) => values.length > 1)) return unmeasured(null, true);
+    const want = Object.fromEntries(active.map(([dim, values]) => [dim, values[0]]));
+    const seg = funnel.segments.find((s) => sameDims(s.dims, want));
+    if (!seg || seg.measured === false) return unmeasured(seg?.reason ?? null);
+    const label = (key: string) => funnel.steps.find((s) => s.key === key)?.label ?? key;
+    const steps = seg.steps.map((s) => ({ key: s.key, label: label(s.key), users: s.users }));
+    return { steps, users: steps[0]?.users ?? seg.users, measured: true, reason: null };
+  }
 
   const matching = funnel.segments.filter((seg) =>
     active.every(([dim, values]) => {
@@ -290,12 +336,20 @@ export function applyClientFilters(funnel: FunnelDef, filters: FilterState): Fil
       return v !== undefined && values.includes(v);
     }),
   );
+  const counted = matching.filter((seg) => seg.measured !== false);
+  if (matching.length > 0 && counted.length === 0) return unmeasured(matching.find((seg) => seg.reason)?.reason ?? null);
   const byStep = new Map<string, number>();
-  for (const seg of matching) {
+  for (const seg of counted) {
     for (const s of seg.steps) byStep.set(s.key, (byStep.get(s.key) ?? 0) + s.users);
   }
   const steps = funnel.steps.map((s) => ({ key: s.key, label: s.label, users: byStep.get(s.key) ?? 0 }));
-  return { steps, users: steps[0]?.users ?? 0 };
+  return { steps, users: steps[0]?.users ?? 0, measured: true, reason: null };
+}
+
+/** Two dim maps name exactly the same selection (same keys, same values). */
+function sameDims(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => b[k] === a[k]);
 }
 
 /** Distinct values for one dimension: declared values first, else observed in
@@ -328,20 +382,47 @@ export interface BreakdownLane {
   users: number;
   /** Users per step key (aligned to the funnel's step order by the caller). */
   steps: Map<string, number>;
+  /** False = this value's path is not measured (lookup mode): no steps, never drawn as 0. */
+  measured?: boolean;
+  reason?: string | null;
 }
 
 /**
  * Group one funnel's segments by ONE dimension value: top-N by users + "Other",
  * plus an "Unsegmented" remainder when segment sums fall short of the funnel
- * totals (sampling) — the remainder is shown, never hidden.
+ * totals (sampling): the remainder is shown, never hidden. Unmeasured cells
+ * never add. In `lookup` mode each value's lane is exactly its one-axis path
+ * (the segment whose dims are `{dimKey: value}` alone): intersections are other
+ * paths and are never summed in, nothing folds into "Other", no remainder is
+ * derived, and an unmeasured path is a lane marked `measured: false`.
  */
-export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number = BREAKDOWN_TOP_N): BreakdownLane[] {
+export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number = BREAKDOWN_TOP_N, mode: FunnelSegmentMode = 'cells'): BreakdownLane[] {
   if (!funnel.segments || funnel.segments.length === 0) return [];
+
+  if (mode === 'lookup') {
+    const lanes: BreakdownLane[] = [];
+    for (const seg of funnel.segments) {
+      const keys = Object.keys(seg.dims);
+      if (keys.length !== 1 || keys[0] !== dimKey) continue;
+      const value = seg.dims[dimKey];
+      if (lanes.some((l) => l.value === value)) continue;
+      const ok = seg.measured !== false;
+      lanes.push({
+        value,
+        users: ok ? seg.users : 0,
+        steps: new Map(ok ? seg.steps.map((s) => [s.key, s.users] as const) : []),
+        measured: ok,
+        reason: ok ? null : seg.reason ?? null,
+      });
+    }
+    // Measured lanes by users; unmeasured ones after them, in payload order.
+    return [...lanes.filter((l) => l.measured).sort((a, b) => b.users - a.users), ...lanes.filter((l) => !l.measured)];
+  }
 
   const byValue = new Map<string, BreakdownLane>();
   for (const seg of funnel.segments) {
     const value = seg.dims[dimKey];
-    if (value === undefined) continue;
+    if (value === undefined || seg.measured === false) continue;
     let lane = byValue.get(value);
     if (!lane) {
       lane = { value, users: 0, steps: new Map() };
@@ -448,7 +529,7 @@ export function collapseSteps(
 
 /** Union of step keys: first funnel's order, then unseen keys from the rest in
  *  their own order. NEVER aligned by index. */
-export function alignStepKeys(funnels: FunnelDef[]): { key: string; label: string }[] {
+export function alignStepKeys(funnels: readonly { steps: readonly { key: string; label: string }[] }[]): { key: string; label: string }[] {
   const out: { key: string; label: string }[] = [];
   const seen = new Set<string>();
   for (const funnel of funnels) {
@@ -765,4 +846,18 @@ export function overviewTableMarkdown(funnels: FunnelDef[], cols: OverviewColumn
   ];
   for (const funnel of funnels) lines.push(markdownRow(funnel, cols));
   return lines.join('\n');
+}
+
+// ─── Explorer selections (board funnel block) ───────────────────────────────
+
+/** A selection written for people: its values in the frame's dimension order
+ *  (`Meta Ads · EN`), undeclared dims after them by key; empty = null (the caller words "all"). */
+export function selectionLabel(sel: Record<string, string>, dims: readonly { key: string }[] = []): string | null {
+  const order = dims.map((d) => d.key);
+  const keys = Object.keys(sel).filter((k) => sel[k]).sort((a, b) => {
+    const ia = order.indexOf(a);
+    const ib = order.indexOf(b);
+    return (ia === -1 ? order.length : ia) - (ib === -1 ? order.length : ib) || a.localeCompare(b);
+  });
+  return keys.length > 0 ? keys.map((k) => sel[k]).join(' · ') : null;
 }

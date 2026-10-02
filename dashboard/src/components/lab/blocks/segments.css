@@ -1,0 +1,151 @@
+/*
+ * The board `segments` block (SegmentsBlock.tsx): one row per dim value, on the
+ * lab table classes (MetricTable.css: wrapper scroll box, sticky header,
+ * density). Tokens only: no literal colours, sizes, weights or durations.
+ *
+ * Nothing breaks inside a word: every cell keeps its content on one line and
+ * the table takes the width its content needs (never less than the box). When
+ * the columns do not fit, the wrapper scrolls sideways with the value column
+ * stuck on the left; a very long value ellipsizes past a cap, its full text in
+ * the cell's title (the last resort).
+ *
+ * Band tone is a LIGHT wash behind the figure, the tinted-surface pattern: the
+ * status hue mixed a little way into the card surface, the figure keeps
+ * --color-text (tested >= 4.5:1 on every tint, light and dark), and a 2px edge
+ * in the hue carries the tone the pale fill gave up. A low-sample row fades; an
+ * unmeasured cell is a dash whose reason shows on hover and on focus.
+ */
+
+.lab-seg {
+  gap: var(--space-2);
+}
+
+.lab-seg-note {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  overflow-wrap: break-word;
+}
+
+.lab-seg-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.lab-seg-table th,
+.lab-seg-table td {
+  white-space: nowrap;
+}
+
+/* Three levels and more air: rows breathe (4px above and below a 16px line instead of
+   2px), the dim value and the figures are the body ink, the users column is secondary, the
+   change after each figure is tertiary, 8px after it. Headers stay the table's secondary. */
+.lab-seg-table[data-density='compact'] tbody td {
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+  line-height: var(--space-4);
+}
+
+.lab-seg-table td.lab-seg-users {
+  color: var(--color-text-secondary);
+}
+
+/* The value column stays put while the metrics scroll under it. */
+.lab-seg-table .lab-seg-value,
+.lab-seg-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  border-right: 1px solid var(--color-border);
+}
+
+.lab-seg-table .lab-seg-value {
+  z-index: 1;
+  max-width: var(--space-28);
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+  text-overflow: ellipsis;
+}
+
+.lab-seg-table thead th:first-child {
+  z-index: 2;
+}
+
+.lab-seg-table tr[data-active] .lab-seg-value {
+  font-weight: var(--font-weight-semibold);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.lab-seg-figure {
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  column-gap: var(--space-2);
+}
+
+.lab-seg-delta {
+  color: var(--color-text-placeholder);
+}
+
+.lab-seg-table[data-bands] td[data-tone='below'] {
+  background: color-mix(in srgb, var(--color-error) 9%, var(--color-bg-secondary));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-error) 70%, var(--color-bg-secondary));
+}
+
+.lab-seg-table[data-bands] td[data-tone='between'] {
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--color-bg-secondary));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-warning) 70%, var(--color-bg-secondary));
+}
+
+.lab-seg-table[data-bands] td[data-tone='above'] {
+  background: color-mix(in srgb, var(--color-success) 9%, var(--color-bg-secondary));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-success) 70%, var(--color-bg-secondary));
+}
+
+/* A small sample is shown, not hidden, but it steps back. */
+.lab-seg-table tr[data-lab-low-sample] td {
+  opacity: 0.55;
+}
+
+.lab-seg-table tr[data-lab-unmeasured] .lab-seg-value {
+  color: var(--color-text-secondary);
+}
+
+.lab-seg-dash {
+  position: relative;
+  display: inline-block;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: help;
+  outline: none;
+}
+
+.lab-seg-dash:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-border-focus);
+}
+
+.lab-seg-reason {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 3;
+  display: none;
+  width: max-content;
+  max-width: calc(var(--space-28) + var(--space-16));
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-weight: var(--font-weight-normal);
+  text-align: left;
+  white-space: normal;
+}
+
+.lab-seg-dash:hover .lab-seg-reason,
+.lab-seg-dash:focus .lab-seg-reason {
+  display: block;
+}

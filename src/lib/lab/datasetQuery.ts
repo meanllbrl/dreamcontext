@@ -140,7 +140,7 @@ export function queryDataset(bundle: DatasetBundle, query: DatasetQuery): Datase
   };
 }
 
-// ─── As-of resolution (the reports "as of" rule, over dataset bundles) ──────
+// ─── As-of resolution (the "as of" rule, over dataset bundles) ─────────────
 
 export interface DatasetAsOf {
   bundle: DatasetBundle;
@@ -151,7 +151,7 @@ export interface DatasetAsOf {
 /** The newest dataset-bundle snapshot at/before the END of `date`
  *  (YYYY-MM-DD, inclusive) — reimplemented locally rather than imported
  *  because matrix.ts's `snapshotAsOf` is typed to `MatrixSnapshot[]`, not
- *  `DatasetSnapshot[]`; the algorithm is IDENTICAL to reports-store.ts's
+ *  `DatasetSnapshot[]`; the algorithm is IDENTICAL to `snapshotAsOf`'s
  *  as-of rule: cutoff = end of that calendar date, latest `at` <= cutoff
  *  wins, never a reach-forward, never an interpolation. */
 function datasetSnapshotAsOf(history: DatasetSnapshot[] | undefined, date: string): DatasetSnapshot | null {

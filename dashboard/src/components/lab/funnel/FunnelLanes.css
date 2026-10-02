@@ -1,0 +1,213 @@
+/* Pinned lanes side by side on one step spine (FunnelLanes). Columns and rows are set
+   inline: the step-label column (as wide as its labels, up to a share) plus one per lane;
+   a header row, then ONE row per step that never shrinks under a readable line (16px).
+   A cell is the lane's bar, its "users · share" and the drop into that step. Every row of
+   a lane keeps one track width (the text column is as wide as the lane's widest text), so
+   bars compare down the lane. A narrow cell drops secondary text first: the users, then
+   the share; the bar and the drop stay. Tokens only. */
+
+.funnel-lanes {
+  display: grid;
+  column-gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  line-height: var(--space-4);
+}
+
+/* Room to spare (not dense): 4px between step rows, so the lines never touch. */
+.funnel-lanes:not([data-dense]) {
+  row-gap: var(--space-1);
+}
+
+.funnel-lanes > * {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.funnel-lanes-head {
+  container: lanehead / inline-size;
+}
+
+.funnel-lanes-head-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: var(--space-2);
+  align-items: center;
+  /* Whitespace, not a rule, separates the lane heads from the steps. */
+  margin-bottom: var(--space-2);
+}
+
+.funnel-lanes-num {
+  grid-row: 1 / 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--radius-full);
+  /* The breakdown lane badges' pair: the strong accent carries white text at >= 4.5:1 in both themes. */
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-lanes-name,
+.funnel-lanes-users,
+.funnel-lanes-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.funnel-lanes-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+/* Three levels: the lane name and each step's users are the body ink (primary), step labels
+   and drops secondary, shares and the head's user count tertiary (the quietest readable ink). */
+.funnel-lanes-users {
+  color: var(--color-text-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-lanes-head[data-lab-lane-unmeasured] .funnel-lanes-num {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+}
+
+.funnel-lanes-head[data-lab-lane-unmeasured] .funnel-lanes-users {
+  color: var(--color-warning-ink);
+}
+
+.funnel-lanes-step {
+  align-self: center;
+  color: var(--color-text-secondary);
+}
+
+.funnel-lanes-cell {
+  display: flex;
+  align-items: center;
+  container: lane / inline-size;
+}
+
+.funnel-lanes-row {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(var(--space-4), 1fr) var(--lane-value-w, auto) var(--space-13);
+  align-items: center;
+  column-gap: var(--space-2);
+  min-width: 0;
+}
+
+.funnel-lanes-track {
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+
+.funnel-lanes-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+
+.funnel-lanes-text {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.funnel-lanes-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.funnel-lanes-pct,
+.funnel-lanes-share {
+  color: var(--color-text-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-lanes-share {
+  display: none;
+}
+
+/* A step this lane does not carry: a dash, never a zero bar. */
+.funnel-lanes-cell--missing {
+  display: block;
+  align-self: center;
+  color: var(--color-text-tertiary);
+}
+
+.funnel-lanes-drop {
+  justify-self: end;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.funnel-lanes-drop[data-severity='mid'] {
+  color: var(--color-warning-ink);
+}
+
+.funnel-lanes-drop[data-severity='high'] {
+  color: var(--color-error-ink);
+}
+
+/* The lane's own biggest drop: the tinted wash the flow layout uses. */
+.funnel-lanes-drop[data-lab-worst] {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* A short block: the lane head is one line (number, name, users). */
+.funnel-lanes[data-dense] .funnel-lanes-head-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto;
+  margin-bottom: 0;
+}
+
+/* A narrow one-line head keeps the lane's name; its users stay in the title. */
+@container lanehead (max-width: 150px) {
+  .funnel-lanes[data-dense] .funnel-lanes-head-row { grid-template-columns: auto minmax(0, 1fr); }
+  .funnel-lanes[data-dense] .funnel-lanes-users { display: none; }
+}
+
+.funnel-lanes[data-dense] .funnel-lanes-num {
+  grid-row: auto;
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.funnel-lanes[data-dense] .funnel-lanes-track {
+  height: calc(var(--space-1) + 2px);
+}
+
+/* Narrow lanes: the users go first, then the share; the bar and the drop stay. */
+@container lane (max-width: 190px) {
+  .funnel-lanes-row {
+    grid-template-columns: minmax(var(--space-4), 1fr) var(--lane-share-w, auto) var(--space-13);
+  }
+
+  .funnel-lanes-value { display: none; }
+  .funnel-lanes-share { display: inline; }
+}
+
+@container lane (max-width: 120px) {
+  .funnel-lanes-row {
+    grid-template-columns: minmax(var(--space-4), 1fr) var(--space-13);
+  }
+
+  .funnel-lanes-text { display: none; }
+}

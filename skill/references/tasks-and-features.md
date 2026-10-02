@@ -205,12 +205,14 @@ An **insight** is a named, curated **metric backed by an external source** — "
 
 **An MCP tool, a raw API call, or a hand-written script is the LAST resort.** If `lab/insights/` already holds the metric, fetching it another way bypasses the manifest, cache, tweaks and KR binding — and produces a number the next session cannot reproduce. A real past failure: an agent asked for revenue reached for a billing MCP while the synced Paddle series was already cached, and the project had to hand-write a memory note to stop it. When you genuinely must go outside (the insight doesn't exist, or the question needs a dimension the manifest doesn't carry), say so explicitly — and offer to `lab create` it if the user will want it again. Full rule: SKILL.md Operational Rule 13.
 
-The dashboard has a Lab page: one card per insight (the render draws the body — see the table below), a date-range control on every card, per-insight refresh, sync-all, and tweak editing.
+The dashboard's **Insights** page (Beta) is a set of **boards** (§ Boards below): cards on a 12-column grid, each drawing an insight through its render (the table below) or through blocks from the catalog, with a date-range control, refresh, tweak editing and a freshness line on every insight card.
 
 ```bash
-dreamcontext lab create <slug> --title "Weekly Active Users" [--render <render>] [--size s|m|l] [--adapter http|script] [--category <tab>] [--group <section>] [--unit users] [--ttl 1440]
-dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped unless --force)
+dreamcontext lab create <slug> --title "Weekly Active Users" [--render <render>] [--size s|m|l] [--adapter http|script] [--category <board title>] [--group <section>] [--unit users] [--ttl 1440] [--board <slug>|--no-board]
+dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped; --force skips the TTL, the freshness probe still decides)
 dreamcontext lab sync --all [--force]       # every insight; exits non-zero if any fail
+dreamcontext lab sync --all --dry-run       # what would be fetched / probed / skipped, ZERO upstream requests
+dreamcontext lab sync <slug> --force-hard   # skip the TTL AND the probe: always a full fetch
 dreamcontext lab list [--json]              # all insights with latest value + staleness
 dreamcontext lab show <slug> [--json]       # manifest + cached series (never fetches)
 dreamcontext lab tweak <slug> <key> <value> # a declared tweak, or well-known range/from/to (e.g. range last_1_year)
@@ -235,7 +237,7 @@ dreamcontext lab credentials list           # key NAMES only — values are neve
 | `funnel` | Routed multi-page funnel view (below) | Step-by-step conversion analysis |
 | `app` | Routed, multi-page, full-screen-capable view the SCRIPT builds itself (below) | Dimensional/drill-down data, or any multi-screen interactive story — without writing a component |
 
-**`size: s\|m\|l`** (optional manifest field, `--size` on create) overrides the card's board footprint: `s`/`m` = one column, `l` = two. Absent, the render decides — `table` and `funnel` ask for two columns because they draw tables; everything else takes one. The board grants a 2-column span only where two columns actually exist, so a narrow window degrades instead of overflowing.
+**`size: s\|m\|l`, `width`, `height`** (optional legacy manifest fields) only shape the card a DERIVED board gives the insight (width 1/2/3 → 4/8/12 grid columns, height s/m/l/xl → 3/4/6/8 rows; absent, the render decides: `table` and `funnel` take two thirds). Once boards are saved, a card's place and size live in the board file (`at: {x, y, w, h}`) and are changed by dragging in Edit mode or with `lab board set`.
 
 **Well-known tweaks — `range`, `from`, `to`.** The engine derives a time window for EVERY insight (a relative `range` like `last_30_days`, or an explicit `from`/`to` pair that out-ranks it), so those three keys are writable on any insight whether or not its manifest declares them — via `lab tweak` or the dashboard's date-range control, which is why every card and the funnel pages offer a window even when the author never declared one. A manifest that DOES declare `range` keeps its curated options (and still rejects outsiders); an undeclared one accepts the relative-range grammar and gains an implicit declaration on first write. Setting `range` clears any stored `from`/`to` — otherwise the explicit window would silently pin every later preset to the old dates. Any other knob (`country`, `cohort`, …) still has to be declared in the manifest to be settable.
 
@@ -243,7 +245,15 @@ dreamcontext lab credentials list           # key NAMES only — values are neve
 
 **Key-Result binding (insight → objective):** a manifest `binding: {objective: <slug>, value: latest}` makes every successful sync write the objective's KR `metric.current` automatically — upgrading the roadmap from PO-asserted numbers to measured ones. Offer this whenever an insight measures an existing objective's outcome. Set it via `lab bind` (or the dashboard's objective create modal / detail panel, which search insights by name); binding is ONE feeder per objective — connecting a new insight unbinds the previous one loudly, and connecting immediately seeds `metric.current` from the cached latest.
 
-**Sync semantics:** TTL staleness (default 1440 min) — fresh insights are skipped and reported, `--force` refetches; on failure the prior series is KEPT and the error is loud (never a silent half-sync). **Sleep does NOT run lab sync** — refresh is always an explicit user/agent action.
+**Sync semantics — sync only pays for change.** Three strengths:
+
+| Run | Who asks | TTL | Freshness probe |
+|---|---|---|---|
+| automatic (no force) | a board opening, the page's 60 s re-check, a tab becoming visible | respected | consulted when past TTL |
+| `user` (`--force`, ↻, Sync board, a tweak save) | a person or agent on purpose | skipped | consulted |
+| `hard` (`--force-hard`, card menu "Force full refresh") | on purpose, distrusting the probe | skipped | skipped: always a full fetch |
+
+TTL staleness defaults to 1440 min; age counts from the later of the last real fetch and this machine's last unchanged probe. **The freshness probe** is optional: an `http` manifest may declare `refresh.freshness: {url, method?, headers?, body?, extract: {marker, asOf?, note?}}` (resolved through the same `{{tweak:*}}`/`{{cred:*}}` placeholders as the source; credentials go ONLY to the source's own origin, compared after placeholder resolution, so a cross-origin probe carrying one is refused), and a script may `export async function freshness(ctx)` beside its default export or return `{data, freshness: {marker, asOf?, note?}}` from a normal run. A sync skips the fetch as **upstream unchanged** only when the probe's marker AND the request fingerprint (`queryKey`: resolved tweaks, window, source/script hash) both match the last real fetch; a changed tweak always fetches, a probe that throws, times out (5 s) or returns garbage falls back to a full fetch, and a real fetch is forced once the last one is older than max(24 h, 10 × TTL). The skip reason (`ttl` or `upstream unchanged`) is printed by the CLI and shown on the card; a source's `note` renders as plain text. **Freshness checks are per machine**: the time of the last unchanged probe lives in the gitignored `state/.lab-freshness.json`, so an unchanged probe never dirties the brain-synced cache. Automatic runs leave a slug alone for max(TTL, 15 min) after it failed (no retry pass); `user`/`hard` runs retry. Opening an all-fresh board starts **zero** sync jobs; a request the running job does not cover queues ONE follow-up job (the card says queued). On failure the prior series is KEPT and the error is loud (never a silent half-sync). **Sleep does NOT run lab sync** — refresh is always an explicit user/agent action, or an automation's.
 
 ### Funnel insights (`render: funnel` — the first multi-page insight)
 
@@ -275,6 +285,8 @@ For funnel analysis (comparative across funnels + sequential across steps), an i
 The engine validates + caps the payload (max 40 funnels, 64 steps — over-cap keeps first 63 + the final step, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either.
 
 ### App insights (`render: app` — a script builds its own multi-page, interactive, full-screen body)
+
+> **LEGACY since Insights v2 (2026-09-29).** Existing `app/v1` insights keep working unchanged (they draw through a board's `insight` block, with the `lk-` kit), and `app` stays the answer for a genuinely multi-page, routed, full-screen body. For a one-screen custom view over data you already sync, reach for a board **`html` block** instead (§ Boards): it binds declared inputs, uses the full `dc-` kit, can be saved to the vault library and reused, and needs no script change.
 
 The `funnel` render above is hand-written React — the ONE multi-page view the platform built for a specific analysis shape. `app` generalizes that: **a script author builds a multi-page, interactive, full-screen-capable body itself, with no React component written for them.** If the user wants "the funnel insight's shape, but for my own data", this is the render — never a hand-built dashboard, never a request to platform-engineer a new insight type.
 
@@ -366,19 +378,195 @@ For DIMENSIONAL data — a value broken down over 1-3 dimensions (funnel × lang
 }
 ```
 
-The engine validates + caps it (≤3 dims; per-dim values beyond the top 8 collapse into "Other"; ≤400 rows, the tail merges into one all-Other row; 200 KB hard reject — every cap is a loud notice, and `doctor` re-flags a stored cache that violates one), synthesizes legacy `series` from the rows, and — the important part — **appends a DATED snapshot to `matrixHistory` on every successful sync** (count cap 60 AND a byte cap together). The matrix itself is a snapshot, not a time series: **the history trail IS the time axis**, so a daily sync cadence is what makes a report date-navigable. Δ vs previous period: a row's `prev` wins; else the equal-length (±25%) history snapshot; no honest comparison → no Δ shown. `lab create <slug> --render breakdown --adapter script` scaffolds the `range` tweak + a documented script template; `lab show <slug>` prints the pivot; legacy `Series[]` under `render: breakdown` still renders (bar-list fallback).
+The engine validates + caps it (≤3 dims; per-dim values beyond the top 8 collapse into "Other"; ≤400 rows, the tail merges into one all-Other row; 200 KB hard reject — every cap is a loud notice, and `doctor` re-flags a stored cache that violates one), synthesizes legacy `series` from the rows, and — the important part — **appends a DATED snapshot to `matrixHistory` on every successful sync** (count cap 60 AND a byte cap together). The matrix itself is a snapshot, not a time series: **the history trail IS the time axis**, so a daily sync cadence is what builds a dated trail. Δ vs previous period: a row's `prev` wins; else the equal-length (±25%) history snapshot; no honest comparison → no Δ shown. `lab create <slug> --render breakdown --adapter script` scaffolds the `range` tweak + a documented script template; `lab show <slug>` prints the pivot; legacy `Series[]` under `render: breakdown` still renders (bar-list fallback).
 
 ### HTML card bodies (`html/v1` hybrid — typed renders first, single-page)
 
-A script may return `{ data, html? }`: **`data` is MANDATORY** (exactly what a bare return would be — the numbers keep feeding `latest`, KR bindings, Δ, reports, `lab show` and the Rule-13 read ladder; `{ html }` alone fails the sync loudly), `html` is an OPTIONAL card body, ≤300 KB (over-cap = loud sync failure, never truncated). The dashboard draws it in a **network-less sandboxed iframe** (`sandbox="allow-scripts"` with NO same-origin grant + a `default-src 'none'` CSP — it can animate and compute against the data embedded at sync time, but it cannot fetch, beacon, or touch the parent origin), and the detail panel always shows the typed data TWIN next to it, so a screen reader is never locked to the iframe. **Rule: reach for a typed render first; write `html` only when the render vocabulary cannot express the card in ONE screen — reach for `app` (above) the moment it needs more than one page** — and use the `lab-html-kit.css` classes instead of your own CSS (`lk-title`, `lk-value`, `lk-label`, `lk-muted`, `lk-delta--up/down`, `lk-stat`, `lk-chip`, `lk-table`, `lk-bar`/`lk-bar-fill--N`, `lk-low-sample`, `lk-empty`): the kit ships embedded with the current theme's design tokens, so a kit-classed card looks native dreamcontext in light and dark and repaints on theme change. A run whose script returns no `html` clears any prior body — stale presentation is worse than none. `app/v1` pages draw against the SAME kit and the SAME sandbox/CSP guarantee — `html/v1` is simply the one-page, no-bridge case of it. **Height is automatic here too, on exactly the same terms** (the body measures itself and the host resizes to match; fixed at 232px until 2026-09-08, which quietly pushed authors to shrink type until it fit — the opposite of why the kit exists): the CARD is clamped to 120–320px because that bound belongs to the board grid, and the DETAIL panel is effectively unbounded, so a long body reads in full when opened rather than being written small. There is no height field to set — if the card needs more than one screen of its own, that is the signal to make it an `app`.
+> **LEGACY since Insights v2 (2026-09-29).** Existing `html/v1` bodies keep rendering exactly as before through a board's `insight` block (the `lk-` kit stays for them). Do not write NEW script-embedded html bodies: a custom card is a board **`html` block** (§ Boards), which is decoupled from the sync script, bound to data by declared inputs, and reusable from the vault library.
 
-### Reports (My Reports — `lab/reports/<slug>.md`)
+A script may return `{ data, html? }`: **`data` is MANDATORY** (exactly what a bare return would be — the numbers keep feeding `latest`, KR bindings, Δ, board blocks, `lab show` and the Rule-13 read ladder; `{ html }` alone fails the sync loudly), `html` is an OPTIONAL card body, ≤300 KB (over-cap = loud sync failure, never truncated). The dashboard draws it in a **network-less sandboxed iframe** (`sandbox="allow-scripts"` with NO same-origin grant + a `default-src 'none'` CSP — it can animate and compute against the data embedded at sync time, but it cannot fetch, beacon, or touch the parent origin), and the detail panel always shows the typed data TWIN next to it, so a screen reader is never locked to the iframe. **Rule: reach for a typed render first; write `html` only when the render vocabulary cannot express the card in ONE screen — reach for `app` (above) the moment it needs more than one page** — and use the `lab-html-kit.css` classes instead of your own CSS (`lk-title`, `lk-value`, `lk-label`, `lk-muted`, `lk-delta--up/down`, `lk-stat`, `lk-chip`, `lk-table`, `lk-bar`/`lk-bar-fill--N`, `lk-low-sample`, `lk-empty`): the kit ships embedded with the current theme's design tokens, so a kit-classed card looks native dreamcontext in light and dark and repaints on theme change. A run whose script returns no `html` clears any prior body — stale presentation is worse than none. `app/v1` pages draw against the SAME kit and the SAME sandbox/CSP guarantee — `html/v1` is simply the one-page, no-bridge case of it. **Height is automatic here too, on exactly the same terms** (the body measures itself and the host resizes to match; fixed at 232px until 2026-09-08, which quietly pushed authors to shrink type until it fit — the opposite of why the kit exists): the CARD is clamped to 120–320px because that bound belongs to the board grid, and the DETAIL panel is effectively unbounded, so a long body reads in full when opened rather than being written small. There is no height field to set — if the card needs more than one screen of its own, that is the signal to make it an `app`.
 
-A report is a **composed, window-navigable document over insights you already track** — it OWNS NO DATA and has no sync path of its own; it reads insight caches, dated history snapshots, and transient window measurements. Frontmatter: `title`, `description`, `date_nav: none|daily|weekly|monthly`, optional `window`, `sections: [{ title, prose?, window?, items: [{ insight, view?, breakdown?: { rows, cols, filter? }, window? }] }]`; body = `## Notes` prose. Create with `lab report create <slug> --title "…" --insights a,b,c`; read with `lab report show <slug> [--date YYYY-MM-DD]` or the dashboard's **My Reports** page (`/lab/reports/<slug>` — toolbar → Reports).
+### Boards (the Insights page, Beta — `lab/boards/<slug>.md`)
 
-**The date navigator IS the measurement window** (owner decision, 2026-09-01): the `date_nav` granularity sets the default span (daily/weekly/monthly → the 1/7/30 days **ending at the selected date**; live = ending today), and every item RE-MEASURES that window through a transient sync — written to `lab/cache/.windows/`, never to the canonical cache, the snapshot trails or a KR binding (aligning a report must never move the roadmap). A `window` spec at report/section/item level overrides the default (most specific wins): a relative range (`last_30_days`, re-anchored at the selected date — right for lagging metrics like refunds) or `'own'` (the tile keeps its own window; also the automatic fallback for source-less manual tiles, which cannot re-measure). Pinned/own items SAY so on their chip, and a section whose shown windows genuinely differ wears a mixed-window warning. `window: own` at report level restores the pure snapshot-as-of semantics ("latest sync at/before the end of that day"), which is still what dated resolution means for own/manual items. Honesty stays absolute: a window with no measurement is an explicit "not measured yet" empty — never a silently substituted other window, never an interpolation. The navigator is a free RANGE control with quick presets (Last 7/14/30/90 days, Last 1 year): editing the start date (or picking a preset) turns the view into a custom from→to window (URL `?from=&date=`, CLI `--from`) that overrides the report default for every non-pinned item — pins still win and still say so. The dashboard fetches owed windows automatically on open/navigation; from the CLI or an automation, run `lab report sync <slug> [--date …] [--from …]`.
+A **board** is a composed page over insights you already track: **cards** on a 12-column grid (a row is 56 px), each card a stack of **blocks**. A board OWNS NO DATA and has no sync path of its own; its blocks read insight caches. Boards replace the old categories, groups and Reports (Reports and their AI commentary were removed; an old `lab/reports/` folder in a vault is left untouched and ignored).
 
-**AI commentary (optional layer).** A report may carry an agent-written reading per view, stored dated at `lab/reports/.commentary/<slug>/<dateKey>.md` and always labelled "AI-generated · <model> · <time>". The division of labor is fixed: deterministic honesty (mixed windows, unmeasured states, low sample) is the PLATFORM's job in code; the commentary adds interpretation on top and may never replace the author's section prose or own any number (the generation prompt embeds the resolved values and forbids inventing others). It is generated ONLY on demand — the report page's Analyze button or `lab report comment <slug> [--date] [--from]` — as a pure-text headless `claude -p` run (plan mode, no tools; the server writes the file). The output is SPREAD across the report, not one block: the model writes an overall reading first, then `## <section title>` blocks that render as slim AI notes INSIDE their sections (parse is lenient — an invented heading folds back into the summary rather than vanishing). Non-AI reports are first-class: `commentary: false` in the report frontmatter removes the surface entirely. A report referencing a deleted insight shows a warning for that item and keeps rendering. Opening the report page starts one scoped sync job (`slugs[]`) and sections fill progressively as each insight settles. **Window honesty**: every resolved item also carries its measurement `window` (`{fromISO,toISO}`) and `rangeKey` (the `range` tweak value, e.g. `last_7_days`) — live items derive it from the cache's own tweaks/typed range, dated items from the snapshot's recorded range, and a dated series event honestly reports `null` (today's tweak never relabels history). The surface renders the window next to each as-of stamp ("7-day · Aug 25 – Sep 1" / "no declared window" / "window unknown") and a section whose items mix windows wears a mixed-window warning strip — don't hand-write window caveats into prose for what the surface now says itself; keep prose for interpretation.
+```yaml
+# lab/boards/growth.md (frontmatter = the spec, body = optional prose)
+title: Growth
+order: 1
+cards:
+  - id: c-signups                  # unique within the board (React key, brain-sync merge key)
+    at: {x: 0, y: 0, w: 4, h: 3}   # 12 columns; h in rows
+    title: Signups                 # optional; defaults to the primary insight's title
+    insight: daily-signups         # optional primary: detail panel, refresh, range, tweaks
+    blocks:                        # optional; absent = one `insight` block (the insight drawn exactly as before)
+      - stat: {data: daily-signups, delta: prev, spark: true}
+      - line: {data: daily-signups, area: true, color: 2}
+```
+
+A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` key). **The block catalog** (`dreamcontext lab block list [--json]` prints every type, the frames it accepts and its options). Every option lives in ONE place, the engine catalog in `src/lib/lab/blocks.ts` (EN and TR labels); the dashboard inspector is generated from it, `lab board set` validates against it, and the table below is generated from it too (a lockstep test fails when they drift). An unset option takes its default:
+
+<!-- block-catalog:start (generated from dashboard/src/generated/block-catalog.json; see tests/unit/lab-block-catalog-doc.test.ts) -->
+| block | option | what it sets | values | default |
+|---|---|---|---|---|
+| `stat`: One number with its change and a sparkline. | `delta` | Change | `none`, `prev` | `none` |
+|  | `spark` | Sparkline | `true`, `false` | `false` |
+|  | `unit` | Unit | text | unset |
+|  | `format` | Format | `number`, `compact`, `percent`, `currency` | `number` |
+|  | `series` | Series | list of names | unset |
+|  | `size` | Size | `sm`, `md`, `lg` | `md` |
+|  | `goal` | Goal | number | unset |
+| `line`: Series over time. | `area` | Fill area | `true`, `false` | `false` |
+|  | `color` | Color | number 1 to 8 | `1` |
+|  | `series` | Series | list of names | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `curve` | Curve | `linear`, `smooth`, `step` | `linear` |
+|  | `points` | Points | `auto`, `always`, `never` | `auto` |
+|  | `yMin` | Y axis starts at | `auto`, `zero` | `auto` |
+|  | `reference` | Reference line | number | unset |
+|  | `referenceLabel` | Reference label | text | unset |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `bar`: Values side by side. | `orientation` | Orientation | `h`, `v` | `h` |
+|  | `color` | Color | number 1 to 8 | `1` |
+|  | `comparePrev` | Compare with previous period | `true`, `false` | `false` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `series` | Series | list of names | unset |
+|  | `valueLabels` | Value labels | `true`, `false` | `true` |
+|  | `topN` | Top N, rest as Other | number 1 to 50 | unset |
+|  | `group` | Several series | `grouped`, `stacked` | `grouped` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+| `stacked`: Parts of a whole over time. | `color` | Color | number 1 to 8 | `1` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `series` | Series | list of names | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `mode` | Shape | `bar`, `area` | `bar` |
+|  | `normalize` | Show as 100% | `true`, `false` | `false` |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+| `pie`: Shares of a total. Seven or more slices draw as bars. | `donut` | Donut | `true`, `false` | `false` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `centerTotal` | Total in the center | `true`, `false` | `false` |
+|  | `labels` | Slice labels | `legend`, `outside`, `inside`, `none` | `legend` |
+|  | `topN` | Top N, rest as Other | number 1 to 50 | unset |
+|  | `color` | Color | number 1 to 8 | `1` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `table`: Rows and columns of numbers. | `columns` | Columns | list of names | unset |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `density` | Density | `compact`, `comfortable` | `compact` |
+|  | `bars` | Data bars | `true`, `false` | `false` |
+|  | `deltaColor` | Color the change | `true`, `false` | `true` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `heatmap`: Intensity across two axes. | `color` | Color | number 1 to 8 | `1` |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+|  | `scale` | Color scale | `sequential`, `diverging` | `sequential` |
+|  | `cellLabels` | Values in cells | `true`, `false` | `false` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `funnel`: Step by step conversion. | `compact` | Compact | `true`, `false` | `false` |
+|  | `showConversion` | Conversion rates | `true`, `false` | `true` |
+|  | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `layout` | Layout | `bars`, `flow` | `bars` |
+|  | `markWorst` | Mark the biggest drop | `true`, `false` | `false` |
+| `pivot`: One dimension down, another across. | `rows` | Rows | text | unset |
+|  | `cols` | Columns | text | unset |
+|  | `where` | Only rows where | `{dim: [values]}` | unset |
+| `text`: Markdown notes and headings. | `markdown` | Text | markdown | unset |
+| `callout`: A highlighted note. | `tone` | Tone | `info`, `success`, `warning`, `danger` | `info` |
+|  | `markdown` | Text | markdown | unset |
+| `tabs`: Panels of blocks, one visible at a time. Tabs do not nest. | `tabs` | Tabs | `[{label, blocks: [...]}]` | unset |
+| `filter`: Chips that filter the blocks bound to the same dataset. | `dim` | Dimension | text | unset |
+| `html`: Your own markup in a sandbox, fed only the inputs it declares. | `html` | HTML | inline HTML | unset |
+|  | `ref` | Library block | text | unset |
+|  | `inputs` | Inputs | `{name: <binding>}` | unset |
+| `insight`: The insight exactly as it renders on its own. | `page` | Page | one name (pick: app-pages) | unset |
+|  | `nav` | Page tabs | `true`, `false` | `false` |
+| `breakdown`: Chips per dimension that select one measured path for the funnel blocks in the card, and pin paths as compare lanes. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `dims` | Breakdowns | list of names (pick: dims) | unset |
+|  | `counts` | User counts | `true`, `false` | `false` |
+|  | `lanes` | Compare lanes | `true`, `false` | `true` |
+| `trend`: The selected path's metrics day by day. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `metrics` | Metrics | list of names (pick: metrics) | unset |
+|  | `chart` | Chart | `line`, `bar` | `line` |
+|  | `switch` | Metric switch | `true`, `false` | `true` |
+|  | `legend` | Legend | `top`, `bottom`, `right`, `none` | `bottom` |
+|  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
+|  | `grid` | Gridlines | `true`, `false` | `true` |
+|  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+| `benchmark`: Each metric against its floor and target on one ruler. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `metrics` | Metrics | list of names (pick: metrics) | unset |
+|  | `comparePrev` | Compare with previous period | `true`, `false` | `true` |
+|  | `sources` | Band sources | `true`, `false` | `true` |
+| `segments`: One row per value of a dimension, under the current selection. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `by` | Split by | one name (pick: dims) | unset |
+|  | `metrics` | Metrics | list of names (pick: metrics) | unset |
+|  | `bands` | Band colors | `true`, `false` | `true` |
+|  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
+|  | `limit` | Row limit | number 1 to 400 | unset |
+|  | `density` | Density | `compact`, `comfortable` | `compact` |
+<!-- block-catalog:end -->
+
+How the chart options read. `format`: `auto` groups digits below 10,000 and turns compact above (12.4K), `percent` expects a fraction (0.25 shows 25%), `currency` uses the unit when it is a 3-letter code. `color` is the first palette slot (1 to 8); colours follow the entity, never its rank, so a filter, a legend toggle or a series pick never repaints a survivor, and a 9th series or an Other bucket is grey. `topN` keeps the N largest and folds the rest into one Other row (grey, always last); `normalize` shows each x as 100%; `sort`, `topN` and `normalize` change the VALUES, so `lab board show` prints them too. `legend` places the series legend (a single series never gets one); clicking a legend item hides that series. `axes` and `grid` only change chrome. A pie with 7 or more slices kept draws as bars. `filter` narrows every sibling block bound to the same dataset, client-side, with zero sync requests; `tabs` never nest; `text` and `callout` markdown is sanitized with remote images stripped; `insight` is the whole insight exactly as its render draws it (the migration path; html/v1 and app/v1 bodies keep the `lk-` kit there).
+
+Static options run in ONE fixed order, `where` → interactive filter → `sort` → `limit`, and a table's total is computed after filtering and before the limit, so a filtered board never shows the total of a pre-cut list. `lab board show` and the dashboard run the same code and print the same values.
+
+**Opening a legacy vault writes nothing.** With no `lab/boards/` the boards are DERIVED: one per manifest `category` (uncategorized → "Other"), in the saved tab order from `state/.lab-prefs.json` (prefs that only ever lived in one browser's storage are invisible to the server, so cards then fall back to manifest order), each `group` a full-width heading, legacy width/height mapped onto the grid. The **first edit** (UI or CLI) materializes ALL boards at once, atomically, into `lab/boards/`; after that an insight on no board is **unplaced** (the Add card menu lists it first). `lab create` places a new insight on the board titled like its `--category`, else the first board (`--board <slug>` picks one, `--no-board` opts out).
+
+**Editing.** In the dashboard, Edit mode drags and resizes cards on the grid (below 720 px the board is one read-only column), the card menu edits blocks in the **inspector** (type, data, options, all generated from the catalog; ⌘Z undoes), and **Add card** offers an insight, a catalog block, or custom HTML. Saves are rev-checked: a board changed elsewhere (a teammate, an agent, a sync) reloads with a notice instead of being overwritten, and a failed save keeps the edit pending with a Retry. Agents edit the same files through the CLI (`lab board create|add-card|set|validate|remove-card|delete`), which validates strictly: every problem names the card id, the block path and the fix.
+
+**Custom HTML blocks and the vault library.** An `html` block runs its markup in the same network-less sandbox Chat uses (no network, no same-origin, `default-src 'none'`) with the full **`dc-` kit** (the Chat kit's classes, tabs and diagrams), fills its grid cell (a tall body scrolls inside it) and repaints on theme change. It gets data ONLY through the inputs it declares: `inputs: {revenue: mrr-by-plan/plans}` makes `lab.data('revenue')` resolve to that input's frame (`lab.inputs` lists the declared names); any other name is refused. Save a block to the vault library with the inspector's "Save to library" or `dreamcontext lab block save <slug> --file block.html --inputs revenue:table`; it lands in `lab/blocks/<slug>.md` (frontmatter `title`, `description`, `inputs: [{name, kind}]`, body = the HTML) and any card reuses it with `- html: {ref: <slug>, inputs: {revenue: <binding>}}`.
+
+**Trust statement (what an HTML block can and cannot see).** Caches already sync with the brain, so a declared input exposes nothing a teammate does not already have. The allow-list separates a library body's author from the card's author: the body can only read the names the card binds. Local-only material (credentials, `state/.secrets*`, anything outside `lab/cache/`) never reaches a frame: every read goes through the hardened cache reader, so a symlinked cache, a `../` or a `%2F` in a binding yields no data. HTML blocks carry no script-hash tripwire (they render the moment a board opens), which is exactly why they only ever get declared, already-synced data. App shortcuts do not reach into a focused HTML block (no shortcut bridge; click outside first).
+
+**Brain sync.** Board files merge semantically (`lab-board` class): cards union by `id`, a card changed on both sides keeps ours, a card deleted on one side and changed on the other is kept and reported, overlaps are resolved on the grid. A board file left with conflict markers opens as an error board (read-only, "Open file") until fixed. Library blocks (`lab/blocks/*.md`) merge as prose. Per-machine state stays local: `state/.lab-prefs.json` (active board, legacy tab order, funnel columns) and `state/.lab-freshness.json` are never synced.
+
+### Funnel explorer (board blocks over a funnel set)
+
+A funnel explorer is ONE synced insight whose pages are board blocks: each page can sit on its own card, or the whole explorer can be one interactive card. Pick-type options (`funnel`, `dims`, `metrics`, `by`, `page`) take names from the synced data; the inspector lists them, and a name that is not in the data renders a visible note, never a silent fallback.
+
+**Contract.** The script returns `{data, app?}` where `data` is a `dataset/v1` bundle that may carry ONE extra member, `funnel: funnel-set/v1`. The sync writes both: the bundle to `cache.datasets` (tables for stat/bar/filter blocks) and the funnel set to `cache.funnel` plus its history. A malformed `funnel` member fails the sync loudly and keeps the prior cache. `funnel-set/v1` gains optional fields (old payloads stay valid):
+
+- `segment_mode`: `cells` (default: disjoint cells the engine may sum) or `lookup` (each segment is its own measured path for an exact selection, one axis or an intersection; looked up, never summed, never folded into Other, no per-dim value cap; 64 segments max, the tail dropped with a notice).
+- Per segment `measured` (default true) and `reason` (up to 200 chars). **Not measured is not zero**: an unmeasured path has no steps, its chip is disabled with the reason on hover and focus, its metrics read "Not measured: reason" and no 0 or 0% is ever drawn. An unmeasured cell never adds to a `cells` sum.
+- Per segment `metrics`, `benchmarks` (absent = the set's band, shown as inherited) and `daily`; per funnel `daily: [{t: 'YYYY-MM-DD', m: {metricKey: number|null}}]` (keys must exist in `metrics`, 92 days max, a null day is a gap).
+- Per metric `measured` / `reason` (a broken denominator). Per benchmark `floor_source`, `target_source` (up to 64 chars, printed under the ruler) and `better: higher|lower` (`lower` flips below/above and improving/worsening).
+- Over 400 KB the engine trims segment daily, then funnel daily, then segments.
+
+In `cells` mode a selection sums the matching measured cells, so it has step users but no rates (rates cannot be summed); the benchmark says so.
+
+**Blocks.** All bind `data: <insight>` and share the card's selection:
+
+| page | block | what it draws |
+|---|---|---|
+| chips | `breakdown` | one chip row per dim, intersections, disabled unmeasured combos with their reason, pin up to 4 selections as compare lanes |
+| daily | `trend` | the selected path's daily metrics as a line or bar chart, a metric switch (one series at a time) |
+| benchmark | `benchmark` | floor, current and target on one ruler, delta vs the previous window, status word, each bound's source |
+| flow / steps | `funnel` with `layout: flow` or `bars`, `markWorst` | the selected path (never summed in lookup mode), drop badges, the worst drop marked, pinned lanes side by side on one step spine (a missing step is a dash) |
+| per dim | `segments` with `by: <dim>` | one row per value of that dim under the selection on the other axes, band tone washes, faded low-sample rows, sortable |
+
+A funnel block with default options draws exactly as before. Loss reasons (payment declines and the like) need no page type: a `stat` and a `bar` on a dataset of the same bundle plus a `filter` on a cohort dim. A second funnel in the set (say "Activation ladder") is drawn by `funnel: <id>`.
+
+**One interactive card (app mode).** `dreamcontext lab board add-card <board> --preset funnel-explorer --insight <slug> [--locale en|tr]` writes a 12x12 card: a `breakdown` block above a `tabs` block with Daily, Benchmark, Flow, Steps and one Segments tab per client dim (first 4). The insight must be synced first (the tabs come from its dims; otherwise the command exits 1 with "sync <slug> first"). `--preset` and `--block` are mutually exclusive. The dashboard's Add card menu offers the same preset for an insight whose cache holds a funnel, and writes the same blocks. Any card opens full screen from its menu (`?card=<id>`, Esc or Back closes) and keeps its selection and active tab.
+
+**Selection is card-scoped.** A chip click narrows every funnel-frame block in the same card (tabs included) and filters same-insight tables by the dims they carry (the total follows); a table without a selected dim says "Not split by X". Chip and tab clicks send zero sync requests. Cards do not share a selection.
+
+**CLI parity.** `dreamcontext lab board show <board> --select "platform=Web,language=EN" [--json]` adds an `explorer` field to every explorer block (and to a funnel block in explorer mode): `{selection, slice, axes | series | rows | drops}`, computed by the same frameOps functions the dashboard blocks call, so the CLI prints the same benchmark rows, step users, worst step and segment rows as the card. Human output prints "Not measured: reason" and marks the biggest drop.
+
+**A v1 app insight on a board.** The `insight` block takes `page` (pin any app page) and `nav: true` (page pills in the card; a pill click and an in-frame `lab.navigate` both switch pages with a fresh frame). `nav: false` keeps the plain card preview.
+
+**Synthetic names only.** Fixtures, presets, docs and screenshots use a fictional vocabulary (e.g. "Acme Storefront", "Quiz checkout (v2)", "Activation ladder"), never a registered vault or real product name.
 
 ### Insight capture (in-session — ASK, never auto-create)
 
@@ -386,7 +574,7 @@ Mirrors proactive objective capture. When the user states or implies a recurring
 
 1. **Dedup first.** `dreamcontext memory recall "<metric>" --types insight` and `dreamcontext lab list`. If one covers it, offer to update/re-sync it instead.
 2. **Offer it.** *"Want me to track this as a Lab insight so every session sees the current value?"* Never create without a yes.
-3. **Agree the shape.** Slug, title, render (the table above), category (top-level dashboard tab, e.g. "Marketing"), group (section within it), unit, optional `size` — and write a real `## Meaning` section (it powers recall).
+3. **Agree the shape.** Slug, title, render (the table above), the board it lands on (`--board <slug>`, or `--category` to land on the board with that title), unit — and write a real `## Meaning` section (it powers recall).
 4. **Pick the source.** HTTP endpoint (+ extract path) or a custom script. Secrets go in via `dreamcontext lab credentials set <key>` — never inline in the manifest.
 5. **Declare tweaks** the user will want to adjust (typed `enum`/`date`/`string`). Declare `range` only to CURATE its presets — the window keys work without a declaration (see well-known tweaks above).
 6. **Scaffold + first sync.** `lab create`, edit the manifest, `lab sync <slug>`, confirm the value looks right.

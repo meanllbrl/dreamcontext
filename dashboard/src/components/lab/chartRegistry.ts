@@ -12,6 +12,7 @@ import { HeatmapBody } from './HeatmapChart';
 import { FunnelBody } from './funnel/FunnelCardPreview';
 import { BreakdownBody } from './BreakdownPivot';
 import { LabAppBody } from './LabAppBody';
+import blockCatalog from '../../generated/block-catalog.json';
 
 /**
  * The chart registry — the ONE place a render type is wired up. The card and the
@@ -71,44 +72,68 @@ export interface ChartRegistryEntry {
   routed?: boolean;
   /** Card tooltip — what clicking it does. */
   openHint: string;
+  /**
+   * How the body sits in a board cell (the `insight` block). `fill`: a chart; it gets
+   * a box of definite size with no scroll and draws to it (ChartBodyProps.height).
+   * `scroll`: a table-like body (rows, a pivot, a multi-page app); it keeps its natural
+   * height and scrolls inside the cell. html/v1 and app/v1 bodies always scroll.
+   */
+  fit: 'fill' | 'scroll';
 }
 
 const DETAIL_HINT = 'Open details, history & interactive chart';
+
+/**
+ * Board columns (legacy thirds) each render wants. The table lives in the
+ * engine catalog (`RENDER_DEFAULT_SPAN`, src/lib/lab/blocks.ts), which board
+ * derivation also reads; this reads its generated mirror, so the two cannot
+ * disagree. A render the mirror lacks falls back to one column.
+ */
+const RENDER_SPAN = blockCatalog.renderDefaultSpan as Partial<Record<string, number>>;
+function spanOf(render: Render): CardSpan {
+  const span = RENDER_SPAN[render];
+  return span === 2 || span === 3 ? span : 1;
+}
 
 /** `Record<Render, …>`: a new render can't compile until it has an entry. */
 export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   number: {
     CardBody: NumberBody,
+    fit: 'fill',
     DetailBody: NumberDetailBody,
-    defaultSpan: 1,
+    defaultSpan: spanOf('number'),
     supportsWindow: true,
     emptyHint: 'No value yet.',
     openHint: DETAIL_HINT,
   },
   line: {
     CardBody: LineBody,
-    defaultSpan: 1,
+    fit: 'fill',
+    defaultSpan: spanOf('line'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
     openHint: DETAIL_HINT,
   },
   pie: {
     CardBody: PieBody,
-    defaultSpan: 1,
+    fit: 'fill',
+    defaultSpan: spanOf('pie'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
     openHint: DETAIL_HINT,
   },
   raw: {
     CardBody: RawBody,
-    defaultSpan: 1,
+    fit: 'scroll',
+    defaultSpan: spanOf('raw'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
     openHint: DETAIL_HINT,
   },
   funnel: {
     CardBody: FunnelBody,
-    defaultSpan: 2,
+    fit: 'scroll',
+    defaultSpan: spanOf('funnel'),
     supportsWindow: true,
     emptyHint: 'No funnel data yet — sync to fetch.',
     routed: true,
@@ -116,21 +141,24 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   },
   bar: {
     CardBody: BarBody,
-    defaultSpan: 1,
+    fit: 'fill',
+    defaultSpan: spanOf('bar'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
     openHint: DETAIL_HINT,
   },
   bar_compare: {
     CardBody: BarCompareBody,
-    defaultSpan: 1,
+    fit: 'fill',
+    defaultSpan: spanOf('bar_compare'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
     openHint: DETAIL_HINT,
   },
   stacked: {
     CardBody: StackedBody,
-    defaultSpan: 1,
+    fit: 'fill',
+    defaultSpan: spanOf('stacked'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
     openHint: DETAIL_HINT,
@@ -138,14 +166,16 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   table: {
     // A metric table needs room for four columns of numbers before it wraps.
     CardBody: TableBody,
-    defaultSpan: 2,
+    fit: 'scroll',
+    defaultSpan: spanOf('table'),
     supportsWindow: true,
     emptyHint: 'No series yet.',
     openHint: DETAIL_HINT,
   },
   heatmap: {
     CardBody: HeatmapBody,
-    defaultSpan: 1,
+    fit: 'fill',
+    defaultSpan: spanOf('heatmap'),
     supportsWindow: true,
     emptyHint: 'No data yet.',
     openHint: DETAIL_HINT,
@@ -153,7 +183,8 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   breakdown: {
     // A pivot needs room for its column axis before it wraps.
     CardBody: BreakdownBody,
-    defaultSpan: 2,
+    fit: 'scroll',
+    defaultSpan: spanOf('breakdown'),
     supportsWindow: true,
     emptyHint: 'No breakdown data yet — sync to fetch.',
     openHint: DETAIL_HINT,
@@ -161,7 +192,8 @@ export const CHART_REGISTRY: Record<Render, ChartRegistryEntry> = {
   app: {
     // A multi-page app body needs room to preview its entry/card page.
     CardBody: LabAppBody,
-    defaultSpan: 2,
+    fit: 'scroll',
+    defaultSpan: spanOf('app'),
     supportsWindow: true,
     emptyHint: 'No app body yet — sync to build it.',
     routed: true,

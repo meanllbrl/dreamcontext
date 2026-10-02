@@ -2,6 +2,7 @@ import {
   LabError,
   type FunnelBenchmark,
   type FunnelCacheEntry,
+  type FunnelDay,
   type FunnelDef,
   type FunnelDimension,
   type FunnelMetricFormat,
@@ -39,10 +40,17 @@ export const MAX_STEPS = 64;
 export const MAX_DIMENSIONS = 8;
 /** Per dimension: values beyond the top-N (by users) collapse into "Other". */
 export const MAX_DIMENSION_VALUES = 8;
-/** Per funnel: segment cells beyond this (after value collapse) merge into one "Other" cell. */
+/** Per funnel: segment cells beyond this (after value collapse) merge into one "Other" cell.
+ *  In `lookup` mode the tail beyond it is DROPPED (a looked-up path is never merged). */
 export const MAX_SEGMENTS = 64;
-/** Byte cap on the stored funnel-set JSON. Segments are dropped first; a set
- *  still over the cap after that is rejected. */
+/** Per funnel / segment: daily trend days kept (the newest). */
+export const MAX_DAILY_DAYS = 92;
+/** Max length of a `reason` (why a segment or metric is not measured). */
+export const MAX_REASON_CHARS = 200;
+/** Max length of a benchmark bound's `floor_source` / `target_source`. */
+export const MAX_SOURCE_CHARS = 64;
+/** Byte cap on the stored funnel-set JSON. Trim order: segment daily, then
+ *  funnel daily, then segments; a set still over the cap after that is rejected. */
 export const MAX_FUNNEL_BYTES = 400_000;
 /** Bounded per-sync snapshot trail (compact: metrics + step users only). */
 export const FUNNEL_HISTORY_MAX = 40;
@@ -97,7 +105,17 @@ function parseDimension(raw: unknown, notices: string[]): FunnelDimension | null
   return dim;
 }
 
-function parseMetric(key: string, raw: unknown): FunnelMetricValue {
+/** Trim + cap a free-text field (reason, source). Over-cap text is cut, with a notice. */
+function cleanText(raw: unknown, max: number, where: string, notices: string[]): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const text = raw.replace(/\s+/g, ' ').trim();
+  if (!text) return undefined;
+  if (text.length <= max) return text;
+  notices.push(`${where}: text over ${max} chars, cut.`);
+  return text.slice(0, max).trimEnd();
+}
+
+function parseMetric(key: string, raw: unknown, where: string, notices: string[]): FunnelMetricValue {
   if (!isRecord(raw)) return { v: toFiniteOrNull(raw), format: 'number' };
   const format = typeof raw.format === 'string' && (FORMATS as readonly string[]).includes(raw.format)
     ? (raw.format as FunnelMetricFormat)
@@ -105,8 +123,67 @@ function parseMetric(key: string, raw: unknown): FunnelMetricValue {
   const metric: FunnelMetricValue = { v: toFiniteOrNull(raw.v), format };
   if (typeof raw.label === 'string' && raw.label.trim()) metric.label = raw.label.trim();
   if ('prev' in raw) metric.prev = toFiniteOrNull(raw.prev);
-  void key;
+  if (raw.measured === false) {
+    // Not measured is not zero: an unmeasured metric carries no current value.
+    metric.measured = false;
+    metric.v = null;
+    const reason = cleanText(raw.reason, MAX_REASON_CHARS, `${where} metric "${key}" reason`, notices);
+    if (reason) metric.reason = reason;
+  }
   return metric;
+}
+
+function parseMetrics(raw: unknown, where: string, notices: string[]): Record<string, FunnelMetricValue> {
+  const metrics: Record<string, FunnelMetricValue> = {};
+  if (isRecord(raw)) {
+    for (const [key, v] of Object.entries(raw)) metrics[key] = parseMetric(key, v, where, notices);
+  }
+  return metrics;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function isIsoDay(t: string): boolean {
+  if (!ISO_DAY.test(t)) return false;
+  const ms = Date.parse(`${t}T00:00:00Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === t;
+}
+
+/** Validate a daily trend: ISO days only, known metric keys only, oldest first,
+ *  one entry per day (the later one wins), the newest MAX_DAILY_DAYS kept. */
+function parseDaily(raw: unknown, metricKeys: ReadonlySet<string>, where: string, notices: string[]): FunnelDay[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    notices.push(`${where}: daily is not an array, dropped.`);
+    return undefined;
+  }
+  const byDay = new Map<string, FunnelDay>();
+  let badDays = 0;
+  const unknown = new Set<string>();
+  for (const d of raw) {
+    const t = isRecord(d) && typeof d.t === 'string' ? d.t.trim() : '';
+    if (!isRecord(d) || !isIsoDay(t) || !isRecord(d.m)) {
+      badDays += 1;
+      continue;
+    }
+    const m: Record<string, number | null> = {};
+    for (const [k, v] of Object.entries(d.m)) {
+      if (!metricKeys.has(k)) {
+        unknown.add(k);
+        continue;
+      }
+      m[k] = toFiniteOrNull(v);
+    }
+    byDay.set(t, { t, m });
+  }
+  if (badDays > 0) notices.push(`${where}: ${badDays} daily entr${badDays === 1 ? 'y' : 'ies'} without a YYYY-MM-DD \`t\` and an \`m\` object dropped.`);
+  if (unknown.size > 0) notices.push(`${where}: daily metric key(s) ${[...unknown].map((k) => `"${k}"`).join(', ')} not in metrics, dropped.`);
+  let days = [...byDay.values()].sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+  if (days.length > MAX_DAILY_DAYS) {
+    notices.push(`${where}: ${days.length} daily entries, kept the newest ${MAX_DAILY_DAYS}.`);
+    days = days.slice(days.length - MAX_DAILY_DAYS);
+  }
+  return days.length > 0 ? days : undefined;
 }
 
 function parseStep(raw: unknown): FunnelStep | null {
@@ -125,11 +202,22 @@ function parseStep(raw: unknown): FunnelStep | null {
   return step;
 }
 
-function parseSegment(raw: unknown, stepKeys: Set<string>): FunnelSegment | null {
+function segmentKey(dims: Record<string, string>): string {
+  return Object.keys(dims).sort().map((k) => `${k}=${dims[k]}`).join('|');
+}
+
+function parseSegment(
+  raw: unknown,
+  stepKeys: Set<string>,
+  funnelMetricKeys: ReadonlySet<string>,
+  funnelId: string,
+  notices: string[],
+): FunnelSegment | null {
   if (!isRecord(raw) || !isRecord(raw.dims)) return null;
   const dims: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw.dims)) dims[k] = String(v);
   if (Object.keys(dims).length === 0) return null;
+  const where = `funnel ${funnelId} segment ${segmentKey(dims)}`;
   const steps: { key: string; users: number }[] = [];
   if (Array.isArray(raw.steps)) {
     for (const s of raw.steps) {
@@ -140,19 +228,40 @@ function parseSegment(raw: unknown, stepKeys: Set<string>): FunnelSegment | null
     }
   }
   const users = toFiniteOrNull(raw.users);
-  return { dims, users: users === null ? (steps[0]?.users ?? 0) : Math.max(0, users), steps };
+  const seg: FunnelSegment = { dims, users: users === null ? (steps[0]?.users ?? 0) : Math.max(0, users), steps };
+  if (raw.measured === false) {
+    seg.measured = false;
+    const reason = cleanText(raw.reason, MAX_REASON_CHARS, `${where} reason`, notices);
+    if (reason) seg.reason = reason;
+  }
+  const metrics = parseMetrics(raw.metrics, where, notices);
+  if (Object.keys(metrics).length > 0) seg.metrics = metrics;
+  const benchmarks = parseBenchmarks(raw.benchmarks, where, notices);
+  if (benchmarks) seg.benchmarks = benchmarks;
+  const daily = parseDaily(raw.daily, new Set([...funnelMetricKeys, ...Object.keys(metrics)]), where, notices);
+  if (daily) seg.daily = daily;
+  return seg;
 }
 
-/** Merge segment cells that share identical dims (sums users + per-step users). */
+const isMeasured = (seg: FunnelSegment): boolean => seg.measured !== false;
+
+/** Merge segment cells that share identical dims (sums users + per-step users).
+ *  cells mode only. An unmeasured cell never adds to a sum: it yields to any
+ *  measured cell with the same dims. A true merge drops the per-cell metrics,
+ *  bands and daily (rates cannot be summed). */
 function mergeSegments(segments: FunnelSegment[]): FunnelSegment[] {
   const byDims = new Map<string, FunnelSegment>();
   for (const seg of segments) {
-    const key = Object.keys(seg.dims).sort().map((k) => `${k}=${seg.dims[k]}`).join('|');
+    const key = segmentKey(seg.dims);
     const prior = byDims.get(key);
-    if (!prior) {
-      byDims.set(key, { dims: { ...seg.dims }, users: seg.users, steps: seg.steps.map((s) => ({ ...s })) });
+    if (!prior || (!isMeasured(prior) && isMeasured(seg))) {
+      byDims.set(key, { ...seg, dims: { ...seg.dims }, steps: seg.steps.map((s) => ({ ...s })) });
       continue;
     }
+    if (!isMeasured(seg)) continue;
+    delete prior.metrics;
+    delete prior.benchmarks;
+    delete prior.daily;
     prior.users += seg.users;
     const byStep = new Map(prior.steps.map((s) => [s.key, s]));
     for (const s of seg.steps) {
@@ -162,6 +271,15 @@ function mergeSegments(segments: FunnelSegment[]): FunnelSegment[] {
     }
   }
   return [...byDims.values()];
+}
+
+/** A folded cell speaks for "Other", not for its own value: its rates go. */
+function asOther(seg: FunnelSegment, dims: Record<string, string>): FunnelSegment {
+  const out: FunnelSegment = { ...seg, dims };
+  delete out.metrics;
+  delete out.benchmarks;
+  delete out.daily;
+  return out;
 }
 
 /** Collapse over-cap dimension values to "Other", then over-cap cells to one "Other" cell. */
@@ -190,7 +308,7 @@ function capSegments(
     out = out.map((seg) => {
       const v = seg.dims[dim.key];
       if (v === undefined || kept.has(v)) return seg;
-      return { ...seg, dims: { ...seg.dims, [dim.key]: OTHER_VALUE } };
+      return asOther(seg, { ...seg.dims, [dim.key]: OTHER_VALUE });
     });
     out = mergeSegments(out);
     notices.push(`funnel ${funnelId}: dimension "${dim.key}" had ${usersByValue.size} values — kept top ${MAX_DIMENSION_VALUES}, collapsed ${collapsed} into "${OTHER_VALUE}".`);
@@ -205,13 +323,44 @@ function capSegments(
     for (const k of Object.keys(tail[0].dims)) otherDims[k] = OTHER_VALUE;
     notices.push(`funnel ${funnelId}: ${out.length} segment cells — kept top ${MAX_SEGMENTS - 1}, merged ${tail.length} into "${OTHER_VALUE}".`);
     // One final merge so a kept all-Other cell and the merged tail can't coexist.
-    out = mergeSegments([...kept, ...tail.map((seg) => ({ ...seg, dims: otherDims }))]);
+    out = mergeSegments([...kept, ...tail.map((seg) => asOther(seg, otherDims))]);
   }
 
   return out;
 }
 
-function parseFunnel(raw: unknown, index: number, dimensions: FunnelDimension[], notices: string[]): FunnelDef | null {
+/** lookup mode: every segment is its own measured path for an exact selection.
+ *  Looked up, never summed: no value collapse into "Other", no merge. A repeated
+ *  selection keeps its first occurrence; the tail past MAX_SEGMENTS (payload
+ *  order, so the script decides what matters) is dropped. Both with a notice. */
+function lookupSegments(funnelId: string, segments: FunnelSegment[], notices: string[]): FunnelSegment[] {
+  const seen = new Set<string>();
+  const out: FunnelSegment[] = [];
+  let dupes = 0;
+  for (const seg of segments) {
+    const key = segmentKey(seg.dims);
+    if (seen.has(key)) {
+      dupes += 1;
+      continue;
+    }
+    seen.add(key);
+    out.push(seg);
+  }
+  if (dupes > 0) notices.push(`funnel ${funnelId}: ${dupes} lookup segment(s) repeat an earlier selection, later occurrence dropped.`);
+  if (out.length > MAX_SEGMENTS) {
+    notices.push(`funnel ${funnelId}: ${out.length} lookup segments, kept the first ${MAX_SEGMENTS}, dropped ${out.length - MAX_SEGMENTS}.`);
+    out.length = MAX_SEGMENTS;
+  }
+  return out;
+}
+
+function parseFunnel(
+  raw: unknown,
+  index: number,
+  dimensions: FunnelDimension[],
+  mode: 'cells' | 'lookup',
+  notices: string[],
+): FunnelDef | null {
   if (!isRecord(raw)) {
     notices.push(`funnels[${index}] is not an object — skipped.`);
     return null;
@@ -249,10 +398,8 @@ function parseFunnel(raw: unknown, index: number, dimensions: FunnelDimension[],
     steps.push(last);
   }
 
-  const metrics: Record<string, FunnelMetricValue> = {};
-  if (isRecord(raw.metrics)) {
-    for (const [key, v] of Object.entries(raw.metrics)) metrics[key] = parseMetric(key, v);
-  }
+  const metrics = parseMetrics(raw.metrics, `funnel ${id}`, notices);
+  const metricKeys = new Set(Object.keys(metrics));
 
   const meta: Record<string, string> = {};
   if (isRecord(raw.meta)) {
@@ -263,20 +410,26 @@ function parseFunnel(raw: unknown, index: number, dimensions: FunnelDimension[],
 
   const funnel: FunnelDef = { id, name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : id, meta, metrics, steps };
 
+  const daily = parseDaily(raw.daily, metricKeys, `funnel ${id}`, notices);
+  if (daily) funnel.daily = daily;
+
   if (Array.isArray(raw.segments) && raw.segments.length > 0) {
     const stepKeys = new Set(steps.map((s) => s.key));
     const segments = raw.segments
-      .map((s) => parseSegment(s, stepKeys))
+      .map((s) => parseSegment(s, stepKeys, metricKeys, id, notices))
       .filter((s): s is FunnelSegment => s !== null);
     if (segments.length > 0) {
-      funnel.segments = capSegments(id, mergeSegments(segments), dimensions, notices);
+      funnel.segments = mode === 'lookup'
+        ? lookupSegments(id, segments, notices)
+        : capSegments(id, mergeSegments(segments), dimensions, notices);
     }
   }
 
   return funnel;
 }
 
-function parseBenchmarks(raw: unknown): Record<string, FunnelBenchmark> | undefined {
+/** A band is kept when it says anything: a bound, or which direction is good. */
+function parseBenchmarks(raw: unknown, where: string, notices: string[]): Record<string, FunnelBenchmark> | undefined {
   if (!isRecord(raw)) return undefined;
   const out: Record<string, FunnelBenchmark> = {};
   for (const [key, v] of Object.entries(raw)) {
@@ -286,7 +439,13 @@ function parseBenchmarks(raw: unknown): Record<string, FunnelBenchmark> | undefi
     const target = toFiniteOrNull(v.target);
     if (floor !== null) bench.floor = floor;
     if (target !== null) bench.target = target;
-    if (bench.floor !== undefined || bench.target !== undefined) out[key] = bench;
+    const floorSource = cleanText(v.floor_source, MAX_SOURCE_CHARS, `${where} benchmark "${key}" floor_source`, notices);
+    if (floorSource && floor !== null) bench.floor_source = floorSource;
+    const targetSource = cleanText(v.target_source, MAX_SOURCE_CHARS, `${where} benchmark "${key}" target_source`, notices);
+    if (targetSource && target !== null) bench.target_source = targetSource;
+    if (v.better === 'higher' || v.better === 'lower') bench.better = v.better;
+    else if (v.better !== undefined) notices.push(`${where} benchmark "${key}": unknown better "${String(v.better)}", treated as higher.`);
+    if (bench.floor !== undefined || bench.target !== undefined || bench.better !== undefined) out[key] = bench;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -306,6 +465,10 @@ export function parseFunnelSet(raw: unknown): ParsedFunnelSet {
   }
 
   const notices: string[] = [];
+
+  let mode: 'cells' | 'lookup' = 'cells';
+  if (raw.segment_mode === 'lookup' || raw.segment_mode === 'cells') mode = raw.segment_mode;
+  else if (raw.segment_mode !== undefined) notices.push(`unknown segment_mode "${String(raw.segment_mode)}", treated as cells.`);
 
   const dimensions: FunnelDimension[] = [];
   if (Array.isArray(raw.dimensions)) {
@@ -330,7 +493,7 @@ export function parseFunnelSet(raw: unknown): ParsedFunnelSet {
   const funnels: FunnelDef[] = [];
   const seenIds = new Set<string>();
   for (let i = 0; i < rawFunnels.length; i++) {
-    const funnel = parseFunnel(rawFunnels[i], i, dimensions, notices);
+    const funnel = parseFunnel(rawFunnels[i], i, dimensions, mode, notices);
     if (!funnel) continue;
     if (seenIds.has(funnel.id)) {
       notices.push(`duplicate funnel id "${funnel.id}" — later occurrence dropped.`);
@@ -344,21 +507,33 @@ export function parseFunnelSet(raw: unknown): ParsedFunnelSet {
   if (typeof raw.primary === 'string' && raw.primary.trim()) set.primary = raw.primary.trim();
   const lowSample = toFiniteOrNull(raw.low_sample_threshold);
   if (lowSample !== null && lowSample >= 0) set.low_sample_threshold = lowSample;
-  const benchmarks = parseBenchmarks(raw.benchmarks);
+  const benchmarks = parseBenchmarks(raw.benchmarks, 'set', notices);
   if (benchmarks) set.benchmarks = benchmarks;
+  if (raw.segment_mode !== undefined && mode === raw.segment_mode) set.segment_mode = mode;
 
-  // ── Byte cap: drop segments first (largest funnels first), then reject. ──
-  if (JSON.stringify(set).length > MAX_FUNNEL_BYTES) {
-    const withSegments = set.funnels
-      .filter((f) => f.segments && f.segments.length > 0)
-      .sort((a, b) => JSON.stringify(b.segments).length - JSON.stringify(a.segments).length);
-    for (const funnel of withSegments) {
-      delete funnel.segments;
-      notices.push(`funnel ${funnel.id}: segments dropped to fit the ${MAX_FUNNEL_BYTES}-byte cache cap.`);
-      if (JSON.stringify(set).length <= MAX_FUNNEL_BYTES) break;
+  // ── Byte cap, cheapest detail first (largest funnel first at each stage):
+  // segment daily, then funnel daily, then segments; still over = reject. ──
+  const over = (): boolean => JSON.stringify(set).length > MAX_FUNNEL_BYTES;
+  const bySize = (size: (f: FunnelDef) => number) =>
+    set.funnels.filter((f) => size(f) > 0).sort((a, b) => size(b) - size(a));
+  const stages: { size: (f: FunnelDef) => number; drop: (f: FunnelDef) => void; what: string }[] = [
+    {
+      size: (f) => (f.segments ?? []).reduce((n, seg) => n + (seg.daily ? JSON.stringify(seg.daily).length : 0), 0),
+      drop: (f) => { for (const seg of f.segments ?? []) delete seg.daily; },
+      what: 'segment daily trends',
+    },
+    { size: (f) => (f.daily ? JSON.stringify(f.daily).length : 0), drop: (f) => { delete f.daily; }, what: 'daily trend' },
+    { size: (f) => (f.segments?.length ? JSON.stringify(f.segments).length : 0), drop: (f) => { delete f.segments; }, what: 'segments' },
+  ];
+  for (const stage of stages) {
+    if (!over()) break;
+    for (const funnel of bySize(stage.size)) {
+      stage.drop(funnel);
+      notices.push(`funnel ${funnel.id}: ${stage.what} dropped to fit the ${MAX_FUNNEL_BYTES}-byte cache cap.`);
+      if (!over()) break;
     }
   }
-  if (JSON.stringify(set).length > MAX_FUNNEL_BYTES) {
+  if (over()) {
     throw new LabError(`Funnel payload exceeds the ${MAX_FUNNEL_BYTES}-byte cap even without segments — return fewer funnels/steps (Lab stores insights, not raw dumps).`);
   }
 

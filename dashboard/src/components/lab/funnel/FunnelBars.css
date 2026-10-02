@@ -7,7 +7,7 @@
 
 .funnel-bars-empty {
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   padding: var(--space-4) 0;
 }
 
@@ -23,8 +23,27 @@
   min-height: 18px;
 }
 
+/* Board block: the rows share the height the block gives them (grid rows are set
+   inline, minmax(0, --space-8) each: up to 32px, shrinking toward 0 in a short
+   cell) and give up height before they would ever scroll. */
+.funnel-bars--fill {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  align-content: start;
+}
+
+.funnel-bars--fill .funnel-bars-row {
+  min-height: 0;
+  overflow: hidden;
+  /* A shrunken row keeps its descenders: the line box is only as tall as the glyphs. */
+  line-height: 1.25;
+}
+
 .funnel-bars-label {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -47,7 +66,7 @@
 }
 
 .funnel-bars-value {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
   white-space: nowrap;
@@ -55,4 +74,22 @@
 
 .funnel-bars-pct {
   color: var(--color-text-tertiary);
+}
+
+/* The step-to-step conversion (board block): its own labelled marker, set apart from the
+   share-of-top percent so the two numbers are never read for each other. */
+.funnel-bars-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+.funnel-bars-step-icon {
+  flex: none;
+}
+
+.funnel-bars-step--spacer {
+  visibility: hidden;
 }

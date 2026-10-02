@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
@@ -15,12 +15,14 @@ import {
   type Agg,
   type Binding,
   type ExtractConfig,
+  type HttpFreshnessProbe,
   type InsightCache,
   type InsightManifest,
   type InsightHeight,
   type InsightSize,
   type InsightSource,
   type InsightWidth,
+  type RefreshConfig,
   type Render,
   type TweakDecl,
 } from './types.js';
@@ -53,6 +55,41 @@ export function cachePath(contextRoot: string, slug: string): string {
 /** Kebab-case, path-safe insight slug (same shape objectives/tasks use). */
 export function isSafeInsightSlug(slug: string): boolean {
   return /^[a-z0-9][a-z0-9-]*$/.test(slug) && !slug.includes('--') && !slug.endsWith('-');
+}
+
+/** Insight slugs `lab create` refuses: they collide with `/lab/<x>` dashboard
+ *  routes and `/api/lab/<x>` server routes registered before `/api/lab/:slug`. */
+export const RESERVED_INSIGHT_SLUGS = ['b', 'boards', 'blocks', 'caches', 'sync', 'sync-jobs', 'credentials', 'reports'] as const;
+
+export type LabFileKind = 'insight' | 'cache' | 'board' | 'block';
+
+const LAB_FILE_LOCATIONS: Record<LabFileKind, { dir: string; ext: string }> = {
+  insight: { dir: 'insights', ext: '.md' },
+  cache: { dir: 'cache', ext: '.json' },
+  board: { dir: 'boards', ext: '.md' },
+  block: { dir: 'blocks', ext: '.md' },
+};
+
+/**
+ * The ONE gate every lab file read goes through: the slug must pass
+ * `isSafeInsightSlug` before a path is built, the file must be a regular file
+ * (a symlink is refused, never followed), and its realpath must be exactly
+ * `<realpath(contextRoot)>/lab/<dir>/<slug><ext>` (so a symlinked `lab/` or
+ * `lab/cache/` cannot pull data from outside the vault either). Returns the
+ * contained path, or null for anything absent, unsafe or escaping.
+ */
+export function resolveContainedLabFile(contextRoot: string, kind: LabFileKind, slug: string): string | null {
+  if (typeof slug !== 'string' || !isSafeInsightSlug(slug)) return null;
+  const { dir, ext } = LAB_FILE_LOCATIONS[kind];
+  const path = join(labDir(contextRoot), dir, `${slug}${ext}`);
+  try {
+    const st = lstatSync(path);
+    if (st.isSymbolicLink() || !st.isFile()) return null;
+    const expected = join(realpathSync(contextRoot), 'lab', dir, `${slug}${ext}`);
+    return realpathSync(path) === expected ? path : null;
+  } catch {
+    return null;
+  }
 }
 
 function strOrNull(v: unknown): string | null {
@@ -170,6 +207,42 @@ export function parseSource(v: unknown): InsightSource | null {
   return null;
 }
 
+/**
+ * LENIENT refresh parse: `ttl_minutes` (default 1440) plus the optional http
+ * `freshness` probe. A malformed probe block degrades to no probe (TTL-only),
+ * never a throw. `extract` is a marker path string, or `{ marker, asOf?, note? }`.
+ */
+export function parseRefresh(v: unknown): RefreshConfig {
+  const r = asRecord(v);
+  const ttlRaw = r ? Number(r.ttl_minutes) : NaN;
+  const out: RefreshConfig = { ttl_minutes: Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : DEFAULT_TTL_MINUTES };
+  const f = r ? asRecord(r.freshness) : null;
+  if (!f) return out;
+  const url = typeof f.url === 'string' ? f.url.trim() : '';
+  const ex = asRecord(f.extract);
+  const marker = typeof f.extract === 'string' ? f.extract.trim() : typeof ex?.marker === 'string' ? ex.marker.trim() : '';
+  if (!url || !marker) return out;
+  const rawHeaders = asRecord(f.headers);
+  let headers: Record<string, string> | null = null;
+  if (rawHeaders) {
+    headers = {};
+    for (const [k, val] of Object.entries(rawHeaders)) headers[k] = String(val);
+  }
+  const probe: HttpFreshnessProbe = {
+    url,
+    method: f.method === 'POST' ? 'POST' : 'GET',
+    headers,
+    body: typeof f.body === 'string' ? f.body : null,
+    extract: {
+      marker,
+      asOf: typeof ex?.asOf === 'string' && ex.asOf.trim() ? ex.asOf.trim() : null,
+      note: typeof ex?.note === 'string' && ex.note.trim() ? ex.note.trim() : null,
+    },
+  };
+  out.freshness = probe;
+  return out;
+}
+
 function toStringArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
   if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter(Boolean);
@@ -179,8 +252,6 @@ function toStringArray(v: unknown): string[] {
 export function readInsightFile(filePath: string): InsightManifest {
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
   const slug = basename(filePath, '.md');
-  const refresh = asRecord(data.refresh);
-  const ttlRaw = refresh ? Number(refresh.ttl_minutes) : NaN;
   return {
     slug,
     title: typeof data.title === 'string' && data.title.trim() ? data.title : slug,
@@ -192,7 +263,7 @@ export function readInsightFile(filePath: string): InsightManifest {
     width: toWidth(data.width),
     height: toHeight(data.height),
     source: parseSource(data.source),
-    refresh: { ttl_minutes: Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : DEFAULT_TTL_MINUTES },
+    refresh: parseRefresh(data.refresh),
     tweaks: parseTweaks(data.tweaks),
     binding: parseBinding(data.binding),
     credentials_used: toStringArray(data.credentials_used),
@@ -209,8 +280,11 @@ export function listInsights(contextRoot: string): InsightManifest[] {
   const files = fg.sync('*.md', { cwd: dir, absolute: true }).sort();
   const out: InsightManifest[] = [];
   for (const file of files) {
+    // Unsafe names, symlinks and anything escaping lab/insights/ are skipped.
+    const contained = resolveContainedLabFile(contextRoot, 'insight', basename(file, '.md'));
+    if (!contained) continue;
     try {
-      out.push(readInsightFile(file));
+      out.push(readInsightFile(contained));
     } catch {
       // skip a manifest that won't even parse as frontmatter
     }
@@ -219,8 +293,8 @@ export function listInsights(contextRoot: string): InsightManifest[] {
 }
 
 export function getInsight(contextRoot: string, slug: string): InsightManifest | null {
-  const path = insightPath(contextRoot, slug);
-  if (!isSafeInsightSlug(slug) || !existsSync(path)) return null;
+  const path = resolveContainedLabFile(contextRoot, 'insight', slug);
+  if (!path) return null;
   try {
     return readInsightFile(path);
   } catch {
@@ -231,8 +305,8 @@ export function getInsight(contextRoot: string, slug: string): InsightManifest |
 // ─── Cache read/write (atomic) ──────────────────────────────────────────────
 
 export function readCache(contextRoot: string, slug: string): InsightCache | null {
-  const path = cachePath(contextRoot, slug);
-  if (!existsSync(path)) return null;
+  const path = resolveContainedLabFile(contextRoot, 'cache', slug);
+  if (!path) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'));
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
@@ -494,6 +568,9 @@ export interface CreateInsightInput {
 export function validateManifestForWrite(input: CreateInsightInput): void {
   if (!isSafeInsightSlug(input.slug.trim())) {
     throw new LabError(`Invalid insight slug "${input.slug}" — use kebab-case (e.g. weekly-active-users).`);
+  }
+  if ((RESERVED_INSIGHT_SLUGS as readonly string[]).includes(input.slug.trim())) {
+    throw new LabError(`Insight slug "${input.slug}" is reserved (${RESERVED_INSIGHT_SLUGS.join(', ')}); pick another.`);
   }
   if (!input.title || !input.title.trim()) {
     throw new LabError('An insight title is required.');

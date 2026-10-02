@@ -1,0 +1,497 @@
+/*
+ * Funnel explorer: the breakdown chip bar, its lane box, the trend block's
+ * metric switch and the notes both blocks share. Tokens only (light and dark
+ * render one layout); the type ladder is 12 / 14 at 400 / 600.
+ */
+
+/* ─── Shared explorer notes ──────────────────────────────────────────────── */
+
+.lab-explorer-note {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lab-explorer-state {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 0;
+  padding: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.lab-explorer-state-title {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ─── Breakdown chips ────────────────────────────────────────────────────── */
+
+/*
+ * The chip header is the quiet part of the explorer: it frames the page, it is not the page.
+ * Three levels: dimension labels tertiary (12, muted, regular), chips secondary (12, secondary
+ * ink, hairline), the pressed chip primary (accent ink, semibold). Groups are separated by
+ * whitespace (24 between groups, 8 between chips, 12 between wrapped rows), never by rules.
+ *
+ * "Muted" here is --color-text-placeholder: the one text token that is lighter than secondary
+ * in light (#757575, AA on white) and dimmer in dark (6.3:1). --color-text-tertiary is DARKER
+ * than secondary in light (#474747, a chip-text token), so it would invert the ladder.
+ */
+.lab-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.lab-breakdown-axes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: var(--space-6);
+  row-gap: var(--space-3);
+  min-width: 0;
+}
+
+.lab-breakdown-dim {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lab-breakdown-dim-label {
+  flex: none;
+  color: var(--color-text-placeholder);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  /* One chip tall, so the label sits on the first chip row's centre line. */
+  line-height: var(--space-5);
+  white-space: nowrap;
+}
+
+.lab-breakdown-chips {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
+  min-width: 0;
+}
+
+.lab-breakdown-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-5);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.lab-breakdown-chip-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-breakdown-chip-count {
+  color: var(--color-text-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-breakdown-chip:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.lab-breakdown-chip:focus-visible,
+.lab-breakdown-pin:focus-visible,
+.lab-breakdown-clear:focus-visible,
+.lab-breakdown-lane-remove:focus-visible,
+.lab-trend-switch-option:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.lab-breakdown-chip[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  /* The tint laid over the canvas (not over whatever card is behind), so the text contrast is
+     fixed: accent ink on it reads >= 4.5:1 in both themes (--color-accent-text is white, for
+     text on a SOLID accent fill; on this tint it was 1.15:1 in light). */
+  background: linear-gradient(var(--color-accent-soft), var(--color-accent-soft)), var(--color-bg);
+  color: var(--color-accent-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-breakdown-chip[aria-pressed='true'] .lab-breakdown-chip-count {
+  color: var(--color-accent-ink);
+}
+
+/* Not measured is not zero: a dashed, quiet chip that still takes focus (its reason shows). */
+.lab-breakdown-chip[aria-disabled='true'] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-placeholder);
+  cursor: not-allowed;
+}
+
+.lab-breakdown-chip[aria-disabled='true']:hover {
+  border-color: var(--color-border);
+  background: transparent;
+}
+
+.lab-breakdown-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.lab-breakdown-tip {
+  max-width: calc(var(--space-20) * 3);
+}
+
+.lab-breakdown-tip-text {
+  color: var(--color-text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* ─── Lanes ──────────────────────────────────────────────────────────────── */
+
+/* The lanes row: its own group, set apart by the block's 12px gap (no rule above it). */
+.lab-breakdown-lanes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-3);
+  min-width: 0;
+}
+
+.lab-breakdown-lane-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
+  min-width: 0;
+}
+
+.lab-breakdown-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+}
+
+.lab-breakdown-lane-num {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.lab-breakdown-lane-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-breakdown-lane-remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-placeholder);
+  cursor: pointer;
+}
+
+.lab-breakdown-lane-remove:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.lab-breakdown-pin,
+.lab-breakdown-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--color-border-hover);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lab-breakdown-pin span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-breakdown-pin:hover:not(:disabled),
+.lab-breakdown-clear:hover {
+  border-color: var(--color-accent);
+  /* Ink, not --color-accent-text: that is white, for text on a solid accent fill. */
+  color: var(--color-accent-ink);
+}
+
+.lab-breakdown-clear {
+  border-style: solid;
+  border-color: transparent;
+}
+
+.lab-breakdown-pin:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/*
+ * The lanes hint is tertiary and optional: inline only on a wide card (the large preset) or when
+ * it explains a disabled pin (four lanes); elsewhere it is the pin button's tooltip.
+ */
+.lab-breakdown-hint {
+  display: none;
+  min-width: 0;
+  color: var(--color-text-placeholder);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.lab-breakdown-hint[data-hint='always'] {
+  display: inline;
+}
+
+@container (min-width: 1100px) {
+  .lab-breakdown-hint {
+    display: inline;
+  }
+}
+
+/* ─── Compact form (the chip rows would be cut): one select per dimension ─── */
+
+.lab-breakdown-compact-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
+  min-width: 0;
+}
+
+.lab-breakdown-select {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lab-breakdown-select select,
+.lab-trend-select {
+  min-width: 0;
+  max-width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.lab-breakdown-select select:hover,
+.lab-trend-select:hover {
+  border-color: var(--color-border-hover);
+}
+
+.lab-breakdown-select select:focus-visible,
+.lab-trend-select:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* A chosen value reads like the active chip: accent ink on the tint. */
+.lab-breakdown-select[data-active='true'] select {
+  border-color: var(--color-accent);
+  background: linear-gradient(var(--color-accent-soft), var(--color-accent-soft)), var(--color-bg);
+  color: var(--color-accent-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-breakdown-select option,
+.lab-trend-select option {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-breakdown--compact .lab-breakdown-lane {
+  padding-right: 0;
+}
+
+.lab-breakdown-pin--icon {
+  justify-content: center;
+  width: var(--space-6);
+  padding: 0;
+}
+
+/* A narrow cell stacks each dimension's label over its chips. */
+@container (max-width: 420px) {
+  .lab-breakdown-dim {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .lab-breakdown-hint[data-hint='always'] {
+    display: none;
+  }
+}
+
+/* ─── Trend ──────────────────────────────────────────────────────────────── */
+
+/*
+ * Trend hierarchy: the line and its end value are the content; the metric switch is secondary
+ * (12, secondary ink, the chosen metric semibold); axis ticks and legend are tertiary (muted).
+ */
+.lab-trend {
+  --viz-tick: var(--color-text-placeholder);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-trend .lab-chart-legend-item[aria-pressed='true'] {
+  color: var(--color-text-placeholder);
+}
+
+/* A hidden series reads quieter still (the chart's own rule uses the darker tertiary token). */
+.lab-trend .lab-chart-legend-item[aria-pressed='false'] {
+  color: var(--color-text-placeholder);
+  opacity: 0.6;
+}
+
+.lab-trend .lab-chart-legend-item[aria-pressed='true']:hover {
+  color: var(--color-text);
+}
+
+.lab-trend-switch {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: var(--space-1);
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+
+.lab-trend-switch-option {
+  /* Never shrinks: a label that does not fit overflows the switch, and the block measures that
+     and swaps in the compact select (a truncated metric name is never drawn). */
+  flex: none;
+  min-width: 0;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lab-trend-switch-option:hover {
+  color: var(--color-text);
+}
+
+.lab-trend-switch-option[aria-checked='true'] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: var(--shadow-sm);
+}
+
+.lab-trend-switch-option[data-measured='false'] {
+  color: var(--color-text-placeholder);
+  text-decoration: line-through dotted;
+}
+
+.lab-trend-chart {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}

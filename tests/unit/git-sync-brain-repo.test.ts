@@ -11,6 +11,7 @@ import {
   resolveBrainSyncEnabled,
   resolveBrainSyncToken,
   buildBrainGitignore,
+  FULL_REPO_LOCAL_GITIGNORE_ENTRIES,
   acquireBrainLock,
   releaseBrainLock,
   healStaleBrainConfig,
@@ -46,6 +47,14 @@ describe('git-sync/brain-repo — buildBrainGitignore', () => {
     expect(gi).toContain('state/.secrets.json');
     expect(gi).toContain('state/.brain-merge/');
     expect(gi).toContain('state/.brain-local.json');
+  });
+
+  it('keeps Lab freshness checks and board staging dirs machine-local, in both ignore lists', () => {
+    const lines = buildBrainGitignore().split('\n').map((l) => l.trim());
+    expect(lines).toContain('state/.lab-freshness.json');
+    expect(lines).toContain('lab/.boards-staging-*/');
+    expect(FULL_REPO_LOCAL_GITIGNORE_ENTRIES).toContain('_dream_context/state/.lab-freshness.json');
+    expect(FULL_REPO_LOCAL_GITIGNORE_ENTRIES).toContain('_dream_context/lab/.boards-staging-*/');
   });
 });
 

@@ -1,0 +1,46 @@
+/*
+ * The pivot table (BreakdownPivot.tsx). Tokens only.
+ *
+ * The table's wrapper is its scroll box and the header cells stick to its top,
+ * wherever the pivot is drawn. `--fit` (the board `pivot` block) makes the view a
+ * column that fills its host: the filter chips and the total line stay put, the
+ * table wrapper takes the room between them and is the only thing that scrolls.
+ */
+
+.lab-pivot-head th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-tertiary);
+}
+
+.lab-pivot-row > td {
+  border-top: 1px solid var(--color-border);
+}
+
+.lab-pivot-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lab-pivot--fit {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lab-pivot--fit > .lab-pivot-chips,
+.lab-pivot--fit > .lab-pivot-foot {
+  flex: none;
+}
+
+.lab-pivot--fit > .lab-pivot-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+}

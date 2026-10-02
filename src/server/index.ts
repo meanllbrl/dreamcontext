@@ -88,11 +88,19 @@ import {
   handleLabBinding,
   handleLabCredentialsGet,
   handleLabCredentialsSet,
-  handleLabReportsList,
-  handleLabReportShow,
-  handleLabReportCommentaryGet,
-  handleLabReportCommentaryStart,
 } from './routes/lab.js';
+import {
+  handleLabBoardCreate,
+  handleLabBoardDelete,
+  handleLabBoardPut,
+  handleLabBoardShow,
+  handleLabBoardsList,
+  handleLabBlockPut,
+  handleLabBlockShow,
+  handleLabBlocksList,
+  handleLabCaches,
+} from './routes/lab-boards.js';
+import { sweepBoardStaging } from '../lib/lab/boards.js';
 import {
   handleAutomationsList,
   handleAutomationsRunStatus,
@@ -608,13 +616,17 @@ export function buildRouter(): Router {
   router.get('/api/lab/sync-jobs/current', handleLabSyncJobCurrent);
   router.get('/api/lab/credentials', handleLabCredentialsGet);
   router.post('/api/lab/credentials', handleLabCredentialsSet);
-  // Reports before `/api/lab/:slug` — first match wins within a method, and
-  // `/api/lab/reports` must never be read as an insight named "reports".
-  router.get('/api/lab/reports', handleLabReportsList);
-  // Commentary before the bare :slug reads — first match wins within a method.
-  router.get('/api/lab/reports/:slug/commentary', handleLabReportCommentaryGet);
-  router.post('/api/lab/reports/:slug/commentary', handleLabReportCommentaryStart);
-  router.get('/api/lab/reports/:slug', handleLabReportShow);
+  // Boards, the bulk cache read and the block library (Insights v2). Their
+  // first segments are reserved insight slugs; they MUST precede /api/lab/:slug.
+  router.get('/api/lab/boards', handleLabBoardsList);
+  router.post('/api/lab/boards', handleLabBoardCreate);
+  router.get('/api/lab/boards/:slug', handleLabBoardShow);
+  router.put('/api/lab/boards/:slug', handleLabBoardPut);
+  router.delete('/api/lab/boards/:slug', handleLabBoardDelete);
+  router.get('/api/lab/caches', handleLabCaches);
+  router.get('/api/lab/blocks', handleLabBlocksList);
+  router.get('/api/lab/blocks/:slug', handleLabBlockShow);
+  router.put('/api/lab/blocks/:slug', handleLabBlockPut);
   router.get('/api/lab/:slug', handleLabShow);
   router.patch('/api/lab/:slug/tweaks', handleLabTweaks);
   router.patch('/api/lab/:slug/binding', handleLabBinding);
@@ -867,6 +879,16 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   const { port, contextRoot, open, host = '127.0.0.1' } = options;
   const router = buildRouter();
   const dashboardDir = getDashboardDir();
+
+  // A crashed board materialize can leave `lab/.boards-staging-<pid>-*`
+  // behind; remove those whose pid is dead (never waits on the board lock).
+  if (contextRoot) {
+    try {
+      sweepBoardStaging(contextRoot);
+    } catch (err) {
+      console.warn(`[lab] board staging sweep failed: ${(err as Error).message}`);
+    }
+  }
 
   // Network exposure (--host beyond loopback) is opt-in; when it's on, gate
   // every non-loopback request behind a per-process token so LAN neighbors

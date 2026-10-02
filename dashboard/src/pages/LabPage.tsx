@@ -1,18 +1,19 @@
-import { useEffect, useState } from 'react';
-import { LabBoard } from '../components/lab/LabBoard';
+import { useCallback, useEffect, useState } from 'react';
+import { BoardPage } from '../components/lab/board/BoardPage';
 import { FunnelDetailPage } from '../components/lab/funnel/FunnelDetailPage';
 import { LabAppPage } from '../components/lab/LabAppPage';
 import { LabRoutedInsight } from '../components/lab/LabRoutedInsight';
-import { ReportPage } from '../components/lab/reports/ReportPage';
 import {
   clearLabPath,
   flushBufferedRoute,
+  pushLabBoardPath,
   pushLabPath,
   setLabRouteWritable,
   useLabRoute,
 } from '../components/lab/funnel/labRoute';
 import { useInstanceEvent, useVault } from '../context/VaultContext';
 import type { FocusTarget } from '../hooks/useFocusTarget';
+import { useLabPrefs } from '../hooks/useLabPrefs';
 import './LabPage.css';
 
 interface LabPageProps {
@@ -21,8 +22,10 @@ interface LabPageProps {
 }
 
 /**
- * Lab — the analytics-insights dashboard page. The board is the default view;
- * multi-page insights (`render: funnel` and `render: app`) route to
+ * Lab — the analytics-insights dashboard page. Boards are the default view:
+ * the bare page opens the saved board (`.lab-prefs.json` `activeBoard`, else
+ * the first), `/lab/b/<board>` opens that one, and picking a tab pushes its
+ * address and saves it. Multi-page insights (`render: funnel` and `render: app`) route to
  * `/lab/<slug>` and a render-specific sub-segment (`/f/<funnelId>` for
  * funnel, `/p/<pageId>` for app) with real history entries, so back/forward
  * and deep links work. A bare `/lab/<slug>` dispatches by the insight's
@@ -32,7 +35,12 @@ interface LabPageProps {
 export function LabPage({ focus }: LabPageProps = {}) {
   const { bus, isActive } = useVault();
   const route = useLabRoute();
+  const { prefs, setActiveBoard } = useLabPrefs();
   const [toast, setToast] = useState<string | null>(null);
+  const onBoardChange = useCallback((slug: string) => {
+    setActiveBoard(slug);
+    pushLabBoardPath(slug, 'push', bus);
+  }, [setActiveBoard, bus]);
 
   useEffect(() => {
     if (!toast) return;
@@ -66,15 +74,7 @@ export function LabPage({ focus }: LabPageProps = {}) {
   });
 
   let content;
-  if (route.report) {
-    content = (
-      <ReportPage
-        slug={route.report}
-        onBack={() => pushLabPath(null, null, bus)}
-        onToast={setToast}
-      />
-    );
-  } else if (route.slug && route.funnelId) {
+  if (route.slug && route.funnelId) {
     content = (
       <FunnelDetailPage
         slug={route.slug}
@@ -103,13 +103,19 @@ export function LabPage({ focus }: LabPageProps = {}) {
       />
     );
   } else {
-    content = <LabBoard focus={focus} />;
+    content = (
+      <BoardPage
+        board={route.board ?? prefs.activeBoard}
+        onBoardChange={onBoardChange}
+        focus={focus}
+      />
+    );
   }
 
   return (
     <div style={{ height: '100%', minHeight: 0 }}>
       {content}
-      {toast && (route.slug || route.report) && <div className="lab-toast">{toast}</div>}
+      {toast && route.slug && <div className="lab-toast">{toast}</div>}
     </div>
   );
 }

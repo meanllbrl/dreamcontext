@@ -1,0 +1,421 @@
+/*
+ * The board `benchmark` block (BenchmarkBlock.tsx): one row per metric, floor /
+ * now / target on one ruler. Tokens only: no literal colours, sizes, weights or
+ * durations. Everything sits on the 4px grid.
+ *
+ * Three type levels, so the eye lands on the number first:
+ *   primary   - the current value: 14px, semibold, body ink. The metric name
+ *               shares its line at 14px regular in the secondary ink, so it
+ *               names the row without competing with the figure;
+ *   secondary - the change, the previous window, the trend word and the status
+ *               pill: 12px regular;
+ *   tertiary  - sources, the Inherited mark, the legend and the bound labels:
+ *               12px in the quietest readable ink (--color-text-placeholder,
+ *               >= 4.5:1 on the card in light and dark).
+ * Rows are separated by whitespace (12px, tightened only to keep every row),
+ * never by hairlines; lines inside a row are 4px apart; two text runs on one
+ * line keep >= 8px between them.
+ *
+ * Tone follows the tinted-surface pattern: the status pill and the band's zones
+ * are the status hue colour-mixed into a theme surface, text keeps its ink. The
+ * pill says where NOW sits against the band; the trend word says which way it
+ * moved since the previous window.
+ *
+ * The block fills its cell and never scrolls (BENCH_PX plans each tier); a
+ * narrower block drops secondary text first (the previous value, then the trend
+ * word), never the figure.
+ */
+
+.lab-bench {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  container: bench / inline-size;
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--space-4);
+}
+
+.lab-bench-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-height: 0;
+}
+
+.lab-bench[data-row-gap='8'] .lab-bench-rows { gap: var(--space-2); }
+.lab-bench[data-row-gap='4'] .lab-bench-rows { gap: var(--space-1); }
+
+/* Full row: name + value + status / the secondary run / the ruler / the tertiary sources. */
+.lab-bench-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'label value side'
+    'run run run'
+    'ruler ruler ruler'
+    'sources sources sources';
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  min-width: 0;
+}
+
+/* ── primary line ───────────────────────────────────────────────────── */
+
+.lab-bench-label {
+  grid-area: label;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--space-5);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-bench-value {
+  grid-area: value;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--space-5);
+  white-space: nowrap;
+}
+
+/* ── secondary run: change, previous, trend ─────────────────────────── */
+
+.lab-bench-delta {
+  grid-area: run;
+  display: flex;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-bench-change,
+.lab-bench-trend {
+  color: var(--color-text-secondary);
+}
+
+.lab-bench-change[data-trend='improving'],
+.lab-bench-trend[data-trend='improving'] { color: var(--color-success-ink); }
+
+.lab-bench-change[data-trend='worsening'],
+.lab-bench-trend[data-trend='worsening'] { color: var(--color-error-ink); }
+
+/* ── status pill: where now sits against the band, in words ─────────── */
+
+.lab-bench-side {
+  grid-area: side;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lab-bench-status {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  line-height: calc(var(--space-4) + 2px);
+  white-space: nowrap;
+}
+
+.lab-bench-status[data-tone='below'] {
+  background: color-mix(in srgb, var(--color-error) 10%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-error) 40%, var(--color-border));
+}
+
+.lab-bench-status[data-tone='between'] {
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+}
+
+.lab-bench-status[data-tone='above'] {
+  background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-success) 40%, var(--color-border));
+}
+
+.lab-bench-status[data-tone='no-band'] {
+  color: var(--color-text-secondary);
+}
+
+/* ── ruler ──────────────────────────────────────────────────────────── */
+
+.lab-bench-ruler {
+  grid-area: ruler;
+  position: relative;
+  min-width: 0;
+  height: var(--space-4);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.lab-bench-ruler[data-labels] {
+  height: var(--space-8);
+}
+
+.lab-bench-ruler:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-border-focus);
+}
+
+.lab-bench-track {
+  position: absolute;
+  top: calc(var(--space-1) + 1px);
+  right: 0;
+  left: 0;
+  height: calc(var(--space-1) + 2px);
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+}
+
+.lab-bench-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.lab-bench-zone[data-tone='below'] { background: color-mix(in srgb, var(--color-error) 28%, var(--color-bg-tertiary)); }
+.lab-bench-zone[data-tone='between'] { background: color-mix(in srgb, var(--color-warning) 28%, var(--color-bg-tertiary)); }
+.lab-bench-zone[data-tone='above'] { background: color-mix(in srgb, var(--color-success) 28%, var(--color-bg-tertiary)); }
+
+/* Every marker is centred on its scale position: `left` is the x, the translate centres it. */
+.lab-bench-mark {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.lab-bench-bound {
+  top: 1px;
+  width: 2px;
+  height: calc(var(--space-3) + 2px);
+  border-radius: var(--radius-full);
+  background: var(--color-text-secondary);
+}
+
+/* The target carries a small flag, so floor and target read apart without their labels. */
+.lab-bench-bound--target::before,
+.lab-bench-key-mark--target::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: calc(var(--space-1) + 1px);
+  height: var(--space-1);
+  background: inherit;
+}
+
+.lab-bench-link {
+  position: absolute;
+  top: calc(var(--space-2) - 1px);
+  height: 2px;
+  background: var(--color-text-tertiary);
+  opacity: 0.6;
+}
+
+.lab-bench-prev,
+.lab-bench-key-mark--prev {
+  box-sizing: border-box;
+  width: calc(var(--space-2) + 2px);
+  height: calc(var(--space-2) + 2px);
+  border: 2px solid var(--color-text-tertiary);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+}
+
+.lab-bench-prev {
+  top: 3px;
+}
+
+.lab-bench-current,
+.lab-bench-key-mark--current {
+  box-sizing: border-box;
+  width: var(--space-3);
+  height: var(--space-3);
+  border: 2px solid var(--color-bg-secondary);
+  border-radius: var(--radius-full);
+  background: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-text);
+}
+
+.lab-bench-current {
+  top: 2px;
+}
+
+/* Tertiary: the bound labels sit in their own band under the track, 8px apart at least. */
+.lab-bench-bound-label {
+  position: absolute;
+  top: calc(var(--space-4) + 1px);
+  color: var(--color-text-placeholder);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── tertiary line: sources and the Inherited mark ──────────────────── */
+
+.lab-bench-sources-line {
+  grid-area: sources;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  color: var(--color-text-placeholder);
+}
+
+.lab-bench-sources {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A row whose band is the whole funnel's: a quiet word, its meaning in the title (dotted = there is more). */
+.lab-bench-inherit {
+  flex: none;
+  color: var(--color-text-placeholder);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Not measured: the reason wraps between words (up to 3 lines; the row's title has the rest), never an ellipsis. */
+.lab-bench-unmeasured {
+  grid-column: 2 / -1;
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  white-space: normal;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* A full row has room under its name: the reason takes the whole width there. */
+.lab-bench[data-mode='full'] .lab-bench-unmeasured {
+  grid-column: 1 / -1;
+}
+
+/* ── legend: one quiet tertiary line ────────────────────────────────── */
+
+.lab-bench-legend {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-4);
+  height: var(--space-4);
+  overflow: hidden;
+  color: var(--color-text-placeholder);
+}
+
+.lab-bench-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.lab-bench-key-mark {
+  position: relative;
+  flex: none;
+}
+
+.lab-bench-key-mark--floor,
+.lab-bench-key-mark--target {
+  width: 2px;
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-text-secondary);
+}
+
+.lab-bench-key-mark--target {
+  margin-right: var(--space-1);
+}
+
+/* ── notes ──────────────────────────────────────────────────────────── */
+
+.lab-bench-note,
+.lab-bench-more {
+  flex: none;
+  color: var(--color-text-secondary);
+  overflow-wrap: break-word;
+}
+
+/* ── compact: one line per metric, the ruler inline ─────────────────── */
+
+.lab-bench[data-mode='compact'] .lab-bench-row {
+  grid-template-columns: minmax(var(--space-16), max-content) auto auto minmax(var(--space-16), 1fr) auto;
+  grid-template-areas:
+    'label value run ruler side'
+    'sources sources sources sources sources';
+  align-items: start;
+}
+
+/* On one line the ruler band (16px) centres on the 20px primary line. */
+.lab-bench[data-mode='compact'] .lab-bench-ruler {
+  margin-top: 2px;
+}
+
+.lab-bench[data-mode='compact'] .lab-bench-delta {
+  line-height: var(--space-5);
+}
+
+/* The status pill writes its full words; a narrow one-line row prints the short word (see the container rules). */
+.lab-bench-status-short {
+  display: none;
+}
+
+/* On a one-line row the side cell sits on the primary line too. */
+.lab-bench[data-mode='compact'] .lab-bench-side {
+  line-height: var(--space-5);
+}
+
+/* ── narrow: secondary text goes first, the figure and the status stay ─ */
+
+/* One-line rows share their line with the ruler: the trend word and the previous value yield first. */
+@container bench (max-width: 720px) {
+  .lab-bench[data-mode='compact'] .lab-bench-trend-word { display: none; }
+  .lab-bench[data-mode='compact'] .lab-bench-prev-value { display: none; }
+  .lab-bench[data-mode='compact'] .lab-bench-status-word { display: none; }
+  .lab-bench[data-mode='compact'] .lab-bench-status-short { display: inline; }
+}
+
+@container bench (max-width: 560px) {
+  .lab-bench-prev-value { display: none; }
+}
+
+@container bench (max-width: 440px) {
+  .lab-bench-trend-word { display: none; }
+}
+
+@container bench (max-width: 420px) {
+  .lab-bench[data-mode='compact'] .lab-bench-status { display: none; }
+}
+
+/* Narrower still: the secondary run goes before the metric name would ever clip. */
+@container bench (max-width: 340px) {
+  .lab-bench[data-mode='compact'] .lab-bench-delta { display: none; }
+}
+
+@container bench (max-width: 300px) {
+  .lab-bench-status { display: none; }
+}

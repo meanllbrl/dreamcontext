@@ -9,6 +9,9 @@ import { chartEntry, detailBodyFor } from './chartRegistry';
 import { HtmlInsightBody } from './HtmlInsightBody';
 import { humanizeTweakKey, humanizeTweakValue } from './tweakLabels';
 import { useI18n } from '../../context/I18nContext';
+import type { InsightCache } from '../../hooks/useLab';
+import { tableTotal, type TableTotal } from '../../generated/frameOps';
+import { FrameTable, type FrameTableRow } from './MetricTable';
 import './InsightDetailPanel.css';
 
 /**
@@ -22,6 +25,55 @@ interface Props {
   summary: InsightSummary;
   onClose: () => void;
   onToast: (msg: string) => void;
+}
+
+/**
+ * The scaffold's `## Meaning` placeholder (src/lib/lab/store.ts `createInsight`), mirrored:
+ * the dashboard cannot import the engine. Matched whitespace-insensitively.
+ */
+const MEANING_PLACEHOLDER = '(What does this number MEAN? Why does it matter, and how should a reader interpret a move?)';
+
+/** The `## Meaning` prose, or '' when there is none: empty, or still the scaffold's placeholder. */
+export function meaningText(raw: string | null | undefined): string {
+  const text = (raw ?? '').replace(/^##\s*Meaning\s*/i, '').trim();
+  const squash = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  return squash(text) === squash(MEANING_PLACEHOLDER) ? '' : text;
+}
+
+/** A dataset/matrix insight's rows, as the board's table block reads them. */
+export interface DetailTable {
+  label: string | null;
+  dims: { key: string; label: string }[];
+  rows: FrameTableRow[];
+  unit: string | null;
+  total: TableTotal;
+}
+
+/**
+ * The table a `table` insight IS: the primary dataset of its bundle (else the first), else its
+ * matrix set; null when it has neither (a series table keeps the registry body). The same pick
+ * the engine's frame resolution makes for a binding with no dataset key (frames.ts buildTable).
+ */
+export function detailTable(cache: InsightCache | null | undefined): DetailTable | null {
+  if (!cache) return null;
+  const bundle = cache.datasets?.bundle;
+  const sets = Array.isArray(bundle?.datasets) ? bundle.datasets : [];
+  const ds = sets.find((d) => d.key === bundle?.primary) ?? sets[0];
+  const source = ds
+    ? { label: ds.label ?? null, dims: ds.dims, rows: ds.rows, total: ds.total, unit: ds.unit ?? cache.unit ?? null }
+    : cache.matrix?.set
+      ? { label: null, dims: cache.matrix.set.dims, rows: cache.matrix.set.rows, total: cache.matrix.set.total, unit: cache.matrix.set.unit ?? cache.unit ?? null }
+      : null;
+  if (!source || !Array.isArray(source.dims) || !Array.isArray(source.rows)) return null;
+  const rows = source.rows.map((r) => ({ ...r, d: { ...r.d } }));
+  const sourceTotal = source.total ? { ...source.total } : null;
+  return {
+    label: source.label,
+    dims: source.dims.map((d) => ({ key: d.key, label: d.label ?? d.key })),
+    rows,
+    unit: source.unit,
+    total: tableTotal(rows, sourceTotal, false),
+  };
 }
 
 function fmtWhen(iso: string): string {
@@ -73,7 +125,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   const detail = useLabInsight(summary.slug);
   const sync = useSyncInsight();
   const applyTweaks = useApplyTweaks();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const overlayId = useOverlayId('insight-detail-panel');
 
   // Esc closes — but only when this panel is the topmost overlay (overlayStack,
@@ -102,7 +154,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   const manifest = detail.data?.insight ?? null;
   const cache = detail.data?.cache ?? null;
   const series = cache?.series ?? [];
-  const meaning = (detail.data?.meaning ?? '').replace(/^##\s*Meaning\s*/i, '').trim();
+  const meaning = meaningText(detail.data?.meaning);
   const resolvedTweaks = detail.data?.resolvedTweaks ?? {};
   // Newest first — the reader wants "what happened last", not the epoch.
   // Array.isArray: the cache file is user-editable JSON; a malformed history
@@ -151,6 +203,7 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
   // registry (its own detail variant when it has one, else the card's).
   const entry = chartEntry(summary.render);
   const DetailBody = detailBodyFor(summary.render);
+  const table = summary.render === 'table' ? detailTable(cache) : null;
 
   const detailRows: [string, string][] = [];
   if (summary.group) detailRows.push(['Group', summary.group]);
@@ -225,13 +278,28 @@ export function InsightDetailPanel({ summary, onClose, onToast }: Props) {
                   </div>
                 )}
                 <div className="idp-chart">
-                  <DetailBody
-                    summary={summary}
-                    cache={cache}
-                    series={series}
-                    full
-                    emptyHint={entry.emptyHint}
-                  />
+                  {table ? (
+                    // A dataset table reads as its rows, drawn by the board's table component.
+                    <div data-lab-detail-table>
+                      <FrameTable
+                        dims={table.dims}
+                        rows={table.rows}
+                        unit={table.unit}
+                        total={table.total}
+                        bars
+                        density="comfortable"
+                        emptyHint={t('lab.blocks.empty.noData')}
+                      />
+                    </div>
+                  ) : (
+                    <DetailBody
+                      summary={summary}
+                      cache={cache}
+                      series={series}
+                      full
+                      emptyHint={entry.emptyHint}
+                    />
+                  )}
                 </div>
 
                 {meaning && (

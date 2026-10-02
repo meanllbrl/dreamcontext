@@ -536,19 +536,23 @@ The numbers that tell you whether the project is working — weekly active users
 dreamcontext lab create weekly-active-users --title "Weekly Active Users" \
   --render line --adapter http --group growth --ttl 1440
 dreamcontext lab credentials set analytics_token   # gitignored, 0600, never printed (list shows names only)
-dreamcontext lab sync --all                        # refresh every insight (skips fresh unless --force)
+dreamcontext lab sync --all                        # refresh what changed (skips fresh; --force asks the source, --force-hard always fetches)
+dreamcontext lab sync --all --dry-run              # what would be fetched, probed or skipped: zero upstream requests
 dreamcontext lab show weekly-active-users --json   # cached series only — never re-fetches
 dreamcontext lab tweak weekly-active-users range 90d   # adjust a declared tweak, e.g. the time range
 dreamcontext lab bind weekly-active-users increase-retention-20   # feed an objective's Key Result
+dreamcontext lab board add-card growth --insight weekly-active-users --block '{"line": {"area": true}}'
+dreamcontext lab board show growth                 # every card's resolved values, the same ones the dashboard draws
 ```
 
 - **Insights, not raw dumps.** A hard cap of **62 points per series** is structural: over ~180 days rolls up monthly, 45–180 days weekly, under 45 daily. Lab delivers curated metrics to agents and dashboards; it is not a BI tool.
 - **Every session sees the latest value.** Cached snapshots ride the SessionStart snapshot and are recallable by meaning — `memory recall "weekly active users" --types insight` — without knowing the slug.
 - **Measured roadmap progress.** Bind an insight to an objective's Key Result and `lab sync` writes `metric.current`, so the [forecast cascade](#roadmap-objectives--the-okr-board) reflects *measured* progress instead of asserted numbers. An objective has exactly one feeder; binding a new insight unbinds the previous one, loudly.
 - **A source is either** the generic **HTTP** adapter (any JSON API — endpoint, headers, and body may reference `{{tweak:…}}` and `{{cred:…}}` placeholders, with a JSON-path `extract`) **or a custom `.mjs` script** under `lab/scripts/` — which runs locally with your credentials, so Lab prints a loud change notice before a modified script runs again. Every sync runs your script fresh, so an edit to it (or to a helper it imports) applies on the next sync, never on the next restart.
+- **Sync only pays for change.** An optional freshness probe (`refresh.freshness`, or a script's `freshness()`) asks the source whether anything moved; an unchanged marker for an unchanged request skips the fetch, and the card says why ("upstream unchanged"). Opening a board whose insights are all fresh starts no sync at all.
 - **No silent half-sync.** A failed fetch keeps the prior cached series intact, surfaces the error loudly, and exits non-zero. **Sleep never runs lab sync** (credential exposure, latency, non-determinism).
 
-The dashboard's **Lab page** groups insights by category with number / line / pie / raw / funnel renders (hand-rolled SVG), per-insight and sync-all refresh, inline tweak editing, and a "feeds &lt;objective&gt;" provenance chip on bound insights.
+The dashboard's **Insights** page (Beta) is a set of **boards**: cards on a 12-column grid you drag and resize in Edit mode, each card a stack of **blocks** from a built-in catalog (stat, line, bar, stacked, pie, table, heatmap, funnel, pivot, text, callout, tabs, filter) bound to your insights' cached data, edited in an inspector without code, with undo. A **custom HTML block** runs your own markup in a network-less sandbox with the dashboard's `dc-` kit and gets only the inputs it declares; save it to the vault's block library (`lab/blocks/`) and reuse it on any card. Boards live in `lab/boards/<slug>.md`, so teammates and agents read and write the same boards (`lab board …`, merged card by card on brain sync). An existing vault opens with one board per category and nothing is written until your first edit. Reports and their AI commentary were retired in favour of boards; older `html/v1` and `app/v1` card bodies keep rendering as before.
 
 **Funnel analytics** (`--render funnel`): an insight whose adapter returns a `funnel-set/v1` payload gets its own routed multi-page view — an all-funnels comparison table, then a per-funnel step lane with drop badges, a click-two-steps A→B conversion gesture, filters, breakdowns, and period compare. Long funnels can fold statistically insignificant steps into a single collapsed node via a user-set significant-change threshold, so the lane shows the shape that matters.
 

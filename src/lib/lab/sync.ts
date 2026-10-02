@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { getObjective, updateObjectiveMetric } from '../objectives-store.js';
 import { getAdapter, scriptFilePath } from './adapters/index.js';
 import { readCredentials, redactSecrets } from './credentials.js';
 import { getInsight, listInsights, readCache, writeCache, writeInsightBinding } from './store.js';
 import { resolveTweaks } from './tweaks.js';
-import { isValidWindow, writeWindowCache, type WindowRange } from './window-cache.js';
 import { rollupSeries } from './rollup.js';
 import {
   appendFunnelHistory,
@@ -30,6 +30,7 @@ import {
   parseDatasetBundle,
 } from './dataset.js';
 import {
+  FRESHNESS_PROBE_TIMEOUT_MS,
   isRawDatasetBundle,
   isRawFunnelSet,
   isRawMatrixSet,
@@ -37,6 +38,7 @@ import {
   LabError,
   MAX_HTML_BYTES,
   type Agg,
+  type AdapterContext,
   type AppCacheEntry,
   type Binding,
   type DatasetCacheEntry,
@@ -52,15 +54,17 @@ import {
   type RawFunnelSet,
   type RawMatrixSet,
   type RawSeries,
+  type ResolvedTweaks,
   type Series,
+  type SourceFreshness,
   type SyncEvent,
 } from './types.js';
 
 /**
  * Lab sync engine — the shared core the CLI and `/api/lab*` both call.
  *
- * Per insight: TTL staleness skip (unless force; the skip is REPORTED, never
- * silent) → script-hash tripwire → resolve tweaks → adapter fetch → capped
+ * Per insight: freshness gate (below; every skip is REPORTED with its reason,
+ * never silent) → script-hash tripwire → resolve tweaks → adapter fetch → capped
  * rollup → cache write → optional bound-objective `metric.current` write. On
  * failure the prior series is preserved, error+errorAt are set from the REDACTED
  * message (never the raw Error object), and the result is flagged `failed` so
@@ -69,7 +73,14 @@ import {
  * Sleep does NOT call this (credential exposure, latency, non-determinism).
  */
 
-export type SyncStatus = 'ok' | 'fresh' | 'failed';
+export type SyncStatus = 'ok' | 'fresh' | 'failed' | 'skipped';
+
+/** Why a `fresh` result did not fetch: the TTL has not run out, or the source's
+ *  probe answered with the same marker for the same request fingerprint. */
+export type FreshReason = 'ttl' | 'upstream-unchanged';
+/** Why a `skipped` result did not run: an automatic run backing off a slug
+ *  whose last attempt failed recently. */
+export type SkipReason = 'error-backoff';
 
 export interface SyncResult {
   slug: string;
@@ -77,22 +88,39 @@ export interface SyncResult {
   latest?: number | null;
   granularity?: string;
   error?: string;
+  /** Set on `fresh` and `skipped` results — shown on the card and in the CLI. */
+  reason?: FreshReason | SkipReason;
+  /** The source's own freshness note (plain text) when it gave one. */
+  freshnessNote?: string;
+}
+
+/**
+ * How hard a sync pushes past the freshness gate.
+ *
+ * - absent: AUTOMATIC (board open, timers). TTL applies, a stale slug consults
+ *   the upstream probe, a slug that failed recently is backed off.
+ * - `'user'`: someone asked (↻, Sync board, tweak save). The TTL is skipped but
+ *   the probe is still consulted: unchanged upstream = no fetch.
+ * - `'hard'`: skip the TTL AND the probe (CLI `--force-hard`, "Force full refresh").
+ *
+ * `true` is read as `'user'` for one release (old clients and scripts); `false`
+ * is automatic.
+ */
+export type SyncForce = 'user' | 'hard';
+
+/** Normalize a request/CLI force value; anything unrecognised is automatic. */
+export function normalizeSyncForce(force: unknown): SyncForce | undefined {
+  if (force === true || force === 'user') return 'user';
+  if (force === 'hard') return 'hard';
+  return undefined;
 }
 
 export interface SyncOptions {
-  force?: boolean;
+  force?: boolean | SyncForce;
   fetchImpl?: typeof fetch;
   now?: () => number;
-  /**
-   * Transient measurement-window override (report window inheritance). When
-   * set, the resolved range/from/to are replaced by this window and the result
-   * is written to the TRANSIENT window cache only — the canonical cache, the
-   * snapshot trails and the KR binding are never touched (the 42.31→0 lesson:
-   * a report aligning windows must not move the roadmap). TTL freshness is
-   * skipped (the window cache has its own read-side freshness policy) and a
-   * failed run writes nothing at all.
-   */
-  window?: WindowRange;
+  /** Freshness-probe budget override in ms (tests); default FRESHNESS_PROBE_TIMEOUT_MS. */
+  probeTimeoutMs?: number;
 }
 
 /** One insight settled during a `syncAll` run — emitted as it happens, not at the end. */
@@ -105,6 +133,7 @@ export interface LabSyncProgress {
   slug: string;
   status: SyncStatus;
   error?: string;
+  reason?: FreshReason | SkipReason;
 }
 
 export interface SyncAllOptions extends SyncOptions {
@@ -112,9 +141,6 @@ export interface SyncAllOptions extends SyncOptions {
   concurrency?: number;
   /** Restrict the run to these slugs (used by the job layer's retry pass). */
   only?: string[];
-  /** Per-slug transient window overrides (report window inheritance) — each
-   *  listed slug syncs into the window cache instead of the canonical one. */
-  windows?: Record<string, WindowRange>;
   /** Called as each insight settles — the caller's live progress feed. */
   onProgress?: (ev: LabSyncProgress) => void;
   /** Per-insight watchdog in ms (default LAB_INSIGHT_TIMEOUT_MS). */
@@ -252,6 +278,325 @@ export function bindInsight(
   return { manifest, unbound, seededCurrent };
 }
 
+// ─── Freshness gate ─────────────────────────────────────────────────────────
+//
+// Sync only pays for change. An automatic run skips a slug inside its TTL and
+// backs off a slug that failed recently; past the TTL (or under 'user') it asks
+// the source a cheap question first — the http `refresh.freshness` probe or the
+// script's `freshness()` export — and skips the fetch when the marker AND the
+// request fingerprint (`queryKey`) match the last real fetch. Any probe failure
+// is a full fetch, and a real fetch is forced once the last one is older than
+// the max age, so a probe can never pin stale data forever.
+
+/** Floor of the automatic error backoff: max(TTL, this). */
+export const ERROR_BACKOFF_FLOOR_MINUTES = 15;
+/** Floor of the max age that forces a real fetch: max(this, 10 × TTL). */
+export const MAX_AGE_FLOOR_MINUTES = 24 * 60;
+/** TTL assumed when a manifest carries none (the store's default). */
+const DEFAULT_TTL_MINUTES = 1440;
+/** Caps on what a source may say about itself (after redaction). */
+export const FRESHNESS_MARKER_MAX = 256;
+const FRESHNESS_AS_OF_MAX = 64;
+const FRESHNESS_NOTE_MAX = 280;
+
+function ttlOf(manifest: InsightManifest): number {
+  const ttl = manifest.refresh?.ttl_minutes;
+  return typeof ttl === 'number' && Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_MINUTES;
+}
+
+/** Automatic runs leave a failed slug alone for this long. */
+export function errorBackoffMinutes(manifest: InsightManifest): number {
+  return Math.max(ttlOf(manifest), ERROR_BACKOFF_FLOOR_MINUTES);
+}
+
+/** A real fetch is forced once the last one is older than this. */
+export function maxAgeMinutes(manifest: InsightManifest): number {
+  return Math.max(MAX_AGE_FLOOR_MINUTES, 10 * ttlOf(manifest));
+}
+
+/** Plain text only: control characters and runs of whitespace fold to one space. */
+function plainText(v: string): string {
+  // eslint-disable-next-line no-control-regex
+  return v.replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim();
+}
+
+/**
+ * Normalize what a source said about its own freshness. The marker must be a
+ * string or finite number of at most FRESHNESS_MARKER_MAX chars AFTER
+ * `redactSecrets`, else there is no marker (null) and the insight is TTL-only.
+ * `asOf`/`note` are capped plain text.
+ */
+export function normalizeFreshness(
+  raw: unknown,
+  secretValues: string[],
+): Omit<SourceFreshness, 'queryKey'> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const r = raw as { marker?: unknown; asOf?: unknown; note?: unknown };
+  const str = (v: unknown): string | null => {
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+    return null;
+  };
+  const rawMarker = str(r.marker);
+  if (rawMarker === null || rawMarker.trim() === '') return null;
+  const marker = redactSecrets(rawMarker, secretValues);
+  if (marker.length > FRESHNESS_MARKER_MAX) return null;
+  const text = (v: unknown, max: number): string | null => {
+    const t = str(v);
+    if (t === null) return null;
+    const clean = plainText(redactSecrets(t, secretValues)).slice(0, max);
+    return clean || null;
+  };
+  return { marker, asOf: text(r.asOf, FRESHNESS_AS_OF_MAX), note: text(r.note, FRESHNESS_NOTE_MAX) };
+}
+
+/**
+ * The request fingerprint: the resolved tweak values, the resolved window and
+ * the source definition (the script file's hash, or the http source template).
+ * An unchanged marker only skips a fetch when THIS is unchanged too — a tweak
+ * edit asks a different question of the same upstream data.
+ */
+export function computeQueryKey(
+  manifest: InsightManifest,
+  resolvedTweaks: ResolvedTweaks,
+  scriptHash: string | null,
+): string {
+  const source = manifest.source;
+  const sourceKey = !source
+    ? 'none'
+    : source.adapter === 'script'
+      ? `script:${scriptHash ?? 'missing'}`
+      : `http:${createHash('sha256').update(JSON.stringify({
+        endpoint: source.endpoint,
+        method: source.method,
+        headers: source.headers,
+        body: source.body,
+        extract: source.extract,
+      })).digest('hex')}`;
+  const tweaks = Object.keys(resolvedTweaks.values).sort().map((k) => [k, resolvedTweaks.values[k]]);
+  return createHash('sha256')
+    .update(JSON.stringify({ tweaks, range: resolvedTweaks.range, source: sourceKey }))
+    .digest('hex')
+    .slice(0, 32);
+}
+
+// ─── Machine-local freshness sidecar ────────────────────────────────────────
+//
+// `state/.lab-freshness.json` records WHEN this machine last confirmed each
+// insight unchanged upstream. It is machine-local (brain-sync ignored) so an
+// unchanged probe never dirties the synced cache: the cache only changes on a
+// real fetch. An entry counts only while its marker + queryKey still match the
+// cache's (a teammate's newer fetch makes it moot).
+
+/** Relative path of the sidecar under `_dream_context/`. */
+export const LAB_FRESHNESS_SIDECAR_REL = 'state/.lab-freshness.json';
+
+export interface FreshnessCheck {
+  checkedAt: string;
+  marker: string;
+  queryKey: string;
+}
+
+function sidecarPath(contextRoot: string): string {
+  return join(contextRoot, 'state', '.lab-freshness.json');
+}
+
+/** Read the sidecar. Missing/malformed → `{}` (never throws). */
+export function readFreshnessChecks(contextRoot: string): Record<string, FreshnessCheck> {
+  try {
+    const parsed = JSON.parse(readFileSync(sidecarPath(contextRoot), 'utf-8')) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    const out: Record<string, FreshnessCheck> = {};
+    for (const [slug, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const e = v as Partial<FreshnessCheck> | null;
+      if (e && typeof e.checkedAt === 'string' && typeof e.marker === 'string' && typeof e.queryKey === 'string') {
+        out[slug] = { checkedAt: e.checkedAt, marker: e.marker, queryKey: e.queryKey };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Record one confirmed-unchanged probe. Merge-on-write: re-read, set, tmp + rename. */
+function recordFreshnessCheck(contextRoot: string, slug: string, check: FreshnessCheck): void {
+  try {
+    const path = sidecarPath(contextRoot);
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    const all = readFreshnessChecks(contextRoot);
+    all[slug] = check;
+    const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    writeFileSync(tmp, JSON.stringify(all, null, 2) + '\n', 'utf-8');
+    renameSync(tmp, path);
+  } catch (err) {
+    // The check is an optimisation; failing to record it costs one more probe.
+    console.warn(`[lab] ${slug}: could not record the freshness check: ${(err as Error).message}`);
+  }
+}
+
+/** This machine's last confirmation that `cache` is still current, or null. */
+export function lastCheckedAt(contextRoot: string, slug: string, cache: InsightCache | null): string | null {
+  const sf = cache?.sourceFreshness;
+  if (!sf) return null;
+  const check = readFreshnessChecks(contextRoot)[slug];
+  if (!check || check.marker !== sf.marker || check.queryKey !== sf.queryKey) return null;
+  return check.checkedAt;
+}
+
+/** ms of the newest evidence the cache is current: max(fetchedAt, checkedAt). NaN when none. */
+export function lastConfirmedMs(contextRoot: string, slug: string, cache: InsightCache | null): number {
+  const fetched = cache?.fetchedAt ? Date.parse(cache.fetchedAt) : Number.NaN;
+  const checkedIso = lastCheckedAt(contextRoot, slug, cache);
+  const checked = checkedIso ? Date.parse(checkedIso) : Number.NaN;
+  if (Number.isNaN(fetched)) return checked;
+  if (Number.isNaN(checked)) return fetched;
+  return Math.max(fetched, checked);
+}
+
+/** Race a probe against a deadline — an adapter that ignores its own budget
+ *  still cannot hold the sync open. */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new LabError(`timed out after ${ms}ms.`)), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * The automatic gate (absent force only): a `fresh`/`skipped` result when the
+ * run must not touch the source, else null. PURE decision (the caller logs);
+ * `syncInsight` and the dry-run plan share it.
+ * Staleness age = now − max(fetchedAt, this machine's last unchanged probe).
+ */
+function automaticGate(
+  contextRoot: string,
+  slug: string,
+  manifest: InsightManifest,
+  prior: InsightCache,
+  nowMs: number,
+): { result: SyncResult; detail: string } | null {
+  const ttl = ttlOf(manifest);
+  const ageMin = (nowMs - lastConfirmedMs(contextRoot, slug, prior)) / 60_000;
+  if (Number.isFinite(ageMin) && ageMin >= 0 && ageMin < ttl) {
+    return {
+      result: { slug, status: 'fresh', reason: 'ttl', latest: prior.latest },
+      detail: `age ${Math.round(ageMin)}m < ttl ${ttl}m`,
+    };
+  }
+  // A slug that failed recently is left alone by automatic runs — a board
+  // open must not hammer a broken source every minute. A user run retries.
+  const errorAgeMin = prior.errorAt ? (nowMs - Date.parse(prior.errorAt)) / 60_000 : Number.NaN;
+  if (Number.isFinite(errorAgeMin) && errorAgeMin >= 0 && errorAgeMin < errorBackoffMinutes(manifest)) {
+    return {
+      result: { slug, status: 'skipped', reason: 'error-backoff', latest: prior.latest, error: prior.error ?? undefined },
+      detail: `failed ${Math.round(errorAgeMin)}m ago`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Whether the upstream probe runs, and whether its answer could save the
+ * fetch. A skip needs the last real fetch's marker for THIS queryKey, that
+ * fetch to have succeeded (a cache carrying an error is re-fetched), to be
+ * inside the max age, and the script unchanged (the tripwire: a changed script
+ * is never probed — its hash is in the queryKey, so it always fetches). An
+ * http probe also runs when a skip is impossible, to capture the marker
+ * BEFORE the data; a script captures its own inside the fetch child.
+ */
+function probePlan(
+  manifest: InsightManifest,
+  prior: InsightCache | null,
+  queryKey: string,
+  scriptChanged: boolean,
+  nowMs: number,
+): { skipEligible: boolean; wantsProbe: boolean } {
+  const priorMarker = prior?.sourceFreshness;
+  const fetchedMs = prior?.fetchedAt ? Date.parse(prior.fetchedAt) : Number.NaN;
+  const withinMaxAge = Number.isFinite(fetchedMs) && (nowMs - fetchedMs) / 60_000 < maxAgeMinutes(manifest);
+  const skipEligible = Boolean(
+    priorMarker && priorMarker.queryKey === queryKey && !prior?.error && withinMaxAge && !scriptChanged,
+  );
+  const wantsProbe = manifest.source?.adapter === 'http'
+    ? Boolean(manifest.refresh.freshness)
+    : skipEligible;
+  return { skipEligible, wantsProbe };
+}
+
+/** What `lab sync --dry-run` says a run would do for one insight. */
+export interface SyncPlan {
+  slug: string;
+  /**
+   * skip  - no request at all (inside the TTL, or backing off a recent error);
+   * probe - one cheap freshness probe; the fetch happens only if upstream changed;
+   * fetch - a real fetch (`probe: true` = a probe runs first to record the marker).
+   */
+  action: 'skip' | 'probe' | 'fetch';
+  /** Machine-readable why: the fresh/skip reason, or why a fetch is due. */
+  reason: FreshReason | SkipReason | 'force-hard' | 'no-cache' | 'stale' | 'user' | 'script-changed' | 'no-source';
+  probe: boolean;
+  /** One human sentence. */
+  detail: string;
+}
+
+/**
+ * Plan one insight's sync WITHOUT running it: the same gate and probe
+ * decisions `syncInsight` makes, from local files only (manifest, cache, the
+ * freshness sidecar, the script's hash). Never calls an adapter, so it fires
+ * ZERO upstream requests.
+ */
+export function planSyncInsight(contextRoot: string, slug: string, opts: Pick<SyncOptions, 'force' | 'now'> = {}): SyncPlan {
+  const manifest = getInsight(contextRoot, slug);
+  if (!manifest) throw new LabError(`Insight not found: ${slug}`);
+  const force = normalizeSyncForce(opts.force);
+  const nowMs = opts.now ? opts.now() : Date.now();
+  const prior = readCache(contextRoot, slug);
+
+  if (!force && prior) {
+    const gate = automaticGate(contextRoot, slug, manifest, prior, nowMs);
+    if (gate) {
+      return { slug, action: 'skip', reason: gate.result.reason!, probe: false, detail: gate.result.reason === 'ttl' ? `fresh (${gate.detail})` : `backing off (${gate.detail})` };
+    }
+  }
+  if (!manifest.source) {
+    return { slug, action: 'fetch', reason: 'no-source', probe: false, detail: 'no valid source block: the run would fail' };
+  }
+  const newHash = computeScriptHash(manifest);
+  const scriptChanged = Boolean(newHash && prior?.scriptHash && prior.scriptHash !== newHash);
+  const why: SyncPlan['reason'] = force === 'hard'
+    ? 'force-hard'
+    : scriptChanged
+      ? 'script-changed'
+      : !prior
+        ? 'no-cache'
+        : force === 'user' ? 'user' : 'stale';
+  if (force === 'hard') {
+    return { slug, action: 'fetch', reason: why, probe: false, detail: 'forced full refresh: fetch, no probe' };
+  }
+  const queryKey = computeQueryKey(manifest, resolveTweaks(manifest), newHash);
+  const { skipEligible, wantsProbe } = probePlan(manifest, prior, queryKey, scriptChanged, nowMs);
+  const canProbe = Boolean(getAdapter(manifest).probe) && wantsProbe;
+  if (canProbe && skipEligible) {
+    return { slug, action: 'probe', reason: why, probe: true, detail: 'probe upstream; fetch only if the marker changed' };
+  }
+  return {
+    slug,
+    action: 'fetch',
+    reason: why,
+    probe: canProbe,
+    detail: canProbe ? 'probe to record the marker, then fetch' : 'fetch',
+  };
+}
+
 /** Sync one insight by slug. */
 export async function syncInsight(
   contextRoot: string,
@@ -261,61 +606,82 @@ export async function syncInsight(
   const manifest = getInsight(contextRoot, slug);
   if (!manifest) throw new LabError(`Insight not found: ${slug}`);
 
-  const windowOverride = opts.window && isValidWindow(opts.window) ? opts.window : undefined;
-  if (opts.window && !windowOverride) {
-    throw new LabError(`Invalid window override for ${slug}: from/to must be YYYY-MM-DD with from ≤ to.`);
-  }
-
+  const force = normalizeSyncForce(opts.force);
   const nowMs = opts.now ? opts.now() : Date.now();
   const prior = readCache(contextRoot, slug);
 
-  // ── TTL staleness skip (reported, never silent). A window-overridden run is
-  // always explicit — its freshness lives on the window-cache read side. ──
-  if (!opts.force && !windowOverride && prior?.fetchedAt) {
-    const ageMin = (nowMs - Date.parse(prior.fetchedAt)) / 60_000;
-    if (Number.isFinite(ageMin) && ageMin >= 0 && ageMin < manifest.refresh.ttl_minutes) {
-      console.log(`[lab] ${slug}: fresh (age ${Math.round(ageMin)}m < ttl ${manifest.refresh.ttl_minutes}m) — skipping; use --force to refetch.`);
-      return { slug, status: 'fresh', latest: prior.latest };
+  // ── Automatic gate (reported, never silent). ──
+  if (!force && prior) {
+    const gate = automaticGate(contextRoot, slug, manifest, prior, nowMs);
+    if (gate) {
+      console.log(gate.result.status === 'fresh'
+        ? `[lab] ${slug}: fresh (${gate.detail}) — skipping; use --force to refetch.`
+        : `[lab] ${slug}: ${gate.detail} — automatic sync backing off; use --force to retry now.`);
+      return gate.result;
     }
   }
 
-  let resolvedTweaks = resolveTweaks(manifest);
-  if (windowOverride) {
-    // Replace the window everywhere an adapter can read it: the range object
-    // (what scripts consume via ctx.resolvedTweaks.range), and the from/to
-    // values ({{tweak:from}}/{{tweak:to}} substitution). The relative `range`
-    // value is dropped so a script reading the string cannot contradict the
-    // object it sits next to.
-    const spanMs = Date.parse(`${windowOverride.toISO}T00:00:00Z`) - Date.parse(`${windowOverride.fromISO}T00:00:00Z`);
-    const values: Record<string, string> = {
-      ...resolvedTweaks.values,
-      from: windowOverride.fromISO,
-      to: windowOverride.toISO,
-    };
-    delete values.range;
-    resolvedTweaks = {
-      values,
-      range: { fromISO: windowOverride.fromISO, toISO: windowOverride.toISO },
-      spanDays: Math.max(0, Math.round(spanMs / 86_400_000)),
-    };
-  }
+  const resolvedTweaks = resolveTweaks(manifest);
   const credentials = readCredentials(contextRoot);
   const secretValues = Object.values(credentials);
 
   // ── Script-hash tripwire: LOUD notice BEFORE executing a changed script. ──
   const newHash = computeScriptHash(manifest);
-  if (newHash && prior?.scriptHash && prior.scriptHash !== newHash) {
+  const scriptChanged = Boolean(newHash && prior?.scriptHash && prior.scriptHash !== newHash);
+  if (scriptChanged) {
     console.warn(`[lab] script changed since last run for ${slug} — review lab/scripts before trusting this sync.`);
+  }
+
+  const adapterCtx: AdapterContext = {
+    manifest,
+    resolvedTweaks,
+    credentials,
+    fetchImpl: opts.fetchImpl,
+    probeTimeoutMs: opts.probeTimeoutMs,
+  };
+  const queryKey = computeQueryKey(manifest, resolvedTweaks, newHash);
+
+  // ── Upstream probe ('user' and stale automatic runs; never 'hard'). Skip
+  // only when marker AND queryKey match the last real fetch (probePlan). ──
+  let captured: Omit<SourceFreshness, 'queryKey'> | null = null;
+  if (force !== 'hard' && manifest.source) {
+    const priorMarker = prior?.sourceFreshness;
+    const { skipEligible, wantsProbe } = probePlan(manifest, prior, queryKey, scriptChanged, nowMs);
+    const adapter = getAdapter(manifest);
+    if (adapter.probe && wantsProbe) {
+      const budgetMs = opts.probeTimeoutMs ?? FRESHNESS_PROBE_TIMEOUT_MS;
+      try {
+        const raw = await withDeadline(adapter.probe(adapterCtx), budgetMs + 3_000);
+        captured = normalizeFreshness(raw, secretValues);
+        if (raw !== null && !captured) {
+          console.warn(`[lab] ${slug}: freshness probe returned no usable marker — fetching.`);
+        }
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        console.warn(`[lab] ${slug}: freshness probe failed — fetching: ${redactSecrets(raw, secretValues)}`);
+      }
+      if (captured && skipEligible && priorMarker && captured.marker === priorMarker.marker) {
+        recordFreshnessCheck(contextRoot, slug, {
+          checkedAt: new Date(nowMs).toISOString(),
+          marker: priorMarker.marker,
+          queryKey,
+        });
+        console.log(`[lab] ${slug}: upstream unchanged (marker ${captured.marker}) — skipping the fetch.`);
+        const note = captured.note ?? priorMarker.note;
+        return {
+          slug,
+          status: 'fresh',
+          reason: 'upstream-unchanged',
+          latest: prior?.latest ?? null,
+          ...(note ? { freshnessNote: note } : {}),
+        };
+      }
+    }
   }
 
   try {
     const adapter = getAdapter(manifest);
-    const fetched = await adapter.fetch({
-      manifest,
-      resolvedTweaks,
-      credentials,
-      fetchImpl: opts.fetchImpl,
-    });
+    const fetched = await adapter.fetch(adapterCtx);
 
     // ── html/v1 hybrid + app/v1: unwrap the optional envelope. `data` carries
     // the numbers exactly as a bare return would; `html` is an optional capped
@@ -327,6 +693,9 @@ export async function syncInsight(
     let html: string | undefined;
     let app: AppCacheEntry | undefined;
     let result: RawSeries[] | RawFunnelSet | RawMatrixSet | RawDatasetBundle;
+    // The source's own word on this data wins over the pre-fetch probe.
+    const freshness = (isRawPayloadEnvelope(fetched) ? normalizeFreshness(fetched.freshness, secretValues) : null)
+      ?? captured;
     if (isRawPayloadEnvelope(fetched)) {
       if (typeof fetched.html === 'string' && fetched.html.length > 0) {
         const bytes = Buffer.byteLength(fetched.html, 'utf-8');
@@ -420,36 +789,21 @@ export async function syncInsight(
         prior?.datasetHistory,
         makeDatasetSnapshot(parsed.bundle, resolvedTweaks.range, new Date(nowMs).toISOString()),
       );
+      // A funnel explorer's bundle carries one funnel-set/v1 member: it is
+      // stored as cache.funnel (with its history) exactly as a bare funnel-set
+      // would be; latest + series stay the primary dataset's.
+      if (parsed.funnel) {
+        funnel = { set: parsed.funnel.set, notices: parsed.funnel.notices, range: resolvedTweaks.range };
+        funnelHistory = appendFunnelHistory(
+          prior?.funnelHistory,
+          makeFunnelSnapshot(parsed.funnel.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
+        );
+      }
     } else {
       const rolled = rollupSeries(result, resolvedTweaks.spanDays, aggFor(manifest));
       series = rolled.series;
       granularity = rolled.granularity;
       latest = computeLatest(series, manifest.binding);
-    }
-
-    if (windowOverride) {
-      // ── Transient window run: full cache SHAPE, but no history, no trails,
-      // no canonical write, no KR binding — the measurement answers a report's
-      // window question and nothing else. ──
-      const transient: InsightCache = {
-        slug,
-        fetchedAt: new Date(nowMs).toISOString(),
-        tweaks: resolvedTweaks.values,
-        granularity,
-        unit: manifest.unit,
-        series,
-        latest,
-        error: null,
-        errorAt: null,
-        scriptHash: null,
-      };
-      if (funnel) transient.funnel = funnel;
-      if (matrix) transient.matrix = matrix;
-      if (datasets) transient.datasets = datasets;
-      if (html !== undefined) transient.html = html;
-      if (app) transient.app = app;
-      writeWindowCache(contextRoot, slug, windowOverride, transient);
-      return { slug, status: 'ok', latest, granularity };
     }
 
     const cache: InsightCache = {
@@ -490,24 +844,25 @@ export async function syncInsight(
     // presence (the html/v1 rule, extended to app/v1 the same way).
     if (html !== undefined) cache.html = html;
     if (app) cache.app = app;
+    // Marker + fingerprint of THIS fetch (no checkedAt: that is machine-local).
+    if (freshness) cache.sourceFreshness = { ...freshness, queryKey };
     writeCache(contextRoot, slug, cache);
 
     if (manifest.binding) writeBinding(contextRoot, slug, manifest.binding, latest);
 
-    return { slug, status: 'ok', latest, granularity };
+    return {
+      slug,
+      status: 'ok',
+      latest,
+      granularity,
+      ...(freshness?.note ? { freshnessNote: freshness.note } : {}),
+    };
   } catch (err) {
     // Build the stored/logged message from the REDACTED string only — never the
     // raw Error object (a stack could carry an un-redacted URL/header).
     const rawMsg = err instanceof LabError ? err.message : (err instanceof Error ? err.message : String(err));
     const message = redactSecrets(rawMsg, secretValues);
     console.error(`[lab] sync failed for ${slug}: ${message}`);
-
-    if (windowOverride) {
-      // A failed transient run writes NOTHING — the canonical cache's error
-      // state belongs to the canonical timeline, and there is no partial
-      // window measurement worth keeping.
-      return { slug, status: 'failed', error: message };
-    }
 
     const failCache: InsightCache = {
       slug,
@@ -539,6 +894,8 @@ export async function syncInsight(
     if (prior?.datasetHistory) failCache.datasetHistory = prior.datasetHistory;
     if (prior?.html !== undefined) failCache.html = prior.html;
     if (prior?.app) failCache.app = prior.app;
+    // The kept data still belongs to the kept marker.
+    if (prior?.sourceFreshness) failCache.sourceFreshness = prior.sourceFreshness;
     writeCache(contextRoot, slug, failCache);
 
     return { slug, status: 'failed', error: message };
@@ -645,16 +1002,20 @@ export async function syncAll(
     for (;;) {
       const i = next++;
       if (i >= total) return;
-      const slugOpts: SyncOptions = opts.windows?.[slugs[i]]
-        ? { ...opts, window: opts.windows[slugs[i]] }
-        : opts;
-      const result = await settleInsight(contextRoot, slugs[i], slugOpts, timeoutMs);
+      const result = await settleInsight(contextRoot, slugs[i], opts, timeoutMs);
       results[i] = result;
       done++;
       // A throwing progress callback is the CALLER's bug and must not abort the
       // run — half the board would silently go unsynced.
       try {
-        opts.onProgress?.({ done, total, slug: result.slug, status: result.status, error: result.error });
+        opts.onProgress?.({
+          done,
+          total,
+          slug: result.slug,
+          status: result.status,
+          error: result.error,
+          ...(result.reason ? { reason: result.reason } : {}),
+        });
       } catch (err) {
         console.warn(`[lab] sync progress callback threw: ${(err as Error).message}`);
       }

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
-import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
+import type { FunnelCacheEntry, FunnelPrev } from '../components/lab/funnel/funnelModel';
 import type { MatrixCacheEntry, MatrixSnapshot } from '../components/lab/matrixModel';
 import type { AppCacheEntry, DatasetCacheEntry } from '../components/lab/appModel';
 import type { InsightHeight, InsightSize, InsightWidth, Render } from '../components/lab/chartRegistry';
@@ -51,6 +51,10 @@ export interface InsightSummary {
   ttlMinutes: number;
   staleMinutes: number | null;
   stale: boolean | null;
+  /** This machine's last "upstream unchanged" confirmation (staleness counts from the newer of this and fetchedAt). */
+  checkedAt?: string | null;
+  /** The source's own plain-text freshness note, or null. */
+  freshnessNote?: string | null;
   tweaks: PublicTweak[];
 }
 
@@ -130,10 +134,15 @@ export interface InsightDetail {
 
 export interface SyncResult {
   slug: string;
-  status: 'ok' | 'fresh' | 'failed';
+  /** `skipped` = an automatic run backing off a recent failure. */
+  status: 'ok' | 'fresh' | 'failed' | 'skipped';
   latest?: number | null;
   granularity?: string;
   error?: string;
+  /** Why a `fresh`/`skipped` result did not fetch. */
+  reason?: 'ttl' | 'upstream-unchanged' | 'error-backoff';
+  /** The source's own plain-text freshness note. */
+  freshnessNote?: string;
 }
 
 /**
@@ -172,13 +181,23 @@ export function useLabInsight(slug: string | null) {
   });
 }
 
-/** Sync one insight (always forces a refetch — the explicit user action). */
+/**
+ * How hard a sync pushes past the freshness gate. `'user'` = someone pressed
+ * something (the TTL is skipped, the upstream probe still decides); `'hard'` =
+ * skip the probe too ("Force full refresh"). AUTOMATIC callers (board open,
+ * timers, visibility re-checks) send no force at all.
+ */
+export type LabSyncForce = 'user' | 'hard';
+
+/** Sync one insight: an explicit user action, so `'user'` unless `'hard'` is asked for. */
 export function useSyncInsight() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (slug: string) =>
-      api.post<{ results: SyncResult[]; failed: SyncResult[] }>('/lab/sync', { slug, force: true }),
+    mutationFn: (arg: string | { slug: string; force: LabSyncForce }) => {
+      const { slug, force } = typeof arg === 'string' ? { slug: arg, force: 'user' as const } : arg;
+      return api.post<{ results: SyncResult[]; failed: SyncResult[] }>('/lab/sync', { slug, force });
+    },
     onSuccess: () => invalidateLab(queryClient),
   });
 }
@@ -194,20 +213,21 @@ export function useSyncInsight() {
  */
 export interface LabSyncJob {
   id: string;
-  status: 'running' | 'success' | 'error';
+  /** `queued` = a follow-up waiting for the running job; it starts itself. */
+  status: 'queued' | 'running' | 'success' | 'error';
   done: number;
   total: number;
   attempt: number;
   startedAt: number;
   finishedAt: number | null;
-  /** Filled LIVE as insights settle — the report page's progressive fill feed. */
+  /** Filled LIVE as insights settle. */
   results: SyncResult[];
   failed: string[];
   error: string | null;
-  /** The slugs the run is scoped to (a report's subset), or null = whole board. */
+  /** The slugs the run is scoped to (a subset), or null = every insight. */
   slugs: string[] | null;
-  /** Per-slug transient window overrides (report window inheritance), or null. */
-  windows: Record<string, { fromISO: string; toISO: string }> | null;
+  /** null = an automatic run (no retry pass). */
+  force: LabSyncForce | null;
   /** The insight that settled most recently ("now syncing …" copy). */
   current: string | null;
 }
@@ -225,161 +245,61 @@ export function useLabSyncJob() {
   });
 }
 
-/** Start (or adopt) the bulk sync job — the whole board, or a `slugs` subset
- *  (the report page's progressive fill). Returns immediately — watch `useLabSyncJob`. */
+/** Both job slots: the running (or last settled) job and the queued follow-up. */
+export interface LabSyncSlots {
+  running: LabSyncJob | null;
+  pending: LabSyncJob | null;
+}
+
+/**
+ * The same poll as `useLabSyncJob`, with the queued follow-up too (a board
+ * shows "queued" on the cards it covers). Shares its cache entry, so the two
+ * hooks never poll twice.
+ */
+export function useLabSyncSlots() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['lab-sync-job'],
+    queryFn: () => api.get<{ job: LabSyncJob | null; running?: LabSyncJob | null; pending?: LabSyncJob | null }>('/lab/sync-jobs/current'),
+    select: (d): LabSyncSlots => ({ running: d.running ?? d.job ?? null, pending: d.pending ?? null }),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d?.job?.status === 'running' || d?.pending ? 800 : false;
+    },
+    refetchOnWindowFocus: true,
+    retry: 0,
+  });
+}
+
+/** What starting a job produced: a new run, the adopted running one, or the
+ *  queued follow-up (`queued: true`, `job` = that follow-up). */
+export interface LabSyncJobStart {
+  job: LabSyncJob;
+  started: boolean;
+  queued: boolean;
+  running: LabSyncJob | null;
+  pending: LabSyncJob | null;
+}
+
+/** Start (or adopt, or queue) the bulk sync job — every insight, or a `slugs`
+ *  subset. `force` ABSENT = automatic (board open, timers): the TTL and the
+ *  error backoff apply and there is no retry pass. User actions pass `'user'`.
+ *  Returns immediately — watch `useLabSyncJob`. */
 export function useStartLabSyncJob() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (opts: {
-      force?: boolean;
-      slugs?: string[];
-      windows?: Record<string, { fromISO: string; toISO: string }>;
-    } = {}) =>
-      api.post<{ job: LabSyncJob; started: boolean }>('/lab/sync-jobs', {
-        force: opts.force !== false,
+    mutationFn: (opts: { force?: LabSyncForce; slugs?: string[] } = {}) =>
+      api.post<LabSyncJobStart>('/lab/sync-jobs', {
+        ...(opts.force ? { force: opts.force } : {}),
         ...(opts.slugs ? { slugs: opts.slugs } : {}),
-        ...(opts.windows ? { windows: opts.windows } : {}),
       }),
     onSuccess: (d) => {
       // Seed the poll cache so the progress chip appears immediately (no 800ms gap).
-      queryClient.setQueryData(['lab-sync-job'], { job: d.job });
+      const running = d.running ?? (d.queued ? null : d.job);
+      queryClient.setQueryData(['lab-sync-job'], { job: running, running, pending: d.pending ?? (d.queued ? d.job : null) });
       queryClient.invalidateQueries({ queryKey: ['lab-sync-job'] });
     },
-  });
-}
-
-// ─── Reports ("My Reports") ─────────────────────────────────────────────────
-
-export interface ReportSummary {
-  slug: string;
-  title: string;
-  description: string | null;
-  date_nav: 'none' | 'daily' | 'weekly' | 'monthly';
-  sections: number;
-  items: number;
-}
-
-/** One resolved report item (see src/lib/lab/reports-store.ts). */
-export interface ResolvedReportItem {
-  insight: string;
-  missing: boolean;
-  title: string | null;
-  render: string | null;
-  unit: string | null;
-  view: string | null;
-  breakdown: { rows?: string; cols?: string; filter?: Record<string, string> } | null;
-  /** ISO sync time the shown data was taken at, or null = honest empty. */
-  asOf: string | null;
-  latest: number | null;
-  matrixSnapshot: MatrixSnapshot | null;
-  funnelSnapshot: FunnelSnapshot | null;
-  /** Live cache — only when resolving WITHOUT a date. */
-  cache: InsightCache | null;
-  /** Measurement window of the SHOWN data, or null = none recorded (honest;
-   *  never the engine's silent default, never today's tweak relabeling history). */
-  window: { fromISO: string; toISO: string } | null;
-  /** The `range` tweak value behind the live cache (e.g. `last_7_days`), or null. */
-  rangeKey: string | null;
-  /** The window this item SHOULD measure (report inheritance), or null = 'own'. */
-  targetWindow: { fromISO: string; toISO: string } | null;
-  /** How the shown data relates to the target window. */
-  windowStatus: 'own' | 'aligned' | 'window' | 'stale' | 'missing' | 'cannot';
-}
-
-export interface ResolvedReportSection {
-  title: string;
-  prose: string | null;
-  items: ResolvedReportItem[];
-}
-
-export interface ReportDetail {
-  report: {
-    slug: string;
-    title: string;
-    description: string | null;
-    date_nav: ReportSummary['date_nav'];
-    notes: string;
-    /** False = the report opted out of AI commentary (non-AI reports are
-     *  first-class); absent (older servers) = enabled. */
-    commentaryEnabled?: boolean;
-  };
-  /** The resolved-to date, or null = live. */
-  date: string | null;
-  sections: ResolvedReportSection[];
-}
-
-/** The stored AI commentary of one report view, or null. */
-export interface ReportCommentary {
-  slug: string;
-  dateKey: string;
-  generatedAt: string;
-  model: string;
-  body: string;
-}
-
-export interface ReportCommentaryJob {
-  id: string;
-  slug: string;
-  dateKey: string;
-  status: 'running' | 'success' | 'error';
-  startedAt: number;
-  finishedAt: number | null;
-  error: string | null;
-  commentary: ReportCommentary | null;
-}
-
-export function useLabReportCommentary(slug: string | null, date: string | null) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['lab-report-commentary', slug, date],
-    queryFn: () =>
-      api.get<{ commentary: ReportCommentary | null; job: ReportCommentaryJob | null }>(
-        `/lab/reports/${slug}/commentary${date ? `?date=${date}` : ''}`,
-      ),
-    enabled: !!slug,
-    // Poll while a generation runs; idle otherwise.
-    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? 1200 : false),
-    retry: 0,
-  });
-}
-
-/** Start (or adopt) the commentary generation for a report view. */
-export function useStartLabReportCommentary() {
-  const queryClient = useQueryClient();
-  const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, date, from }: { slug: string; date: string | null; from?: string | null }) =>
-      api.post<{ job: ReportCommentaryJob; started: boolean }>(
-        `/lab/reports/${slug}/commentary`,
-        { ...(date ? { date } : {}), ...(from ? { from } : {}) },
-      ),
-    onSuccess: (_d, vars) => {
-      queryClient.invalidateQueries({ queryKey: ['lab-report-commentary', vars.slug, vars.date] });
-    },
-  });
-}
-
-export function useLabReports() {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['lab-reports'],
-    queryFn: () => api.get<{ reports: ReportSummary[] }>('/lab/reports').then((r) => r.reports),
-    retry: 0,
-  });
-}
-
-export function useLabReport(slug: string | null, date: string | null, from: string | null = null) {
-  const api = useApi();
-  const params = new URLSearchParams();
-  if (date) params.set('date', date);
-  if (from) params.set('from', from);
-  const qs = params.toString();
-  return useQuery({
-    queryKey: ['lab-report', slug, date, from],
-    queryFn: () => api.get<ReportDetail>(`/lab/reports/${slug}${qs ? `?${qs}` : ''}`),
-    enabled: !!slug,
-    retry: 0,
   });
 }
 
@@ -470,7 +390,7 @@ export function useApplyTweaks() {
       await api.patch<{ insight: PublicManifest }>(`/lab/${slug}/tweaks`, { tweaks });
       const data = await api.post<{ results: SyncResult[]; failed: SyncResult[] }>(
         '/lab/sync',
-        { slug, force: true },
+        { slug, force: 'user' },
       );
       const result = data.results[0];
       return result?.status === 'failed'
