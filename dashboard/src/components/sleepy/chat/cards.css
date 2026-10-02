@@ -1071,6 +1071,19 @@ video.chat-msg-user-media-el { cursor: default; }
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
   color: var(--color-warning);
 }
+/* Collapsed: one line, clipped. The full command is one click away on the header. */
+.chat-bypasscard-desc--clip {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.chat-bypasscard-body:has(.chat-bypasscard-desc--clip) { padding-block: var(--space-2); }
+/* Opened: a heredoc can still be long — scroll inside the card, never past a screen. */
+.chat-bypasscard-cmd {
+  max-height: 320px;
+  overflow: auto;
+  border-radius: var(--radius-md);
+}
 .chat-bypasscard-note {
   margin: 0;
   color: var(--color-warning);
