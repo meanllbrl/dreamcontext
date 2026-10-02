@@ -838,6 +838,11 @@ describe('formatModelName', () => {
     expect(formatModelName('claude-fable-5')).toBe('Fable 5');
   });
 
+  it('a bracketed variant tag does not swallow the minor version', () => {
+    expect(formatModelName('claude-opus-5-5[1m]')).toBe('Opus 5.5');
+    expect(formatModelName('claude-sonnet-5-5[1m]')).toBe('Sonnet 5.5');
+  });
+
   it('an unknown family is returned VERBATIM — never blanked, never relabelled', () => {
     expect(formatModelName('gpt-4o')).toBe('gpt-4o');
     expect(formatModelName('some-internal-build')).toBe('some-internal-build');

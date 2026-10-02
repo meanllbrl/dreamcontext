@@ -1193,6 +1193,8 @@ export function runDurationMs(run: SubAgentRun, now: number): number {
  * A model id → a short human label: `claude-haiku-4-5-20251001` → `Haiku 4.5`,
  * `claude-opus-5` → `Opus 5`. The trailing 8-digit date stamp is dropped (it is a build
  * date, not a version anyone reads), and the remaining version segments join on a dot.
+ * A bracketed variant tag (`claude-opus-5-5[1m]`, what the CLI reports for a 1M-context run)
+ * is dropped first — left on, it glues to the last segment and the minor version vanishes.
  *
  * An id from a family we don't know is returned VERBATIM rather than relabelled or blanked —
  * a raw id the user can read beats a dash that says nothing, and beats claiming a model ran
@@ -1206,7 +1208,7 @@ export function formatModelName(model: string): string {
   const lower = id.toLowerCase();
   const family = MODEL_FAMILIES.find((f) => lower.includes(f));
   if (!family) return id;
-  const after = lower.slice(lower.indexOf(family) + family.length);
+  const after = lower.slice(lower.indexOf(family) + family.length).replace(/\[[^\]]*\]/g, '');
   const version = after
     .split('-')
     .filter((part) => /^\d+$/.test(part) && part.length < 8)
