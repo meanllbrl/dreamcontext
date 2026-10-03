@@ -22,7 +22,7 @@ import {
   releaseWindowNonce, windowLabelsForVault,
 } from '../../lib/assistant/relay.js';
 import { listVaults } from '../../lib/vaults.js';
-import { recordDelegation } from '../../lib/assistant/delegations.js';
+import { dismissDelegation, listDelegations, recordDelegation } from '../../lib/assistant/delegations.js';
 import { notifyAssistantAutonomy } from './agent-chat.js';
 import { captureScreens } from '../../lib/assistant/screen.js';
 
@@ -314,7 +314,7 @@ export async function handleAssistantUi(req: IncomingMessage, res: ServerRespons
     const out = await gated(res, verb, `${chat.vault} · ${chat.sessionId}`, text, isPermission, (finalText) =>
       relay({ ...args, vault: chat.vault, ...(verb === 'send' ? { text: finalText } : args.choice ? { choice: finalText } : { text: finalText }) }));
     // The Assistant is told when this session next asks, finishes a turn, or closes.
-    if (out.body.ok === true) recordDelegation(args.sessionId, chat.vault);
+    if (out.body.ok === true) recordDelegation(args.sessionId, chat.vault, verb === 'send' ? args.text : undefined);
     sendJson(res, out.status, out.body);
     return;
   }
@@ -325,7 +325,7 @@ export async function handleAssistantUi(req: IncomingMessage, res: ServerRespons
     // registry keys on (useAssistantDoorbell.ts).
     if (out.body.ok === true) {
       const result = out.body.result as { sessionId?: unknown } | null | undefined;
-      recordDelegation(result?.sessionId, args.vault);
+      recordDelegation(result?.sessionId, args.vault, args.prompt);
     }
     sendJson(res, out.status, out.body);
     return;
@@ -381,6 +381,92 @@ export async function handleAssistantRollup(req: IncomingMessage, res: ServerRes
     if (a !== 'gone') counts[a] += 1;
   }
   sendJson(res, 200, { ...counts, proposals: listProposals().length });
+}
+
+/** How many live chats the glance lists — a notch row each, never a transcript. */
+const GLANCE_MAX = 6;
+/** The glance's per-string cap: one line in the notch, not the whole command. */
+const GLANCE_TEXT_CAP = 240;
+
+/**
+ * GET /api/assistant/glance — the open notch's "what is happening" rows: every chat that is
+ * asking, working, starting or stale (idle and gone are left out), asking first. Unlike the
+ * rollup this carries project text (the pending prompt), so every such string is wrapped in
+ * `<untrusted-project-output>` like any other route; the notch strips the wrapper to draw it.
+ * It does NOT taint: the notch is the owner's eyes, not the assistant's.
+ */
+export async function handleAssistantGlance(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  const now = Date.now();
+  const rank: Record<string, number> = { asking: 0, working: 1, starting: 2, stale: 3 };
+  const clip = (s: string) => (s.length > GLANCE_TEXT_CAP ? `${s.slice(0, GLANCE_TEXT_CAP)}…` : s);
+  const chats = listChats({})
+    .map((c) => ({ c, activity: activityOf(c, now) }))
+    .filter(({ activity }) => activity in rank)
+    .sort((a, b) => rank[a.activity] - rank[b.activity] || Date.parse(b.c.lastFrameAt) - Date.parse(a.c.lastFrameAt))
+    .slice(0, GLANCE_MAX)
+    .map(({ c, activity }) => ({
+      sessionId: c.sessionId,
+      vault: c.vault,
+      activity,
+      since: c.updatedAt,
+      title: c.title ? wrapUntrusted(c.vault, clip(c.title)) : '',
+      ask: activity === 'asking' && c.pendingQuestion
+        ? {
+          id: c.pendingQuestion.requestId,
+          kind: c.pendingQuestion.isPermission ? 'permission' : 'question',
+          tool: c.pendingQuestion.toolName,
+          text: wrapUntrusted(c.vault, clip(c.pendingQuestion.text)),
+        }
+        : null,
+    }));
+  // What the Assistant handed off, live first then the recently closed. The brief is the
+  // Assistant's own words, but those may echo project output, so it is wrapped like the rest.
+  const delegations = listDelegations(now).map((d) => ({
+    sessionId: d.sessionId,
+    vault: d.vault,
+    activity: d.activity,
+    startedAt: d.startedAt,
+    endedAt: d.endedAt,
+    brief: d.brief ? wrapUntrusted(d.vault, clip(d.brief)) : '',
+    lastText: d.lastText ? wrapUntrusted(d.vault, clip(d.lastText)) : '',
+    ask: d.pending
+      ? { id: d.pending.id, kind: d.pending.kind, tool: d.pending.tool, text: wrapUntrusted(d.vault, clip(d.pending.text)) }
+      : null,
+  }));
+  sendJson(res, 200, { chats, delegations });
+}
+
+/** POST /api/assistant/delegations/dismiss {sessionId} — the owner cleared a closed hand-off. */
+export async function handleAssistantDelegationDismiss(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const sessionId = typeof b.sessionId === 'string' && b.sessionId.length <= 100 ? b.sessionId : '';
+  if (!sessionId) { sendError(res, 400, 'invalid_args', 'sessionId is required'); return; }
+  sendJson(res, 200, { ok: dismissDelegation(sessionId) });
+}
+
+/**
+ * POST /api/assistant/answer {sessionId, question, choice: 'allow'|'deny'} — the owner pressed
+ * Allow or Deny on a permission row in the notch. The OWNER decided, so no autonomy gate and no
+ * proposal: it rides the same `answer` relay the assistant's verb does (claimed by the project
+ * window that holds the chat), and is not recorded as a delegation.
+ */
+export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  holdOpen(req);
+  const b = (await parseJsonBody(req)) ?? {};
+  const sessionId = typeof b.sessionId === 'string' && b.sessionId.length <= 100 ? b.sessionId : '';
+  const question = typeof b.question === 'string' && b.question.length <= 200 ? b.question : '';
+  const choice = b.choice === 'allow' || b.choice === 'deny' ? b.choice : '';
+  if (!sessionId || !question || !choice) { sendError(res, 400, 'invalid_args', 'sessionId, question and choice (allow|deny) are required'); return; }
+  const chat = getChat(sessionId);
+  if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${sessionId}".`); return; }
+  // Only the prompt the registry still shows: a stale row must not answer a newer one.
+  if (chat.pendingQuestion?.requestId !== question) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
+  const r = await relayCommand('answer', { sessionId, question, choice, text: null, vault: chat.vault });
+  if (r.ok) sendJson(res, 200, { ok: true, result: r.result });
+  else sendJson(res, r.error === 'no_surface' ? 409 : 200, { ok: false, error: r.error });
 }
 
 /** Runs a bundled-CLI subcommand in `cwd` — injectable for tests. */

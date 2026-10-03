@@ -8,8 +8,14 @@ import { isDesktop } from '../../lib/desktop';
 import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
 import { claimSeat, flying, guardHeal, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
-import { ProposalList, type Proposal } from './ProposalList';
-import { EMPTY_ROLLUP, pillBubbles, pillLabel, readRollup, type Rollup } from './notchModel';
+import { ProposalList, decide, type Proposal } from './ProposalList';
+import { GlanceList, HandoffList, answerPermission, dismissHandoff } from './GlanceList';
+import { ConversationMenu } from './ConversationMenu';
+import { NotchPeek, peekItem } from './NotchPeek';
+import {
+  EMPTY_ROLLUP, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel, readGlance, readHandoffs, readRollup,
+  type GlanceChat, type Handoff, type Rollup,
+} from './notchModel';
 import { emitExternalPushToTalk, summonTakeDue } from '../../lib/voice/externalPushToTalk';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { initAgentSettingsFromServer, readAgentSettings } from '../../lib/agentSettings';
@@ -62,6 +68,19 @@ const HOME_AFTER_SPOKEN_MS = 1500;
 const HOME_AFTER_SILENT_MS = 8000;
 /** The leave / arrive animations (notch.css `dc-notch-leave` / `dc-notch-arrive`). */
 const LEAVE_MS = 280;
+/** How long the island stays green after the last turn across every project ends. */
+const DONE_GLOW_MS = 4000;
+/** The peek: as wide as a short sentence plus two buttons, never the whole open panel. */
+const PEEK_W = 460;
+/** Hover must rest this long before the peek drops (a cursor crossing the menu bar is not a hover). */
+const HOVER_IN_MS = 220;
+/** Leaving a hover peek: this long to come back before it folds. */
+const HOVER_OUT_MS = 350;
+/** A finished hand-off's reply stays in the peek this long (paused while hovered). */
+const FINISHED_PEEK_MS = 7000;
+
+/** Why the peek is down: a hover, a prompt waiting on the owner, or a hand-off that just ended. */
+type PeekReason = 'hover' | 'ask' | 'finished';
 
 /** Where the assistant sits: grown out of the notch, or floating as its own window. */
 type Seat = 'notch' | 'window';
@@ -167,6 +186,28 @@ async function seat(expanded: boolean, geo: Geometry | null, ms: number = frameM
 }
 
 /**
+ * The PEEK seat: the pill grown down by `h` px, centred under the housing. Never focused — a
+ * peek is something to glance at, and the owner may be typing in another app.
+ */
+async function seatPeek(geo: Geometry | null, h: number, ms: number = frameMotionMs()): Promise<void> {
+  if (!isDesktop() || switchedOff) return;
+  const pill = notchFrame(false, geo);
+  const width = Math.max(PEEK_W, pill.width);
+  const f: SeatFrame = geo
+    ? { width, height: pill.height + h, x: geo.x + (geo.width - width) / 2, y: geo.y }
+    : { width, height: pill.height + h };
+  const gen = claimSeat(f);
+  if (!wantSeat(gen, f)) return;
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const win = getCurrentWindow();
+    if (!(await win.isVisible())) await win.show();
+    if (!isCurrentSeat(gen)) return;
+    await applyFrame(f, ms, 'clear');
+  } catch { /* ACL / no runtime */ }
+}
+
+/**
  * Change seats natively (desktop/src-tauri/src/assistant.rs `apply_seat`: level, resizable,
  * shadow; the min size rides the frame, see `seatWindow`). The SAME window and webview move;
  * nothing is rebuilt or reloaded.
@@ -255,6 +296,17 @@ export function Notch() {
   const [session, setSession] = useState<ChatSession | null>(null);
   const [rollup, setRollup] = useState<Rollup>(EMPTY_ROLLUP);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [glance, setGlance] = useState<GlanceChat[]>([]);
+  const [handoffs, setHandoffs] = useState<Handoff[]>([]);
+  /** The open panel's two faces: what is happening everywhere, and the conversation. */
+  const [tab, setTab] = useState<'now' | 'chat'>('chat');
+  const [convosOpen, setConvosOpen] = useState(false);
+  const [peek, setPeek] = useState<PeekReason | null>(null);
+  const [finishedId, setFinishedId] = useState<string | null>(null);
+  const peekRef = useRef<HTMLDivElement>(null);
+  /** Something waits on the owner (a prompt or a proposal) — opening lands on "Now". */
+  const waitingRef = useRef(false);
+  const [justFinished, setJustFinished] = useState(false);
   const [attention, setAttention] = useState(false);
   const [geo, setGeo] = useState<Geometry | null>(null);
   // Remembered for the whole app run: the webview is never reloaded, so every hotkey summon
@@ -336,6 +388,10 @@ export function Notch() {
         } else {
           setProposals([]);
         }
+        // The rows and the hand-offs, every tick: the collapsed pill and its peek speak from
+        // them too (who asks, which hand-off just finished), not only the open panel.
+        const raw = await (await fetch('/api/assistant/glance')).json();
+        if (alive) { setGlance(readGlance(raw)); setHandoffs(readHandoffs(raw)); }
       } catch { /* transient */ }
     };
     void tick();
@@ -345,7 +401,142 @@ export function Notch() {
 
   useEffect(() => onAssistantNotify((_text, level) => { if (level === 'attention') setAttention(true); }), []);
 
-  const expand = useCallback(() => {
+  // The last turn across every project just ended: green for a moment, then idle.
+  const busyCount = rollup.working + rollup.starting;
+  const wasBusy = useRef(0);
+  useEffect(() => {
+    const ended = wasBusy.current > 0 && busyCount === 0;
+    wasBusy.current = busyCount;
+    if (busyCount > 0) { setJustFinished(false); return; }
+    if (!ended) return;
+    setJustFinished(true);
+    const t = window.setTimeout(() => setJustFinished(false), DONE_GLOW_MS);
+    return () => window.clearTimeout(t);
+  }, [busyCount]);
+  const mood = notchMood(rollup, justFinished);
+  const dropRow = useCallback((sessionId: string) => {
+    setGlance((g) => g.filter((c) => c.sessionId !== sessionId));
+    setHandoffs((hs) => hs.map((h) => (h.sessionId === sessionId ? { ...h, ask: null, activity: 'working' } : h)));
+  }, []);
+  const clearHandoff = useCallback((sessionId: string) => {
+    dismissHandoff(sessionId);
+    setHandoffs((hs) => hs.filter((h) => h.sessionId !== sessionId));
+  }, []);
+  waitingRef.current = glance.some((c) => !!c.ask) || proposals.length > 0;
+
+  // ── THE PEEK: the collapsed notch says one thing without being opened ──────────────────
+  // Only from the notch seat: popped out, the window IS the surface and a hidden one stays hidden.
+  const canPeek = !expanded && seatMode === 'notch';
+  const canPeekRef = useRef(canPeek);
+  canPeekRef.current = canPeek;
+  const hoverRef = useRef(false);
+
+  // A prompt the owner has not seen yet drops the peek by itself; it stays until it is
+  // answered or waved away. One already seen (answered, dismissed) never drops it again.
+  const askKeys = glance.filter((c) => c.ask).map((c) => `${c.sessionId}:${c.ask!.id}`).join('|');
+  const seenAsks = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const keys = askKeys ? askKeys.split('|') : [];
+    const fresh = keys.some((k) => !seenAsks.current.has(k));
+    for (const k of keys) seenAsks.current.add(k);
+    if (fresh && canPeekRef.current) setPeek('ask');
+    if (!keys.length) setPeek((p) => (p === 'ask' ? null : p));
+  }, [askKeys]);
+
+  // A hand-off that was running and is now done or closed: say so, with its reply.
+  const phases = useRef(new Map<string, string>());
+  useEffect(() => {
+    let ended: string | null = null;
+    const next = new Map<string, string>();
+    for (const h of handoffs) {
+      const ph = handoffPhase(h);
+      const was = phases.current.get(h.sessionId);
+      if ((was === 'running' || was === 'waiting') && (ph === 'done' || ph === 'closed')) ended = h.sessionId;
+      next.set(h.sessionId, ph);
+    }
+    phases.current = next;
+    if (!ended) return;
+    setFinishedId(ended);
+    if (canPeekRef.current) setPeek((p) => p ?? 'finished');
+  }, [handoffs]);
+  // The pill says "<project> finished" for a while after; the peek folds sooner (not while hovered).
+  useEffect(() => {
+    if (!finishedId) return;
+    const t = window.setTimeout(() => setFinishedId(null), 30_000);
+    return () => window.clearTimeout(t);
+  }, [finishedId]);
+  useEffect(() => {
+    if (peek !== 'finished') return;
+    const t = window.setTimeout(() => { if (!hoverRef.current) setPeek((p) => (p === 'finished' ? null : p)); }, FINISHED_PEEK_MS);
+    return () => window.clearTimeout(t);
+  }, [peek, finishedId]);
+
+  // Hover: rest on the pill and it drops; leave and it folds (an event peek for a prompt stays).
+  const hoverTimer = useRef<number | null>(null);
+  const onHoverIn = useCallback(() => {
+    hoverRef.current = true;
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    if (!canPeekRef.current) return;
+    hoverTimer.current = window.setTimeout(() => setPeek((p) => p ?? 'hover'), HOVER_IN_MS);
+  }, []);
+  const onHoverOut = useCallback(() => {
+    hoverRef.current = false;
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => setPeek((p) => (p === 'hover' || p === 'finished' ? null : p)), HOVER_OUT_MS);
+  }, []);
+  useEffect(() => () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current); }, []);
+
+  // Seat the peek to its content (re-measured as rows change), and fold back to the pill.
+  const peekShown = !!peek && canPeek;
+  const wasPeek = useRef(false);
+  useEffect(() => {
+    if (!peekShown) {
+      if (wasPeek.current && !expandedRef.current && seatRef.current === 'notch') void seat(false, geo);
+      wasPeek.current = false;
+      return;
+    }
+    wasPeek.current = true;
+    const el = peekRef.current;
+    if (!el) return;
+    const fit = () => void seatPeek(geo, Math.ceil(el.getBoundingClientRect().height));
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [peekShown, geo]);
+
+  // Y / N answer the first thing waiting on the owner — a project's permission prompt, else the
+  // first proposal — while the island is open and the owner is not typing.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'y' && key !== 'n') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const ask = glance.find((c) => c.ask?.kind === 'permission');
+      if (ask) {
+        e.preventDefault();
+        void answerPermission(ask, key === 'y' ? 'allow' : 'deny').then((ok) => { if (ok) dropRow(ask.sessionId); });
+        return;
+      }
+      const p = proposals[0];
+      if (p) {
+        e.preventDefault();
+        void decide(p.id, key === 'y' ? 'approve' : 'reject').then((ok) => {
+          if (ok) setProposals((ps) => ps.filter((x) => x.id !== p.id));
+        });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded, glance, proposals, dropRow]);
+
+  // Opening lands on what matters: "Now" when something waits on the owner, else the chat.
+  const expand = useCallback((to?: 'now' | 'chat') => {
+    setTab(to ?? (waitingRef.current ? 'now' : 'chat'));
+    setPeek(null);
     setExpanded(true);
     setAttention(false);
     const seated = seatRef.current === 'window' ? seatWindow(geo, frameRef.current) : seat(true, geo);
@@ -355,6 +546,8 @@ export function Notch() {
   // shrinking it to a pill; the next summon brings the window back.
   const collapse = useCallback(() => {
     setExpanded(false);
+    setPeek(null);
+    setConvosOpen(false);
     if (seatRef.current === 'window') {
       void readFrame().then((f) => { if (f) frameRef.current = f; return hideWindow(); });
     } else {
@@ -504,7 +697,7 @@ export function Notch() {
           const press = ++pressRef.current;
           if (!expandedRef.current) {
             flushSync(() => setExpanded(true));
-            void expand().then(() => {
+            void expand('chat').then(() => {
               if (!summonTakeDue(mode, heldRef.current, expandedRef.current, press === pressRef.current)) return;
               emitExternalPushToTalk({ edge, mode, summon: true });
             });
@@ -588,7 +781,21 @@ export function Notch() {
     cs.setCommandHandler(executeAssistantCommand);
     sessionRef.current = cs;
     setSession(cs);
+    setConvosOpen(false);
+    setTab('chat');
   }, []);
+
+  // Back to an earlier conversation: the live one is closed (its transcript stays, listed in the
+  // menu), the picked one is resumed in its place and becomes the one every launch resumes.
+  const switchConversation = useCallback((id: string) => {
+    const old = sessionRef.current;
+    if (old) { old.setCommandHandler(null); old.dispose(); }
+    void saveConversationId(id);
+    startSession(id);
+    setConvosOpen(false);
+    setTab('chat');
+    window.setTimeout(() => sessionRef.current?.focus(), 0);
+  }, [startSession]);
 
   const actions = useMemo<ChatSurfaceActions>(() => ({
     changeModel: (_sid, id) => sessionRef.current?.setModel(id),
@@ -618,13 +825,26 @@ export function Notch() {
   const name = status?.config?.name ?? 'Assistant';
   const bubbles = pillBubbles(rollup);
   const label = pillLabel(rollup);
+  // Asking, the pill says WHO in place of the assistant's own name: "acme needs you".
+  const asker = glance.find((c) => c.activity === 'asking');
+  const finishedVault = finishedId ? handoffs.find((h) => h.sessionId === finishedId)?.vault ?? null : null;
+  const pillText = pillHeadline({ name, asker: asker?.vault ?? null, proposals: rollup.proposals, finished: finishedVault, handoffs, working: busyCount });
+  // The "Now" tab's count: everything that waits on the owner or is still running for them.
+  const nowCount = glance.filter((c) => c.ask).length + proposals.length + handoffs.filter((h) => handoffPhase(h) === 'running').length;
+  // "Now" lists a handed-off chat once, under Handed off — unless it is asking, which goes on top.
+  const handedOff = new Set(handoffs.map((h) => h.sessionId));
+  const liveRows = glance.filter((c) => c.ask || !handedOff.has(c.sessionId));
+  const peekNow = peekShown ? peekItem(glance, handoffs, peek === 'finished' ? finishedId : null) : null;
   const popped = seatMode === 'window';
   // Popped out there is no camera housing to straddle: the top row is a plain title bar.
   const hasNotch = !popped && !!geo && geo.notch_width > 0;
 
   return (
     <div
-      className={`dc-notch surface-night${expanded ? ' dc-notch--open' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && popped ? ' dc-notch--working' : ''}${motion ? ` dc-notch--${motion}` : ''}`}
+      data-mood={mood}
+      className={`dc-notch surface-night${expanded ? ' dc-notch--open' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && popped ? ' dc-notch--working' : ''}${motion ? ` dc-notch--${motion}` : ''}${peekShown ? ' dc-notch--peek' : ''}${busyCount > 0 && !expanded ? ' dc-notch--busy' : ''}`}
+      onPointerEnter={onHoverIn}
+      onPointerLeave={onHoverOut}
       onPointerDown={engage}
       onKeyDown={engage}
     >
@@ -634,7 +854,7 @@ export function Notch() {
       <button
         type="button"
         className="dc-notch__pill"
-        onClick={popped ? undefined : expanded ? collapse : expand}
+        onClick={popped ? undefined : expanded ? collapse : () => void expand()}
         onMouseDown={onPillMouseDown}
         style={{
           ['--notch-pill-h' as string]: `${pillHeight(geo)}px`,
@@ -646,7 +866,7 @@ export function Notch() {
           {status?.avatar
             ? <img className="dc-notch__avatar" src={status.avatar} alt="" />
             : <span className="dc-notch__avatar dc-notch__avatar--initial">{name.slice(0, 1)}</span>}
-          <span className="dc-notch__name">{name}</span>
+          <span className="dc-notch__name">{pillText}</span>
         </span>
         {/* Always drawn: it is the grid's middle column (0 wide without a camera housing), so
             the right ear keeps the right column instead of dropping into the middle one. */}
@@ -671,15 +891,61 @@ export function Notch() {
 
       {/* Hidden, never unmounted, while collapsed — see the header. The pill above already
           carries the name, so the bar holds only quiet actions. */}
+      {/* The peek: one thing, said from the collapsed notch (see NotchPeek.tsx). */}
+      {peekNow && (
+        <NotchPeek
+          ref={peekRef}
+          item={peekNow}
+          onOpenChat={() => void expand(peekNow.kind === 'summary' ? undefined : 'chat')}
+          onDone={() => setPeek(null)}
+        />
+      )}
+
+      {/* Hidden, never unmounted, while collapsed — see the header. Two faces: "Now" (what
+          every project is doing and what waits on the owner) and the conversation. */}
       <div className="dc-notch__panel" hidden={!expanded}>
         <div className="dc-notch__bar">
-          <button type="button" className="dc-notch__action" onClick={newConversation}>New conversation</button>
+          <div className="dc-notch__tabs" role="tablist">
+            <button type="button" role="tab" aria-selected={tab === 'now'} className="dc-notch__tab" onClick={() => { setTab('now'); setConvosOpen(false); }}>
+              Now{nowCount > 0 && <span className="dc-notch__count">{nowCount}</span>}
+            </button>
+            <button type="button" role="tab" aria-selected={tab === 'chat'} className="dc-notch__tab" onClick={() => { setTab('chat'); window.setTimeout(() => sessionRef.current?.focus(), 0); }}>
+              Chat
+            </button>
+          </div>
+          <span className="dc-notch__spacer" />
+          <button type="button" className="dc-notch__action" aria-expanded={convosOpen} onClick={() => setConvosOpen((v) => !v)} title="Earlier conversations">
+            Conversations ▾
+          </button>
+          <button type="button" className="dc-notch__action" onClick={newConversation} title="Start fresh — this one stays in Conversations">＋</button>
           {popped
             ? <button type="button" className="dc-notch__action dc-notch__dock" onClick={dock} title="Put it back in the notch">Dock</button>
             : <button type="button" className="dc-notch__action dc-notch__popout" onClick={popOut} title="Open as a window">Pop out</button>}
         </div>
-        {proposals.length > 0 && <ProposalList proposals={proposals} onDecided={(id) => setProposals((p) => p.filter((x) => x.id !== id))} />}
-        <div className="dc-notch__chat" ref={hostRef} />
+        {convosOpen && (
+          <ConversationMenu
+            vault={ASSISTANT_VAULT}
+            currentId={session?.claudeId ?? null}
+            onPick={switchConversation}
+            onNew={newConversation}
+            onClose={() => setConvosOpen(false)}
+          />
+        )}
+        <div className="dc-notch__now" hidden={tab !== 'now' || convosOpen}>
+          {liveRows.length > 0 && <GlanceList chats={liveRows} onAnswered={dropRow} />}
+          {proposals.length > 0 && (
+            <ProposalList
+              proposals={proposals}
+              keyed={!glance.some((c) => c.ask?.kind === 'permission')}
+              onDecided={(id) => setProposals((p) => p.filter((x) => x.id !== id))}
+            />
+          )}
+          {handoffs.length > 0 && <HandoffList handoffs={handoffs} onAnswered={dropRow} onDismiss={clearHandoff} />}
+          {glance.length === 0 && proposals.length === 0 && handoffs.length === 0 && (
+            <p className="dc-notch__empty">Nothing running and nothing waiting on you. Ask {name} to start something.</p>
+          )}
+        </div>
+        <div className="dc-notch__chat" ref={hostRef} hidden={tab !== 'chat' || convosOpen} />
         {!status?.exists && status && (
           <p className="dc-notch__empty">Create the Assistant from the Launcher first.</p>
         )}

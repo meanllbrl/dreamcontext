@@ -38,7 +38,7 @@ import { listVaults } from '../vaults.js';
 import { wrapUntrusted } from './autonomy.js';
 import { relayCommand } from './relay.js';
 import { getAssistantSurface } from './session-state.js';
-import { GONE_TTL_MS, getChat, onChatChange, type ChatChange, type ChatEntry } from './chat-registry.js';
+import { GONE_TTL_MS, activityOf, getChat, onChatChange, type ChatActivity, type ChatChange, type ChatEntry } from './chat-registry.js';
 
 export interface AssistantInbox {
   id: string;
@@ -54,6 +54,11 @@ export const GONE_DEBOUNCE_MS = 3_000;
 export const QUEUE_CAP = 20;
 /** Cap on the last assistant text carried in an event. */
 const LAST_TEXT_CAP = 1500;
+/** What the notch keeps of a delegation once its chat closed: the last few, for an hour. */
+export const ENDED_CAP = 10;
+export const ENDED_TTL_MS = 60 * 60_000;
+/** The brief (what the Assistant asked the project to do), capped: a notch line, not a prompt. */
+const BRIEF_CAP = 400;
 /** A request id reaches the header only when it is this plain. */
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
 
@@ -67,6 +72,10 @@ const LAST_LINE: Record<EventStatus, string> = {
 
 interface Delegation {
   vault: string;
+  /** What the Assistant asked for — the `chat` prompt or the `send`/`answer` text, latest wins. */
+  brief: string;
+  /** When the Assistant first handed this session work. */
+  startedAt: number;
   /** `${status}:${requestId}` of the last event emitted — identical consecutive states are not news. */
   lastEmitted: string | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
@@ -75,6 +84,19 @@ interface Delegation {
 }
 
 interface Queued { sessionId: string; text: string }
+
+/** A closed delegation, kept for the notch only (never an event, never the inbox). */
+interface Ended { sessionId: string; vault: string; brief: string; startedAt: number; endedAt: number; lastText: string }
+let ended: Ended[] = [];
+
+function remember(sessionId: string, d: Delegation, e: ChatEntry | null): void {
+  ended = ended.filter((x) => x.sessionId !== sessionId);
+  ended.unshift({
+    sessionId, vault: d.vault, brief: d.brief, startedAt: d.startedAt, endedAt: Date.now(),
+    lastText: e?.lastAssistantText[e.lastAssistantText.length - 1] ?? '',
+  });
+  if (ended.length > ENDED_CAP) ended.length = ENDED_CAP;
+}
 
 const delegated = new Map<string, Delegation>();
 let queue: Queued[] = [];
@@ -104,8 +126,10 @@ function sweep(now = Date.now()): void {
       clearIdle(d);
       clearGone(d);
       delegated.delete(id);
+      remember(id, d, null);
     }
   }
+  ended = ended.filter((x) => now - x.endedAt <= ENDED_TTL_MS);
 }
 
 /** The event text. Line 1 and the last line are the server's; everything between is fenced. */
@@ -199,6 +223,7 @@ function armGone(sessionId: string, d: Delegation, gone: ChatEntry): void {
     if (delegated.get(sessionId) !== d) return;
     if (isLive(getChat(sessionId))) return;
     delegated.delete(sessionId);
+    remember(sessionId, d, gone);
     emitEvent(sessionId, d.vault, 'gone', gone);
   }, GONE_DEBOUNCE_MS);
   t.unref?.();
@@ -241,7 +266,7 @@ function onChange({ entry }: ChatChange): void {
  * The Assistant started (`chat`) or sent/answered into this session: tell it when the session
  * asks, finishes a turn, or closes. An invalid id or an unregistered vault is ignored.
  */
-export function recordDelegation(sessionId: unknown, vault: unknown): void {
+export function recordDelegation(sessionId: unknown, vault: unknown, brief?: unknown): void {
   if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) return;
   if (typeof vault !== 'string' || !listVaults().some((v) => v.name === vault)) return;
   if (!unsubscribe) unsubscribe = onChatChange(onChange);
@@ -249,8 +274,10 @@ export function recordDelegation(sessionId: unknown, vault: unknown): void {
   const prev = delegated.get(sessionId);
   if (prev) { clearIdle(prev); clearGone(prev); }
   const chat = getChat(sessionId);
-  const d: Delegation = prev ?? { vault, lastEmitted: null, idleTimer: null, goneTimer: null, recordedAt: Date.now() };
+  const d: Delegation = prev ?? { vault, brief: '', startedAt: Date.now(), lastEmitted: null, idleTimer: null, goneTimer: null, recordedAt: Date.now() };
   d.vault = vault;
+  if (typeof brief === 'string' && brief.trim()) d.brief = brief.trim().slice(0, BRIEF_CAP);
+  ended = ended.filter((x) => x.sessionId !== sessionId);
   d.recordedAt = Date.now();
   delegated.set(sessionId, d);
   if (chat?.status === 'gone') {
@@ -275,6 +302,46 @@ export function attachAssistantInbox(next: AssistantInbox): () => void {
   return () => { if (inbox?.id === next.id) inbox = null; };
 }
 
+/** One delegation as the notch draws it. `lastText` and `pending` are PROJECT text (callers wrap). */
+export interface DelegationView {
+  sessionId: string;
+  vault: string;
+  brief: string;
+  startedAt: number;
+  endedAt: number | null;
+  activity: ChatActivity;
+  lastText: string;
+  pending: { id: string; kind: 'permission' | 'question'; tool: string; text: string } | null;
+}
+
+/** Every delegation the notch should show: the live ones, then the recently closed. */
+export function listDelegations(now = Date.now()): DelegationView[] {
+  sweep(now);
+  const live = [...delegated].map(([sessionId, d]): DelegationView => {
+    const c = getChat(sessionId);
+    return {
+      sessionId, vault: d.vault, brief: d.brief, startedAt: d.startedAt, endedAt: null,
+      activity: c ? activityOf(c, now) : 'gone',
+      lastText: c?.lastAssistantText[c.lastAssistantText.length - 1] ?? '',
+      pending: c?.pendingQuestion
+        ? { id: c.pendingQuestion.requestId, kind: c.pendingQuestion.isPermission ? 'permission' : 'question', tool: c.pendingQuestion.toolName, text: c.pendingQuestion.text }
+        : null,
+    };
+  }).sort((a, b) => b.startedAt - a.startedAt);
+  const closed: DelegationView[] = ended.map((x) => ({
+    sessionId: x.sessionId, vault: x.vault, brief: x.brief, startedAt: x.startedAt, endedAt: x.endedAt,
+    activity: 'gone', lastText: x.lastText, pending: null,
+  }));
+  return [...live, ...closed];
+}
+
+/** The owner cleared a closed delegation from the notch. A live one is not dismissable. */
+export function dismissDelegation(sessionId: string): boolean {
+  const before = ended.length;
+  ended = ended.filter((x) => x.sessionId !== sessionId);
+  return ended.length < before;
+}
+
 /** Test seam. */
 export function _currentAssistantInbox(): AssistantInbox | null {
   return inbox;
@@ -290,6 +357,7 @@ export function _resetDelegations(): void {
   for (const d of delegated.values()) { clearIdle(d); clearGone(d); }
   delegated.clear();
   queue = [];
+  ended = [];
   inbox = null;
   pumping = false;
   unsubscribe?.();

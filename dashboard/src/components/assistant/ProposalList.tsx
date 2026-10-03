@@ -18,7 +18,7 @@ const VERB_LABEL: Record<string, string> = {
   broadcast: 'Tell every project',
 };
 
-async function decide(id: string, action: 'approve' | 'edit' | 'reject', text?: string): Promise<boolean> {
+export async function decide(id: string, action: 'approve' | 'edit' | 'reject', text?: string): Promise<boolean> {
   try {
     const res = await fetch(`/api/assistant/proposals/${encodeURIComponent(id)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, text }),
@@ -29,7 +29,7 @@ async function decide(id: string, action: 'approve' | 'edit' | 'reject', text?: 
   }
 }
 
-function ProposalRow({ p, onDecided }: { p: Proposal; onDecided: (id: string) => void }) {
+function ProposalRow({ p, keyed, onDecided }: { p: Proposal; keyed: boolean; onDecided: (id: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(p.text);
   const [busy, setBusy] = useState(false);
@@ -52,19 +52,20 @@ function ProposalRow({ p, onDecided }: { p: Proposal; onDecided: (id: string) =>
       <div className="dc-proposal__actions">
         {editing
           ? <button type="button" className="dc-proposal__btn dc-proposal__btn--primary" disabled={busy || !draft.trim()} onClick={() => void act('edit')}>Send edited</button>
-          : <button type="button" className="dc-proposal__btn dc-proposal__btn--primary" disabled={busy} onClick={() => void act('approve')}>Approve</button>}
+          : <button type="button" className="dc-proposal__btn dc-proposal__btn--primary" disabled={busy} onClick={() => void act('approve')}>Approve{keyed && <kbd>Y</kbd>}</button>}
         <button type="button" className="dc-proposal__btn" disabled={busy} onClick={() => setEditing((v) => !v)}>{editing ? 'Cancel edit' : 'Edit'}</button>
-        <button type="button" className="dc-proposal__btn" disabled={busy} onClick={() => void act('reject')}>Reject</button>
+        <button type="button" className="dc-proposal__btn" disabled={busy} onClick={() => void act('reject')}>Reject{keyed && !editing && <kbd>N</kbd>}</button>
       </div>
     </li>
   );
 }
 
 /** The actions the assistant wants to take that need the owner's yes first. */
-export function ProposalList({ proposals, onDecided }: { proposals: Proposal[]; onDecided: (id: string) => void }) {
+/** `keyed`: Y / N act on the first proposal (Notch.tsx owns the keys), so its row shows them. */
+export function ProposalList({ proposals, keyed = false, onDecided }: { proposals: Proposal[]; keyed?: boolean; onDecided: (id: string) => void }) {
   return (
     <ul className="dc-proposals" aria-label="Waiting for your approval">
-      {proposals.map((p) => <ProposalRow key={p.id} p={p} onDecided={onDecided} />)}
+      {proposals.map((p, i) => <ProposalRow key={p.id} p={p} keyed={keyed && i === 0} onDecided={onDecided} />)}
     </ul>
   );
 }

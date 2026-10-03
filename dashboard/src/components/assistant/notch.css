@@ -115,7 +115,7 @@ html:has(.dc-notch) #root {
   padding: 0 var(--space-1);
   border-radius: var(--radius-full);
   background: var(--color-warning);
-  color: var(--color-warning-ink);
+  color: var(--notch-surface);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   text-align: center;
@@ -300,4 +300,363 @@ html:has(.dc-notch) #root {
   .dc-notch__glow,
   .dc-notch--arrive,
   .dc-notch--leave { animation: none; }
+}
+
+/* ── THE MOOD (Notch.tsx `data-mood`, notchModel `notchMood`) ─────────────────────────────
+   One word the whole island wears, read from across the room: amber when something waits on
+   the owner, green for a moment when the last turn ends. A soft light pooled under the
+   housing — the island stays black, only its top glows — never a flood of colour. */
+.dc-notch {
+  --notch-mood: transparent;
+  transition: background-color 400ms ease;
+}
+.dc-notch[data-mood='asking'] { --notch-mood: var(--color-warning); }
+.dc-notch[data-mood='done'] { --notch-mood: var(--color-success); }
+.dc-notch--open,
+.dc-notch--peek,
+.dc-notch__pill {
+  background-image: radial-gradient(120% 90% at 50% 0%,
+    color-mix(in srgb, var(--notch-mood) 22%, transparent), transparent 70%);
+}
+.dc-notch--open .dc-notch__pill { background: transparent; }
+.dc-notch__panel { background: transparent; }
+/* Collapsed, the words carry the mood too: the asker's name in amber. */
+.dc-notch[data-mood='asking'] .dc-notch__name { color: var(--color-warning); }
+.dc-notch[data-mood='done'] .dc-notch__name { color: var(--color-success); }
+
+/* Key chips on the button the key presses (Allow Y, Deny N). */
+.dc-notch kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  opacity: 0.6;
+}
+
+/* ── THE GLANCE: what every project is doing, asking first ─────────────────────────────── */
+.dc-glance {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 45%;
+  overflow: auto;
+  border-bottom: 1px solid var(--color-border);
+}
+.dc-glance__row { border-radius: var(--radius-lg); }
+.dc-glance__row[data-activity='asking'] {
+  padding-bottom: var(--space-2);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-secondary));
+}
+.dc-glance__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.dc-glance__head:hover,
+.dc-glance__head:focus-visible { background: var(--color-bg-secondary); }
+.dc-glance__dot {
+  flex: 0 0 auto;
+  align-self: center;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+}
+.dc-glance__row[data-activity='working'] .dc-glance__dot,
+.dc-glance__row[data-activity='starting'] .dc-glance__dot {
+  background: var(--color-success);
+  animation: dc-glance-breathe 1.6s ease-in-out infinite;
+}
+.dc-glance__row[data-activity='asking'] .dc-glance__dot { background: var(--color-warning); }
+@keyframes dc-glance-breathe { 50% { opacity: 0.35; } }
+.dc-glance__vault { font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.dc-glance__status { color: var(--color-text-secondary); white-space: nowrap; }
+.dc-glance__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-tertiary);
+}
+.dc-glance__ask { padding: 0 var(--space-2) 0 calc(var(--space-2) * 2 + var(--space-2)); }
+.dc-glance__cmd {
+  display: block;
+  margin-bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 6em;
+  overflow: auto;
+}
+.dc-glance__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.dc-glance__btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  padding: var(--space-1) var(--space-3);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.dc-glance__btn:hover:not(:disabled) { border-color: var(--color-border-hover); }
+.dc-glance__btn--primary { background: var(--color-text); border-color: var(--color-text); color: var(--notch-surface); }
+.dc-glance__btn:disabled { opacity: 0.5; cursor: default; }
+.dc-glance__fail { color: var(--color-warning); font-size: var(--font-size-xs); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-notch { transition: none; }
+  .dc-glance__row[data-activity='working'] .dc-glance__dot,
+  .dc-glance__row[data-activity='starting'] .dc-glance__dot { animation: none; }
+}
+
+/* ── COLLAPSED, BUSY: one hairline of light under the pill while any project works ────────── */
+.dc-notch--busy:not(.dc-notch--peek) .dc-notch__pill { position: relative; }
+.dc-notch--busy:not(.dc-notch--peek) .dc-notch__pill::after {
+  content: '';
+  position: absolute;
+  left: var(--space-6);
+  right: var(--space-6);
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--notch-glow-2), var(--notch-glow-3), transparent) 0 0 / 40% 100% no-repeat;
+  animation: dc-notch-loading 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ── THE PEEK (NotchPeek.tsx): the pill grown down by one thing ───────────────────────────── */
+.dc-notch.dc-notch--peek {
+  box-sizing: border-box;
+  background-color: var(--notch-surface);
+  border: 1px solid var(--notch-edge);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
+  overflow: hidden;
+}
+.dc-notch--peek .dc-notch__pill { background: transparent; border-radius: 0; }
+.dc-peek {
+  position: relative;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  font-size: var(--font-size-sm);
+  animation: dc-peek-drop 220ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+@keyframes dc-peek-drop {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+.dc-peek__line { margin: 0 var(--space-6) var(--space-2) 0; color: var(--color-text-secondary); }
+.dc-peek__line strong { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.dc-peek__brief { color: var(--color-text-tertiary); }
+.dc-peek__text {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.dc-peek__idle { margin: 0; }
+.dc-peek__close {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-2);
+  width: var(--space-6);
+  height: var(--space-6);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+}
+.dc-peek__close:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+.dc-peek__quiet {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.dc-peek__quiet:hover { color: var(--color-text); background: var(--color-bg-secondary); }
+.dc-peek__rows { list-style: none; margin: 0 0 var(--space-1); padding: 0; }
+.dc-peek__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dc-peek__row:hover { background: var(--color-bg-secondary); }
+.dc-peek__row[data-activity='working'] .dc-glance__dot,
+.dc-peek__row[data-activity='starting'] .dc-glance__dot { background: var(--color-success); animation: dc-glance-breathe 1.6s ease-in-out infinite; }
+.dc-peek__row[data-activity='asking'] .dc-glance__dot { background: var(--color-warning); }
+.dc-peek__open { display: block; margin-left: auto; }
+
+/* ── THE OPEN PANEL'S TWO FACES: tabs on the bar ─────────────────────────────────────────── */
+.dc-notch__bar { align-items: center; padding: var(--space-1) var(--space-3); }
+.dc-notch__tabs { display: flex; gap: var(--space-1); }
+.dc-notch__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  padding: var(--space-1) var(--space-3);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.dc-notch__tab:hover { color: var(--color-text); }
+.dc-notch__tab[aria-selected='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
+.dc-notch__count {
+  min-width: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-warning);
+  color: var(--notch-surface);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+}
+.dc-notch__spacer { flex: 1 1 auto; }
+.dc-notch__now {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.dc-notch__now[hidden],
+.dc-notch__chat[hidden] { display: none; }
+.dc-notch__now .dc-glance,
+.dc-notch__now .dc-proposals { max-height: none; overflow: visible; }
+.dc-notch__section {
+  margin: var(--space-3) var(--space-4) var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ── HANDED OFF (GlanceList.tsx HandoffList) ─────────────────────────────────────────────── */
+.dc-handoffs ul { list-style: none; margin: 0; padding: 0 var(--space-3) var(--space-3); display: flex; flex-direction: column; gap: var(--space-1); }
+.dc-handoff { border-radius: var(--radius-lg); }
+.dc-handoff[data-phase='waiting'] { background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-secondary)); }
+.dc-handoff__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.dc-handoff__head:hover { background: var(--color-bg-secondary); }
+.dc-handoff__brief {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+.dc-handoff__phase { white-space: nowrap; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.dc-handoff__ago { white-space: nowrap; color: var(--color-text-tertiary); font-size: var(--font-size-2xs); font-variant-numeric: tabular-nums; }
+.dc-handoff[data-phase='running'] .dc-glance__dot { background: var(--color-success); animation: dc-glance-breathe 1.6s ease-in-out infinite; }
+.dc-handoff[data-phase='waiting'] .dc-glance__dot { background: var(--color-warning); }
+.dc-handoff[data-phase='done'] .dc-glance__dot { background: var(--color-success); }
+.dc-handoff[data-phase='done'] .dc-handoff__phase { color: var(--color-success); }
+.dc-handoff[data-phase='closed'] { opacity: 0.7; }
+.dc-handoff__body { padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) * 3); }
+.dc-handoff__text {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  max-height: 8em;
+  overflow: auto;
+}
+
+/* ── CONVERSATIONS (ConversationMenu.tsx) ────────────────────────────────────────────────── */
+.dc-convos {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1) var(--space-3) var(--space-3);
+}
+.dc-convos__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.dc-convos__row:hover,
+.dc-convos__row:focus-visible { background: var(--color-bg-secondary); }
+.dc-convos__row[aria-current='true'] { background: var(--color-bg-tertiary); }
+.dc-convos__new { color: var(--color-accent); }
+.dc-convos__title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-convos__meta { flex: 0 0 auto; color: var(--color-text-tertiary); font-size: var(--font-size-2xs); }
+.dc-convos__empty { margin: var(--space-3); color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-peek,
+  .dc-notch--busy .dc-notch__pill::after,
+  .dc-handoff[data-phase='running'] .dc-glance__dot,
+  .dc-peek__row .dc-glance__dot { animation: none; }
 }

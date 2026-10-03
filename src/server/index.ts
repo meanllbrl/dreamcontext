@@ -12,7 +12,7 @@ import { isLoopback } from './routes/agent-spawn-shared.js';
 import { assistantContextRoot, assistantExists, isAssistantVault } from '../lib/assistant/home.js';
 import { declineAllProposals } from '../lib/assistant/proposals.js';
 import {
-  handleAssistantStatus, handleAssistantRollup, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
+  handleAssistantStatus, handleAssistantRollup, handleAssistantGlance, handleAssistantOwnerAnswer, handleAssistantDelegationDismiss, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
   handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
@@ -383,6 +383,9 @@ export function buildRouter(): Router {
   // The dreamcontext Assistant (vault-agnostic; every route self-gates — see routes/assistant.ts).
   router.get('/api/assistant/status', handleAssistantStatus);
   router.get('/api/assistant/rollup', handleAssistantRollup);
+  router.get('/api/assistant/glance', handleAssistantGlance);
+  router.post('/api/assistant/answer', handleAssistantOwnerAnswer);
+  router.post('/api/assistant/delegations/dismiss', handleAssistantDelegationDismiss);
   router.post('/api/assistant/create', handleAssistantCreate);
   router.get('/api/assistant/profile', handleAssistantProfileGet);
   router.post('/api/assistant/profile', handleAssistantProfileSet);
