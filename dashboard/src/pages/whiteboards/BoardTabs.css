@@ -1,0 +1,365 @@
+/*
+ * The board tab strip: boards side by side as Chrome-style tabs, coloured groups, the tab
+ * and group menus. The panels it opens ("All boards", "New board") are BoardSwitcher.css.
+ * Tokens only, both themes.
+ *
+ * Colour is a group's IDENTITY, never a status, drawn the way Chrome does (owner, 2026-10-03,
+ * with Chrome's strip as the reference): a solid label, one line under the group's tabs, and
+ * the group's colour as the outline of its open tab. An ungrouped open tab is a neutral raised
+ * surface; the accent stays on the focus ring.
+ */
+
+.wbt {
+  flex: 1 1 auto;
+  align-self: stretch;
+  gap: var(--space-1);
+}
+
+/* Group palette → the chart tokens (both themes declare them). */
+.wbt [data-color='grey'] { --wbt-hue: var(--chart-6); }
+.wbt [data-color='blue'] { --wbt-hue: var(--chart-2); }
+.wbt [data-color='red'] { --wbt-hue: var(--chart-3); }
+.wbt [data-color='yellow'] { --wbt-hue: var(--chart-5); }
+.wbt [data-color='green'] { --wbt-hue: var(--chart-4); }
+.wbt [data-color='pink'] { --wbt-hue: var(--chart-7); }
+.wbt [data-color='purple'] { --wbt-hue: var(--chart-1); }
+.wbt [data-color='cyan'] { --wbt-hue: var(--chart-8); }
+
+.wbt-strip {
+  flex: 0 1 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.wbt-strip::-webkit-scrollbar { display: none; }
+
+/* ─── tab ─── */
+
+.wbt-tab {
+  position: relative;
+  /* A set width, not a flex-basis: the strip sizes to its content, and a basis alone does
+     not count toward that, so every tab would shrink to its name and clip it. */
+  flex: 0 1 auto;
+  width: 200px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 72px;
+  height: var(--space-8);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.wbt-tab:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.wbt-tab[aria-selected='true'] {
+  border-color: var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.wbt-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* Chrome's quiet separator between two tabs that are neither open nor hovered. */
+.wbt-tab:not([aria-selected='true']):not(:hover) + .wbt-tab:not([aria-selected='true']):not(:hover)::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 25%;
+  bottom: 25%;
+  width: 1px;
+  background: var(--color-border);
+}
+
+/* The open tab of a group wears the group's colour as its outline. */
+.wbt-group .wbt-tab[aria-selected='true'] {
+  border-color: var(--wbt-hue);
+  box-shadow: inset 0 0 0 1px var(--wbt-hue);
+}
+
+.wbt-tab > .wbs-glyph {
+  width: 14px;
+  height: 14px;
+  color: var(--color-text-tertiary);
+}
+
+.wbt-tab[aria-selected='true'] > .wbs-glyph { color: var(--color-text-secondary); }
+
+/* ─── group: the chip and its tabs in one box, one coloured line under them all ─── */
+
+.wbt-group {
+  position: relative;
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  align-self: stretch;
+}
+
+.wbt-group::after {
+  content: '';
+  position: absolute;
+  left: var(--space-2);
+  right: 0;
+  bottom: var(--space-1);
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--wbt-hue);
+  pointer-events: none;
+}
+
+.wbt-group[data-collapsed]::after { right: auto; width: calc(100% - var(--space-2)); }
+
+.wbt-tab[data-dragging] { opacity: 0.45; }
+
+/* Where a dragged tab will land: a bar on that side. */
+.wbt-tab[data-drop]::before,
+.wbt-chip[data-drop]::before {
+  content: '';
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+
+.wbt-tab[data-drop='before']::before { left: -2px; }
+.wbt-tab[data-drop='after']::before,
+.wbt-chip[data-drop]::before { right: -2px; }
+
+.wbt-tab-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbt-tab-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.wbt-tab:hover .wbt-tab-close,
+.wbt-tab[aria-selected='true'] .wbt-tab-close { opacity: 1; }
+
+.wbt-tab-close:hover {
+  background: var(--color-bg-tertiary, var(--color-border));
+  color: var(--color-text);
+}
+
+/* ─── group chip: a solid label, as Chrome draws it. The ink is dark on every hue in both
+   themes (≥ 4.4:1 on all eight light-theme hues, higher on the paler dark-theme ones); white
+   would fall to 2.6:1 on yellow. ─── */
+
+.wbt-chip {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 160px;
+  height: var(--space-6);
+  margin: 0 2px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--wbt-hue);
+  color: var(--color-deep-space);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+/* An unnamed group is a coloured dot. */
+.wbt-chip:not([data-named]) {
+  min-width: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+}
+
+.wbt-chip:not([data-named]) .wbt-chip-name { display: none; }
+
+.wbt-chip:hover { filter: brightness(1.08); }
+
+.wbt-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.wbt-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbt-chip-count {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-deep-space) 14%, transparent);
+  color: inherit;
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.wbt-chip:not([data-named]) .wbt-chip-count { background: transparent; }
+
+/* "All boards" (⌄): a square button at the strip's end. */
+.wbt-all.wbs-current {
+  flex-shrink: 0;
+  justify-content: center;
+  width: var(--space-8);
+  padding: 0;
+  color: var(--color-text-secondary);
+}
+
+/* The panels hang from the strip's right edge. */
+.wbt-anchor { display: contents; }
+
+.wbt-anchor--end > .wbs-panel {
+  left: auto;
+  right: 0;
+}
+
+/* ─── tab + group menus ─── */
+
+.wbt-menu {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+}
+
+.wbt-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--space-8);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wbt-menu-item:hover:not(:disabled),
+.wbt-menu-item:focus-visible {
+  outline: none;
+  background: var(--color-bg-secondary);
+}
+
+.wbt-menu-item:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.wbt-menu-sep {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--color-border);
+}
+
+.wbt-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1);
+}
+
+.wbt-editor-name {
+  height: var(--space-8);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.wbt-editor-name:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.wbt-colors {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.wbt-swatch {
+  flex-shrink: 0;
+  width: var(--space-5);
+  height: var(--space-5);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--wbt-hue);
+  cursor: pointer;
+}
+
+.wbt-swatch[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--color-bg-elevated), 0 0 0 4px var(--wbt-hue);
+}
+
+.wbt-swatch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg-elevated), 0 0 0 4px var(--color-accent);
+}
+
+.wbt-swatch--sm {
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wbt-tab,
+  .wbt-tab-close { transition: none; }
+}

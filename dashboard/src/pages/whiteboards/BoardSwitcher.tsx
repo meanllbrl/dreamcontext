@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+/**
+ * The board tab strip's two panels (A16): "All boards" (search, open, delete) and "New board".
+ * The strip that opens them is BoardTabs.tsx.
+ */
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useI18n } from '../../context/I18nContext';
-import { useDismissOnOutside } from '../../lib/useDismissOnOutside';
 import {
   useCreateWhiteboard, useDeleteWhiteboard, useWhiteboardList, type WhiteboardSummary,
 } from '../../hooks/useWhiteboards';
@@ -9,74 +12,9 @@ import {
 } from './boardSwitcherLogic';
 import './BoardSwitcher.css';
 
-type Panel = 'boards' | 'create' | null;
-
-interface BoardSwitcherProps {
-  /** The open board. */
-  slug: string;
-  /** Its display name once loaded; until then the list's name, then the slug, stand in. */
-  name?: string;
-  /** Open another board. The page re-keys the editor on the slug, so the old board's save
-   *  loop flushes before its canvas goes away. */
-  onOpen: (slug: string) => void;
-}
-
-/**
- * The board switcher at the top of a board (A16): the open board's name opens "All boards"
- * (search, open, delete), and "+" names and creates a new one in place. One panel at a time;
- * Esc and an outside click close it through the app's shared overlay stack.
- */
-export function BoardSwitcher({ slug, name, onOpen }: BoardSwitcherProps) {
-  const { t } = useI18n();
-  const { data: boards } = useWhiteboardList();
-  const label = name || boards?.find((b) => b.slug === slug)?.name || slug;
-  const [panel, setPanel] = useState<Panel>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setPanel(null), []);
-  useDismissOnOutside(panel !== null, close, [rootRef]);
-
-  const toggle = (next: Exclude<Panel, null>) => setPanel((cur) => (cur === next ? null : next));
-  const open = (target: string) => {
-    setPanel(null);
-    if (target !== slug) onOpen(target);
-  };
-
-  return (
-    <div className="wbs" ref={rootRef}>
-      <button
-        type="button"
-        className="wbs-current"
-        aria-haspopup="dialog"
-        aria-expanded={panel === 'boards'}
-        title={t('whiteboard.switcher.switch')}
-        onClick={() => toggle('boards')}
-      >
-        <BoardGlyph />
-        <span className="wbs-current-name">{label}</span>
-        <ChevronGlyph />
-      </button>
-      <button
-        type="button"
-        className="wbs-icon-btn"
-        aria-haspopup="dialog"
-        aria-expanded={panel === 'create'}
-        aria-label={t('whiteboard.switcher.new')}
-        title={t('whiteboard.switcher.new')}
-        onClick={() => toggle('create')}
-      >
-        <PlusGlyph />
-      </button>
-      {panel === 'boards' && (
-        <BoardsPanel current={slug} onOpen={open} onNew={() => setPanel('create')} />
-      )}
-      {panel === 'create' && <CreatePanel onCreated={open} />}
-    </div>
-  );
-}
-
 // ── All boards ───────────────────────────────────────────────────────────────────────────────
 
-function BoardsPanel({ current, onOpen, onNew }: {
+export function BoardsPanel({ current, onOpen, onNew }: {
   current: string;
   onOpen: (slug: string) => void;
   onNew: () => void;
@@ -264,7 +202,7 @@ function BoardRow({
 
 // ── New board ────────────────────────────────────────────────────────────────────────────────
 
-function CreatePanel({ onCreated }: { onCreated: (slug: string) => void }) {
+export function CreatePanel({ onCreated }: { onCreated: (slug: string) => void }) {
   const { t } = useI18n();
   const create = useCreateWhiteboard();
   const [name, setName] = useState('');
@@ -309,7 +247,7 @@ const glyph = {
   strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true,
 };
 
-function BoardGlyph() {
+export function BoardGlyph() {
   return (
     <svg {...glyph} className="wbs-glyph">
       <rect x="2" y="2.5" width="12" height="11" rx="2.5" />
@@ -318,23 +256,23 @@ function BoardGlyph() {
   );
 }
 
-function ChevronGlyph() {
+export function ChevronGlyph() {
   return <svg {...glyph} className="wbs-glyph wbs-chevron"><path d="M4.5 6.5 8 10l3.5-3.5" /></svg>;
 }
 
-function PlusGlyph() {
+export function PlusGlyph() {
   return <svg {...glyph} className="wbs-glyph"><path d="M8 3.5v9M3.5 8h9" /></svg>;
 }
 
-function SearchGlyph() {
+export function SearchGlyph() {
   return <svg {...glyph} className="wbs-glyph"><circle cx="7" cy="7" r="4.25" /><path d="m10.25 10.25 3 3" /></svg>;
 }
 
-function CheckGlyph() {
+export function CheckGlyph() {
   return <svg {...glyph} className="wbs-glyph"><path d="m3.5 8.5 3 3 6-6.5" /></svg>;
 }
 
-function TrashGlyph() {
+export function TrashGlyph() {
   return (
     <svg {...glyph} className="wbs-glyph">
       <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.1a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8.1" />

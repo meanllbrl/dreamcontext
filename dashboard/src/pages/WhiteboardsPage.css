@@ -1,6 +1,6 @@
 /*
- * Control Panel: one board open full-bleed under a toolbar (the board switcher, the save
- * state). The switcher's own rules live in whiteboards/BoardSwitcher.css.
+ * Control Panel: one board open full-bleed under a toolbar (the board tabs, the save state).
+ * The tabs' own rules live in whiteboards/BoardTabs.css and BoardSwitcher.css.
  *
  * Accent budget (K8): none here beyond the focus ring. Save state is plain text; the one
  * failure ink is the error token, on "Not saved" and the corrupt-board card.

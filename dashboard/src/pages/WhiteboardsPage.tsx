@@ -7,7 +7,7 @@ import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
 import { LazyWhiteboardCanvas } from '../components/whiteboard/LazyWhiteboardCanvas';
 import { PagePopupProvider } from '../components/whiteboard/PagePopup';
-import { BoardSwitcher } from './whiteboards/BoardSwitcher';
+import { BoardTabs } from './whiteboards/BoardTabs';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import './WhiteboardsPage.css';
 
@@ -17,7 +17,7 @@ interface WhiteboardsPageProps {
 }
 
 /**
- * Control Panel (A15): one board open full-bleed, with the board switcher on top (A16). A
+ * Control Panel (A15): one board open full-bleed, with the boards as tabs on top (A16). A
  * board is an Excalidraw scene the user and the agent draw on together; the CLI writes the
  * same file, and the editor's save + poll loop keeps the two in step (D5, D11).
  *
@@ -71,7 +71,7 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
   const doExport = async () => setExportNote(await exportFile());
 
   const switcher = (
-    <BoardSwitcher slug={slug} name={load.kind === 'ready' ? load.name : undefined} onOpen={onOpen} />
+    <BoardTabs slug={slug} name={load.kind === 'ready' ? load.name : undefined} onOpen={onOpen} />
   );
 
   if (load.kind === 'loading') {
@@ -110,7 +110,6 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
       <h1 className="wbp-sr-only">{load.name}</h1>
       <div className="wbp-bar">
         {switcher}
-        <span className="wbp-head-spacer" />
         <SaveStatus state={saveState} />
         {canExport && (
           <button type="button" className="wbp-btn" onClick={() => void doExport()}>
