@@ -402,9 +402,11 @@
   margin: 0;
   padding: 0;
   overflow: hidden;
-  /* The divider takes the section hue too, so the four groups stay readable at 56px where
-     the label itself is gone. Mixed toward the border so it reads as a rule, not a rail. */
-  border-top: 1px solid color-mix(in srgb, var(--nav-hue, var(--color-border)) 30%, var(--color-border));
+  /* A plain rule, inset from the edges. The section hue is not carried here any more: at
+     56px the owner could not tell what the colours meant (2026-10-03), and the grouping is
+     legible from the rule and the gap alone. */
+  margin: 0 var(--space-2);
+  border-top: 1px solid var(--color-border);
 }
 
 /* The marker is part of the label's text row — with the label collapsed to zero height it
@@ -414,7 +416,20 @@
 }
 
 .sidebar--collapsed .sidebar-group + .sidebar-group {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.sidebar--collapsed .sidebar-group .sidebar-nav {
+  padding-top: var(--space-3);
+}
+
+/* The first group sits right under the brand's own rule; a second line there is noise. */
+.sidebar--collapsed .sidebar-brand + .sidebar-group .sidebar-group-label {
+  border-top: none;
+}
+
+.sidebar--collapsed .sidebar-brand + .sidebar-group .sidebar-nav {
+  padding-top: var(--space-1);
 }
 
 .sidebar--collapsed .sidebar-item {
@@ -642,4 +657,66 @@
 
 .sidebar--collapsed .sidebar-sync-settings {
   display: none;
+}
+
+/* ─── Collapsed: bare glyphs, not fifteen tinted boxes ─────────────────────────
+   Owner, 2026-10-03: at 56px the rail was a column of identical 24px tinted boxes whose
+   glyphs sat at 55% ink in four section hues; the box outweighed the drawing and the hues
+   read as meaning nobody could decode. Collapsed, the ROW is the target and the GLYPH is
+   the content: no box, no ring, no section hue, a larger stroke in the neutral secondary
+   ink. Only the active row is coloured, so the one colour on the rail means "you are here".
+   The expanded rail keeps its badges: there the label carries the meaning. */
+.sidebar--collapsed .sidebar-item {
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.sidebar--collapsed .sidebar-icon {
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-secondary);
+}
+
+.sidebar--collapsed .sidebar-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar--collapsed .sidebar-item:hover .sidebar-icon,
+.sidebar--collapsed .sidebar-item[data-hero] .sidebar-icon {
+  box-shadow: none;
+}
+
+.sidebar--collapsed .sidebar-item:hover .sidebar-icon {
+  color: var(--color-text);
+}
+
+.sidebar--collapsed .sidebar-item--active {
+  background: var(--color-accent-soft);
+}
+
+.sidebar--collapsed .sidebar-item--active .sidebar-icon,
+.sidebar--collapsed .sidebar-item--brain-sync .sidebar-icon,
+.sidebar--collapsed .sidebar-item--nudge .sidebar-icon {
+  color: var(--color-accent);
+}
+
+/* The collapsed rail's name tag (RailTip.tsx). Fixed to the viewport and portalled, since
+   the rail clips horizontally; it never takes the pointer, so it cannot steal a hover. */
+.sidebar-tip {
+  position: fixed;
+  z-index: 1000;
+  transform: translateY(-50%);
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 0 0 1px var(--color-border), var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  pointer-events: none;
 }

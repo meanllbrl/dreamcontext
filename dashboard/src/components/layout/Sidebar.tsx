@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
 import { MaturityTag } from '../common/MaturityTag';
 import { NavIcon, ChatIcon } from './NavIcons';
+import { RailTip } from './RailTip';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
 import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
@@ -234,8 +235,17 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   // Continuous stagger index across groups for the entrance animation.
   let staggerIndex = 0;
 
+  // Collapsed, the label is gone: the row's name moves to `aria-label` (so it keeps an
+  // accessible name) and to `data-tip`, which RailTip shows at once. The native `title` is
+  // dropped there, or every hover would show the name twice.
+  const railRef = useRef<HTMLElement>(null);
+  const named = (hint: string) => collapsed
+    ? { 'aria-label': hint, 'data-tip': hint }
+    : { title: hint };
+
   return (
-    <nav className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} aria-label="Primary">
+    <nav ref={railRef} className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} aria-label="Primary">
+      <RailTip railRef={railRef} enabled={collapsed} />
       {/* Brand lockup — the dream gem + wordmark + active vault. */}
       <div className="sidebar-brand" title="dreamcontext">
         <BrandMark size={30} glow />
@@ -268,7 +278,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                       className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
                       aria-current={chatOpen ? 'page' : undefined}
                       onClick={() => openAgentSurface(bus)}
-                      title={live > 0 ? `${label} (${live} open)` : label}
+                      {...named(live > 0 ? `${label} (${live} open)` : label)}
                     >
                       <span className="sidebar-icon"><ChatIcon /></span>
                       <span className="sidebar-label">{label}</span>
@@ -301,7 +311,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                   <button
                     className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
                     onClick={isAbout ? openAbout : () => onNavigate(page)}
-                    title={tag ? `${label} (${tag})` : label}
+                    {...named(tag ? `${label} (${tag})` : label)}
                     aria-current={current === page ? 'page' : undefined}
                     data-hero={hero || undefined}
                   >
@@ -335,7 +345,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         <button
           className={`sidebar-item sidebar-item--announcements ${activePage === 'announcements' ? 'sidebar-item--active' : ''}`}
           onClick={() => onNavigate('announcements')}
-          title={t('nav.announcements')}
+          {...named(t('nav.announcements'))}
           aria-current={activePage === 'announcements' ? 'page' : undefined}
         >
           <span className="sidebar-icon"><NavIcon page="announcements" /></span>
@@ -349,7 +359,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
           <button
             className={`sidebar-item sidebar-item--brain-sync${nudgeGithubSync ? ' sidebar-item--nudge' : ''}`}
             onClick={openGithubSync}
-            title={githubSyncLabel}
+            {...named(githubSyncLabel)}
           >
             <span className="sidebar-icon"><GitHubMark size={14} /></span>
             <span className="sidebar-label">{githubSyncLabel}</span>

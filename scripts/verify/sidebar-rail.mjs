@@ -18,8 +18,10 @@
  *   C6  Every group's icon badge carries its own hue as a TINTED SURFACE; the
  *       active badge is still full accent; no `--nav-hue-*` resolves to the
  *       accent; nothing in the rail spends `--color-warning`.
- *   C7  Collapsed to 56px the four hues are still distinct on the badges, and
- *       the group divider still carries its section's hue.
+ *   C7  Collapsed to 56px the rail drops the badges (owner, 2026-10-03): every
+ *       idle glyph is bare and in ONE neutral ink, the group dividers are plain
+ *       rules, only the active row is coloured, and hovering a glyph shows its
+ *       name at once.
  *   C4  Nothing in the rail renders in uppercase (K15).
  *   D4  Both themes: every hue-derived value CHANGES between light and dark, so
  *       nothing is baked.
@@ -335,6 +337,20 @@ async function main() {
 
         const n = ['light-expanded', 'light-collapsed', 'dark-expanded', 'dark-collapsed'].indexOf(key) + 1;
         await page.screenshot({ path: join(SHOTS, `${n}-${key}.png`), clip: { x: 0, y: 0, width: 280, height: 1000 } });
+        if (collapsed) {
+          // The name tag: hover the second Workspace row (the first is Chat, which may be active).
+          const row = page.locator('.sidebar-group .sidebar-item:not(.sidebar-item--active)').nth(1);
+          const expect = await row.getAttribute('data-tip');
+          await row.hover();
+          await page.waitForTimeout(150);
+          snap.tip = await page.evaluate(() => {
+            const el = document.querySelector('.sidebar-tip');
+            const rail = document.querySelector('.sidebar')?.getBoundingClientRect();
+            return el ? { text: (el.textContent || '').trim(), right: el.getBoundingClientRect().left >= (rail?.right ?? 0) } : null;
+          });
+          if (snap.tip) snap.tip.expect = expect;
+          await page.screenshot({ path: join(SHOTS, `${n}-${key}-hover.png`), clip: { x: 0, y: 0, width: 280, height: 1000 } });
+        }
         await ctx.close();
       }
     }
@@ -418,13 +434,23 @@ async function main() {
     console.log('\n═══ 6. Collapsed to the icon rail ═══');
     const lc = snaps['light-collapsed'];
     check('the rail actually collapsed', lc.collapsed && lc.railWidth <= 80, `width=${lc.railWidth}px`);
-    check('the four hues are still distinct on the badges at 56px', distinct(lc),
-      GROUPS.map((g) => `${g.label}=${lc.sample[g.label]?.bg}`).join(' '));
-    // The label collapses to zero height and its border becomes the section
-    // divider — which must keep the hue, or the groups merge into one column.
-    const dividers = GROUPS.map((g) => lc.sample[g.label]?.labelBorderTop);
-    check('…and the group divider still carries its section hue',
-      new Set(dividers.filter(Boolean)).size === GROUPS.length, dividers.join(' '));
+    // Owner, 2026-10-03: the tinted boxes and four hues made the collapsed rail unreadable.
+    // Collapsed, an idle glyph is bare and every group speaks the SAME neutral ink.
+    const bare = (snap) => GROUPS.every((g) => /rgba\(0, 0, 0, 0\)|transparent/.test(snap.sample[g.label]?.bg ?? '')
+      && (snap.sample[g.label]?.ring ?? '') === 'none');
+    const oneInk = (snap) => new Set(GROUPS.map((g) => snap.sample[g.label]?.ink)).size === 1;
+    check('[C7] collapsed: no idle glyph sits in a box', bare(lc),
+      GROUPS.map((g) => `${g.label}=${lc.sample[g.label]?.bg}/${lc.sample[g.label]?.ring}`).join(' '));
+    check('[C7] …and all four groups share one neutral glyph ink', oneInk(lc),
+      GROUPS.map((g) => `${g.label}=${lc.sample[g.label]?.ink}`).join(' '));
+    check('[C7] …which is not the accent', lc.sample['Workspace']?.ink !== lc.accent, `${lc.sample['Workspace']?.ink}`);
+    check('[C7] the active glyph is the accent, so the one colour means "you are here"',
+      lc.active?.ink === lc.accent, `${lc.active?.label}: ${lc.active?.ink} vs ${lc.accent}`);
+    const dividers = GROUPS.slice(1).map((g) => lc.sample[g.label]?.labelBorderTop);
+    check('[C7] the group dividers are one plain rule, not four hues',
+      new Set(dividers.filter(Boolean)).size === 1, dividers.join(' '));
+    check('[C7] hovering a collapsed glyph shows its name at once',
+      lc.tip?.text === lc.tip?.expect && !!lc.tip?.expect && lc.tip?.right, JSON.stringify(lc.tip));
 
     // ── 7: both themes, and nothing is baked ─────────────────────────────
     console.log('\n═══ 7. Dark theme ═══');
@@ -455,8 +481,12 @@ async function main() {
     check('the hero is still first, named and Beta in dark',
       de.hero?.label === 'Automations' && de.hero?.afterTasks === true && de.hero?.maturity === 'Beta',
       JSON.stringify(de.hero));
-    check('dark collapsed keeps its four distinct hues', distinct(dc),
-      GROUPS.map((g) => `${g.label}=${dc.sample[g.label]?.bg}`).join(' '));
+    check('[C7] dark collapsed: bare glyphs in one neutral ink', bare(dc) && oneInk(dc),
+      GROUPS.map((g) => `${g.label}=${dc.sample[g.label]?.bg}/${dc.sample[g.label]?.ink}`).join(' '));
+    check('[C7] dark collapsed: the active glyph is the accent', dc.active?.ink === dc.accent,
+      `${dc.active?.ink} vs ${dc.accent}`);
+    check('[C7] dark collapsed: the name tag shows on hover', dc.tip?.text === dc.tip?.expect && !!dc.tip?.expect,
+      JSON.stringify(dc.tip));
 
     // ── 8 (round 2): the label wraps instead of truncating ───────────────
     // R2-1 (owner decision 1a): the label wraps rather than truncating. Since 2026-09-29 the
