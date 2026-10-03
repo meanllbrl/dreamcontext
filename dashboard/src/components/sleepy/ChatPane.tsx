@@ -29,6 +29,7 @@ import { PermissionCard } from './chat/PermissionCard';
 import { PlanCard } from './chat/PlanCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
+import { TeamBoard } from './chat/TeamBoard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { QueuedMessages } from './chat/QueuedMessages';
 import { PeerSessionHolder } from './chat/PeerSessionCard';
@@ -214,9 +215,11 @@ function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
   return info;
 }
 
-function ChatLiveRail({ session, taskSlug, quest, lineage }: {
+function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
   session: ChatSession;
   taskSlug?: string;
+  /** Every party this chat drew, for the team board (renders nothing under two). */
+  team: { parties: Party[]; runsOf: (p: Party) => SubAgentRun[]; onDrillIn: (run: SubAgentRun) => void };
   /** This chat's quest, or null outside Plan/Develop (and before the first message). */
   quest: QuestView | null;
   /** The Develop chat's "How this was built" tree; null for a plan, which built nothing. */
@@ -241,6 +244,7 @@ function ChatLiveRail({ session, taskSlug, quest, lineage }: {
         </div>
       )}
       {quest && !goalActive && <ChatQuestBar quest={quest} lineage={lineage} />}
+      <TeamBoard parties={team.parties} runsOf={team.runsOf} onDrillIn={team.onDrillIn} />
       <GoalLivePanel claudeId={session.claudeId} enabled={live} variant="rail" />
       <CouncilLivePanel claudeId={session.claudeId} enabled={live} />
     </div>
@@ -1734,7 +1738,13 @@ export function ChatPane({
 
   return (
     <div className="chat-pane" ref={paneRef} data-status={session.status}>
-      <ChatLiveRail session={session} taskSlug={taskSlug} quest={quest} lineage={lineage} />
+      <ChatLiveRail
+        session={session}
+        taskSlug={taskSlug}
+        quest={quest}
+        lineage={lineage}
+        team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn }}
+      />
       {session.status === 'connecting' && <ReconnectingChip />}
       <div className="chat-transcript">
         <div

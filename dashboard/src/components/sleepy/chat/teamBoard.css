@@ -1,0 +1,159 @@
+/* The team board on the chat's live rail (TeamBoard.tsx): one line of phases, opening into a
+   column per phase with a chip per agent. Tones mean outcome only: a phase or chip that is
+   simply running carries the accent, never a fill. */
+
+.chat-team-board {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.chat-team-board-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  width: 100%;
+  padding: 6px 11px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-team-board-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; border-radius: var(--radius-md); }
+
+.chat-team-board-rail {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+.chat-team-board-phase { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; }
+.chat-team-board-link {
+  width: 18px;
+  height: 1px;
+  margin: 0 6px;
+  background: var(--color-border-hover);
+}
+.chat-team-board-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+.chat-team-board-phase[data-tone='running'] .chat-team-board-dot {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+  animation: chat-team-board-pulse 1.6s ease-in-out infinite;
+}
+.chat-team-board-phase[data-tone='good'] .chat-team-board-dot { background: var(--color-success); }
+.chat-team-board-phase[data-tone='bad'] .chat-team-board-dot { background: var(--color-warning); }
+.chat-team-board-phase-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+.chat-team-board-phase-count { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+
+.chat-team-board-sum {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.chat-team-board-live { color: var(--color-accent-ink); }
+.chat-team-board-clock { margin-left: 6px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.chat-team-board-caret { margin-left: 6px; color: var(--color-text-tertiary); }
+
+/* The columns: one per phase, scrolling sideways past the pane's edge, never wrapping a phase
+   under another (the left-to-right order IS the run's order). */
+.chat-team-board-cols {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2, 8px);
+  max-height: 240px;
+  padding: 2px 11px 10px;
+  overflow: auto;
+}
+.chat-team-board-col {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 168px;
+}
+.chat-team-board-col-head {
+  padding: 0 2px 2px;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-team-board-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-team-board-chip:hover { background: var(--color-accent-soft); border-color: var(--color-accent); }
+.chat-team-board-chip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.chat-team-board-chip[data-tone='running'] { border-color: var(--color-accent); }
+.chat-team-board-chip:not([data-tone='running']) .chat-a-avatar { opacity: 0.7; }
+.chat-team-board-chip-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The mark: a spinning ring while running, a glyph in a ring once it lands. */
+.chat-team-board-chip-mark {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 8.5px;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+}
+.chat-team-board-chip-mark[data-tone='running'] {
+  border-color: var(--color-accent-soft);
+  border-top-color: var(--color-accent);
+  animation: chat-team-board-spin 0.9s linear infinite;
+}
+.chat-team-board-chip-mark[data-tone='good'] { color: var(--color-success-ink); }
+.chat-team-board-chip-mark[data-tone='bad'] { color: var(--color-warning-ink); }
+
+@keyframes chat-team-board-spin { to { transform: rotate(360deg); } }
+@keyframes chat-team-board-pulse { 50% { box-shadow: 0 0 0 5px transparent; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-team-board-chip-mark[data-tone='running'],
+  .chat-team-board-phase[data-tone='running'] .chat-team-board-dot { animation: none; }
+}

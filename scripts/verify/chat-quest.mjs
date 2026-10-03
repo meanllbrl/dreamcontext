@@ -848,6 +848,19 @@ async function runThemeIn(browser, base, theme, report) {
   await sampleContrast();
   await shot(vis('.chat-live-rail'), 'plan-rail-round2');
   await shot(reviewCards().last(), 'party-round2-live');
+  // The team board: every party a column, open on its own while a round runs.
+  const board = () => vis('.chat-live-rail .chat-team-board');
+  const boardCols = async () => board().locator('.chat-team-board-col-head').evaluateAll((els) => els.map((e) => e.textContent.trim()));
+  ok('team board: open while round 2 runs, one column per party (scout, round 1, round 2)',
+    (await board().getAttribute('data-open').catch(() => null)) === 'true'
+      && JSON.stringify(await boardCols()) === JSON.stringify(['Scouting', 'Plan review · round 1', 'Plan review · round 2']),
+    JSON.stringify(await boardCols()));
+  ok('…its round-2 column has 3 chips, at least one running',
+    (await board().locator('.chat-team-board-col').last().locator('.chat-team-board-chip').count()) === 3
+      && (await board().locator('.chat-team-board-chip[data-tone="running"]').count()) >= 1);
+  ok('…the header counts "3 phases · 7 agents"', ((await board().locator('.chat-team-board-sum').innerText().catch(() => '')) || '').includes('3 phases · 7 agents'),
+    await board().locator('.chat-team-board-sum').innerText().catch(() => '<no board>'));
+  await shot(board(), 'team-board-live');
 
   // ── the win: "Plan sealed", and its one-shot moment ─────────────────────────────────
   // The win swaps the map for its victory (ChatQuestBar), which carries the one-shot moment.
@@ -865,6 +878,21 @@ async function runThemeIn(browser, base, theme, report) {
     Number.isFinite(WIN_HOLD_MS) && (await page.locator('.chat-live-rail [data-just-won]').count()) === 0, `WIN_HOLD_MS=${WIN_HOLD_MS}`);
   await waitIdle();
   await shot(vis('.chat-live-rail'), 'plan-sealed');
+  ok('team board: folds to its one line once every agent landed',
+    (await vis('.chat-live-rail .chat-team-board').getAttribute('data-open').catch(() => 'missing')) === null
+      && (await vis('.chat-live-rail .chat-team-board-chip').count()) === 0);
+  await vis('.chat-live-rail .chat-team-board-head').first().click().catch(() => {});
+  ok('…a click opens it again, every chip marked landed',
+    (await vis('.chat-live-rail .chat-team-board-chip').count()) === 7
+      && (await vis('.chat-live-rail .chat-team-board-chip[data-tone="running"]').count()) === 0);
+  await shot(vis('.chat-live-rail .chat-team-board'), 'team-board-done');
+  const firstChip = vis('.chat-live-rail .chat-team-board-chip').first();
+  await firstChip.click().catch(() => {});
+  ok('…and a chip drills into that agent (the slide-over opens)',
+    await until(async () => (await page.locator('.chat-slideover-panel').count()) > 0, 8000));
+  await vis('.chat-slideover-close').first().click().catch(() => {});
+  await until(async () => (await page.locator('.chat-slideover-panel').count()) === 0, 5000);
+  await vis('.chat-live-rail .chat-team-board-head').first().click().catch(() => {});
   // §5: the seal stamps once. PLAN-ANSWER sent 7 agents (a scout, then 3 lenses twice).
   const sealStats = async () => ((await vis('.chat-live-rail .quest-victory-stats').first().innerText().catch(() => '')) || '').trim();
   const sealAtWin = await sealStats();
