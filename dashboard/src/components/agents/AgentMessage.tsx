@@ -15,6 +15,7 @@ import { useI18n } from '../../context/I18nContext';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { markdownToText } from '../../lib/markdownToText';
 import { middleTruncate } from '../../lib/fileLabel';
+import { agentFileKind, type AgentFileKind } from '../../lib/agentFileKind';
 import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import { runDuration, useNow } from './agentRunState';
 import {
@@ -52,39 +53,9 @@ function hhmm(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-/**
- * The image types the VAULT route will actually stream back.
- *
- * MIRRORS the raster half of `GRAPH_RAW_CONTENT_TYPE` (src/server/routes/graph.ts)
- * and must not drift from it: an extension listed here that the route does not
- * serve renders a broken image, and one the route serves but this omits shows a
- * chip for a picture we could have drawn.
- *
- * `.svg` IS DELIBERATELY ABSENT, on both sides. An SVG is a script-bearing
- * document, and `/api/graph/content` is generic — the Knowledge page hands its
- * URL to an iframe. It falls through to a chip here, which is the whole point.
- */
-const RASTER_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-/** Media the same route streams with byte ranges — mirrors its `video/*` and `audio/*` rows. */
-const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov'];
-const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav'];
-
-export type AgentFileKind = 'board' | 'image' | 'video' | 'audio' | 'pdf' | 'doc';
-
-/**
- * What a posted path should be DRAWN as. Extension-only and total: an unknown
- * type is a `doc`, which is the card — the treatment that works for anything.
- */
-export function agentFileKind(path: string): AgentFileKind {
-  const lower = path.toLowerCase();
-  const has = (list: string[]) => list.some((ext) => lower.endsWith(ext));
-  if (lower.endsWith('.excalidraw.md')) return 'board';
-  if (has(RASTER_EXTENSIONS)) return 'image';
-  if (has(VIDEO_EXTENSIONS)) return 'video';
-  if (has(AUDIO_EXTENSIONS)) return 'audio';
-  if (lower.endsWith('.pdf')) return 'pdf';
-  return 'doc';
-}
+// The kind table lives in a pure module so root vitest can test it; re-exported for the
+// surfaces that have always imported it from here.
+export { agentFileKind, type AgentFileKind };
 
 /** The short type word a document card leads with: `PDF`, `MD`, `CSV`… */
 function typeWord(name: string): string {
@@ -280,7 +251,7 @@ function AgentClip({ path, name, onOpen }: { path: string; name: string; onOpen:
 /** What each kind of file is called in the ask preview's "what came back" line. A PDF
  *  and a plain document used to share one glyph; they are different things to open. */
 const KIND_GLYPH: Record<AgentFileKind, string> = {
-  board: '▦', image: '▣', video: '▶', audio: '♪', pdf: '◧', doc: '▤',
+  board: '▦', image: '▣', video: '▶', audio: '♪', pdf: '◧', html: '▤', doc: '▤',
 };
 
 /**

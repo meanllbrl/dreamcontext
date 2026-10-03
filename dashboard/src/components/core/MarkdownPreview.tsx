@@ -1,4 +1,7 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import {
+  useCallback, useLayoutEffect, useMemo, useRef,
+  type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
+} from 'react';
 import { marked } from 'marked';
 // Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
 // global, but which modules a route loads is not, so every parse path imports it for itself.
@@ -12,6 +15,7 @@ import {
   type MarkdownBlockState,
 } from '../../lib/markdownBlocks';
 import { decorateMarkdownTables } from '../../lib/markdownTables';
+import { markdownWithWikilinks, WIKILINK_ATTR } from '../../lib/wikilinks';
 import './MarkdownPreview.css';
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -23,14 +27,21 @@ const HTML_CACHE_MAX = 64;
 interface Props {
   content: string;
   frontmatter?: Record<string, unknown>;
+  /**
+   * A `[[target]]` / `[[target|label]]` was clicked. Without it a wikilink still renders as its
+   * label, link-styled, and a click does nothing (it has no `href` to follow).
+   */
+  onWikilink?: (target: string) => void;
 }
 
-export function MarkdownPreview({ content, frontmatter }: Props) {
+export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
   // The markdown as its top-level blocks — the unit that gets re-rendered. A streamed answer
   // only ever appends to the last one, so the blocks before it are written to the DOM once and
   // then left alone for the rest of the turn. See lib/markdownBlocks.ts for why that matters
   // (a `<video>` rebuilt per frame re-fetches the clip per frame).
-  const blocks = useMemo(() => markdownBlocks(content), [content]);
+  // Wikilinks become anchors BEFORE the split: the fence-aware pass needs the whole text to know
+  // which lines are inside a code block (see lib/wikilinks.ts).
+  const blocks = useMemo(() => markdownBlocks(markdownWithWikilinks(content)), [content]);
 
   // Sanitize before the HTML reaches the document. marked output for normal markdown
   // (headings, lists, code, tables, links) is preserved; scripts, event handlers, and
@@ -64,7 +75,32 @@ export function MarkdownPreview({ content, frontmatter }: Props) {
     // browser paints, or a wide table paints outside its card for one frame. Idempotent, so a
     // streamed table is re-decorated as its rows arrive. See lib/markdownTables.ts.
     decorateMarkdownTables(el);
-  }, [blocks, toHtml]);
+    // A clickable wikilink is reachable from the keyboard; an inert one stays out of tab order.
+    if (onWikilink) {
+      el.querySelectorAll(`[${WIKILINK_ATTR}]:not([tabindex])`).forEach((a) => {
+        a.setAttribute('tabindex', '0');
+        a.setAttribute('role', 'link');
+      });
+    }
+  }, [blocks, toHtml, onWikilink]);
+
+  const wikilinkTarget = (e: { target: EventTarget | null }): string | null => {
+    if (!onWikilink || !(e.target instanceof Element)) return null;
+    return e.target.closest(`[${WIKILINK_ATTR}]`)?.getAttribute(WIKILINK_ATTR) ?? null;
+  };
+  const onBodyClick = (e: ReactMouseEvent) => {
+    const target = wikilinkTarget(e);
+    if (target === null) return;
+    e.preventDefault();
+    onWikilink?.(target);
+  };
+  const onBodyKey = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'Enter') return;
+    const target = wikilinkTarget(e);
+    if (target === null) return;
+    e.preventDefault();
+    onWikilink?.(target);
+  };
 
   const { resolved } = useTheme();
   // Both passes stay keyed to the message text: they are marker-guarded (`data-highlighted`,
@@ -78,7 +114,7 @@ export function MarkdownPreview({ content, frontmatter }: Props) {
     : [];
 
   return (
-    <div className="md-preview">
+    <div className={onWikilink ? 'md-preview md-preview--wikilinks' : 'md-preview'}>
       {fmEntries.length > 0 && (
         <div className="md-frontmatter">
           {fmEntries.map(([key, value]) => (
@@ -91,7 +127,12 @@ export function MarkdownPreview({ content, frontmatter }: Props) {
       )}
       {/* Children are written by the layout effect above, block by block. React must not be
           given any of its own here — it would reconcile them against the patched DOM. */}
-      <div ref={bodyRef} className="markdown-body" />
+      <div
+        ref={bodyRef}
+        className="markdown-body"
+        onClick={onWikilink ? onBodyClick : undefined}
+        onKeyDown={onWikilink ? onBodyKey : undefined}
+      />
     </div>
   );
 }

@@ -26,6 +26,8 @@ function read(path: string): string {
 
 describe('AgentMessage — the rich blocks are mounted, not re-implemented', () => {
   const source = read(join(AGENTS, 'AgentMessage.tsx'));
+  /** The extension allowlists moved to a pure module AgentMessage re-exports from. */
+  const kindSource = read(join(DASHBOARD, 'lib', 'agentFileKind.ts'));
 
   /**
    * MUTATION 17 from the plan, and the reason it is the one worth writing: a
@@ -66,7 +68,7 @@ describe('AgentMessage — the rich blocks are mounted, not re-implemented', () 
    * side would serve it as `image/svg+xml`. This pins the client half.
    */
   it('mirrors the server raster allowlist exactly, and never adds .svg', () => {
-    const block = /const RASTER_EXTENSIONS = \[([^\]]*)\]/.exec(source);
+    const block = /const RASTER_EXTENSIONS = \[([^\]]*)\]/.exec(kindSource);
     expect(block, 'RASTER_EXTENSIONS must stay a plain array literal so this can parse it').toBeTruthy();
     const mirrored = [...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
     expect(mirrored).toEqual(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
@@ -88,7 +90,7 @@ describe('AgentMessage — the rich blocks are mounted, not re-implemented', () 
     const table = /GRAPH_RAW_CONTENT_TYPE: Record<string, string> = \{([\s\S]*?)\}/.exec(graph);
     const served = [...table![1].matchAll(/'(\.[a-z0-9]+)':\s*'([^']+)'/g)];
     for (const [name, prefix] of [['VIDEO_EXTENSIONS', 'video/'], ['AUDIO_EXTENSIONS', 'audio/']] as const) {
-      const block = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(source);
+      const block = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(kindSource);
       expect(block, `${name} must stay a plain array literal`).toBeTruthy();
       const mirrored = [...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
       const onServer = served.filter(([, , type]) => type.startsWith(prefix)).map(([, ext]) => ext);

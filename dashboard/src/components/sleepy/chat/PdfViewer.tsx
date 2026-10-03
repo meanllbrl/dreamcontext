@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { agentFileUrl } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import { FileActions } from './FileActions';
+import { revealPath } from './chatEntities';
 
 /**
  * A PDF named in the transcript, opened AT FULL WINDOW — the same gesture an image gets, and
@@ -22,6 +23,16 @@ import { FileActions } from './FileActions';
  * without PDF support), `navigator.pdfViewerEnabled` says so up front and the surface degrades
  * to the honest thing: "this window can't display it" plus the button that hands it to the
  * app that can. That button is never absent, in any state, on purpose.
+ *
+ * EMBEDDED (`embedded`): the same probe, states and buttons drawn INLINE in whatever contains
+ * it — the board's side panel, the wiki card's in-card reader — instead of portalled over the
+ * window. Nothing window-wide happens then: the page behind is not scroll-locked, focus is not
+ * taken, and Esc and closing belong to the host, so `onClose` is ignored and no ✕ is drawn.
+ * The HOST's header owns the title too: the embedded viewer draws no header at all — no name
+ * row, no button bar (the side panel keeps "Open on computer" in its ⋯ menu; the wiki card
+ * reaches it by opening the page in that panel) — and only when it cannot show the document
+ * does it put one "Open on computer" button right under the reason, so the way out stays one
+ * click away in every state.
  */
 
 /** Does this engine have a built-in PDF viewer? `undefined` on engines predating the property
@@ -41,7 +52,7 @@ type Probe =
   | { state: 'missing'; message: string };
 
 export function PdfViewer({
-  path, label, src: srcOverride, onClose,
+  path, label, src: srcOverride, onClose, embedded = false,
 }: {
   /** The file as the surface names it — shown in the header, and the path handed to the OS. */
   path: string;
@@ -51,7 +62,10 @@ export function PdfViewer({
    *  instead: that route is vault-scoped and, unlike `/agent/file`, not gated on the desktop
    *  app — a browser dashboard must not be told "desktop only" about a file in its own vault. */
   src?: string;
-  onClose: () => void;
+  /** Required full-window (it is the way out); optional embedded, where the host owns closing. */
+  onClose?: () => void;
+  /** Render inline in the container instead of as a full-window portal. */
+  embedded?: boolean;
 }) {
   const api = useApi();
   const { vault } = useVault();
@@ -88,17 +102,19 @@ export function PdfViewer({
   // Lock the page behind the viewer, exactly as ImageViewer does — it covers the window, and a
   // transcript scrolling underneath it is both distracting and a way to lose your place.
   useEffect(() => {
+    if (embedded) return;
     const body = document.body;
     const prev = body.style.overflow;
     body.style.overflow = 'hidden';
     return () => { body.style.overflow = prev; };
-  }, []);
+  }, [embedded]);
 
   useEffect(() => {
+    if (embedded) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     rootRef.current?.focus();
     return () => previouslyFocused?.focus?.();
-  }, []);
+  }, [embedded]);
 
   // Esc closes THIS and nothing else: the viewer opens over the agent overlay, which closes on
   // Esc too, and without swallowing the key one press would take the whole surface down with
@@ -111,6 +127,7 @@ export function PdfViewer({
   // into our chrome. The ✕ is therefore not a convenience — it is the guaranteed way out, and
   // it is present in every state this component can be in.
   useEffect(() => {
+    if (embedded || !onClose) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
@@ -119,7 +136,7 @@ export function PdfViewer({
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+  }, [onClose, embedded]);
 
   const allow = (grantPath: string) => {
     setGranting(true);
@@ -131,41 +148,62 @@ export function PdfViewer({
 
   const canEmbed = probe.state === 'ok' && engineRendersPdf();
 
-  return createPortal(
-    <div ref={rootRef} className="pdf-viewer" role="dialog" aria-modal="true" aria-label={label || path} tabIndex={-1}>
-      <div className="pdf-viewer-head">
-        <div className="pdf-viewer-head-text">
-          <span className="pdf-viewer-name">{label || path.split('/').pop()}</span>
-          <span className="pdf-viewer-path" title={path}>{path}</span>
-        </div>
-        <button type="button" className="pdf-viewer-close" onClick={onClose} aria-label="Close" title="Close">✕</button>
-      </div>
+  const viewer = (
+    <div
+      ref={rootRef}
+      className={embedded ? 'pdf-viewer pdf-viewer--embedded' : 'pdf-viewer'}
+      role={embedded ? 'region' : 'dialog'}
+      aria-modal={embedded ? undefined : true}
+      aria-label={label || path}
+      tabIndex={-1}
+    >
+      {!embedded && (
+        <>
+          <div className="pdf-viewer-head">
+            <div className="pdf-viewer-head-text">
+              <span className="pdf-viewer-name">{label || path.split('/').pop()}</span>
+              <span className="pdf-viewer-path" title={path}>{path}</span>
+            </div>
+            {onClose && (
+              <button type="button" className="pdf-viewer-close" onClick={onClose} aria-label="Close" title="Close">✕</button>
+            )}
+          </div>
 
-      <FileActions path={path} className="pdf-viewer-actions" />
+          <FileActions path={path} className="pdf-viewer-actions" />
+        </>
+      )}
 
       <div className="pdf-viewer-stage">
         {probe.state === 'checking' && <p className="pdf-viewer-status">Loading…</p>}
 
         {probe.state === 'missing' && (
-          <p className="pdf-viewer-status error">Couldn’t open this PDF — {probe.message}.</p>
+          <div className="pdf-viewer-stage-actions">
+            <p className="pdf-viewer-status error">Couldn’t open this PDF — {probe.message}.</p>
+            {embedded && <EmbeddedOpen path={path} />}
+          </div>
         )}
 
         {probe.state === 'blocked' && (
           <div className="pdf-viewer-blocked">
             <p className="pdf-viewer-status">
               This PDF lives outside the project. Allow access to read it here, or open it on your
-              computer with the buttons above.
+              computer with {embedded ? 'the button below' : 'the buttons above'}.
             </p>
             <button type="button" className="chat-btn" onClick={() => allow(probe.path)} disabled={granting}>
               {granting ? 'Allowing…' : 'Allow access'}
             </button>
+            {embedded && <EmbeddedOpen path={path} />}
           </div>
         )}
 
         {probe.state === 'ok' && !canEmbed && (
-          <p className="pdf-viewer-status">
-            This window can’t display PDFs. Use “Open on computer” above to read it in your PDF app.
-          </p>
+          <div className="pdf-viewer-stage-actions">
+            <p className="pdf-viewer-status">
+              This window can’t display PDFs. Use “Open on computer” {embedded ? 'below' : 'above'} to read it in
+              your PDF app.
+            </p>
+            {embedded && <EmbeddedOpen path={path} />}
+          </div>
         )}
 
         {canEmbed && (
@@ -188,7 +226,29 @@ export function PdfViewer({
           />
         )}
       </div>
-    </div>,
-    document.body,
+    </div>
+  );
+  return embedded ? viewer : createPortal(viewer, document.body);
+}
+
+/** The embedded viewer's one way out when it cannot show the document: hand the file to the
+ *  computer's PDF app (`mode: 'auto'`, the same route FileActions uses), and say so if that
+ *  is refused. */
+function EmbeddedOpen({ path }: { path: string }) {
+  const api = useApi();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const open = () => {
+    setBusy(true);
+    setNote(null);
+    void revealPath(api, path, 'auto').then((err) => { setBusy(false); setNote(err); });
+  };
+  return (
+    <>
+      <button type="button" className="chat-btn" onClick={open} disabled={busy}>
+        {busy ? 'Opening…' : 'Open on computer'}
+      </button>
+      {note && <p className="pdf-viewer-status error">Couldn’t do that — {note}</p>}
+    </>
   );
 }

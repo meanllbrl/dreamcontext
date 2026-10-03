@@ -1,0 +1,189 @@
+/* The shared reader (DocumentReader.tsx): the viewer window's pieces (ViewerWindow.css) plus
+   what a popup or a pane needs — an inline PDF, an inline board, a sandboxed web page and the
+   wikilink "not found" line. Tokens only. */
+
+.doc-reader { min-width: 0; }
+.doc-reader--embedded,
+.doc-reader--pdf,
+.doc-reader--board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.doc-reader--board { padding: var(--space-3); }
+
+/* PdfViewer's embedded mode: the full-window layout, filling its container instead of the
+   viewport. The stage still flexes; the frame needs a floor so a pane with no definite height
+   does not collapse it. */
+.pdf-viewer.pdf-viewer--embedded {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+.pdf-viewer--embedded .pdf-viewer-stage { min-height: 360px; }
+
+.doc-reader-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+.doc-reader-notice > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.doc-reader-notice-dismiss {
+  flex: 0 0 auto;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+}
+.doc-reader-notice-dismiss:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+.doc-reader-html {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  max-width: 980px;
+  margin: 0 auto;
+}
+.doc-reader-html-frame {
+  display: block;
+  width: 100%;
+  /* Until the page reports its height; HtmlPage drops the floor once it has. */
+  min-height: 200px;
+  border: 0;
+  background: transparent;
+}
+.doc-reader-html-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.doc-reader-html-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ─── The PAGE variant (`variant="page"`, `.doc-reader--page`) ───────────────────────────
+   The board's side panel and the wiki card read a file as a page, not as an editor card:
+   MarkdownPreview's default `.md-preview` is a framed preview box (border, card background,
+   14px text), which is what made the first popup look like a small card floating in an empty
+   frame. Every override below is scoped to this variant, so the viewer window — which never
+   passes it — keeps its look exactly. */
+
+.doc-reader--page { background: var(--color-bg); }
+
+.doc-reader--page .viewer-doc {
+  max-width: none;
+  margin: 0;
+  padding: var(--space-8) var(--space-10) var(--space-16);
+}
+
+/* The text column: no frame, no card, ~70 characters measured at the reading size. */
+.doc-reader--page .md-preview {
+  flex: none;
+  overflow: visible;
+  max-width: 68ch;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--font-size-base);
+}
+
+.doc-reader--page .md-preview .markdown-body {
+  font-size: var(--font-size-base);
+  line-height: 1.65;
+  color: var(--color-text);
+}
+.doc-reader--page .md-preview .markdown-body p,
+.doc-reader--page .md-preview .markdown-body ul,
+.doc-reader--page .md-preview .markdown-body ol,
+.doc-reader--page .md-preview .markdown-body pre,
+.doc-reader--page .md-preview .markdown-body blockquote,
+.doc-reader--page .md-preview .markdown-body table { margin-bottom: var(--space-4); }
+.doc-reader--page .md-preview .markdown-body li { line-height: 1.65; }
+
+/* Headings keep their hierarchy above the larger body size. */
+.doc-reader--page .md-preview .markdown-body h1 {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-heading-sm);
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--space-5);
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.doc-reader--page .md-preview .markdown-body h2 {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-heading-sm);
+  margin: var(--space-8) 0 var(--space-3);
+}
+.doc-reader--page .md-preview .markdown-body h3 {
+  font-size: 1.125em;
+  line-height: var(--line-height-heading-sm);
+  margin: var(--space-6) 0 var(--space-2);
+}
+.doc-reader--page .md-preview .markdown-body h4,
+.doc-reader--page .md-preview .markdown-body h5,
+.doc-reader--page .md-preview .markdown-body h6 {
+  font-size: var(--font-size-base);
+  margin: var(--space-5) 0 var(--space-2);
+}
+.doc-reader--page .md-preview .markdown-body > :first-child { margin-top: 0; }
+
+/* Code, tables and quotes at a size that sits with 16px prose. */
+.doc-reader--page .md-preview .markdown-body pre {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+}
+.doc-reader--page .md-preview .markdown-body pre code { font-size: var(--font-size-sm); line-height: var(--line-height-normal); }
+.doc-reader--page .md-preview .markdown-body table { font-size: var(--font-size-sm); }
+.doc-reader--page .md-preview .markdown-body blockquote {
+  font-style: normal;
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+}
+.doc-reader--page .md-preview .markdown-body img { margin: var(--space-2) 0; }
+
+/* Plain text, a folder and a notice share the same column. */
+.doc-reader--page .viewer-text,
+.doc-reader--page .viewer-dir,
+.doc-reader--page .viewer-status { max-width: 68ch; margin-left: auto; margin-right: auto; }
+.doc-reader--page .viewer-text { font-size: var(--font-size-sm); }
+.doc-reader--page .doc-reader-notice { max-width: 68ch; margin: var(--space-4) auto 0; }
+
+/* A web page: the frame takes the panel's width; the sandbox note sits quietly under it. */
+.doc-reader--page .doc-reader-html {
+  max-width: none;
+  padding: var(--space-6) var(--space-8) var(--space-10);
+}
+
+/* A PDF: the stage fills the page edge to edge — the engine's viewer draws its own margins. */
+.doc-reader--page.doc-reader--pdf .pdf-viewer--embedded { background: var(--color-bg); }
+.doc-reader--page.doc-reader--pdf .pdf-viewer-stage { padding: 0; min-height: 0; }
+.doc-reader--page.doc-reader--pdf .pdf-viewer-frame { border-radius: 0; }
+
+@media (max-width: 720px) {
+  .doc-reader--page .viewer-doc { padding: var(--space-5) var(--space-5) var(--space-10); }
+}
+
+/* PdfViewer's embedded mode drops its own header (the host's header owns the title); when
+   it cannot show the document, the open / reveal buttons sit right under the reason. */
+.pdf-viewer-stage-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
