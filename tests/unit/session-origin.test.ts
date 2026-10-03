@@ -77,6 +77,18 @@ describe('scrubSpawnEnv / prepareDashboardEnv', () => {
     expect(env[SPAWNED_ENV]).toBeUndefined();
     expect(env.DREAMCONTEXT_SERVER_PID).toBe('4242');
   });
+
+  it("prepareDashboardEnv drops the launcher's session and tab ids, leaving SPAWN_ENV_KEYS alone", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: '/bin',
+      CLAUDE_CODE_SESSION_ID: HUMAN,
+      DREAMCONTEXT_TAB_SESSION: ORCH,
+    };
+    prepareDashboardEnv(env, 4242);
+    expect(env).toEqual({ PATH: '/bin', DREAMCONTEXT_SERVER_PID: '4242' });
+    expect(SPAWN_ENV_KEYS).not.toContain('CLAUDE_CODE_SESSION_ID');
+    expect(SPAWN_ENV_KEYS).not.toContain('DREAMCONTEXT_TAB_SESSION');
+  });
 });
 
 describe('findRegisteredActor', () => {

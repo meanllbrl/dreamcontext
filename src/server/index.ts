@@ -232,6 +232,7 @@ import {
 } from './routes/linked-repos.js';
 import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
+import { startOrphanSweep } from './orphan-sweep.js';
 import { handleAdminShutdown } from './routes/admin.js';
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../lib/manifest.js';
 import { prepareDashboardEnv } from '../lib/session-origin.js';
@@ -1040,6 +1041,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // upgrade — GET /api/health surfaces it and the dashboard bundle auto-relaunches
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
       startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
+      startOrphanSweep();
     });
   });
 }

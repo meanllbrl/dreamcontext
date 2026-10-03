@@ -75,9 +75,16 @@ export function scrubSpawnEnv(env: NodeJS.ProcessEnv): void {
  * Called first thing by the dashboard server. Scrubs spawn markers (a server launched from a
  * spawned context must not pass one to a human pane) and stamps the server's own pid as the
  * ancestry boundary, so unpinned panes, which get no per-tab env, still bound the walk.
+ *
+ * Also drops the launcher's conversation and tab ids (a hook-launched server inherits them):
+ * every child would otherwise carry that tab's id, and the orphan sweep reads the tab id as the
+ * owner of a leftover process. Deleted inline, not via SPAWN_ENV_KEYS — that list is the
+ * spawn-marker contract and the test isolation setup depends on it.
  */
 export function prepareDashboardEnv(env: NodeJS.ProcessEnv, serverPid: number): void {
   scrubSpawnEnv(env);
+  delete env.CLAUDE_CODE_SESSION_ID;
+  delete env.DREAMCONTEXT_TAB_SESSION;
   env.DREAMCONTEXT_SERVER_PID = String(serverPid);
 }
 
@@ -97,7 +104,7 @@ export function parsePsTable(psOutput: string): Map<number, PsRow> {
 }
 
 /** `claude` as a command word (bare or path tail), never a path fragment like `~/.claude/…`. */
-const CLAUDE_COMMAND_RE = /(^|[\s/])claude($|\s)/;
+export const CLAUDE_COMMAND_RE =/(^|[\s/])claude($|\s)/;
 
 /**
  * Walk up from `startPid` (the hook's parent) counting claude-like commands. The hook's own
