@@ -237,6 +237,20 @@
   text-overflow: ellipsis;
 }
 
+/* A page row's type (MD / PDF / HTML), before its title. */
+.wb-picker-type {
+  display: inline-block;
+  margin-right: var(--space-2);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  vertical-align: 1px;
+}
+
 .wb-picker-row-meta {
   max-width: 100%;
   overflow: hidden;

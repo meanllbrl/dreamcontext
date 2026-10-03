@@ -59,12 +59,14 @@ export function WidgetPalette({ left, top, onPick, onClose, onCanvasMenu }: {
         <>
           <p className="wb-palette-heading">{tx('whiteboard.palette.label', 'Add to board')}</p>
           {item(tx('whiteboard.palette.insight', 'Insight…'), () => setStage('insight'))}
-          {item(tx('whiteboard.palette.knowledge', 'Knowledge…'), () => setStage('knowledge'))}
+          {item(tx('whiteboard.palette.page', 'Knowledge or file…'), () => setStage('knowledge'))}
           {item(tx('whiteboard.palette.task', 'Task…'), () => setStage('task'))}
           {item(tx('whiteboard.palette.todo', 'Todo list'), () => onPick({ v: 1, kind: 'todo', title: tx('whiteboard.kind.todo', 'Todo'), items: [] }))}
           {item(tx('whiteboard.palette.note', 'Note'), () => onPick({ v: 1, kind: 'note', title: tx('whiteboard.kind.note', 'Note'), markdown: '' }))}
           {item(tx('whiteboard.palette.html', 'HTML block'), () => onPick({ v: 1, kind: 'html', title: tx('whiteboard.kind.html', 'HTML block'), html: '' }))}
           {item(tx('whiteboard.palette.web', 'Web embed…'), () => setStage('web'))}
+          {/* A wiki card starts empty and is filled from inside it; each one keeps its own list. */}
+          {item(tx('whiteboard.palette.wiki', 'Wiki'), () => onPick({ v: 1, kind: 'wiki', title: tx('whiteboard.kind.wiki', 'Wiki'), sections: [] }))}
           {onCanvasMenu && (
             <>
               <hr className="wb-palette-sep" />

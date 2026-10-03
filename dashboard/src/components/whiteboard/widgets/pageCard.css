@@ -1,0 +1,10 @@
+/* Page cards (KnowledgeWidget over a knowledge slug or a project .md / .pdf / .html file).
+   The header label already says the type, so the body is the title and one quiet line. */
+
+/* Where a file lives: its folder, one line, under the title and out of its way. */
+.wb-page-card-where {
+  display: block;
+  margin-top: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}

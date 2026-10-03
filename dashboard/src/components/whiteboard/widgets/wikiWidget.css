@@ -1,0 +1,563 @@
+/* The wiki card (WikiWidget.tsx): a list of sections and pages at S / M, the list beside an
+   in-card page reader at L / XL. Design tokens only; one row height; one highlight style. */
+
+/* The card lays its own body out: the list and the reader manage their own padding and scroll. */
+.wb-widget.wb-widget--wiki .wb-widget-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.wb-wiki {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── the list ───────────────────────────────────────────────────────────────────────────── */
+
+.wb-wiki-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-1) var(--space-3) var(--space-3);
+}
+
+.wb-widget.is-active .wb-wiki-list {
+  overflow-y: auto;
+}
+
+.wb-widget--size-s .wb-wiki-list {
+  padding: 0 var(--space-2) var(--space-2);
+  gap: var(--space-2);
+}
+
+.wb-wiki-section {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-sm);
+}
+
+.wb-wiki-section-title {
+  /* A block, not a flex box: `text-overflow` only ellipsizes a block's own line, so a long
+     heading ends in "…" instead of being cut mid-letter. */
+  display: block;
+  margin: 0;
+  padding: 0 var(--space-2);
+  line-height: var(--space-6);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-wiki-pages {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-wiki-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--space-8);
+  border-radius: var(--radius-sm);
+}
+
+.wb-wiki-row-open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  min-height: var(--space-8);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-wiki-row-open:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.wb-wiki-row-open:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.wb-wiki-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-sm);
+}
+
+/* The page's type: quiet, after the title, never louder than it. */
+.wb-wiki-row-type {
+  flex: none;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+/* The page being read in the card: ONE style, on the row only. */
+.wb-wiki-row.is-current .wb-wiki-row-open {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.wb-wiki-row.is-current .wb-wiki-row-title {
+  font-weight: var(--font-weight-medium);
+}
+
+/* ── the empty card ─────────────────────────────────────────────────────────────────────── */
+
+.wb-wiki-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: 1;
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.wb-wiki-empty-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.wb-wiki-empty-hint {
+  margin: 0;
+  max-width: 28ch;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.wb-wiki-btn-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ── L / XL: the list beside the in-card reader ─────────────────────────────────────────── */
+
+.wb-wiki-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.wb-wiki-split > .wb-wiki-list {
+  flex: none;
+  /* At L the list takes close to half the card: headings and titles read whole, and the
+     reader keeps a page column of its own. Proportional, so a free-form resize keeps it. */
+  width: 46%;
+  padding-right: var(--space-2);
+}
+
+.wb-widget--size-xl .wb-wiki-split > .wb-wiki-list {
+  width: 30%;
+}
+
+/* At S, and in L's narrow column, the type label gives its room to the title. */
+.wb-widget--size-s .wb-wiki-row-type,
+.wb-widget--size-l .wb-wiki-split .wb-wiki-row-type {
+  display: none;
+}
+
+.wb-wiki-reader {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--color-border);
+}
+
+.wb-wiki-reader-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  min-height: var(--space-8);
+  padding: 0 var(--space-2);
+}
+
+.wb-wiki-reader-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.wb-wiki-reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wb-widget.is-active .wb-wiki-reader-body {
+  overflow-y: auto;
+}
+
+/* The panel's page look, at the card's scale: the same column and type, less margin, and the
+   card's own surface instead of the page background. */
+.wb-wiki-reader .doc-reader--page {
+  background: transparent;
+}
+
+.wb-wiki-reader .doc-reader--page .viewer-doc {
+  padding: var(--space-3) var(--space-5) var(--space-6);
+}
+
+.wb-wiki-reader .doc-reader--page .md-preview .markdown-body h1 {
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--space-3);
+}
+
+.wb-wiki-reader .doc-reader--page .doc-reader-html {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.wb-wiki-reader .doc-reader--pdf,
+.wb-wiki-reader .doc-reader--board {
+  height: 100%;
+}
+
+.wb-wiki-reader .pdf-viewer--embedded .pdf-viewer-stage {
+  min-height: 0;
+}
+
+/* ── icon buttons (reader header, edit rows, picker) ────────────────────────────────────── */
+
+.wb-wiki-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--space-6);
+  height: var(--space-6);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.wb-wiki-icon:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.wb-wiki-icon:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.wb-wiki-icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── edit mode ──────────────────────────────────────────────────────────────────────────── */
+
+.wb-wiki-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.wb-wiki-card-title .wb-input {
+  font-size: var(--font-size-sm);
+}
+
+.wb-wiki-card-title-label {
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.wb-wiki-section-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--space-8);
+  border-radius: var(--radius-sm);
+}
+
+.wb-wiki-section-name {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--space-7);
+  padding: 0 var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.wb-wiki-section-name:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.wb-wiki-section-name:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.wb-wiki-rename {
+  flex: 1;
+  min-height: var(--space-7);
+  font-size: var(--font-size-sm);
+}
+
+.wb-wiki-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--space-4);
+  color: var(--color-text-tertiary);
+  cursor: grab;
+}
+
+.wb-wiki--editing .wb-wiki-row {
+  cursor: grab;
+}
+
+.wb-wiki--editing .wb-wiki-row:hover .wb-wiki-grip,
+.wb-wiki-section-edit:hover .wb-wiki-grip {
+  color: var(--color-text-secondary);
+}
+
+.wb-wiki-row-remove {
+  opacity: 0;
+}
+
+.wb-wiki-row:hover .wb-wiki-row-remove,
+.wb-wiki-row:focus-within .wb-wiki-row-remove {
+  opacity: 1;
+}
+
+.wb-wiki-section-empty {
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-6);
+  min-height: var(--space-8);
+  display: flex;
+  align-items: center;
+  border: 1px dashed transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.wb-wiki-section-empty.is-drop-target {
+  border-color: var(--color-border-focus);
+}
+
+/* Where a drop lands: a 2px line in the accent, before or after the row. */
+.wb-wiki-row.is-drop-before::before,
+.wb-wiki-row.is-drop-after::after,
+.wb-wiki-section.is-drop-before::before,
+.wb-wiki-section.is-drop-after::after {
+  content: '';
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+.wb-wiki-section.is-drop-before,
+.wb-wiki-section.is-drop-after {
+  position: relative;
+}
+
+.wb-wiki-row.is-drop-before::before { top: -1px; }
+.wb-wiki-row.is-drop-after::after { bottom: -1px; }
+.wb-wiki-section.is-drop-before::before { top: calc(-1 * var(--space-2)); }
+.wb-wiki-section.is-drop-after::after { bottom: calc(-1 * var(--space-2)); }
+
+.wb-wiki-list-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.wb-wiki-hint {
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+}
+
+/* The inline delete confirm: the question, then Delete / Cancel, in the heading's place. */
+.wb-wiki-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+
+.wb-wiki-confirm-text {
+  flex: 1 1 12ch;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.wb-wiki-confirm-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.wb-widget-btn.wb-wiki-danger {
+  border-color: var(--color-error);
+  color: var(--color-error-ink);
+}
+
+/* ── the page picker, over the card ─────────────────────────────────────────────────────── */
+
+.wb-wiki-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+  background: var(--color-bg-secondary);
+}
+
+.wb-wiki-picker-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.wb-wiki-picker-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.wb-wiki-picker .wb-picker {
+  flex: 1;
+  min-height: 0;
+}
+
+.wb-wiki-picker .wb-picker-list {
+  flex: 1;
+  max-height: none;
+}
+
+.wb-wiki-picker .wb-picker-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The card's key boundary (WikiWidget.tsx): a wrapper for events only, never a layout box. */
+.wb-wiki-keys {
+  display: contents;
+}
+
+/* "+N more": the last line of an inactive card whose rows do not all fit. Quiet, one line,
+   the rows' inset; a click on it (the activating click included) shows every row. */
+.wb-wiki-more {
+  display: block;
+  flex: none;
+  width: 100%;
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  line-height: var(--space-6);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Snug under the last row: the list's gap is taken back, and an inactive list keeps only a
+   small bottom inset, so the line costs one line of height and no more. */
+.wb-wiki-list.is-clipped {
+  padding-bottom: var(--space-1);
+}
+
+.wb-wiki-list .wb-wiki-more {
+  margin-top: calc(var(--space-3) * -1);
+}
+
+.wb-widget--size-s .wb-wiki-list .wb-wiki-more {
+  margin-top: calc(var(--space-2) * -1);
+}
+
+.wb-wiki-more:hover {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+
+.wb-wiki-more:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+/* The copy measured while the rows are counted: takes the real line's height, draws nothing. */
+.wb-wiki-more--measure {
+  visibility: hidden;
+}

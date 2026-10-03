@@ -14,6 +14,7 @@ import { openExternalUrl } from '../../lib/desktop';
 import { registerPinchTarget } from '../../lib/excalidrawPinch';
 import { DEFAULT_WIDGET_SIZES, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
 import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
+import { usePagePopup } from './PagePopup';
 import { IMAGES_LATER_MESSAGE, reconcileRemoteScene, stripImageElements } from './sceneSync';
 import { WidgetPalette } from './WidgetPalette';
 import {
@@ -55,7 +56,8 @@ export interface WhiteboardCanvasProps {
   /** Called when the scene's content changed (not on a mere selection or scroll), with every
    *  element including tombstones, images already removed. The page debounces its save. */
   onSceneChange?: (elements: readonly OrderedExcalidrawElement[]) => void;
-  /** A clicked `dreamcontext://<kind>/<id>` element link. Default: open tasks/knowledge in the app. */
+  /** A clicked `dreamcontext://<kind>/<id>` element link. Default: a task or knowledge page opens
+   *  in the board page's page popup when there is one, else on its own page in the app. */
   onInternalLink?: (kind: string, id: string) => void;
 }
 
@@ -126,6 +128,10 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
   onSceneChangeRef.current = onSceneChange;
   const onInternalLinkRef = useRef(onInternalLink);
   onInternalLinkRef.current = onInternalLink;
+  // The board page's page popup (PagePopup.tsx), when this canvas sits under one.
+  const pagePopup = usePagePopup();
+  const pagePopupRef = useRef(pagePopup);
+  pagePopupRef.current = pagePopup;
   const txRef = useRef(tx);
   txRef.current = tx;
 
@@ -431,6 +437,8 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
       openInternal: (kind, id) => {
         if (onInternalLinkRef.current) { onInternalLinkRef.current(kind, id); return; }
         if (kind === 'task' || kind === 'knowledge') {
+          // Read over the board in the popup; the board itself stays put.
+          if (pagePopupRef.current?.openPage({ kind, ref: id })) return;
           emitInstance(bus, 'dreamcontext-agent-open-page', { page: kind === 'task' ? 'tasks' : 'knowledge', id });
         }
       },

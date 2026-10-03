@@ -1,23 +1,34 @@
 import { useTasks } from '../../../hooks/useTasks';
 import { emitInstance, useVault } from '../../../context/VaultContext';
-import { isValidWidgetRef, taskTitle } from '../widgetModel';
+import { humaniseSlug, isValidWidgetRef, stampedTitle, taskTitle } from '../widgetModel';
+import { usePagePopup } from '../PagePopup';
 import { useWbText } from '../whiteboardHost';
+import { PageBody } from './KnowledgeWidget';
 import { WidgetButton, WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
 
 /**
- * A task on the board: name, status, priority, due date, and an Open button that lands on it
- * in the Tasks page through the app's existing open-page event (on this project's bus only).
+ * A task on the board: name, status, priority, due date. Opening it, by the Open button or a
+ * click on the card once it is active, reads the task's own markdown file in the board's page
+ * popup; the popup's "Open in Tasks" is the way to the Tasks page.
  */
 export function TaskWidget({ payload, active, size }: WidgetProps) {
   const tx = useWbText();
   const { bus } = useVault();
+  const popup = usePagePopup();
   const ref = isValidWidgetRef(payload.ref) ? payload.ref : null;
   const { data, isLoading, isError } = useTasks();
   const task = ref ? data?.find((t) => t.slug === ref) : undefined;
-  // A title stamped as the bare slug (older pickers did) reads as no title.
-  const stamped = payload.title && payload.title !== ref ? payload.title : '';
-  const title = stamped || (task ? taskTitle(task) : ref) || tx('whiteboard.kind.task', 'Task');
+  // A title stamped as the bare slug (older pickers did) reads as no title; the label stays "Task".
+  const title = stampedTitle(payload.title, ref) || (task ? taskTitle(task) : ref ? humaniseSlug(ref) : '')
+    || tx('whiteboard.kind.task', 'Task');
+
+  const open = () => {
+    if (!task) return;
+    if (popup?.openPage({ kind: 'task', ref: task.slug })) return;
+    // Outside a board page there is no popup: the task opens where it lives.
+    emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: task.slug });
+  };
 
   let body;
   if (!ref) {
@@ -37,7 +48,7 @@ export function TaskWidget({ payload, active, size }: WidgetProps) {
     const due = task.due_date ? `${tx('whiteboard.task.due', 'due')} ${task.due_date}` : '';
     const summary = task.description && task.description !== task.name ? task.description : '';
     body = (
-      <div className="wb-entity">
+      <PageBody onOpen={open}>
         <p className="wb-entity-title">{title}</p>
         {size === 's' ? (
           <p className="wb-entity-meta">
@@ -57,7 +68,7 @@ export function TaskWidget({ payload, active, size }: WidgetProps) {
             </div>
           </>
         )}
-      </div>
+      </PageBody>
     );
   }
 
@@ -68,9 +79,7 @@ export function TaskWidget({ payload, active, size }: WidgetProps) {
       active={active}
       size={size}
       actions={task && (
-        <WidgetButton onClick={() => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: task.slug })}>
-          {tx('whiteboard.widget.open', 'Open')}
-        </WidgetButton>
+        <WidgetButton onClick={open}>{tx('whiteboard.widget.open', 'Open')}</WidgetButton>
       )}
     >
       {body}

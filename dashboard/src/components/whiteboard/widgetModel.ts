@@ -4,7 +4,9 @@
  *
  * No React, no CSS, no Excalidraw import: root vitest imports this file.
  */
-import { WIDGET_KINDS, WIDGET_LINK_PREFIX, type WidgetPayload } from '../../lib/whiteboardWidgets';
+import {
+  WIDGET_KINDS, WIDGET_LINK_PREFIX, isValidPageRef, pageRefKind, type PageKind, type WidgetPayload,
+} from '../../lib/whiteboardWidgets';
 
 export type WidgetKind = WidgetPayload['kind'];
 export type TodoItem = NonNullable<WidgetPayload['items']>[number];
@@ -21,6 +23,15 @@ export function isWidgetKind(v: unknown): v is WidgetKind {
 
 export function isValidWidgetRef(ref: unknown): ref is string {
   return typeof ref === 'string' && REF_RE.test(ref) && !ref.split('/').includes('..');
+}
+
+/**
+ * The ref check for one kind, the server's rule (src/lib/whiteboards/validate.ts): a knowledge
+ * widget is a PAGE, whose ref is a knowledge slug OR a project-relative .md/.pdf/.html path;
+ * every other kind takes a slug.
+ */
+export function isValidRefFor(kind: WidgetKind, ref: unknown): ref is string {
+  return kind === 'knowledge' ? isValidPageRef(ref) : isValidWidgetRef(ref);
 }
 
 /** `validateEmbeddable`: only our own scheme. Every other link is rejected, so Excalidraw's
@@ -153,4 +164,74 @@ export function knowledgeTitle(entry: { slug: string; name?: string; content?: s
 export function taskTitle(task: { slug: string; name?: string }): string {
   const name = task.name?.trim() ?? '';
   return name && !isSlugLike(name, task.slug) ? name : humaniseSlug(task.slug);
+}
+
+// ── page cards: the type label and the title ─────────────────────────────────────────────────
+
+/** The type words every page surface uses: the cards, the wiki card's rows, the picker, the panel. */
+export type PageTypeLabel = 'Knowledge' | 'MD' | 'PDF' | 'HTML';
+
+/** The label for what a page ref points at (`pageRefKind`'s answer). */
+export function pageKindLabel(kind: PageKind): Exclude<PageTypeLabel, 'Knowledge'>;
+export function pageKindLabel(kind: 'knowledge' | PageKind): PageTypeLabel;
+export function pageKindLabel(kind: 'knowledge' | PageKind): PageTypeLabel {
+  return kind === 'knowledge' ? 'Knowledge' : kind === 'pdf' ? 'PDF' : kind === 'html' ? 'HTML' : 'MD';
+}
+
+/**
+ * The label a page card's header wears: "Knowledge" for a knowledge slug, the file's type for a
+ * project file (MD / PDF / HTML, the page picker's vocabulary), null for an invalid ref. A PDF
+ * card never says "Knowledge". THE one place a page ref becomes a type word: the panel's
+ * `pageTypeChip` and the picker read it from here.
+ */
+export function pageTypeLabel(ref: unknown): PageTypeLabel | null {
+  const kind = pageRefKind(ref);
+  return kind === null ? null : pageKindLabel(kind);
+}
+
+/** True when a page ref is a project file path rather than a knowledge slug. */
+export function isPagePath(ref: unknown): boolean {
+  const kind = pageRefKind(ref);
+  return kind !== null && kind !== 'knowledge';
+}
+
+/**
+ * A file path read as a title: the folder and the extension go, `-` and `_` become spaces, runs
+ * of spaces collapse, the first letter is upper-cased and the rest kept as written
+ * ("docs/Q3_report-final.html" → "Q3 report final", "README.md" → "README"). A leading dot is
+ * not part of the name (".hidden.md" → "Hidden"). A name with nothing left once stripped
+ * (".md", ".gitignore", "---.pdf") falls back to the file name.
+ *
+ * THE one place a file name becomes a title: the cards, the wiki card's rows and the panel's
+ * heading (`pageTitleFromPath`) all read it from here.
+ */
+export function humanizeFileName(path: string): string {
+  const leaf = path.split('/').filter(Boolean).pop() ?? path;
+  const dot = leaf.lastIndexOf('.');
+  const base = dot >= 0 ? leaf.slice(0, dot) : leaf;
+  const words = base.replace(/[-_]+/g, ' ').replace(/^[\s.]+/, '').replace(/\s+/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : leaf;
+}
+
+/**
+ * A title stamped in a widget payload, unless it is only the ref again: the bare ref, or the
+ * raw file name of a path ref (older pickers stamped both). Empty when there is no real stamp.
+ */
+export function stampedTitle(stamp: unknown, ref: string | null): string {
+  const clean = typeof stamp === 'string' ? stamp.trim() : '';
+  if (!clean || !ref) return clean;
+  const leaf = ref.split('/').filter(Boolean).pop() ?? ref;
+  return clean === ref || clean === leaf ? '' : clean;
+}
+
+/**
+ * The title a page card shows: a real stamped title first; then, for a file path, the file name
+ * humanised; for a knowledge slug, the entry's own title (`knowledgeTitle`) when it is loaded,
+ * else the slug humanised. Never the raw ref.
+ */
+export function pageCardTitle(ref: string, stamp?: unknown, entryTitle?: string): string {
+  const stamped = stampedTitle(stamp, ref);
+  if (stamped) return stamped;
+  if (isPagePath(ref)) return humanizeFileName(ref);
+  return entryTitle?.trim() || humaniseSlug(ref);
 }

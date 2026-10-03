@@ -11,7 +11,7 @@ import * as dash from '../../dashboard/src/lib/whiteboardWidgets.js';
 describe('whiteboard widget contract mirror', () => {
   it('WIDGET_KINDS match, in order', () => {
     expect([...dash.WIDGET_KINDS]).toEqual([...lib.WIDGET_KINDS]);
-    expect([...lib.WIDGET_KINDS]).toEqual(['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web']);
+    expect([...lib.WIDGET_KINDS]).toEqual(['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki']);
   });
 
   it('WIDGET_LINK_PREFIX matches', () => {
@@ -21,6 +21,10 @@ describe('whiteboard widget contract mirror', () => {
 
   it('WidgetPayload is the same shape both ways', () => {
     expectTypeOf<dash.WidgetPayload>().toEqualTypeOf<lib.WidgetPayload>();
+    // A wiki card's list: sections of pages.
+    expectTypeOf<dash.WikiSection>().toEqualTypeOf<lib.WikiSection>();
+    expectTypeOf<dash.WikiPage>().toEqualTypeOf<lib.WikiPage>();
+    expectTypeOf<lib.WidgetPayload['sections']>().toEqualTypeOf<lib.WikiSection[] | undefined>();
   });
 
   it('WIDGET_SIZES and WIDGET_GRID match, and are the A17 contract', () => {
@@ -36,8 +40,28 @@ describe('whiteboard widget contract mirror', () => {
     expectTypeOf<dash.WidgetSize>().toEqualTypeOf<lib.WidgetSize>();
   });
 
+  it('page refs (slug | project-relative .md/.pdf/.html path) are judged the same both ways', () => {
+    expect([...dash.PAGE_FILE_EXTENSIONS]).toEqual([...lib.PAGE_FILE_EXTENSIONS]);
+    const cases: unknown[] = [
+      'architecture/overview', 'docs/spec.pdf', 'site/index.html', 'site/old.HTM', 'Notes/Ürün Planı.md',
+      '_dream_context/knowledge/a.md', '../secret.md', '/etc/passwd.md', '~/x.md', 'a/../b.md', 'a//b.md',
+      './a.md', 'C:/x.md', 'a\\b.md', 'docs/x.txt', 'docs/x', '', 42, null, 'a\nb.md',
+    ];
+    for (const c of cases) {
+      expect(dash.pageRefKind(c), String(c)).toBe(lib.pageRefKind(c));
+      expect(dash.isValidPageRef(c), String(c)).toBe(lib.isValidPageRef(c));
+    }
+    expect(lib.pageRefKind('architecture/overview')).toBe('knowledge');
+    expect(lib.pageRefKind('docs/spec.pdf')).toBe('pdf');
+    expect(lib.pageRefKind('site/old.HTM')).toBe('html');
+    expect(lib.pageRefKind('Notes/Ürün Planı.md')).toBe('md');
+    for (const bad of ['../secret.md', '/etc/passwd.md', '~/x.md', 'a/../b.md', 'C:/x.md', 'docs/x.txt']) {
+      expect(lib.isValidPageRef(bad), bad).toBe(false);
+    }
+  });
+
   it('per-kind default sizes match', () => {
     expect(dash.DEFAULT_WIDGET_SIZES).toEqual(lib.DEFAULT_WIDGET_SIZES);
-    expect(lib.DEFAULT_WIDGET_SIZES).toEqual({ insight: 'm', knowledge: 's', task: 's', todo: 'm', note: 'm', html: 'l', web: 'l' });
+    expect(lib.DEFAULT_WIDGET_SIZES).toEqual({ insight: 'm', knowledge: 's', task: 's', todo: 'm', note: 'm', html: 'l', web: 'l', wiki: 'l' });
   });
 });

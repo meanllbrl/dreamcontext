@@ -157,7 +157,7 @@ The same memory mechanism powers every surface of the project. Files are structu
 - **Features & PRDs** — living product specs with freshness tracking, tied to real tasks and releases.
 - **Tasks & Roadmap** — a full task lifecycle (kanban, sprints, custom fields) plus PO-authored [objectives](#roadmap-objectives--the-okr-board) with dependency-aware forecast and slip detection.
 - **[Lab insights](#lab-insights)** — live metrics from your analytics, Stripe, or any API — curated, cached in the brain, visible to every session.
-- **Whiteboard** (alpha) — Excalidraw boards you and your agent draw on together, carrying live widgets: insight cards, task and knowledge links, todo lists, notes, sandboxed HTML blocks, web embeds. The agent reads what you ticked and rewrites the board with `dreamcontext whiteboard` ("clear yesterday's, write today's"), and an open board picks up its edits within seconds.
+- **Whiteboard** (alpha) — Excalidraw boards you and your agent draw on together, carrying live widgets: insight cards, task and knowledge links, todo lists, notes, sandboxed HTML blocks, web embeds, and wiki cards that hold their own list of pages (knowledge, Markdown, PDF, HTML). A page opens in a side panel next to the board, so reading never leaves it; a large wiki card reads the page inside the card. The agent reads what you ticked and rewrites the board with `dreamcontext whiteboard` ("clear yesterday's, write today's"), and an open board picks up its edits within seconds.
 - **[Council](#council)** — multi-persona debates for the hard calls, synthesized into cited verdicts.
 - **[Team sync](#built-for-teams)** — the whole picture reaches your team: git-backed brain sync, ClickUp / GitHub task backends, cross-project federation.
 

@@ -1,0 +1,214 @@
+/* The page panel (PagePopup.tsx): a page read BESIDE the board. It slides in from the right
+   edge of the board body the way the Brain page's node drawer does (`.brain-drawer`), and
+   PUSHES the canvas rather than covering it: collapsed, it is a flex item in `.wbp-body`'s
+   row next to `.wbp-canvas` (`flex: 1; min-width: 0`), so every Excalidraw control stays in
+   view left of it. Expanded, it is laid over the whole body instead. The width never
+   transitions — a canvas resized on every frame would re-lay Excalidraw each frame — so the
+   panel animates with transform / clip-path only. Design tokens only. */
+
+.wb-page-panel {
+  position: relative;
+  z-index: 20;
+  flex: none;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  width: clamp(420px, 44%, 760px);
+  /* The canvas keeps the width its top bar needs (toolbar + "+ Add" + Library, see below)
+     whenever the board is wide enough to give it; on a narrower board the reading floor wins. */
+  max-width: max(420px, calc(100% - 780px));
+  min-height: 0;
+  overflow: hidden;
+  /* In flow, a long page's height would otherwise count toward the shell's content height
+     and squeeze the app's top bar by a few pixels; the panel's size comes from its row only. */
+  contain: size;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
+  font-family: var(--font-family);
+  outline: none;
+  animation: wb-page-panel-in var(--transition-normal) var(--ease-out);
+}
+.wb-page-panel--full {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: none;
+}
+/* Expand reveals leftward from the panel's side position; Collapse settles back in. */
+.wb-page-panel--widen { animation: wb-page-panel-widen var(--transition-normal) var(--ease-out); }
+.wb-page-panel--narrow { animation: wb-page-panel-narrow var(--transition-normal) var(--ease-out); }
+/* Focus lands on the panel itself as it opens (so Esc reaches it); that is not a state to
+   draw a ring around — its buttons draw their own. */
+.wb-page-panel.wb-page-panel:focus,
+.wb-page-panel.wb-page-panel:focus-visible { outline: none; }
+.wb-page-panel--leaving { animation: wb-page-panel-out var(--transition-fast) var(--ease-out) forwards; }
+
+@keyframes wb-page-panel-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes wb-page-panel-widen {
+  from { clip-path: inset(0 0 0 56%); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes wb-page-panel-narrow {
+  from { opacity: 0.6; transform: translateX(calc(-1 * var(--space-6))); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wb-page-panel-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-page-panel,
+  .wb-page-panel--widen,
+  .wb-page-panel--narrow,
+  .wb-page-panel--leaving { animation: none; }
+}
+
+/* While the side panel pushes the canvas, Excalidraw's top bar gets the narrower box's
+   layout. Its own grid is `1fr 2fr 1fr` with a 2rem gap: the tool row only fits the middle
+   column above ~1100px, and below that the top-right column ("+ Add", Library) is pushed off
+   the canvas's right edge — under the panel. Sized to content at the sides and the rest to the
+   tools, every control stays in the canvas. Scoped to an open, collapsed panel only: the board
+   at full width keeps Excalidraw's layout untouched. */
+.wbp-body:has(> .wb-page-panel:not(.wb-page-panel--full)) .wbp-canvas .App-menu_top {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-gap: var(--space-3);
+}
+
+/* ─── Header: back, forward | title | expand, ⋯, × ─── */
+
+.wb-page-panel-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  min-height: var(--space-12);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wb-page-panel-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+.wb-page-panel-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+  color: var(--color-text);
+}
+
+.wb-page-panel-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.wb-page-panel-icon:hover:not(:disabled),
+.wb-page-panel-icon[aria-expanded='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
+.wb-page-panel-icon:disabled { opacity: 0.35; cursor: default; }
+.wb-page-panel-icon:focus-visible { outline: none; box-shadow: var(--shadow-glow); }
+
+/* ─── The ⋯ menu ─── */
+
+.wb-page-panel-menu {
+  position: absolute;
+  top: calc(100% - var(--space-1));
+  right: var(--space-3);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  animation: wb-page-panel-menu-in var(--transition-fast) var(--ease-out);
+}
+@keyframes wb-page-panel-menu-in {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--space-1))); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-page-panel-menu { animation: none; }
+}
+
+.wb-page-panel-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.wb-page-panel-menu-item:hover,
+.wb-page-panel-menu-item:focus-visible { outline: none; background: var(--color-bg-tertiary); }
+.wb-page-panel-menu-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--color-text-secondary);
+}
+
+.wb-page-panel-note {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* ─── Body: the page itself ─── */
+
+.wb-page-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+/* An embedded PDF fills the panel rather than its own floor. */
+.wb-page-panel-body > .doc-reader--pdf { height: 100%; }
+
+/* Too narrow to share: the panel lies over the board rather than squeeze it to nothing. */
+@media (max-width: 720px) {
+  .wb-page-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: none;
+  }
+}

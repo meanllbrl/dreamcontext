@@ -1,11 +1,14 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../context/I18nContext';
+import { useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useDefaultWhiteboard, useWhiteboardEditor } from '../hooks/useWhiteboards';
 import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
 import { LazyWhiteboardCanvas } from '../components/whiteboard/LazyWhiteboardCanvas';
+import { PagePopupProvider } from '../components/whiteboard/PagePopup';
 import { BoardSwitcher } from './whiteboards/BoardSwitcher';
+import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import './WhiteboardsPage.css';
 
 interface WhiteboardsPageProps {
@@ -23,7 +26,12 @@ interface WhiteboardsPageProps {
  */
 export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
   const { t } = useI18n();
-  const [openSlug, setOpenSlug] = useState<string | null>(focus?.id ?? null);
+  const { instanceId } = useVault();
+  // The board open before a reload: the URL hash (see boardHash). There is one URL per window,
+  // so only the window's first project reads it back, like Shell's `/lab/` deep link.
+  const [openSlug, setOpenSlug] = useState<string | null>(
+    () => focus?.id ?? (instanceId === 'inst-1' ? parseBoardHash(window.location.hash) : null),
+  );
   useFocusTarget(focus, setOpenSlug);
   const fallback = useDefaultWhiteboard(openSlug === null);
 
@@ -58,6 +66,7 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
   const { t } = useI18n();
   const { load, saveState, onApi, onSceneChange, exportFile } = useWhiteboardEditor(slug);
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
+  useBoardHash(slug);
 
   const doExport = async () => setExportNote(await exportFile());
 
@@ -113,13 +122,41 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
         <div className="wbp-banner" role="alert">{t('whiteboard.page.deleted')}</div>
       )}
       {exportNote && <div className="wbp-banner wbp-banner--quiet" role="status">{exportNote.text}</div>}
-      <div className="wbp-canvas">
-        <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
-          <LazyWhiteboardCanvas initialScene={load.scene} onApi={onApi} onSceneChange={onSceneChange} />
-        </Suspense>
+      <div className="wbp-body">
+        {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
+        <PagePopupProvider>
+          <div className="wbp-canvas">
+            <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
+              <LazyWhiteboardCanvas initialScene={load.scene} onApi={onApi} onSceneChange={onSceneChange} />
+            </Suspense>
+          </div>
+        </PagePopupProvider>
       </div>
     </div>
   );
+}
+
+/**
+ * Keep the board in the URL hash, so a reload lands back on it. Only the project in front
+ * writes it (one URL per window); leaving the page takes it off.
+ */
+function useBoardHash(slug: string): void {
+  const { isActive } = useVault();
+  useEffect(() => {
+    if (!isActive) return;
+    writeHash(formatBoardHash(slug, window.location.hash));
+  }, [isActive, slug]);
+  const activeRef = useRef(isActive);
+  activeRef.current = isActive;
+  useLayoutEffect(() => () => {
+    if (activeRef.current) writeHash(clearBoardHash(window.location.hash));
+  }, []);
+}
+
+/** Replace the hash in place: a board switch is not a step the browser's Back should walk. */
+function writeHash(hash: string): void {
+  if (window.location.hash === hash || (!hash && !window.location.hash)) return;
+  window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + hash);
 }
 
 function SaveStatus({ state }: { state: SaveState }) {

@@ -198,6 +198,29 @@
   justify-content: space-between;
 }
 
+/* A page or task card, once active, reads its page in the board's popup on a click. The hover
+   tint is the accent as INK on the card (5.6:1 light, 6.0:1 dark), never `--color-accent-text`:
+   that one is the text ON an accent fill, white, and vanished on the light card. */
+.wb-widget.is-active .wb-entity--open { cursor: pointer; }
+.wb-widget.is-active .wb-entity--open:hover .wb-entity-title { color: var(--color-accent-ink); }
+.wb-entity--open:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-glow);
+}
+
+/* A file page's type: MD / PDF / HTML, in the chip's own quiet form, set in caps. */
+.wb-page-chip {
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+}
+.wb-page-folder {
+  display: block;
+  min-width: 0;
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+}
+
 .wb-entity-summary {
   display: -webkit-box;
   margin: 0;

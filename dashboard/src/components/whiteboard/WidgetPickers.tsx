@@ -2,9 +2,12 @@ import { useMemo, useState } from 'react';
 import { useLabInsights } from '../../hooks/useLab';
 import { useKnowledgeList } from '../../hooks/useKnowledge';
 import { useTasks } from '../../hooks/useTasks';
+import { useWhiteboardPages, type WhiteboardPageHit } from '../../hooks/useWhiteboardPages';
 import type { WidgetPayload } from '../../lib/whiteboardWidgets';
 import { WEB_URL_REASON_TEXT, validateWebUrl } from './webUrl';
-import { isValidWidgetRef, knowledgeTitle, taskTitle } from './widgetModel';
+import {
+  humanizeFileName, isValidRefFor, isValidWidgetRef, knowledgeTitle, pageKindLabel, pageTypeLabel, taskTitle,
+} from './widgetModel';
 import { useWbText } from './whiteboardHost';
 
 /** One pickable row: a slug and what to show for it. */
@@ -77,19 +80,93 @@ export function InsightPicker({ onPick }: { onPick: Pick }) {
   );
 }
 
-export function KnowledgePicker({ onPick }: { onPick: Pick }) {
+/** What the page picker hands back: the ref a page widget or a wiki row stores, and its title. */
+export interface PickedPage { ref: string; title: string }
+
+/**
+ * The page picker: knowledge pages AND project .md / .pdf / .html files, searched on the server
+ * (`/whiteboards/pages`), each row showing its type in the cards' vocabulary (Knowledge / MD /
+ * PDF / HTML). A knowledge page comes back with its real title (A19); a file with its name. The
+ * ref is whatever the server says the page is (slug or path), re-checked against the page-ref
+ * rule so a pick never makes a widget or a wiki row the save refuses. The palette's "Knowledge
+ * or file…" and the wiki card's "Add page" both use it.
+ */
+export function PagePicker({ onPick, isDisabled }: {
+  onPick: (page: PickedPage) => void;
+  /** A ref that may not be picked here (the wiki section already lists it): drawn, but inert. */
+  isDisabled?: (ref: string) => boolean;
+}) {
   const tx = useWbText();
-  const { data, isLoading, isError } = useKnowledgeList();
-  const rows = useMemo(() => data?.map((k) => ({ slug: k.slug, title: knowledgeTitle(k), meta: k.slug })), [data]);
-  return (
-    <PickList
-      rows={rows}
-      loading={isLoading}
-      failed={isError}
-      emptyText={tx('whiteboard.palette.noKnowledge', 'No knowledge files.')}
-      onPick={(r) => onPick({ v: 1, kind: 'knowledge', ref: r.slug, title: r.title })}
-    />
+  const [q, setQ] = useState('');
+  const { data, isLoading, isError } = useWhiteboardPages(q, { limit: MAX_ROWS });
+  const knowledge = useKnowledgeList();
+  const titles = useMemo(
+    () => new Map((knowledge.data ?? []).map((k) => [k.slug, knowledgeTitle(k)])),
+    [knowledge.data],
   );
+  const rows = useMemo(
+    () => (data?.pages ?? []).filter((p) => isValidRefFor('knowledge', p.ref)),
+    [data],
+  );
+  // A file reads as its name humanised, the way its card will: never the raw file name.
+  const titleOf = (p: WhiteboardPageHit) => (p.source === 'knowledge' ? titles.get(p.ref) ?? p.title : humanizeFileName(p.path || p.ref));
+  const pick = (p: WhiteboardPageHit) => onPick({ ref: p.ref, title: titleOf(p) });
+  const firstPickable = rows.find((p) => !isDisabled?.(p.ref));
+
+  return (
+    <div className="wb-picker">
+      <input
+        className="wb-picker-search"
+        autoFocus
+        value={q}
+        placeholder={tx('whiteboard.palette.searchPages', 'Search pages and files…')}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && firstPickable) { e.preventDefault(); pick(firstPickable); } }}
+      />
+      <div className="wb-picker-list" role="listbox">
+        {isLoading && <p className="wb-picker-empty">{tx('whiteboard.widget.loading', 'Loading…')}</p>}
+        {isError && <p className="wb-picker-empty">{tx('whiteboard.widget.loadFailed', 'Could not load this.')}</p>}
+        {!isLoading && !isError && rows.length === 0 && (
+          <p className="wb-picker-empty">{tx('whiteboard.palette.noPages', 'No pages found.')}</p>
+        )}
+        {rows.map((p) => {
+          const type = pageTypeLabel(p.ref) ?? pageKindLabel(p.kind);
+          const taken = isDisabled?.(p.ref) ?? false;
+          return (
+            <button
+              key={`${p.source}:${p.ref}`}
+              type="button"
+              role="option"
+              aria-selected={false}
+              aria-disabled={taken || undefined}
+              disabled={taken}
+              className="wb-picker-row"
+              data-page-ref={p.ref}
+              onClick={() => pick(p)}
+            >
+              <span className="wb-picker-row-title">
+                <span className="wb-picker-type" data-page-type={type}>
+                  {type === 'Knowledge' ? tx('whiteboard.kind.knowledge', 'Knowledge') : type}
+                </span>
+                {titleOf(p)}
+              </span>
+              <span className="wb-picker-row-meta">
+                {taken ? tx('whiteboard.wiki.alreadyListed', 'Already in this section') : p.source === 'knowledge' ? p.ref : p.path}
+              </span>
+            </button>
+          );
+        })}
+        {data?.truncated && rows.length > 0 && (
+          <p className="wb-picker-empty">{tx('whiteboard.palette.morePages', 'More match: keep typing to narrow.')}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The palette's page picker: a picked page becomes a page card. */
+export function KnowledgePicker({ onPick }: { onPick: Pick }) {
+  return <PagePicker onPick={(p) => onPick({ v: 1, kind: 'knowledge', ref: p.ref, title: p.title })} />;
 }
 
 export function TaskPicker({ onPick }: { onPick: Pick }) {

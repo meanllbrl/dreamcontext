@@ -14,8 +14,11 @@ import './widgets.css';
  * (its `activeEmbeddable.state === 'hover'`); `WhiteboardCanvas.css` restyles it with tokens.
  * The card itself carries no hint, so a board of widgets reads as content, not instructions.
  */
-export function WidgetFrame({ kind, title, active, size, actions, children }: {
+export function WidgetFrame({ kind, label: explicitLabel, title, active, size, actions, children }: {
   kind: WidgetKind | 'unknown';
+  /** The header label when the kind alone would mislabel the card: a page card over a PDF
+   *  says "PDF", not "Knowledge". Shown as given. */
+  label?: string;
   title: string;
   active: boolean;
   size?: WidgetSize;
@@ -23,7 +26,7 @@ export function WidgetFrame({ kind, title, active, size, actions, children }: {
   children: ReactNode;
 }) {
   const tx = useWbText();
-  const label = tx(`whiteboard.kind.${kind}`, KIND_LABEL[kind]);
+  const label = explicitLabel || tx(`whiteboard.kind.${kind}`, KIND_LABEL[kind] ?? KIND_LABEL.unknown);
   // A title that only repeats the kind ("Note" on a note) is left out of the header.
   const showTitle = !!title && title.toLowerCase() !== label.toLowerCase();
   return (
@@ -42,7 +45,9 @@ export function WidgetFrame({ kind, title, active, size, actions, children }: {
   );
 }
 
-const KIND_LABEL: Record<WidgetKind | 'unknown', string> = {
+// String-keyed, not `Record<WidgetKind, …>`: a kind added to the contract before its label here
+// still compiles and reads "Widget" through the lookup fallback.
+const KIND_LABEL: Readonly<Record<string, string>> = {
   insight: 'Insight',
   knowledge: 'Knowledge',
   task: 'Task',
@@ -50,6 +55,7 @@ const KIND_LABEL: Record<WidgetKind | 'unknown', string> = {
   note: 'Note',
   html: 'HTML',
   web: 'Web',
+  wiki: 'Wiki',
   unknown: 'Widget',
 };
 
