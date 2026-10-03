@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useApi } from '../../context/VaultContext';
+import { useApi, useVault } from '../../context/VaultContext';
+import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
+import { requestClaudeSignIn } from '../../lib/claudeAuth';
 import {
   useClaudeAccounts,
   type ClaudeAccountWire,
@@ -195,6 +197,11 @@ function Bar({ label, percent, resetsAt, locked, now }: {
 export function ClaudeAccounts() {
   const api = useApi();
   const qc = useQueryClient();
+  const { bus } = useVault();
+  const { data: caps } = useAgentCapabilities();
+  // The machine's own account signs in through a terminal pane, which needs the embedded
+  // terminal and the CLI — same gate as the System doctor's Sign in.
+  const canSignInPrimary = !!(caps?.embeddedTerminal && caps?.claudeCli);
   const { data, isLoading } = useClaudeAccounts(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -496,7 +503,20 @@ export function ClaudeAccounts() {
                     </div>
                     {/* A connected account whose credential expired has to be able to come
                         back without being removed and re-added. The machine's own account
-                        signs in from the System doctor's terminal flow instead. */}
+                        has no sandbox to sign into (the server refuses it as
+                        `primary_account`), so its button opens the System doctor's terminal
+                        flow instead — the CLI's login-method picker on screen. */}
+                    {a.isPrimary && canSignInPrimary && (stale || probeNotes[a.id] === 'needs-relogin') && (
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--primary"
+                        disabled={busy !== ''}
+                        title="Opens a terminal tab that runs Claude's sign-in"
+                        onClick={() => requestClaudeSignIn(bus)}
+                      >
+                        Sign in again
+                      </button>
+                    )}
                     {!a.isPrimary && (
                       <button
                         type="button"
