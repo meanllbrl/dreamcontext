@@ -292,9 +292,29 @@ updated: "2026-10-02"
 --                                                   -- every other link, so the
 --                                                   -- native iframe embed never runs
 --   customData.dc:   { kind, ...payload, size }     -- kind: insight | knowledge |
---                                                   -- task | todo | note | html | web
---                                                   -- size: s | m | l | xl (180/16 grid)
+--                                                   -- task | todo | note | html |
+--                                                   -- web | wiki   (0.30.0: wiki)
+--                                                   -- size: s | m | l | xl, the
+--                                                   -- NEAREST preset only -- since
+--                                                   -- 0.30.0 the element's own w/h
+--                                                   -- is authoritative (free-form
+--                                                   -- drag, 4px step, 120x96 floor)
+--                                                   -- and `size` is a content-layout
+--                                                   -- hint, not geometry
 --   customData.dcTag: "<tag>"                       -- on a plain drawn element
+--
+-- wiki widget payload (0.30.0):
+--   { kind: "wiki", title, sections: [ { id, title,
+--       pages: [ { ref, label? } ] } ] }
+--   ref = a knowledge slug OR a project-relative .md / .pdf / .html path.
+--   A section with no `pages` is refused on every write path; a tombstone strips
+--   `sections`. Several wiki cards per board; the list is edited in the card (UI)
+--   or by `dreamcontext whiteboard nav list|add|remove|move --card <id>`, always
+--   under the board lock, and merges per element like any other widget.
+--   A knowledge/page card's `ref` follows the same slug-or-path rule.
+--
+-- REMOVED in 0.30.0 (before release): the board-level `dreamcontext-wiki` frontmatter key and its
+-- nav GET/PUT routes (the wiki became a widget, not a board mode).
 --
 -- Concurrency is Excalidraw's own per-element reconcile (higher `version`, then
 -- lower `versionNonce`); tombstones are kept forever in Phase 1. No `image`

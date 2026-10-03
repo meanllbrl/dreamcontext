@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-10-02'
+updated: '2026-10-03'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -197,6 +197,13 @@ Task `insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-report
 - [x] Brain sync: `lab-board` merge class (union by card id, changed-on-both = ours, deleted-vs-changed = kept and reported, overlaps resolved); conflict-marked board = error board, PUT refused (423); `lab/blocks/*.md` stays on the prose path.
 - [x] `.lab-prefs.json` keeps `order`, `catOrder`, `category`, `collapsed`, `columns`; gains `activeBoard` (falls back to the first board).
 - [x] Sidebar: Insights entry is `maturity: 'beta'`.
+
+Owner feedback on 0.30.0 (2026-10-02, `6c4c91cf`):
+
+- [x] A click on a card's plain surface opens what the menu's **Open detail** opens; `isCardControl` leaves buttons, tabs, toolbars, iframes and anything with `cursor: pointer` alone, and the title opens it from the keyboard.
+- [x] An **app page inside a card is clickable**: `LabAppFrame`'s card mode no longer sets `pointer-events: none` (it relied on a v1 card click handler that v2 never had, so app pages in cards were dead).
+- [x] A **v1 app explorer says how to convert**: `lab board add-card --preset funnel-explorer` on an app insight with no funnel member prints the route (`data.funnel`, `lab sync`, preset), Add card shows the preset disabled with the same hint, and the skill reference gained "Converting a v1 app explorer".
+- [x] **Auto-sync can be turned off and says when it runs**: manifest `refresh.auto: false` keeps an insight out of every automatic job (client planner AND the sync-jobs route), and the card tooltip says when the next automatic check is, or that it is off or backing off.
 
 *(From task `feat-lab-analytics-insights-subsystem` — validated plan v3, converged via goal-skill with 3 reviewers over 3 iterations.)*
 
@@ -737,6 +744,11 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-03 — Owner feedback on 0.30.0: a card opens where you click it, and automatic sync can be switched off
+
+- **Shipped** `6c4c91cf`: `BoardCard` opens its detail from a click on the card's plain surface (`isCardControl` spares buttons, tabs, toolbars, iframes and anything with `cursor: pointer`; the title does it from the keyboard); `LabAppFrame` card mode stops killing pointer events, so app pages in cards are live again; `lab board add-card --preset funnel-explorer` on a funnel-less app insight says how to convert it and Add card shows the same hint on the disabled preset; `refresh.auto: false` excludes an insight from every automatic job and the card tooltip says when the next check is, or that it is off or backing off. `tests/unit/lab-board-open-and-auto.test.ts`, `lab-board-explorer-cli.test.ts`.
+- **PRD reconciliation:** four criteria added under the Insights v2 block; `status` stays `in_review`, `released_version` stays `null`.
 
 ### 2026-10-02 — The chart standard and the funnel explorer ship in 0.30.0
 

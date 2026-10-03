@@ -4,12 +4,14 @@ type: feature
 name: whiteboards
 description: >-
   Editable Excalidraw control panels with live widgets that the user and the
-  agent edit together (dashboard page + dreamcontext whiteboard CLI)
+  agent edit together, plus a wiki side of it: any file is a page, wiki cards
+  hold their own page lists, and pages read in a side panel beside the board
+  (dashboard page + dreamcontext whiteboard CLI)
 pinned: false
 date: '2026-09-29'
 status: in_review
 created: '2026-09-29'
-updated: '2026-10-02'
+updated: '2026-10-03'
 released_version: null
 tags:
   - 'topic:dashboard'
@@ -20,6 +22,8 @@ tags:
 related_tasks:
   - >-
     whiteboard-modulu-her-board-ajanin-ve-kullanicinin-birlikte-cizdigi-canli-widget-tasiyan-bir-excalidraw-kontrol-paneli-olur
+  - >-
+    whiteboard-wiki-olur-sayfalar-board-dan-cikmadan-popup-ta-wiki-menusunde-ve-tuval-wiki-modunda-okunur
 ---
 
 ## Why
@@ -32,6 +36,10 @@ The owner wanted one place that gathers the brain: a control panel, wiki and bra
 - [x] As the owner, I want to tick a todo on the board and have the agent read it back, so I never have to tell it what I finished.
 - [x] As an agent or automation, I want to clear yesterday's items and write today's in the same place with two commands, so a daily board keeps its layout.
 - [x] As a teammate, I want boards to travel with brain sync and merge per element, so two people editing one board never lose each other's work.
+- [x] As the owner, I want clicking a card to open the page **beside** the board instead of throwing me off the whiteboard, so reading a knowledge page never costs me my canvas, my zoom or my unsaved strokes.
+- [x] As the owner, I want a wiki card that holds the page list I chose — sections I name, pages I drag into order — so one board can carry several little wikis instead of one automatic knowledge tree.
+- [x] As the owner, I want any file to be a page (knowledge markdown, a PDF, an HTML export), so the board reads the things I actually keep in the project, not only brain entries.
+- [x] As the owner, I want to drag a widget to the exact box I need (a phone-width web embed), so the sizes help me instead of springing my box back to a preset.
 
 ## Acceptance Criteria
 
@@ -50,9 +58,38 @@ Phase 1 (task `whiteboard-modulu-…`, criteria A1-A14 there are canonical):
 - [x] An HTML block draws no inner bordered box inside the card chrome.
 - [ ] Owner sign-off in the installed .app closes the task (`verify:whiteboard` in both themes is green).
 
+Phase 1.5 — pages, wiki cards and the side panel (task `whiteboard-wiki-olur-…`, criteria F1-F3 there are canonical):
+
+- [x] A knowledge/task card, a page card, a `dreamcontext://` link or a wiki card's page opens the page in a panel on the board's **right** that pushes the canvas aside; the app page never changes, unsaved strokes and zoom/pan survive, and the board slug stays in the URL hash.
+- [x] The panel has back/forward, Esc and ×, Expand to the full board width, a title-only header, a `⋯` menu for secondary actions (open in Knowledge/Tasks, open on the computer, reveal in Finder, copy path) and one family of line icons.
+- [x] The reader looks like a page, not a card: no frame, body text ≥15px, ~70-character measure, generous margins — the same in the panel and in an L/XL wiki card, in both themes.
+- [x] `MarkdownPreview` turns `[[target]]` and `[[target|label]]` into links the reader follows in place, saying "not found" when a target does not resolve.
+- [x] A PDF opens embedded with its title printed once; when the engine cannot draw it, "open on the computer" is always reachable.
+- [x] Opening the panel pans the board by the least amount that shows the whole opener with a margin (zoom never changes; a card already in view never moves; a card wider than the canvas aligns its left edge). Closing restores the pre-open pan **only** if the user did not pan or zoom while reading; Expand and in-panel navigation never pan.
+- [x] Any file is a page: a page card takes a knowledge slug **or** a project-relative `.md`/`.pdf`/`.html` path, wears the file's own type label (not "KNOWLEDGE"), shows a readable title, and old knowledge widgets keep working without migration. The palette picker searches knowledge + project files and labels them Knowledge / MD / PDF / HTML.
+- [x] `agentFileKind` returns `html` for `.html`/`.htm`; an HTML page draws in chat's strict sandbox (`allow-scripts`, no network, CSP `default-src 'none'`) with a one-line note that outside css/images are not loaded.
+- [x] A `wiki` widget kind carries its own title and ordered sections of pages in `customData.dc.sections`, so a board can hold several; every write path validates the list (pages-less sections refused, page refs checked), a tombstone drops the sections, and the list survives element-merge and git sync.
+- [x] At S/M a wiki card IS the list (whole rows only, "+N more" when rows are hidden) and a page opens the side panel; at L/XL the list sits beside an in-card `DocumentReader` with its own back/forward and a single selection highlight.
+- [x] The list is edited in the card: add/rename/delete a section, add/remove a page, reorder sections and pages by drag-and-drop or Alt+Arrow, all written to the board file.
+- [x] The left wiki menu, the Canvas | Wiki mode switch, the wiki URL state and board-level nav (`dreamcontext-wiki` frontmatter + nav routes) are **removed**; the canvas is full width again.
+- [x] CLI: `whiteboard add <slug> wiki --title`, `whiteboard nav list|add|remove|move --card <id>` edits a card's list under the board lock, `show --json` reports every wiki card under `wikis`; `GET /api/whiteboards/pages` searches knowledge + project files (symlinks skipped).
+- [x] A drag-resize keeps the box the user dragged it to (4px step, 120×96 floor) instead of springing to the nearest preset; `dc.size` records the nearest preset for content layout, the size control shows no current preset on a free-form box and snaps back on a pick; todo rows follow the real box height.
+- [x] A plain click anywhere on an inactive widget activates it **and** hands that same click to the control under the pointer (a todo ticks in one click).
+- [x] Unit tests (wikilinks, `agentFileKind` html, wiki payload/merge/reorder, nav CLI, board hash, panel pan rules) plus `verify:whiteboard` in both themes: 679 checks.
+- [ ] Owner sign-off on the panel and the wiki card in the installed .app.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-03]** The opener stays visible: because the panel pushes the canvas, opening pans the board by the minimum that shows the whole opening card (zoom untouched), and closing restores the pre-open pan **unless** the user panned or zoomed while reading — in which case their board is the new place to return to. The rules are pure functions in `pagePopupModel.ts`, measured by `verify:whiteboard` in both themes.
+- **[2026-10-03]** A drag-resize is authoritative: the box stays where the user dragged it (4px step, 120×96 floor) and `dc.size` becomes a derived *content-layout* hint (nearest preset), not a geometry constraint. A free-form box shows no current preset; picking one snaps back deliberately.
+- **[2026-10-02]** The side panel **pushes** the canvas rather than overlaying it: overlaid it hid Excalidraw's + Add, Library and the right half of the toolbar. Expand still lays the panel over the full board width. The look stays the Brain `.brain-drawer` pattern (slide in from the right, border-left, shadow).
+- **[2026-10-02]** **The wiki is a card, not a mode** (owner, after reviewing the first build and calling it ugly). This supersedes the earlier "Canvas | Wiki mode" decision, which mis-carried the intent: a wiki is a `wiki` widget whose pages are the list the owner chose (`customData.dc.sections`), several per board; an automatic folder tree over all knowledge was explicitly NOT wanted; the left wiki menu, the mode switch and the wiki URL state are removed and the canvas is full width.
+- **[2026-10-02]** One reader, reused: `ViewerWindow`'s type routing (md / pdf / media / board) is extracted into a shared `DocumentReader` that the viewer window, the side panel and the L/XL wiki card all mount — extracted, not rewritten (component-reuse-over-reimplementation).
+- **[2026-10-02]** One vocabulary across picker, cards and panel: a knowledge page is labelled "Knowledge"; project files keep MD / PDF / HTML. "Open in Knowledge" is not removed, it demotes to a secondary action — the primary click no longer leaves the board.
+- **[2026-10-02]** URL: the wiki parts of the hash (`wbmode`, `wbpage`) are gone; the board itself stays in `#wb=<slug>` so a reload lands on the same board (`pages/whiteboards/boardHash.ts`).
+- **[2026-10-02]** `.html` pages render in the **strict** chat sandbox (no network, CSP `default-src 'none'`, no assets from their own folder), with a one-line note in the panel saying so.
+- **[2026-10-02]** Every UI wave closes with the lead looking at real screenshots in both themes before the reviewer, and the owner on the last wave. Reviewers read code only; they did not catch the first build's appearance.
 - **[2026-09-30]** The feature is named **Whiteboard** (owner): the Workspace rail entry says "Whiteboard" (key `nav.whiteboard`, page id `whiteboards` unchanged). "Control Panel" names only the default board (slug `control-panel`); the Packs/Settings group is "System".
 - **[2026-09-29]** Named `whiteboard` in code, CLI and routes: `board` already means Tasks saved views (`src/server/routes/board.ts`) and chat's `ref.kind === 'board'` (a read-only excalidraw file). UI label was "Whiteboards" (now "Whiteboard", 2026-09-30 above).
 - **[2026-09-29]** Storage inside the brain, git-tracked, in the Obsidian Excalidraw format with a plain json fence; a nested `whiteboards/.gitattributes` (`* merge=binary`) routes every git divergence to the `whiteboard-md` element-merge handler instead of a line splice. A nested `.gitignore` keeps `.locks/` and `*.tmp` out.
@@ -73,11 +110,25 @@ Phase 1 (task `whiteboard-modulu-…`, criteria A1-A14 there are canonical):
 - Dashboard page with list grid, save loop (800ms debounce, one PUT in flight, retry with backoff, sticky "Not saved", flush on hide/unmount, deleted-board and corrupt-board states), and chat references to `_dream_context/whiteboards/…` opening the page.
 - Git sync `whiteboard-md` merge class (add/add union, delete/modify, 3-way frontmatter, corrupt side → agent).
 
+**What shipped in Phase 1.5 — the wiki side (2026-10-02/03)**
+- **Sizes are now free-form.** A drag-resize keeps the dragged box (4px step, 120×96 floor); `dc.size` is the nearest preset kept only as a content-layout hint, so a web widget can be phone-width. A plain click on an inactive widget activates it and forwards the click to the control under the pointer.
+- **One shared reader.** `DocumentReader` holds the md / pdf / media / board routing that used to live inside `ViewerWindow`; the viewer window, the whiteboard side panel and the L/XL wiki card all mount it. `PdfViewer` gained an embedded mode, `.html`/`.htm` became their own kind drawn in chat's strict sandbox, and `MarkdownPreview` renders `[[wikilinks]]` as links the reader follows in place.
+- **A side panel beside the board.** `PagePopup` slides in from the right and **narrows** the canvas (not an overlay), with back/forward, Esc, ×, Expand to full board width, a title-only header and a `⋯` overflow menu. `pagePopupModel.ts` holds the pure geometry: the minimum pan that keeps the opening card fully visible, and the restore-on-close rule that yields to a pan/zoom the user made while reading.
+- **Any file is a page.** A page card's ref is a knowledge slug or a project-relative `.md`/`.pdf`/`.html` path; the card wears the file's type label and a humanised title; the palette picker searches both through `GET /api/whiteboards/pages` (`src/lib/whiteboards/pages.ts`, symlinks skipped).
+- **The `wiki` widget kind.** Title plus ordered `sections[{id,title,pages[{ref,label?}]}]` in `customData.dc`, several cards per board, validated on every write path, stripped by a tombstone, element-merged like any widget. S/M renders the list (whole rows, "+N more"); L/XL renders list + in-card reader. The list is edited in the card (sections add/rename/delete, pages add/remove, DnD and Alt+Arrow reorder) through `host.commitWidget`.
+- **Removed:** the left wiki menu, the Canvas | Wiki mode switch, the `dreamcontext-wiki` frontmatter and the board-level nav routes. Only `#wb=<slug>` remains in the hash.
+- CLI: `whiteboard add <slug> wiki --title`, `whiteboard nav list|add|remove|move --card <id>`, `show --json` reporting `wikis`.
+- The default **Control Panel** board and its folder now ship inside the brain (`dbf94fd8`).
+
 **Key files**
-- `src/lib/whiteboards/`: `format.ts` (parse/serialize, deterministic), `merge.ts` (`mergeElements`), `store.ts` (paths, lock, `mutateWhiteboard`, rev, git hygiene files), `widgets.ts` (`WIDGET_KINDS`, `makeWidgetElement`), `validate.ts` (slug/ref/tag/url/element/PUT body), `ops.ts` (show, update, remove, draw import), `errors.ts`
-- `src/cli/commands/whiteboard.ts`, `src/server/routes/whiteboards.ts`, `src/lib/git-sync/semantic-merge.ts`
-- `dashboard/src/pages/WhiteboardsPage.tsx`, `dashboard/src/hooks/useWhiteboards.ts`, `dashboard/src/components/whiteboard/**`, `dashboard/src/lib/whiteboardWidgets.ts` (mirror of `WIDGET_KINDS`, drift-tested)
-- Docs: `skill/references/whiteboards.md`
+- `src/lib/whiteboards/`: `format.ts` (parse/serialize, deterministic), `merge.ts` (`mergeElements`), `store.ts` (paths, lock, `mutateWhiteboard`, rev, git hygiene files), `widgets.ts` (`WIDGET_KINDS` incl. `wiki`, `makeWidgetElement`), `validate.ts` (slug/ref/tag/url/element/wiki-sections/PUT body), `nav.ts` (a wiki card's section+page list ops under the board lock), `pages.ts` (knowledge + project-file page search and title resolution), `ops.ts` (show incl. `wikis`, update, remove, draw import), `errors.ts`
+- `src/cli/commands/whiteboard.ts`, `src/server/routes/whiteboards.ts` (incl. `GET /api/whiteboards/pages`), `src/lib/git-sync/semantic-merge.ts`
+- `dashboard/src/components/appLink/DocumentReader.{tsx,css}` (shared reader, mounted by `ViewerWindow` too), `dashboard/src/lib/wikilinks.ts`, `dashboard/src/lib/agentFileKind.ts`, `dashboard/src/components/core/MarkdownPreview.tsx`, `dashboard/src/components/sleepy/chat/PdfViewer.tsx` (embedded mode)
+- `dashboard/src/pages/WhiteboardsPage.tsx`, `dashboard/src/pages/whiteboards/boardHash.ts`, `dashboard/src/hooks/useWhiteboards.ts`, `dashboard/src/hooks/useWhiteboardPages.ts`
+- `dashboard/src/components/whiteboard/**`: `PagePopup.{tsx,css}` + `pagePopupModel.ts` (panel + pan rules), `wikiCardModel.ts`, `widgets/WikiWidget.tsx` + `wikiWidget.css`, `PanelIcons.tsx`, `widgetSize.ts` (free-form resize), `widgets/{KnowledgeWidget,TaskWidget,WidgetFrame}.tsx`, `pageCard.css`
+- `dashboard/src/lib/whiteboardWidgets.ts` (mirror of `WIDGET_KINDS`, drift-tested)
+- Verification: `scripts/verify/whiteboard.mjs` (679 checks, both themes), `tests/unit/whiteboard-{nav,nav-cli,wiki-model,page-popup,page-title,board-hash,widget-size,widget-mirror}.test.ts`, `tests/unit/wikilinks.test.ts`, `tests/unit/agent-file-kind-html.test.ts`
+- Docs: `skill/references/whiteboards.md`, `skill/references/cli-reference.md`
 
 ## Notes
 
@@ -91,6 +142,16 @@ Phase 1 (task `whiteboard-modulu-…`, criteria A1-A14 there are canonical):
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-03 — Phase 1.5: the board grew a wiki side, and reading a page stopped costing you the board
+
+- **Free-form resize** `127422a6`: a dragged box stays where it was dragged (4px step, 120×96 floor) and `dc.size` demotes to a content-layout hint, so a web widget can be phone-width; a plain click on an inactive widget activates it and hands the same click to the control under the pointer (one-click todo).
+- **The default board ships** `dbf94fd8`: the Control Panel whiteboard and its folder live in the brain.
+- **One shared reader** `e84e0639`: `ViewerWindow`'s type routing extracted into `DocumentReader` (reused by the window, the side panel and the wiki card), `PdfViewer` embedded mode, `.html` as its own kind in the strict sandbox, and `[[wikilinks]]` as links the reader follows in place.
+- **The `wiki` widget kind** `aa9d4778`: title + ordered sections of pages in `customData.dc`, several cards per board, validated on every write path and stripped by a tombstone; `whiteboard add <slug> wiki`, `whiteboard nav list|add|remove|move --card <id>`, `show --json` → `wikis`, and `GET /api/whiteboards/pages` searching knowledge + project files.
+- **Pages open beside the board** `b755ea71`: a pushing (not overlaying) right-hand panel with back/forward, Esc, ×, Expand, a title-only header and a `⋯` menu; any file is a page (knowledge slug or `.md`/`.pdf`/`.html` path) with its own type label and a readable title; the wiki card lists at S/M and reads in-card at L/XL, with in-card section/page editing, DnD and Alt+Arrow reorder written to the board file. The left wiki menu, the Canvas | Wiki mode and the board-level nav routes were removed.
+- **The opener stays in view** `f30642f2`: opening pans the board by the minimum that shows the whole opening card (zoom untouched, a visible card never moves); closing restores the pre-open pan unless the user panned or zoomed while reading. Pure functions in `pagePopupModel.ts`, measured in both themes (679 checks).
+- **PRD reconciliation:** four new user stories and a Phase 1.5 criteria block ticked from shipped code, tests and `verify:whiteboard`; the "wiki is a card, not a mode" owner reversal recorded as superseding the earlier mode decision; Technical Details rewritten for the shared reader, the panel, page refs and the wiki card; `related_tasks` += the wiki task. Only owner sign-off in the installed .app is open, so `status` stays `in_review` and `released_version` stays `null`.
 
 ### 2026-10-02 — Phase 1 shipped in 0.30.0: editable boards, live widgets, a switcher and Apple-style sizes
 

@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-09-30'
+updated: '2026-10-03'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -94,6 +94,10 @@ and moving before the limit lands did not exist at all.
       names the signed-out account and signs it in through the same route, then resumes the
       conversation. Before this, the banner ran `claude auth login` in a plain shell, which
       signs in the real `~/.claude` and never the sandbox the chat was running on.
+- [x] The machine's OWN account, signed out, has a way back from its row (2026-10-03, `f0e105c8`).
+      The primary row hid "Sign in again" because the relogin route refuses it (`primary_account`)
+      and nothing took its place, so a signed-out "this machine" account showed the warning with
+      no action at all. The row now opens the same terminal sign-in the System doctor uses.
 - [x] With no second account connected, behaviour is bit-for-bit what it was: no sandbox is
       built, no symlink is laid, and no ordinary spawn is rejected.
 - [x] A sandbox's `.claude.json` carries NO MCP configuration at any depth
@@ -421,6 +425,11 @@ account's usage".
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-03 - The machine's own account gets its way back
+
+- `f0e105c8`: a signed-out primary row showed the warning and no action, because the relogin route refuses `primary_account` and the UI simply hid the button. `ClaudeAccounts.tsx` now offers the same terminal sign-in the System doctor uses — the refusal is a different ROUTE, not a missing capability.
+- **PRD reconciliation:** one criterion added under "Accounts, identity, and sign-in"; `status` stays `in_review`, `released_version` stays `0.27.0`.
 
 ### 2026-10-02 - A signed-out connected account signs back in, into its own sandbox (in 0.30.0)
 

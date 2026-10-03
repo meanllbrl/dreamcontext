@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-09-07'
+updated: '2026-10-03'
 released_version: v0.19.0
 tags:
   - frontend
@@ -378,6 +378,12 @@ hook path every session runs through. Comments were reworded to stop naming Task
 - [x] `?page=<page>` deep-link support in `Shell.tsx` (explicit page param overrides remembered page, validated against page list); enables direct navigation to any page.
 - [x] `FlowDiagram` engine reused for the Council showcase (6-persona ring with CSS Motion Path comets); same composited animation system as the About page — zero jank at full and mini sizes.
 
+### The side rail reads itself (2026-10-02/03)
+
+- [x] Workspace reads **Chat, Tasks, Automations, then the beta pages, with the alpha ones last** (`6f0ad33d`, `tests/unit/sidebar-nav.test.ts`) — maturity is the ordering rule, so a new alpha page cannot push a daily page down.
+- [x] **Collapsed, the rail is bare glyphs in one ink** (`d69e531a`, `verify:sidebar-rail` 57/57). At 56 px every icon used to sit in its own tinted, ringed box in one of four section hues and the owner could not tell what the colours meant: the box, ring and section hue are gone, glyphs are 20 px in the neutral secondary ink, dividers are one plain rule, and **only the active row is accent**.
+- [x] A collapsed row **names itself at once on hover or focus** through a portalled `RailTip`, and carries an `aria-label` because its visible label is hidden. The expanded rail is unchanged.
+
 ### Startup Performance (v0.27.0)
 - [x] The dashboard's first paint never blocks on a synchronous cross-vault git fetch: `POST /api/brain/team/fetch` delegates to a child process (`teamFetchOffLoop` → the hidden `brain team-fetch --json` verb) instead of running `execFileSync` git on the server's event loop, and the launcher's first fire is deferred 3s past mount. Measured with Playwright: the launcher's vault list paints in 0.3–0.4s (9.5s on 0.25.0).
 
@@ -617,6 +623,12 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-03 — The side rail stops colouring everything and starts naming things
+
+- **Order** `6f0ad33d`: Workspace reads Chat, Tasks, Automations, then beta, then alpha — maturity decides the order (`tests/unit/sidebar-nav.test.ts`).
+- **Collapsed rail** `d69e531a`: at 56 px the tinted ringed boxes and the four section hues are gone; 20 px glyphs in the neutral secondary ink, one plain divider rule, accent only on the active row, and a portalled `RailTip` name tag on hover/focus plus an `aria-label` per row. `verify:sidebar-rail` C7 rewritten, 57/57.
+- **PRD reconciliation:** a "The side rail reads itself" criteria block added; `status` stays `active`.
 
 ### 2026-09-07 — Startup stops paying four waits (v0.27.0)
 Consolidates task `launcher-acilisi-9-5s-den-0-4s-ye-team-fetch-event-loop-disina-cli-path-cache-probe-memo-fontlar-bundle-da` (commit bec210b). Four independent stalls on the path between launching the app and being able to use it: the render-blocking `fonts.googleapis.com` stylesheet, the event-loop-blocking cross-vault team fetch, that fetch racing first paint, and the desktop app's cold login-shell CLI lookup (twice over). Measured: launcher vault list 9.5s → 0.3–0.4s (Playwright); server health 2.56s cold → 0.73s once `~/.dreamcontext/desktop-cli-path` is written. Details under Technical Details → Startup Performance.

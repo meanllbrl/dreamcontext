@@ -1,5 +1,131 @@
 [
   {
+    "date": "2026-10-03",
+    "type": "fix",
+    "scope": "chat",
+    "description": "The bypass-permissions notice printed its whole guarded heredoc under a caution-tinted block, burying the transcript and breaking its own backtick-spliced sentence; it now collapses to a one-line disclosure that opens to the verbatim command, capped at 320px. Separately, a sub-agent id like claude-opus-5-5[1m] rendered as 'Opus 5' because the bracketed context-window tag glued onto the last version segment and failed the digits-only filter; the label now keeps the minor version with its [1m] tag.",
+    "breaking": false,
+    "summary": "Bypass notice collapses to one line, and a sub-agent's model label keeps its minor version with a [1m] tag",
+    "references": [
+      "commit:e64c9fb2",
+      "commit:bd5c9454"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "fix",
+    "scope": "lab",
+    "description": "Owner feedback on the 0.30.0 cut: a click on a board card's plain surface now opens the same detail as the menu's Open action (buttons, tabs, toolbars, iframes and anything with cursor:pointer are excluded); LabAppFrame no longer blanket-disables pointer-events in card mode, which had silently killed clicks on app pages inside cards. Adding a funnel-explorer preset card on an app insight with no funnel member now explains how to convert it (data.funnel + lab sync + preset) instead of failing silently. A manifest insight can now set refresh.auto: false to opt out of every automatic sync job, and its card tooltip reports the next automatic check time or that auto-sync is off/backing off.",
+    "breaking": false,
+    "summary": "Insights v2 board cards become fully clickable, auto-sync can be turned off, and a v1 app explorer explains how to convert",
+    "references": [
+      "commit:6c4c91cf",
+      "feature:lab-analytics-insights",
+      "task:insights-v2-boards-feel-finished-a-card-click-opens-its-detail-html-inside-a-card-is-clickable-a-v1-explorer-converts-and-auto-sync-is-bounded-and-visible"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "fix",
+    "scope": "accounts",
+    "description": "The primary account row hid its relogin button because the server refuses a sandboxed relogin for the primary_account, but nothing replaced it, leaving a signed-out 'this machine' account showing only a warning with no way back. It now opens the same terminal sign-in flow the System doctor already uses.",
+    "breaking": false,
+    "summary": "The machine's own account gets a 'Sign in again' path when signed out",
+    "references": [
+      "commit:f0e105c8"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "fix",
+    "scope": "nav",
+    "description": "At 56px every icon sat in its own tinted, ringed box carrying one of four section hues with no legible meaning. Collapsed, the box/ring/section-hue chrome is removed: glyphs render at 20px in the neutral secondary ink, dividers are a single plain rule, and only the active row gets the accent. A new RailTip component shows the row's name on hover or focus via a portal, and each row gets an aria-label since its text label is hidden. The expanded rail is unchanged. Narrows the 2026-09-22 colour=mood decision: the section hue now lives on the expanded rail only.",
+    "breaking": false,
+    "summary": "Collapsed side menu shows bare glyphs in one neutral ink, colours only the active row, and names icons on hover",
+    "references": [
+      "commit:d69e531a",
+      "file:_dream_context/core/2.memory.md"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "feat",
+    "scope": "chat",
+    "description": "A multi-phase run previously scattered its party cards down the transcript with no single place reading it as one run. The new team board is one line (phase dots, name, landed/total, phases-and-agents count) that opens into a column per party, with a chip drilling into that agent's detail. It shows only from two parties up, stays open while agents run, and folds once they land.",
+    "breaking": false,
+    "summary": "A team board on the live rail groups a multi-phase agent run into one line that opens into per-party columns",
+    "references": [
+      "commit:0d21ab31",
+      "feature:agent-feedback"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "The open notch gains Now and Chat faces: Now lists what every project is doing plus every hand-off the Assistant made (brief, status, age, last reply), with permission prompts answered in place (Allow/Deny). Conversations lists and resumes earlier chats in the hidden vault; + starts a new one without discarding the old. Collapsed, the pill becomes a status ticker ('X needs you' / 'waiting on you' / 'X finished'), shows a busy hairline while any project works, and grows a non-focus-stealing peek on hover, on a new permission prompt, or for a few seconds after a hand-off finishes. New routes: GET /api/assistant/glance, POST /api/assistant/answer, POST /api/assistant/delegations/dismiss; delegations.ts now retains brief text and recently-closed hand-offs.",
+    "breaking": false,
+    "summary": "Assistant notch tracks hand-offs across projects, keeps conversation history, and answers permissions from a peek",
+    "references": [
+      "commit:76f144a2",
+      "feature:dreamcontext-assistant",
+      "task:a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Drag-resizing a widget now keeps the exact box the user dragged to (4px step, 120x96 floor) instead of snapping to the nearest S/M/L/XL preset, so a widget can be any width; the size control shows no current preset on a free-form box. A plain click anywhere on an inactive widget now both activates it and forwards the click to the control under the pointer, so a todo item ticks in one click instead of two.",
+    "breaking": false,
+    "summary": "Whiteboard widgets get free-form drag resize and single-click activation",
+    "references": [
+      "commit:127422a6",
+      "feature:whiteboards",
+      "task:whiteboard-modulu-her-board-ajanin-ve-kullanicinin-birlikte-cizdigi-canli-widget-tasiyan-bir-excalidraw-kontrol-paneli-olur"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Clicking a knowledge/task/page card, a dreamcontext:// link, or a wiki page now opens a side panel beside the board instead of leaving it, keeping Excalidraw's toolbar, zoom and pan intact. A new DocumentReader (shared by the viewer window, the panel and the wiki card) renders markdown with resolved [[wikilinks]], embedded PDF, and sandboxed HTML (no network, strict CSP). A new 'wiki' widget kind holds its own ordered sections of pages, editable in-card or via 'whiteboard nav' CLI subcommands, with a page search route (GET /api/whiteboards/pages). Opening a panel now pans the board the minimum amount to keep the opening card fully visible (zoom untouched); closing restores the prior pan only if the board wasn't moved while reading.",
+    "breaking": false,
+    "summary": "Whiteboard pages open in a side panel with a shared reader, wiki cards, and view-preserving pan",
+    "references": [
+      "commit:b755ea71",
+      "commit:aa9d4778",
+      "commit:e84e0639",
+      "commit:f30642f2",
+      "feature:whiteboards",
+      "task:whiteboard-wiki-olur-sayfalar-board-dan-cikmadan-popup-ta-wiki-menusunde-ve-tuval-wiki-modunda-okunur"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-10-02",
     "type": "feat",
     "scope": "chat",
