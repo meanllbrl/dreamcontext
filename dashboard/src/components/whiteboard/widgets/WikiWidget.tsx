@@ -138,7 +138,7 @@ export function WikiWidget({ elementId, payload, active, size, height }: WidgetP
       dispatch({ type: 'push', path });
       return;
     }
-    if (popup?.openPage({ kind: 'knowledge', ref: page.ref })) return;
+    if (popup?.openPage({ kind: 'knowledge', ref: page.ref }, elementId)) return;
     // Outside a board page there is no panel: a knowledge page still opens where it lives.
     if (pageTypeLabel(page.ref) === 'Knowledge') emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'knowledge', id: page.ref });
   };
@@ -465,9 +465,9 @@ export function WikiWidget({ elementId, payload, active, size, height }: WidgetP
           onFollow={follow}
           onOpenInPanel={popup ? (path) => {
             const ref = pathToPageRef(path);
-            if (ref) { popup.openPage({ kind: 'knowledge', ref }); return; }
+            if (ref) { popup.openPage({ kind: 'knowledge', ref }, elementId); return; }
             const owner = owningPage(path);
-            if (owner?.page === 'tasks') popup.openPage({ kind: 'task', ref: owner.id });
+            if (owner?.page === 'tasks') popup.openPage({ kind: 'task', ref: owner.id }, elementId);
           } : undefined}
         />
       </div>

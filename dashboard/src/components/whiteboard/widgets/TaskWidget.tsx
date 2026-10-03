@@ -12,7 +12,7 @@ import type { WidgetProps } from './types';
  * click on the card once it is active, reads the task's own markdown file in the board's page
  * popup; the popup's "Open in Tasks" is the way to the Tasks page.
  */
-export function TaskWidget({ payload, active, size }: WidgetProps) {
+export function TaskWidget({ elementId, payload, active, size }: WidgetProps) {
   const tx = useWbText();
   const { bus } = useVault();
   const popup = usePagePopup();
@@ -25,7 +25,7 @@ export function TaskWidget({ payload, active, size }: WidgetProps) {
 
   const open = () => {
     if (!task) return;
-    if (popup?.openPage({ kind: 'task', ref: task.slug })) return;
+    if (popup?.openPage({ kind: 'task', ref: task.slug }, elementId)) return;
     // Outside a board page there is no popup: the task opens where it lives.
     emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: task.slug });
   };

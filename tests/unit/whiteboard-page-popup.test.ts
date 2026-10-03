@@ -2,12 +2,12 @@
  * The board's page panel, pure half (dashboard/src/components/whiteboard/pagePopupModel.ts):
  * which file a card or link opens, the type chip a page ref wears, the owning app page and
  * page ref a file maps back to, the back/forward stack, and the panel's Expand toggle, ⋯ menu
- * rows, menu keys and Esc order.
+ * rows, menu keys and Esc order, and the pan that keeps the panel's opener in view.
  */
 import { describe, expect, it } from 'vitest';
 import {
-  CLOSED_STACK, MAX_STACK, canGoBack, canGoForward, currentPage, escapeCloses, menuIndexAfter, owningPage,
-  pageFileName, pageStackReducer, pageTitleFromPath, pageTypeChip, panelMenuItems, pathToPageRef, targetPath, taskPath,
+  CLOSED_STACK, MAX_STACK, OPENER_MARGIN_PX, canGoBack, canGoForward, currentPage, escapeCloses, menuIndexAfter, openerPan, owningPage,
+  pageFileName, panBeforeReopen, panOnClose, pageStackReducer, pageTitleFromPath, pageTypeChip, panelMenuItems, pathToPageRef, targetPath, taskPath,
   togglePanelWidth, vaultRelativePath, type PageStack, type PageStackAction,
 } from '../../dashboard/src/components/whiteboard/pagePopupModel';
 import { isValidRefFor } from '../../dashboard/src/components/whiteboard/widgetModel';
@@ -208,5 +208,84 @@ describe('pageTitleFromPath: the heading of a file with no title of its own', ()
   it('never returns an empty heading', () => {
     expect(pageTitleFromPath('docs/.pdf')).toBe('.pdf');
     expect(pageTitleFromPath('docs/---.md')).toBe('---.md');
+  });
+});
+
+describe('openerPan: the card that opened the panel stays in view', () => {
+  const canvas = { width: 1000, height: 700 };
+  const m = OPENER_MARGIN_PX;
+
+  it('a fully visible opener moves nothing', () => {
+    expect(openerPan({ x1: 100, y1: 100, x2: 400, y2: 300 }, { scrollX: 0, scrollY: 0, zoom: 1 }, canvas)).toBeNull();
+    // Touching the edge is still fully visible: nothing moves.
+    expect(openerPan({ x1: 0, y1: 0, x2: 1000, y2: 700 }, { scrollX: 0, scrollY: 0, zoom: 1 }, canvas)).toBeNull();
+  });
+
+  it('clipped at the right: the minimal pan that shows it with the margin, zoom untouched', () => {
+    // Screen right edge (900 + 50) * 2 = 1900, 900px past the canvas; it must end at 1000 - m.
+    const pan = openerPan({ x1: 700, y1: 100, x2: 900, y2: 200 }, { scrollX: 50, scrollY: -30, zoom: 2 }, canvas);
+    expect(pan).toEqual({ scrollX: 50 + (1000 - m - 1900) / 2, scrollY: -30, zoom: 2 });
+    expect((900 + pan!.scrollX) * 2).toBe(1000 - m);
+  });
+
+  it('clipped at the left: brought in to the margin', () => {
+    const pan = openerPan({ x1: -40, y1: 100, x2: 200, y2: 200 }, { scrollX: 0, scrollY: 0, zoom: 1 }, canvas);
+    expect(pan).toEqual({ scrollX: 40 + m, scrollY: 0, zoom: 1 });
+  });
+
+  it('wider than the canvas: its left edge aligns with the margin', () => {
+    const pan = openerPan({ x1: 300, y1: 100, x2: 1400, y2: 200 }, { scrollX: 0, scrollY: 0, zoom: 1 }, canvas);
+    expect(pan).toEqual({ scrollX: m - 300, scrollY: 0, zoom: 1 });
+  });
+
+  it('corrects vertically only when clipped top or bottom', () => {
+    const pan = openerPan({ x1: 100, y1: 600, x2: 300, y2: 800 }, { scrollX: 0, scrollY: 0, zoom: 1 }, canvas);
+    expect(pan).toEqual({ scrollX: 0, scrollY: 700 - m - 800, zoom: 1 });
+  });
+});
+
+describe('panOnClose: the pre-open pan comes back only over an untouched viewport', () => {
+  const before = { scrollX: 10, scrollY: 20, zoom: 1 };
+  const leftAt = { scrollX: -300, scrollY: 20, zoom: 1 };
+
+  it('untouched: the exact pre-open values come back', () => {
+    expect(panOnClose(before, leftAt, { ...leftAt })).toEqual(before);
+  });
+
+  it('the user panned or zoomed while the panel was open: the viewport is left alone', () => {
+    expect(panOnClose(before, leftAt, { ...leftAt, scrollX: -310 })).toBeNull();
+    expect(panOnClose(before, leftAt, { ...leftAt, zoom: 1.1 })).toBeNull();
+  });
+
+  it('nothing was panned, or nothing recorded: nothing to restore', () => {
+    expect(panOnClose(before, before, { ...before })).toBeNull();
+    expect(panOnClose(null, leftAt, leftAt)).toBeNull();
+    expect(panOnClose(before, null, leftAt)).toBeNull();
+  });
+});
+
+describe('panBeforeReopen: another page opened from the board while the panel is open', () => {
+  const before = { scrollX: 10, scrollY: 20, zoom: 1 };
+  const leftAt = { scrollX: -300, scrollY: 20, zoom: 1 };
+
+  it('untouched since the panel left it: the original pre-open pan stays the restore target', () => {
+    expect(panBeforeReopen(before, leftAt, { ...leftAt })).toBe(before);
+  });
+
+  it('the user panned since: the restore target becomes where the user put the board', () => {
+    const moved = { ...leftAt, scrollY: -40 };
+    expect(panBeforeReopen(before, leftAt, moved)).toEqual(moved);
+  });
+
+  it('a zoom counts as a move, and its zoom travels with the new target', () => {
+    const zoomed = { ...leftAt, zoom: 1.2 };
+    expect(panBeforeReopen(before, leftAt, zoomed)).toEqual(zoomed);
+  });
+
+  it('closing after the rebase returns to the user\'s board, never the pre-first-open pan', () => {
+    const moved = { scrollX: -320, scrollY: -40, zoom: 1.2 };
+    const rebased = panBeforeReopen(before, leftAt, moved);
+    const leftAtB = { ...moved, scrollX: -400 };
+    expect(panOnClose(rebased, leftAtB, { ...leftAtB })).toEqual(moved);
   });
 });

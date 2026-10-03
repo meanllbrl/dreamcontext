@@ -135,6 +135,29 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
   const txRef = useRef(tx);
   txRef.current = tx;
 
+  // The panel keeps the card that opened it in view (PagePopup.tsx): it reads and pans this
+  // board's viewport, never its zoom.
+  useEffect(() => {
+    if (!pagePopup) return;
+    return pagePopup.attachBoard({
+      viewport: () => {
+        const s = apiRef.current?.getAppState();
+        return s ? { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value } : null;
+      },
+      setScroll: ({ scrollX, scrollY }) => apiRef.current?.updateScene({ appState: { scrollX, scrollY } }),
+      canvasSize: () => {
+        const r = wrapRef.current?.getBoundingClientRect();
+        return r && r.width > 0 && r.height > 0 ? { width: r.width, height: r.height } : null;
+      },
+      elementBox: (id) => {
+        const el = apiRef.current?.getSceneElements().find((e) => e.id === id);
+        if (!el) return null;
+        const [x1, y1, x2, y2] = getCommonBounds([el]);
+        return { x1, y1, x2, y2 };
+      },
+    });
+  }, [pagePopup]);
+
   const toast = useCallback((message: string) => {
     apiRef.current?.setToast({ message, closable: true, duration: 4000 });
   }, []);
@@ -430,7 +453,7 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
   }, []);
 
   // ── element links (D3): preventDefault first, then route ──────────────────────────────────
-  const onLinkOpen = useCallback((element: { link?: string | null }, event: { preventDefault(): void }) => {
+  const onLinkOpen = useCallback((element: { id?: string; link?: string | null }, event: { preventDefault(): void }) => {
     handleLinkOpen(element, event, {
       ownOrigin: window.location.origin,
       openExternal: (url) => { void openExternalUrl(url); },
@@ -438,7 +461,7 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
         if (onInternalLinkRef.current) { onInternalLinkRef.current(kind, id); return; }
         if (kind === 'task' || kind === 'knowledge') {
           // Read over the board in the popup; the board itself stays put.
-          if (pagePopupRef.current?.openPage({ kind, ref: id })) return;
+          if (pagePopupRef.current?.openPage({ kind, ref: id }, element.id ?? linkOpenerId(apiRef.current, element.link))) return;
           emitInstance(bus, 'dreamcontext-agent-open-page', { page: kind === 'task' ? 'tasks' : 'knowledge', id });
         }
       },
@@ -614,6 +637,15 @@ function forwardClick(clientX: number, clientY: number): void {
     return;
   }
   target.click();
+}
+
+/** The element whose hyperlink popup was clicked: the one selected element carrying that link
+ *  (the popup anchor hands over only the href). */
+function linkOpenerId(api: ExcalidrawImperativeAPI | null, link: string | null | undefined): string | undefined {
+  if (!api || !link) return undefined;
+  const selected = api.getAppState().selectedElementIds;
+  const hits = api.getSceneElements().filter((el) => selected[el.id] && el.link === link);
+  return hits.length === 1 ? hits[0]!.id : undefined;
 }
 
 /** Where the size control goes: under the one selected, unrotated widget, and nowhere while a

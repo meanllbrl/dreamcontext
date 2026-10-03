@@ -55,7 +55,13 @@
  *        path; Esc closes the menu, then the panel; × closes; focus returns. The page reads as
  *        a page: ≥ 15px, painted lines ≤ 75ch, no frame or card background; a PDF's title is
  *        written once; HTML in an allow-scripts, no-allow-same-origin, CSP default-src 'none'
- *        iframe with its one-line note right under the page (≤ HTML_NOTE_GAP px). [[wikilinks]]
+ *        iframe with its one-line note right under the page (≤ HTML_NOTE_GAP px). The card that
+ *        opened the panel stays in view: one straddling the pushed canvas's edge is panned (zoom
+ *        unchanged) until its DOM box is inside the canvas, 12–40px from its right edge; one
+ *        already in view moves nothing; close restores the exact pre-open scroll and zoom, but
+ *        not after the user wheeled the board while reading, nor after they panned or zoomed
+ *        while reading A and then opened B (close returns to their board); Expand + Collapse
+ *        pan nothing. [[wikilinks]]
  *        navigate in the same panel with
  *        back/forward, an unresolved one says "not found". Wiki cards seeded by `whiteboard add
  *        … wiki` + `nav add --card`: at S and M an inactive list draws whole rows only, no
@@ -2230,6 +2236,137 @@ async function main() {
         !!gapAt && gapAt.gap >= 0 && gapAt.gap <= HTML_NOTE_GAP, JSON.stringify(gapAt));
       await wshot(`w-panel-html-${theme}`);
       ok(`${T} the panel's × closes it`, !!(await closePanel()));
+
+      // ── 1c. the card that opened the panel stays in view (owner, 2026-10-03) ────────────
+      // The push narrows the canvas, so a card near the board's right can end up under the
+      // panel's edge. Such a card is panned just far enough to show it whole (zoom untouched);
+      // a card already in view moves nothing; closing puts the pre-open pan back unless the user
+      // panned while reading; Expand / Collapse pan nothing. `g.p.l` (block 1) is where the
+      // pushed canvas ends. Every pan here is a user's wheel over empty canvas.
+      const vpOf = (s) => ({ zoom: s?.zoom, scrollX: s?.scrollX, scrollY: s?.scrollY });
+      const sameVp = (a, b) => !!a && !!b && a.zoom === b.zoom && a.scrollX === b.scrollX && a.scrollY === b.scrollY;
+      const opener = pageCard(NOTES.title);
+      const openerFit = async () => {
+        const b = await opener.boundingBox().catch(() => null);
+        const c = await page.locator('.wbp-canvas').boundingBox().catch(() => null);
+        return b && c ? {
+          card: { l: Math.round(b.x * 10) / 10, r: Math.round((b.x + b.width) * 10) / 10, t: Math.round(b.y), b: Math.round(b.y + b.height) },
+          canvas: { l: Math.round(c.x * 10) / 10, r: Math.round((c.x + c.width) * 10) / 10, t: Math.round(c.y), b: Math.round(c.y + c.height) },
+        } : null;
+      };
+      const wholeIn = (f) => !!f && f.card.l >= f.canvas.l - 1 && f.card.r <= f.canvas.r + 1 && f.card.t >= f.canvas.t - 1 && f.card.b <= f.canvas.b + 1;
+      let panned = { x: 0, y: 0 };
+      /** The user's wheel over empty canvas, moving the board's content by (dx, dy) screen px. */
+      const wheelPan = async (dx, dy) => {
+        const s = await scene();
+        const p = emptySpot(s, [], { w: 40, h: 40 }) ?? { x: s.offsetLeft + 300, y: s.offsetTop + s.height - 120 };
+        const before = vpOf(s);
+        await page.mouse.move(p.x, p.y);
+        await page.mouse.wheel(-dx, -dy);
+        panned = { x: panned.x + dx, y: panned.y + dy };
+        return until(async () => { const v = vpOf(await scene()); return sameVp(v, before) ? null : v; }, 3000);
+      };
+      const pushedOpen = () => until(async () => { const x = await panelSettled(); return x && Math.abs(x.c.r - x.p.l) <= 2 ? x : null; }, 4000);
+      const edge = g?.p.l ?? 0;
+
+      // (b) a card wholly left of where the pushed canvas will end: opening moves nothing.
+      await clearSelection();
+      const fb0 = await openerFit();
+      if (fb0) await wheelPan(Math.round(edge - 80 - fb0.card.r), 0);
+      const fb = await openerFit();
+      ok(`${T} fixture: a page card sits wholly left of where the pushed canvas will end`,
+        !!fb && !!g && fb.card.l >= fb.canvas.l + 1 && fb.card.r <= edge - 40, JSON.stringify({ fb, edge }));
+      const vB = vpOf(await scene());
+      ok(`${T} ONE click on that card opens the panel`, (await openCard(opener)) === 1 && !!(await panelWaitPath(NOTES.ref)), String(await panelPath()));
+      await pushedOpen();
+      await page.waitForTimeout(250);
+      const vB1 = vpOf(await scene());
+      ok(`${T} a card already in view beside the panel: opening it leaves scrollX / scrollY / zoom exactly as they were`,
+        sameVp(vB1, vB), `${JSON.stringify(vB)} → ${JSON.stringify(vB1)}`);
+      ok(`${T} …and the card is still wholly in the canvas`, wholeIn(await openerFit()), JSON.stringify(await openerFit()));
+      ok(`${T} (b) closed`, !!(await closePanel()));
+
+      // (a) a card straddling where the pushed canvas will end: ONE click, and it is panned whole into view.
+      await clearSelection();
+      const fa0 = await openerFit();
+      if (fa0) await wheelPan(Math.round(edge - (fa0.card.l + fa0.card.r) / 2), 0);
+      const fa = await openerFit();
+      ok(`${T} fixture: the card straddles where the pushed canvas will end (the panel's edge would cut it)`,
+        !!fa && !!g && fa.card.l < edge - 20 && fa.card.r > edge + 20 && fa.card.l >= fa.canvas.l, JSON.stringify({ fa, edge }));
+      const vA = vpOf(await scene());
+      ok(`${T} ONE click on the straddling card opens the panel`, (await openCard(opener)) === 1 && !!(await panelWaitPath(NOTES.ref)), String(await panelPath()));
+      const gA = await pushedOpen();
+      const fitA = await until(async () => { const x = await openerFit(); return wholeIn(x) ? x : null; }, 3000) ?? await openerFit();
+      ok(`${T} after the push, the card that opened the panel is wholly inside the canvas (DOM box inside the canvas box ±1px)`,
+        !!gA && wholeIn(fitA), JSON.stringify({ fitA, panelL: gA?.p.l }));
+      const vA1 = vpOf(await scene());
+      ok(`${T} …by a pan alone: the zoom is unchanged`, vA1.zoom === vA.zoom && vA1.scrollX !== vA.scrollX, `${JSON.stringify(vA)} → ${JSON.stringify(vA1)}`);
+      console.log(`info: ${T} the opener ends ${fitA ? Math.round(fitA.canvas.r - fitA.card.r) : '?'}px left of the pushed canvas's right edge`);
+      ok(`${T} …and by the least pan: the card ends a small margin (12–40px) left of the canvas's right edge`,
+        !!fitA && fitA.canvas.r - fitA.card.r >= 12 && fitA.canvas.r - fitA.card.r <= 40, JSON.stringify(fitA));
+      await wshot(`w-panel-opener-visible-${theme}`);
+
+      // (e) Expand, then Collapse: no pan.
+      await page.locator('.wb-page-panel [aria-label="Expand"]').click().catch(() => {});
+      const fullE = await until(async () => { const x = await panelGeo(); return x?.settled && Math.abs(x.p.l - x.body.l) <= 1 ? x : null; }, 4000);
+      await page.locator('.wb-page-panel [aria-label="Collapse"]').click().catch(() => {});
+      const sideE = await pushedOpen();
+      await page.waitForTimeout(250);
+      const vE = vpOf(await scene());
+      ok(`${T} Expand then Collapse pan nothing: scroll and zoom exactly as the open left them`,
+        !!fullE && !!sideE && sameVp(vE, vA1), `${JSON.stringify(vA1)} → ${JSON.stringify(vE)}`);
+
+      // (c) close: the pre-open pan comes back exactly.
+      ok(`${T} (c) the panel's × closes it`, !!(await closePanel()));
+      const vC = vpOf(await scene());
+      ok(`${T} closing (the viewport untouched while open) puts scroll and zoom back exactly as before the open`,
+        sameVp(vC, vA), `${JSON.stringify(vA)} → ${JSON.stringify(vC)}`);
+
+      // (d) the user pans while the panel is open: closing leaves the viewport where they took it.
+      await clearSelection();
+      const vD = vpOf(await scene());
+      ok(`${T} ONE click opens the straddling card again`, (await openCard(opener)) === 1 && !!(await panelWaitPath(NOTES.ref)));
+      await pushedOpen();
+      await until(async () => wholeIn(await openerFit()), 3000);
+      const vD1 = await wheelPan(0, -60);
+      ok(`${T} fixture: the user's wheel pans the board while the panel is open`, !!vD1 && vD1.scrollY !== vD.scrollY, JSON.stringify(vD1));
+      ok(`${T} (d) the panel's × closes it`, !!(await closePanel()));
+      const vD2 = vpOf(await scene());
+      ok(`${T} the user panned while the panel was open: closing leaves the viewport where they took it (no reset to the pre-open pan)`,
+        sameVp(vD2, vD1) && !sameVp(vD2, vD), `pre-open ${JSON.stringify(vD)}, user ${JSON.stringify(vD1)}, after close ${JSON.stringify(vD2)}`);
+      // (f) the user moves the board while reading A, then opens B from the board, then closes:
+      // the close returns to the board the USER left before B, never to the pan from before A
+      // (with a zoom, never an old scroll under the new zoom). Once with the wheel, once zooming.
+      const openerB = pageCard(LAUNCH.title);
+      for (const how of ['pans', 'zooms']) {
+        await clearSelection();
+        const vPreA = vpOf(await scene());
+        ok(`${T} (f, ${how}) ONE click opens card A`, (await openCard(opener)) === 1 && !!(await panelWaitPath(NOTES.ref)));
+        await pushedOpen();
+        await until(async () => wholeIn(await openerFit()), 3000);
+        const vOpen = vpOf(await scene());
+        if (how === 'pans') await wheelPan(0, -60);
+        else await page.locator('.excalidraw .zoom-in-button').click().catch(() => {});
+        const vUser = await until(async () => { const v = vpOf(await scene()); return sameVp(v, vOpen) ? null : v; }, 3000);
+        ok(`${T} (f, ${how}) fixture: the user ${how} the board while A is open`, !!vUser && (how === 'pans' || vUser.zoom !== vOpen.zoom), JSON.stringify({ vOpen, vUser }));
+        const bBox = await openerB.locator('.wb-entity').first().boundingBox().catch(() => null);
+        if (bBox) await page.mouse.click(bBox.x + bBox.width / 2, bBox.y + Math.min(bBox.height / 2, 30));
+        ok(`${T} (f, ${how}) one click on card B, beside the open panel, opens B in it`, !!(await panelWaitPath(KPATH(LAUNCH.name))), String(await panelPath()));
+        await pushedOpen();
+        await page.waitForTimeout(250);
+        ok(`${T} (f, ${how}) the panel's × closes it`, !!(await closePanel()));
+        const vAfter = vpOf(await scene());
+        ok(`${T} the user ${how === 'pans' ? 'panned' : 'zoomed'} while reading A, then opened B: closing returns to the board they left before B, not the pan from before A`,
+          sameVp(vAfter, vUser) && !sameVp(vAfter, vPreA), `pre-A ${JSON.stringify(vPreA)}, user ${JSON.stringify(vUser)}, after close ${JSON.stringify(vAfter)}`);
+        if (how === 'zooms') {
+          await page.locator('.excalidraw .zoom-out-button').click().catch(() => {});
+          await page.waitForTimeout(250);
+        }
+      }
+
+      // The board back where block 1c found it, for the checks after it.
+      await wheelPan(-panned.x, -panned.y);
+      panned = { x: 0, y: 0 };
 
       // A task card, a dreamcontext://task link and a dreamcontext://knowledge link: all three
       // read in the panel.

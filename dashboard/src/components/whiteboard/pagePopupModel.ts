@@ -204,6 +204,91 @@ export function menuIndexAfter(index: number, key: string, count: number): numbe
   }
 }
 
+// ── keeping the opener in view ────────────────────────────────────────────────────────────
+
+/** The board's pan and zoom: Excalidraw's `scrollX` / `scrollY` (scene units) and zoom. */
+export interface BoardViewport {
+  scrollX: number;
+  scrollY: number;
+  zoom: number;
+}
+
+/** A scene-space box: an element's bounds. */
+export interface SceneBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Room left between the opener and the canvas edge it is brought to, in screen px. */
+export const OPENER_MARGIN_PX = 24;
+
+/** Below this, a box edge past the canvas edge is rounding, not clipping (screen px). */
+const CLIP_SLACK_PX = 0.5;
+
+/** The screen offset that brings [lo, hi] inside [0, size] with `margin`, or 0 when it is
+ *  already inside. A span wider than the room aligns its low edge. */
+function axisShift(lo: number, hi: number, size: number, margin: number): number {
+  if (lo >= -CLIP_SLACK_PX && hi <= size + CLIP_SLACK_PX) return 0;
+  if (hi - lo + 2 * margin > size) return margin - lo;
+  return hi > size ? size - margin - hi : margin - lo;
+}
+
+/**
+ * The pan that brings the card which opened the panel fully into the canvas that is left
+ * beside it, or null when nothing needs to move. Only the scroll moves, by the least amount
+ * that shows the whole box with `margin` screen px to spare; the zoom never changes. A box
+ * wider (or taller) than the canvas aligns its left (top) edge. Screen x of a scene point is
+ * `(x + scrollX) * zoom` from the canvas's left edge.
+ */
+export function openerPan(
+  box: SceneBox,
+  view: BoardViewport,
+  canvas: { width: number; height: number },
+  margin = OPENER_MARGIN_PX,
+): BoardViewport | null {
+  const z = view.zoom;
+  const dx = axisShift((box.x1 + view.scrollX) * z, (box.x2 + view.scrollX) * z, canvas.width, margin);
+  const dy = axisShift((box.y1 + view.scrollY) * z, (box.y2 + view.scrollY) * z, canvas.height, margin);
+  if (dx === 0 && dy === 0) return null;
+  return { scrollX: view.scrollX + dx / z, scrollY: view.scrollY + dy / z, zoom: z };
+}
+
+export function sameViewport(a: BoardViewport, b: BoardViewport): boolean {
+  return a.scrollX === b.scrollX && a.scrollY === b.scrollY && a.zoom === b.zoom;
+}
+
+/**
+ * What closing the panel does to the board's pan: the pan from before the panel first opened
+ * comes back only when the viewport is still exactly what the panel left it at. A user who
+ * panned or zoomed while reading keeps where they went (null: leave the viewport alone).
+ */
+export function panOnClose(
+  beforeOpen: BoardViewport | null,
+  leftAt: BoardViewport | null,
+  now: BoardViewport,
+): BoardViewport | null {
+  if (!beforeOpen || !leftAt || !sameViewport(leftAt, now)) return null;
+  return sameViewport(beforeOpen, now) ? null : beforeOpen;
+}
+
+/**
+ * The pan a close returns to, as another page is opened from the board while the panel is
+ * already open. A viewport still exactly where the panel left it keeps the pan from before the
+ * panel first opened; one the user panned or zoomed since is where the user wants the board,
+ * so it becomes the pan the close returns to (its zoom included, so a later restore never puts
+ * an old scroll under a new zoom).
+ */
+export function panBeforeReopen(
+  beforeOpen: BoardViewport | null,
+  leftAt: BoardViewport | null,
+  now: BoardViewport | null,
+): BoardViewport | null {
+  if (!now || !leftAt || sameViewport(leftAt, now)) return beforeOpen;
+  return now;
+}
+
 /** What one Esc closes: the ⋯ menu first when it is open, the panel otherwise. */
 export function escapeCloses(menuOpen: boolean): 'menu' | 'panel' {
   return menuOpen ? 'menu' : 'panel';

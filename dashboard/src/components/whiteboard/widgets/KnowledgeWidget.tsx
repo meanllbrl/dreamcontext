@@ -20,7 +20,7 @@ import './pageCard.css';
  * already cached and polled, and a slug is looked up in it without building a URL from
  * board-supplied text.
  */
-export function KnowledgeWidget({ payload, active, size }: WidgetProps) {
+export function KnowledgeWidget({ elementId, payload, active, size }: WidgetProps) {
   const tx = useWbText();
   const { bus } = useVault();
   const popup = usePagePopup();
@@ -38,7 +38,7 @@ export function KnowledgeWidget({ payload, active, size }: WidgetProps) {
 
   const open = () => {
     if (!ref) return;
-    if (popup?.openPage({ kind: 'knowledge', ref })) return;
+    if (popup?.openPage({ kind: 'knowledge', ref }, elementId)) return;
     // Outside a board page there is no popup: a knowledge page still opens where it lives.
     if (!isPath) emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'knowledge', id: ref });
   };

@@ -14,9 +14,9 @@ import {
   OpenInAppIcon,
 } from './PanelIcons';
 import {
-  CLOSED_STACK, canGoBack, canGoForward, currentPage, escapeCloses, menuIndexAfter, owningPage, pageStackReducer,
-  pageTitleFromPath, panelMenuItems, targetPath, togglePanelWidth, type PageTarget, type PanelMenuItem,
-  type PanelWidth,
+  CLOSED_STACK, canGoBack, canGoForward, currentPage, escapeCloses, menuIndexAfter, openerPan, owningPage,
+  pageStackReducer, pageTitleFromPath, panBeforeReopen, panelMenuItems, panOnClose, targetPath, togglePanelWidth, type BoardViewport,
+  type PageTarget, type PanelMenuItem, type PanelWidth, type SceneBox,
 } from './pagePopupModel';
 import { knowledgeTitle, parseWidgetLink, taskTitle } from './widgetModel';
 import { useWbText } from './whiteboardHost';
@@ -39,14 +39,33 @@ import './PagePopup.css';
  * back/forward stack: every link the reader follows (a document-relative link, a resolved
  * `[[wikilink]]`, a `dreamcontext://knowledge|task` link) is pushed onto it.
  *
+ * The card that opened the panel stays in view: once the canvas has narrowed, an opener the
+ * panel's edge clips is panned just far enough to show it whole (`openerPan`, zoom untouched),
+ * and closing puts the pan from before the panel first opened back, unless the user panned or
+ * zoomed while reading (`panOnClose`). Expand / Collapse and links followed inside the panel
+ * never pan. The canvas lends the provider its viewport through {@link PanelBoard}.
+ *
  * The pieces stand alone for the wiki card's in-card reader: `DocumentReader variant="page"`,
  * the icons in PanelIcons.tsx and the stack reducer in pagePopupModel.ts need none of this
  * chrome.
  */
 
 export interface PagePopupApi {
-  /** Open the panel on this card's or link's page (a fresh stack). False when the ref is not readable. */
-  openPage: (target: PageTarget) => boolean;
+  /** Open the panel on this card's or link's page (a fresh stack). False when the ref is not
+   *  readable. `openerId` is the board element that opened it, kept in view as the canvas narrows. */
+  openPage: (target: PageTarget, openerId?: string) => boolean;
+  /** The canvas lends its viewport; the returned function takes it back. */
+  attachBoard: (board: PanelBoard) => () => void;
+}
+
+/** What the panel may know and do about the board beside it. */
+export interface PanelBoard {
+  viewport: () => BoardViewport | null;
+  /** Pans to this scroll; the zoom is left as it is. */
+  setScroll: (view: BoardViewport) => void;
+  /** The canvas's size as laid out right now (the push has already narrowed it). */
+  canvasSize: () => { width: number; height: number } | null;
+  elementBox: (id: string) => SceneBox | null;
 }
 
 const PagePopupContext = createContext<PagePopupApi | null>(null);
@@ -59,15 +78,62 @@ export function usePagePopup(): PagePopupApi | null {
 
 export function PagePopupProvider({ children }: { children: ReactNode }) {
   const [stack, dispatch] = useReducer(pageStackReducer, CLOSED_STACK);
+  const path = currentPage(stack);
+  const openRef = useRef(false);
+  openRef.current = path !== null;
+  const boardRef = useRef<PanelBoard | null>(null);
+  // The pan from before the panel first opened, and the viewport the panel last left.
+  const pan = useRef<{ before: BoardViewport | null; leftAt: BoardViewport | null }>({ before: null, leftAt: null });
+  // An open from the board waiting for the push to lay out: its opener, if it named one.
+  const pendingOpen = useRef<{ openerId?: string } | null>(null);
+  const [openSeq, bumpOpen] = useReducer((n: number) => n + 1, 0);
   const api = useMemo<PagePopupApi>(() => ({
-    openPage: (target) => {
+    openPage: (target, openerId) => {
       const path = targetPath(target);
       if (!path) return false;
+      const now = boardRef.current?.viewport() ?? null;
+      if (!openRef.current) pan.current = { before: now, leftAt: null };
+      // Open already, and the user moved the board since: the close returns to THEIR board.
+      else pan.current.before = panBeforeReopen(pan.current.before, pan.current.leftAt, now);
+      pendingOpen.current = { openerId };
       dispatch({ type: 'open', path });
+      bumpOpen();
       return true;
     },
+    attachBoard: (board) => {
+      boardRef.current = board;
+      return () => { if (boardRef.current === board) boardRef.current = null; };
+    },
   }), []);
-  const path = currentPage(stack);
+
+  // After the commit that mounted (or re-targeted) the panel the canvas already has its pushed
+  // width, so the opener is measured against the canvas the user will see. One pan, no animation.
+  useLayoutEffect(() => {
+    const pending = pendingOpen.current;
+    pendingOpen.current = null;
+    const board = boardRef.current;
+    const view = pending && board?.viewport();
+    if (!pending || !board || !view) return;
+    const box = pending.openerId ? board.elementBox(pending.openerId) : null;
+    const size = box ? board.canvasSize() : null;
+    const next = box && size ? openerPan(box, view, size) : null;
+    if (next) board.setScroll(next);
+    pan.current.leftAt = next ?? view;
+  }, [openSeq]);
+
+  // Closed: the pre-open pan comes back only over a viewport the user did not move.
+  const isOpen = path !== null;
+  const wasOpen = useRef(false);
+  useLayoutEffect(() => {
+    if (isOpen) { wasOpen.current = true; return; }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    const { before, leftAt } = pan.current;
+    pan.current = { before: null, leftAt: null };
+    const now = boardRef.current?.viewport();
+    const back = now ? panOnClose(before, leftAt, now) : null;
+    if (back) boardRef.current?.setScroll(back);
+  }, [isOpen]);
   return (
     <PagePopupContext.Provider value={api}>
       {children}
