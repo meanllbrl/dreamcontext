@@ -439,6 +439,29 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
     };
   }, []);
 
+  // ── A scroll that pans the board stays with the board. An active widget takes pointer
+  // events, and over an HTML or web block the wheel lands in the iframe's own document, which
+  // never hands it back: a pan that drifted onto one stopped dead. While a pan is running
+  // (a wheel that hit the canvas, momentum included) widgets let the wheel through; the latch
+  // drops once the wheel has been quiet for WHEEL_LATCH_MS.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    let timer = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (!wrap.classList.contains(WHEEL_LATCH_CLASS) && (e.target as HTMLElement | null)?.tagName !== 'CANVAS') return;
+      wrap.classList.add(WHEEL_LATCH_CLASS);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => wrap.classList.remove(WHEEL_LATCH_CLASS), WHEEL_LATCH_MS);
+    };
+    wrap.addEventListener('wheel', onWheel, { capture: true, passive: true });
+    return () => {
+      wrap.removeEventListener('wheel', onWheel, { capture: true });
+      window.clearTimeout(timer);
+      wrap.classList.remove(WHEEL_LATCH_CLASS);
+    };
+  }, []);
+
   // ── pinch scoped to this board (see lib/excalidrawPinch.ts) ───────────────────────────────
   useEffect(() => {
     const el = wrapRef.current;
@@ -601,6 +624,11 @@ function snapWidgets(api: ExcalidrawImperativeAPI, before: GestureSnapshot): voi
  * (a 100ms timer holding the element it hit), so a tick that replaces the element is not undone.
  */
 const CLICK_FORWARD_DELAY_MS = 120;
+
+/** The board's wheel latch: on the canvas wrapper while a pan runs (WhiteboardCanvas.css). A
+ *  trackpad's momentum fires every ~16ms, so a gap this long means the gesture is over. */
+const WHEEL_LATCH_CLASS = 'wb-canvas-wrap--wheeling';
+const WHEEL_LATCH_MS = 250;
 
 function subscribeWidgetActivation(api: ExcalidrawImperativeAPI): (() => void)[] {
   let timer = 0;

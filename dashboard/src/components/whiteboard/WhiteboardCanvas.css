@@ -44,6 +44,13 @@
   pointer-events: none;
 }
 
+/* A pan in progress (the wheel latch in WhiteboardCanvas.tsx): even the active widget lets the
+   wheel through to the canvas, so the pan does not stop on it. `!important` beats Excalidraw's
+   inline pointer-events on the active embeddable. */
+.wb-canvas-wrap--wheeling .excalidraw__embeddable-container__inner {
+  pointer-events: none !important;
+}
+
 /* A selection of widgets only (A18): Excalidraw's properties panel (stroke, sloppiness, opacity…)
    has nothing to say about a frameless card, and its link popup would show the raw
    `dreamcontext://` URL with edit/embed buttons. Excalidraw 0.18.1 has no prop or UIOption for
