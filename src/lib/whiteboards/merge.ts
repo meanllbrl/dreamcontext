@@ -57,7 +57,8 @@ export function mergeElements(
 
 /**
  * D14: a tombstone keeps every Excalidraw schema field and loses only its heavy payload —
- * `text`/`originalText`, and the widget's `html`, `markdown` and `items`. Applied on EVERY
+ * `text`/`originalText`, and the widget's `html`, `markdown`, `items` and a wiki card's
+ * `sections`. Applied on EVERY
  * write, so a browser echoing the unstripped copy back at an equal version stays a no-op.
  */
 export function stripTombstone(el: WhiteboardElement): WhiteboardElement {
@@ -65,13 +66,13 @@ export function stripTombstone(el: WhiteboardElement): WhiteboardElement {
   const textKeys = (['text', 'originalText', 'rawText'] as const).filter((k) => typeof el[k] === 'string' && el[k] !== '');
   const cd = el.customData;
   const dc = cd && typeof cd.dc === 'object' && cd.dc !== null ? (cd.dc as Record<string, unknown>) : null;
-  const heavyDc = dc && ('html' in dc || 'markdown' in dc || 'items' in dc);
+  const heavyDc = dc && ('html' in dc || 'markdown' in dc || 'items' in dc || 'sections' in dc);
   if (textKeys.length === 0 && !heavyDc) return el;
   const out: WhiteboardElement = { ...el };
   // Emptied, not removed: `text` is a required field of Excalidraw's text schema.
   for (const k of textKeys) out[k] = '';
   if (heavyDc && dc) {
-    const { html: _h, markdown: _m, items: _i, ...rest } = dc;
+    const { html: _h, markdown: _m, items: _i, sections: _s, ...rest } = dc;
     out.customData = { ...cd, dc: rest };
   }
   return out;

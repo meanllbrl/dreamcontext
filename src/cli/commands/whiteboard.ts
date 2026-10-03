@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, info } from '../../lib/format.js';
@@ -14,14 +14,16 @@ import {
   DEFAULT_WHITEBOARD,
 } from '../../lib/whiteboards/store.js';
 import { WhiteboardError, WhiteboardValidationError } from '../../lib/whiteboards/errors.js';
-import { checkWebUrl, isValidRef, isValidTag } from '../../lib/whiteboards/validate.js';
+import { checkWebUrl, isValidRef, isValidTag, isValidWidgetRef } from '../../lib/whiteboards/validate.js';
 import {
   WIDGET_KINDS,
   WIDGET_SIZES,
   DEFAULT_WIDGET_SIZES,
   isWidgetKind,
   isWidgetSize,
+  isValidPageRef,
   makeWidgetElement,
+  pageRefKind,
   type WidgetKind,
   type WidgetSize,
   type WidgetPayload,
@@ -38,6 +40,21 @@ import {
   removeElements,
   type ElementView,
 } from '../../lib/whiteboards/ops.js';
+import {
+  addPage,
+  addSection,
+  applyWikiEdit,
+  findSectionIndex,
+  movePage,
+  moveSection,
+  removePage,
+  removeSection,
+  resolveWikiCard,
+  wikiCards,
+  wikiCardView,
+  type WikiCardView,
+  type WikiNav,
+} from '../../lib/whiteboards/nav.js';
 
 /**
  * `dreamcontext whiteboard` — the agent's hands on a board. Every write goes through
@@ -83,10 +100,16 @@ function readTextOpt(opts: { text?: string; file?: string }): string | undefined
   return opts.text;
 }
 
+/** Where a page ref points: a knowledge slug in the brain, or a file relative to the project. */
+function pageExists(root: string, ref: string): boolean {
+  if (pageRefKind(ref) === 'knowledge') return existsSync(join(root, 'knowledge', `${ref}.md`));
+  return existsSync(join(dirname(root), ref));
+}
+
 /** Where a ref of this kind lives in the brain — only used for the does-it-exist warning. */
 function refExists(root: string, kind: WidgetKind, ref: string): boolean {
   if (kind === 'insight') return existsSync(join(root, 'lab', 'insights', `${ref}.md`));
-  if (kind === 'knowledge') return existsSync(join(root, 'knowledge', `${ref}.md`));
+  if (kind === 'knowledge') return pageExists(root, ref);
   if (kind === 'task') return existsSync(join(root, 'state', `${ref}.md`));
   return true;
 }
@@ -117,10 +140,174 @@ function printView(v: ElementView): void {
   }
 }
 
+function printNav(nav: WikiNav): void {
+  nav.sections.forEach((s, i) => {
+    console.log(`  ${i}. ${chalk.bold(s.title)}  ${chalk.dim(s.id)}`);
+    s.pages.forEach((p, j) => {
+      const label = p.label ? `  ${p.label}` : '';
+      console.log(`      ${j}. ${p.ref}${chalk.dim(`  ${pageRefKind(p.ref) === 'knowledge' ? 'knowledge' : pageRefKind(p.ref)}`)}${label}`);
+    });
+  });
+}
+
+function parseIndex(raw: string | undefined, label: string): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n)) throw new WhiteboardValidationError(`${label} must be an integer (got '${raw}')`);
+  return n;
+}
+
+/** Run a list edit on one wiki card under the board's lock; returns the card as written. */
+async function editWikiCard(
+  root: string,
+  slug: string,
+  cardId: string | undefined,
+  fn: (nav: WikiNav) => WikiNav,
+): Promise<WikiCardView> {
+  let out: WikiCardView | null = null;
+  await mutateWhiteboard(root, slug, (board) => {
+    const card = resolveWikiCard(board.elements, slug, cardId);
+    const i = board.elements.indexOf(card);
+    board.elements[i] = applyWikiEdit(card, fn);
+    out = wikiCardView(board.elements[i]);
+  });
+  return out as unknown as WikiCardView;
+}
+
+function cardName(card: WikiCardView): string {
+  return card.title ? `wiki card "${card.title}"` : `wiki card ${card.id}`;
+}
+
+function registerNavCommands(wb: Command): void {
+  const nav = wb
+    .command('nav')
+    .description('A wiki card\'s list: sections of pages (knowledge slugs or project .md/.pdf/.html paths), stored in the card on the board');
+  const cardOpt = '--card <widget-id>';
+  const cardHelp = 'The wiki card to edit (may be left out when the board has exactly one)';
+
+  // --- nav list ---
+  nav.command('list <slug>', { isDefault: true })
+    .description('List a wiki card\'s sections and pages, with their 0-based positions')
+    .option(cardOpt, cardHelp)
+    .option('--json', 'Machine-readable output')
+    .action(run((slug: string, opts: { card?: string; json?: boolean }) => {
+      const { board } = readWhiteboard(ensureContextRoot(), slug);
+      const card = wikiCardView(resolveWikiCard(board.elements, slug, opts.card));
+      if (opts.json) {
+        console.log(JSON.stringify({ slug, card }, null, 2));
+        return;
+      }
+      if (card.sections.length === 0) {
+        info(`The ${cardName(card)} on ${slug} is empty. Add a section: dreamcontext whiteboard nav add ${slug} --card ${card.id} --section "<title>"`);
+        return;
+      }
+      printNav(card);
+    }));
+
+  // --- nav add ---
+  nav.command('add <slug>')
+    .description('Add a section (--section <title>), or a page to a section (--section <id|title> --page <ref>); a page into a missing section creates it')
+    .requiredOption('--section <id|title>', 'Section id or title (a new section\'s title)')
+    .option('--page <ref>', 'Knowledge slug or project-relative .md/.pdf/.html path')
+    .option('--label <text>', 'Label for the page (default: the page\'s own title)')
+    .option('--at <index>', '0-based position to insert at (default: the end)')
+    .option(cardOpt, cardHelp)
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, opts: { section: string; page?: string; label?: string; at?: string; card?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      const at = parseIndex(opts.at, '--at');
+      if (opts.page !== undefined && !isValidPageRef(opts.page)) {
+        throw new WhiteboardValidationError(`invalid page ref '${opts.page}' (a knowledge slug, or a project-relative .md/.pdf/.html path with no '..')`);
+      }
+      if (opts.page === undefined && opts.label !== undefined) throw new WhiteboardValidationError('--label applies to a page (--page <ref>)');
+      let created = false;
+      const card = await editWikiCard(root, slug, opts.card, (cur) => {
+        if (opts.page === undefined) {
+          created = true;
+          return addSection(cur, opts.section, { at }).nav;
+        }
+        let next = cur;
+        let key = opts.section;
+        try {
+          findSectionIndex(cur, key);
+        } catch (err) {
+          if (!(err instanceof WhiteboardValidationError) || !/^no section/.test(err.message)) throw err;
+          const added = addSection(cur, opts.section);
+          next = added.nav;
+          key = added.section.id;
+          created = true;
+        }
+        return addPage(next, key, { ref: opts.page, label: opts.label }, { at });
+      });
+      const warning = opts.page !== undefined && !pageExists(root, opts.page)
+        ? `no page '${opts.page}' exists yet; the card will show it as "not found" until it does`
+        : null;
+      if (opts.json) {
+        if (warning) console.error(`⚠ ${warning}`);
+        console.log(JSON.stringify({ slug, card }, null, 2));
+        return;
+      }
+      if (warning) console.log(chalk.yellow('⚠') + ' ' + warning);
+      if (opts.page === undefined) success(`Added section ${chalk.bold(opts.section)} to the ${cardName(card)} on ${slug}`);
+      else success(`Added ${chalk.bold(opts.page)} to ${created ? 'new ' : ''}section ${chalk.bold(opts.section)} of the ${cardName(card)} on ${slug}`);
+      printNav(card);
+    }));
+
+  // --- nav remove ---
+  nav.command('remove <slug>')
+    .description('Remove a section (and its pages), or one page from it with --page')
+    .requiredOption('--section <id|title>', 'Section id or title')
+    .option('--page <ref|#n>', 'The page\'s ref, or its 0-based position (#n)')
+    .option(cardOpt, cardHelp)
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, opts: { section: string; page?: string; card?: string; json?: boolean }) => {
+      let removed = '';
+      const card = await editWikiCard(ensureContextRoot(), slug, opts.card, (cur) => {
+        if (opts.page === undefined) {
+          const r = removeSection(cur, opts.section);
+          removed = `section ${r.removed.title}`;
+          return r.nav;
+        }
+        const r = removePage(cur, opts.section, opts.page);
+        removed = r.removed.ref;
+        return r.nav;
+      });
+      if (opts.json) {
+        console.log(JSON.stringify({ slug, removed, card }, null, 2));
+        return;
+      }
+      success(`Removed ${chalk.bold(removed)} from the ${cardName(card)} on ${slug}`);
+      if (card.sections.length > 0) printNav(card);
+    }));
+
+  // --- nav move ---
+  nav.command('move <slug>')
+    .description('Reorder: move a section, or a page (--page) within its section or into --to-section, to 0-based --to')
+    .requiredOption('--section <id|title>', 'Section id or title')
+    .option('--page <ref|#n>', 'The page\'s ref, or its 0-based position (#n)')
+    .requiredOption('--to <index>', 'Target 0-based position (negative counts from the end)')
+    .option('--to-section <id|title>', 'Move the page into this section')
+    .option(cardOpt, cardHelp)
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, opts: { section: string; page?: string; to: string; toSection?: string; card?: string; json?: boolean }) => {
+      const to = parseIndex(opts.to, '--to')!;
+      if (opts.page === undefined && opts.toSection !== undefined) throw new WhiteboardValidationError('--to-section applies to a page (--page <ref|#n>)');
+      const card = await editWikiCard(ensureContextRoot(), slug, opts.card, (cur) => (opts.page === undefined
+        ? moveSection(cur, opts.section, to)
+        : movePage(cur, opts.section, opts.page, to, opts.toSection)));
+      if (opts.json) {
+        console.log(JSON.stringify({ slug, card }, null, 2));
+        return;
+      }
+      success(`Moved ${chalk.bold(opts.page ?? opts.section)} on the ${cardName(card)} on ${slug}`);
+      printNav(card);
+    }));
+}
+
 export function registerWhiteboardCommand(program: Command): void {
   const wb = program
     .command('whiteboard')
-    .description('Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web)');
+    .description('Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki)');
 
   // --- list ---
   wb.command('list', { isDefault: true })
@@ -181,24 +368,31 @@ export function registerWhiteboardCommand(program: Command): void {
         return;
       }
       const views = live.map((e) => describeElement(e, !!opts.full));
+      const wikis = wikiCards(live).map((el) => ({ ...wikiCardView(el), size: describeElement(el).size }));
       if (opts.json) {
         console.log(JSON.stringify({
           slug,
           name: boardName(board, slug),
           description: typeof board.frontmatter.description === 'string' ? board.frontmatter.description : '',
           elements: views,
+          wikis,
         }, null, 2));
         return;
       }
       console.log(chalk.bold(boardName(board, slug)) + chalk.dim(`  (${slug}, ${views.length} element${views.length === 1 ? '' : 's'})`));
       for (const v of views) printView(v);
+      for (const w of wikis) {
+        if (w.sections.length === 0) continue;
+        console.log(chalk.bold(cardName(w)) + chalk.dim(`  ${w.id}`));
+        printNav(w);
+      }
     }));
 
   // --- add ---
   wb.command('add <slug> <kind>')
     .description(`Add a widget: ${WIDGET_KINDS.join(' | ')}`)
-    .option('--ref <slug>', 'insight / knowledge / task slug')
-    .option('--title <text>', 'Widget title')
+    .option('--ref <ref>', 'insight / task slug; for knowledge (a page): a knowledge slug or a project-relative .md/.pdf/.html path')
+    .option('--title <text>', 'Widget title (a wiki card needs one)')
     .option('--text <text>', 'Note markdown or HTML block content')
     .option('--file <path>', 'Read note markdown / HTML block content from a file')
     .option('--url <https-url>', 'Web embed URL (https only)')
@@ -225,7 +419,11 @@ export function registerWhiteboardCommand(program: Command): void {
       };
       if (kind === 'insight' || kind === 'knowledge' || kind === 'task') {
         if (!opts.ref) throw new WhiteboardValidationError(`${kind} widget needs --ref <slug>`);
-        if (!isValidRef(opts.ref)) throw new WhiteboardValidationError(`invalid ref '${opts.ref}'`);
+        if (!isValidWidgetRef(kind, opts.ref)) {
+          throw new WhiteboardValidationError(kind === 'knowledge'
+            ? `invalid page ref '${opts.ref}' (a knowledge slug, or a project-relative .md/.pdf/.html path with no '..')`
+            : `invalid ref '${opts.ref}'`);
+        }
         payload.ref = opts.ref;
       } else if (kind === 'todo') {
         payload.items = opts.item.map(newTodoItem);
@@ -236,6 +434,9 @@ export function registerWhiteboardCommand(program: Command): void {
         payload.html = body;
       } else if (kind === 'web') {
         payload.url = checkWebUrl(opts.url);
+      } else if (kind === 'wiki') {
+        if (!opts.title?.trim()) throw new WhiteboardValidationError('wiki widget needs --title "<title>"');
+        payload.sections = [];
       }
 
       let id = '';
@@ -259,6 +460,9 @@ export function registerWhiteboardCommand(program: Command): void {
       }
       if (warning) console.log(chalk.yellow('⚠') + ' ' + warning);
       success(`Added ${kind} widget ${chalk.bold(id)} to ${slug}`);
+      if (kind === 'wiki') {
+        console.log(chalk.dim(`  Fill it: dreamcontext whiteboard nav add ${slug} --card ${id} --section "<title>" --page <ref>`));
+      }
     }));
 
   // --- update ---
@@ -268,7 +472,7 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--text <text>', 'New note markdown / HTML / text')
     .option('--file <path>', 'Read the new content from a file')
     .option('--url <https-url>', 'New web URL')
-    .option('--ref <slug>', 'New insight / knowledge / task ref')
+    .option('--ref <ref>', 'New insight / task slug, or knowledge page ref (slug or project-relative .md/.pdf/.html path)')
     .option('--item <text>', 'Append a todo item (repeatable)', collect, [])
     .option('--check <n>', 'Tick todo item n (1-based) or item id (repeatable)', collect, [])
     .option('--uncheck <n>', 'Untick todo item n (1-based) or item id (repeatable)', collect, [])
@@ -290,7 +494,10 @@ export function registerWhiteboardCommand(program: Command): void {
         at: parseAt(opts.at),
         size: parseSize(opts.size),
       };
-      if (update.ref !== undefined && !isValidRef(update.ref)) throw new WhiteboardValidationError(`invalid ref '${update.ref}'`);
+      // The kind-specific check (a knowledge page also takes a path) runs in applyUpdate.
+      if (update.ref !== undefined && !isValidRef(update.ref) && !isValidPageRef(update.ref)) {
+        throw new WhiteboardValidationError(`invalid ref '${update.ref}'`);
+      }
       let view: ElementView | null = null;
       await mutateWhiteboard(ensureContextRoot(), slug, (board) => {
         const i = board.elements.findIndex((e) => e.id === id && e.isDeleted !== true);
@@ -330,6 +537,8 @@ export function registerWhiteboardCommand(program: Command): void {
       success(`Removed ${r.removed.length} element${r.removed.length === 1 ? '' : 's'} from ${slug}`);
       if (r.bbox) console.log(`bbox ${formatBBox(r.bbox)}`);
     }));
+
+  registerNavCommands(wb);
 
   // --- draw ---
   wb.command('draw <slug>')

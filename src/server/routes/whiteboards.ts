@@ -18,6 +18,7 @@ import {
   whiteboardsDir,
 } from '../../lib/whiteboards/store.js';
 import { mergeElements } from '../../lib/whiteboards/merge.js';
+import { searchPages } from '../../lib/whiteboards/pages.js';
 import {
   WHITEBOARD_MAX_BODY_BYTES,
   WhiteboardError,
@@ -185,6 +186,29 @@ export async function handleWhiteboardGet(
   } catch (err) {
     sendWhiteboardError(res, err);
   }
+}
+
+/**
+ * GET /api/whiteboards/pages?q=&limit=&kind=md|pdf|html → `{pages: [{ref, kind, source, title, path}], truncated}`:
+ * knowledge entries and project .md/.pdf/.html files a page widget or a wiki card's page can
+ * point at. Registered before `:slug` (`pages` is a reserved board slug).
+ */
+export async function handleWhiteboardPages(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const q = (url.searchParams.get('q') || '').slice(0, 200);
+  const rawLimit = Number.parseInt(url.searchParams.get('limit') || '', 10);
+  const rawKind = url.searchParams.get('kind');
+  const kind = rawKind === 'md' || rawKind === 'pdf' || rawKind === 'html' ? rawKind : undefined;
+  if (rawKind && !kind) {
+    sendError(res, 400, 'invalid', 'kind must be one of md, pdf, html.');
+    return;
+  }
+  sendJson(res, 200, searchPages(contextRoot, q, { limit: Number.isFinite(rawLimit) ? rawLimit : undefined, kind }));
 }
 
 /** GET /api/whiteboards/:slug/rev → `{rev}` — the D5 poll, cached by mtime + size in the store. */

@@ -153,6 +153,7 @@ import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './rou
 import {
   handleWhiteboardsList, handleWhiteboardsCreate, handleWhiteboardGet, handleWhiteboardRev,
   handleWhiteboardPut, handleWhiteboardDelete, handleWhiteboardDefault,
+  handleWhiteboardPages,
 } from './routes/whiteboards.js';
 import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
 import {
@@ -742,11 +743,12 @@ export function buildRouter(): Router {
   router.put('/api/board/shared', handleBoardSharedPut);
   router.put('/api/board/local', handleBoardLocalPut);
 
-  // Whiteboards — editable Excalidraw boards under whiteboards/<slug>/. `default` and `:slug/rev` before
+  // Whiteboards — editable Excalidraw boards under whiteboards/<slug>/. `default`, `pages` and `:slug/rev` before
   // `:slug` (first match wins); every write goes through the store's lock + merge.
   router.get('/api/whiteboards', handleWhiteboardsList);
   router.post('/api/whiteboards', handleWhiteboardsCreate);
   router.get('/api/whiteboards/default', handleWhiteboardDefault);
+  router.get('/api/whiteboards/pages', handleWhiteboardPages);
   router.get('/api/whiteboards/:slug/rev', handleWhiteboardRev);
   router.get('/api/whiteboards/:slug', handleWhiteboardGet);
   router.put('/api/whiteboards/:slug', handleWhiteboardPut);

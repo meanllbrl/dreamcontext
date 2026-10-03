@@ -3138,13 +3138,13 @@
     },
     {
       "path": "whiteboard",
-      "desc": "Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web)",
+      "desc": "Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki)",
       "args": [],
       "group": true
     },
     {
       "path": "whiteboard add",
-      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web",
+      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web | wiki",
       "args": [
         "<slug>",
         "<kind>"
@@ -3188,6 +3188,62 @@
       "path": "whiteboard list",
       "desc": "List whiteboards",
       "args": []
+    },
+    {
+      "path": "whiteboard nav",
+      "desc": "A wiki card's list: sections of pages (knowledge slugs or project .md/.pdf/.html paths), stored in the card on the board",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "whiteboard nav add",
+      "desc": "Add a section (--section <title>), or a page to a section (--section <id|title> --page <ref>); a page into a missing section creates it",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--section",
+        "--page",
+        "--label",
+        "--at",
+        "--card"
+      ]
+    },
+    {
+      "path": "whiteboard nav list",
+      "desc": "List a wiki card's sections and pages, with their 0-based positions",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--card"
+      ]
+    },
+    {
+      "path": "whiteboard nav move",
+      "desc": "Reorder: move a section, or a page (--page) within its section or into --to-section, to 0-based --to",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--section",
+        "--page",
+        "--to",
+        "--to-section",
+        "--card"
+      ]
+    },
+    {
+      "path": "whiteboard nav remove",
+      "desc": "Remove a section (and its pages), or one page from it with --page",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--section",
+        "--page",
+        "--card"
+      ]
     },
     {
       "path": "whiteboard remove",

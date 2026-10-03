@@ -64,10 +64,10 @@ const LOCK_STALE_MS = 30_000;
 export const DEFAULT_WHITEBOARD = { slug: 'control-panel', name: 'Control Panel' } as const;
 
 /**
- * Slugs `createWhiteboard` never hands out: `GET /api/whiteboards/default` is a route, so a
- * board slugged `default` could never be opened by GET.
+ * Slugs `createWhiteboard` never hands out: `GET /api/whiteboards/default` and
+ * `GET /api/whiteboards/pages` are routes, so a board slugged either could never be opened by GET.
  */
-const RESERVED_SLUGS = new Set(['default']);
+const RESERVED_SLUGS = new Set(['default', 'pages']);
 
 export function whiteboardsDir(root: string): string {
   return join(root, WHITEBOARDS_DIR);

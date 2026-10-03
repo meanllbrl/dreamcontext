@@ -4,10 +4,13 @@ import {
   REF_KINDS,
   isWidgetKind,
   isWidgetSize,
+  isValidPageRef,
+  type WidgetKind,
   type WidgetPayload,
   type WhiteboardElement,
 } from './widgets.js';
 import { WhiteboardValidationError, WhiteboardTooLargeError } from './errors.js';
+import { validateNav } from './nav.js';
 
 /**
  * The one validator every whiteboard write goes through — the CLI, the store's changed-element
@@ -41,6 +44,14 @@ export function isValidWhiteboardSlug(slug: unknown): slug is string {
 
 export function isValidRef(ref: unknown): ref is string {
   return typeof ref === 'string' && REF_RE.test(ref) && !ref.split('/').includes('..');
+}
+
+/**
+ * A widget ref for this kind: a `knowledge` widget is a page, so its ref may be a knowledge
+ * slug OR a project-relative .md/.pdf/.html path; insight and task refs stay slugs.
+ */
+export function isValidWidgetRef(kind: WidgetKind, ref: unknown): ref is string {
+  return kind === 'knowledge' ? isValidPageRef(ref) : isValidRef(ref);
 }
 
 export function isValidTag(tag: unknown): tag is string {
@@ -84,7 +95,7 @@ export function validateWidgetPayload(raw: unknown, opts: { selfOrigin?: string 
     throw new WhiteboardValidationError(`unknown widget kind '${String(dc.kind)}' (expected one of ${WIDGET_KINDS.join(', ')})`);
   }
   const kind = dc.kind;
-  if (dc.ref !== undefined && !isValidRef(dc.ref)) throw new WhiteboardValidationError(`invalid widget ref: ${String(dc.ref)}`);
+  if (dc.ref !== undefined && !isValidWidgetRef(kind, dc.ref)) throw new WhiteboardValidationError(`invalid widget ref: ${String(dc.ref)}`);
   if (REF_KINDS.includes(kind) && dc.ref === undefined) throw new WhiteboardValidationError(`${kind} widget needs a ref`);
   if (dc.tag !== undefined && !isValidTag(dc.tag)) throw new WhiteboardValidationError(`invalid tag: ${String(dc.tag)}`);
   if (dc.size !== undefined && !isWidgetSize(dc.size)) {
@@ -106,6 +117,24 @@ export function validateWidgetPayload(raw: unknown, opts: { selfOrigin?: string 
       if (!item || typeof item !== 'object' || typeof item.id !== 'string' || typeof item.text !== 'string' || typeof item.done !== 'boolean') {
         throw new WhiteboardValidationError('each todo item must be {id: string, text: string, done: boolean}');
       }
+    }
+  }
+  if (dc.sections !== undefined) {
+    if (kind !== 'wiki') throw new WhiteboardValidationError(`sections apply to wiki widgets, not ${kind}`);
+    // The same rules the CLI's nav ops write by: ids, limits, page refs (slug or project path).
+    // Stored lists are complete: a section without its `pages` array is refused, never stored
+    // half-formed (readers still treat one that reached disk another way as empty: nav.ts).
+    try {
+      if (Array.isArray(dc.sections)) {
+        for (const sec of dc.sections) {
+          if (sec && typeof sec === 'object' && !Array.isArray((sec as Record<string, unknown>).pages)) {
+            throw new WhiteboardValidationError(`section '${String((sec as Record<string, unknown>).id)}' needs a pages array (use [] for none)`);
+          }
+        }
+      }
+      validateNav({ sections: dc.sections });
+    } catch (err) {
+      throw new WhiteboardValidationError(`wiki card: ${(err as Error).message}`);
     }
   }
   return dc as unknown as WidgetPayload;

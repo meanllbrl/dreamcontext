@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
  * build roots). `tests/unit/whiteboard-widget-mirror.test.ts` fails the moment the two drift.
  */
 
-export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web'] as const;
+export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki'] as const;
 export type WidgetKind = (typeof WIDGET_KINDS)[number];
 
 export const WIDGET_LINK_PREFIX = 'dreamcontext://';
@@ -16,15 +16,61 @@ export const WIDGET_LINK_PREFIX = 'dreamcontext://';
 /** Kinds whose payload points at a dreamcontext entity by slug. */
 export const REF_KINDS: readonly WidgetKind[] = ['insight', 'knowledge', 'task'];
 
+/** File types a page (a `knowledge` widget, a page on a wiki card) may point at by path. */
+export const PAGE_FILE_EXTENSIONS = ['.md', '.pdf', '.html', '.htm'] as const;
+export type PageKind = 'md' | 'pdf' | 'html';
+
+const PAGE_SLUG_RE = /^[a-z0-9][a-z0-9\-/]{0,200}$/;
+const MAX_PAGE_PATH = 500;
+
+/**
+ * What a page ref points at: `'knowledge'` for a knowledge slug, the file kind for a
+ * project-relative path, or null when the ref is neither. A path is relative (no leading `/`,
+ * `~`, drive letter or scheme), uses `/`, has no empty, `.` or `..` segment and no control
+ * character, and ends in one of {@link PAGE_FILE_EXTENSIONS}.
+ */
+export function pageRefKind(ref: unknown): 'knowledge' | PageKind | null {
+  if (typeof ref !== 'string' || !ref) return null;
+  if (PAGE_SLUG_RE.test(ref)) return ref.split('/').includes('..') ? null : 'knowledge';
+  if (ref.length > MAX_PAGE_PATH) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f\\:]/.test(ref) || ref.startsWith('/') || ref.startsWith('~')) return null;
+  if (ref.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) return null;
+  const lower = ref.toLowerCase();
+  if (lower.endsWith('.md')) return 'md';
+  if (lower.endsWith('.pdf')) return 'pdf';
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
+  return null;
+}
+
+/** A page ref: a knowledge slug OR a project-relative `.md` / `.pdf` / `.html` / `.htm` path. */
+export function isValidPageRef(ref: unknown): ref is string {
+  return pageRefKind(ref) !== null;
+}
+
 export interface TodoItem {
   id: string;
   text: string;
   done: boolean;
 }
 
+/** A page on a wiki card: a page ref ({@link isValidPageRef}) and an optional label. */
+export interface WikiPage {
+  ref: string;
+  label?: string;
+}
+
+/** One section of a wiki card's list; `id` is stable across renames and reorders. */
+export interface WikiSection {
+  id: string;
+  title: string;
+  pages: WikiPage[];
+}
+
 export interface WidgetPayload {
   v: 1;
   kind: WidgetKind;
+  /** insight/task: a slug. knowledge (a "page"): a knowledge slug or a project-relative .md/.pdf/.html path. */
   ref?: string;
   title?: string;
   markdown?: string;
@@ -34,6 +80,8 @@ export interface WidgetPayload {
   tag?: string;
   /** Grid size preset (A17). Absent: the dashboard derives the nearest preset from width/height. */
   size?: WidgetSize;
+  /** wiki: the card's own list of sections and pages (src/lib/whiteboards/nav.ts edits it). */
+  sections?: WikiSection[];
 }
 
 /**
@@ -53,6 +101,7 @@ export const DEFAULT_WIDGET_SIZES: Readonly<Record<WidgetKind, WidgetSize>> = {
   note: 'm',
   html: 'l',
   web: 'l',
+  wiki: 'l',
 };
 
 export function isWidgetSize(v: unknown): v is WidgetSize {

@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid';
 import { parseWhiteboard, sortElements } from './format.js';
 import { WhiteboardValidationError } from './errors.js';
-import { validateElement } from './validate.js';
+import { isValidWidgetRef, validateElement } from './validate.js';
 import {
   elementTag,
   newElementId,
@@ -14,8 +14,10 @@ import {
   type TodoItem,
   type WhiteboardElement,
   type WidgetPayload,
+  type WikiSection,
 } from './widgets.js';
 import { nextIndices } from './store.js';
+import { readWikiSections } from './nav.js';
 
 /**
  * Element-level operations behind the `dreamcontext whiteboard` verbs, kept out of the CLI so
@@ -135,6 +137,8 @@ export interface ElementView {
   /** A widget's grid size: its `dc.size`, or the preset nearest its width/height when unset. */
   size?: WidgetSize;
   items?: TodoItem[];
+  /** A wiki card's list of sections and pages. */
+  sections?: WikiSection[];
   url?: string;
   markdown?: string;
   html?: string;
@@ -157,6 +161,7 @@ export function describeElement(el: WhiteboardElement, full = false): ElementVie
     if (dc.ref) view.ref = dc.ref;
     if (dc.title) view.title = dc.title;
     if (dc.items) view.items = dc.items;
+    if (dc.kind === 'wiki') view.sections = readWikiSections(dc.sections);
     if (dc.url) view.url = dc.url;
     for (const key of ['markdown', 'html'] as const) {
       const v = dc[key];
@@ -236,6 +241,7 @@ export function applyUpdate(el: WhiteboardElement, u: WidgetUpdate, now = Date.n
     }
     if (u.ref !== undefined) {
       if (!['insight', 'knowledge', 'task'].includes(dc.kind)) throw new WhiteboardValidationError(`--ref does not apply to ${dc.kind} widgets`);
+      if (!isValidWidgetRef(dc.kind, u.ref)) throw new WhiteboardValidationError(`invalid ${dc.kind} ref '${u.ref}'`);
       dc.ref = u.ref;
       next.link = `dreamcontext://${dc.kind}/${u.ref}`;
     }
