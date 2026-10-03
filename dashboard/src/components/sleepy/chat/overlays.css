@@ -492,25 +492,3 @@
   overflow-x: auto;
 }
 
-/* ── A running teammate, docked in the background tray (BackgroundShellsTray) ──
-   Its role reads in the chat's UI face, not the shell rows' mono: it is a teammate, not a
-   command line. What it is doing now follows in secondary ink. */
-.chat-bgshells-row--mate .chat-bgshells-row-name {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  font-family: var(--font-family-text);
-  font-size: var(--font-size-sm);
-}
-.chat-bgshells-mate-role {
-  flex: 0 0 auto;
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text);
-}
-.chat-bgshells-mate-doing {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-secondary);
-}

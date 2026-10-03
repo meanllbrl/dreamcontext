@@ -1999,7 +1999,6 @@ export function ChatPane({
         onOpen={handleOpenShell}
         onStop={handleStopShell}
         teammates={runningTeammates}
-        onOpenTeammate={handleDrillIn}
       />
       {/* Live peer sessions, docked with the rows above for the same reason: a session in
           another project can be sitting blocked on a permission prompt, and a blocking row

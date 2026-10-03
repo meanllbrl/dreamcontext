@@ -11,6 +11,14 @@ function teammateLabel(run: SubAgentRun): string {
   return id ? AGENT_ROLES[id.role].label : (run.name.trim() || 'Teammate');
 }
 
+/** The header's name for the working crew, counted per role: "3 Builders", "Planner, 2 Builders".
+ *  Three identical names in a row ("Builder, Builder, Builder") said less than a number. */
+function crewLabel(mates: SubAgentRun[]): string {
+  const counts = new Map<string, number>();
+  for (const m of mates) counts.set(teammateLabel(m), (counts.get(teammateLabel(m)) ?? 0) + 1);
+  return [...counts].map(([label, n]) => (n === 1 ? label : `${n} ${label}s`)).join(', ');
+}
+
 /**
  * ORGANISM — the background-shells tray: a persistent strip above the composer listing every
  * shell the CLI is running in the background, with the two actions that surface actually
@@ -45,7 +53,7 @@ function statusWord(status: SubAgentRun['status']): string {
 }
 
 export function BackgroundShellsTray({
-  runs, onOpen, onStop, teammates = [], onOpenTeammate,
+  runs, onOpen, onStop, teammates = [],
 }: {
   runs: SubAgentRun[];
   onOpen: (run: SubAgentRun) => void;
@@ -56,13 +64,13 @@ export function BackgroundShellsTray({
    * The owner, 2026-09-26: "the planner was running, where is it? we only see a shell". The
    * teammate's card sits in the transcript where it was launched, and the lead then writes a
    * long message, so the only live thing left on screen was the lead's own "Wait for planner…"
-   * loop down here. A running teammate is live state exactly like a running shell, so it is
-   * docked here too, ABOVE the shells: its role, what it is doing now, its clock, and a click
-   * that opens its own transcript. Gone from here the moment it stops running; its card in
-   * the transcript keeps the record.
+   * loop down here. So a running teammate is NAMED in this header ("3 Builders are working")
+   * and counted into its clock — but never listed as rows or chips. The owner, 10-03: the
+   * transcript's team card and the run strip already show every builder, a third copy here
+   * was duplication, and it ignored the tray's collapse. Gone from the header the moment it
+   * stops running; its card in the transcript keeps the record.
    */
   teammates?: SubAgentRun[];
-  onOpenTeammate?: (run: SubAgentRun) => void;
 }) {
   // `tick` is this surface's clock: it drives the live elapsed readouts AND the eviction of
   // finished rows, so both read the same instant.
@@ -75,7 +83,9 @@ export function BackgroundShellsTray({
   // still readable, one click away), a running one is live state worth having open. The
   // tray sits over the composer, so a list that never closes costs the transcript real
   // height for rows about processes that exited minutes ago.
-  const { open: expanded, onToggle } = useGroupCollapse(shells);
+  const { open: shellsOpen, onToggle } = useGroupCollapse(shells);
+  // Nothing to disclose without a shell: teammates are named in the header only.
+  const expanded = shells.length > 0 && shellsOpen;
   useEffect(() => {
     // Live: a 1s heartbeat for the clocks, which also expires rows as it goes.
     if (running > 0) {
@@ -104,14 +114,14 @@ export function BackgroundShellsTray({
       <button
         type="button"
         className="chat-bgshells-head"
-        onClick={onToggle}
-        aria-expanded={expanded}
+        onClick={shells.length > 0 ? onToggle : undefined}
+        aria-expanded={shells.length > 0 ? expanded : undefined}
       >
         <span className="chat-bgshells-glyph" aria-hidden>▶</span>
         <span className="chat-bgshells-title">
           {mates.length > 0
             ? [
-              `${mates.map(teammateLabel).join(', ')} ${mates.length === 1 ? 'is' : 'are'} working`,
+              `${crewLabel(mates)} ${mates.length === 1 ? 'is' : 'are'} working`,
               shellsRunning > 0 ? `${shellsRunning} background shell${shellsRunning === 1 ? '' : 's'}` : null,
             ].filter(Boolean).join(' · ')
             : running > 0
@@ -123,38 +133,12 @@ export function BackgroundShellsTray({
         {outcome && <span className="chat-bgshells-note">{outcome}</span>}
         <span className="chat-bgshells-clock">{formatClock(elapsed)}</span>
         {running > 0 && <span className="chat-bgshells-spinner" aria-hidden />}
-        <span className="chat-bgshells-caret" aria-hidden>{expanded ? '▾' : '▸'}</span>
+        {shells.length > 0 && <span className="chat-bgshells-caret" aria-hidden>{expanded ? '▾' : '▸'}</span>}
       </button>
 
-      {(expanded || mates.length > 0) && (
+      {expanded && (
         <ul className="chat-bgshells-rows">
-          {/* Teammates first, and shown even with the tray collapsed: a collapsed tray is a
-              list of old shells, never a teammate that is working right now. */}
-          {mates.map((run) => (
-            <li className="chat-bgshells-row chat-bgshells-row--mate" key={`mate:${run.taskId}`} data-status={run.status}>
-              <button
-                type="button"
-                className="chat-bgshells-open"
-                onClick={() => onOpenTeammate?.(run)}
-                title="Open this teammate's conversation"
-              >
-                <span className="chat-bgshells-row-name">
-                  <span className="chat-bgshells-mate-role">{teammateLabel(run)}</span>
-                  {(run.activity || run.name) && (
-                    <span className="chat-bgshells-mate-doing">{run.activity || run.name}</span>
-                  )}
-                </span>
-                <span className="chat-bgshells-row-meta">
-                  <span className="chat-bgshells-row-status" data-status={run.status}>working</span>
-                  <span className="chat-bgshells-row-clock">{formatClock(runDurationMs(run, tick))}</span>
-                </span>
-              </button>
-              <span className="chat-bgshells-row-actions">
-                <button type="button" className="chat-bgshells-btn" onClick={() => onOpenTeammate?.(run)}>Open</button>
-              </span>
-            </li>
-          ))}
-          {expanded && shells.map((run) => (
+          {shells.map((run) => (
             <li className="chat-bgshells-row" key={run.taskId} data-status={run.status}>
               <button
                 type="button"
