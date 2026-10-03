@@ -363,3 +363,76 @@
   .wbt-tab,
   .wbt-tab-close { transition: none; }
 }
+
+/* ─── "are you sure" before a close ───
+ * Closing is not destructive, so nothing here is red: a question, one sentence of reassurance,
+ * a quiet Cancel and the primary Close. */
+
+.wbt-confirm {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 300px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+  transform-origin: top left;
+  animation: wbt-pop 200ms var(--ease-out) both;
+}
+
+@keyframes wbt-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wbt-confirm { animation-name: wbt-fade; }
+  @keyframes wbt-fade { from { opacity: 0; } to { opacity: 1; } }
+}
+
+.wbt-confirm-ask {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.wbt-confirm-note {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.wbt-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.wbt-confirm-cancel {
+  height: var(--space-8);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.wbt-confirm-cancel:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+
+.wbt-confirm-cancel:focus-visible,
+.wbt-confirm .wbs-primary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg-elevated), 0 0 0 4px var(--color-accent);
+}

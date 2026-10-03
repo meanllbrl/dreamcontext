@@ -1,28 +1,26 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import type { TLSSocket } from 'node:tls';
-import { existsSync, lstatSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isSameOriginAsHost } from '../remote-access.js';
-import { acquireFileLockWithin, releaseFileLock } from '../../lib/file-lock.js';
 import {
   boardName,
   createWhiteboard,
   DEFAULT_WHITEBOARD,
   ensureDefaultWhiteboard,
+  listTrashedWhiteboards,
   listWhiteboards,
   mutateWhiteboard,
   readWhiteboard,
-  resolveWhiteboardPath,
+  restoreWhiteboard,
+  TRASH_DIR,
+  trashWhiteboard,
   whiteboardRev,
-  whiteboardsDir,
 } from '../../lib/whiteboards/store.js';
 import { mergeElements } from '../../lib/whiteboards/merge.js';
 import { searchPages } from '../../lib/whiteboards/pages.js';
 import {
   WHITEBOARD_MAX_BODY_BYTES,
   WhiteboardError,
-  WhiteboardLockError,
   WhiteboardTooLargeError,
   WhiteboardValidationError,
   validatePutBody,
@@ -35,10 +33,6 @@ import {
 // (`mutateWhiteboard`: lock, read, merge, validate, strip tombstones, write only on a byte
 // change). This file maps HTTP onto it and adds the two things only a request knows: the
 // body cap and the dashboard's own origin (D7).
-
-const TRASH_DIR = '.trash';
-const LOCK_WAIT_MS = 5_000;
-const LOCK_STALE_MS = 30_000;
 
 /** Typed store errors carry their own status; anything else is a real 500. */
 function sendWhiteboardError(res: ServerResponse, err: unknown): void {
@@ -267,10 +261,9 @@ export async function handleWhiteboardPut(
 }
 
 /**
- * DELETE /api/whiteboards/:slug → moves the board folder to `whiteboards/.trash/<slug>-<ts>/`.
- * Taken under the same lock `mutateWhiteboard` uses, so a PUT in flight either lands before the
- * move or finds the board gone (404), never a half-moved folder. The trash carries its own
- * `*` .gitignore: a deleted board must not travel to teammates through brain sync.
+ * DELETE /api/whiteboards/:slug → moves the board folder to `whiteboards/.trash/<slug>-<ms>/`
+ * (store.ts `trashWhiteboard`). The trash is gitignored: a deleted board stays on this machine,
+ * restorable, and never travels to teammates through brain sync.
  */
 export async function handleWhiteboardDelete(
   _req: IncomingMessage,
@@ -284,32 +277,33 @@ export async function handleWhiteboardDelete(
     return;
   }
   try {
-    resolveWhiteboardPath(contextRoot, slug);
-    const base = whiteboardsDir(contextRoot);
-    // Same path as the store's per-board lock (store.ts `mutateWhiteboard`).
-    const lockPath = join(base, '.locks', `${slug}.lock`);
-    const held = await acquireFileLockWithin(lockPath, { waitMs: LOCK_WAIT_MS, staleMs: LOCK_STALE_MS });
-    if (!held) throw new WhiteboardLockError(`whiteboard '${slug}' is busy (another write holds its lock); try again`);
-    try {
-      const { dir } = resolveWhiteboardPath(contextRoot, slug);
-      const trash = join(base, TRASH_DIR);
-      if (isLink(trash) || (existsSync(trash) && !lstatSync(trash).isDirectory())) {
-        throw new WhiteboardValidationError('whiteboards/.trash is not a plain folder; refusing to move a board into it');
-      }
-      if (!existsSync(trash)) mkdirSync(trash);
-      const ignore = join(trash, '.gitignore');
-      if (!existsSync(ignore)) writeFileSync(ignore, '*\n', 'utf-8');
-      const trashed = `${slug}-${Date.now()}`;
-      renameSync(dir, join(trash, trashed));
-      sendJson(res, 200, { ok: true, slug, trashed: `${TRASH_DIR}/${trashed}` });
-    } finally {
-      releaseFileLock(lockPath);
-    }
+    const { id } = await trashWhiteboard(contextRoot, slug);
+    sendJson(res, 200, { ok: true, slug, trashed: `${TRASH_DIR}/${id}`, id });
   } catch (err) {
     sendWhiteboardError(res, err);
   }
 }
 
-function isLink(p: string): boolean {
-  try { return lstatSync(p).isSymbolicLink(); } catch { return false; }
+/** GET /api/whiteboards/trash → `{trash: [{id, slug, name, elements, deletedAt}]}`, newest first. */
+export async function handleWhiteboardTrashList(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  sendJson(res, 200, { trash: listTrashedWhiteboards(contextRoot) });
+}
+
+/** POST /api/whiteboards/trash/:id/restore → `{slug}`: the board is back, under that slug. */
+export async function handleWhiteboardRestore(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    sendJson(res, 200, await restoreWhiteboard(contextRoot, params.id));
+  } catch (err) {
+    sendWhiteboardError(res, err);
+  }
 }

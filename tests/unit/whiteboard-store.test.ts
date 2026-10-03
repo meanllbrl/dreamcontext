@@ -5,8 +5,8 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  createWhiteboard, ensureDefaultWhiteboard, listWhiteboards, mutateWhiteboard, nextIndices, readWhiteboard, whiteboardRev,
-  whiteboardsDir, DEFAULT_WHITEBOARD,
+  createWhiteboard, ensureDefaultWhiteboard, listTrashedWhiteboards, listWhiteboards, mutateWhiteboard, nextIndices,
+  readWhiteboard, restoreWhiteboard, trashWhiteboard, whiteboardRev, whiteboardsDir, DEFAULT_WHITEBOARD,
 } from '../../src/lib/whiteboards/store.js';
 import { parseWhiteboard, serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import { mergeElements } from '../../src/lib/whiteboards/merge.js';
@@ -326,5 +326,39 @@ describe('whiteboard widgets: sizes (A17)', () => {
     expect(nearestWidgetSize(320, 200)).toBe('m');
     expect(nearestWidgetSize(400, 300)).toBe('l');
     expect(nearestWidgetSize(900, 400)).toBe('xl');
+  });
+});
+
+describe('trash and restore', () => {
+  it('a deleted board moves to a gitignored trash, is listed there, and comes back intact', async () => {
+    const { slug } = createWhiteboard(root, 'Careful Plan');
+    await mutateWhiteboard(root, slug, (b) => { b.elements.push(note('a0', 'keep me')); });
+    const { id } = await trashWhiteboard(root, slug);
+
+    expect(listWhiteboards(root).map((b) => b.slug)).not.toContain(slug);
+    expect(readFileSync(join(whiteboardsDir(root), '.trash', '.gitignore'), 'utf-8')).toBe('*\n');
+    const trash = listTrashedWhiteboards(root);
+    expect(trash).toHaveLength(1);
+    expect(trash[0]).toMatchObject({ id, slug, name: 'Careful Plan', elements: 1 });
+
+    expect(await restoreWhiteboard(root, id)).toEqual({ slug });
+    expect(readWhiteboard(root, slug).board.elements).toHaveLength(1);
+    expect(listTrashedWhiteboards(root)).toEqual([]);
+  });
+
+  it('restores under a new slug when the old one was taken since', async () => {
+    const { slug } = createWhiteboard(root, 'Plan');
+    const { id } = await trashWhiteboard(root, slug);
+    createWhiteboard(root, 'Plan');
+    const restored = await restoreWhiteboard(root, id);
+    expect(restored.slug).toBe(`${slug}-2`);
+    expect(readWhiteboard(root, restored.slug).board.frontmatter.name).toBe('Plan');
+    expect(existsSync(join(whiteboardsDir(root), slug))).toBe(true);
+  });
+
+  it('refuses an id that is not a plain trash entry', async () => {
+    for (const bad of ['../x-1700000000000', 'nope', '.gitignore', 'x-1700000000000']) {
+      await expect(restoreWhiteboard(root, bad)).rejects.toBeInstanceOf(WhiteboardNotFoundError);
+    }
   });
 });

@@ -349,8 +349,10 @@ describe('useWhiteboards request paths', () => {
       'get LIST_PATH', 'post LIST_PATH', 'del boardUrl(slug', 'get boardUrl(slug', 'get `${url}/rev`', 'put url', 'get url',
       // A15: the server ensures the default board and returns its slug.
       'get `${LIST_PATH}/default`',
+      // The local trash: list it, restore from it.
+      'get TRASH_PATH', 'post restoreUrl(id',
     ]));
-    for (const call of calls) expect(call, call).toMatch(/ (LIST_PATH|boardUrl\(slug|url|`\$\{url\}\/rev`|`\$\{LIST_PATH\}\/default`)$/);
+    for (const call of calls) expect(call, call).toMatch(/ (LIST_PATH|TRASH_PATH|restoreUrl\(id|boardUrl\(slug|url|`\$\{url\}\/rev`|`\$\{LIST_PATH\}\/default`)$/);
   });
 });
 

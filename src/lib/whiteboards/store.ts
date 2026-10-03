@@ -64,10 +64,10 @@ const LOCK_STALE_MS = 30_000;
 export const DEFAULT_WHITEBOARD = { slug: 'control-panel', name: 'Control Panel' } as const;
 
 /**
- * Slugs `createWhiteboard` never hands out: `GET /api/whiteboards/default` and
- * `GET /api/whiteboards/pages` are routes, so a board slugged either could never be opened by GET.
+ * Slugs `createWhiteboard` never hands out: `GET /api/whiteboards/default`, `…/pages` and
+ * `…/trash` are routes, so a board slugged any of them could never be opened by GET.
  */
-const RESERVED_SLUGS = new Set(['default', 'pages']);
+const RESERVED_SLUGS = new Set(['default', 'pages', 'trash']);
 
 export function whiteboardsDir(root: string): string {
   return join(root, WHITEBOARDS_DIR);
@@ -420,4 +420,142 @@ export async function mutateWhiteboard(
   } finally {
     releaseFileLock(lockPath);
   }
+}
+
+// ─── trash ────────────────────────────────────────────────────────────────
+
+/**
+ * A deleted board is never removed: its folder moves to `whiteboards/.trash/<slug>-<ms>/`, and
+ * the trash carries its own `*` .gitignore, so the history stays on this machine and never
+ * travels to teammates through brain sync. {@link restoreWhiteboard} brings it back.
+ */
+export const TRASH_DIR = '.trash';
+const TRASH_ENTRY_RE = /^([a-z0-9][a-z0-9-]*)-(\d{10,})$/;
+
+export interface TrashedWhiteboard {
+  /** The trash folder's name, `<slug>-<ms>`: what {@link restoreWhiteboard} takes. */
+  id: string;
+  slug: string;
+  name: string;
+  elements: number;
+  deletedAt: string;
+}
+
+function trashDir(root: string): string {
+  return join(whiteboardsDir(root), TRASH_DIR);
+}
+
+function ensureTrashDir(root: string): string {
+  const trash = trashDir(root);
+  if (isSymlink(trash) || (existsSync(trash) && !lstatSync(trash).isDirectory())) {
+    throw new WhiteboardValidationError('whiteboards/.trash is not a plain folder; refusing to move a board into it');
+  }
+  if (!existsSync(trash)) mkdirSync(trash);
+  const ignore = join(trash, '.gitignore');
+  if (isSymlink(ignore)) throw new WhiteboardValidationError('whiteboards/.trash/.gitignore is a symlink; refusing to write through it');
+  if (!existsSync(ignore)) writeFileSync(ignore, '*\n', 'utf-8');
+  return trash;
+}
+
+async function withBoardLock<T>(root: string, slug: string, fn: () => T): Promise<T> {
+  const base = ensureWhiteboardsDir(root);
+  const lockPath = join(base, '.locks', `${slug}.lock`);
+  const held = await acquireFileLockWithin(lockPath, { waitMs: LOCK_WAIT_MS, staleMs: LOCK_STALE_MS });
+  if (!held) throw new WhiteboardLockError(`whiteboard '${slug}' is busy (another write holds its lock); try again`);
+  try {
+    return fn();
+  } finally {
+    releaseFileLock(lockPath);
+  }
+}
+
+/**
+ * Move a board into the trash. Taken under the board's own lock, so a write in flight either
+ * lands before the move or finds the board gone, never a half-moved folder.
+ */
+export async function trashWhiteboard(root: string, slug: string): Promise<{ id: string }> {
+  resolveWhiteboardPath(root, slug);
+  return withBoardLock(root, slug, () => {
+    const { dir } = resolveWhiteboardPath(root, slug);
+    const trash = ensureTrashDir(root);
+    let ms = Date.now();
+    while (existsSync(join(trash, `${slug}-${ms}`))) ms++;
+    const id = `${slug}-${ms}`;
+    renameSync(dir, join(trash, id));
+    return { id };
+  });
+}
+
+/** A trash entry's folder and board file, refusing anything not plain and contained. */
+function resolveTrashEntry(root: string, id: string): { dir: string; file: string; slug: string; ms: number } | null {
+  const m = TRASH_ENTRY_RE.exec(id);
+  if (!m || !isValidWhiteboardSlug(m[1])) return null;
+  const trash = trashDir(root);
+  try {
+    if (!lstatSync(trash).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  const dir = safeChildPath(trash, id);
+  if (!dir || isSymlink(dir)) return null;
+  const file = safeChildPath(dir, `${m[1]}${BOARD_SUFFIX}`);
+  if (!file) return null;
+  try {
+    if (!lstatSync(dir).isDirectory() || !lstatSync(file).isFile()) return null;
+  } catch {
+    return null;
+  }
+  return { dir, file, slug: m[1], ms: Number(m[2]) };
+}
+
+/** The trash, newest first. A board that does not parse is listed under its slug. */
+export function listTrashedWhiteboards(root: string): TrashedWhiteboard[] {
+  let entries: string[];
+  try {
+    if (!lstatSync(trashDir(root)).isDirectory()) return [];
+    entries = readdirSync(trashDir(root));
+  } catch {
+    return [];
+  }
+  const out: TrashedWhiteboard[] = [];
+  for (const id of entries) {
+    const entry = resolveTrashEntry(root, id);
+    if (!entry) continue;
+    let name = entry.slug;
+    let elements = 0;
+    try {
+      const board = parseWhiteboard(readFileSync(entry.file, 'utf-8'));
+      name = boardName(board, entry.slug);
+      elements = board.elements.filter((e) => e.isDeleted !== true).length;
+    } catch { /* listed by slug: it can still be restored and fixed by hand */ }
+    out.push({ id, slug: entry.slug, name, elements, deletedAt: new Date(entry.ms).toISOString() });
+  }
+  return out.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+}
+
+/**
+ * Bring a trashed board back. It returns under its old slug when that is free; a board made
+ * since under the same slug keeps it, and the restored one takes `<slug>-2`, `-3`….
+ */
+export async function restoreWhiteboard(root: string, id: string): Promise<{ slug: string }> {
+  const first = resolveTrashEntry(root, id);
+  if (!first) throw new WhiteboardNotFoundError(`nothing in the trash named '${id}'`);
+  const base = ensureWhiteboardsDir(root);
+  const free = (slug: string) => !RESERVED_SLUGS.has(slug) && !existsSync(join(base, slug)) && !isSymlink(join(base, slug));
+  for (let n = 1; n < 10_000; n++) {
+    const suffix = n === 1 ? '' : `-${n}`;
+    const slug = `${first.slug.slice(0, MAX_SLUG - suffix.length).replace(/-+$/, '')}${suffix}`;
+    if (!free(slug)) continue;
+    const done = await withBoardLock(root, slug, () => {
+      if (!free(slug)) return false;
+      const entry = resolveTrashEntry(root, id);
+      if (!entry) throw new WhiteboardNotFoundError(`nothing in the trash named '${id}'`);
+      const dir = join(base, slug);
+      renameSync(entry.dir, dir);
+      if (slug !== entry.slug) renameSync(join(dir, `${entry.slug}${BOARD_SUFFIX}`), join(dir, `${slug}${BOARD_SUFFIX}`));
+      return true;
+    });
+    if (done) return { slug };
+  }
+  throw new WhiteboardValidationError(`could not find a free slug to restore '${first.slug}'`);
 }

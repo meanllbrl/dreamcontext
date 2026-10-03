@@ -49,8 +49,15 @@ function useTabLayout(): [TabLayout, (update: (l: TabLayout) => TabLayout) => vo
 
 type Panel = 'boards' | 'create' | null;
 type Menu = { kind: 'tab'; slug: string; x: number; y: number } | { kind: 'group'; id: string; x: number; y: number } | null;
+/** A close waiting for "are you sure": closing never deletes a board, but a board that drops
+ *  off the strip feels lost, so every close asks first. In-app, not `confirm()`: a browser
+ *  dialog is a silent no-op in the desktop webview. */
+type Confirm = { ask: string; run: () => void; x: number; y: number } | null;
 /** Where a dragged tab would land: before `before` (null = the end), in `group`. */
 type DropAt = { before: string | null; group: string | null; mark: string; side: 'before' | 'after' | 'end' };
+
+/** `.wbt-confirm`'s width, so the popover is kept inside the strip. */
+const CONFIRM_WIDTH = 300;
 
 const newGroupId = () => `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -76,15 +83,19 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
   const [layout, change] = useTabLayout();
   const [panel, setPanel] = useState<Panel>(null);
   const [menu, setMenu] = useState<Menu>(null);
+  const [confirm, setConfirm] = useState<Confirm>(null);
   const [drag, setDrag] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropAt | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const closePanel = useCallback(() => setPanel(null), []);
   const closeMenu = useCallback(() => setMenu(null), []);
+  const closeConfirm = useCallback(() => setConfirm(null), []);
   useDismissOnOutside(panel !== null, closePanel, [rootRef]);
   useDismissOnOutside(menu !== null, closeMenu, [menuRef]);
+  useDismissOnOutside(confirm !== null, closeConfirm, [confirmRef]);
 
   // The open board always has a tab: a deep link, a chat link or "All boards" may open one
   // that is not on the strip.
@@ -122,6 +133,29 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
     if (next.tabs.length === 0) return;
     change(keep);
     if (!next.tabs.some((x) => x.slug === slug)) onOpen(next.tabs[0].slug);
+  };
+
+  /** Where a popover opens: under the element the click came from, in the strip's frame. */
+  const below = (el: Element) => {
+    const host = rootRef.current?.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    return { x: box.left - (host?.left ?? 0), y: box.bottom - (host?.top ?? 0) + 4 };
+  };
+
+  const askClose = (target: string, at: { x: number; y: number }) => {
+    if (single) return;
+    setMenu(null);
+    setPanel(null);
+    setConfirm({
+      ask: t('whiteboard.tabs.closeAsk').replace('{name}', nameOf(target)),
+      run: () => close(target),
+      ...at,
+    });
+  };
+
+  const askCloseMany = (ask: string, keep: (l: TabLayout) => TabLayout, at: { x: number; y: number }) => {
+    setMenu(null);
+    setConfirm({ ask, run: () => closeTabs(keep), ...at });
   };
 
   const openMenu = (e: MouseEvent, next: Exclude<Menu, null>) => {
@@ -213,7 +247,7 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
         draggable
         onClick={() => open(item.slug)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(item.slug); } }}
-        onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); close(item.slug); } }}
+        onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); askClose(item.slug, below(e.currentTarget)); } }}
         onContextMenu={(e) => menuAt(e, 'tab', item.slug)}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = 'move';
@@ -235,7 +269,7 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
             draggable={false}
             aria-label={`${t('whiteboard.tabs.close')} ${label}`}
             title={t('whiteboard.tabs.close')}
-            onClick={(e) => { e.stopPropagation(); close(item.slug); }}
+            onClick={(e) => { e.stopPropagation(); askClose(item.slug, below(e.currentTarget.closest('.wbt-tab') ?? e.currentTarget)); }}
           >
             <CloseGlyph />
           </button>
@@ -331,11 +365,12 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
                 }} />
               )}
               <div className="wbt-menu-sep" role="separator" />
-              <MenuItem label={t('whiteboard.tabs.close')} disabled={single} onClick={() => { close(menuTab.slug); setMenu(null); }} />
-              <MenuItem label={t('whiteboard.tabs.closeOthers')} disabled={single} onClick={() => {
-                closeTabs((l) => closeOtherTabs(l, menuTab.slug));
-                setMenu(null);
-              }} />
+              <MenuItem label={t('whiteboard.tabs.close')} disabled={single} onClick={() => askClose(menuTab.slug, menu)} />
+              <MenuItem label={t('whiteboard.tabs.closeOthers')} disabled={single} onClick={() => askCloseMany(
+                t('whiteboard.tabs.closeOthersAsk').replace('{n}', String(layout.tabs.length - 1)),
+                (l) => closeOtherTabs(l, menuTab.slug),
+                menu,
+              )} />
             </>
           )}
           {menuGroup && (
@@ -343,11 +378,39 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
               group={menuGroup}
               onChange={(patch) => change((l) => updateGroup(l, menuGroup.id, patch))}
               onUngroup={() => { change((l) => ungroup(l, menuGroup.id)); setMenu(null); }}
-              onClose={() => { closeTabs((l) => closeGroup(l, menuGroup.id)); setMenu(null); }}
+              onClose={() => askCloseMany(
+                t('whiteboard.tabs.closeGroupAsk')
+                  .replace('{name}', menuGroup.name || t('whiteboard.tabs.unnamed'))
+                  .replace('{n}', String(layout.tabs.filter((x) => x.group === menuGroup.id).length)),
+                (l) => closeGroup(l, menuGroup.id),
+                menu,
+              )}
               canClose={layout.tabs.some((x) => x.group !== menuGroup.id)}
               onDone={() => setMenu(null)}
             />
           )}
+        </div>
+      )}
+
+      {confirm && (
+        <div
+          className="wbt-confirm"
+          role="alertdialog"
+          aria-label={confirm.ask}
+          ref={confirmRef}
+          style={{ left: Math.max(0, Math.min(confirm.x, (rootRef.current?.clientWidth ?? 0) - CONFIRM_WIDTH)), top: confirm.y }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setConfirm(null); }}
+        >
+          <p className="wbt-confirm-ask">{confirm.ask}</p>
+          <p className="wbt-confirm-note">{t('whiteboard.tabs.closeNote')}</p>
+          <div className="wbt-confirm-actions">
+            <button type="button" className="wbt-confirm-cancel" autoFocus onClick={() => setConfirm(null)}>
+              {t('whiteboard.widget.cancel')}
+            </button>
+            <button type="button" className="wbs-primary" onClick={() => { const { run } = confirm; setConfirm(null); run(); }}>
+              {t('whiteboard.tabs.confirmClose')}
+            </button>
+          </div>
         </div>
       )}
     </div>

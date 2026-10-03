@@ -1,11 +1,13 @@
 /**
- * The board tab strip's two panels (A16): "All boards" (search, open, delete) and "New board".
+ * The board tab strip's two panels (A16): "All boards" (search, open, delete, restore a deleted
+ * board) and "New board".
  * The strip that opens them is BoardTabs.tsx.
  */
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import {
-  useCreateWhiteboard, useDeleteWhiteboard, useWhiteboardList, type WhiteboardSummary,
+  useCreateWhiteboard, useDeleteWhiteboard, useRestoreWhiteboard, useWhiteboardList, useWhiteboardTrash,
+  type TrashedWhiteboard, type WhiteboardSummary,
 } from '../../hooks/useWhiteboards';
 import {
   DEFAULT_BOARD_SLUG, canDeleteBoard, filterBoards, isDefaultBoard, moveActive, newBoardName, pickActive,
@@ -106,6 +108,8 @@ export function BoardsPanel({ current, onOpen, onNew }: {
         </ul>
       )}
 
+      <TrashSection onRestored={onOpen} />
+
       <div className="wbs-foot">
         <button type="button" className="wbs-foot-btn" onClick={onNew}>
           <PlusGlyph /> {t('whiteboard.switcher.new')}
@@ -198,6 +202,81 @@ function BoardRow({
       )}
     </li>
   );
+}
+
+// ── Recently deleted ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Deleted boards, folded under the list. A delete only moves the board into
+ * `whiteboards/.trash/`, which is gitignored: the history lives on this machine alone, and one
+ * click puts a board back (under a new slug if its old one was taken since).
+ */
+function TrashSection({ onRestored }: { onRestored: (slug: string) => void }) {
+  const { t } = useI18n();
+  const { data: trash, refetch } = useWhiteboardTrash();
+  useEffect(() => { void refetch(); }, [refetch]);
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
+  if (!trash || trash.length === 0) return null;
+  return (
+    <div className="wbs-trash" data-open={open ? '' : undefined}>
+      <button
+        type="button"
+        className="wbs-trash-toggle"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        title={t('whiteboard.switcher.trashHint')}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ChevronGlyph />
+        <span className="wbs-trash-title">{t('whiteboard.switcher.trash')}</span>
+        <span className="wbs-trash-count">{trash.length}</span>
+      </button>
+      {/* Always rendered, so the fold can animate open and shut (K18). */}
+      <div className="wbs-trash-fold" id={bodyId} inert={!open}>
+        <ul className="wbs-trash-list">
+          {trash.map((item) => <TrashRow key={item.id} item={item} onRestored={onRestored} />)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function TrashRow({ item, onRestored }: { item: TrashedWhiteboard; onRestored: (slug: string) => void }) {
+  const { t, locale } = useI18n();
+  const restore = useRestoreWhiteboard();
+  const deleted = new Date(item.deletedAt);
+  return (
+    <li className="wbs-trash-row">
+      <span className="wbs-row-text">
+        <span className="wbs-row-name">{item.name}</span>
+        <span className="wbs-row-meta" title={Number.isNaN(deleted.getTime()) ? undefined : deleted.toLocaleString(locale)}>
+          {item.elements === 1 ? t('whiteboard.switcher.elementsOne') : t('whiteboard.page.elements').replace('{n}', String(item.elements))}
+          {!Number.isNaN(deleted.getTime()) && <> · {agoText(item.deletedAt, locale)}</>}
+        </span>
+        {restore.isError && <span className="wbs-confirm-error">{restore.error?.message}</span>}
+      </span>
+      <button
+        type="button"
+        className="wbs-trash-restore"
+        disabled={restore.isPending}
+        onClick={() => restore.mutate(item.id, { onSuccess: (res) => { if (res?.slug) onRestored(res.slug); } })}
+      >
+        {t('whiteboard.switcher.restore')}
+      </button>
+    </li>
+  );
+}
+
+/** "3 minutes ago" in the reader's language: when it went matters, the clock time does not. */
+function agoText(iso: string, locale: string): string {
+  const s = Math.round((Date.parse(iso) - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  const abs = Math.abs(s);
+  if (abs < 60) return rtf.format(0, 'minute');
+  if (abs < 3600) return rtf.format(Math.round(s / 60), 'minute');
+  if (abs < 86400) return rtf.format(Math.round(s / 3600), 'hour');
+  return rtf.format(Math.round(s / 86400), 'day');
 }
 
 // ── New board ────────────────────────────────────────────────────────────────────────────────

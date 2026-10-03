@@ -14,8 +14,11 @@
  *       and another click unfolds it;
  *   T5  the layout (order, group, colour, collapse) survives a reload;
  *   T6  dragging a tab onto the strip's start reorders it;
- *   T7  closing a tab takes it off the strip, the board still exists on disk, the open board
- *       moves to its neighbour; the last tab has no close button.
+ *   T7  closing a tab first asks "are you sure" (Cancel keeps it); confirmed, it takes the tab
+ *       off the strip, the board still exists on disk, the open board moves to its
+ *       neighbour; the last tab has no close button;
+ *   T8  a deleted board lands in a gitignored local trash, "Recently deleted" lists it, and
+ *       Restore brings it back with its content and opens it.
  * Screenshots both themes to <scratch>/shots.
  */
 import { spawn, execFileSync } from 'node:child_process';
@@ -161,13 +164,57 @@ async function main() {
     const launch = page.locator('.wbt-tab', { hasText: 'Launch plan' });
     await launch.hover();
     await launch.locator('.wbt-tab-close').click();
+    const ask = page.locator('.wbt-confirm');
+    ok('T7 the close button asks first', await ask.isVisible() && (await ask.innerText()).includes('Launch plan'), await ask.innerText().catch(() => ''));
+    ok('T7 …and the tab is still there while it asks', (await tabNames(page)).includes('Launch plan'));
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: join(SHOTS, 'close-confirm.png'), clip: { x: 0, y: 0, width: 1440, height: 260 } });
+    await ask.locator('button', { hasText: 'Cancel' }).click();
+    ok('T7 Cancel keeps the tab', (await tabNames(page)).includes('Launch plan') && await ask.count() === 0);
+    await launch.hover();
+    await launch.locator('.wbt-tab-close').click();
+    await ask.locator('button', { hasText: /^Close$/ }).click();
     const after = await tabNames(page);
     ok('T7 closing a tab takes it off the strip', !after.includes('Launch plan'), JSON.stringify(after));
     ok('T7 …the open board moves to its neighbour', (await activeName(page)) === 'Control Panel', await activeName(page));
     ok('T7 …and the board itself still exists', existsSync(join(PROJ, '_dream_context', 'whiteboards', 'launch-plan')));
 
+    // T8
+    dc(['whiteboard', 'add', 'pricing-ideas', 'note', '--text', 'hand-made plan']);
+    await page.locator('.wbt-all').click();
+    const row = page.locator('.wbs-panel--boards .wbs-row', { hasText: 'Pricing ideas' });
+    await row.hover();
+    await row.locator('.wbs-row-delete').click();
+    await page.locator('.wbs-row--confirm button', { hasText: 'Delete' }).click();
+    // The confirm row stands in for the board's row while it asks, so wait for the trash, not the list.
+    await page.locator('.wbs-trash-toggle').waitFor({ timeout: 5000 });
+    const trashDir = join(PROJ, '_dream_context', 'whiteboards', '.trash');
+    ok('T8 a delete moves the board to the local trash', !existsSync(join(PROJ, '_dream_context', 'whiteboards', 'pricing-ideas')) && existsSync(trashDir));
+    let ignored = true;
+    try { execFileSync('git', ['check-ignore', '-q', join(trashDir, 'x')], { cwd: PROJ }); } catch { ignored = false; }
+    ok('T8 …which git ignores', ignored);
+    const toggle = page.locator('.wbs-trash-toggle');
+    await toggle.waitFor({ timeout: 5000 });
+    ok('T8 "Recently deleted" counts it', (await page.locator('.wbs-trash-count').innerText()) === '1', await toggle.innerText());
+    await toggle.click();
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: join(SHOTS, 'trash.png'), clip: { x: 900, y: 0, width: 540, height: 600 } });
+    await page.locator('.wbs-trash-row', { hasText: 'Pricing ideas' }).locator('button', { hasText: 'Restore' }).click();
+    await page.locator('.wbt-tab[aria-selected="true"]', { hasText: 'Pricing ideas' }).waitFor({ timeout: 5000 });
+    const shown = JSON.parse(dc(['whiteboard', 'show', 'pricing-ideas', '--json']));
+    ok('T8 Restore brings the board back, content and all, and opens it',
+      JSON.stringify(shown).includes('hand-made plan'), JSON.stringify(shown).slice(0, 200));
+    ok('T8 …and the trash is empty again', (await page.locator('.wbs-trash-toggle').count()) === 0);
+
     // dark theme shot
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    const rn = page.locator('.wbt-tab', { hasText: 'Control Panel' });
+    await rn.hover();
+    await rn.locator('.wbt-tab-close').click();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: join(SHOTS, 'close-confirm-dark.png'), clip: { x: 0, y: 0, width: 1440, height: 260 } });
+    await page.keyboard.press('Escape');
+    ok('T7 Escape dismisses the question and keeps the tab', (await page.locator('.wbt-confirm').count()) === 0 && (await tabNames(page)).includes('Control Panel'));
     await page.locator('.wbt-tab', { hasText: 'Research notes' }).click();
     await page.waitForTimeout(300);
     await page.screenshot({ path: join(SHOTS, 'tabs-dark.png'), clip: { x: 0, y: 0, width: 1440, height: 120 } });

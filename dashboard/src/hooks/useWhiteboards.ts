@@ -35,11 +35,14 @@ export function whiteboardFilePath(slug: string): string {
 }
 
 /** Paths for the `api` client, which adds the `/api` prefix itself: a literal `/api/…` here
- *  would request `/api/api/whiteboards`. Every whiteboard request goes through these two. */
+ *  would request `/api/api/whiteboards`. Every whiteboard request goes through these. */
 const LIST_PATH = '/whiteboards';
 const boardUrl = (slug: string) => `${LIST_PATH}/${encodeURIComponent(slug)}`;
+const TRASH_PATH = `${LIST_PATH}/trash`;
+const restoreUrl = (id: string) => `${TRASH_PATH}/${encodeURIComponent(id)}/restore`;
 
 const LIST_KEY = ['whiteboards'] as const;
+const TRASH_KEY = [...LIST_KEY, 'trash'] as const;
 
 /** The fit-on-open's clear margins, in screen px: the top clears Excalidraw's tool bar and the
  *  "To move canvas…" hint under it; the sides and bottom keep content off the edges. */
@@ -92,7 +95,41 @@ export function useDeleteWhiteboard() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (slug: string) => api.del<unknown>(boardUrl(slug)),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true }); },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true });
+      void qc.invalidateQueries({ queryKey: TRASH_KEY });
+    },
+  });
+}
+
+/** One row of `GET /api/whiteboards/trash` (mirrors `TrashedWhiteboard` in src/lib/whiteboards/store.ts). */
+export interface TrashedWhiteboard {
+  id: string;
+  slug: string;
+  name: string;
+  elements: number;
+  deletedAt: string;
+}
+
+/** Deleted boards, newest first. They sit in a gitignored trash on this machine only. */
+export function useWhiteboardTrash() {
+  const api = useApi();
+  return useQuery({
+    queryKey: TRASH_KEY,
+    queryFn: async () => (await api.get<{ trash: TrashedWhiteboard[] }>(TRASH_PATH)).trash ?? [],
+  });
+}
+
+export function useRestoreWhiteboard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ slug: string }>(restoreUrl(id), {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true });
+      void qc.invalidateQueries({ queryKey: TRASH_KEY });
+    },
   });
 }
 
