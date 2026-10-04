@@ -365,10 +365,32 @@ function auditBlockLength(elements) {
   return hits.length;
 }
 
+// ---------- whiteboard guard ----------
+/**
+ * A dreamcontext whiteboard (`_dream_context/whiteboards/<slug>/`, or any file whose frontmatter
+ * says `dreamcontext-whiteboard: 1`) is a live board the dashboard and the CLI write under a lock,
+ * with tombstones for what was deleted. Overwriting it from here replaces the whole scene outside
+ * that lock: widgets vanish and an open dashboard re-saves stale copies. It is never a target.
+ */
+function refuseWhiteboard(outPath) {
+  const abs = path.resolve(outPath);
+  const segs = abs.split(path.sep);
+  const i = segs.lastIndexOf('whiteboards');
+  const underBoards = i > 0 && segs[i - 1] === '_dream_context';
+  let marked = false;
+  try {
+    marked = /^dreamcontext-whiteboard:\s*1\s*$/m.test(fs.readFileSync(abs, 'utf8').split(/\n---\s*\n/)[0]);
+  } catch (e) { /* no file yet: nothing to overwrite */ }
+  if (underBoards || marked) {
+    throw new Error(`refusing to write ${outPath}: it is a dreamcontext whiteboard. Add widgets with \`dreamcontext whiteboard add <slug> <kind>\`, or draw shapes onto it with \`dreamcontext whiteboard draw <slug> --file <board.excalidraw.md>\` (build that file somewhere else first).`);
+  }
+}
+
 // ---------- main build ----------
 function buildExcalidraw(spec) {
   const outPath = spec.out;
   if (!outPath) throw new Error('spec.out (output .excalidraw.md path) is required');
+  refuseWhiteboard(outPath);
   // Expand composite types (charts, house-style widgets, stack/row) down to primitives first, so the
   // rest of the build only ever sees text/image/rectangle/line/… — one code path for JSON and JS.
   spec = Object.assign({}, spec, { elements: expandElements(spec.elements) });
