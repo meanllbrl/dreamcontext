@@ -1,4 +1,3 @@
-import { useLayoutEffect, useRef, useState } from 'react';
 import { useLabInsight, type InsightDetail } from '../../../hooks/useLab';
 import { formatValue } from '../../lab/chartBody';
 import { LineChart } from '../../lab/LineChart';
@@ -22,8 +21,7 @@ const SERIES_RENDERS = new Set(['number', 'line']);
  * query key, no second request) and formats the number the way every Lab readout does.
  *
  * L/XL do not reuse `InsightView` for a number or line insight: its full `number` body is the
- * figure WITH a sparkline AND a line chart (two charts), and its chart keeps a fixed height the
- * card letterboxes. Other renders (bar, pie, funnel…) are one chart already and stay on it.
+ * figure WITH a sparkline AND a line chart (two charts). Other renders (bar, pie, funnel…) are one chart already and stay on it.
  */
 export function InsightWidget({ payload, active, size }: WidgetProps) {
   const tx = useWbText();
@@ -101,44 +99,20 @@ function InsightHeadline({ detail, variant }: { detail: InsightDetail; variant: 
   );
 }
 
-/** LineChart's fixed viewBox width; its `height` prop is the viewBox height. */
-const CHART_VIEW_WIDTH = 560;
-
 /**
- * The Lab's line chart, filling the space left under the headline. LineChart draws into a
- * 560-wide viewBox at the height it is given, so the height handed to it is the box's own
- * aspect ratio at that width: the drawing then fills the box edge to edge instead of being
- * letterboxed. Layout sizes (not the bounding rect) so the board's zoom transform is ignored.
+ * The Lab's line chart, filling the space left under the headline. LineChart measures its own
+ * box in layout pixels (zoom-proof) and draws to it, so it is given no height: a fixed one would
+ * be a pixel height, and any guess at it overflows the card or letterboxes it.
  */
 function InsightChart({ detail }: { detail: InsightDetail }) {
   const tx = useWbText();
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const [viewHeight, setViewHeight] = useState<number | null>(null);
-  const series = detail.cache?.series ?? [];
-
-  useLayoutEffect(() => {
-    const box = boxRef.current;
-    if (!box) return;
-    const measure = () => {
-      const { clientWidth: w, clientHeight: h } = box;
-      if (w > 0 && h > 0) setViewHeight(Math.max(40, Math.round((CHART_VIEW_WIDTH * h) / w)));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(box);
-    return () => ro.disconnect();
-  }, []);
-
   return (
-    <div ref={boxRef} className="wb-insight-chart">
-      {viewHeight !== null && (
-        <LineChart
-          series={series}
-          unit={detail.cache?.unit ?? detail.insight.unit ?? null}
-          height={viewHeight}
-          emptyHint={tx('whiteboard.insight.noData', 'No data yet.')}
-        />
-      )}
+    <div className="wb-insight-chart">
+      <LineChart
+        series={detail.cache?.series ?? []}
+        unit={detail.cache?.unit ?? detail.insight.unit ?? null}
+        emptyHint={tx('whiteboard.insight.noData', 'No data yet.')}
+      />
     </div>
   );
 }

@@ -344,16 +344,11 @@
   height: auto;
 }
 
+/* LineChart fills this box and measures it; the box must have a definite height. */
 .wb-insight-chart {
+  position: relative;
   flex: 1;
   min-height: 0;
-}
-
-/* LineChart sizes its viewBox to this box's aspect; the svg fills the box. */
-.wb-insight-chart > div,
-.wb-insight-chart > div > svg {
-  width: 100%;
-  height: 100%;
 }
 
 /* Todo */
