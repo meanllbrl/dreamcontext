@@ -1015,6 +1015,12 @@ describe('formatClock', () => {
   it('clamps a negative elapsed to 0:00', () => {
     expect(formatClock(-1000)).toBe('0:00');
   });
+
+  it('counts hours past the hour, so a day-long run is not "1347:11"', () => {
+    expect(formatClock(3_599_000)).toBe('59:59');
+    expect(formatClock(3_600_000)).toBe('1:00:00');
+    expect(formatClock(80_831_000)).toBe('22:27:11');
+  });
 });
 
 // ─── splitInlineCode (permission description) ───────────────────────────────────

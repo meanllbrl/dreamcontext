@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   partyBatches, partyTitle, partyHeadline, partyOutcome, partyBeat, partyTally, deriveChatQuest, chatLineage,
-  runIdentity, runVerdict, runCarries, runDoing, type Party, type QuestEntry,
+  partyLine, runIdentity, runVerdict, runCarries, runDoing, runName, type Party, type QuestEntry,
 } from '../../dashboard/src/components/sleepy/chat/questModel';
 import type { SubAgentRun } from '../../dashboard/src/components/sleepy/chat/chatEntities';
 import { anchorsBySession, withTeammates, type TeammateWire } from '../../dashboard/src/components/sleepy/chat/teammates';
@@ -403,7 +403,37 @@ describe('party copy', () => {
   });
 });
 
+describe('the team board line', () => {
+  it('says a stage once per stretch, each phase by its step, and keeps the order a stage came back in', () => {
+    const { entries, runs } = lanternfishRun();
+    const parties = partyBatches(entries, runs);
+    const scout = agent('sc', 'Explore', 'Map the code');
+    const [scouting] = partyBatches([scout], [runFor(scout)]);
+    const line = (ps: Party[]) => partyLine(ps, (p) => p).map((g) => [g.stage, g.phases.map((ph) => ph.step)]);
+    // Two builds in a row share "Build"; a review between them starts its own stretch.
+    expect(line([parties[0], parties[2], parties[1], parties[3]])).toEqual([
+      ['Build', ['wave 6', 'wave 7']],
+      ['Boss gate', ['round 1', 'round 2']],
+    ]);
+    expect(line(parties)).toEqual([
+      ['Build', ['wave 6']], ['Boss gate', ['round 1']], ['Build', ['wave 7']], ['Boss gate', ['round 2']],
+    ]);
+    // A phase with no step is its own stretch: two scouting runs never merge into "Scouting  ·".
+    expect(line([scouting, scouting, parties[0]])).toEqual([['Scouting', [null]], ['Scouting', [null]], ['Build', ['wave 6']]]);
+  });
+});
+
 describe('one run', () => {
+  it('names an agent its role cannot tell apart, and never by a command line', () => {
+    expect(runName(runFor(agent('i', 'goal-implementer', 'phone UI and service worker')))).toBe('phone UI and service worker');
+    expect(runName(runFor(agent('t', 'general-purpose', 'tidy the readme')))).toBe('tidy the readme');
+    // A lens is its role: "Critic" already says which one.
+    expect(runName(runFor(agent('c', 'goal-plan-reviewer', 'critic lens')))).toBeNull();
+    // A registered teammate's brief names it whatever its role.
+    expect(runName(runFor(agent('r', 'reviewer', 'review lane H'), { session: 'abc', role: 'reviewer' }))).toBe('review lane H');
+    expect(runName(shellFor(bash('h', 'claude -p --resume x --fork-session "T3"'), { name: 'claude -p --resume x --fork-session "T3"' }))).toBeNull();
+  });
+
   it('reads a verdict from judges only', () => {
     const c = agent('c', 'goal-plan-reviewer', 'critic lens');
     expect(runVerdict(runFor(c, { summary: '**NEEDS_WORK** the premise' }))).toBe('needs-work');

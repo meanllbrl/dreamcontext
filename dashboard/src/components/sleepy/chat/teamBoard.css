@@ -1,6 +1,6 @@
-/* The team board on the chat's live rail (TeamBoard.tsx): one line of phases, opening into a
-   column per phase with a chip per agent. Tones mean outcome only: a phase or chip that is
-   simply running carries the accent, never a fill. */
+/* The team board on the chat's live rail (TeamBoard.tsx): one line of phases, opening into the
+   team of ONE phase. Tones mean outcome only: a phase or chip that is simply running carries
+   the accent, never a fill. The phase on show is a pointer, so it gets a neutral surface. */
 
 .chat-team-board {
   container-type: inline-size;
@@ -9,12 +9,12 @@
   background: var(--color-bg);
 }
 
-.chat-team-board-top { display: flex; align-items: stretch; }
+.chat-team-board-top { display: flex; align-items: stretch; min-height: 32px; }
 .chat-team-board-expand {
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  width: 30px;
+  width: 32px;
   border: none;
   border-left: 1px solid var(--color-border);
   background: transparent;
@@ -24,40 +24,61 @@
 .chat-team-board-expand:hover { color: var(--color-text); }
 .chat-team-board-expand:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 
-.chat-team-board-head {
+/* The line. Longer than the pane, it scrolls sideways (TeamBoard keeps the phase on show in
+   view) and fades at the edge instead of cutting a word in half. */
+.chat-team-board-rail {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-3, 12px);
-  padding: 6px 11px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+.chat-team-board-rail::-webkit-scrollbar { display: none; }
+.chat-team-board-group { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.chat-team-board-link {
+  width: 16px;
+  height: 1px;
+  margin: 0 8px;
+  background: var(--color-border-hover);
+}
+.chat-team-board-stage {
+  margin: 0 4px;
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.chat-team-board-phase {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
   border: none;
+  border-radius: var(--radius-full);
   background: transparent;
   font: inherit;
   color: var(--color-text-secondary);
-  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
-.chat-team-board-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; border-radius: var(--radius-md); }
+.chat-team-board-phase:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+.chat-team-board-phase:active { transform: scale(0.97); }
+.chat-team-board-phase:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-team-board[data-open] .chat-team-board-phase[data-current] { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-team-board-phase[data-tone='running'] { color: var(--color-text); }
+.chat-team-board-phase[data-solo] .chat-team-board-phase-name { color: var(--color-text); font-weight: var(--font-weight-semibold); }
 
-.chat-team-board-rail {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-}
-.chat-team-board-phase { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; }
-.chat-team-board-link {
-  width: 18px;
-  height: 1px;
-  margin: 0 6px;
-  background: var(--color-border-hover);
-}
 .chat-team-board-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--color-text-tertiary);
 }
@@ -68,72 +89,46 @@
 }
 .chat-team-board-phase[data-tone='good'] .chat-team-board-dot { background: var(--color-success); }
 .chat-team-board-phase[data-tone='bad'] .chat-team-board-dot { background: var(--color-warning); }
-.chat-team-board-phase-name {
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text);
-  font-weight: var(--font-weight-semibold);
-}
+.chat-team-board-phase-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .chat-team-board-phase-count { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
 
-.chat-team-board-sum {
+.chat-team-board-toggle {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--color-text-secondary);
   white-space: nowrap;
+  cursor: pointer;
 }
+.chat-team-board-toggle:hover { color: var(--color-text); }
+.chat-team-board-toggle:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; border-radius: var(--radius-md); }
 .chat-team-board-live { color: var(--color-accent-ink); }
-.chat-team-board-tally + .chat-team-board-live::before { content: '·'; margin-right: 4px; color: var(--color-text-secondary); }
-.chat-team-board-clock { margin-left: 6px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
-.chat-team-board-caret { margin-left: 6px; color: var(--color-text-tertiary); }
+.chat-team-board-clock { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.chat-team-board-caret { color: var(--color-text-tertiary); }
 
-/* The columns: one per phase, scrolling sideways past the pane's edge, never wrapping a phase
-   under another (the left-to-right order IS the run's order). */
-.chat-team-board-cols {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2, 8px);
-  max-height: 240px;
-  padding: 2px 11px 10px;
-  overflow: auto;
-}
-/* A column's width follows its chip tracks (--tracks, set by boardTracks), so every chip in the
-   board is the same width and the columns together fill the pane; a track stops growing at
-   240px, past which a pill only gets emptier. */
-.chat-team-board-col {
-  flex: var(--tracks, 1) 1 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: calc(var(--tracks, 1) * 124px + (var(--tracks, 1) - 1) * 4px);
-  max-width: calc(var(--tracks, 1) * 240px + (var(--tracks, 1) - 1) * 4px);
-}
-.chat-team-board-chips {
+/* The team of the phase on show: chips wrap across the width, so five agents are one row on a
+   wide pane, not a column five chips tall. A very large team scrolls inside five rows. */
+.chat-team-board-team {
   display: grid;
-  grid-template-columns: repeat(var(--tracks, 1), minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
   gap: 4px;
-}
-.chat-team-board-col-head {
-  padding: 0 2px 2px;
-  overflow: hidden;
-  color: var(--color-text-tertiary);
-  font-size: 10.5px;
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-height: 164px;
+  padding: 0 8px 8px;
+  overflow-y: auto;
 }
 
 .chat-team-board-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 8px 4px 4px;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px 0 4px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
   background: var(--color-bg-secondary);
@@ -143,9 +138,11 @@
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 .chat-team-board-chip:hover { background: var(--color-accent-soft); border-color: var(--color-accent); }
+.chat-team-board-chip:active { transform: scale(0.98); }
 .chat-team-board-chip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
 .chat-team-board-chip[data-tone='running'] { border-color: var(--color-accent); }
 .chat-team-board-chip:not([data-tone='running']) .chat-a-avatar { opacity: 0.7; }
+.chat-team-board-chip .chat-a-avatar { flex: 0 0 auto; }
 .chat-team-board-chip-label {
   flex: 1 1 auto;
   min-width: 0;
@@ -160,11 +157,11 @@
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border: 1.5px solid currentColor;
   border-radius: 50%;
-  font-size: 8.5px;
+  font-size: 9px;
   font-weight: var(--font-weight-bold);
   line-height: 1;
   color: var(--color-text-tertiary);
@@ -180,22 +177,26 @@
 @keyframes chat-team-board-spin { to { transform: rotate(360deg); } }
 @keyframes chat-team-board-pulse { 50% { box-shadow: 0 0 0 5px transparent; } }
 
-/* Narrow panes shed the header from the least needed end, so the phase that is running stays
-   named: the tally goes first, then every landed phase but the latest keeps only its dot and count. */
+/* Narrow panes shed the line from the least needed end, so the phase at work and the one on
+   show stay named: the agent count goes first, then every other phase keeps only its dot and
+   count, then only its dot, and a stage word with none of those two in its stretch. */
 @container (max-width: 720px) {
   .chat-team-board-tally { display: none; }
-  .chat-team-board-tally + .chat-team-board-live::before { content: none; }
-  .chat-team-board-phase:not([data-tone='running']):not(:last-child) .chat-team-board-phase-name { display: none; }
-  .chat-team-board-link { width: 10px; margin: 0 4px; }
+  .chat-team-board-phase:not([data-tone='running']):not([data-current]) .chat-team-board-phase-name { display: none; }
+  .chat-team-board-link { width: 8px; margin: 0 4px; }
 }
 @container (max-width: 420px) {
-  .chat-team-board-head { padding: 6px 8px; gap: var(--space-2, 8px); }
-  .chat-team-board-phase:not([data-tone='running']):not(:last-child) .chat-team-board-phase-count { display: none; }
-  .chat-team-board-phase-name { max-width: 110px; }
-  .chat-team-board-cols { padding: 2px 8px 8px; }
+  .chat-team-board-rail { padding: 4px; }
+  .chat-team-board-phase { padding: 0 4px; }
+  .chat-team-board-phase:not([data-tone='running']):not([data-current]) .chat-team-board-phase-count { display: none; }
+  .chat-team-board-group:not(:has([data-current], [data-tone='running'])) .chat-team-board-stage { display: none; }
+  .chat-team-board-toggle { padding: 0 8px; }
+  .chat-team-board-team { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .chat-team-board-chip-mark[data-tone='running'],
   .chat-team-board-phase[data-tone='running'] .chat-team-board-dot { animation: none; }
+  .chat-team-board-phase:active,
+  .chat-team-board-chip:active { transform: none; }
 }

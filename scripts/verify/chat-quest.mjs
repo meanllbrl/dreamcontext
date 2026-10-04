@@ -853,51 +853,64 @@ async function runThemeIn(browser, base, theme, report) {
   await sampleContrast();
   await shot(vis('.chat-live-rail'), 'plan-rail-round2');
   await shot(reviewCards().last(), 'party-round2-live');
-  // The team board: every party a column, open on its own while a round runs.
+  // The team board: a line of phases, opening into ONE phase's team. It folds while the live
+  // party's card is on screen (the card already shows that team), opens once the card is out
+  // of sight, and no pinned strip draws the same team under it (owner 2026-10-04).
   const board = () => vis('.chat-live-rail .chat-team-board');
-  const boardCols = async () => board().locator('.chat-team-board-col-head').evaluateAll((els) => els.map((e) => e.textContent.trim()));
-  ok('team board: open while round 2 runs, one column per party (scout, round 1, round 2)',
-    (await board().getAttribute('data-open').catch(() => null)) === 'true'
-      && JSON.stringify(await boardCols()) === JSON.stringify(['Scouting', 'Plan review · round 1', 'Plan review · round 2']),
-    JSON.stringify(await boardCols()));
-  ok('…its round-2 column has 3 chips, at least one running',
-    (await board().locator('.chat-team-board-col').last().locator('.chat-team-board-chip').count()) === 3
-      && (await board().locator('.chat-team-board-chip[data-tone="running"]').count()) >= 1);
-  ok('…the header counts "3 phases · 7 agents"', ((await board().locator('.chat-team-board-sum').innerText().catch(() => '')) || '').includes('3 phases · 7 agents'),
-    await board().locator('.chat-team-board-sum').innerText().catch(() => '<no board>'));
+  const boardOpen = async () => (await board().getAttribute('data-open').catch(() => null)) === 'true';
+  const liveCardInView = () => page.evaluate(() => {
+    const card = [...document.querySelectorAll('.chat-subagents[data-outcome="running"]')].find((e) => e.getClientRects().length);
+    const scroller = card?.closest('.chat-scroll');
+    if (!card || !scroller) return null;
+    const c = card.getBoundingClientRect();
+    const v = scroller.getBoundingClientRect();
+    return Math.min(c.bottom, v.bottom) - Math.max(c.top, v.top) >= Math.min(64, c.height);
+  });
+  const cardInView = await liveCardInView();
+  ok('team board: folded while the live card is on screen, open while it is not',
+    cardInView !== null && (await boardOpen()) === !cardInView, `cardInView=${cardInView} open=${await boardOpen()}`);
+  ok('…and no pinned strip draws the same team a second time under it', (await vis('.chat-subagents-rail').count()) === 0,
+    `rails=${await vis('.chat-subagents-rail').count()}`);
+  const lineWords = async () => ({
+    stages: await board().locator('.chat-team-board-stage').allTextContents(),
+    phases: await board().locator('.chat-team-board-phase-name').allTextContents(),
+  });
+  ok('…its line says each phase once and "Plan review" once for both rounds',
+    JSON.stringify(await lineWords()) === JSON.stringify({ stages: ['Plan review'], phases: ['Scouting', 'round 1', 'round 2'] }),
+    JSON.stringify(await lineWords()));
+  if (!(await boardOpen())) await board().locator('.chat-team-board-phase[data-current]').click().catch(() => {});
+  const chipLabels = async () => board().locator('.chat-team-board-chip-label').allTextContents();
+  ok('…open, it shows the round-2 team only: 3 chips, each named apart, at least one running',
+    (await boardOpen()) && (await board().locator('.chat-team-board-chip').count()) === 3
+      && new Set(await chipLabels()).size === 3
+      && (await board().locator('.chat-team-board-chip[data-tone="running"]').count()) >= 1,
+    JSON.stringify(await chipLabels()));
+  ok('…the summary says who is working', /\d+ working/.test(await board().locator('.chat-team-board-toggle').innerText().catch(() => '')),
+    await board().locator('.chat-team-board-toggle').innerText().catch(() => '<no board>'));
   await shot(board(), 'team-board-live');
-  // The columns share the width: they reach the board's right edge (unless every chip track is
-  // at its 240px cap), and a column folds its chips into tracks instead of a tall stack.
-  const boardFill = () => board().evaluate((el) => {
-    const cols = el.querySelector('.chat-team-board-cols');
-    const style = getComputedStyle(cols);
-    const edge = cols.getBoundingClientRect().right - parseFloat(style.paddingRight);
-    const colEls = [...cols.querySelectorAll('.chat-team-board-col')];
-    const chips = [...cols.querySelectorAll('.chat-team-board-chip')].map((c) => c.getBoundingClientRect());
-    const rows = (col) => new Set([...col.querySelectorAll('.chat-team-board-chip')].map((c) => Math.round(c.getBoundingClientRect().top))).size;
+  // The team wraps across the width: three agents are ONE row wherever three chips fit, so the
+  // board is never a tall column beside empty ones.
+  const teamFit = () => board().evaluate((el) => {
+    const team = el.querySelector('.chat-team-board-team');
+    const chips = [...team.querySelectorAll('.chat-team-board-chip')].map((c) => c.getBoundingClientRect());
     return {
-      gap: Math.round(edge - colEls[colEls.length - 1].getBoundingClientRect().right),
-      capped: chips.every((r) => r.width >= 239),
+      rows: new Set(chips.map((r) => Math.round(r.top))).size,
       widths: [...new Set(chips.map((r) => Math.round(r.width)))],
-      rows: colEls.map(rows),
-      counts: colEls.map((c) => c.querySelectorAll('.chat-team-board-chip').length),
-      overflow: cols.scrollWidth > cols.clientWidth + 1,
+      overflow: team.scrollWidth > team.clientWidth + 1,
+      height: Math.round(el.getBoundingClientRect().height),
     };
   });
   for (const w of [null, 760, 560]) {
     if (w) await board().evaluate((el, px) => { el.style.width = `${px}px`; }, w);
     await page.waitForTimeout(150);
-    const fill = await boardFill();
-    // At 760px the 1+3+3 chips fit two rows (1, 2 and 2 tracks): the 3-agent rounds fold.
-    ok(`team board ${w ? `at ${w}px` : 'on the rail'}: columns fill the width, every chip one width${w === 760 ? ', rounds folded to 2 rows' : ''}`,
-      (fill.gap <= 2 || fill.capped) && !fill.overflow && fill.widths.length <= 2
-        && (w !== 760 || JSON.stringify(fill.rows) === '[1,2,2]'),
-      JSON.stringify(fill));
+    const fit = await teamFit();
+    ok(`team board ${w ? `at ${w}px` : 'on the rail'}: the team is one row, every chip one width, nothing overflows`,
+      fit.rows === 1 && fit.widths.length === 1 && !fit.overflow, JSON.stringify(fit));
     await shot(board(), `team-board-fill-${w ?? 'rail'}`);
   }
   await board().evaluate((el) => { el.style.width = ''; });
-  // Responsive: squeezed to a narrow pane, the header sheds the tally and the landed phases'
-  // names, so the running phase stays named and nothing in the header overflows.
+  // Responsive: squeezed to a narrow pane, the line sheds the landed phases' names, so the
+  // running phase stays named and in view and nothing in the top row overflows.
   for (const w of [560, 380]) {
     await board().evaluate((el, px) => { el.style.width = `${px}px`; }, w);
     await page.waitForTimeout(150);
@@ -905,15 +918,17 @@ async function runThemeIn(browser, base, theme, report) {
       const shown = (sel) => [...el.querySelectorAll(sel)].filter((n) => n.getClientRects().length > 0);
       const running = el.querySelector('.chat-team-board-phase[data-tone="running"] .chat-team-board-phase-name');
       const rail = el.querySelector('.chat-team-board-rail');
-      const head = el.querySelector('.chat-team-board-head');
+      const top = el.querySelector('.chat-team-board-top');
       return {
         tally: shown('.chat-team-board-tally').length,
         names: shown('.chat-team-board-phase-name').length,
-        runningNamed: !!running && running.getClientRects().length > 0 && running.getBoundingClientRect().right <= rail.getBoundingClientRect().right + 1,
-        headFits: head.scrollWidth <= head.clientWidth + 1,
+        runningNamed: !!running && running.getClientRects().length > 0
+          && running.getBoundingClientRect().right <= rail.getBoundingClientRect().right + 1
+          && running.getBoundingClientRect().left >= rail.getBoundingClientRect().left - 1,
+        headFits: top.scrollWidth <= top.clientWidth + 1,
       };
     });
-    ok(`team board at ${w}px: tally hidden, only the running phase named and in view, header fits`,
+    ok(`team board at ${w}px: tally hidden, only the running phase named and in view, top row fits`,
       fit.tally === 0 && fit.names === 1 && fit.runningNamed && fit.headFits, JSON.stringify(fit));
     await shot(board(), `team-board-${w}`);
   }
@@ -939,10 +954,14 @@ async function runThemeIn(browser, base, theme, report) {
   ok('team board: folds to its one line once every agent landed',
     (await vis('.chat-live-rail .chat-team-board').getAttribute('data-open').catch(() => 'missing')) === null
       && (await vis('.chat-live-rail .chat-team-board-chip').count()) === 0);
-  await vis('.chat-live-rail .chat-team-board-head').first().click().catch(() => {});
-  ok('…a click opens it again, every chip marked landed',
-    (await vis('.chat-live-rail .chat-team-board-chip').count()) === 7
+  await vis('.chat-live-rail .chat-team-board-toggle').first().click().catch(() => {});
+  ok('…a click opens the newest phase again, every chip marked landed',
+    (await vis('.chat-live-rail .chat-team-board-chip').count()) === 3
       && (await vis('.chat-live-rail .chat-team-board-chip[data-tone="running"]').count()) === 0);
+  await vis('.chat-live-rail .chat-team-board-phase').first().click().catch(() => {});
+  ok('…and a phase on the line shows its own team instead: Scouting is the scout alone',
+    (await vis('.chat-live-rail .chat-team-board-chip').count()) === 1
+      && (await vis('.chat-live-rail .chat-team-board-phase').first().getAttribute('aria-pressed')) === 'true');
   await shot(vis('.chat-live-rail .chat-team-board'), 'team-board-done');
   const firstChip = vis('.chat-live-rail .chat-team-board-chip').first();
   await firstChip.click().catch(() => {});
@@ -950,7 +969,7 @@ async function runThemeIn(browser, base, theme, report) {
     await until(async () => (await page.locator('.chat-slideover-panel').count()) > 0, 8000));
   await vis('.chat-slideover-close').first().click().catch(() => {});
   await until(async () => (await page.locator('.chat-slideover-panel').count()) === 0, 5000);
-  await vis('.chat-live-rail .chat-team-board-head').first().click().catch(() => {});
+  await vis('.chat-live-rail .chat-team-board-toggle').first().click().catch(() => {});
   // §5: the seal stamps once. PLAN-ANSWER sent 7 agents (a scout, then 3 lenses twice).
   const sealStats = async () => ((await vis('.chat-live-rail .quest-victory-stats').first().innerText().catch(() => '')) || '').trim();
   const sealAtWin = await sealStats();

@@ -113,6 +113,10 @@ const RAIL_CLEARANCE = 64;
 /** How long a jumped-to sub-agent row stays flashed. */
 const FLASH_MS = 1600;
 
+/** How much of the live party's card must show for the team board to fold behind it: its
+ *  header and the top of a row. A shorter card counts once it is all in view. */
+const TEAM_IN_VIEW_PX = 64;
+
 /** How many candidate anchor rows a reveal captures to measure its own prepend against.
  *  One would do for every row keyed by `item.id`; the spares exist because the combined
  *  `SubAgentCard`'s key can migrate on the very reveal being measured — see `revealEarlier`. */
@@ -219,8 +223,9 @@ function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
 function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
   session: ChatSession;
   taskSlug?: string;
-  /** Every party this chat drew, for the team board (renders nothing under two). */
-  team: { parties: Party[]; runsOf: (p: Party) => SubAgentRun[]; onDrillIn: (run: SubAgentRun) => void };
+  /** Every party this chat drew, for the team board (renders nothing under two), and whether
+   *  the live party's card is on screen, which folds the board. */
+  team: { parties: Party[]; runsOf: (p: Party) => SubAgentRun[]; onDrillIn: (run: SubAgentRun) => void; inView: boolean };
   /** This chat's quest, or null outside Plan/Develop (and before the first message). */
   quest: QuestView | null;
   /** The Develop chat's "How this was built" tree; null for a plan, which built nothing. */
@@ -269,6 +274,7 @@ function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
           runsOf={team.runsOf}
           onDrillIn={team.onDrillIn}
           onExpand={goalActive && !goalWon ? () => setGoalOpen(true) : undefined}
+          teamInView={team.inView}
         />
       )}
       <CouncilLivePanel claudeId={session.claudeId} enabled={live} />
@@ -906,6 +912,10 @@ export function ChatPane({
    *  rail only ever shows while a run is going, so the fallback just keeps the ref measured. */
   const railParty = [...drawnParties].reverse().find((p) => liveRunsOf(p).some((r) => r.status === 'running'))
     ?? drawnParties[drawnParties.length - 1] ?? null;
+  /** A chat with a team board pins nothing over its transcript: the board on the live rail is
+   *  already the run, opening on its own once the card scrolls away, and a pinned strip under
+   *  it drew the same team a third time (owner 2026-10-04). */
+  const teamBoardShows = teamBoardState(drawnParties, liveRunsOf).shows;
   /** The Bash calls that started a headless teammate. Each keeps its own row (the party card
    *  follows the first), so none may fold into a run of plain steps. */
   const headlessToolUseIds = new Set(
@@ -1258,14 +1268,22 @@ export function ChatPane({
   // taller than the viewport is not an intersection change at all.
   const [subAgentCardEl, setSubAgentCardEl] = useState<HTMLDivElement | null>(null);
   const [railPinned, setRailPinned] = useState(false);
+  /** The same card, on screen: the team board folds to its line while it is, since the card
+   *  already shows the team (owner 2026-10-04). Read off the same two rects as the pin. */
+  const [teamInView, setTeamInView] = useState(false);
   /** The run a rail chip last jumped to. `n` makes a repeat click on the SAME chip a new
    *  state value, so the flash replays instead of silently doing nothing. */
   const [jumped, setJumped] = useState<{ id: string | null; n: number } | null>(null);
 
   const syncRail = useCallback(() => {
     const scroller = scrollRef.current;
-    if (!scroller || !subAgentCardEl || scroller.clientHeight === 0) { setRailPinned(false); return; }
-    setRailPinned(subAgentCardEl.getBoundingClientRect().top < scroller.getBoundingClientRect().top);
+    if (!scroller || !subAgentCardEl || scroller.clientHeight === 0) { setRailPinned(false); setTeamInView(false); return; }
+    const card = subAgentCardEl.getBoundingClientRect();
+    const view = scroller.getBoundingClientRect();
+    setRailPinned(card.top < view.top);
+    // Its header and a row, or all of a shorter card: a sliver at the edge is not "on screen".
+    const shown = Math.min(card.bottom, view.bottom) - Math.max(card.top, view.top);
+    setTeamInView(card.height > 0 && shown >= Math.min(TEAM_IN_VIEW_PX, card.height));
   }, [subAgentCardEl]);
 
   // Re-measure when the card mounts/unmounts (`syncRail` identity follows `subAgentCardEl`)
@@ -1768,7 +1786,7 @@ export function ChatPane({
         taskSlug={taskSlug}
         quest={quest}
         lineage={lineage}
-        team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn }}
+        team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn, inView: teamInView }}
       />
       {session.status === 'connecting' && <ReconnectingChip />}
       <div className="chat-transcript">
@@ -1985,7 +2003,7 @@ export function ChatPane({
         {/* Pinned OVER the transcript's top edge (never inside the scroller — see the
             "jump to latest" note above, which holds for the same reasons). It renders
             nothing at all unless a run is still going. */}
-        {railPinned && (
+        {railPinned && !teamBoardShows && (
           <SubAgentRail
             runs={railParty ? liveRunsOf(railParty) : []}
             party={railParty}

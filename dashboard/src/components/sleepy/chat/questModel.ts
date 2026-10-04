@@ -120,6 +120,20 @@ export function runCarries(run: SubAgentRun): Carries | null {
   return null;
 }
 
+/** Roles whose label alone does not say which one this is: five builders are five "Builder"s. */
+const NAMED_ROLES: ReadonlySet<AgentRoleId> = new Set(['implementer', 'headless', 'agent']);
+
+/**
+ * Which one this agent is, in its own words: the brief's name ("phone UI and service worker")
+ * when the role alone cannot tell it from its teammates, or a registered teammate's brief
+ * whatever its role. Null when the name is a command line rather than words a person wrote.
+ */
+export function runName(run: SubAgentRun): string | null {
+  if (!NAMED_ROLES.has(runIdentity(run).role) && !isTeammateRun(run)) return null;
+  const name = run.name.trim();
+  return name && !JARGON_RE.test(name) ? name : null;
+}
+
 /** The row's "doing" line: what it is on right now, or how it ended. */
 export function runDoing(run: SubAgentRun): string {
   const { stage } = runIdentity(run);
@@ -336,15 +350,40 @@ export function partyBatches(entries: readonly QuestEntry[], runs: readonly SubA
 /** The card's kicker: "Plan review · round 2", "Build · wave 1", "Scouting". A build names
  *  the wave its builders were registered with; only an unregistered one counts its place. */
 export function partyTitle(p: Party): string {
+  const { stage, step } = partyTitleParts(p);
+  return step ? `${stage} · ${step}` : stage;
+}
+
+/** The kicker's two halves: the stage ("Build") and, when the stage repeats, which one ("wave 3"). */
+export function partyTitleParts(p: Party): { stage: string; step: string | null } {
   switch (p.stage) {
     case 'review': case 'boss': case 'trial':
-      return `${QUEST_STAGE_LABELS[p.stage]} · round ${p.round}`;
+      return { stage: QUEST_STAGE_LABELS[p.stage], step: `round ${p.round}` };
     case 'build':
-      return `${QUEST_STAGE_LABELS.build} · wave ${p.wave ?? p.round}`;
-    case 'scout': return 'Scouting';
-    case 'none': return 'Teamwork';
-    default: return QUEST_STAGE_LABELS[p.stage];
+      return { stage: QUEST_STAGE_LABELS.build, step: `wave ${p.wave ?? p.round}` };
+    case 'scout': return { stage: 'Scouting', step: null };
+    case 'none': return { stage: 'Teamwork', step: null };
+    default: return { stage: QUEST_STAGE_LABELS[p.stage], step: null };
   }
+}
+
+/** One run of the team board's line: a stage word said once, then each of its phases by its step. */
+export interface PartyLineGroup<T> { stage: string; phases: Array<{ phase: T; step: string | null }> }
+
+/**
+ * The team board's line: consecutive phases of one stage share the stage word ("Build  wave 1 ·
+ * wave 3"), so it is said once instead of per phase. A phase with no step (Scouting) is its own
+ * group. Order is kept: a stage that comes back later starts a new group.
+ */
+export function partyLine<T>(phases: readonly T[], partyOf: (phase: T) => Party): PartyLineGroup<T>[] {
+  const groups: PartyLineGroup<T>[] = [];
+  for (const phase of phases) {
+    const { stage, step } = partyTitleParts(partyOf(phase));
+    const last = groups[groups.length - 1];
+    if (step && last && last.stage === stage && last.phases[0].step) last.phases.push({ phase, step });
+    else groups.push({ stage, phases: [{ phase, step }] });
+  }
+  return groups;
 }
 
 /** "Scout", or "3 reviewers": the party named the way a person would count it. */

@@ -384,7 +384,10 @@ export function formatDuration(ms: number): string {
 /** `0:24` · `1:04` · `12:03` — the sub-agent group's elapsed clock. */
 export function formatClock(ms: number): string {
   const secs = Math.max(0, Math.round(ms / 1000));
-  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  // Past an hour the minutes become hours: a run of a day read "1347:11", which nobody parses.
+  if (secs >= 3600) return `${Math.floor(secs / 3600)}:${pad(Math.floor(secs / 60) % 60)}:${pad(secs % 60)}`;
+  return `${Math.floor(secs / 60)}:${pad(secs % 60)}`;
 }
 
 /**

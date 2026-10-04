@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  summarizeSubAgents, formatClock, runMetaChips, isAgentRun, isHeadlessAgentShell, isTeammateRun,
+  summarizeSubAgents, formatClock, runMetaChips, isAgentRun, isHeadlessAgentShell,
   useGroupCollapse, groupOutcomeNote, reportableRuns,
   type SubAgentRun,
 } from './chatEntities';
@@ -9,13 +9,13 @@ import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
 import { peerLogoUrl } from '../../../api/client';
 import { useVault } from '../../../context/VaultContext';
 import { AGENT_ROLES, type AgentRoleId } from '../../../lib/agentRoles';
-import { JARGON_RE, VERDICT_LABELS, freshExplainer, type Verdict } from '../../../lib/quest';
+import { VERDICT_LABELS, freshExplainer, type Verdict } from '../../../lib/quest';
 import { AgentAvatar, QuestBadge, VerdictChip } from './atoms';
 import { RoleCharacter } from './RoleCharacter';
 import { CardHeader } from './molecules';
 import {
   partyBatches, partyHeadline, partyOutcome, partyTally, partyTitle,
-  runCarries, runDoing, runIdentity, runVerdict,
+  runCarries, runDoing, runIdentity, runName, runVerdict,
   type Party, type PartyOutcome,
 } from './questModel';
 
@@ -58,15 +58,6 @@ function statusMark(status: SubAgentRun['status']): string {
  */
 function resolveParty(runs: SubAgentRun[], party: Party | null | undefined): Party | null {
   return party ?? partyBatches([], runs)[0] ?? null;
-}
-
-/** Roles whose label alone does not say which one this is: the run's own words go beside it. */
-const NAMED_ROLES: ReadonlySet<AgentRoleId> = new Set(['implementer', 'headless', 'agent']);
-
-/** A run's name, only when it is words a person wrote (a dispatch description), never a command line. */
-function speakableName(run: SubAgentRun): string | null {
-  const name = run.name.trim();
-  return name && !JARGON_RE.test(name) ? name : null;
 }
 
 /** The row's hover text: the whole identity, plumbing included, for whoever wants it. */
@@ -221,7 +212,7 @@ export function SubAgentCard({
             const carries = runCarries(run);
             // A teammate's line is its brief, whatever its role: it is the one place on the card
             // that says what this Planner was asked to do.
-            const name = NAMED_ROLES.has(role) || isTeammateRun(run) ? speakableName(run) : null;
+            const name = runName(run);
             // ONE entry per agent (owner 09-27): the row and, once it landed, its report under
             // the row's line. A button cannot hold the report's own expander, so the row and the
             // report are siblings inside the entry rather than one nested in the other.
