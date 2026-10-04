@@ -1176,6 +1176,16 @@ describe('nextStickToBottom', () => {
     expect(nextStickToBottom(true, at(900, 1400))).toBe(false);
   });
 
+  it('a gesture up that starts at the bottom leaves at once, inside the slack too', () => {
+    // Owner recording 10-04: scrolling up during a stream snapped back on its first frames —
+    // −29px by the wheel, +54px one frame later. The first 48px of the gesture were still
+    // "at the bottom", so the next token re-pinned the reader. Moving up is leaving.
+    expect(nextStickToBottom(true, at(1500 - 10, 1500))).toBe(false);
+    expect(nextStickToBottom(true, at(1500 - BOTTOM_SLACK, 1500))).toBe(false);
+    // …and a clamp inside the slack, with no gesture up behind it, still does not.
+    expect(nextStickToBottom(true, churn(1500 - 10, 1500))).toBe(true);
+  });
+
   it('keeps sticking while growing content pushes the bottom away', () => {
     // The scroll event that a token lands in: position unchanged (or moved DOWN by our own
     // programmatic scroll), distance suddenly > slack. This is the case that used to kill

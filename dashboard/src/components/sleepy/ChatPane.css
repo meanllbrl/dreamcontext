@@ -160,26 +160,16 @@
    transcript entry keeps its natural height and the column scrolls. */
 .chat-scroll-inner > * { flex: 0 0 auto; }
 
-/* Off-screen entries are skipped. Without this, every width change (the rail collapsing,
-   the focused pane widening) and every height change (a thinking block opening) laid out
-   the WHOLE transcript — two long ones side by side stepped at 66–116ms a frame in the
-   owner's recording (10-04, "çok takılıyor"). `auto` remembers each entry's last rendered
-   height, so once an entry has been seen its placeholder is its real size; an entry never
-   rendered (older history above a pinned view) starts at the estimate and corrects when it
-   scrolls in, which the pane's ResizeObserver hold absorbs like any other height change.
-
-   `content-visibility: auto` also brings layout + paint containment, which an entry must
-   NOT have while something of it escapes its box: the hover bar hangs below the message
-   (`top: 100%`, clipped by paint containment), and a fullscreen block, PDF or receipt is a
-   `position: fixed` child that layout containment would trap inside the entry. Those
-   entries render plainly — they are on screen anyway, so nothing is lost by it. */
-.chat-scroll-inner > * {
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto 120px;
-}
-.chat-scroll-inner > :is(:hover, :focus-within, :has([aria-modal="true"], .pdf-viewer, .quest-receipt-scrim)) {
-  content-visibility: visible;
-}
+/* NO `content-visibility: auto` on the entries (tried 10-04 for the rail-toggle layout cost,
+   reverted the same day). An entry never rendered — every row a reveal prepends above the
+   reader — sits at its intrinsic-size ESTIMATE until it scrolls into view and takes its real
+   height, so reading upward resized the content above the fold on almost every step, and the
+   ResizeObserver hold paid for each one with a `scrollTop` write WHILE the gesture was still
+   in flight. Measured in Chromium on a 300-entry resume, one slow wheel read upward: 10 writes
+   of 36–88px with it, 0 without. In the app's WKWebView those writes land under trackpad
+   momentum, which is the owner's "scroll stutters" recording (10-04). chatEntities' window
+   section rejected it for exactly this reason; the rail toggle's own fix (the transform-only
+   glide) does not depend on it. */
 
 /* ── Jump to latest (shown only while the view is NOT stuck to the bottom) ─────────── */
 

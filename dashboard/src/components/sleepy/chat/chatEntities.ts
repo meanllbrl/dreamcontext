@@ -1553,8 +1553,15 @@ export interface ScrollMetrics {
 }
 
 /**
- * The next stick-to-bottom state for a scroll event. Three rules, in this order:
+ * The next stick-to-bottom state for a scroll event. Four rules, in this order:
  *
+ * 0. The user moving UP leaves, even inside the slack. The slack exists to absorb CONTENT
+ *    moving (a token landing between a scroll and its handler) — not a reader. Checked after
+ *    rule 1 instead, a gesture up that starts at the bottom spent its first
+ *    {@link BOTTOM_SLACK} pixels still "pinned", so the next streamed token re-pinned it and
+ *    threw the reader back down: the snap-back at the start of every scroll up during a
+ *    stream (owner recording 10-04, measured frame by frame: −29px by the wheel, +54px by
+ *    the pin one frame later, then the gesture again).
  * 1. At (or within {@link BOTTOM_SLACK} of) the bottom → stick. Covers arriving back by any
  *    means: wheel, drag, keyboard, or our own programmatic scroll.
  * 2. A scroll event the user did not ask to move UP cannot unstick. Position alone can't
@@ -1576,7 +1583,8 @@ export interface ScrollMetrics {
  *    second pass: "it jumps to the middle when the agent finishes").
  * 3. Only then does direction matter: an UPWARD move unsticks. Content growing under a
  *    pinned view pushes the bottom away without ever moving `scrollTop` backwards, so a
- *    fast stream still can't be mistaken for the user scrolling off.
+ *    fast stream still can't be mistaken for the user scrolling off. (Rule 0 is this same
+ *    rule, lifted above the slack.)
  *
  * A zero-height scroller is not measurable — a minimized pane's container is detached from
  * the document, and treating that as "scrolled away" would strand the view at the top when
@@ -1584,9 +1592,8 @@ export interface ScrollMetrics {
  */
 export function nextStickToBottom(prev: boolean, m: ScrollMetrics): boolean {
   if (m.clientHeight === 0) return prev;
+  if (m.userDriven && m.scrollTop < m.prevScrollTop - 1) return false;
   if (isAtBottom(m)) return true;
-  if (!m.userDriven) return prev;
-  if (m.scrollTop < m.prevScrollTop - 1) return false;
   return prev;
 }
 

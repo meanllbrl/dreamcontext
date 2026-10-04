@@ -68,6 +68,7 @@ const TRIM_SLACK = 20;
 const WINDOW_TAIL_CARDS = 20;
 const WINDOW_STEP_CARDS = 20;
 const WINDOW_MAX_ENTRIES = 400;
+const BOTTOM_SLACK_PX = 48;
 
 /** Mirrors transcript-history.ts — a resumed conversation replays at most this many items, so
  *  it is the real `total` every replayed scenario's window is a slice of. */
@@ -513,6 +514,49 @@ async function runScenarios(chromium, base, report) {
   ok(`after quiet the snap lands (rows=${afterD.rows} ≤ ${WINDOW_TAIL + TRIM_SLACK + 6})`,
     afterD.rows <= WINDOW_TAIL + TRIM_SLACK + 6, JSON.stringify(afterD));
   ok('and the view is pinned to the bottom again', afterD.fromBottom <= 4, JSON.stringify(afterD));
+
+  // ── G: a gesture up leaves the bottom at once; reading up writes nothing (owner 10-04) ─
+  //
+  // Owner recording 10-04, measured frame by frame: scrolling up during a stream snapped back
+  // on its first frames (−29px by the wheel, +54px by the pin one frame later), because the
+  // first BOTTOM_SLACK pixels of a gesture up still counted as "at the bottom" and the next
+  // token re-pinned. And a plain read upward made the ResizeObserver hold write `scrollTop`
+  // mid-gesture (10 writes of 36–88px in this fixture) while `content-visibility: auto` let
+  // never-rendered rows resize as they scrolled in. In WKWebView every one of those writes
+  // lands under trackpad momentum, which is the stutter.
+  console.log('── G: a gesture up leaves the bottom at once; an upward read writes no scrollTop');
+  await send('STREAM third');
+  ok('a third streaming turn starts', await until(busy, 10000));
+  await page.waitForTimeout(400);
+  await aimAtTranscript();
+  // Three trackpad-sized deltas, 30px in all — inside BOTTOM_SLACK.
+  for (let i = 0; i < 3; i += 1) { await page.mouse.wheel(0, -10); await page.waitForTimeout(16); }
+  await page.waitForTimeout(250); // tokens keep landing; a re-pin would have yanked by now
+  const g1 = await probe();
+  const g1Latest = (await vis('.chat-jump').count()) > 0;
+  ok('a 30px gesture up mid-stream is not pulled back to the bottom', g1.fromBottom > BOTTOM_SLACK_PX, JSON.stringify(g1));
+  ok('…and it reads as leaving: the Latest pill is up', g1Latest);
+  await until(async () => !(await busy()), 20000);
+  await page.waitForTimeout(500);
+
+  await page.evaluate(() => {
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+    window.__verifyWrites = 0;
+    Object.defineProperty(Element.prototype, 'scrollTop', {
+      configurable: true,
+      get() { return desc.get.call(this); },
+      set(v) { if (this.classList?.contains('chat-scroll')) window.__verifyWrites += 1; desc.set.call(this, v); },
+    });
+  });
+  const box = await vis('.chat-scroll').first().boundingBox();
+  for (let i = 0; i < 60; i += 1) {
+    // The pointer drifts across rows the way a reader's does, so hover changes are in it too.
+    await page.mouse.move(box.x + box.width / 2, box.y + 100 + ((i * 37) % (box.height - 200)));
+    await page.mouse.wheel(0, -60);
+    await page.waitForTimeout(16);
+  }
+  const g2Writes = await page.evaluate(() => window.__verifyWrites);
+  ok(`a continuous read upward writes no scrollTop while it moves (${g2Writes} writes)`, g2Writes === 0);
 
   // ── E1/E2: a window folded into ONE collapsed run card (owner report 08-01, second pass) ─
   //
