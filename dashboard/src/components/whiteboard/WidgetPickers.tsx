@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useLabInsights } from '../../hooks/useLab';
+import { useBoards } from '../../hooks/useBoards';
 import { useKnowledgeList } from '../../hooks/useKnowledge';
 import { useTasks } from '../../hooks/useTasks';
 import { useWhiteboardPages, type WhiteboardPageHit } from '../../hooks/useWhiteboardPages';
-import type { WidgetPayload } from '../../lib/whiteboardWidgets';
+import { isLabCardRef, type WidgetPayload } from '../../lib/whiteboardWidgets';
 import { WEB_URL_REASON_TEXT, validateWebUrl } from './webUrl';
 import {
   humanizeFileName, isValidRefFor, isValidWidgetRef, knowledgeTitle, pageKindLabel, pageTypeLabel, taskTitle,
@@ -64,6 +65,34 @@ function PickList({ rows, loading, failed, onPick, emptyText }: {
 }
 
 type Pick = (payload: WidgetPayload) => void;
+
+/**
+ * Every card of every readable Lab board, as `<board>/<card-id>` rows: picking one puts that card
+ * on the board as a `lab-card` widget, drawn exactly as Lab draws it.
+ */
+export function LabCardPicker({ onPick }: { onPick: Pick }) {
+  const tx = useWbText();
+  const { data, isLoading, isError } = useBoards();
+  const insights = useLabInsights();
+  const titles = useMemo(() => new Map((insights.data ?? []).map((i) => [i.slug, i.title])), [insights.data]);
+  const rows = useMemo(() => (data?.boards ?? [])
+    .filter((b) => !b.error)
+    .flatMap((b) => b.cards.map((c) => ({
+      slug: `${b.slug}/${c.id}`,
+      title: c.title ?? (c.insight ? titles.get(c.insight) ?? c.insight : c.id),
+      meta: b.title,
+    })))
+    .filter((r) => isLabCardRef(r.slug)), [data, titles]);
+  return (
+    <PickList
+      rows={rows}
+      loading={isLoading}
+      failed={isError}
+      emptyText={tx('whiteboard.palette.noLabCards', 'No Lab board cards.')}
+      onPick={(r) => onPick({ v: 1, kind: 'lab-card', ref: r.slug, title: r.title })}
+    />
+  );
+}
 
 export function InsightPicker({ onPick }: { onPick: Pick }) {
   const tx = useWbText();

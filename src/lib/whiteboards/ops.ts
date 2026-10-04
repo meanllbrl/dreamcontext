@@ -240,7 +240,7 @@ export function applyUpdate(el: WhiteboardElement, u: WidgetUpdate, now = Date.n
       dc.url = u.url;
     }
     if (u.ref !== undefined) {
-      if (!['insight', 'knowledge', 'task'].includes(dc.kind)) throw new WhiteboardValidationError(`--ref does not apply to ${dc.kind} widgets`);
+      if (!['insight', 'knowledge', 'task', 'lab-card'].includes(dc.kind)) throw new WhiteboardValidationError(`--ref does not apply to ${dc.kind} widgets`);
       if (!isValidWidgetRef(dc.kind, u.ref)) throw new WhiteboardValidationError(`invalid ${dc.kind} ref '${u.ref}'`);
       dc.ref = u.ref;
       next.link = `dreamcontext://${dc.kind}/${u.ref}`;

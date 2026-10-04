@@ -11,7 +11,7 @@
  * No React, no CSS: root vitest imports this file.
  */
 
-export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki'] as const;
+export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card'] as const;
 
 export const WIDGET_LINK_PREFIX = 'dreamcontext://';
 
@@ -47,6 +47,20 @@ export function isValidPageRef(ref: unknown): ref is string {
   return pageRefKind(ref) !== null;
 }
 
+/** A Lab board card on a whiteboard (`lab-card`): `<board-slug>/<card-id>`, both kebab-case. */
+const LAB_CARD_REF_RE = /^[a-z0-9][a-z0-9-]{0,99}\/[a-z0-9][a-z0-9-]{0,199}$/;
+
+export function isLabCardRef(ref: unknown): ref is string {
+  return typeof ref === 'string' && LAB_CARD_REF_RE.test(ref);
+}
+
+/** A lab-card ref split into its board and card, or null when it is not one. */
+export function splitLabCardRef(ref: unknown): { board: string; card: string } | null {
+  if (!isLabCardRef(ref)) return null;
+  const slash = ref.indexOf('/');
+  return { board: ref.slice(0, slash), card: ref.slice(slash + 1) };
+}
+
 /** A page on a wiki card: a page ref ({@link isValidPageRef}) and an optional label. */
 export interface WikiPage {
   ref: string;
@@ -63,7 +77,8 @@ export interface WikiSection {
 export type WidgetPayload = {
   v: 1;
   kind: (typeof WIDGET_KINDS)[number];
-  /** insight/task: a slug. knowledge (a "page"): a knowledge slug or a project-relative .md/.pdf/.html path. */
+  /** insight/task: a slug. knowledge (a "page"): a knowledge slug or a project-relative .md/.pdf/.html path.
+   *  lab-card: `<board-slug>/<card-id>`. */
   ref?: string;
   title?: string;
   markdown?: string;
@@ -95,6 +110,7 @@ export const DEFAULT_WIDGET_SIZES: Readonly<Record<(typeof WIDGET_KINDS)[number]
   html: 'l',
   web: 'l',
   wiki: 'l',
+  'lab-card': 'xl',
 };
 
 export function isWidgetSize(v: unknown): v is WidgetSize {

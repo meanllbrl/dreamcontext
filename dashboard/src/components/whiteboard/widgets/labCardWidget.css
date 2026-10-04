@@ -1,0 +1,205 @@
+/* A Lab card on a whiteboard, the funnel widget and the date-window chip. Design tokens only. */
+
+/* The header's always-on slot (the date window): pushed to the end, before the active actions. */
+.wb-widget-head-meta {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.wb-widget-head-meta + .wb-widget-actions {
+  margin-left: 0;
+}
+
+.wb-window-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 220px;
+  min-height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wb-window-chip:hover,
+.wb-window-chip[aria-expanded='true'] {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.wb-window-chip.is-busy {
+  opacity: 0.7;
+}
+
+.wb-window-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The range picker over the board: above the canvas and its widgets. */
+.board-popover.wb-window-pop {
+  z-index: 60;
+}
+
+/* The Lab card fills the widget body; the widget is already the card's frame, so the inner card
+   loses its own border, radius and background. */
+.wb-labcard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.wb-labcard > .board-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* On the board the widget header names the card and carries its window, so the card's own
+   header (title, freshness) is left to full screen; an empty lane box waits there too (pinning
+   lanes is a full-screen task; a card that holds lanes still shows them). A widget's height is
+   the chart's, not the chrome's. */
+.wb-labcard > .board-card .board-card-head {
+  display: none;
+}
+
+.wb-labcard > .board-card .lab-breakdown-lanes[data-lab-breakdown-lanes='0'] {
+  display: none;
+}
+
+.wb-labcard > .board-card .board-card-body {
+  padding-top: 0;
+  gap: var(--space-2);
+}
+
+.wb-labcard > .board-card .board-card-body {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.wb-labcard-lifted {
+  flex: 1;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+}
+
+/* Full screen sits over the whole app, the canvas toolbar included. */
+.board-fullscreen.wb-labcard-fullscreen {
+  z-index: 50;
+}
+
+/* Funnel at S / M: the headline over a mini lane. */
+.wb-funnel-mini {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: var(--space-1);
+  height: 100%;
+  min-height: 0;
+}
+
+.wb-funnel-mini--m {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  column-gap: var(--space-4);
+}
+
+.wb-funnel-mini--m .wb-funnel-lane {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+}
+
+.wb-funnel-mini-head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wb-funnel-mini-top,
+.wb-funnel-mini-conv-label {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-funnel-mini-conv {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-1);
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.wb-funnel-mini-conv-pct {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.wb-funnel-mini-conv-n {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.wb-funnel-mini-empty {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+/* The lane: one column per step, a bar as tall as the step's share of the top step. */
+.wb-funnel-lane {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-funnel-lane-step {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wb-funnel-lane-track {
+  position: relative;
+  flex: 1;
+  min-height: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+
+.wb-funnel-lane-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: var(--radius-sm);
+  background: var(--chart-1);
+}
+
+.wb-funnel-lane-pct {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: clip;
+}

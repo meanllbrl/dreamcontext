@@ -14,7 +14,7 @@ import './widgets.css';
  * (its `activeEmbeddable.state === 'hover'`); `WhiteboardCanvas.css` restyles it with tokens.
  * The card itself carries no hint, so a board of widgets reads as content, not instructions.
  */
-export function WidgetFrame({ kind, label: explicitLabel, title, active, size, actions, children }: {
+export function WidgetFrame({ kind, label: explicitLabel, title, active, size, actions, meta, children }: {
   kind: WidgetKind | 'unknown';
   /** The header label when the kind alone would mislabel the card: a page card over a PDF
    *  says "PDF", not "Knowledge". Shown as given. */
@@ -23,6 +23,9 @@ export function WidgetFrame({ kind, label: explicitLabel, title, active, size, a
   active: boolean;
   size?: WidgetSize;
   actions?: ReactNode;
+  /** Always shown at the end of the header, active or not (an insight's date window): what the
+   *  card IS for, where `actions` are what can be done to it. */
+  meta?: ReactNode;
   children: ReactNode;
 }) {
   const tx = useWbText();
@@ -38,6 +41,7 @@ export function WidgetFrame({ kind, label: explicitLabel, title, active, size, a
       <div className="wb-widget-head">
         <span className="wb-widget-kind">{label}</span>
         {showTitle && <span className="wb-widget-title" title={title}>{title}</span>}
+        {meta && <span className="wb-widget-head-meta">{meta}</span>}
         {active && actions && <span className="wb-widget-actions">{actions}</span>}
       </div>
       <div className="wb-widget-body">{children}</div>
@@ -56,6 +60,7 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   html: 'HTML',
   web: 'Web',
   wiki: 'Wiki',
+  'lab-card': 'Lab card',
   unknown: 'Widget',
 };
 

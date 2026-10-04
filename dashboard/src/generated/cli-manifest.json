@@ -3260,7 +3260,7 @@
     },
     {
       "path": "whiteboard add",
-      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web | wiki",
+      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web | wiki | lab-card",
       "args": [
         "<slug>",
         "<kind>"

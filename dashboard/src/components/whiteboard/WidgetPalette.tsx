@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WidgetPayload } from '../../lib/whiteboardWidgets';
-import { InsightPicker, KnowledgePicker, TaskPicker, WebPicker } from './WidgetPickers';
+import { InsightPicker, KnowledgePicker, LabCardPicker, TaskPicker, WebPicker } from './WidgetPickers';
 import { useWbText } from './whiteboardHost';
 
-type Stage = 'menu' | 'insight' | 'knowledge' | 'task' | 'web';
+type Stage = 'menu' | 'insight' | 'lab-card' | 'knowledge' | 'task' | 'web';
 
 /**
  * The component library (D8): what a right-click on empty canvas, or the "+ Add" button, opens.
@@ -59,6 +59,7 @@ export function WidgetPalette({ left, top, onPick, onClose, onCanvasMenu }: {
         <>
           <p className="wb-palette-heading">{tx('whiteboard.palette.label', 'Add to board')}</p>
           {item(tx('whiteboard.palette.insight', 'Insight…'), () => setStage('insight'))}
+          {item(tx('whiteboard.palette.labCard', 'Lab card…'), () => setStage('lab-card'))}
           {item(tx('whiteboard.palette.page', 'Knowledge or file…'), () => setStage('knowledge'))}
           {item(tx('whiteboard.palette.task', 'Task…'), () => setStage('task'))}
           {item(tx('whiteboard.palette.todo', 'Todo list'), () => onPick({ v: 1, kind: 'todo', title: tx('whiteboard.kind.todo', 'Todo'), items: [] }))}
@@ -80,6 +81,7 @@ export function WidgetPalette({ left, top, onPick, onClose, onCanvasMenu }: {
             ← {tx('whiteboard.palette.back', 'Back')}
           </button>
           {stage === 'insight' && <InsightPicker onPick={onPick} />}
+          {stage === 'lab-card' && <LabCardPicker onPick={onPick} />}
           {stage === 'knowledge' && <KnowledgePicker onPick={onPick} />}
           {stage === 'task' && <TaskPicker onPick={onPick} />}
           {stage === 'web' && <WebPicker onPick={onPick} />}

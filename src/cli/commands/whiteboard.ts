@@ -14,6 +14,7 @@ import {
   DEFAULT_WHITEBOARD,
 } from '../../lib/whiteboards/store.js';
 import { WhiteboardError, WhiteboardValidationError } from '../../lib/whiteboards/errors.js';
+import { getBoard } from '../../lib/lab/boards.js';
 import { checkWebUrl, isValidRef, isValidTag, isValidWidgetRef } from '../../lib/whiteboards/validate.js';
 import {
   WIDGET_KINDS,
@@ -24,6 +25,7 @@ import {
   isValidPageRef,
   makeWidgetElement,
   pageRefKind,
+  splitLabCardRef,
   type WidgetKind,
   type WidgetSize,
   type WidgetPayload,
@@ -111,6 +113,15 @@ function refExists(root: string, kind: WidgetKind, ref: string): boolean {
   if (kind === 'insight') return existsSync(join(root, 'lab', 'insights', `${ref}.md`));
   if (kind === 'knowledge') return pageExists(root, ref);
   if (kind === 'task') return existsSync(join(root, 'state', `${ref}.md`));
+  if (kind === 'lab-card') {
+    const parts = splitLabCardRef(ref);
+    if (!parts) return false;
+    try {
+      return !!getBoard(root, parts.board)?.cards.some((c) => c.id === parts.card);
+    } catch {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -391,7 +402,7 @@ export function registerWhiteboardCommand(program: Command): void {
   // --- add ---
   wb.command('add <slug> <kind>')
     .description(`Add a widget: ${WIDGET_KINDS.join(' | ')}`)
-    .option('--ref <ref>', 'insight / task slug; for knowledge (a page): a knowledge slug or a project-relative .md/.pdf/.html path')
+    .option('--ref <ref>', 'insight / task slug; for knowledge (a page): a knowledge slug or a project-relative .md/.pdf/.html path; for lab-card: <board>/<card-id>')
     .option('--title <text>', 'Widget title (a wiki card needs one)')
     .option('--text <text>', 'Note markdown or HTML block content')
     .option('--file <path>', 'Read note markdown / HTML block content from a file')
@@ -417,12 +428,14 @@ export function registerWhiteboardCommand(program: Command): void {
         tag: opts.tag,
         size: typeof size === 'string' ? size : undefined,
       };
-      if (kind === 'insight' || kind === 'knowledge' || kind === 'task') {
-        if (!opts.ref) throw new WhiteboardValidationError(`${kind} widget needs --ref <slug>`);
+      if (kind === 'insight' || kind === 'knowledge' || kind === 'task' || kind === 'lab-card') {
+        if (!opts.ref) throw new WhiteboardValidationError(`${kind} widget needs --ref ${kind === 'lab-card' ? '<board>/<card-id>' : '<slug>'}`);
         if (!isValidWidgetRef(kind, opts.ref)) {
           throw new WhiteboardValidationError(kind === 'knowledge'
             ? `invalid page ref '${opts.ref}' (a knowledge slug, or a project-relative .md/.pdf/.html path with no '..')`
-            : `invalid ref '${opts.ref}'`);
+            : kind === 'lab-card'
+              ? `invalid lab card ref '${opts.ref}' (expected <board>/<card-id>, e.g. growth/c-signups; \`dreamcontext lab board show <board>\` lists card ids)`
+              : `invalid ref '${opts.ref}'`);
         }
         payload.ref = opts.ref;
       } else if (kind === 'todo') {
@@ -472,7 +485,7 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--text <text>', 'New note markdown / HTML / text')
     .option('--file <path>', 'Read the new content from a file')
     .option('--url <https-url>', 'New web URL')
-    .option('--ref <ref>', 'New insight / task slug, or knowledge page ref (slug or project-relative .md/.pdf/.html path)')
+    .option('--ref <ref>', 'New insight / task slug, knowledge page ref (slug or project-relative .md/.pdf/.html path), or lab-card <board>/<card-id>')
     .option('--item <text>', 'Append a todo item (repeatable)', collect, [])
     .option('--check <n>', 'Tick todo item n (1-based) or item id (repeatable)', collect, [])
     .option('--uncheck <n>', 'Untick todo item n (1-based) or item id (repeatable)', collect, [])
