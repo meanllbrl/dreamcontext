@@ -160,6 +160,27 @@
    transcript entry keeps its natural height and the column scrolls. */
 .chat-scroll-inner > * { flex: 0 0 auto; }
 
+/* Off-screen entries are skipped. Without this, every width change (the rail collapsing,
+   the focused pane widening) and every height change (a thinking block opening) laid out
+   the WHOLE transcript — two long ones side by side stepped at 66–116ms a frame in the
+   owner's recording (10-04, "çok takılıyor"). `auto` remembers each entry's last rendered
+   height, so once an entry has been seen its placeholder is its real size; an entry never
+   rendered (older history above a pinned view) starts at the estimate and corrects when it
+   scrolls in, which the pane's ResizeObserver hold absorbs like any other height change.
+
+   `content-visibility: auto` also brings layout + paint containment, which an entry must
+   NOT have while something of it escapes its box: the hover bar hangs below the message
+   (`top: 100%`, clipped by paint containment), and a fullscreen block, PDF or receipt is a
+   `position: fixed` child that layout containment would trap inside the entry. Those
+   entries render plainly — they are on screen anyway, so nothing is lost by it. */
+.chat-scroll-inner > * {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 120px;
+}
+.chat-scroll-inner > :is(:hover, :focus-within, :has([aria-modal="true"], .pdf-viewer, .quest-receipt-scrim)) {
+  content-visibility: visible;
+}
+
 /* ── Jump to latest (shown only while the view is NOT stuck to the bottom) ─────────── */
 
 .chat-jump {

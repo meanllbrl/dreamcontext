@@ -19,8 +19,11 @@
   overflow: hidden;
   background: var(--color-bg);
   contain: layout paint;
-  /* Slide with the sidebar when it collapses/expands (left edge tracks the content area). */
-  transition: left var(--transition-normal);
+  /* NOT animated. A `left` transition re-sizes the surface every frame, which is a style +
+     layout pass of every pane in it per frame — two long transcripts stepped through 14–26
+     layouts and 130–175ms frames at 4x CPU (owner recording 10-04: 66–116ms gaps in WebKit).
+     The surface lands at its new edge in ONE layout; the motion is the rail's glide curtain
+     (`.sidebar-glide`, Shell.tsx), animated with `transform` only. */
 
   /* ── Focus widening (see `.agent-panes.split > .agent-pane.active` below) ──
      `--pane-count` is set inline from React (the live pane count); the two lengths are
@@ -31,8 +34,8 @@
   --pane-count: 1;             /* overridden inline; the fallback keeps the math finite */
 }
 /* Expanded = fill ONLY the page content area: below the title bar (--header-height)
-   and right of the sidebar (--app-content-left, collapse-aware). right/bottom stay 0
-   from the base `inset`, so it never covers the header or the nav rail. */
+   and right of the sidebar (--app-content-left, or the collapsed rule below). right/bottom
+   stay 0 from the base `inset`, so it never covers the header or the nav rail. */
 .agent-surface.expanded {
   display: flex;
   top: var(--header-height);
@@ -53,6 +56,18 @@
   animation: agent-surface-zoom-out 280ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
   transform-origin: calc(100% - 72px) calc(100% - 48px);
   pointer-events: none;
+}
+/* The collapsed rail. Shell.tsx publishes the collapse state on the nearest
+   `.project-instance` (one window can hold several projects); this rule names the surface
+   directly instead of the instance flipping `--app-content-left`, because a custom property
+   is inherited — flipping it restyled the whole project, both transcripts included (see the
+   note on the token in tokens.css). Named like this, a collapse restyles this one element.
+   Not on a phone: there the rail is force-collapsed and the surface is full-viewport
+   (`.agent-surface[data-mobile].expanded { left: 0 }`, MobileChat.css), which this selector
+   would otherwise outrank — the old variable flip never could, so neither may this. */
+.project-instance[data-sidebar="collapsed"] .agent-surface.expanded:not([data-mobile]),
+.project-instance[data-sidebar="collapsed"] .agent-surface.closing {
+  left: var(--sidebar-width-collapsed);
 }
 @keyframes agent-surface-zoom-in {
   from { transform: scale(0.28) translateY(24px); opacity: 0; border-radius: var(--radius-xl, 16px); }

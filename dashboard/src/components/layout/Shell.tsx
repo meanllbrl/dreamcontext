@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Header } from './Header';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
 import { useVault, emitInstance } from '../../context/VaultContext';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
+import { useRailGlide } from './useRailGlide';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
@@ -95,15 +96,21 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   // Publish the sidebar collapse state on the nearest `.project-instance` ancestor so
   // surfaces mounted OUTSIDE the Shell tree but INSIDE that instance (the expanded Agent
   // overlay, a sibling of Shell under `ProjectInstance`) can bound themselves to the content
-  // area — its expanded left edge reads `--app-content-left`, which this attribute flips.
-  // Scoped to the instance (not `<html>`) because one window now holds several projects, each
-  // with its own content-area rect.
-  useEffect(() => {
+  // area — its left edge follows this attribute (AgentTerminal.css). Scoped to the instance
+  // (not `<html>`) because one window now holds several projects, each with its own
+  // content-area rect. A LAYOUT effect: nothing animates the overlay's edge any more, so it
+  // has to land in the same frame as the rail it sits against, not one paint later.
+  useLayoutEffect(() => {
     const instanceEl = shellRef.current?.closest('.project-instance');
     if (instanceEl instanceof HTMLElement) {
       instanceEl.dataset.sidebar = sidebarCollapsed ? 'collapsed' : 'expanded';
     }
   }, [sidebarCollapsed]);
+
+  // The rail's motion — see useRailGlide.ts. Declared after the attribute above, so the
+  // slab measures the rail with the overlay's edge already moved.
+  const glideRef = useRef<HTMLDivElement | null>(null);
+  useRailGlide(shellRef, glideRef, sidebarCollapsed);
 
   const navigate = useCallback((page: Page, id: string | null) => {
     setActivePage(page);
@@ -141,6 +148,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
       />
       <div className="shell-body">
         <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} />
+        <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
         <main className="shell-main">
           {children({ page: activePage, focusId, nonce, navigate, clearFocus })}
         </main>

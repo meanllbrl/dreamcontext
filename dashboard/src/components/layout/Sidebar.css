@@ -9,8 +9,47 @@
   overflow-x: hidden;
   overflow-y: auto;
   flex-shrink: 0;
-  /* --transition-normal = 240ms ease (token already includes easing; no trailing 'ease') */
-  transition: width var(--transition-normal);
+  /* NOT animated. A `width` transition re-lays out the whole main area every frame — the
+     page and, with the Agent overlay open, every pane's transcript (owner, 10-04: "çok
+     takılıyor"). The rail lands at its new width in ONE layout and the motion lives on
+     `.sidebar-glide` below. Same move as the pane focus widening (usePaneFocusGlide.ts). */
+}
+
+/* ── The rail's glide ───────────────────────────────────────────────────────────────
+   The strip between the collapsed and the expanded rail, over everything (the expanded
+   Agent overlay is z-index 20), clipped to that strip. Shell.tsx plays its one child across
+   it with `transform` only when the rail is toggled, so the compositor draws the motion and
+   nothing is laid out per frame:
+     collapse — a slab of RAIL retreats to the left: the rail's edge sliding in.
+     expand   — a slab of CONTENT retreats to the right: the content's edge sliding out,
+                uncovering the rail that is already there.
+   At rest the slab sits translated out of its clip, so the strip paints nothing and takes
+   no pointer events. `fixed`, with its top/height copied off the rail when it plays, so it
+   needs no positioned ancestor — making `.shell-body` one would re-home every unpositioned
+   absolute element in every page. */
+.sidebar-glide {
+  position: fixed;
+  top: 0;
+  height: 0;
+  left: var(--sidebar-width-collapsed);
+  width: calc(var(--sidebar-width) - var(--sidebar-width-collapsed));
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 21;
+}
+.sidebar-glide-slab {
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  will-change: transform;
+}
+.sidebar-glide[data-dir="collapse"] .sidebar-glide-slab {
+  background: var(--color-bg-secondary);
+  border-right: 1px solid var(--color-border);
+}
+.sidebar-glide[data-dir="expand"] .sidebar-glide-slab {
+  background: var(--color-bg);
+  border-left: 1px solid var(--color-border);
 }
 
 /* Brand lockup at the top of the rail. */
