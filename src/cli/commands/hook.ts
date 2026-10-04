@@ -39,7 +39,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { DEVELOP_LEAD_DENY_REASON, developLeadWriteDenied } from '../../lib/develop-lead-guard.js';
-import { chatTabTitleNudge } from '../../lib/chat-tab-title-nudge.js';
+import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -1639,13 +1639,26 @@ export function registerHookCommand(program: Command): void {
         process.exit(0);
       }
 
+      // ── A Chat tab still named "Chat N" → hold the turn open once to name it ──
+      // The UserPromptSubmit nudge alone left ~5 tabs in 6 unnamed (see
+      // chat-tab-title-nudge.ts). Decided FIRST because a blocked stop is not the end
+      // of the turn: the chip must stay "working" through the short continuation.
+      // Printed to stdout as the hook's JSON answer; nothing below writes stdout.
+      let titleBlock: ReturnType<typeof chatTabTitleStopBlock> = null;
+      try {
+        if (process.env.DREAMCONTEXT_CHAT_TAB === '1' && !isNestedClaudeHook()) {
+          titleBlock = chatTabTitleStopBlock(process.env, input as Record<string, unknown>, resolveContextRoot());
+          if (titleBlock) console.log(JSON.stringify(titleBlock));
+        }
+      } catch { /* advisory — must never break the stop path */ }
+
       // ── Live turn state → dashboard status chip ──────────────────────────
       // Stop means the turn ENDED — flip the embedded tab's chip to "ready" via the
       // status-file contract (see writeAgentTurnState). Before the root check: the
       // chip must update even when a brain is missing. Nested-guarded so a `claude
       // -p` the agent ran via Bash can't mark the still-working outer turn done.
       try {
-        if (process.env.DREAMCONTEXT_AGENT_STATUS_FILE && !isNestedClaudeHook()) {
+        if (!titleBlock && process.env.DREAMCONTEXT_AGENT_STATUS_FILE && !isNestedClaudeHook()) {
           writeAgentTurnState(process.env.DREAMCONTEXT_AGENT_STATUS_FILE, 'ready');
         }
       } catch { /* status is best-effort — the chip falls back to the screen heuristic */ }
@@ -2308,7 +2321,7 @@ export function registerHookCommand(program: Command): void {
         if (process.env.DREAMCONTEXT_CHAT_TAB === '1' && !isNestedClaudeHook()) {
           const tp = typeof (input as Record<string, unknown>).transcript_path === 'string'
             ? (input as Record<string, unknown>).transcript_path as string : undefined;
-          const nudge = chatTabTitleNudge(process.env, tp);
+          const nudge = chatTabTitleNudge(process.env, tp, resolveContextRoot());
           if (nudge) console.log(nudge);
         }
       } catch { /* advisory — must never break the prompt path */ }
