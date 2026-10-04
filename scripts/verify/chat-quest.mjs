@@ -679,6 +679,19 @@ async function runThemeIn(browser, base, theme, report) {
   const waitIdle = () => until(async () => !(await busy()), 60000);
   const ok = (label, cond, detail) => report.check(theme, label, cond, detail);
   const shot = async (loc, name) => { try { if (await loc.count()) await loc.first().screenshot({ path: join(SHOTS, `${name}-${theme}.png`) }); } catch { /* a moving target */ } };
+  // QUEST_GALLERY=1: the rail in every state, at a wide and a narrow pane, for a person to look at.
+  const GALLERY = join(SHOTS, 'gallery');
+  const gallery = async (name) => {
+    if (!process.env.QUEST_GALLERY) return;
+    mkdirSync(GALLERY, { recursive: true });
+    for (const [label, width] of [['wide', 1500], ['narrow', 600]]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.waitForTimeout(400);
+      try { await vis('.chat-live-rail').first().screenshot({ path: join(GALLERY, `${name}-${label}-${theme}.png`) }); } catch { /* a moving target */ }
+    }
+    await page.setViewportSize({ width: 1500, height: 1000 });
+    await page.waitForTimeout(200);
+  };
   const say = async (text) => {
     if (!(await until(async () => (await vis('.chat-cmp-input').count()) > 0, 30000))) {
       await page.screenshot({ path: join(SHOTS, `no-composer-${text}-${theme}.png`) });
@@ -808,6 +821,7 @@ async function runThemeIn(browser, base, theme, report) {
   await say('PLAN-ANSWER');
   const planMap = () => vis('.chat-live-rail .quest-map[data-kind="plan"]');
   ok('a Plan chat draws its quest map on the rail', await until(async () => (await planMap().count()) === 1, 15000));
+  await gallery('01-plan-scout');
   const scoutCard = () => vis('.chat-subagents[data-party-stage="scout"]');
   ok('"Scout is mapping the code" while the scout works',
     await until(async () => (await scoutCard().innerText()).includes('Scout is mapping the code'), 6000),
@@ -825,24 +839,15 @@ async function runThemeIn(browser, base, theme, report) {
   ok('round 2 is under way (a second review card, still running)',
     await until(async () => (await reviewCards().count()) === 2 && (await vis('.chat-subagents[data-party-stage="review"][data-outcome="running"]').count()) === 1, 30000),
     `cards=${await reviewCards().count()}`);
-  const reviewNode = vis('.chat-live-rail .quest-node[data-stage="review"]');
-  ok('plan quest stages are ask, draft, review, task',
-    JSON.stringify(await planMap().locator('.quest-node').evaluateAll((els) => els.map((e) => e.getAttribute('data-stage')))) === '["ask","draft","review","task"]');
-  ok('in round 2, review is the active stage with rounds = 2',
-    (await reviewNode.getAttribute('data-state')) === 'active' && (await reviewNode.getAttribute('data-rounds')) === '2',
-    `${await reviewNode.getAttribute('data-state')} / ${await reviewNode.getAttribute('data-rounds')}`);
-  ok('…with the 3 reviewers standing on it',
-    (await reviewNode.locator('.quest-node-cast .chat-a-avatar').count()) === 3,
-    `${await reviewNode.locator('.quest-node-cast .chat-a-avatar').count()} avatars`);
-  ok('…and the beat reads "Claude called 3 reviewers with fresh eyes"',
-    ((await vis('.chat-live-rail .quest-beat').innerText().catch(() => '')) || '').includes('Claude called 3 reviewers with fresh eyes'),
-    await vis('.chat-live-rail .quest-beat').innerText().catch(() => '<no beat>'));
-  ok('the cast never animates', (await animatingCount(page, '.quest-node-cast .chat-a-avatar')) === 0);
+  // One strip at a time: while the team works, the board IS the live run and the quest map
+  // steps back (it returns whenever the lead works alone, and for the win).
+  ok('the quest map steps back while the team board\'s agents work',
+    (await planMap().count()) === 0 && (await vis('.chat-live-rail .chat-team-board').count()) === 1,
+    `map=${await planMap().count()} board=${await vis('.chat-live-rail .chat-team-board').count()}`);
+  await gallery('02-plan-review-live');
   if (await vis('.chat-subagents-rail').count()) {
     ok('the rail chips never animate', (await animatingCount(page, '.chat-subagents-rail-chip .chat-a-avatar')) === 0);
   }
-  const railH = await vis('.chat-live-rail .quest-map[data-variant="rail"]').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
-  ok('the chat quest map on the rail is ≤ 64px tall', railH.length > 0 && railH.every((h) => h <= 64), JSON.stringify(railH));
   await motion('a running party-row avatar', '.chat-subagents-row[data-status="running"] > .chat-a-avatar');
   await samplePlain('round 2 live');
   await sampleContrast();
@@ -861,6 +866,28 @@ async function runThemeIn(browser, base, theme, report) {
   ok('…the header counts "3 phases · 7 agents"', ((await board().locator('.chat-team-board-sum').innerText().catch(() => '')) || '').includes('3 phases · 7 agents'),
     await board().locator('.chat-team-board-sum').innerText().catch(() => '<no board>'));
   await shot(board(), 'team-board-live');
+  // Responsive: squeezed to a narrow pane, the header sheds the tally and the landed phases'
+  // names, so the running phase stays named and nothing in the header overflows.
+  for (const w of [560, 380]) {
+    await board().evaluate((el, px) => { el.style.width = `${px}px`; }, w);
+    await page.waitForTimeout(150);
+    const fit = await board().evaluate((el) => {
+      const shown = (sel) => [...el.querySelectorAll(sel)].filter((n) => n.getClientRects().length > 0);
+      const running = el.querySelector('.chat-team-board-phase[data-tone="running"] .chat-team-board-phase-name');
+      const rail = el.querySelector('.chat-team-board-rail');
+      const head = el.querySelector('.chat-team-board-head');
+      return {
+        tally: shown('.chat-team-board-tally').length,
+        names: shown('.chat-team-board-phase-name').length,
+        runningNamed: !!running && running.getClientRects().length > 0 && running.getBoundingClientRect().right <= rail.getBoundingClientRect().right + 1,
+        headFits: head.scrollWidth <= head.clientWidth + 1,
+      };
+    });
+    ok(`team board at ${w}px: tally hidden, only the running phase named and in view, header fits`,
+      fit.tally === 0 && fit.names === 1 && fit.runningNamed && fit.headFits, JSON.stringify(fit));
+    await shot(board(), `team-board-${w}`);
+  }
+  await board().evaluate((el) => { el.style.width = ''; });
 
   // ── the win: "Plan sealed", and its one-shot moment ─────────────────────────────────
   // The win swaps the map for its victory (ChatQuestBar), which carries the one-shot moment.
@@ -878,6 +905,7 @@ async function runThemeIn(browser, base, theme, report) {
     Number.isFinite(WIN_HOLD_MS) && (await page.locator('.chat-live-rail [data-just-won]').count()) === 0, `WIN_HOLD_MS=${WIN_HOLD_MS}`);
   await waitIdle();
   await shot(vis('.chat-live-rail'), 'plan-sealed');
+  await gallery('03-plan-sealed');
   ok('team board: folds to its one line once every agent landed',
     (await vis('.chat-live-rail .chat-team-board').getAttribute('data-open').catch(() => 'missing')) === null
       && (await vis('.chat-live-rail .chat-team-board-chip').count()) === 0);
@@ -1152,6 +1180,7 @@ async function runThemeIn(browser, base, theme, report) {
     await devMap().locator('.quest-node[data-stage="build"]').innerText().catch(() => ''));
   const buildCard = vis('.chat-subagents[data-party-stage="build"]');
   ok('the build party is live', await until(async () => (await buildCard.count()) === 1, 15000));
+  await gallery('04-develop-build-live');
   await sampleContrast();
 
   ok('the Develop run finishes', await waitText('DEVELOP-DONE', 60000));
@@ -1190,6 +1219,7 @@ async function runThemeIn(browser, base, theme, report) {
   await headless.locator('.chat-m-toolhead-hit').click().catch(() => {});
 
   ok('"Quest cleared" appears', await until(async () => (await railText()).includes('Quest cleared'), 10000), await railText());
+  await gallery('05-develop-cleared');
   await vis('.chat-live-rail .quest-receipt-toggle').first().click().catch(() => {});
   ok('…with the receipt', await until(async () => (await vis('.quest-receipt').count()) === 1, 5000));
   await sampleContrast();
@@ -1213,6 +1243,7 @@ async function runThemeIn(browser, base, theme, report) {
     (await goalReview.locator('.quest-node-cast .chat-a-avatar').count()) === 3
     && ((await goalReview.locator('.quest-node-round').innerText().catch(() => '')) || '').includes('round 2'),
     await goalReview.innerText().catch(() => ''));
+  await gallery('06-goal-review-live');
   const questBar = () => vis('.chat-live-rail .chat-quest-bar');
   ok('the develop map is hidden while the goal file exists', (await questBar().count()) === 0 && (await devMap().count()) === 0);
   const goalBarH = await vis('.chat-live-rail .goal-live-bar').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
@@ -1241,6 +1272,7 @@ async function runThemeIn(browser, base, theme, report) {
   await page.waitForTimeout(WIN_HOLD_MS + 1000);
   ok('…once: it settles and does not fire again on the next poll',
     (await page.locator('.chat-live-rail .quest-branch[data-just-branched]').count()) === 0);
+  await gallery('07-goal-build-live');
   for (const width of [1500, 720]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.waitForTimeout(500);
@@ -1257,6 +1289,7 @@ async function runThemeIn(browser, base, theme, report) {
   await say('GOAL-DONE');
   ok('GOAL-DONE: the rail shows the finished goal, "Quest cleared"',
     await until(async () => (await vis('.chat-live-rail div.goal-live-bar[data-won]').count()) === 1, 15000), await railText());
+  await gallery('08-goal-done');
   ok('the develop map stays hidden after GOAL-DONE', (await questBar().count()) === 0);
   await vis('.chat-live-rail .goal-live-bar .quest-receipt-toggle').first().click().catch(() => {});
   ok('the receipt opens', await until(async () => (await vis('.quest-receipt').count()) === 1, 5000));
@@ -1310,6 +1343,7 @@ async function runThemeIn(browser, base, theme, report) {
   const devRun = () => vis('.chat-live-rail .goal-live-bar .quest-map[data-kind="develop"]');
   await say('DEVRUN-W2');
   ok('DEVRUN: the rail shows a develop-kind map from the live file', await until(async () => (await devRun().count()) === 1, 15000), await railText());
+  await gallery('09-devrun-wave2-live');
   const stagesOf = async (loc) => loc.locator('.quest-node').evaluateAll((els) => els.map((e) => e.getAttribute('data-stage')));
   ok('…with exactly Build, Boss gate and Final trial (no Draft, Plan review or Task)',
     JSON.stringify(await stagesOf(devRun())) === JSON.stringify(['build', 'boss', 'trial']), JSON.stringify(await stagesOf(devRun())));
@@ -1336,6 +1370,7 @@ async function runThemeIn(browser, base, theme, report) {
 
   await say('DEVRUN-DONE');
   ok('DEVRUN-DONE: "Quest cleared" on the rail', await until(async () => (await vis('.chat-live-rail div.goal-live-bar[data-won]').count()) === 1, 15000), await railText());
+  await gallery('10-devrun-done');
   await vis('.chat-live-rail .goal-live-bar .quest-receipt-toggle').first().click().catch(() => {});
   ok('the develop receipt opens', await until(async () => (await vis('.quest-receipt').count()) === 1, 5000));
   const waves = await vis('.quest-receipt .quest-wave[data-wave]').evaluateAll((els) => els.map((e) => ({

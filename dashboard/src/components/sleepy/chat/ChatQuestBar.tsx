@@ -14,7 +14,13 @@ import './questBar.css';
  * A leaf with its own one-second tick, so the elapsed clock and the beat's freshness move while
  * nothing streams, without re-rendering the transcript that owns the quest.
  */
-export function ChatQuestBar({ quest, lineage }: { quest: QuestView; lineage: QuestLineage | null }) {
+export function ChatQuestBar({ quest, lineage, liveHidden = false }: {
+  quest: QuestView;
+  lineage: QuestLineage | null;
+  /** The team board draws the live run: show only the win. Still MOUNTED meanwhile, so the
+   *  bar knows it watched the run and the win gets its one-shot moment. */
+  liveHidden?: boolean;
+}) {
   const outcome = quest.outcome;
   const now = useTicker(outcome == null);
 
@@ -28,6 +34,7 @@ export function ChatQuestBar({ quest, lineage }: { quest: QuestView; lineage: Qu
   const beat = useFreshBeat(quest.beat, now);
   const [receipt, setReceipt] = useState(false);
   const title = quest.title ?? 'This quest';
+  if (liveHidden && !outcome) return null;
 
   return (
     <>

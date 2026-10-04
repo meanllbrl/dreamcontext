@@ -212,6 +212,17 @@
     clip-path: inset(50%);
   }
 }
+/* A Develop run's stages carry long notes ("wave 2 of 3 · 4m", "1 of 3 reviewed"): the stages
+   not being worked shed theirs first, keeping their names, so the last stage is never cut. */
+@container quest-map (max-width: 600px) {
+  .quest-map:not([data-kind='goal']):not([data-variant='full']) .quest-node:not([data-state='active']) .quest-node-meta {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
 @container quest-map (max-width: 520px) {
   .quest-map:not([data-kind='goal']):not([data-variant='full']) .quest-node[data-state='done'] .quest-node-label {
     position: absolute;

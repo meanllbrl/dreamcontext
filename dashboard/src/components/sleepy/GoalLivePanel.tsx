@@ -25,13 +25,21 @@ import './GoalLivePanel.css';
  * Session-scoped by the SERVER: this component only ever receives an active state for the
  * pane whose conversation is running the orchestrator.
  */
-export function GoalLivePanel({ claudeId, enabled, variant = 'strip' }: {
+export function GoalLivePanel({ claudeId, enabled, variant = 'strip', liveMapHidden = false, open: openProp, onOpenChange }: {
   claudeId?: string;
   enabled: boolean;
   variant?: 'rail' | 'strip';
+  /** The chat's team board already draws this run while it is live: show only the win (the
+   *  popup still opens, from the board's own expand button). */
+  liveMapHidden?: boolean;
+  /** The popup, when the caller holds it (the chat rail, so the team board can open it). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const { data } = useAgentGoalLive(claudeId, enabled);
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = onOpenChange ?? setOpenState;
   const [receipt, setReceipt] = useState(false);
   // The file is written by an agent: only its normalized shape reaches a renderer.
   const st = useMemo(() => (data?.active ? normalizeGoalLive(data.state) : null), [data]);
@@ -55,6 +63,7 @@ export function GoalLivePanel({ claudeId, enabled, variant = 'strip' }: {
       setOpen(false);
       setReceipt(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a caller's setter may be a fresh closure
   }, [st]);
 
   if (!st || !quest) return null;
@@ -63,7 +72,7 @@ export function GoalLivePanel({ claudeId, enabled, variant = 'strip' }: {
 
   return (
     <>
-      {quest.outcome ? (
+      {liveMapHidden && !quest.outcome ? null : quest.outcome ? (
         <div className="goal-live-bar" data-variant={variant} data-won={quest.outcome.kind}>
           <QuestVictory
             quest={quest}
@@ -111,7 +120,7 @@ function activeStageLabel(q: QuestView): string {
   return questVictoryCopy(q)?.headline ?? q.stages[q.activeIndex]?.label ?? QUEST_STAGE_LABELS.draft;
 }
 
-function ExpandIcon() {
+export function ExpandIcon() {
   return (
     <svg className="goal-live-expand" viewBox="0 0 12 12" width="12" height="12" aria-hidden>
       <path d="M7 1.5h3.5V5 M10.5 1.5 6.5 5.5 M5 10.5H1.5V7 M1.5 10.5l4-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />

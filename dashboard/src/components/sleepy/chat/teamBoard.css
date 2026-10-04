@@ -3,16 +3,33 @@
    simply running carries the accent, never a fill. */
 
 .chat-team-board {
+  container-type: inline-size;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
 }
 
+.chat-team-board-top { display: flex; align-items: stretch; }
+.chat-team-board-expand {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  border: none;
+  border-left: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.chat-team-board-expand:hover { color: var(--color-text); }
+.chat-team-board-expand:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+
 .chat-team-board-head {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--space-3, 12px);
-  width: 100%;
   padding: 6px 11px;
   border: none;
   background: transparent;
@@ -69,6 +86,7 @@
   white-space: nowrap;
 }
 .chat-team-board-live { color: var(--color-accent-ink); }
+.chat-team-board-tally + .chat-team-board-live::before { content: '·'; margin-right: 4px; color: var(--color-text-secondary); }
 .chat-team-board-clock { margin-left: 6px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
 .chat-team-board-caret { margin-left: 6px; color: var(--color-text-tertiary); }
 
@@ -83,11 +101,12 @@
   overflow: auto;
 }
 .chat-team-board-col {
-  flex: 0 0 auto;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  width: 168px;
+  min-width: 132px;
+  max-width: 220px;
 }
 .chat-team-board-col-head {
   padding: 0 2px 2px;
@@ -152,6 +171,22 @@
 
 @keyframes chat-team-board-spin { to { transform: rotate(360deg); } }
 @keyframes chat-team-board-pulse { 50% { box-shadow: 0 0 0 5px transparent; } }
+
+/* Narrow panes shed the header from the least needed end, so the phase that is running stays
+   named: the tally goes first, then every landed phase but the latest keeps only its dot and count. */
+@container (max-width: 720px) {
+  .chat-team-board-tally { display: none; }
+  .chat-team-board-tally + .chat-team-board-live::before { content: none; }
+  .chat-team-board-phase:not([data-tone='running']):not(:last-child) .chat-team-board-phase-name { display: none; }
+  .chat-team-board-link { width: 10px; margin: 0 4px; }
+}
+@container (max-width: 420px) {
+  .chat-team-board-head { padding: 6px 8px; gap: var(--space-2, 8px); }
+  .chat-team-board-phase:not([data-tone='running']):not(:last-child) .chat-team-board-phase-count { display: none; }
+  .chat-team-board-phase-name { max-width: 110px; }
+  .chat-team-board-cols { padding: 2px 8px 8px; }
+  .chat-team-board-col { min-width: 116px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .chat-team-board-chip-mark[data-tone='running'],

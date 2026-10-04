@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { formatClock, isAgentRun, type SubAgentRun } from './chatEntities';
 import { AGENT_ROLES } from '../../../lib/agentRoles';
 import { AgentAvatar } from './atoms';
+import { ExpandIcon } from '../GoalLivePanel';
 import { partyClockMs } from './SubAgentCard';
 import { partyOutcome, partyTitle, runDoing, runIdentity, runVerdict, type Party, type PartyOutcome } from './questModel';
 import './teamBoard.css';
@@ -38,15 +39,31 @@ function chipTone(run: SubAgentRun): Tone {
 
 const MARKS: Record<Tone, string> = { running: '', good: '✓', bad: '!', ended: '■' };
 
-export function TeamBoard({ parties, runsOf, onDrillIn }: {
+function teamPhases(parties: Party[], runsOf: (p: Party) => SubAgentRun[]) {
+  return parties
+    .map((p) => ({ party: p, runs: runsOf(p).filter(isAgentRun) }))
+    .filter((ph) => ph.runs.length > 0);
+}
+
+/** Whether the board draws at all, and whether its team is at work: the rail asks, so a quest
+ *  map and the board never draw the same run twice. */
+export function teamBoardState(parties: Party[], runsOf: (p: Party) => SubAgentRun[]): { shows: boolean; running: number } {
+  const phases = teamPhases(parties, runsOf);
+  return {
+    shows: phases.length >= 2,
+    running: phases.reduce((n, ph) => n + ph.runs.filter((r) => r.status === 'running').length, 0),
+  };
+}
+
+export function TeamBoard({ parties, runsOf, onDrillIn, onExpand }: {
   parties: Party[];
   /** A party's live runs: the board, like the cards, cannot drill into a rebuilt one. */
   runsOf: (p: Party) => SubAgentRun[];
   onDrillIn: (run: SubAgentRun) => void;
+  /** Opens the goal-skill run's full quest map; absent when no such run is live. */
+  onExpand?: () => void;
 }) {
-  const phases = parties
-    .map((p) => ({ party: p, runs: runsOf(p).filter(isAgentRun) }))
-    .filter((ph) => ph.runs.length > 0);
+  const phases = teamPhases(parties, runsOf);
   const all = phases.flatMap((ph) => ph.runs);
   const running = all.filter((r) => r.status === 'running').length;
 
@@ -65,6 +82,7 @@ export function TeamBoard({ parties, runsOf, onDrillIn }: {
 
   return (
     <div className="chat-team-board" data-open={open || undefined} data-running={running > 0 || undefined}>
+      <div className="chat-team-board-top">
       <button
         type="button"
         className="chat-team-board-head"
@@ -86,12 +104,24 @@ export function TeamBoard({ parties, runsOf, onDrillIn }: {
           })}
         </span>
         <span className="chat-team-board-sum">
-          {phases.length} phases · {all.length} agents
-          {running > 0 && <> · <span className="chat-team-board-live">{running} working</span></>}
+          <span className="chat-team-board-tally">{phases.length} phases · {all.length} agents</span>
+          {running > 0 && <span className="chat-team-board-live">{running} working</span>}
           {clock != null && <span className="chat-team-board-clock">{formatClock(clock)}</span>}
           <span className="chat-team-board-caret" aria-hidden>{open ? '▴' : '▾'}</span>
         </span>
       </button>
+      {onExpand && (
+        <button
+          type="button"
+          className="chat-team-board-expand"
+          onClick={onExpand}
+          aria-label="Open the full quest map"
+          title="Open the full quest map"
+        >
+          <ExpandIcon />
+        </button>
+      )}
+      </div>
       {open && (
         <div className="chat-team-board-cols">
           {phases.map(({ party, runs }) => (

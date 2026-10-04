@@ -4,6 +4,7 @@ import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
 import { useAgentGoalLive, useHeadlessTeammates } from '../../hooks/useAgentCapabilities';
+import { normalizeGoalLive } from '../../lib/goalLive';
 import { anchorsBySession, launchedSessionIds, withTeammates } from './chat/teammates';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { ChatMode } from '../../lib/chatModes';
@@ -29,7 +30,7 @@ import { PermissionCard } from './chat/PermissionCard';
 import { PlanCard } from './chat/PlanCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
-import { TeamBoard } from './chat/TeamBoard';
+import { TeamBoard, teamBoardState } from './chat/TeamBoard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { QueuedMessages } from './chat/QueuedMessages';
 import { PeerSessionHolder } from './chat/PeerSessionCard';
@@ -231,7 +232,17 @@ function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
   const live = session.status === 'open';
   // The same query `GoalLivePanel` runs (shared key, so still one poll): read here only to
   // know whether the goal-skill map has the rail.
-  const goalActive = !!useAgentGoalLive(session.claudeId, live).data?.active;
+  const goalData = useAgentGoalLive(session.claudeId, live).data;
+  const goalActive = !!goalData?.active;
+  const goalWon = goalActive && normalizeGoalLive(goalData?.state)?.phase === 'done';
+  const board = teamBoardState(team.parties, team.runsOf);
+  const [goalOpen, setGoalOpen] = useState(false);
+  // One strip at a time. The team at work is the board; the lead at work between batches is
+  // the map (which stage, which wave, what Claude is doing); a finished run is its win, with
+  // the board folded under it as the record. The board steps back only while a map has
+  // something live to say, never when it would be the only sign of the run.
+  const mapLive = goalActive ? !goalWon : !!quest && !quest.outcome;
+  const boardOwnsRun = board.shows && board.running > 0;
   return (
     <div className="chat-live-rail">
       {link && (
@@ -243,9 +254,23 @@ function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
           ))}
         </div>
       )}
-      {quest && !goalActive && <ChatQuestBar quest={quest} lineage={lineage} />}
-      <TeamBoard parties={team.parties} runsOf={team.runsOf} onDrillIn={team.onDrillIn} />
-      <GoalLivePanel claudeId={session.claudeId} enabled={live} variant="rail" />
+      {quest && !goalActive && <ChatQuestBar quest={quest} lineage={lineage} liveHidden={boardOwnsRun} />}
+      <GoalLivePanel
+        claudeId={session.claudeId}
+        enabled={live}
+        variant="rail"
+        liveMapHidden={boardOwnsRun}
+        open={goalOpen}
+        onOpenChange={setGoalOpen}
+      />
+      {!(mapLive && !boardOwnsRun) && (
+        <TeamBoard
+          parties={team.parties}
+          runsOf={team.runsOf}
+          onDrillIn={team.onDrillIn}
+          onExpand={goalActive && !goalWon ? () => setGoalOpen(true) : undefined}
+        />
+      )}
       <CouncilLivePanel claudeId={session.claudeId} enabled={live} />
     </div>
   );
