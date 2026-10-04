@@ -142,12 +142,20 @@ async function readGeometry(): Promise<Geometry | null> {
 const CUE_FLOOR_MS = 1500;
 
 /** One light Force Touch tap (src/assistant.rs `assistant_haptic`); nothing outside the app. */
-async function notchHaptic(): Promise<void> {
-  if (!isDesktop()) return;
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('assistant_haptic');
-  } catch { /* an older app build without the command: the sound alone */ }
+/**
+ * The notification's tick and trackpad tap, both native (assistant.rs `assistant_haptic`): a
+ * WebAudio tick stayed silent until the notch was clicked once (autoplay policy). The browser
+ * preview, or an app build without the command, falls back to the WebAudio tick.
+ */
+async function notchCue(): Promise<void> {
+  if (isDesktop()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('assistant_haptic', { sound: true });
+      return;
+    } catch { /* fall through to the webview's own tick */ }
+  }
+  playNotchTick();
 }
 
 /** The collapsed pill's height: the camera housing's, or a plain pill's without one. */
@@ -719,8 +727,7 @@ export function Notch() {
     cue.item = item;
     if (!isNew || Date.now() - cue.at < CUE_FLOOR_MS) return;
     cue.at = Date.now();
-    playNotchTick();
-    void notchHaptic();
+    void notchCue();
   }, [peekShown, peek, eventPeek]);
   const wasPeek = useRef(false);
   useEffect(() => {

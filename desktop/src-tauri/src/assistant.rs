@@ -354,16 +354,102 @@ pub fn assistant_geometry<R: Runtime>(window: tauri::WebviewWindow<R>) -> Result
 }
 
 /// One faint trackpad tap with a notch notification (owner, 2026-10-04: "a minimal vibration,
-/// like haptic feedback"). A Mac has no vibration motor: the only haptic is the Force Touch
-/// trackpad, and it is felt only while a finger rests on it. `Generic` is the lightest pattern
-/// AppKit offers. No trackpad, or a non-Force-Touch one, makes it a silent no-op.
+/// like haptic feedback"), and with `sound`, the notification's tick.
+///
+/// A Mac has no vibration motor: the only haptic is the Force Touch trackpad, felt only while a
+/// finger rests on it. `NSHapticFeedbackManager` performs ONLY for the active app, and the notch
+/// is a non-activating panel of an app that is usually NOT in front, so its taps were dropped
+/// (owner, 2026-10-04: "the haptic does not come"). The trackpad's actuator is driven directly
+/// instead (MultitouchSupport, loaded at run time; see `actuate_trackpad`), with AppKit as the
+/// fallback when that framework is missing.
+///
+/// The tick is a system sound for the same reason: the webview's WebAudio context stays
+/// suspended until the notch is clicked once (autoplay policy), so the first notifications
+/// after launch were silent. A native sound has no such gate.
 #[tauri::command]
-pub fn assistant_haptic() {
+pub fn assistant_haptic(sound: Option<bool>) {
+    if sound == Some(true) {
+        play_tick();
+    }
+    if actuate_trackpad() {
+        return;
+    }
     use objc2_app_kit::{
         NSHapticFeedbackManager, NSHapticFeedbackPattern, NSHapticFeedbackPerformanceTime, NSHapticFeedbackPerformer,
     };
     NSHapticFeedbackManager::defaultPerformer()
         .performFeedbackPattern_performanceTime(NSHapticFeedbackPattern::Generic, NSHapticFeedbackPerformanceTime::Now);
+}
+
+/// The notification tick: a quiet system sound.
+fn play_tick() {
+    use objc2_app_kit::NSSound;
+    use objc2_foundation::NSString;
+    if let Some(snd) = NSSound::soundNamed(&NSString::from_str("Tink")) {
+        snd.setVolume(0.35);
+        snd.play();
+    }
+}
+
+/// Tap the built-in trackpad through its actuator (MultitouchSupport.framework, private, the
+/// way HapticKey does it), which works whichever app is in front. Loaded with `dlopen`, so a
+/// macOS without it just returns false. Actuation 1 is the lightest click.
+fn actuate_trackpad() -> bool {
+    use std::ffi::{c_void, CStr};
+    type CreateDefault = unsafe extern "C" fn() -> *const c_void;
+    type GetDeviceId = unsafe extern "C" fn(*const c_void, *mut u64) -> i32;
+    type CreateActuator = unsafe extern "C" fn(u64) -> *const c_void;
+    type OpenClose = unsafe extern "C" fn(*const c_void) -> i32;
+    type Actuate = unsafe extern "C" fn(*const c_void, i32, u32, f32, f32) -> i32;
+    extern "C" {
+        fn CFRelease(cf: *const c_void);
+    }
+    const PATH: &CStr = c"/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport";
+    unsafe {
+        let lib = libc::dlopen(PATH.as_ptr(), libc::RTLD_LAZY);
+        if lib.is_null() {
+            return false;
+        }
+        let sym = |name: &CStr| libc::dlsym(lib, name.as_ptr());
+        let (cd, gid, ca, op, ac, cl) = (
+            sym(c"MTDeviceCreateDefault"),
+            sym(c"MTDeviceGetDeviceID"),
+            sym(c"MTActuatorCreateFromDeviceID"),
+            sym(c"MTActuatorOpen"),
+            sym(c"MTActuatorActuate"),
+            sym(c"MTActuatorClose"),
+        );
+        if [cd, gid, ca, op, ac, cl].iter().any(|p| p.is_null()) {
+            return false;
+        }
+        let create_default: CreateDefault = std::mem::transmute(cd);
+        let get_id: GetDeviceId = std::mem::transmute(gid);
+        let create_actuator: CreateActuator = std::mem::transmute(ca);
+        let open: OpenClose = std::mem::transmute(op);
+        let actuate: Actuate = std::mem::transmute(ac);
+        let close: OpenClose = std::mem::transmute(cl);
+        let device = create_default();
+        if device.is_null() {
+            return false;
+        }
+        let mut id: u64 = 0;
+        let ok_id = get_id(device, &mut id) == 0 && id != 0;
+        CFRelease(device);
+        if !ok_id {
+            return false;
+        }
+        let actuator = create_actuator(id);
+        if actuator.is_null() {
+            return false;
+        }
+        let mut done = false;
+        if open(actuator) == 0 {
+            done = actuate(actuator, 1, 0, 0.0, 2.0) == 0;
+            close(actuator);
+        }
+        CFRelease(actuator);
+        done
+    }
 }
 
 /// The camera housing of the NSScreen whose frame starts at `x` (logical), from
