@@ -315,7 +315,7 @@ export interface ConversationModel {
   accountSwitch?: {
     switched: boolean;
     reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-      | 'stayed_put' | 'auto_switch_disabled';
+      | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
     accountId: string;
     fromAccountId?: string;
     email?: string;
@@ -330,6 +330,8 @@ export interface ConversationModel {
     unmeasured?: boolean;
     rejected?: Array<{ id: string; why: string }>;
     pendingText?: string;
+    /** Every held owner message, oldest first — see the protocol event. */
+    pendingTexts?: string[];
     /** The SERVER's answer to "is a turn really running?" — see the frame's own note. The
      *  restart gate reads this instead of `session.busy`, which is set optimistically. */
     turnInFlight?: boolean;
@@ -473,6 +475,9 @@ export interface ChatSession {
    *  gives it one as soon as there is one. Callers falling back from a refused steer should
    *  always pass it; the ⇡ button never does. */
   enqueue: (text: string, opts?: { steerWhenPossible?: boolean }) => void;
+  /** Hold the queue as Stop does (a no-op when it is empty). For a respawn carrying over the
+   *  rows of a session whose queue the user had paused: the rows come along, the pause too. */
+  pauseQueue: () => void;
   /** Send ONE queued row this instant — the row's "Send now". Steers when a turn is running,
    *  sends when none is; leaves the rest of the queue's order and pause untouched. */
   sendQueuedNow: (id: string) => void;
@@ -995,6 +1000,7 @@ export function createChatSession(
     steer,
     canSteer: steerable,
     enqueue,
+    pauseQueue,
     editQueued,
     removeQueued,
     sendQueuedNow,
@@ -1129,9 +1135,9 @@ export function createChatSession(
      *  closed before the restart landed does not come back on the other side of it. */
     dismissed?: string,
   ): void {
-    // `pendingText` is dropped on the way in: on THIS session the turn has already been
-    // resubmitted, so keeping it would invite a second send.
-    const { pendingText: _drop, ...rest } = move;
+    // The held texts are dropped on the way in: on THIS session they have already been
+    // resubmitted, so keeping them would invite a second send.
+    const { pendingText: _drop, pendingTexts: _dropAll, ...rest } = move;
     const closed = dismissed ?? conv.accountSwitchDismissed;
     conv = {
       ...conv,
@@ -1365,6 +1371,7 @@ export function createChatSession(
             ...(ev.unmeasured ? { unmeasured: true } : {}),
             ...(ev.rejected ? { rejected: ev.rejected } : {}),
             ...(ev.pendingText ? { pendingText: ev.pendingText } : {}),
+            ...(ev.pendingTexts ? { pendingTexts: ev.pendingTexts } : {}),
             ...(ev.turnInFlight === undefined ? {} : { turnInFlight: ev.turnInFlight }),
           },
         };
@@ -1978,6 +1985,10 @@ export function createChatSession(
       const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now(), opts);
       if (next !== conv.queued) conv = { ...conv, queued: next };
     });
+  }
+
+  function pauseQueue(): void {
+    if (conv.queued.length > 0) applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
   }
 
   function editQueued(qid: string, text: string): void {

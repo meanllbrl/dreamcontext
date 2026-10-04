@@ -54,7 +54,8 @@ vi.mock('../../src/lib/claude-limit-rejections.js', async (importOriginal) => {
 });
 vi.mock('../../src/lib/claude-usage-probe.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/lib/claude-usage-probe.js')>();
-  return { ...real, probeAccountUsage: vi.fn(async () => ({ status: 'healthy-unmeasured', reason: 'test' })) };
+  const probe = vi.fn(async () => ({ status: 'healthy-unmeasured', reason: 'test' }));
+  return { ...real, probeAccountUsage: probe, probeAccountForDecision: probe };
 });
 
 const { startChatSession } = await import('../../src/server/routes/agent-chat.js');

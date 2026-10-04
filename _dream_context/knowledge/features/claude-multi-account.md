@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-10-03'
+updated: '2026-10-04'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -33,6 +33,8 @@ related_tasks:
   - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim
   - >-
     automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands
+  - >-
+    an-account-switch-is-never-left-owed-held-messages-ride-it-it-is-said-again-and-a-stalled-one-gives-the-messages-back
 ---
 
 ## Why
@@ -281,6 +283,22 @@ and moving before the limit lands did not exist at all.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-10-04] A switch is never left owed.** Observed 16:41–16:54: a weekly limit landed on
+  the preferred account and four panes earned the same refusal on every message for 13 minutes
+  with three accounts at 3–14%. The client watcher `stop()`ed on the first `switched:false`
+  notice, so the later real switch was announced and never performed; the server then sent each
+  new message into the refused account. Now: a reported-only notice never disarms; messages typed
+  while a switch is owed are HELD (`pendingTexts`, oldest first) instead of sent; the frame is said
+  again at the turn boundary (`turnInFlight:false`) and on reattach; every chat respawn carries
+  the client queue; a restart not performed within `SWITCH_STALL_MS` (60s, attached, at the
+  boundary) releases the held messages to the current account, retracts the notice
+  (`switch_stalled`) and stops moving that pane. `lastSentText` is cleared at turn end, so a
+  refused background-task turn moves the pane without resubmitting an old message. Decision
+  probes are shared per account (`probeAccountForDecision`) and an `unknown` probe falls back to a
+  CURRENT disk cache — the racing probes were turning free accounts into `all_exhausted`.
+  Known edge: a message sent in the milliseconds between the server sending the restart frame and
+  the client acting on it is held by the dying process and lost.
 
 - **[2026-09-13] A percentage alone cannot rank two accounts — time is half the price.** Owner,
   four connected accounts on screen: a 97% five-hour window that reopened in three hours and a 91%

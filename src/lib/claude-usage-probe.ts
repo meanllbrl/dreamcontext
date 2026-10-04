@@ -7,7 +7,7 @@ import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { ensureSandbox } from './claude-account-sandbox.js';
 import { claudeAuthStatus, PROBE_TIMEOUT_MS } from './claude-auth.js';
-import { readUsageLimits, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
+import { readUsageLimits, usageReadingIsCurrent, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
 import { parseUsageReport, withLockedReasons } from './claude-usage-report.js';
 
 /**
@@ -320,4 +320,55 @@ function expectedAccountUuid(dir: string, home: string): string | null {
     (a) => (a.configDir ?? home) === dir || a.configDir === dir,
   );
   return account?.accountUuid ? account.accountUuid : null;
+}
+
+/** How long a decision probe's good answer is lent to the next pane that asks. */
+export const SHARED_PROBE_TTL_MS = 30_000;
+
+const sharedProbes = new Map<string, { at: number; outcome: Promise<ProbeOutcome> }>();
+
+/** Tests only: forget every shared probe. */
+export function resetSharedProbes(): void {
+  sharedProbes.clear();
+}
+
+/**
+ * {@link probeAccountUsage} for a SWITCH DECISION — shared across every pane, and never blinder
+ * than the disk.
+ *
+ * SHARED, because a limit lands on every pane of an account at once. Observed 2026-10-04: a
+ * weekly limit refused four panes inside a minute, each pane probed every other account, and a
+ * dozen `claude /usage` children raced for the same sandboxes. A probe that times out is
+ * `unknown`, `unknown` is never a candidate, and "no candidate" is `all_exhausted` — while those
+ * accounts sat at 3–14%. One probe per account is in flight at a time and every asker waits on
+ * it; a good answer is lent for {@link SHARED_PROBE_TTL_MS}, a bad one is not kept at all, so the
+ * next ask tries again.
+ *
+ * NEVER BLINDER THAN THE DISK, because `unknown` means only that THIS probe could not tell. When
+ * the account's own cache is current by the rule every other decision already uses
+ * (`usageReadingIsCurrent`, the CLI's own ceiling), that cache is a measurement, not a guess, and
+ * it decides. `stale` and `needs-relogin` are positive facts and are never papered over.
+ */
+export function probeAccountForDecision(
+  configDir: string,
+  deps: ProbeDeps & { now?: () => number } = {},
+): Promise<ProbeOutcome> {
+  const now = deps.now ?? Date.now;
+  const hit = sharedProbes.get(configDir);
+  if (hit && now() - hit.at <= SHARED_PROBE_TTL_MS) return hit.outcome;
+
+  const outcome = probeAccountUsage(configDir, deps)
+    .catch((err): ProbeOutcome => ({ status: 'unknown', reason: (err as Error)?.message ?? String(err) }))
+    .then((res): ProbeOutcome => {
+      if (res.status !== 'ok') {
+        // Settled: the next asker spends a probe of its own rather than inherit this failure.
+        if (sharedProbes.get(configDir)?.outcome === outcome) sharedProbes.delete(configDir);
+      }
+      if (res.status !== 'unknown') return res;
+      let cached: UsageLimitsResponse;
+      try { cached = readUsageLimits(configDir); } catch { return res; }
+      return usageReadingIsCurrent(cached, now()) ? { status: 'ok', limits: cached } : res;
+    });
+  sharedProbes.set(configDir, { at: now(), outcome });
+  return outcome;
 }

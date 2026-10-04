@@ -92,9 +92,50 @@ describe('auto-switch restart', () => {
     expect(line.includes('stop()'), 'the carried-notice guard must not disarm the watcher').toBe(false);
   });
 
-  it('enqueues the held turn instead of writing it to a socket that is still connecting', () => {
-    expect(arm).toMatch(/next\.enqueue\(move\.pendingText\)/);
+  it('a reported-only notice does NOT disarm the watcher (2026-10-04)', () => {
+    // "Stayed put" / "every account is full" is followed, often a minute later, by a REAL
+    // switch. When this line called `stop()`, that later switch was announced and never
+    // performed: the server held the message for a restart nobody did, and every message after
+    // it went into the refused account — thirteen minutes of the same limit error, three
+    // accounts free.
+    const line = arm.split('\n').find((l) => /!move\.switched/.test(l)) ?? '';
+    expect(line, 'the reported-only guard must exist').not.toBe('');
+    expect(line.includes('stop()'), 'a reported-only notice must not disarm the watcher').toBe(false);
+  });
+
+  it('hands EVERY held turn to the respawn, the list first and the single text as fallback', () => {
+    expect(arm).toMatch(/move\.pendingTexts \?\? \(move\.pendingText \? \[move\.pendingText\] : \[\]\)/);
+    expect(arm).toMatch(/resumeChatRef\.current\?\.\(cs, undefined, move\.accountId, held\)/);
     expect(arm.includes('next.send('), 'send() cannot reach a CONNECTING socket').toBe(false);
+  });
+});
+
+describe('every chat respawn carries what was waiting to be sent', () => {
+  const surface = code(read(SURFACE));
+  const resume = callbackBody(surface, 'resumeChatSession');
+  const carry = surface.slice(surface.indexOf('function carryQueueInto'), surface.indexOf('function carryQueueInto') + 400);
+
+  it('reads the outgoing queue BEFORE dispose', () => {
+    const readAt = resume.indexOf('cs.getModel().queued');
+    const disposeAt = resume.indexOf('cs.dispose()');
+    expect(readAt).toBeGreaterThan(-1);
+    expect(readAt).toBeLessThan(disposeAt);
+  });
+
+  it('carries it onto the new session beside the draft', () => {
+    expect(resume).toMatch(/carryQueueInto\(s as ChatSession, heldTexts, carriedQueue\)/);
+  });
+
+  it('enqueues the held turns AHEAD of the old queue, and never sends', () => {
+    const heldAt = carry.indexOf('for (const text of held) next.enqueue(text)');
+    const queuedAt = carry.indexOf('for (const text of queued.texts) next.enqueue(text)');
+    expect(heldAt).toBeGreaterThan(-1);
+    expect(queuedAt).toBeGreaterThan(heldAt);
+    expect(carry.includes('.send('), 'send() cannot reach a CONNECTING socket').toBe(false);
+  });
+
+  it('keeps a paused queue paused', () => {
+    expect(carry).toMatch(/queued\.paused[^\n]*next\.pauseQueue\(\)/);
   });
 });
 
@@ -175,5 +216,22 @@ describe('a dismissed account-switch notice', () => {
 
   it('is not drawn by the pane', () => {
     expect(pane).toMatch(/conv\.accountSwitch && !conv\.accountSwitch\.dismissed/);
+  });
+});
+
+describe('the held-text list on the wire', () => {
+  it('is parsed in order, and an older single-text frame still parses', async () => {
+    const { parseChatLine } = await import('../../dashboard/src/lib/chatProtocol');
+    const frame = { type: '_meta', subtype: 'account_switch', switched: true, reason: 'limit_hit', accountId: 'spare', turnInFlight: false };
+    const listed = parseChatLine(JSON.stringify({ ...frame, pendingText: 'devam', pendingTexts: ['devam', 'alo', 42, ''] }));
+    expect(listed).toMatchObject({ kind: 'account-switch', pendingText: 'devam', pendingTexts: ['devam', 'alo'], turnInFlight: false });
+    const single = parseChatLine(JSON.stringify({ ...frame, pendingText: 'devam' }));
+    expect(single).toMatchObject({ kind: 'account-switch', pendingText: 'devam' });
+    expect(single).not.toHaveProperty('pendingTexts');
+  });
+
+  it('is dropped with the single text when the notice is carried onto the new session', () => {
+    const session = code(read(SESSION));
+    expect(session).toMatch(/const \{ pendingText: _drop, pendingTexts: _dropAll, \.\.\.rest \} = move/);
   });
 });

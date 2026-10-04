@@ -314,6 +314,19 @@ function carryDraftInto(next: ChatSession, draft: string): void {
   if (draft) next.sendText(draft);
 }
 
+/**
+ * Carry what was WAITING to be sent onto the session replacing it: first the turns the server
+ * held for an account switch (`held` — typed before anything the composer queued behind them),
+ * then the outgoing session's own queued rows, paused again if the user had paused them.
+ * Enqueued, never sent: the new socket is still connecting, and the queue drains on its open
+ * edge (see `armAccountSwitch`'s note on why `send` here lost the message every time).
+ */
+function carryQueueInto(next: ChatSession, held: string[], queued: { texts: string[]; paused: boolean }): void {
+  for (const text of held) next.enqueue(text);
+  for (const text of queued.texts) next.enqueue(text);
+  if (queued.paused && queued.texts.length > 0) next.pauseQueue();
+}
+
 /** How long a chat link waits for the surface's capabilities, settings and saved roster
  *  before acting on what it has, and how often it looks. */
 const LINKED_SESSION_WAIT_MS = 8_000;
@@ -566,7 +579,7 @@ export function AgentSurface() {
   // after it because it IS a spawn caller. Same latest-value ref idiom as
   // `chatPermissionModeRef` above.
   const resumeChatRef = useRef<
-    ((cs: ChatSession, targetBypass?: boolean, targetAccountId?: string) => ChatSession) | null
+    ((cs: ChatSession, targetBypass?: boolean, targetAccountId?: string, heldTexts?: string[]) => ChatSession) | null
   >(null);
   const [authNotice, setAuthNotice] = useState<{
     identity: string; loggedIn: boolean | null; restarted: number;
@@ -663,7 +676,13 @@ export function AgentSurface() {
       if (sessions.current.get(cs.id) !== cs) { stop(); return; }   // closed/replaced
       const move = cs.getModel().accountSwitch;
       if (!move) return;
-      if (!move.switched || !move.accountId) { stop(); return; }     // reported only
+      // Reported only: nothing to restart — but `return`, never `stop()`. A session told
+      // "stayed put" or "every account is full" can be told to MOVE a minute later, once the
+      // probe that failed answers or a window reopens. Disarming here (as this line did until
+      // 2026-10-04) left that later switch announced and never performed: the server held the
+      // message for a restart that never came and sent every one after it into the refused
+      // account — "You've hit your weekly limit" for thirteen minutes with three accounts free.
+      if (!move.switched || !move.accountId) return;
       // ── THE NOTICE IS ALSO CARRIED ONTO THE SESSION THIS RESTART CREATES ──────────────
       //
       // `next.noteAccountSwitch(move)` at the bottom of this callback copies the notice onto
@@ -705,7 +724,11 @@ export function AgentSurface() {
         from: cs.id, claudeId: cs.claudeId,
         detail: { toAccountId: move.accountId, turnInFlight: move.turnInFlight, hasPendingText: !!move.pendingText, reason: move.reason },
       });
-      const next = resumeChatRef.current?.(cs, undefined, move.accountId);
+      // The held turns go in AHEAD of anything the old session had queued: the server held
+      // them, so they were typed first. Handed to the respawn rather than enqueued after it
+      // returns, because that is where the old queue is carried and the order is set.
+      const held = move.pendingTexts ?? (move.pendingText ? [move.pendingText] : []);
+      const next = resumeChatRef.current?.(cs, undefined, move.accountId, held);
       if (!next) {
         // `resumeChatRef` is assigned on every render, so an empty ref here would mean the
         // restart never ran — after the session was already disposed by nobody. Worth seeing.
@@ -720,7 +743,8 @@ export function AgentSurface() {
       // exists; without this the copy lands re-opened and the × the reader pressed is undone
       // by the very restart it was pressed during.
       next.noteAccountSwitch(move, cs.getModel().accountSwitchDismissed);
-      // The held turn is resubmitted on the NEW process, so the user's message is never lost.
+      // The held turns are resubmitted on the NEW process (by `resumeChatSession`, above), so
+      // the user's messages are never lost.
       //
       // ENQUEUED, NOT SENT. `next` was constructed microseconds ago and its WebSocket is still
       // CONNECTING — `writeUser` refuses any frame on a socket that is not OPEN and answers
@@ -730,7 +754,6 @@ export function AgentSurface() {
       // carry it (`maybeFlushQueue` drains on the open edge), and it holds it VISIBLY — if the
       // new socket never opens at all, the text is a row the user can still read and resend
       // rather than something that vanished between two processes.
-      if (move.pendingText) next.enqueue(move.pendingText);
     });
   }, []);
 
@@ -1397,10 +1420,15 @@ export function AgentSurface() {
   // resumed session's trigger then shows what the new process is genuinely running (ChatPane
   // resolves it from the CLI's own `system:init`), so the indicator stays truthful even when
   // this seed is a beat behind.
-  const resumeChatSession = useCallback((cs: ChatSession, targetBypass?: boolean, targetAccountId?: string) => {
+  const resumeChatSession = useCallback((cs: ChatSession, targetBypass?: boolean, targetAccountId?: string, heldTexts: string[] = []) => {
     // Captured BEFORE dispose, applied after the respawn — see `carryDraftInto`. This path is
     // also the permission-mode fallback, so it is the one a Bypass switch actually takes.
     const carried = cs.getModel().draft;
+    // …and the QUEUE, for the same reason: a message typed while a turn ran sits in
+    // `conv.queued`, which is per session and died with it. Every respawn ate it — and an
+    // account switch is the respawn most likely to have one waiting, since the composer
+    // queues behind the very message the server is holding.
+    const carriedQueue = { texts: cs.getModel().queued.map((q) => q.text), paused: !!cs.getModel().queuePaused };
     traceRespawn('resumeChatSession', 'begin', {
       from: cs.id, claudeId: cs.claudeId,
       detail: { targetBypass, targetAccountId, fromAccountId: cs.accountId, mode: cs.mode, exited: cs.getModel().exited },
@@ -1431,6 +1459,7 @@ export function AgentSurface() {
     // The carry stays ADJACENT to the spawn — `chat-draft-carry.test.ts` reads the proximity
     // as the guarantee, and the trace below is diagnostics that must not come between them.
     carryDraftInto(s as ChatSession, carried);
+    carryQueueInto(s as ChatSession, heldTexts, carriedQueue);
     traceRespawn('resumeChatSession', 'spawned', { from: cs.id, to: s.id, claudeId: cs.claudeId, detail: { accountId: acct } });
     setSessionList((prev) => {
       const next = prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'chat' as const, bypass: s.bypass, claudeId: s.claudeId, mode: cs.mode } : m));

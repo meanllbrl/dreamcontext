@@ -227,7 +227,10 @@ export type ChatEvent =
    * even in principle. A frame reusing it would never fire.
    *
    * `switched: true`  → the turn was HELD; restart this conversation on `accountId` at the turn
-   *                     boundary and resubmit `pendingText`. The user is TOLD which account —
+   *                     boundary and resubmit `pendingTexts` (else `pendingText`). The frame
+   *                     may arrive AGAIN for the same move — with a longer list, or with
+   *                     `turnInFlight: false` at the boundary; the latest copy is the truth.
+   *                     The user is TOLD which account —
    *                     the billed account never changes silently.
    * `switched: false` → nothing changed and the turn already went out on the current account.
    *                     `reason` says why: `all_exhausted` (with `earliestResetAt`, so the
@@ -244,7 +247,7 @@ export type ChatEvent =
       kind: 'account-switch';
       switched: boolean;
       reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-        | 'stayed_put' | 'auto_switch_disabled';
+        | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
       accountId: string;
       fromAccountId?: string;
       email?: string;
@@ -255,6 +258,10 @@ export type ChatEvent =
       earliestResetAt?: number;
       rejected?: Array<{ id: string; why: string }>;
       pendingText?: string;
+      /** EVERY owner message held for this restart, oldest first (`pendingText` is the first).
+       *  A message typed while the restart is owed joins it instead of going out on the account
+       *  being left, so the frame is re-sent with the longer list. */
+      pendingTexts?: string[];
       /** The winner is signed in but publishes no usage numbers — there is no percent behind
        *  this choice, and the banner must say so rather than imply a measured one. */
       unmeasured?: boolean;
@@ -1035,6 +1042,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       switched: obj.switched === true,
       reason: reason === 'limit_near' || reason === 'limit_hit' || reason === 'limit_known'
         || reason === 'needs_relogin' || reason === 'all_exhausted' || reason === 'stayed_put'
+        || reason === 'switch_stalled'
         ? reason
         : 'auto_switch_disabled',
       accountId: str(obj.accountId) ?? '',
@@ -1046,6 +1054,9 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       ...(typeof obj.earliestResetAt === 'number' ? { earliestResetAt: obj.earliestResetAt } : {}),
       ...(rejected && rejected.length > 0 ? { rejected } : {}),
       ...(str(obj.pendingText) ? { pendingText: str(obj.pendingText)! } : {}),
+      ...(Array.isArray(obj.pendingTexts) && obj.pendingTexts.some((t) => str(t))
+        ? { pendingTexts: obj.pendingTexts.flatMap((t) => (str(t) ? [str(t)!] : [])) }
+        : {}),
       ...(obj.unmeasured === true ? { unmeasured: true } : {}),
       ...(typeof obj.turnInFlight === 'boolean' ? { turnInFlight: obj.turnInFlight } : {}),
     };

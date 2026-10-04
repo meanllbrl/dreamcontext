@@ -125,6 +125,8 @@ export function BranchStartBanner({ tone, message, onDismiss }: {
  *                         information the user can act on.
  *   • stayed_put        — refused, and nowhere better to go. Only ever shown after a real
  *                         refusal; a pre-emptive "stayed put" is not news and stays silent.
+ *   • switch_stalled    — a move was announced and never performed (the pane did not restart
+ *                         in time); the held messages went out on THIS account instead.
  *   • auto_switch_disabled — the limit is close (or already hit) and the setting is OFF, so
  *                         nothing changed. Reporting without acting is what "off" means.
  */
@@ -132,7 +134,7 @@ export function AccountSwitchBanner({ move, onDismiss }: {
   move: {
     switched: boolean;
     reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-      | 'stayed_put' | 'auto_switch_disabled';
+      | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
     accountId: string;
     email?: string;
     sessionPercent?: number;
@@ -178,6 +180,8 @@ export function AccountSwitchBanner({ move, onDismiss }: {
           : 'Every account is at its limit. This message went out on the current account.')
       : move.reason === 'stayed_put'
         ? `This account hit its limit and no other account is in better shape${when ? `, so work resumes at ${when}` : ''}.`
+        : move.reason === 'switch_stalled'
+          ? 'This chat could not be moved to another account, so your messages went out on this one. Open a new chat to start on another account.'
         : move.reason === 'auto_switch_disabled' && when
           ? `This account is at its limit until ${when}. Auto-switch is off, so nothing was changed.`
           : 'This account is close to its limit. Auto-switch is off, so nothing was changed.';

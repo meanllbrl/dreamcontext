@@ -44,7 +44,7 @@ import {
   switchStrategyFor, switchWeightsFor,
 } from '../../lib/claude-accounts.js';
 import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-sandbox.js';
-import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
+import { probeAccountForDecision } from '../../lib/claude-usage-probe.js';
 import { readUsageLimits, usageReadingIsCurrent } from '../../lib/claude-usage.js';
 import {
   SWITCH_THRESHOLD_PERCENT, chooseAccount, shouldProbe, shouldSwitchAway, type AccountReading,
@@ -750,6 +750,17 @@ const INTERRUPT_KILL_GRACE_MS = 1500;
  */
 const BLIND_PROBE_COOLDOWN_MS = 60_000;
 
+/**
+ * How long an announced account switch may stay unperformed, counted from the turn boundary
+ * with a socket attached, before the held messages are sent on the current account instead.
+ * The client restarts the instant it reads `turnInFlight: false`, so a minute only elapses when
+ * something on the client side is broken — and then a visible limit error beats a message that
+ * never runs. Overridable for the verify harness.
+ */
+const SWITCH_STALL_MS = Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS) > 0
+  ? Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS)
+  : 60_000;
+
 /** How long a chat's `claude` child may outlive its WebSocket to finish an in-flight turn.
  *
  *  A `claude -p --input-format stream-json` process whose stdin stays open waits for the
@@ -1212,6 +1223,10 @@ export function startChatSession(
   let lingerKillTimer: ReturnType<typeof setTimeout> | null = null;
 
   const untrack = trackChild(child);
+  // A write that loses a race with stdin's end is reported as an asynchronous 'error' event,
+  // which `writeStdin`'s try/catch cannot see — and an unheard 'error' takes the whole server
+  // down. The close handler already reports the child going away.
+  child.stdin.on?.('error', () => { /* stdin ended under a write */ });
 
   /** Resolves once the child has exited (cutChild waits on it). */
   let markExited: () => void = () => { /* replaced below */ };
@@ -1276,6 +1291,8 @@ export function startChatSession(
     if (turnsInFlight === 0) {
       outstandingAsks.clear();
       if (live) markTurnEnded(live);
+      // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
+      reannounceSwitch();
     }
     armDetachReap();
   };
@@ -1315,6 +1332,23 @@ export function startChatSession(
     if (!alive) return;
     try { child.stdin.write(JSON.stringify(obj) + '\n'); }
     catch { /* stream torn down between the alive check and the write — best-effort */ }
+  };
+
+  /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
+   *  released by `releaseStalledSwitch`. */
+  const writeOwnerTurn = (text: string): void => {
+    openTurn();
+    lastSentText = text;
+    registry?.userSent(text);
+    // The Assistant hears what is happening right now with every owner turn: a second,
+    // server-written block with no project text in it (live-context.ts), dropped from the
+    // replay because it starts with `<`.
+    const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text }];
+    if (isAssistant) {
+      const live = assistantLiveContext();
+      if (live) content.push({ type: 'text', text: live });
+    }
+    writeStdin({ type: 'user', message: { role: 'user', content } });
   };
 
   const sendMeta = (frame: Record<string, unknown>): void => {
@@ -1406,6 +1440,7 @@ export function startChatSession(
     clearInterruptTimers();
     clearLingerTimers();
     clearDetachTimers();
+    if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
     if (live) unregisterLiveChat(live);
     untrack();
@@ -1436,6 +1471,7 @@ export function startChatSession(
   function drain(): void {
     if (!alive || lingerTimer || lingerKillTimer) return;
     clearDetachTimers();
+    if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
     // No longer adoptable (a reattach arriving now resumes in a new process instead), but still
     // listed as running and cuttable until it actually exits (D22; teardown unregisters it).
@@ -1542,6 +1578,9 @@ export function startChatSession(
     for (const line of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }
+    // A switch announced to the socket that went away is still owed: the client that just
+    // arrived never read it, and without it the held messages wait for a restart nobody asks for.
+    reannounceSwitch();
     return true;
   }
 
@@ -1724,6 +1763,12 @@ export function startChatSession(
       // quota, and the main turn it belongs to is about to fail for the same reason.
       const limit = readLimitSignal(obj);
       if (limit) onLimitRejected(limit);
+      // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
+      // turn's end the text has been answered, so a LATER refusal (a background task's turn,
+      // which no user frame of ours opened) must not resubmit it.
+      if (obj.type === 'result' && obj.parent_tool_use_id === undefined && turnsInFlight === 0) {
+        lastSentText = null;
+      }
 
       // Refresh the project's slash-command cache from the authoritative source every time
       // the CLI reports one, so a NEW session can be handed the list before its first turn
@@ -1807,6 +1852,80 @@ export function startChatSession(
   // it. Eating a user's turn in order to hide a limit is worse than the limit.
   let switchPending = false;
   /**
+   * The switch last announced, kept so it can be SAID AGAIN. A frame said once is a frame that
+   * can be missed: a socket that reattached after it, or a client still gated on a turn that
+   * has since ended. Re-sent at every turn boundary and on every reattach while the restart is
+   * owed (`reannounceSwitch`). Held without its texts — those are `heldTexts`, re-read per send.
+   */
+  let pendingSwitchFrame: Record<string, unknown> | null = null;
+  /**
+   * Every owner message held for the restart, in the order typed.
+   *
+   * Until 2026-10-04 only the FIRST was held: a message arriving while a restart was owed went
+   * out on the current account — the account that had just refused. Observed that day on four
+   * panes at once: a weekly limit landed, the restart never came, and every "devam" / "alo" for
+   * thirteen minutes earned the same "You've hit your weekly limit" while three accounts sat
+   * idle. A message typed into a known wall is not "never swallowed"; it is swallowed with a
+   * receipt. Each one now joins the restart instead, and the client resubmits all of them.
+   */
+  let heldTexts: string[] = [];
+  /** Fires when an owed restart has not happened long after the turn boundary — see
+   *  `releaseStalledSwitch`. */
+  let switchStallTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set once a restart was owed and never came. From then on this process REPORTS limits and
+   *  moves nothing: whatever is broken on the client side will not be fixed by announcing
+   *  another restart it cannot perform, and holding messages for it would lose them. */
+  let switchAbandoned = false;
+
+  /** stdin is ended or about to be: a draining pane (`drain`) or one handed to its successor
+   *  (`respawnInPlace`). Nothing may be written to it, and no restart is owed by it any more. */
+  const stdinEnding = (): boolean => !!(lingerTimer || lingerKillTimer || handedOff);
+
+  /** (Re)send the owed switch with the texts held so far and the CLI's REAL turn state. */
+  const reannounceSwitch = (): void => {
+    if (!switchPending || !pendingSwitchFrame || stdinEnding()) return;
+    sendMeta({
+      ...pendingSwitchFrame,
+      turnInFlight: turnsInFlight > 0,
+      ...(heldTexts.length > 0 ? { pendingText: heldTexts[0], pendingTexts: [...heldTexts] } : {}),
+    });
+    armSwitchStall();
+  };
+
+  /** Start the stall clock — only at a turn boundary, only while a socket is attached (a
+   *  detached pane cannot restart, and a reattach re-announces). */
+  const armSwitchStall = (): void => {
+    if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
+    if (!switchPending || !alive || detached || stdinEnding() || turnsInFlight > 0) return;
+    switchStallTimer = setTimeout(releaseStalledSwitch, SWITCH_STALL_MS);
+    switchStallTimer.unref?.();
+  };
+
+  /**
+   * The owed restart never came. Give the held messages to THIS process rather than keep them
+   * from everyone: on an account that refused they earn the honest limit error, which beats a
+   * message that silently never ran. Then stop moving this pane at all (`switchAbandoned`).
+   */
+  const releaseStalledSwitch = (): void => {
+    switchStallTimer = null;
+    // A pane that restarted is draining this child (its socket ended on purpose), so `detached`
+    // is false and `alive` still true: writing now would hit an ended stdin, which Node reports
+    // as an asynchronous 'error' event no try/catch can see.
+    if (!alive || !switchPending || detached || stdinEnding() || turnsInFlight > 0) return;
+    console.warn(`[agent-chat] account switch to ${String(pendingSwitchFrame?.accountId)} was announced but never performed; sending ${heldTexts.length} held message(s) on ${activeAccountId}`);
+    const texts = heldTexts;
+    heldTexts = [];
+    switchPending = false;
+    pendingSwitchFrame = null;
+    switchAbandoned = true;
+    // Retract the notice the client holds: the reducer replaces it wholesale, so a client that
+    // missed the boundary frame cannot perform the stale move later and resubmit these texts
+    // a second time.
+    sendMeta({ subtype: 'account_switch', switched: false, reason: 'switch_stalled', accountId: activeAccountId });
+    for (const text of texts) writeOwnerTurn(text);
+  };
+
+  /**
    * The tail of the evaluation chain. EVERY user frame is appended to it, so evaluation #2
    * cannot begin until #1 has finished.
    *
@@ -1853,7 +1972,7 @@ export function startChatSession(
     const readings = await Promise.all(accounts.map(async (acc): Promise<AccountReading> => {
       const dir = acc.configDir ?? homedir();
       if (dir === accountConfigDir) return { ...activeReading, id: acc.id };
-      const outcome = await probeAccountUsage(dir);
+      const outcome = await probeAccountForDecision(dir);
       return outcome.status === 'ok'
         ? { id: acc.id, limits: outcome.limits }
         : { id: acc.id, problem: outcome.status };
@@ -1913,16 +2032,20 @@ export function startChatSession(
       sessionId: isAssistant ? null : registry?.sessionId ?? null,
       until: previousResetAt ?? null,
     });
-    sendMeta({
+    heldTexts = resubmit && text ? [text] : [];
+    // `turnInFlight` and the held texts are added per send by `reannounceSwitch`:
+    //
+    // `turnInFlight` is whether a turn is REALLY running in the CLI right now. The client's
+    // restart gate reads THIS, not its own optimistic `busy`: the message being held never
+    // became a turn, so gating on `busy` would wait for a boundary that can never arrive. When
+    // a genuinely in-flight turn IS running — a steer that landed mid-turn, a sub-agent's
+    // refusal while the main turn continues — this is true and the client waits for it: that
+    // turn was authorized by the old credentials and is allowed to finish on them. The frame
+    // is said again with `false` the moment that turn ends, so the client never has to infer
+    // the boundary from its own `busy` (which a background sub-agent's frames keep raising).
+    pendingSwitchFrame = {
       subtype: 'account_switch',
       switched: true,
-      // Whether a turn is REALLY running in the CLI right now. The client's restart gate reads
-      // THIS, not its own optimistic `busy`: the message being held never became a turn, so
-      // gating on `busy` would wait for a boundary that can never arrive. When a genuinely
-      // in-flight turn IS running — a steer that landed mid-turn, or a `/effort` turn the
-      // CLI has not answered yet — this is true and the client correctly waits for it: that
-      // turn was authorized by the old credentials and is allowed to finish on them.
-      turnInFlight: turnsInFlight > 0,
       reason: cause,
       accountId: choice.accountId,
       email: target.email,
@@ -1935,9 +2058,10 @@ export function startChatSession(
       ...(choice.unmeasured ? { unmeasured: true } : {}),
       ...(previousResetAt === undefined ? {} : { earliestResetAt: previousResetAt }),
       rejected: choice.rejected,
-      // The turn the client must resubmit after the restart, so it is never lost.
-      ...(resubmit ? { pendingText: text } : {}),
-    });
+    };
+    // The turns the client must resubmit after the restart (`pendingTexts`, oldest first;
+    // `pendingText` is the first, for a client that predates the list), so none is lost.
+    reannounceSwitch();
     return true;
   };
 
@@ -1957,6 +2081,9 @@ export function startChatSession(
   const onLimitRejected = (signal: LimitSignal): void => {
     if (switchPending) return;
     const recorded = recordAccountRejection(activeAccountId, signal);
+    // A restart this pane could not perform: the refusal is on screen as the CLI wrote it, and
+    // announcing another restart would only hold messages for it again.
+    if (switchAbandoned) return;
 
     if (!autoSwitchEnabled()) {
       // OFF still REPORTS — and reporting a limit that has ALREADY landed is worth more than
@@ -1972,24 +2099,39 @@ export function startChatSession(
     }
     if (listClaudeAccounts().length < 2) return;   // nothing to switch to
 
+    // The turn that was refused may not be one WE sent: a background task finishing, or a
+    // sub-agent, starts a turn inside the CLI with no user frame from us. That turn has nothing
+    // to resubmit — but the pane still moves NOW, while it is idle, instead of leaving the next
+    // message to walk into the same wall first. (`lastSentText` is cleared at every turn end,
+    // so it can no longer hand an hours-old message to a refusal it has nothing to do with.)
     const text = lastSentText;
-    if (!text) return;   // no turn of ours to move — nothing to resubmit
 
     // Onto the SAME serialisation chain as the pre-emptive path. A rejection frame and a
     // user frame arriving together must not both decide to switch: the gate is what makes
-    // "one switch at a time" true across the two entry points rather than within each.
-    switchGate = switchGate.then(() =>
-      decideAndAnnounce(text, 'limit_hit', { id: activeAccountId, problem: 'unknown' })
-        .catch(() => false));
+    // "one switch at a time" true across the two entry points rather than within each. The
+    // refusal is often read twice (the synthetic reply AND its `result`), so the second one
+    // finds the first's restart already owed and stands down.
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideAndAnnounce(text ?? '', 'limit_hit', { id: activeAccountId, problem: 'unknown' }, undefined, !!text)
+        .catch(() => false)));
   };
 
   /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
   const maybeSwitchAccount = async (text: string, opts: { resubmit?: boolean } = {}): Promise<boolean> => {
     const resubmit = opts.resubmit ?? true;
-    // One switch at a time per conversation: a second trigger while a restart is pending sends
-    // its message on the CURRENT account rather than starting a second respawn. The message
-    // still goes out — it is never swallowed.
-    if (switchPending) return false;
+    // One switch at a time per conversation. An owner message arriving while a restart is owed
+    // JOINS it — held, re-announced, resubmitted after the restart in typing order — instead of
+    // going out on the account being left, which is (on the post-hoc path) the account that just
+    // refused. A wake message (`resubmit: false`) cannot ride the restart, so it keeps the old
+    // rule and goes out now.
+    if (switchPending) {
+      if (!resubmit) return false;
+      heldTexts.push(text);
+      reannounceSwitch();
+      return true;
+    }
+    if (switchAbandoned) return false;
 
     // The API's own refusal, remembered from an earlier turn (this pane or any other). It
     // OUTRANKS the percentages below, which is the point: the account that produced the
@@ -2059,7 +2201,7 @@ export function startChatSession(
 
     // Past the probe threshold: refresh the ACTIVE account for real before acting on a
     // possibly stale cache.
-    const activeProbe = await probeAccountUsage(accountConfigDir);
+    const activeProbe = await probeAccountForDecision(accountConfigDir);
     if (!alive) return true;                       // the session went away mid-probe
     if (activeProbe.status === 'ok') active = activeProbe.limits;
     if (activeProbe.status !== 'needs-relogin' && !shouldSwitchAway(active)) return false;
@@ -2157,6 +2299,7 @@ export function startChatSession(
     // The socket already went (draining): the next summon spawns under the new autonomy anyway.
     if (lingerTimer || lingerKillTimer || ws.readyState !== ws.OPEN) return;
     handedOff = true;
+    if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     ws.off('message', onWsMessage);
     ws.off('close', onSocketGone);
     ws.off('error', onSocketGone);
@@ -2236,18 +2379,7 @@ export function startChatSession(
           if (!alive || held) return;
           // Autonomy changed while this message waited in the gate: it belongs to the successor.
           if (respawnTo !== null || handedOff) { holdForSuccessor(raw); return; }
-          openTurn();
-          lastSentText = text;
-          registry?.userSent(text);
-          // The Assistant hears what is happening right now with every owner turn: a second,
-          // server-written block with no project text in it (live-context.ts), dropped from the
-          // replay because it starts with `<`.
-          const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text }];
-          if (isAssistant) {
-            const live = assistantLiveContext();
-            if (live) content.push({ type: 'text', text: live });
-          }
-          writeStdin({ type: 'user', message: { role: 'user', content } });
+          writeOwnerTurn(text);
         }));
       return;
     }

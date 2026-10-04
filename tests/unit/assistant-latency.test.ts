@@ -67,6 +67,10 @@ vi.mock('../../src/lib/claude-usage-probe.js', async (importOriginal) => {
       await state.slowProbe;
       return { status: 'error' } as unknown as Awaited<ReturnType<typeof real.probeAccountUsage>>;
     },
+    probeAccountForDecision: async () => {
+      await state.slowProbe;
+      return { status: 'error' } as unknown as Awaited<ReturnType<typeof real.probeAccountUsage>>;
+    },
   };
 });
 

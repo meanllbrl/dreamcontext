@@ -23,7 +23,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { probeAccountUsage, USAGE_PROBE_TIMEOUT_MS } from '../../src/lib/claude-usage-probe.js';
+import { probeAccountForDecision, probeAccountUsage, resetSharedProbes, SHARED_PROBE_TTL_MS, USAGE_PROBE_TIMEOUT_MS, type ProbeRun } from '../../src/lib/claude-usage-probe.js';
 import { sandboxDirFor, writeClaudeAccounts, type ClaudeAccount } from '../../src/lib/claude-accounts.js';
 import { SHARED_SANDBOX_ENTRIES } from '../../src/lib/claude-account-sandbox.js';
 import type { ClaudeAuthStatus } from '../../src/lib/claude-auth.js';
@@ -421,5 +421,85 @@ describe('the probe repairs the sandbox before spawning', () => {
     // Had ensureSandbox only run at creation time, the CLI would have opened a REAL projects/.
     const { lstatSync } = await import('node:fs');
     expect(lstatSync(join(SANDBOX, 'projects')).isSymbolicLink()).toBe(true);
+  });
+});
+
+/**
+ * The SWITCH DECISION's probe. Observed 2026-10-04: a weekly limit refused four panes inside a
+ * minute, each pane probed every other account at once, the racing probes timed out, a timed-out
+ * probe is `unknown`, and `unknown` is never a candidate — so auto-switch answered "every account
+ * is at its limit" while the other three sat at 3–14% on disk.
+ */
+describe('probeAccountForDecision — one probe per account, never blinder than the disk', () => {
+  beforeEach(() => resetSharedProbes());
+
+  /** A spawn the test releases by hand, counting how many children were started. */
+  function heldSpawn(result: ProbeRun) {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    let runs = 0;
+    const runProbe = async (): Promise<ProbeRun> => { runs += 1; await gate; return result; };
+    return { runProbe, release: () => release(), runs: () => runs };
+  }
+
+  it('panes asking at the same moment share ONE child', async () => {
+    writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID } });
+    const spawn = heldSpawn({ timedOut: false, stdout: envelope(LIVE_REPORT) });
+    const asks = [1, 2, 3, 4].map(() => probeAccountForDecision(SANDBOX, { home: HOME, runProbe: spawn.runProbe, authStatus: noJudge }));
+    spawn.release();
+    const outcomes = await Promise.all(asks);
+    expect(spawn.runs()).toBe(1);
+    for (const o of outcomes) expect(o.status).toBe('ok');
+  });
+
+  it('lends a good answer for the TTL, then probes again', async () => {
+    writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID } });
+    let t = 1_000_000;
+    const spawn = heldSpawn({ timedOut: false, stdout: envelope(LIVE_REPORT) });
+    spawn.release();
+    const deps = { home: HOME, runProbe: spawn.runProbe, authStatus: noJudge, now: () => t };
+    await probeAccountForDecision(SANDBOX, deps);
+    t += SHARED_PROBE_TTL_MS - 1;
+    await probeAccountForDecision(SANDBOX, deps);
+    expect(spawn.runs()).toBe(1);
+    t += 2;
+    await probeAccountForDecision(SANDBOX, deps);
+    expect(spawn.runs()).toBe(2);
+  });
+
+  it('a timed-out probe falls back to a CURRENT cache — a measurement, not a guess', async () => {
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 20 * 60_000, percent: 14 }),
+    });
+    const spawn = heldSpawn({ timedOut: true });
+    spawn.release();
+    const res = await probeAccountForDecision(SANDBOX, { home: HOME, runProbe: spawn.runProbe, authStatus: noJudge });
+    expect(res.status).toBe('ok');
+    if (res.status === 'ok') expect(res.limits.limits.find((l) => l.key === 'session')?.percent).toBe(14);
+  });
+
+  it('a timed-out probe over an OLD cache stays unknown, and is not lent to the next asker', async () => {
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 3 * 60 * 60_000 }),
+    });
+    const spawn = heldSpawn({ timedOut: true });
+    spawn.release();
+    const deps = { home: HOME, runProbe: spawn.runProbe, authStatus: noJudge };
+    expect((await probeAccountForDecision(SANDBOX, deps)).status).toBe('unknown');
+    await probeAccountForDecision(SANDBOX, deps);
+    expect(spawn.runs()).toBe(2);
+  });
+
+  it('a positive fact is never papered over by the cache: needs-relogin stays needs-relogin', async () => {
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: Date.now() - 20 * 60_000 }),
+    });
+    const spawn = heldSpawn({ timedOut: false, stdout: '' });
+    spawn.release();
+    const res = await probeAccountForDecision(SANDBOX, { home: HOME, runProbe: spawn.runProbe, authStatus: judge({ loggedIn: false }).fn });
+    expect(res.status).toBe('needs-relogin');
   });
 });
