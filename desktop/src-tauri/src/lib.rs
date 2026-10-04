@@ -27,6 +27,7 @@
 mod app_link;
 mod assistant;
 mod frames;
+mod page_focus;
 mod splash;
 
 use std::net::TcpListener;
@@ -81,6 +82,7 @@ pub fn run() {
             frames::set_frames,
             app_link::take_app_link,
             splash::splash_done,
+            page_focus::focus_diag,
         ])
         // Managed before setup runs, so a link macOS hands over on a cold launch has
         // somewhere to wait even if the server never comes up.
@@ -147,6 +149,13 @@ pub fn run() {
         }
         // A clicked `dreamcontext://` link (banner, hook, browser). macOS delivers it
         // here whether this click launched the app or it was already running.
+        // A window coming forward gives its keyboard to its page (src/page_focus.rs). Not the
+        // notch: it is a non-activating panel that manages its own key state.
+        if let RunEvent::WindowEvent { label, event: tauri::WindowEvent::Focused(true), .. } = &event {
+            if label != assistant::NOTCH_LABEL {
+                page_focus::give_keyboard_to_page(app_handle, label);
+            }
+        }
         #[cfg(target_os = "macos")]
         if let RunEvent::Opened { urls } = &event {
             app_link::handle_opened(app_handle, urls);

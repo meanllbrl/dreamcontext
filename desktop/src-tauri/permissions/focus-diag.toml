@@ -1,0 +1,8 @@
+"$schema" = "schemas/schema.json"
+
+# Append one line to ~/.dreamcontext/logs/focus-diag.log, prefixed with the calling window's
+# label. The composer focus probe (dashboard/src/lib/focusDiag.ts). See src/page_focus.rs.
+[[permission]]
+identifier = "allow-focus-diag"
+description = "Append one diagnostic line about keyboard focus to the local focus log."
+commands.allow = ["focus_diag"]

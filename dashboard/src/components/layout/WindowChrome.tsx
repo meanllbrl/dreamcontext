@@ -4,6 +4,7 @@ import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
 import { trackPresence } from '../../lib/presence';
+import { armFocusDiag } from '../../lib/focusDiag';
 import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
   focusThisWindow,
@@ -717,6 +718,7 @@ export function WindowChrome({ initialVault, initialLink }: {
     // project that is not mounted.
     const tab = openRef.current.find((p) => p.vault === vault);
     if (!tab || tab.cold) return;
+    armFocusDiag(`link ${link.kind}`);
     void focusThisWindow();
     linkSeqRef.current += 1;
     const nonce = linkSeqRef.current;
