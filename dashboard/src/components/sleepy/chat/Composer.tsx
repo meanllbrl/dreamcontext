@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
+import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
 import { VoiceMeter } from './VoiceMeter';
 import {
   parseHotkey, matchesHotkey, releasesHotkey, hotkeyLabel, isLatchKey, effectiveMode,
@@ -942,13 +943,21 @@ export function Composer({
   const levelSubsRef = useRef(new Set<(level: number) => void>());
   const onLevel = useCallback((level: number) => {
     for (const fn of levelSubsRef.current) fn(level);
-  }, []);
+    // Surfaces that draw the take bigger than this strip (the notch's listening state).
+    if (vault) publishVoiceLevel(vault, level);
+  }, [vault]);
   const subscribeLevel = useCallback((fn: (level: number) => void) => {
     levelSubsRef.current.add(fn);
     return () => { levelSubsRef.current.delete(fn); };
   }, []);
 
   const voice = useVoiceCapture({ vault, onTranscript, onLevel });
+
+  // The capture state, published for a surface that draws it bigger (lib/voice/voiceActivity.ts).
+  useEffect(() => {
+    if (!vault) return;
+    publishVoiceActivity({ vault, phase: voice.state, elapsed: voice.elapsed, attempt: voice.attempt, error: voice.error });
+  }, [vault, voice.state, voice.elapsed, voice.attempt, voice.error]);
 
   /**
    * WHICH STATE THE CARD IS IN, as one word — the value the left rail is coloured by and the
@@ -1838,7 +1847,7 @@ export function Composer({
               ? (effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
                 ? `Listening — ${hotkeyLabel(pushToTalk)} again to send`
                 : `Listening — let go to send`)
-              : voice.state === 'transcribing' ? 'Transcribing…'
+              : voice.state === 'transcribing' ? (voice.attempt > 0 ? `Transcribing… trying again (${voice.attempt} of 2)` : 'Transcribing…')
                 : voice.state === 'too-short' ? 'That was a tap — keep it down while you speak'
                   : voice.state === 'silent' ? 'Nothing was heard — try again'
                     : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'

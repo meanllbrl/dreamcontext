@@ -647,9 +647,8 @@ try {
     }
     const firstPid = await page.evaluate(() => /"cwd":"([^"]+)"/.exec(document.body.innerText)?.[1] ?? '');
     ok('the notch chat runs in the hidden vault', firstPid.endsWith('/.dreamcontext/assistant'), firstPid);
-    // A turn pops the notch out to the side by itself (owner, 2026-09-27) and it goes home once
-    // the turn is over; wait for that, then open it by hand for the Escape check.
-    await page.waitForFunction(() => !document.querySelector('.dc-notch--window'), null, { timeout: 15_000 }).catch(() => {});
+    // A turn never pops the notch out by itself (owner, 2026-10-04); open it by hand for the
+    // Escape check if the first answer folded it.
     if (await page.locator('.dc-notch__panel').isHidden()) {
       await page.click('.dc-notch__pill');
       await page.waitForSelector('.dc-notch__panel:not([hidden]) textarea', { timeout: 10_000 });
@@ -665,43 +664,15 @@ try {
     await page.evaluate(() => { window.__calls.length = 0; });
     await page.fill('.dc-notch__chat textarea', 'second turn');
     await page.keyboard.press('Enter');
-    // ── WHILE IT WORKS, IT STEPS OUT (owner, 2026-09-27) ──
-    console.log('\n── a turn pops the notch out to the side, glowing, and it goes home afterwards');
-    const glowing = await page.waitForSelector('.dc-notch--window .dc-notch__glow', { timeout: 5000 }).then(() => true, () => false);
-    ok('a turn starting pops it out to the side seat, wearing the working glow', glowing);
-    if (process.env.VERIFY_SHOT_DIR && glowing) {
-      mkdirSync(process.env.VERIFY_SHOT_DIR, { recursive: true });
-      await page.setViewportSize({ width: 480, height: 620 });
-      // The stand-in agent answers in milliseconds, so the real glow is gone by now; the shot
-      // puts the same element back to show what it looks like.
-      await page.evaluate(() => {
-        const root = document.querySelector('.dc-notch');
-        if (root && !root.querySelector('.dc-notch__glow')) root.insertAdjacentHTML('afterbegin', '<span class="dc-notch__glow" aria-hidden="true"></span>');
-      });
-      await page.waitForTimeout(900);
-      await page.screenshot({ path: join(process.env.VERIFY_SHOT_DIR, 'notch-working-glow.png') });
-      await page.setViewportSize({ width: 580, height: 560 });
-    }
+    // ── NO AUTOMATIC POP-OUT (owner, 2026-10-04: "auto pop out is not needed") ──
+    console.log('\n── a turn never pops the notch out by itself; a turn the owner typed keeps it open');
     const same = await page.waitForFunction(() => document.body.innerText.includes('"said":"second turn"'), null, { timeout: 30_000 }).then(() => true, () => false);
-    ok('and the SAME session still answers a new turn', same);
-    // The stand-in answers in milliseconds; the pop-out's frame lands a few IPCs later
-    // (show, outer_position, scale_factor, then set_frames), so wait for it before reading.
-    await page.waitForFunction(() => window.__calls.some((c) => c.cmd === 'set_frames'), null, { timeout: 5000 }).catch(() => {});
-    const popCalls = await page.evaluate(() => window.__calls.map((c) => {
-      if (c.cmd === 'plugin:event|emit') return `emit ${c.args.event} ${JSON.stringify(c.args.payload)}`;
-      if (c.cmd === 'plugin:window|set_size') { const v = c.args.value; const z = v?.Logical ?? v?.data ?? v; return `set_size ${z?.width}x${z?.height}`; }
-      // Windows move through ONE set_frames call (lib/windowFrames.ts → frames.rs): label + size per item.
-      if (c.cmd === 'set_frames') return `set_frames ${(c.args.items ?? []).map((i) => `${i.label} ${i.width}x${i.height}`).join(',')}`;
-      if (c.cmd === 'plugin:window|set_focus') return 'set_focus';
-      return null;
-    }).filter(Boolean));
-    ok('it asked for the window seat at the side size (480x620)', popCalls.includes('emit assistant://seat {"seat":"window"}') && popCalls.includes('set_frames assistant 480x620'), popCalls.join(' | ') + ' || all: ' + (await page.evaluate(() => window.__calls.map((c) => c.cmd).join(','))));
-    ok('stepping out never takes focus from the app the owner is in', !popCalls.slice(0, popCalls.indexOf('set_frames assistant 480x620') + 1).includes('set_focus'), popCalls.join(' | '));
-    const home = await page.waitForFunction(() => !document.querySelector('.dc-notch--window') && !!document.querySelector('.dc-notch__panel[hidden]'), null, { timeout: 15_000 }).then(() => true, () => false);
-    ok('once the turn is over (nothing read aloud: after the reading pause) it goes home to the collapsed notch', home);
-    const homeCalls = await page.evaluate(() => window.__calls.filter((c) => c.cmd === 'plugin:event|emit').map((c) => JSON.stringify(c.args.payload)));
-    ok('going home asks the native side for the notch seat', homeCalls.includes('{"seat":"notch"}'), homeCalls.join(' | '));
-    await page.click('.dc-notch__pill');
+    ok('the SAME session still answers a new turn', same);
+    await page.waitForTimeout(1500);
+    const turnEmits = await page.evaluate(() => window.__calls.filter((c) => c.cmd === 'plugin:event|emit').map((c) => `${c.args.event} ${JSON.stringify(c.args.payload)}`));
+    ok('the turn never asked for the window seat', !turnEmits.some((c) => c.includes('{"seat":"window"}')), turnEmits.join(' | '));
+    ok('no side window, and the panel the owner typed into is still open after the answer',
+      (await page.locator('.dc-notch--window').count()) === 0 && !(await page.locator('.dc-notch__panel').isHidden()));
     await page.waitForSelector('.dc-notch__panel:not([hidden]) textarea', { timeout: 10_000 });
     const cfg = JSON.parse(readFileSync(join(HOME, '.dreamcontext', 'assistant', 'config.json'), 'utf-8'));
     ok('the notch saved its conversation id for the next summon', /^[0-9a-f-]{36}$/.test(cfg.conversationId ?? ''), JSON.stringify(cfg));
@@ -839,13 +810,13 @@ try {
       };
     });
     const pre = await ear();
-    ok('before the server sends stale: a green ring bubble 1 and a grey bubble 4, said "1 working, 4 idle"',
-      JSON.stringify(pre.bubbles.map((b) => [b.state, b.n, b.ring])) === JSON.stringify([['working', '1', true], ['idle', '4', false]]) && pre.label === '1 working, 4 idle', JSON.stringify(pre));
+    ok('before the server sends stale: one green ring bubble 1 (idle draws none), said "1 working, 4 idle"',
+      JSON.stringify(pre.bubbles.map((b) => [b.state, b.n, b.ring])) === JSON.stringify([['working', '1', true]]) && pre.label === '1 working, 4 idle', JSON.stringify(pre));
     rollupBody = { starting: 0, working: 1, stale: 5, asking: 0, idle: 4, proposals: 0 };
     await rpage.waitForFunction(() => document.querySelector('.dc-notch__ear--right')?.getAttribute('aria-label') === '1 working, 4 idle, 5 stale', null, { timeout: 10_000 }).catch(() => null);
     const post5 = await ear();
-    ok('working=1 idle=4 stale=5: ONE green ring bubble (1) and ONE grey bubble (9), no "0", no sentence',
-      JSON.stringify(post5.bubbles.map((b) => [b.state, b.n, b.ring])) === JSON.stringify([['working', '1', true], ['idle', '9', false]])
+    ok('working=1 idle=4 stale=5: ONE green ring bubble (1), no grey bubble, no "0", no sentence',
+      JSON.stringify(post5.bubbles.map((b) => [b.state, b.n, b.ring])) === JSON.stringify([['working', '1', true]])
         && !/working|idle|stale/.test(post5.text), JSON.stringify(post5));
     ok('the bubbles wear the tab strip\'s own CSS (16px pills), not unstyled text', post5.bubbles.length > 0 && post5.bubbles.every((b) => b.h === '16px' && parseFloat(b.radius) >= 8), JSON.stringify(post5.bubbles));
     ok('its aria-label says the counts in words: "1 working, 4 idle, 5 stale"', post5.label === '1 working, 4 idle, 5 stale', String(post5.label));

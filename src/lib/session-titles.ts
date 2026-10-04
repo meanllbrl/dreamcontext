@@ -46,7 +46,15 @@ function storePath(contextRoot: string): string {
 
 function readStore(contextRoot: string): TitleStore {
   try {
-    const raw = JSON.parse(readFileSync(storePath(contextRoot), 'utf-8')) as unknown;
+    return parseStore(readFileSync(storePath(contextRoot), 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function parseStore(text: string): TitleStore {
+  try {
+    const raw = JSON.parse(text) as unknown;
     const titles = raw && typeof raw === 'object' && !Array.isArray(raw)
       ? (raw as { titles?: unknown }).titles
       : undefined;
@@ -132,14 +140,7 @@ export function recordSessionTitles(
       changed = true;
     }
     if (!changed) return;
-
-    const ids = Object.keys(store);
-    if (ids.length > MAX_TITLES) {
-      ids
-        .sort((a, b) => (store[a].updated < store[b].updated ? -1 : store[a].updated > store[b].updated ? 1 : a < b ? -1 : 1))
-        .slice(0, ids.length - MAX_TITLES)
-        .forEach((id) => { delete store[id]; });
-    }
+    evictOldest(store);
 
     // Same symlink guard as the session map: a cloned vault could commit `state` as a
     // symlink, redirecting this write outside the vault.
@@ -158,5 +159,119 @@ export function recordSessionTitles(
     const tmp = `${path}.${randomUUID()}.tmp`;
     writeFileSync(tmp, JSON.stringify({ titles: store }, null, 2) + '\n', 'utf-8');
     renameSync(tmp, path);
+  } catch { /* best-effort — the picker falls back to first prompts */ }
+}
+
+function evictOldest(store: TitleStore): void {
+  const ids = Object.keys(store);
+  if (ids.length <= MAX_TITLES) return;
+  ids
+    .sort((a, b) => (store[a].updated < store[b].updated ? -1 : store[a].updated > store[b].updated ? 1 : a < b ? -1 : 1))
+    .slice(0, ids.length - MAX_TITLES)
+    .forEach((id) => { delete store[id]; });
+}
+
+// ─── Hands-free cloud: every read and write as the worker (dcuser) ─────────────
+//
+// In the cloud the vault, the transcripts and HOME are dcuser-writable, and transcripts are
+// 0600 dcuser, so the server (dcserver) never opens them itself: a dcuser-planted symlink or
+// FIFO could otherwise make it read or write outside the tree, or hang. Running the I/O as
+// dcuser means a planted link can only reach what dcuser could reach anyway. The runner is
+// injected (the cloud passes `workerRunner`; tests pass a local one).
+
+/** Runs one process to completion — structurally the cloud's `ProcessRunner`. */
+export type WorkerRun = (
+  cmd: string,
+  args: string[],
+  opts: { cwd: string; input?: Buffer; timeoutMs?: number },
+) => Promise<{ code: number | null; stdout: Buffer }>;
+
+const WORKER_IO_TIMEOUT_MS = 15_000;
+
+/** A file's text read as the worker, or null when absent, unreadable or over `maxBytes`. */
+export async function workerReadText(run: WorkerRun, path: string, maxBytes = 1024 * 1024): Promise<string | null> {
+  try {
+    const res = await run('/bin/sh', ['-c', '[ -f "$1" ] || exit 3; exec head -c "$2" -- "$1"', 'sh', path, String(maxBytes + 1)], {
+      cwd: '/', timeoutMs: WORKER_IO_TIMEOUT_MS,
+    });
+    if (res.code !== 0 || res.stdout.length > maxBytes) return null;
+    return res.stdout.toString('utf-8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write `text` to `path` as the worker: a temp file beside it, then rename (a link at `path` is
+ * replaced, never followed). Throws when the write failed, and never leaves the temp file behind:
+ * the script removes it on a failure (EXIT) or a catchable signal (TERM/INT/HUP), and because the
+ * runner's timeout is a SIGKILL that no trap sees, the temp name is chosen HERE and removed by a
+ * second worker call after any failure.
+ */
+export async function workerWriteAtomic(run: WorkerRun, path: string, text: string): Promise<void> {
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  const script = 'set -e; umask 0002; mkdir -p -- "$(dirname -- "$1")"; '
+    + 'trap \'rm -f -- "$2"\' EXIT; trap \'rm -f -- "$2"; trap - EXIT; exit 1\' TERM INT HUP; '
+    // noclobber: the temp name must not exist yet (never write through something planted there).
+    + 'set -C; : > "$2"; set +C; cat > "$2"; chmod 0664 "$2"; mv -f -- "$2" "$1"';
+  let ok = false;
+  try {
+    const res = await run('/bin/sh', ['-c', script, 'sh', path, tmp], { cwd: '/', input: Buffer.from(text, 'utf-8'), timeoutMs: WORKER_IO_TIMEOUT_MS });
+    if (res.code !== 0) throw new Error(`worker write failed (exit ${res.code})`);
+    ok = true;
+  } finally {
+    if (!ok) {
+      try { await run('/bin/rm', ['-f', '--', tmp], { cwd: '/', timeoutMs: WORKER_IO_TIMEOUT_MS }); } catch { /* best-effort */ }
+    }
+  }
+}
+
+/** Append one record to an existing regular file (never a symlink) as the worker, on a fresh
+ *  line. False when the file is absent, a link, or the append failed. */
+export async function workerAppendLine(run: WorkerRun, path: string, line: string): Promise<boolean> {
+  const script = '[ -f "$1" ] && [ ! -L "$1" ] || exit 3; '
+    + 'if [ -s "$1" ] && [ "$(tail -c 1 -- "$1" | od -An -tx1 | tr -d " \\n")" != "0a" ]; then printf "\\n" >> "$1"; fi; '
+    + 'cat >> "$1"';
+  try {
+    const res = await run('/bin/sh', ['-c', script, 'sh', path], { cwd: '/', input: Buffer.from(line, 'utf-8'), timeoutMs: WORKER_IO_TIMEOUT_MS });
+    return res.code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * {@link recordSessionTitles} for the hands-free cloud: the same store and the same
+ * `custom-title` stamp, with every read and write run as the worker. Locating the transcript
+ * is a directory listing only (no file is opened by the server). Best-effort, never throws.
+ */
+export async function recordSessionTitlesViaWorker(
+  run: WorkerRun,
+  contextRoot: string,
+  updates: ReadonlyArray<{ sessionId: string; title: string }>,
+  opts: { home?: string } = {},
+): Promise<void> {
+  try {
+    const path = storePath(contextRoot);
+    const text = await workerReadText(run, path, 4 * 1024 * 1024);
+    const store = text === null ? {} : parseStore(text);
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const { sessionId, title } of updates) {
+      const t = title.trim().slice(0, MAX_TITLE);
+      if (!UUID_RE.test(sessionId) || !t) continue;
+      const prev = store[sessionId];
+      if (prev?.title === t && prev.stamped) continue;
+      const transcript = findTranscriptBySessionId([sessionId], opts.home);
+      const stamped = transcript
+        ? await workerAppendLine(run, transcript, `${JSON.stringify({ type: 'custom-title', customTitle: t, sessionId })}\n`)
+        : false;
+      if (prev?.title === t && !stamped) continue;
+      store[sessionId] = { title: t, updated: prev?.title === t ? prev.updated : now, ...(stamped ? { stamped: true } : {}) };
+      changed = true;
+    }
+    if (!changed) return;
+    evictOldest(store);
+    await workerWriteAtomic(run, path, JSON.stringify({ titles: store }, null, 2) + '\n');
   } catch { /* best-effort — the picker falls back to first prompts */ }
 }

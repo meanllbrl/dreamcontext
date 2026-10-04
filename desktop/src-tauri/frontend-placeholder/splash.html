@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>dreamcontext</title>
+<!--
+  The opening screen: plays splash.mp4 (the logo reveal, rendered from marketing/remotion
+  `Splash-konsolidasyon`) while the dashboard server boots, then tells the shell it is done.
+  The shell (src/splash.rs) shows the Launcher once this page is done AND the Launcher has
+  loaded, then calls window.__dcSplashExit() to fade this card and closes the window.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; cursor: default; -webkit-user-select: none; user-select: none; }
+  /* The window is transparent: this rounded card IS its shape. Its fill matches the clip's
+     first frame, so there is no flash before the video paints. */
+  .card {
+    position: fixed; inset: 0; border-radius: 14px; overflow: hidden;
+    background: radial-gradient(ellipse 75% 85% at 50% 50%, #1b1530 0%, #110e1c 52%, #09080f 100%);
+    opacity: 0; transition: opacity 160ms ease-out;
+  }
+  .light .card { background: radial-gradient(ellipse 75% 85% at 50% 50%, #ffffff 0%, #f6f4fd 50%, #e9e5f6 100%); }
+  .light .hint { color: rgba(70, 76, 100, 0.62); }
+  .card.in { opacity: 1; }
+  .card.out { opacity: 0; transition: opacity 320ms ease-in; }
+  video, img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  img, .still video { display: none; }
+  .still img { display: block; }
+  /* Only for a slow boot: the clip has ended and the app is still on its way. */
+  .hint {
+    position: absolute; left: 0; right: 0; bottom: 26px; text-align: center;
+    font: 500 12px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    letter-spacing: 0.02em; color: rgba(200, 204, 217, 0.62);
+    opacity: 0; transition: opacity 400ms ease-out;
+  }
+  .hint.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .card, .card.out, .hint { transition: none; } }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <video id="clip" playsinline preload="auto"></video>
+  <img id="still" src="splash-still.jpg" alt="dreamcontext">
+  <div class="hint" id="hint">Starting…</div>
+</div>
+<script>
+(function () {
+  var card = document.getElementById('card');
+  var clip = document.getElementById('clip');
+  var hint = document.getElementById('hint');
+  var reported = false;
+  // The app's theme follows the system by default, and the dashboard's own choice lives on
+  // an origin this page cannot read, so the opening screen follows macOS appearance.
+  var light = !matchMedia('(prefers-color-scheme: dark)').matches;
+  var suffix = light ? '-light' : '';
+  if (light) document.documentElement.classList.add('light');
+  document.getElementById('still').src = 'splash-still' + suffix + '.jpg';
+
+  function done() {
+    if (reported) return;
+    reported = true;
+    try { window.__TAURI_INTERNALS__.invoke('splash_done'); } catch (e) { /* the shell's deadline covers it */ }
+  }
+  // Show the finished lockup instead of the clip, and report shortly after.
+  function still() {
+    card.classList.add('still');
+    setTimeout(done, 1100);
+  }
+  function waitingHint() {
+    setTimeout(function () { hint.classList.add('on'); }, 1500);
+  }
+
+  // Called by the shell once the Launcher behind this card is ready.
+  window.__dcSplashExit = function () {
+    card.classList.remove('in');
+    card.classList.add('out');
+  };
+
+  // A click or a key skips the rest of the clip.
+  addEventListener('mousedown', done);
+  addEventListener('keydown', done);
+  // Never hold the app back if the clip stalls.
+  setTimeout(function () { done(); waitingHint(); }, 4500);
+  requestAnimationFrame(function () { card.classList.add('in'); });
+
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    still();
+    return;
+  }
+
+  clip.volume = 0.5;
+  clip.addEventListener('ended', function () { done(); waitingHint(); });
+  clip.addEventListener('error', still);
+  // Played from a blob URL: WebKit's media loader wants byte-range responses, which the
+  // app's custom-scheme asset handler does not give. A blob it can seek freely.
+  fetch('splash' + suffix + '.mp4')
+    .then(function (r) { return r.blob(); })
+    .then(function (blob) {
+      clip.src = URL.createObjectURL(blob);
+      var playing = clip.play();
+      if (playing && playing.catch) {
+        playing.catch(function () {
+          // Sound refused: play silent rather than not at all.
+          clip.muted = true;
+          clip.play().catch(still);
+        });
+      }
+    })
+    .catch(still);
+})();
+</script>
+</body>
+</html>

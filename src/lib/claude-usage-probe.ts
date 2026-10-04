@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { isCloud, spawnAsWorker } from '../server/cloud-mode.js';
 import { join } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
-import { accountEnvFor, assertConfinedConfigDir, listClaudeAccounts } from './claude-accounts.js';
+import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { ensureSandbox } from './claude-account-sandbox.js';
 import { claudeAuthStatus, PROBE_TIMEOUT_MS } from './claude-auth.js';
 import { readUsageLimits, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
@@ -157,9 +158,18 @@ function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
     try {
       // stdout is PIPED now — it is where the answer is. stderr stays ignored: it carries
       // update notices and warnings, never the report.
-      child = bin
-        ? spawn(bin, ['-p', '/usage', '--output-format', 'json'], { stdio: ['ignore', 'pipe', 'ignore'], env })
-        : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json'], { stdio: ['ignore', 'pipe', 'ignore'], env });
+      child = isCloud()
+        // The cloud: as dcuser through the one worker chokepoint, pointed at this account only.
+        ? spawnAsWorker('/bin/bash', ['-lc', 'claude -p "/usage" --output-format json'], {
+          cwd: tmpdir(),
+          ...(isRealHomeConfigDir(configDir) ? {} : { account: { configDir } }),
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        // The laptop: a cwd outside every hands-free locked root, so the probe's own session
+        // never lands in a project that is away.
+        : bin
+          ? spawn(bin, ['-p', '/usage', '--output-format', 'json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env })
+          : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env });
     } catch (err) {
       resolveOut({ timedOut: false, error: (err as Error)?.message ?? String(err) });
       return;

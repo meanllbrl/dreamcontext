@@ -21,6 +21,9 @@ const GITHUB_USER_URL = 'https://api.github.com/user';
 /** The `repo` scope — needed to create/read/push a (private) brain repo. */
 export const BRAIN_OAUTH_SCOPE = 'repo';
 
+/** Hands-free mode (`dreamcontext handsfree setup`): the private devcontainer repo + its codespace. */
+export const HANDSFREE_OAUTH_SCOPE = 'repo codespace';
+
 /**
  * PLACEHOLDER client_id, kept as the sentinel {@link isOAuthAppConfigured}
  * recognizes as "no OAuth App". Setting `DREAMCONTEXT_GITHUB_CLIENT_ID` to this
@@ -90,8 +93,10 @@ export type DevicePollResult =
 export async function startDeviceFlow(
   clientId: string = BRAIN_OAUTH_CLIENT_ID,
   fetchImpl: FetchImpl = globalThis.fetch,
+  /** Space-separated scopes; brain sync keeps the default {@link BRAIN_OAUTH_SCOPE}. */
+  scope: string = BRAIN_OAUTH_SCOPE,
 ): Promise<DeviceFlowStart> {
-  const body = new URLSearchParams({ client_id: clientId, scope: BRAIN_OAUTH_SCOPE });
+  const body = new URLSearchParams({ client_id: clientId, scope });
   const res = await fetchImpl(GITHUB_DEVICE_CODE_URL, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },

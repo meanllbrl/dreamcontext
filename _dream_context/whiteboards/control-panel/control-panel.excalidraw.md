@@ -120,7 +120,7 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 		{
 			"angle": 0,
 			"backgroundColor": "transparent",
-			"boundElements": null,
+			"boundElements": [],
 			"customData": {
 				"dc": {
 					"kind": "insight",
@@ -148,9 +148,9 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 			"strokeStyle": "solid",
 			"strokeWidth": 2,
 			"type": "embeddable",
-			"updated": 1790955403586,
-			"version": 1,
-			"versionNonce": 389963491,
+			"updated": 1791067122010,
+			"version": 103,
+			"versionNonce": 97696294,
 			"width": 376,
 			"x": 784,
 			"y": 0
@@ -158,7 +158,7 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 		{
 			"angle": 0,
 			"backgroundColor": "transparent",
-			"boundElements": null,
+			"boundElements": [],
 			"customData": {
 				"dc": {
 					"items": [
@@ -168,17 +168,17 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 							"text": "0.30.0 pre-publish checklist'i bitir"
 						},
 						{
-							"done": false,
+							"done": true,
 							"id": "xIzFiQmZ",
 							"text": "Whiteboard'ı .app'te onayla"
 						},
 						{
-							"done": false,
+							"done": true,
 							"id": "iv6vwz7_",
 							"text": "İncelemedeki 3 kritik işi kapat"
 						},
 						{
-							"done": false,
+							"done": true,
 							"id": "OL63MqyJ",
 							"text": "Doctor snapshot uyarısını çöz"
 						},
@@ -212,9 +212,9 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 			"strokeStyle": "solid",
 			"strokeWidth": 2,
 			"type": "embeddable",
-			"updated": 1790955403760,
-			"version": 1,
-			"versionNonce": 966004884,
+			"updated": 1791066979057,
+			"version": 8,
+			"versionNonce": 694944038,
 			"width": 376,
 			"x": 1176,
 			"y": 0
@@ -670,7 +670,7 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 		{
 			"angle": 0,
 			"backgroundColor": "transparent",
-			"boundElements": null,
+			"boundElements": [],
 			"customData": {
 				"dc": {
 					"html": "<div class=\"dc-doc\">\n  <div class=\"dc-h3\">İş akışı</div>\n  <p class=\"dc-muted\">Darboğaz incelemede: 32 iş senin onayını bekliyor.</p>\n  <div class=\"dc-grid dc-grid--3\">\n    <div class=\"dc-stat\"><div class=\"dc-stat-label\">Todo</div><div class=\"dc-value\">54</div></div>\n    <div class=\"dc-stat\"><div class=\"dc-stat-label\">Sürüyor</div><div class=\"dc-value\">8</div></div>\n    <div class=\"dc-stat\"><div class=\"dc-stat-label\">İncelemede</div><div class=\"dc-value\">32</div><div class=\"dc-stat-note\"><span class=\"dc-delta dc-delta--down\">darboğaz</span></div></div>\n  </div>\n  <div class=\"dc-divider\"></div>\n  <div class=\"dc-label\">Kural</div>\n  <p class=\"dc-p\">Yeni iş açmadan önce incelemede bekleyen 3 işi kapat.</p>\n</div>\n",
@@ -684,7 +684,7 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 			"fillStyle": "solid",
 			"frameId": null,
 			"groupIds": [],
-			"height": 376,
+			"height": 520,
 			"id": "-pZk-VXmXTf-BwZkOqcWr",
 			"index": "aG",
 			"isDeleted": false,
@@ -698,9 +698,9 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 			"strokeStyle": "solid",
 			"strokeWidth": 2,
 			"type": "embeddable",
-			"updated": 1790955406016,
-			"version": 1,
-			"versionNonce": 1597549645,
+			"updated": 1791066992597,
+			"version": 38,
+			"versionNonce": 1764675558,
 			"width": 376,
 			"x": 392,
 			"y": 980
@@ -780,6 +780,79 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 			"width": 376,
 			"x": 1176,
 			"y": 980
+		},
+		{
+			"angle": 0,
+			"backgroundColor": "transparent",
+			"boundElements": [],
+			"customData": {
+				"dc": {
+					"kind": "wiki",
+					"size": "xl",
+					"title": "Wiki",
+					"v": 1
+				}
+			},
+			"fillStyle": "solid",
+			"frameId": null,
+			"groupIds": [],
+			"height": 820,
+			"id": "0dhH2f-vRusWMq8kDujwl",
+			"index": "aJ",
+			"isDeleted": true,
+			"link": "dreamcontext://wiki/0dhH2f-vRusWMq8kDujwl",
+			"locked": false,
+			"opacity": 100,
+			"roughness": 0,
+			"roundness": null,
+			"seed": 621068041,
+			"strokeColor": "transparent",
+			"strokeStyle": "solid",
+			"strokeWidth": 1,
+			"type": "embeddable",
+			"updated": 1791067111692,
+			"version": 62,
+			"versionNonce": 1529671910,
+			"width": 768,
+			"x": -1176,
+			"y": 0
+		},
+		{
+			"angle": 0,
+			"backgroundColor": "transparent",
+			"boundElements": [],
+			"customData": {
+				"dc": {
+					"kind": "web",
+					"size": "xl",
+					"title": "tilki.app",
+					"url": "https://tilki.app/",
+					"v": 1
+				}
+			},
+			"fillStyle": "solid",
+			"frameId": null,
+			"groupIds": [],
+			"height": 652,
+			"id": "c66LH3rqFTp0DwMKv_z_E",
+			"index": "aK",
+			"isDeleted": true,
+			"link": "dreamcontext://web/c66LH3rqFTp0DwMKv_z_E",
+			"locked": false,
+			"opacity": 100,
+			"roughness": 0,
+			"roundness": null,
+			"seed": 2135976046,
+			"strokeColor": "transparent",
+			"strokeStyle": "solid",
+			"strokeWidth": 1,
+			"type": "embeddable",
+			"updated": 1791067109635,
+			"version": 41,
+			"versionNonce": 1919643386,
+			"width": 728,
+			"x": 1568,
+			"y": 0
 		}
 	],
 	"files": {},

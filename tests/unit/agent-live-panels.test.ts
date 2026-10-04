@@ -53,7 +53,7 @@ describe('live panels are mounted by BOTH agent renderers', () => {
     // Without claudeId the poll is disabled and the panel can never activate — the exact
     // shape of "mounted but permanently dead" a bare `<CouncilLivePanel />` would have.
     const rail = src.slice(src.indexOf('function ChatLiveRail'), src.indexOf('// ─── Degraded'));
-    expect(rail).toMatch(/<GoalLivePanel claudeId=\{session\.claudeId\}/);
+    expect(rail).toMatch(/<GoalLivePanel\s+claudeId=\{session\.claudeId\}/);
     expect(rail).toMatch(/<CouncilLivePanel claudeId=\{session\.claudeId\}/);
   });
 

@@ -5,6 +5,7 @@ import { SPAWNED_ENV } from './session-origin.js';
 import { listConnections } from './connections.js';
 import { currentVaultTarget } from './federation-recall.js';
 import { resolveVaultContextRoot, VaultError } from './vaults.js';
+import { handsfreeLockFor } from './handsfree/trip-state.js';
 import {
   composeMessage,
   updateMessage,
@@ -189,6 +190,22 @@ export function buildDeliveryPrompt(msg: PeerMessage, thread: PeerMessage[] = []
     .join('\n');
 }
 
+// ─── Hands-free lock (shared by every spawn chokepoint) ──────────────────────
+
+/**
+ * Why a spawn in `cwd` is refused, or null when it may run: while a project is in hands-free
+ * mode its roots belong to the cloud machine, and a laptop-side agent writing into them would
+ * collide with the phone's work at Return. Lives here, the lightest module every chokepoint
+ * already reaches (the detached runner, broadcast and the PTY route import it).
+ * `home` is injectable for tests only.
+ */
+export function handsfreeSpawnRefusal(cwd: string, home?: string): string | null {
+  const lock = handsfreeLockFor(cwd, home);
+  if (!lock) return null;
+  if (lock.error) return `hands-free state is unreadable, so every project stays locked: ${lock.error}`;
+  return `this project is in hands-free mode on the cloud machine (trip ${lock.tripId}, ${lock.phase}); Return first (dreamcontext handsfree return)`;
+}
+
 // ─── The live run ────────────────────────────────────────────────────────────
 
 export interface LiveRunResult {
@@ -227,8 +244,10 @@ interface HeadlessJson {
 export function runPeerHeadless(
   peer: PeerTarget,
   prompt: string,
-  opts: { timeoutMs?: number; model?: string; effort?: string } = {},
+  opts: { timeoutMs?: number; model?: string; effort?: string; home?: string } = {},
 ): Promise<LiveRunResult> {
+  const refused = handsfreeSpawnRefusal(peer.projectRoot, opts.home);
+  if (refused) return Promise.resolve({ ok: false, reply: '', sessionId: null, error: refused });
   const timeoutMs = opts.timeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS;
   const argv = [
     '-p', '"$0"',

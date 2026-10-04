@@ -342,6 +342,12 @@ export function dismissDelegation(sessionId: string): boolean {
   return ended.length < before;
 }
 
+/** Is this session one the Assistant handed work to? Its turn ends reach the owner through the
+ *  hand-off rows, so the notch inbox does not announce them a second time. */
+export function isDelegatedSession(sessionId: string): boolean {
+  return delegated.has(sessionId);
+}
+
 /** Test seam. */
 export function _currentAssistantInbox(): AssistantInbox | null {
   return inbox;

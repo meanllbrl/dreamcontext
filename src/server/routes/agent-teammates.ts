@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { sendJson } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentHost } from '../desktop.js';
+import { isCloud } from '../cloud-mode.js';
+import { runWorkerOp } from '../cloud-worker.js';
 import { sanitizeUuid } from './agent-spawn-shared.js';
 import { goalLiveRunFor } from './agent-terminal.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
@@ -154,12 +156,24 @@ export async function handleAgentTeammates(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
-  if (!isDesktop() || !contextRoot) { sendJson(res, 200, { teammates: [] }); return; }
-  const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
-  if (!claudeId) { sendJson(res, 200, { teammates: [] }); return; }
+  if (!isAgentHost() || !contextRoot) { sendJson(res, 200, { teammates: [] }); return; }
+  const query = Object.fromEntries(new URL(req.url || '/', `http://${req.headers.host}`).searchParams);
+  try {
+    // Teammate transcripts are dcuser's 0600 files in the cloud: the same read runs as dcuser.
+    sendJson(res, 200, isCloud()
+      ? await runWorkerOp({ op: 'read', params: { kind: 'teammates', contextRoot, query }, timeoutMs: 60_000 })
+      : await computeTeammates(contextRoot, query));
+  } catch {
+    sendJson(res, 200, { teammates: [] });
+  }
+}
 
-  const allowed = authorized(contextRoot, claudeId, url.searchParams.get('launched'));
+/** The teammate list (also run inside the cloud's dcuser worker). */
+export async function computeTeammates(contextRoot: string, q: Record<string, string>): Promise<{ teammates: TeammateWire[] }> {
+  const claudeId = sanitizeUuid(q.claudeId ?? null);
+  if (!claudeId) return { teammates: [] };
+
+  const allowed = authorized(contextRoot, claudeId, q.launched ?? null);
   const now = Date.now();
   const alive = await teammatesAlive([...allowed.keys()], now);
   const teammates: TeammateWire[] = [];
@@ -177,7 +191,7 @@ export async function handleAgentTeammates(
     }
     teammates.push({ ...summarizeTeammateTranscript(sid, file.raw, file.mtimeMs, now, alive.get(sid) ?? null), ...who });
   }
-  sendJson(res, 200, { teammates });
+  return { teammates };
 }
 
 /** GET /api/agent/teammate-history?claudeId=<pane>&session=<uuid>[&launched=1] — one teammate's
@@ -189,13 +203,24 @@ export async function handleAgentTeammateHistory(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
-  if (!isDesktop() || !contextRoot) { sendJson(res, 200, { items: [] }); return; }
-  const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
-  const session = (url.searchParams.get('session') ?? '').trim().toLowerCase();
-  if (!claudeId || !TEAMMATE_SESSION_RE.test(session)) { sendJson(res, 200, { items: [] }); return; }
-  const allowed = authorized(contextRoot, claudeId, url.searchParams.get('launched') ? session : null);
-  if (!allowed.has(session)) { sendJson(res, 200, { items: [] }); return; }
+  if (!isAgentHost() || !contextRoot) { sendJson(res, 200, { items: [] }); return; }
+  const query = Object.fromEntries(new URL(req.url || '/', `http://${req.headers.host}`).searchParams);
+  try {
+    sendJson(res, 200, isCloud()
+      ? await runWorkerOp({ op: 'read', params: { kind: 'teammate-history', contextRoot, query }, timeoutMs: 60_000 })
+      : computeTeammateHistory(contextRoot, query));
+  } catch {
+    sendJson(res, 200, { items: [] });
+  }
+}
+
+/** One teammate's history (also run inside the cloud's dcuser worker). */
+export function computeTeammateHistory(contextRoot: string, q: Record<string, string>): { items: unknown[] } {
+  const claudeId = sanitizeUuid(q.claudeId ?? null);
+  const session = (q.session ?? '').trim().toLowerCase();
+  if (!claudeId || !TEAMMATE_SESSION_RE.test(session)) return { items: [] };
+  const allowed = authorized(contextRoot, claudeId, q.launched ? session : null);
+  if (!allowed.has(session)) return { items: [] };
   const file = readTeammateTranscript(session);
-  sendJson(res, 200, { items: file ? parseTranscriptHistory(file.raw) : [] });
+  return { items: file ? parseTranscriptHistory(file.raw) : [] };
 }

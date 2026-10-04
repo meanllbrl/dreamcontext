@@ -16,6 +16,7 @@
 
 import type { ChildProcess } from 'node:child_process';
 import { compareVersions } from '../lib/version-check.js';
+import { isCloud } from './cloud-mode.js';
 
 /** Kill callbacks for live children (PTYs, capture spawns) we want reaped on exit. */
 const liveChildren = new Set<() => void>();
@@ -84,6 +85,9 @@ export function startVersionDriftWatch(
   pollMs = 30_000,
 ): (() => void) | undefined {
   if (process.env.DREAMCONTEXT_DESKTOP === '1') return undefined;
+  // The hands-free cloud never self-exits on drift: its root supervisor swaps the build
+  // (POST runtime → exit 75 → install → restart), and an exit here would race that install.
+  if (isCloud()) return undefined;
   if (!startupVersion || startupVersion === '0.0.0') return undefined;
 
   let fired = false;

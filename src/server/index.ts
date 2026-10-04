@@ -4,7 +4,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
+import { cloudGate, cloudUpgradeRefusal, handleCors, rejectCloudUpgrade, isCrossSiteWrite, sendError } from './middleware.js';
+import { isCloud } from './cloud-mode.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
 import { isDesktop } from './desktop.js';
@@ -16,7 +17,9 @@ import {
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
   handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
+  handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
+import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -233,6 +236,14 @@ import {
 import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
+import { registerHandsfreeCloudRoutes } from './routes/handsfree-cloud.js';
+import { handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
+import {
+  handleHandsfreeStatus, handleHandsfreeJob, handleHandsfreeReceipt, handleHandsfreeGo, handleHandsfreeReturn, handleHandsfreeResume,
+  handleHandsfreeRollback, handleHandsfreeAbandon, handleHandsfreeRevokeAll, handsfreeLockRefusal, sendHandsfreeAway,
+  isBodySelectorRoute, screenBodySelectedVault,
+} from './routes/handsfree.js';
+import { isAway } from '../lib/handsfree/trip-state.js';
 import { handleAdminShutdown } from './routes/admin.js';
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../lib/manifest.js';
 import { prepareDashboardEnv } from '../lib/session-origin.js';
@@ -244,6 +255,12 @@ export interface ServerOptions {
   open: boolean;
   /** Network interface to bind. Defaults to loopback (127.0.0.1). */
   host?: string;
+  /**
+   * PINNED for the hands-free cloud (lane D): listen on this inherited, already-bound socket fd
+   * (the root supervisor holds port 8080 and hands it to every server instance) instead of
+   * binding port/host.
+   */
+  listenFd?: number;
 }
 
 /**
@@ -256,6 +273,27 @@ export function buildRouter(): Router {
 
   // Health
   router.get('/api/health', handleHealthGet);
+
+  // Hands-free. The cloud's transfer routes (`/api/handsfree/cloud/*`, 404 off the cloud) and
+  // its phone login; the laptop's own routes (desktop + loopback + same-site only).
+  registerHandsfreeCloudRoutes(router);
+  router.post('/api/handsfree/login', async (req, res) => {
+    if (!isCloud()) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/login'); return; }
+    await handleHandsfreeLogin(req, res);
+  });
+  router.post('/api/handsfree/logout', async (req, res) => {
+    if (!isCloud()) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/logout'); return; }
+    handleHandsfreeLogout(req, res);
+  });
+  router.get('/api/handsfree/status', handleHandsfreeStatus);
+  router.get('/api/handsfree/jobs/current', handleHandsfreeJob);
+  router.get('/api/handsfree/receipt', handleHandsfreeReceipt);
+  router.post('/api/handsfree/go', handleHandsfreeGo);
+  router.post('/api/handsfree/return', handleHandsfreeReturn);
+  router.post('/api/handsfree/resume', handleHandsfreeResume);
+  router.post('/api/handsfree/rollback', handleHandsfreeRollback);
+  router.post('/api/handsfree/abandon', handleHandsfreeAbandon);
+  router.post('/api/handsfree/devices/revoke-all', handleHandsfreeRevokeAll);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
   router.post('/api/admin/shutdown', handleAdminShutdown);
 
@@ -387,6 +425,13 @@ export function buildRouter(): Router {
   router.get('/api/assistant/glance', handleAssistantGlance);
   router.post('/api/assistant/answer', handleAssistantOwnerAnswer);
   router.post('/api/assistant/delegations/dismiss', handleAssistantDelegationDismiss);
+  // The notch inbox: finished chats, automation posts and runs, account notices (notch-inbox.ts).
+  wireNotchInbox();
+  router.get('/api/assistant/inbox', handleAssistantInbox);
+  router.post('/api/assistant/inbox/dismiss', handleAssistantInboxDismiss);
+  router.post('/api/assistant/inbox/seen', handleAssistantInboxSeen);
+  router.post('/api/assistant/inbox/mute', handleAssistantInboxMute);
+  router.post('/api/assistant/presence', handleAssistantPresence);
   router.post('/api/assistant/create', handleAssistantCreate);
   router.get('/api/assistant/profile', handleAssistantProfileGet);
   router.post('/api/assistant/profile', handleAssistantProfileSet);
@@ -783,7 +828,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -837,7 +882,9 @@ export function resolveRequestVault(req: IncomingMessage): string | null | 'INVA
   // generic REST surface (history, attachments, file preview, voice), but ONLY from this
   // machine's desktop app. A network-token holder on a `--host` bind is refused outright.
   if (isAssistantVault(h)) {
-    if (!isLoopback(req) || !isDesktop()) return 'FORBIDDEN';
+    // Desktop + loopback only — and never in cloud mode, where GitHub's forwarder makes every
+    // request loopback.
+    if (isCloud() || !isLoopback(req) || !isDesktop()) return 'FORBIDDEN';
     return assistantExists() ? assistantContextRoot() : 'INVALID';
   }
   // Reject anything path-shaped or containing null bytes / dots.
@@ -902,20 +949,28 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   // every non-loopback request behind a per-process token so LAN neighbors
   // (shared wifi, offices, cafés) can't reach the unauthenticated API.
   const loopbackBind = host === '127.0.0.1' || host === 'localhost' || host === '::1';
-  const networkToken = loopbackBind ? null : generateNetworkToken();
+  // Cloud mode (hands-free) has its own gate: GitHub's forwarder arrives on loopback, so the
+  // network token's loopback bypass would let the whole internet in. No token there.
+  const cloud = isCloud();
+  const networkToken = loopbackBind || cloud ? null : generateNetworkToken();
 
   return new Promise((resolvePromise, reject) => {
     const server = createServer(async (req, res) => {
       try {
-        if (networkToken && !checkNetworkAuth(req, res, networkToken)) return;
+        if (cloud) {
+          // Credential per route class, Origin pinned on writes, the static API allow-list.
+          if (!cloudGate(req, res)) return;
+        } else {
+          if (networkToken && !checkNetworkAuth(req, res, networkToken)) return;
 
-        // Handle CORS preflight
-        if (handleCors(req, res)) return;
+          // Handle CORS preflight
+          if (handleCors(req, res)) return;
 
-        // CSRF defense: reject state-changing requests from a cross-site origin.
-        if (isCrossSiteWrite(req)) {
-          sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
-          return;
+          // CSRF defense: reject state-changing requests from a cross-site origin.
+          if (isCrossSiteWrite(req)) {
+            sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
+            return;
+          }
         }
 
         const url = new URL(req.url || '/', `http://${req.headers.host}`);
@@ -940,9 +995,26 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
               sendError(res, 400, 'no_vault', 'No vault selected.');
               return;
             }
+            // Hands-free (D3/AC6): the ONE lock middleware. A mutating request scoped to a
+            // project that is on the cloud machine is refused; /api/handsfree/* is exempt.
+            const away = cloud ? null : handsfreeLockRefusal(method, url.pathname, effRoot);
+            if (away) {
+              sendHandsfreeAway(res, away);
+              return;
+            }
+            // ...and a vault-agnostic route that names its vault in the body or query.
+            let handlerReq = req;
+            if (!cloud && isBodySelectorRoute(method, url.pathname) && isAway()) {
+              const screened = await screenBodySelectedVault(req, url);
+              if ('lock' in screened) {
+                sendHandsfreeAway(res, screened.lock);
+                return;
+              }
+              handlerReq = screened.req;
+            }
             // Vault-agnostic routes ignore the context root; cast keeps the
             // handler signature satisfied while the null is harmless there.
-            await match.handler(req, res, match.params, effRoot as string);
+            await match.handler(handlerReq, res, match.params, effRoot as string);
           } else {
             sendError(res, 404, 'not_found', `No route: ${method} ${url.pathname}`);
           }
@@ -954,10 +1026,29 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       } catch (err) {
         // Log the real error server-side; return a generic body so internal
         // paths / exception details never leak to the browser (defense in depth).
-        console.error(`[server] unhandled error: ${req.method ?? 'GET'} ${req.url ?? '/'}`, err);
+        // The cloud never logs a query string (it can carry a session or resume id).
+        const shown = cloud ? (req.url ?? '/').split('?')[0] : (req.url ?? '/');
+        console.error(`[server] unhandled error: ${req.method ?? 'GET'} ${shown}`, err);
         sendError(res, 500, 'internal_error', 'Internal server error');
       }
     });
+
+    // Cloud mode: every WebSocket upgrade passes the cloud gate BEFORE any upgrade listener
+    // sees it (device session, our Origin, phase active, chat socket only). A refused upgrade
+    // is answered here and never emitted, so no listener can act on it.
+    if (cloud) {
+      const emit = server.emit.bind(server) as (event: string | symbol, ...args: unknown[]) => boolean;
+      server.emit = ((event: string | symbol, ...args: unknown[]) => {
+        if (event === 'upgrade') {
+          const refusal = cloudUpgradeRefusal(args[0] as IncomingMessage);
+          if (refusal !== null) {
+            rejectCloudUpgrade(args[1] as import('node:stream').Duplex, refusal);
+            return true;
+          }
+        }
+        return emit(event, ...args);
+      }) as typeof server.emit;
+    }
 
     // Agent terminal: bridge a WebSocket to a node-pty running real Claude Code.
     // Self-gates (desktop + loopback + node-pty present); a no-op otherwise.
@@ -978,10 +1069,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
 
     server.setTimeout(30000);
 
-    server.listen(port, host, () => {
+    const onListening = () => {
       const shownHost = host === '127.0.0.1' ? 'localhost' : host;
       const url = `http://${shownHost}:${port}`;
-      console.log(`\n  Dashboard: ${url}\n`);
+      console.log(options.listenFd !== undefined ? `\n  Dashboard: listening on inherited fd ${options.listenFd}\n` : `\n  Dashboard: ${url}\n`);
       if (networkToken) {
         console.log(`  WARNING: bound to ${host} — the dashboard is reachable from your network.`);
         console.log('  Other devices must use a tokenized URL (sets a cookie on first visit):');
@@ -1044,6 +1135,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
       startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
       startOrphanSweep();
-    });
+    };
+    if (options.listenFd !== undefined) server.listen({ fd: options.listenFd }, onListening);
+    else server.listen(port, host, onListening);
   });
 }

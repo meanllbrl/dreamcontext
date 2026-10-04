@@ -1,6 +1,7 @@
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk } from '../../lib/voice/speechQueue';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
+import { splitNotchCue, stripNotchCue, type NotchCue } from '../../lib/notchCue';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { raiseAskAttention } from '../../lib/attention';
@@ -70,6 +71,9 @@ export interface ChatUserItem {
   steered?: true;
 }
 export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
+/** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
+ *  no cue is an answer: `present`, not staying. */
+export interface NotchPresentation { itemId: string; kind: NotchCue['kind']; stay: boolean; text: string }
 export interface ChatThinkingItem { kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number }
 /** A tool call THIS conversation's agent made. There is deliberately no `parentToolUseId`
  *  field: a sub-agent's tool calls never become items at all (the reducer drops every frame
@@ -519,6 +523,12 @@ export interface ChatSession {
    * message mark itself and every other one ignore the event.
    */
   onSpokenChunk: (fn: (chunk: SpokenChunk | null) => void) => () => void;
+  /**
+   * Subscribe to how each of the Assistant's text blocks wants to be SHOWN (its notch cue,
+   * `lib/notchCue.ts`): fired on every change of a block's text, never while its head may still
+   * be a cue. Assistant mode only; elsewhere it never fires. Returns the unsubscribe.
+   */
+  onPresent: (fn: (p: NotchPresentation) => void) => () => void;
   /** Live model switch (`set_model` control request — verified on CLI 2.1.218). Applies to
    *  the NEXT turn; the CLI re-emits `system:init` with the new model, which updates
    *  `session.model`/`conv.model`, and the `control-ack` confirms or surfaces an error. */
@@ -666,6 +676,88 @@ export function historyChatItem(h: HistoryEntry, idStr: string): ChatItem | null
   return null;
 }
 
+// ─── Reconnect + replay (pure helpers) ─────────────────────────────────────────────────
+
+/** Waits between reconnect attempts after a dropped socket; the last value repeats. */
+export const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000] as const;
+/** One attempt (a WS upgrade, a chat-history fetch) that has not answered in this long is
+ *  abandoned and retried on the backoff — the cloud's port forwarder can hang a request. */
+export const CONNECT_TIMEOUT_MS = 15000;
+
+/** The server's `_meta/reattached` frame (agent-chat.ts), or null for anything else. */
+export function readReattachedFrame(raw: string): { adopted: boolean; busy: boolean } | null {
+  try {
+    const o = JSON.parse(raw) as { type?: unknown; subtype?: unknown; adopted?: unknown; busy?: unknown };
+    if (o?.type !== '_meta' || o.subtype !== 'reattached') return null;
+    return { adopted: o.adopted === true, busy: o.busy === true };
+  } catch { return null; }
+}
+
+function isServerRefusal(raw: string): boolean {
+  try {
+    const o = JSON.parse(raw) as { type?: unknown; subtype?: unknown };
+    return o?.type === 'dc_meta' && o.subtype === 'error';
+  } catch { return false; }
+}
+
+/** What identifies one transcript entry across the live stream and the replay: a tool by its
+ *  id, a message by its text. */
+function replayKey(it: ChatItem): string {
+  if (it.kind === 'tool') return `x:${it.toolUseId}`;
+  if (it.kind === 'user') return `u:${it.text.trim()}`;
+  if (it.kind === 'compact') return `c:${(it.summary ?? '').slice(0, 200)}`;
+  return `${it.kind === 'text' ? 't' : 'th'}:${it.text.trim()}`;
+}
+
+/** Does transcript entry `t` record live item `l`? A block still streaming when the socket
+ *  dropped matches its finished version by prefix. */
+function sameEntry(t: ChatItem, l: ChatItem): boolean {
+  if (t.kind !== l.kind) return false;
+  // A compaction still being written has no summary yet: any recorded one is it.
+  if (l.kind === 'compact' && l.summary === undefined) return true;
+  if ((l.kind === 'text' || l.kind === 'thinking') && !l.done && (t.kind === 'text' || t.kind === 'thinking')) {
+    return t.text.trim().startsWith(l.text.trim());
+  }
+  return replayKey(t) === replayKey(l);
+}
+
+/**
+ * Fold a fresh transcript replay into what the pane already shows, so every entry appears
+ * ONCE. The transcript becomes the history; a live item stays live only when the transcript
+ * does not record it yet (it streamed after the reconnect, or has not been flushed).
+ *
+ * Live items are the conversation's tail, in order, so they are matched as a subsequence of
+ * the transcript. The anchor is whichever occurrence of the first live item lets the most
+ * live items match, so a repeated message ("devam") cannot pin the match to the wrong turn.
+ * A live item with no transcript entry before the last matched one is dropped (the transcript
+ * is authoritative for that span); everything after the last match is kept.
+ *
+ * Returns, per kept live item, its old index, so position bookkeeping can be remapped.
+ */
+export function mergeReplay(transcript: ChatItem[], live: ChatItem[]): { history: ChatItem[]; kept: number[] } {
+  if (!live.length) return { history: transcript, kept: [] };
+  const matchFrom = (start: number): number[] => {
+    const hits: number[] = [];
+    let j = start;
+    for (let i = 0; i < live.length; i++) {
+      let k = j;
+      while (k < transcript.length && !sameEntry(transcript[k], live[i])) k++;
+      if (k < transcript.length) { hits.push(i); j = k + 1; }
+    }
+    return hits;
+  };
+  let best: number[] = [];
+  for (let s = 0; s < transcript.length; s++) {
+    if (!sameEntry(transcript[s], live[0]) && s !== 0) continue;
+    const hits = matchFrom(s);
+    if (hits.length >= best.length) best = hits;
+  }
+  const lastHit = best.length ? best[best.length - 1] : -1;
+  const kept: number[] = [];
+  for (let i = lastHit + 1; i < live.length; i++) kept.push(i);
+  return { history: transcript, kept };
+}
+
 // ─── Session factory ────────────────────────────────────────────────────────────────
 
 let chatSessionSeq = 0;
@@ -740,7 +832,15 @@ export function createChatSession(
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}`;
-  const ws = new WebSocket(url);
+  /** The reconnect after a DROPPED socket: the same conversation, `reattach=1` so the server
+   *  adopts the live child instead of spawning a twin. Never carries the opening prompt (it
+   *  already went out) nor `origin` (the server re-derives it). `bypass` is read now, not at
+   *  construction: a live permission switch may have moved it. */
+  const reconnectUrl = (): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
+    + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=1`
+    + `${modelParam}${effortParam}${modeParam}${accountParam}`;
+  // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
+  let ws = new WebSocket(url);
 
   let itemSeq = 0;
   const nextItemId = () => `item-${++itemSeq}`;
@@ -781,11 +881,42 @@ export function createChatSession(
    */
   const spokenChars = new Map<string, number>();
 
+  // ── Assistant mode: notch cues (lib/notchCue.ts) ─────────────────────────────────────
+  // Each text block may open with an invisible cue line saying how the notch shows it. The
+  // RAW text is kept here per item; the item itself only ever holds the body, so the transcript,
+  // the speech queue and the notch all see the same words. A progress block is never spoken.
+  const cueRaw = new Map<string, string>();
+  const cues = new Map<string, NotchCue | null>();
+  const presentListeners = new Set<(p: NotchPresentation) => void>();
+  /** The body to store for item `itemId` given its full raw text (identity outside assistant mode). */
+  function cueBody(itemId: string, raw: string): string {
+    if (mode !== 'assistant') return raw;
+    cueRaw.set(itemId, raw);
+    const split = splitNotchCue(raw);
+    if (split.pending) { cues.delete(itemId); return ''; }
+    cues.set(itemId, split.cue);
+    return split.body;
+  }
+  /** The raw text an item has received so far (its body, outside assistant mode). */
+  function rawOf(itemId: string, body: string): string {
+    return mode === 'assistant' ? (cueRaw.get(itemId) ?? body) : body;
+  }
+  function presentBlock(itemId: string, body: string): void {
+    if (mode !== 'assistant' || !body.trim() || !cues.has(itemId)) return;
+    const cue = cues.get(itemId) ?? null;
+    const p: NotchPresentation = { itemId, kind: cue?.kind ?? 'present', stay: cue?.stay ?? false, text: body };
+    for (const fn of [...presentListeners]) {
+      try { fn(p); } catch { /* a listener's failure is its own */ }
+    }
+  }
+
   /** Speak the part of `full` that item `itemId` has not contributed yet. */
   function speakTail(itemId: string, full: string): void {
     if (!speech) return;
     const already = spokenChars.get(itemId) ?? 0;
     if (full.length <= already) return;
+    // A progress line is shown, never read: the Assistant marked it as thinking out loud.
+    if (cues.get(itemId)?.kind === 'progress') { spokenChars.set(itemId, full.length); return; }
     // Read aloud is opt-in (the composer's switch). Off means nothing reaches the queue, so
     // no `/tts` fetch and no music hold. The text still counts as consumed, so switching it
     // on mid-reply speaks from here on instead of replaying what was skipped.
@@ -875,6 +1006,7 @@ export function createChatSession(
     bargeInSpeech,
     onSpeaking,
     onSpokenChunk,
+    onPresent,
     setModel,
     setEffort,
     setContextHandoff,
@@ -1083,12 +1215,12 @@ export function createChatSession(
         const items = conv.items.slice();
         const cur = items[pos];
         if (cur && (cur.kind === 'text' || cur.kind === 'thinking')) {
-          const next = cur.text + ev.text;
+          const next = cur.kind === 'text' ? cueBody(cur.id, rawOf(cur.id, cur.text) + ev.text) : cur.text + ev.text;
           items[pos] = { ...cur, text: next };
           conv = { ...conv, items };
           // Fed live, so speech starts on the first closed sentence rather than at the end of
           // the turn. Thinking is never spoken.
-          if (cur.kind === 'text') speakTail(cur.id, next);
+          if (cur.kind === 'text') { speakTail(cur.id, next); presentBlock(cur.id, next); }
         }
         return;
       }
@@ -1161,21 +1293,24 @@ export function createChatSession(
         if (pos >= 0) {
           const items = conv.items.slice();
           const cur = items[pos] as ChatTextItem | ChatThinkingItem;
-          items[pos] = { ...cur, text: ev.text };
+          const body = kind === 'text' ? cueBody(cur.id, ev.text) : ev.text;
+          items[pos] = { ...cur, text: body };
           conv = { ...conv, items };
           // The echo is the AUTHORITATIVE full block. Only the tail beyond what this item
           // already contributed is spoken, so a reply that DID stream is not read twice.
-          if (kind === 'text') speakTail(cur.id, ev.text);
+          if (kind === 'text') { speakTail(cur.id, body); presentBlock(cur.id, body); }
         } else {
           const last = [...conv.items].reverse().find((it) => it.kind === kind);
-          if (last && (last as ChatTextItem | ChatThinkingItem).text === ev.text) return;
+          const echoed = kind === 'text' && mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
+          if (last && (last as ChatTextItem | ChatThinkingItem).text === echoed) return;
+          const id = nextItemId();
           const item: ChatTextItem | ChatThinkingItem = {
-            kind, id: nextItemId(), index: -1, text: ev.text, done: true, ts: Date.now(),
+            kind, id, index: -1, text: kind === 'text' ? cueBody(id, ev.text) : ev.text, done: true, ts: Date.now(),
           };
           conv = { ...conv, items: [...conv.items, item] };
           // AC8's case: a short reply the CLI sent with NO deltas at all. This is a fresh
           // item that has contributed nothing, so it is spoken in full — once.
-          if (kind === 'text') speakTail(item.id, ev.text);
+          if (kind === 'text') { speakTail(item.id, item.text); presentBlock(item.id, item.text); }
         }
         return;
       }
@@ -1576,23 +1711,123 @@ export function createChatSession(
     }
   }
 
-  ws.onopen = () => {
-    applyAndNotify(() => { session.status = 'open'; });
-    // THE OPEN EDGE IS A DRAIN EDGE. Until this fires, `writeUser` refuses every frame
-    // (`readyState !== OPEN`) — so anything queued before the socket came up would sit there
-    // until the NEXT inbound frame happened to call `maybeFlushQueue`, and a session whose
-    // first turn has not started yet may wait a long time for one. The account-switch restart
-    // is the caller that made this matter: it hands the held turn to a session that is still
-    // connecting, and that turn must go out the moment the wire exists. Outside the reducer,
-    // for the same reason the `onmessage` drain is: a drain SENDS a frame and appends an item,
-    // which is a second mutation with its own notify.
-    maybeFlushQueue();
-    if (commandHandler) declareSurface();
-  };
-  ws.onmessage = (e) => {
+  // ── Socket lifecycle: a dropped socket RECONNECTS, it does not end the session ─────
+  //
+  // On a phone the socket drops all the time (screen lock, background tab, Wi-Fi ↔ cellular,
+  // the cloud's port forwarder dropping or hanging a request), so a close is the NORMAL case.
+  // The server detaches the live `claude` child instead of ending it (agent-chat-live.ts),
+  // and this side reconnects with `reattach=1` on the backoff below, with no Resume tap; what
+  // streamed while away is replayed from chat-history. The Session-ended banner (status
+  // `closed`) is kept for a REAL end: the process exited, or the server refused the session.
+  /** How many reconnects have been tried since the socket was last open. */
+  let reconnectAttempt = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastAttemptAt = Date.now();
+  /** The server reported an error on the current socket — the close that follows is an end
+   *  (a spawn failure, an account refusal, a conversation held elsewhere), not a drop. */
+  let sawServerError = false;
+  /** This socket is a reconnect: its open edge replays what was missed. */
+  let isReconnect = false;
+
+  function clearConnectTimer(): void {
+    if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+  }
+
+  /** Is `sock` the socket this session currently owns? A late event from an abandoned attempt
+   *  must change nothing. */
+  const isCurrentSocket = (sock: WebSocket): boolean => sock === ws;
+
+  /** Wire one socket attempt. The parameter is named `ws` on purpose: inside, it is the
+   *  attempt being wired, which may already have been superseded by the time it fires. */
+  function bindSocket(ws: WebSocket): void {
+    sawServerError = false;
+    // A forwarder can hang an upgrade for minutes (W0, 2026-10-03): an attempt that has not
+    // opened in time is abandoned, and its close schedules the next one.
+    clearConnectTimer();
+    connectTimer = setTimeout(() => {
+      connectTimer = null;
+      if (isCurrentSocket(ws) && ws.readyState !== WebSocket.OPEN) { try { ws.close(); } catch { /* gone */ } }
+    }, CONNECT_TIMEOUT_MS);
+    ws.onopen = () => {
+      if (!isCurrentSocket(ws)) return;
+      clearConnectTimer();
+      reconnectAttempt = 0;
+      applyAndNotify(() => { session.status = 'open'; });
+      if (isReconnect) void replayMissed();
+      // THE OPEN EDGE IS A DRAIN EDGE. Until this fires, `writeUser` refuses every frame
+      // (`readyState !== OPEN`) — so anything queued before the socket came up would sit there
+      // until the NEXT inbound frame happened to call `maybeFlushQueue`, and a session whose
+      // first turn has not started yet may wait a long time for one. The account-switch restart
+      // is the caller that made this matter: it hands the held turn to a session that is still
+      // connecting, and that turn must go out the moment the wire exists. A reconnect is the
+      // same edge: whatever was queued while the socket was away goes out now. Outside the
+      // reducer, for the same reason the `onmessage` drain is: a drain SENDS a frame and
+      // appends an item, which is a second mutation with its own notify.
+      maybeFlushQueue();
+      if (commandHandler) declareSurface();
+    };
+    ws.onmessage = (e) => { if (isCurrentSocket(ws)) onSocketMessage(e); };
+    // Every error is followed by a close; the close decides.
+    ws.onerror = () => { /* see onclose */ };
+    ws.onclose = () => { if (isCurrentSocket(ws)) onSocketClosed(); };
+  }
+
+  function onSocketClosed(): void {
+    clearConnectTimer();
+    if (disposed) return;
+    if (conv.exited || sawServerError) {
+      applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; });
+      return;
+    }
+    scheduleReconnect();
+  }
+
+  /** Next attempt on the backoff (1, 2, 5, 10, then every 30 s). Never faster: a cloud
+   *  tunnel is rate limited, and a locked phone may stay away for hours. `busy` and open
+   *  cards are left as they are — the turn may well still be running on the server. */
+  function scheduleReconnect(): void {
+    if (disposed || reconnectTimer) return;
+    const delay = RECONNECT_BACKOFF_MS[Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1)];
+    reconnectAttempt += 1;
+    if (session.status !== 'connecting') applyAndNotify(() => { session.status = 'connecting'; });
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; reconnectNow(); }, delay);
+  }
+
+  function reconnectNow(): void {
+    if (disposed) return;
+    lastAttemptAt = Date.now();
+    isReconnect = true;
+    ws = new WebSocket(reconnectUrl());
+    bindSocket(ws);
+  }
+
+  /** Coming back to the page (unlocking the phone) or regaining the network is the moment a
+   *  reconnect is most likely to work, so a pending wait is cut short — at most once per
+   *  backoff floor, so this can never turn into polling. */
+  function onWake(): void {
+    if (!reconnectTimer || document.visibilityState === 'hidden') return;
+    if (Date.now() - lastAttemptAt < RECONNECT_BACKOFF_MS[0]) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    reconnectNow();
+  }
+  window.addEventListener('online', onWake);
+  document.addEventListener('visibilitychange', onWake);
+
+  function onSocketMessage(e: MessageEvent): void {
     const raw = typeof e.data === 'string' ? e.data : '';
     if (!raw) return;
+    // The server's answer to a reattach — not a protocol event, so it never reaches the parser.
+    if (raw.includes('"reattached"')) {
+      const frame = readReattachedFrame(raw);
+      if (frame) { applyReattached(frame.busy); return; }
+    }
+    // A refusal before any spawn (an unknown account, a conversation held elsewhere) arrives as
+    // `dc_meta`, which the parser does not read — but it, too, makes the close an end.
+    if (raw.includes('"dc_meta"') && isServerRefusal(raw)) sawServerError = true;
     const ev = parseChatLine(raw);
+    if (ev?.kind === 'meta-error') sawServerError = true;
     // Noise (hook chatter, status pings, rate-limit events) and unparseable lines touch
     // neither notification channel — nothing changed, so nothing re-renders.
     if (!ev || ev.kind === 'ignored') return;
@@ -1607,12 +1842,23 @@ export function createChatSession(
     maybeFlushQueue();
     // The turn just flushed to the transcript — backfill rewind-anchor uuids while idle.
     if (ev.kind === 'result') void syncTranscriptUuids();
-  };
-  const stopOnClose = () => {
-    applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; });
-  };
-  ws.onclose = stopOnClose;
-  ws.onerror = stopOnClose;
+  }
+  bindSocket(ws);
+
+  /** The server bound this socket to the live child (`busy` = a turn is still running) or,
+   *  when the child had already exited, to a fresh resume (`busy` false). Idle means no card
+   *  can still be waiting: the CLI only asks inside a turn, and a still-open ask is re-sent by
+   *  the server right after this frame. */
+  function applyReattached(busy: boolean): void {
+    applyAndNotify(() => {
+      session.busy = busy;
+      if (!busy) {
+        session.asking = false;
+        if (conv.pending.length) conv = { ...conv, pending: [] };
+      }
+    });
+    maybeFlushQueue();
+  }
 
   /**
    * Write one user message onto the wire and show it in the transcript. The single place a
@@ -1697,6 +1943,11 @@ export function createChatSession(
   /** See the field's doc. With no queue (any mode but assistant) the answer is a settled
    *  `false` — the subscriber still gets its one call, so it never waits for an event that
    *  cannot arrive. */
+  function onPresent(fn: (p: NotchPresentation) => void): () => void {
+    presentListeners.add(fn);
+    return () => { presentListeners.delete(fn); };
+  }
+
   function onSpeaking(fn: (speaking: boolean) => void): () => void {
     if (!speech) { fn(false); return () => {}; }
     return speech.onSpeaking(fn);
@@ -2068,7 +2319,9 @@ export function createChatSession(
   }
 
   function toChatItem(h: HistoryEntry): ChatItem | null {
-    return historyChatItem(h, `hist-${++itemSeq}`);
+    const it = historyChatItem(h, `hist-${++itemSeq}`);
+    // A replayed Assistant block keeps its words, never its notch cue (lib/notchCue.ts).
+    return it && it.kind === 'text' && mode === 'assistant' ? { ...it, text: stripNotchCue(it.text) } : it;
   }
 
   /** Resume replay: `--resume` never re-emits past frames, so a resumed chat would open
@@ -2080,6 +2333,53 @@ export function createChatSession(
     const items = entries.map(toChatItem).filter((x): x is ChatItem => !!x);
     if (!items.length) return;
     applyAndNotify(() => { conv = { ...conv, history: items }; });
+  }
+
+  /**
+   * After a reconnect: replay what streamed while the socket was away. The live child kept
+   * writing its transcript, so chat-history has it; {@link mergeReplay} folds it in so nothing
+   * shows twice. Each fetch has its own timeout and is retried on the reconnect backoff (the
+   * forwarder can drop or hang a request), never faster. A later reconnect supersedes it.
+   */
+  let replayGen = 0;
+  async function replayMissed(): Promise<void> {
+    const gen = ++replayGen;
+    for (let attempt = 0; ; attempt++) {
+      let entries: HistoryEntry[] | null = null;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const r = await Promise.race([
+          api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), CONNECT_TIMEOUT_MS); }),
+        ]);
+        entries = Array.isArray(r?.items) ? r.items : [];
+      } catch { entries = null; } finally { clearTimeout(timer); }
+      if (disposed || gen !== replayGen) return;
+      if (entries) { applyReplay(entries); return; }
+      if (attempt >= RECONNECT_BACKOFF_MS.length - 1) return;
+      await new Promise((r) => setTimeout(r, RECONNECT_BACKOFF_MS[attempt]));
+      if (disposed || gen !== replayGen) return;
+    }
+  }
+
+  function applyReplay(entries: HistoryEntry[]): void {
+    const transcript = entries.map(toChatItem).filter((x): x is ChatItem => !!x);
+    if (!transcript.length) return;
+    const { history, kept } = mergeReplay(transcript, conv.items);
+    const remap = new Map<number, number>();
+    kept.forEach((oldPos, newPos) => remap.set(oldPos, newPos));
+    // Live position bookkeeping follows the items that stayed; a block whose item went to the
+    // history simply starts a fresh card if more of it streams.
+    for (const [index, pos] of [...openBlocksByIndex]) {
+      const next = remap.get(pos);
+      if (next === undefined) openBlocksByIndex.delete(index); else openBlocksByIndex.set(index, next);
+    }
+    for (const [toolId, pos] of [...toolCardPos]) {
+      const next = remap.get(pos);
+      if (next === undefined) toolCardPos.delete(toolId); else toolCardPos.set(toolId, next);
+    }
+    const items = kept.map((i) => conv.items[i]);
+    applyAndNotify(() => { conv = { ...conv, history, items }; });
   }
 
   /** Backfill transcript uuids onto live-sent user items (the protocol never echoes them),
@@ -2132,6 +2432,13 @@ export function createChatSession(
     // that owned it stopped existing.
     renderFlush.cancel();
     speech?.dispose();
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    clearConnectTimer();
+    window.removeEventListener('online', onWake);
+    document.removeEventListener('visibilitychange', onWake);
+    // Goodbye on purpose: the server ends the child as it always did on a closed tab, instead
+    // of keeping it detached for a reattach that will never come.
+    if (ws.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify({ type: 'end' })); } catch { /* closing */ } }
     try { ws.close(); } catch { /* already closing */ }
     try { container.remove(); } catch { /* already detached */ }
   }

@@ -1,0 +1,8 @@
+"$schema" = "schemas/schema.json"
+
+# The opening screen reports that its clip ended or was skipped, which turns one of the
+# two keys of the handoff to the Launcher. See `splash_done` in src/splash.rs.
+[[permission]]
+identifier = "allow-splash-done"
+description = "Tell the shell the opening screen is done, so it can hand over to the Launcher."
+commands.allow = ["splash_done"]

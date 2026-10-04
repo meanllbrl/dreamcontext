@@ -234,6 +234,11 @@ describe('plainPostText — a markdown post as one banner line', () => {
     expect(plainPostText('FR CPA $54.')).toBe('FR CPA $54.');
     expect(plainPostText('  \n\n ')).toBe('');
   });
+
+  it('drops fenced blocks whole (a dream-view card is not words) and the highlight marks', () => {
+    const reply = '```dream-view\n{"type":"title","text":"Ses"}\n```\n\nNotch artık ==ses== çalıyor.\n\n```dream-actions\n[{"label":"x"}]\n```\nBitti.\n```ts\nkapanmamış';
+    expect(plainPostText(reply)).toBe('Notch artık ses çalıyor. Bitti.');
+  });
 });
 
 describe('a thread write never changes a run\'s disposition', () => {

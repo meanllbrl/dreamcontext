@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentHost } from '../desktop.js';
+import { isCloud } from '../cloud-mode.js';
+import { runWorkerOp } from '../cloud-worker.js';
 import { resolveConfigDir } from '../../lib/claude-accounts.js';
 import { EMPTY_USAGE_LIMITS, readUsageLimits } from '../../lib/claude-usage.js';
 
@@ -48,7 +50,7 @@ export async function handleAgentUsageLimits(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  if (!isDesktop()) { sendJson(res, 200, EMPTY_USAGE_LIMITS); return; }
+  if (!isAgentHost()) { sendJson(res, 200, EMPTY_USAGE_LIMITS); return; }
 
   let configDir: string;
   try {
@@ -56,6 +58,15 @@ export async function handleAgentUsageLimits(
     configDir = resolveConfigDir(url.searchParams.get('account'));
   } catch {
     sendJson(res, 200, EMPTY_USAGE_LIMITS);
+    return;
+  }
+  if (isCloud()) {
+    // The sandbox is dcuser's 0700 dir in the cloud: its cache is read as dcuser.
+    try {
+      sendJson(res, 200, await runWorkerOp({ op: 'read', params: { kind: 'usage-limits', configDir }, timeoutMs: 30_000 }));
+    } catch {
+      sendJson(res, 200, EMPTY_USAGE_LIMITS);
+    }
     return;
   }
   sendJson(res, 200, readUsageLimits(configDir));

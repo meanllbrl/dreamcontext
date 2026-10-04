@@ -281,26 +281,239 @@ html:has(.dc-notch) #root {
   to { background-position: 200% 0; }
 }
 
-/* Stepping out to the side and going home again. The window itself jumps (a native frame
-   change); the panel inside grows out of / shrinks into the top corner it came from. */
-.dc-notch--arrive { animation: dc-notch-arrive 320ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
-.dc-notch--leave { animation: dc-notch-leave 280ms cubic-bezier(0.4, 0, 1, 1) both; }
-@keyframes dc-notch-arrive {
-  from { opacity: 0; transform: translateY(-14px) scale(0.86); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes dc-notch-leave {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateY(-24px) scale(0.7); }
-}
-.dc-notch--arrive,
-.dc-notch--leave { transform-origin: top right; }
-
 @media (prefers-reduced-motion: reduce) {
-  .dc-notch__glow,
-  .dc-notch--arrive,
-  .dc-notch--leave { animation: none; }
+  .dc-notch__glow { animation: none; }
 }
+
+/* ── LISTENING (ListeningOverlay.tsx) ─────────────────────────────────────────────────────
+   While the mic is open the open notch is one unmistakable state: the avatar inside rings
+   that swell with the owner's voice (`--lvl`, 0..1, written on the animation frame), the word
+   "Listening", the take's clock. It covers the conversation, never the bar above it. */
+.dc-notch__panel { position: relative; }
+.dc-listen {
+  position: absolute;
+  inset: calc(var(--space-6) + var(--space-3)) 0 0 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: color-mix(in srgb, var(--notch-surface) 94%, transparent);
+  animation: dc-listen-in 180ms ease-out both;
+}
+@keyframes dc-listen-in { from { opacity: 0; } to { opacity: 1; } }
+.dc-listen__orb {
+  --lvl: 0;
+  position: relative;
+  width: 112px;
+  height: 112px;
+  display: grid;
+  place-items: center;
+  margin-bottom: var(--space-3);
+}
+.dc-listen__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-accent);
+  opacity: calc(0.25 + var(--lvl) * 0.6);
+  transform: scale(calc(0.62 + var(--lvl) * 0.5));
+  transition: transform 60ms linear, opacity 60ms linear;
+}
+.dc-listen__ring--2 { transform: scale(calc(0.72 + var(--lvl) * 0.75)); opacity: calc(0.16 + var(--lvl) * 0.4); }
+.dc-listen__ring--3 {
+  transform: scale(calc(0.82 + var(--lvl) * 1));
+  opacity: calc(0.08 + var(--lvl) * 0.3);
+  border-color: var(--color-accent-soft);
+}
+/* At rest (no sound yet) the rings still breathe, so an open mic never looks like a dead one. */
+.dc-listen[data-phase='recording'] .dc-listen__ring--1 { animation: dc-listen-breathe 1.8s ease-in-out infinite; }
+@keyframes dc-listen-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-accent-soft); }
+  50% { box-shadow: 0 0 0 6px var(--color-accent-soft); }
+}
+.dc-listen__avatar {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  box-shadow: 0 0 0 3px var(--notch-surface);
+}
+.dc-listen__avatar--initial {
+  display: grid;
+  place-items: center;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-2xl, 1.5rem);
+  font-weight: var(--font-weight-semibold);
+}
+.dc-listen__title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-xl, 1.25rem);
+  font-weight: var(--font-weight-semibold);
+}
+.dc-listen__sub { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); text-align: center; padding: 0 var(--space-6); }
+.dc-listen__clock { margin: 0; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; font-size: var(--font-size-sm); }
+/* Transcribing: the rings settle and turn slowly — the take is going somewhere. */
+.dc-listen[data-phase='transcribing'] .dc-listen__ring--1 {
+  border-color: var(--color-accent) transparent var(--color-accent) transparent;
+  opacity: 0.8;
+  transform: scale(0.7);
+  animation: dc-listen-spin 1.1s linear infinite;
+}
+.dc-listen[data-phase='transcribing'] .dc-listen__ring--2,
+.dc-listen[data-phase='transcribing'] .dc-listen__ring--3 { opacity: 0.12; }
+@keyframes dc-listen-spin { from { transform: scale(0.7) rotate(0deg); } to { transform: scale(0.7) rotate(360deg); } }
+.dc-listen[data-phase='error'] .dc-listen__ring,
+.dc-listen[data-phase='silent'] .dc-listen__ring,
+.dc-listen[data-phase='too-short'] .dc-listen__ring { border-color: var(--color-warning); opacity: 0.35; transform: scale(0.7); }
+@media (prefers-reduced-motion: reduce) {
+  .dc-listen__ring { transition: none; }
+  .dc-listen[data-phase='recording'] .dc-listen__ring--1,
+  .dc-listen[data-phase='transcribing'] .dc-listen__ring--1 { animation: none; }
+}
+
+/* ── THE INBOX (InboxList.tsx) ────────────────────────────────────────────────────────── */
+.dc-inbox { padding: 0 var(--space-2); }
+.dc-inbox ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.dc-inbox__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  border-radius: var(--radius-lg);
+}
+.dc-inbox__row:hover { background: var(--color-bg-secondary); }
+.dc-inbox__row[data-needs-you] { background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
+.dc-inbox__main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.dc-inbox__main:disabled { cursor: default; }
+.dc-inbox__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.dc-inbox__head { display: flex; align-items: baseline; gap: var(--space-1); color: var(--color-text-secondary); font-size: var(--font-size-sm); min-width: 0; }
+.dc-inbox__head strong { color: var(--color-text); font-weight: var(--font-weight-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dc-inbox__where { color: var(--color-text-tertiary); white-space: nowrap; }
+.dc-inbox__ago { margin-left: auto; color: var(--color-text-tertiary); font-size: var(--font-size-2xs); white-space: nowrap; padding-left: var(--space-2); }
+.dc-inbox__sub { color: var(--color-text-tertiary); font-size: var(--font-size-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dc-inbox__text {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.dc-inbox__tag {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 22%, transparent);
+  color: var(--color-warning);
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
+}
+.dc-inbox__tag--bad { background: color-mix(in srgb, var(--color-danger, var(--color-warning)) 22%, transparent); color: var(--color-danger, var(--color-warning)); }
+.dc-inbox__icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+.dc-inbox__icon--done { color: var(--color-success); }
+.dc-inbox__icon--account { color: var(--color-warning); }
+.dc-inbox__actions { display: flex; flex-direction: column; padding: var(--space-1) var(--space-1) 0 0; }
+.dc-inbox__icon-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-top: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-md, 1rem);
+  line-height: 1;
+}
+.dc-inbox__icon-btn:hover,
+.dc-inbox__icon-btn:focus-visible { background: var(--color-bg-tertiary, var(--color-bg-secondary)); color: var(--color-text); }
+.dc-inbox--muted { padding-top: var(--space-2); }
+.dc-inbox__muted-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+}
+.dc-inbox__muted-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) var(--space-2); color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+
+/* An automation's face: its photo, or its initial. Working, a ring turns around it. */
+.dc-agent-avatar {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+}
+.dc-agent-avatar img { width: 100%; height: 100%; border-radius: var(--radius-full); object-fit: cover; }
+.dc-agent-avatar__initial { color: var(--color-text-secondary); font-size: 0.75em; font-weight: var(--font-weight-semibold); }
+.dc-agent-avatar.is-working::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-success);
+  border-right-color: transparent;
+  animation: dc-agent-spin 1.2s linear infinite;
+}
+@keyframes dc-agent-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dc-agent-avatar.is-working::after { animation: none; border-right-color: var(--color-success); } }
+
+/* The pill's right ear: running automations' faces, and how much waits in the inbox. */
+.dc-notch__agents { display: inline-flex; padding: 0 var(--space-1); }
+.dc-notch__agents .dc-agent-avatar + .dc-agent-avatar { margin-left: -6px; box-shadow: 0 0 0 1.5px var(--notch-surface); }
+.dc-notch__agents .dc-agent-avatar__initial { font-size: 10px; }
+.dc-notch__inbox {
+  min-width: var(--space-5);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+}
+
+/* Peek additions: the Assistant thinking out loud, an automation's face. */
+.dc-peek__progress { display: flex; align-items: flex-start; gap: var(--space-3); padding-right: var(--space-2); }
+.dc-peek__avatar { width: 24px; height: 24px; border-radius: var(--radius-full); object-fit: cover; flex: 0 0 auto; }
+.dc-peek__avatar--initial { display: grid; place-items: center; background: var(--color-accent-strong); color: var(--color-accent-text); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); }
+.dc-peek__text--progress { margin: 2px 0 0; color: var(--color-text); }
+.dc-peek__agent { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+.dc-peek__agent .dc-peek__line { margin: 0; }
+.dc-peek__agent--button { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; cursor: pointer; text-align: left; }
+.dc-peek__running { display: flex; align-items: center; gap: var(--space-1); margin-bottom: var(--space-2); }
+.dc-peek__run { border: 0; background: transparent; padding: 0; cursor: pointer; }
 
 /* ── THE MOOD (Notch.tsx `data-mood`, notchModel `notchMood`) ─────────────────────────────
    One word the whole island wears, read from across the room: amber when something waits on

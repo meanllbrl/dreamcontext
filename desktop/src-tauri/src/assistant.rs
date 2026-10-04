@@ -260,9 +260,15 @@ pub fn ensure_notch<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .collection_behavior(
             CollectionBehavior::new().can_join_all_spaces().full_screen_auxiliary().stationary(),
         )
-        .with_window(|w| w.decorations(false).transparent(true).skip_taskbar(true).shadow(false).always_on_top(true))
+        // `focused(false)`, not the builder's `no_activate(true)`: that one flips the app's
+        // activation policy to Prohibited while the window is built, and macOS hides EVERY
+        // window of a Prohibited app — the opening screen or the Launcher blinked out for
+        // ~300ms and came back. Not focusing the new window is all that is needed to not
+        // steal focus.
+        .with_window(|w| {
+            w.decorations(false).transparent(true).skip_taskbar(true).shadow(false).always_on_top(true).focused(false)
+        })
         .add_style_mask(StyleMask::empty().nonactivating_panel())
-        .no_activate(true)
         .transparent(true)
         .has_shadow(false)
         .hides_on_deactivate(false)
@@ -316,6 +322,19 @@ pub fn assistant_geometry<R: Runtime>(window: tauri::WebviewWindow<R>) -> Result
     let size = m.size().to_logical::<f64>(scale);
     let (notch_width, notch_height) = notch_of_screen_at(pos.x, size.width);
     Ok(NotchGeometry { x: pos.x, y: pos.y, width: size.width, height: size.height, scale, notch_height, notch_width })
+}
+
+/// One faint trackpad tap with a notch notification (owner, 2026-10-04: "a minimal vibration,
+/// like haptic feedback"). A Mac has no vibration motor: the only haptic is the Force Touch
+/// trackpad, and it is felt only while a finger rests on it. `Generic` is the lightest pattern
+/// AppKit offers. No trackpad, or a non-Force-Touch one, makes it a silent no-op.
+#[tauri::command]
+pub fn assistant_haptic() {
+    use objc2_app_kit::{
+        NSHapticFeedbackManager, NSHapticFeedbackPattern, NSHapticFeedbackPerformanceTime, NSHapticFeedbackPerformer,
+    };
+    NSHapticFeedbackManager::defaultPerformer()
+        .performFeedbackPattern_performanceTime(NSHapticFeedbackPattern::Generic, NSHapticFeedbackPerformanceTime::Now);
 }
 
 /// The camera housing of the NSScreen whose frame starts at `x` (logical), from

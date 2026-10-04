@@ -26,6 +26,7 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
     "allow-assistant-geometry",
+    "allow-assistant-haptic",
     "allow-assistant-wake",
     "allow-set-frames"
   ]

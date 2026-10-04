@@ -515,6 +515,40 @@ collapse the notch but never close a popped-out window. **Collapsing and changin
 size and visibility changes, never an unmount** — the pane's socket is the relay's only
 channel, and a closed one would end the assistant's `claude` after the linger.
 
+**It never steps out by itself; it opens and folds (2026-10-04).** There is no automatic
+pop-out: Pop out / Dock are the owner's alone. A hotkey take opens the notch, and once the words
+are sent it folds back to the pill, which says what the Assistant is doing ("Asking tilki…",
+its newest progress line, else "Thinking…") under a busy hairline. **The Assistant decides how
+each text block is shown** with one invisible first-line cue (`dashboard/src/lib/notchCue.ts`):
+`<!-- notch:progress -->` drops a silent peek that folds after a reading time;
+`<!-- notch:present -->` opens the notch WITHOUT taking focus and reads it aloud, folding ~2 s
+after the speech ends (unspoken, after a reading time); `<!-- notch:present stay -->` stays
+open. A block with no cue is an answer. The cue is stripped from the transcript, the replay
+and speech; a progress block is never spoken. The owner clicking or typing in the open notch
+makes it theirs: nothing folds it by itself after that. Read-aloud stays the composer's mute.
+
+**A notification center (2026-10-04).** `GET /api/assistant/inbox` (owner-gated, project text
+wrapped) feeds the notch with what happened while the owner looked elsewhere, each one a peek
+when it arrives and a row under **Now** until dealt with; a click lands on the exact place
+through the app's `dreamcontext://` router (the chat tab, the automation's thread):
+- **a chat finished a turn** while its project was not on screen — project windows report what
+  they show while focused (`POST /api/assistant/presence`, 60 s TTL); looking at the project
+  clears it; delegated sessions are reported as hand-offs instead (`notch-inbox.ts`);
+- **every unread automation post** (and failed run / open question) across all projects, old
+  ones included, until the owner marks it seen (eye: advances the project's own read
+  watermark), clicks it, or ignores that automation for good (`~/.dreamcontext/notch-muted.json`,
+  undo under "Ignored automations");
+- **automations running now**, with their photos (an initial when none), and a short peek when
+  one starts; the pill's right ear shows up to three faces;
+- **an account limit and the switch it caused**, as one row naming both accounts.
+
+**It knows what is going on.** Every owner turn to the Assistant carries a server-written
+`<live-context>` block: which project the owner is looking at, every live chat (project, session
+id, mode, state, age), running automations and what waits in the notch. It holds NO project
+text, so it never taints; the block starts with `<`, so the replay drops it. The Assistant runs
+on its OWN default model, **sonnet at medium effort** (`config.model` / `config.effort`), not the
+owner's chat default; a model or effort picked in the notch's composer becomes its new default.
+
 **Counts are activity, not raw status.** `GET /api/assistant/rollup` returns `{starting,
 working, stale, asking, idle, proposals}`, counted by `activityOf` (`chat-registry.ts`): a chat
 still `starting` 30 s after it opened with no message sent is `idle`; a `working` chat with no
@@ -526,7 +560,12 @@ output for 3 min (11 min while a tool call is open) is `stale`; `asking` never g
 fires while another app is focused and delivers BOTH edges. **Hold:** press summons the notch
 and opens the microphone, release sends the take. **Toggle** (the fallback where a release
 cannot be trusted): press summons + listens, the next press sends, a press with nothing
-recording dismisses. The voice pipeline is the retired J.A.R.V.I.S one (gated takes, Hush, a
+recording dismisses. While the mic is open the notch shows an unmistakable listening state
+(the avatar in rings that swell with the voice, "Listening…", the take's clock, how to send,
+an earcon as the mic opens and closes), then "Got it" while it transcribes. **A failed
+transcription is retried twice** (network, busy, 5xx, `stt_failed`) before the owner is told; a
+missing install (`stt_unconfigured`) is not. An installed whisper that did not answer is a 503
+`stt_failed`, never "not installed". The voice pipeline is the retired J.A.R.V.I.S one (gated takes, Hush, a
 CHANGED transcript waits for a keypress) with one change: **read-aloud is opt-in.** A speaker
 toggle beside the composer's mic, default OFF and remembered per machine (localStorage), gates
 the sentence-by-sentence speech and its music hand-off. Off means no speech request is made at

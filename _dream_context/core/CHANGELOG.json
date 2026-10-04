@@ -1,5 +1,95 @@
 [
   {
+    "date": "2026-10-04",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Closing a whiteboard tab previously discarded it silently and deleting a board was permanent. Closing a tab now asks for confirmation first, and a deleted board is moved to a local trash it can be restored from instead of being destroyed immediately.",
+    "breaking": false,
+    "summary": "Closing a board tab asks first, and a deleted board comes back from a local trash",
+    "references": [
+      "commit:51a44d9c"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "fix",
+    "scope": "whiteboard",
+    "description": "Panning a whiteboard would stop dead as soon as the pointer drifted over an active HTML or web block, because the embedded iframe captured the drag. Board pan now keeps going even while the pointer is over a live HTML/web block.",
+    "breaking": false,
+    "references": [
+      "commit:f12cb471"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Open whiteboards previously had no shared tab strip. Boards now sit side by side as Chrome-style tabs, can be grouped under a name and colour, and a group folds away to save space, giving multi-board sessions the same at-a-glance switching browsers offer.",
+    "breaking": false,
+    "summary": "Boards sit side by side as Chrome-style tabs in named, coloured groups that fold away",
+    "references": [
+      "commit:0979ec13"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "An agent working in a chat tab could start a dev server or emulator and leave it running after the tab closed or the app quit, leaking processes across sessions. The desktop app now tracks and reaps those child processes when the owning chat tab closes or the app exits.",
+    "breaking": false,
+    "summary": "The desktop app reaps dev servers and emulators its chat tabs' agents leave running",
+    "references": [
+      "commit:1af87b18"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "fix",
+    "scope": "chat",
+    "description": "The chat background tray's header listed a builder a second time alongside the live team board, and collapsing the tray closed every open chat instead of just folding the tray. The header now names only currently-working teammates, drawn once, and collapse no longer tears down other open conversations.",
+    "breaking": false,
+    "summary": "Background tray names only working teammates in its header, fixing a third builder render and a collapse-closes-everything bug",
+    "references": [
+      "commit:1663acb5"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "docs",
+    "scope": "marketing",
+    "description": "Intro v4: a 49.3s light-mode reel rebuilt from the owner's reference (captionless product scenes, the question typed and the real live answer with its sources, proportional lockup), on 2026-10-04 captures, rendered with SFX plus a music variant, QA'd, not yet published",
+    "breaking": false,
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "type": "docs",
+    "scope": "marketing",
+    "description": "Built a third umbrella intro from the pacing of an owner-shared reference reel. It has a white canvas over a lavender aurora, puts 1-4 words on screen at a time synced to the VO, surrounds the pain line with a ring of real crops, then reveals the logo, shows the product window with pieces floating off it, closes on three beats and ends on a card. VO is Matilda; the last line was re-taken because the one-take clipped its final word. The record is in marketing/videos/dreamcontext-intro-v3.md.",
+    "breaking": false,
+    "summary": "Intro v3: a 50.6s light-mode promo cut in reel rhythm (LightReel-SFX), rendered and QA'd, not yet published",
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-10-03",
     "type": "fix",
     "scope": "chat",

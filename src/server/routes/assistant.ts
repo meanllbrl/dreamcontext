@@ -25,6 +25,13 @@ import { listVaults } from '../../lib/vaults.js';
 import { dismissDelegation, listDelegations, recordDelegation } from '../../lib/assistant/delegations.js';
 import { notifyAssistantAutonomy } from './agent-chat.js';
 import { captureScreens } from '../../lib/assistant/screen.js';
+import {
+  dismissNotchEvent, listNotchEvents, lookingAt, readMutedAutomations, setAutomationMuted, setPresence,
+  syncAccountRejections, wireNotchInbox,
+} from '../../lib/assistant/notch-inbox.js';
+import { markThreadRead, plainPostText } from '../../lib/automations/threads.js';
+import { getAutomation } from '../../lib/automations/store.js';
+import { automationProject, invalidateAutomationInbox, runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 
 /**
  * `/api/assistant/*` — the dreamcontext Assistant's server surface.
@@ -429,12 +436,120 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
     startedAt: d.startedAt,
     endedAt: d.endedAt,
     brief: d.brief ? wrapUntrusted(d.vault, clip(d.brief)) : '',
-    lastText: d.lastText ? wrapUntrusted(d.vault, clip(d.lastText)) : '',
+    lastText: d.lastText ? wrapUntrusted(d.vault, clip(plainPostText(d.lastText))) : '',
     ask: d.pending
       ? { id: d.pending.id, kind: d.pending.kind, tool: d.pending.tool, text: wrapUntrusted(d.vault, clip(d.pending.text)) }
       : null,
   }));
   sendJson(res, 200, { chats, delegations });
+}
+
+// ─── The notch inbox (owner) ─────────────────────────────────────────────────────────
+
+const INBOX_TEXT_CAP = 400;
+const VAULT_NAME_MAX = 200;
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
+
+/**
+ * GET /api/assistant/inbox — what happened while the owner looked elsewhere: chats that
+ * finished a turn, account limits and switches (`notch-inbox.ts`), every unread automation post
+ * and every automation running right now (`assistant-inbox.ts`), plus which project the owner is
+ * looking at. Project text is wrapped like the glance's; the notch only draws it. Never taints:
+ * this is the owner's view, not the Assistant's.
+ */
+export async function handleAssistantInbox(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  wireNotchInbox();
+  syncAccountRejections();
+  const clip = (s: string) => (s.length > INBOX_TEXT_CAP ? `${s.slice(0, INBOX_TEXT_CAP)}…` : s);
+  const events = listNotchEvents().map((e) => (e.kind === 'finished'
+    ? { ...e, title: e.title ? wrapUntrusted(e.vault, clip(e.title)) : '', lastText: e.lastText ? wrapUntrusted(e.vault, clip(plainPostText(e.lastText))) : '' }
+    : e));
+  let posts: ReturnType<typeof unreadAutomationPosts> = [];
+  let running: ReturnType<typeof runningAutomations> = [];
+  try { posts = unreadAutomationPosts(); } catch { posts = []; }
+  try { running = runningAutomations(); } catch { running = []; }
+  const muted = readMutedAutomations();
+  const vaultOf = new Map(listVaults().map((v) => [v.path, v.name]));
+  sendJson(res, 200, {
+    lookingAt: lookingAt(),
+    events,
+    posts: posts.map((p) => ({
+      ...p,
+      title: wrapUntrusted(p.vault, p.title),
+      text: p.text ? wrapUntrusted(p.vault, p.text) : '',
+    })),
+    running: running.map((r) => ({ ...r, title: wrapUntrusted(r.vault, r.title) })),
+    muted: Object.entries(muted).flatMap(([root, slugs]) => {
+      const vault = vaultOf.get(root);
+      return vault ? slugs.map((slug) => ({ vault, slug })) : [];
+    }),
+  });
+}
+
+/** POST /api/assistant/inbox/dismiss {id} — the owner waved a finish or account notice away. */
+export async function handleAssistantInboxDismiss(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const id = typeof b.id === 'string' && b.id.length <= 200 ? b.id : '';
+  if (!id) { sendError(res, 400, 'invalid_args', 'id is required'); return; }
+  sendJson(res, 200, { ok: dismissNotchEvent(id) });
+}
+
+/** The `{vault, slug}` of an inbox automation call, checked against the registry and the
+ *  project's own manifests, or the refusal to send. */
+function pickAutomation(b: Record<string, unknown>): { vault: string; slug: string; projectRoot: string; contextRoot: string } | string {
+  const vault = typeof b.vault === 'string' && b.vault.length <= VAULT_NAME_MAX ? b.vault : '';
+  const slug = typeof b.slug === 'string' && SLUG_RE.test(b.slug) ? b.slug : '';
+  if (!vault || !slug) return 'vault and slug are required';
+  const p = automationProject(vault);
+  if (!p) return `unknown project "${vault}"`;
+  if (!getAutomation(p.contextRoot, slug)) return `no automation "${slug}" in ${vault}`;
+  return { vault, slug, ...p };
+}
+
+/**
+ * POST /api/assistant/inbox/seen {vault, slug, upToId} — the eye button, or a click that took the
+ * owner to the post. Advances the project's own read watermark (monotonic), the same one its
+ * `#agents` channel reads, so the post is read everywhere at once.
+ */
+export async function handleAssistantInboxSeen(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const a = pickAutomation(b);
+  if (typeof a === 'string') { sendError(res, 400, 'invalid_args', a); return; }
+  const upToId = typeof b.upToId === 'string' && b.upToId.length <= 200 ? b.upToId : '';
+  if (!upToId) { sendError(res, 400, 'invalid_args', 'upToId is required'); return; }
+  markThreadRead(a.contextRoot, a.slug, upToId);
+  invalidateAutomationInbox();
+  sendJson(res, 200, { ok: true });
+}
+
+/** POST /api/assistant/inbox/mute {vault, slug, muted} — never (or again) show this agent's posts in the notch. */
+export async function handleAssistantInboxMute(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const a = pickAutomation(b);
+  if (typeof a === 'string') { sendError(res, 400, 'invalid_args', a); return; }
+  setAutomationMuted(a.projectRoot, a.slug, b.muted !== false);
+  invalidateAutomationInbox();
+  sendJson(res, 200, { ok: true, muted: b.muted !== false });
+}
+
+/**
+ * POST /api/assistant/presence {label, vault|null} — a project window says which project it is
+ * showing while it has focus (`null` when it lost focus). Decides whether a finished turn is
+ * news, and tells the Assistant what the owner is looking at.
+ */
+export async function handleAssistantPresence(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const label = typeof b.label === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(b.label) ? b.label : '';
+  if (!label) { sendError(res, 400, 'invalid_args', 'label is required'); return; }
+  const vault = typeof b.vault === 'string' && listVaults().some((v) => v.name === b.vault) ? b.vault : null;
+  wireNotchInbox();
+  setPresence(label, vault);
+  sendJson(res, 200, { ok: true });
 }
 
 /** POST /api/assistant/delegations/dismiss {sessionId} — the owner cleared a closed hand-off. */

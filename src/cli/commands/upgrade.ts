@@ -9,6 +9,7 @@ import { readVersionCache, writeVersionCache } from '../../lib/version-check.js'
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
 import { readAppManifest } from './app.js';
+import { readTripState } from '../../lib/handsfree/trip-state.js';
 import {
   buildNotifierApp,
   inspectNotifier,
@@ -54,6 +55,14 @@ export interface UpgradeOpts {
    *  be injected by tests: the real one COMPILES AND REPLACES the bundle in the
    *  developer's home, which a unit test must never do. */
   notifierBuilder?: () => BuildNotifierResult;
+  /** HOME whose hands-free state is checked (testing); defaults to the real one. */
+  home?: string;
+}
+
+/** Why an upgrade is refused while the laptop is not `home`. */
+export function upgradeRefusal(phase: string, tripId: string | null, unreadable?: string): string {
+  if (unreadable) return `Upgrade refused: ${unreadable}`;
+  return `Upgrade refused: hands-free mode is ${phase} (trip ${tripId ?? '?'}), and the cloud machine must keep running this laptop's exact build. Return first (dreamcontext handsfree return), then upgrade.`;
 }
 
 // ─── Default implementations ─────────────────────────────────────────────────
@@ -306,6 +315,15 @@ export async function runUpgrade(
     } else {
       console.log(`dreamcontext current: ${current}  latest: ${latest}`);
     }
+    return;
+  }
+
+  // Hands-free (AC18): the cloud machine runs THIS laptop's exact build, and Return checks
+  // the fingerprint. Upgrading mid-trip would put the two sides on different builds.
+  const away = readTripState(opts?.home);
+  if (away.phase !== 'home') {
+    console.log(chalk.red(upgradeRefusal(away.phase, away.tripId, away.unreadable)));
+    process.exitCode = 1;
     return;
   }
 

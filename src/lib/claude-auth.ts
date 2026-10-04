@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { isCloud, spawnAsWorker } from '../server/cloud-mode.js';
 import { resolve as resolvePath } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
-import { accountEnvFor, assertConfinedConfigDir } from './claude-accounts.js';
+import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, resolveConfigDir } from './claude-accounts.js';
 
 /**
  * Is Claude Code actually signed in?
@@ -164,7 +165,11 @@ export function resetClaudeAuthCache(configDir?: string): void {
  * through the gate, which is the dependency this design exists to remove.
  */
 export function claudeAuthStatus(configDir?: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
-  const dir = configDir === undefined ? homedir() : assertConfinedConfigDir(configDir);
+  // The cloud (D13): no login lives in the mirror's real ~/.claude, so "this machine's
+  // account" is the preferred account's own sandbox; the probe runs as dcuser (runProbe).
+  const dir = configDir === undefined
+    ? (isCloud() ? resolveConfigDir(null) : homedir())
+    : assertConfinedConfigDir(configDir);
   const key = resolvePath(dir);
   const hit = cached.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.value);
@@ -206,9 +211,17 @@ function runProbe(dir: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
     const env = { ...process.env, PATH: claudeAwarePath(), ...accountEnvFor(dir) } as NodeJS.ProcessEnv;
     let child: ReturnType<typeof spawn>;
     try {
-      child = bin
-        ? spawn(bin, ['auth', 'status', '--json'], { stdio: ['ignore', 'pipe', 'pipe'], env })
-        : spawn(shell, ['-ilc', 'claude auth status --json'], { stdio: ['ignore', 'pipe', 'pipe'], env });
+      child = isCloud()
+        // The cloud: as dcuser through the one worker chokepoint, pointed at this dir only.
+        ? spawnAsWorker('/bin/bash', ['-lc', 'claude auth status --json'], {
+          cwd: tmpdir(),
+          ...(isRealHomeConfigDir(dir) ? {} : { account: { configDir: dir } }),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        // The laptop: a cwd outside every hands-free locked root (never the server's own cwd).
+        : bin
+          ? spawn(bin, ['auth', 'status', '--json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'], env })
+          : spawn(shell, ['-ilc', 'claude auth status --json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'], env });
     } catch (err) {
       resolve(failed((err as Error)?.message ?? String(err)));
       return;

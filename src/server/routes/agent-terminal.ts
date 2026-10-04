@@ -9,7 +9,11 @@ import { basename, dirname, join } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
+import { isCloud, readFileAsWorker } from '../cloud-mode.js';
+import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
+import { handsfreeSpawnRefusal } from '../../lib/peer-delivery.js';
+import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
@@ -197,11 +201,26 @@ function detectOnPathUncached(cmd: 'claude' | 'npm', timeoutMs: number): Promise
 
 // ─── Capabilities ─────────────────────────────────────────────────────────────
 
+/**
+ * The gate of the four read-only GETs the mobile chat calls (capabilities, model-config,
+ * session-model, session-stats). On the desktop it is unchanged — `isDesktop()` alone; a
+ * non-loopback peer (the tailnet phone) is already fronted by the server's network-auth gate —
+ * and in the hands-free cloud only a device session passes. The PTY itself stays desktop +
+ * loopback only (`attachAgentTerminal`).
+ */
+function servesAgentReads(req: IncomingMessage): boolean {
+  return isAgentHost() && (isDesktop() || isAgentRequest(req));
+}
+
 /** GET /api/agent/capabilities — tells the UI which agent surfaces are usable here. */
 export async function handleAgentCapabilities(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
+  if (isCloud()) {
+    await sendCloudCapabilities(req, res);
+    return;
+  }
   const desktop = isDesktop();
   // Probe the three prerequisites in parallel (only when desktop — they cost a
   // login-shell spawn each). `nodePty` gates the embedded renderer; `claudeCli`
@@ -256,6 +275,30 @@ export async function handleAgentCapabilities(
     ...(claudeAuth ? { claudeAuth: { ...claudeAuth, epoch: claudeAuthWatcher.epoch() } } : {}),
     npm,
     git: gitOk,
+  });
+}
+
+/**
+ * The hands-free cloud's answer. `desktop` stays the "this server hosts agents" flag the chat
+ * surface gates on; there is no PTY, no external terminal and no installer there. Nothing is
+ * probed by spawning as the server (the cloud spawns only through `spawnAsWorker`): the image
+ * ships `claude` and git, and `claudeAuthStatus` runs through the worker in cloud mode.
+ */
+async function sendCloudCapabilities(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const host = servesAgentReads(req);
+  const claudeAuth = host ? await claudeAuthStatus() : null;
+  if (claudeAuth) claudeAuthWatcher.observe(claudeAuth);
+  sendJson(res, 200, {
+    desktop: host,
+    platform: process.platform,
+    embeddedTerminal: false,
+    openTerminal: false,
+    nodePty: false,
+    claudeCli: host,
+    claudePathBroken: false,
+    ...(claudeAuth ? { claudeAuth: { ...claudeAuth, epoch: claudeAuthWatcher.epoch() } } : {}),
+    npm: false,
+    git: host,
   });
 }
 
@@ -663,6 +706,8 @@ export function execShellArgs(shell: string, command: string): string[] {
 type PtyKind = 'agent' | 'shell' | 'exec';
 
 interface PtyLike {
+  /** The shell's pid, which node-pty's setsid makes the leader of its own process group. */
+  pid: number;
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number }) => void): void;
   write(data: string): void;
@@ -898,9 +943,19 @@ interface ModelConfig { models: PricedModelOpt[]; efforts: string[]; defaultMode
 interface StaticModelConfig { models: ModelOpt[]; efforts: string[]; }
 let staticModelConfigCache: StaticModelConfig | null = null;
 
+/**
+ * Read a JSON file in the user's HOME. In the hands-free cloud that HOME is dcuser-writable, so
+ * the server never opens it itself (a planted symlink or FIFO would make it read elsewhere or
+ * hang): the worker reads it.
+ */
+async function readHomeJson(path: string): Promise<Record<string, unknown> | null> {
+  if (!isCloud()) return readJsonSafe(path);
+  try { return JSON.parse((await readFileAsWorker(path, 4 * 1024 * 1024)).toString('utf-8')) as Record<string, unknown>; } catch { return null; }
+}
+
 async function buildStaticModelConfig(): Promise<StaticModelConfig> {
   if (staticModelConfigCache) return staticModelConfigCache;
-  const globalJson = readJsonSafe(join(homedir(), '.claude.json')) ?? {};
+  const globalJson = await readHomeJson(join(homedir(), '.claude.json')) ?? {};
   const base: ModelOpt[] = [
     { id: 'opus', label: 'Opus' },
     { id: 'sonnet', label: 'Sonnet' },
@@ -917,7 +972,8 @@ async function buildStaticModelConfig(): Promise<StaticModelConfig> {
   const seen = new Set(base.map((m) => m.id));
   const models = [...base];
   for (const e of extras) if (!seen.has(e.id)) { seen.add(e.id); models.push(e); }
-  const efforts = await parseEffortsFromCli();
+  // The cloud spawns nothing as the server, so it takes the documented set there.
+  const efforts = isCloud() ? [...EFFORT_LEVELS] : await parseEffortsFromCli();
   staticModelConfigCache = { models, efforts };
   return staticModelConfigCache;
 }
@@ -925,7 +981,7 @@ async function buildStaticModelConfig(): Promise<StaticModelConfig> {
 async function buildModelConfig(): Promise<ModelConfig> {
   const { models, efforts } = await buildStaticModelConfig();
   // Read the user's CURRENT Claude Code defaults live (never cached).
-  const settings = readJsonSafe(join(homedir(), '.claude', 'settings.json')) ?? {};
+  const settings = await readHomeJson(join(homedir(), '.claude', 'settings.json')) ?? {};
   const defaultEffort = typeof settings.effortLevel === 'string' && efforts.includes(settings.effortLevel)
     ? settings.effortLevel
     : (efforts.includes('high') ? 'high' : efforts[0] ?? 'high');
@@ -938,15 +994,29 @@ async function buildModelConfig(): Promise<ModelConfig> {
 }
 
 /** GET /api/agent/model-config — the model/effort options + the user's CLI defaults. */
-export async function handleAgentModelConfig(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Agent model config is desktop-only.'); return; }
+export async function handleAgentModelConfig(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!servesAgentReads(req)) { sendError(res, 403, 'desktop_only', 'Agent model config is desktop-only.'); return; }
   sendJson(res, 200, await buildModelConfig());
 }
 
+/**
+ * The transcript of conversation `id`, as text, or null. In the hands-free cloud transcripts are
+ * 0600 dcuser (the server cannot open them) and the tab→session map is dcuser-writable, so the
+ * map is not consulted there and the read goes through the worker.
+ */
+async function readTranscriptFor(contextRoot: string | null, id: string): Promise<string | null> {
+  if (!isCloud()) {
+    const path = liveTranscriptPath(contextRoot, id);
+    if (!path) return null;
+    try { return readFileSync(path, 'utf-8'); } catch { return null; }
+  }
+  const path = findTranscriptBySessionId([id], homedir());
+  if (!path) return null;
+  try { return (await readFileAsWorker(path)).toString('utf-8'); } catch { return null; }
+}
+
 /** The most recent `message.model` recorded in a transcript, as an alias, or null. */
-function latestTranscriptModel(jsonlPath: string): string | null {
-  let raw: string;
-  try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return null; }
+function latestTranscriptModel(raw: string): string | null {
   const lines = raw.split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const s = lines[i].trim();
@@ -973,7 +1043,7 @@ export async function handleAgentSessionModel(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
-  if (!isDesktop()) { sendJson(res, 200, { model: null }); return; }
+  if (!servesAgentReads(req)) { sendJson(res, 200, { model: null }); return; }
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!id) { sendJson(res, 200, { model: null }); return; }
@@ -982,8 +1052,8 @@ export async function handleAgentSessionModel(
   // transcript on disk yet (Claude Code ≥2.1.x flushes only on exit/rotation) — fall
   // back to the model the PTY was spawned with so an explicit picker choice shows up
   // immediately instead of reading as the CLI default until the first flush.
-  const path = liveTranscriptPath(contextRoot, id);
-  sendJson(res, 200, { model: (path ? latestTranscriptModel(path) : null) ?? liveSpawnModels.get(id) ?? null });
+  const raw = await readTranscriptFor(contextRoot, id);
+  sendJson(res, 200, { model: (raw !== null ? latestTranscriptModel(raw) : null) ?? liveSpawnModels.get(id) ?? null });
 }
 
 // ─── Per-session context-window + cost (read from the transcript's token usage) ───────
@@ -1062,6 +1132,10 @@ function num(v: unknown): number { return typeof v === 'number' && Number.isFini
 export function computeSessionStats(jsonlPath: string): SessionStats {
   let raw: string;
   try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return EMPTY_STATS; }
+  return sessionStatsFromText(raw);
+}
+
+function sessionStatsFromText(raw: string): SessionStats {
   interface TurnUsage { inp: number; out: number; cw: number; cr: number; model: string }
   const turns = new Map<string, TurnUsage>();
   let unkeyed = 0;
@@ -1111,13 +1185,13 @@ export async function handleAgentSessionStats(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
-  if (!isDesktop()) { sendJson(res, 200, EMPTY_STATS); return; }
+  if (!servesAgentReads(req)) { sendJson(res, 200, EMPTY_STATS); return; }
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!id) { sendJson(res, 200, EMPTY_STATS); return; }
   // Live-id resolution: after a `/clear` the header stats must track what's on screen.
-  const path = liveTranscriptPath(contextRoot, id);
-  sendJson(res, 200, path ? computeSessionStats(path) : EMPTY_STATS);
+  const raw = await readTranscriptFor(contextRoot, id);
+  sendJson(res, 200, raw !== null ? sessionStatsFromText(raw) : EMPTY_STATS);
 }
 
 /** Conversation ids currently attached to a live agent PTY in THIS server. A Claude
@@ -1135,7 +1209,29 @@ const liveConversations = new Set<string>();
  *  by the live-tab count. */
 const liveSpawnModels = new Map<string, string>();
 
-function startPtySession(
+/**
+ * Every live PTY in THIS server, keyed by a per-spawn id: born when `pty.spawn` succeeds, dead
+ * on the PTY's exit or its socket's teardown. Hands-free go/return reads and cuts it
+ * ({@link ptySessionsUnder}, {@link cutPtySessionsUnder}). node-pty starts the shell with
+ * setsid, so its pid leads its own process group.
+ */
+const livePtys = new Map<string, { id: string; cwd: string; pid: number }>();
+
+/** Live PTYs whose cwd is under any of `roots` (realpath containment). */
+export function ptySessionsUnder(roots: string[]): Array<{ id: string; cwd: string }> {
+  return [...livePtys.values()].filter((p) => pathUnderAny(p.cwd, roots)).map(({ id, cwd }) => ({ id, cwd }));
+}
+
+/** Cut every live PTY under `roots`: its whole process group, SIGTERM then SIGKILL after 5 s.
+ *  Resolves once they have all exited, to how many matched. */
+export async function cutPtySessionsUnder(roots: string[]): Promise<number> {
+  const hits = [...livePtys.values()].filter((p) => pathUnderAny(p.cwd, roots));
+  if (hits.length > 0) await cutProcessGroups(hits.map((p) => p.pid));
+  return hits.length;
+}
+
+/** Exported for tests (a fake `pty` module); `opts.home` is the hands-free state's HOME. */
+export function startPtySession(
   ws: import('ws').WebSocket,
   pty: typeof import('node-pty'),
   projectRoot: string,
@@ -1150,7 +1246,16 @@ function startPtySession(
   deferPrompt = false,
   execCommand = '',
   execCwd = '',
+  opts: { home?: string } = {},
 ): void {
+  const spawnCwd = kind === 'exec' && execCwd ? execCwd : projectRoot;
+  // Hands-free: refused before anything is held or spawned; the tab shows why.
+  const refused = handsfreeSpawnRefusal(spawnCwd, opts.home);
+  if (refused) {
+    try { ws.send(`\r\n\x1b[31m[${refused}]\x1b[0m\r\n`); } catch { /* closing */ }
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
   const shell = process.env.SHELL || '/bin/zsh';
   // Permission mode — the surface has exactly TWO modes (owner decision 2026-07-23:
   // "if no bypass that means it is auto", never plain manual):
@@ -1319,7 +1424,7 @@ function startPtySession(
       name: 'xterm-color',
       cols: 80,
       rows: 24,
-      cwd: kind === 'exec' && execCwd ? execCwd : projectRoot,
+      cwd: spawnCwd,
       // PATH is claude-aware: the login shell inherits the directory `claude` was
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
@@ -1340,6 +1445,8 @@ function startPtySession(
   }
 
   let alive = true;
+  const ptyId = randomUUID();
+  livePtys.set(ptyId, { id: ptyId, cwd: spawnCwd, pid: term.pid });
   // Reap this PTY's `claude` process if the whole server shuts down (parent-death
   // watchdog / SIGTERM) — otherwise it would orphan to launchd. Untracked on exit.
   const untrack = trackChild(() => { try { term.kill(); } catch { /* gone */ } });
@@ -1353,6 +1460,7 @@ function startPtySession(
   term.onData((data) => pump.data(data));
   term.onExit(({ exitCode }) => {
     alive = false;
+    livePtys.delete(ptyId);
     untrack();
     releaseHeld();
     cleanupDeferred();

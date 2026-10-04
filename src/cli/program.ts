@@ -45,6 +45,8 @@ import { registerLinkCommand } from './commands/link.js';
 import { registerPatternsCommand } from './commands/patterns.js';
 import { registerWhiteboardCommand } from './commands/whiteboard.js';
 import { registerNotifyCommand } from './commands/notify.js';
+import { registerHandsfreeCommand } from './commands/handsfree.js';
+import { registerCloudCommand } from './commands/cloud.js';
 
 /**
  * The command TREE, with no entrypoint attached.
@@ -177,6 +179,8 @@ export function createProgram(): Command {
   registerBrainCommand(program);
   registerLinkCommand(program);
   registerNotifyCommand(program);
+  registerHandsfreeCommand(program);
+  registerCloudCommand(program);
 
   return program;
 }

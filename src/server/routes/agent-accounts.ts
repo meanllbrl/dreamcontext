@@ -1,11 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentRequest, isDesktop } from '../desktop.js';
+import { isCloud } from '../cloud-mode.js';
+import { runWorkerOp } from '../cloud-worker.js';
 import { isLoopback } from './agent-spawn-shared.js';
 import { executeClaudeDetached } from '../../lib/automations/runner.js';
 import {
   ClaudeAccountError,
+  claudeAccountsWritten,
   accountIdFromEmail,
   accountEnvFor,
   autoSwitchEnabled,
@@ -85,6 +88,33 @@ function guard(req: IncomingMessage, res: ServerResponse): boolean {
 }
 
 /**
+ * List, switch and preferred: also the phone's (hands-free cloud, device session). Adding,
+ * signing in again, removing and reordering stay desktop + loopback: a cloud login is the
+ * entrypoint's `claude-login` over `gh codespace ssh` (D13), never a route.
+ */
+function agentGuard(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!isAgentRequest(req)) {
+    sendError(res, 403, 'forbidden', 'Account management is available in the desktop app only.');
+    return false;
+  }
+  return true;
+}
+
+/** Cloud account state (D13): signed in = the sandbox's own `claude auth status --json`
+ *  (token presence included), read as dcuser; never the laptop-side identity heuristic. */
+async function cloudAccountState(dir: string): Promise<{ ok: boolean; limits: UsageLimitWire[]; fetchedAtMs: number | null }> {
+  let ok = false;
+  try { ok = (await claudeAuthStatus(dir)).loggedIn === true; } catch { /* unknown = not signed in */ }
+  if (!ok) return { ok, limits: [], fetchedAtMs: null };
+  try {
+    const reading = await runWorkerOp<{ limits: UsageLimitWire[]; fetchedAtMs: number | null }>({ op: 'read', params: { kind: 'usage-limits', configDir: dir }, timeoutMs: 30_000 });
+    return { ok, limits: reading.limits ?? [], fetchedAtMs: reading.fetchedAtMs ?? null };
+  } catch {
+    return { ok, limits: [], fetchedAtMs: null };
+  }
+}
+
+/**
  * GET /api/agent/accounts — every registered account with its identity and limit state.
  *
  * Reads each account's OWN cache (`<configDir>/.claude.json`), which is why a non-active
@@ -93,9 +123,23 @@ function guard(req: IncomingMessage, res: ServerResponse): boolean {
  * paint would be a spawn storm. A caller who wants fresh numbers asks for a refresh.
  */
 export async function handleAgentAccountsList(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!guard(req, res)) return;
+  if (!agentGuard(req, res)) return;
   const home = homedir();
   const accounts = listClaudeAccounts(home);
+
+  if (isCloud()) {
+    const wire: AccountWire[] = [];
+    for (const acc of accounts) {
+      const st = await cloudAccountState(resolveConfigDir(acc.id, home));
+      wire.push({
+        id: acc.id, email: acc.email, organizationName: acc.organizationName, tier: acc.tier,
+        preferred: acc.preferred, isPrimary: acc.configDir === null,
+        state: st.ok ? 'ok' : 'needs-relogin', limits: st.limits, fetchedAtMs: st.fetchedAtMs,
+      });
+    }
+    sendJson(res, 200, { accounts: wire, autoSwitch: autoSwitchEnabled(home), switchStrategy: switchStrategyFor(home), switchWeights: switchWeightsFor(home) });
+    return;
+  }
 
   const wire: AccountWire[] = accounts.map((acc) => {
     const dir = acc.configDir ?? home;
@@ -327,11 +371,12 @@ export async function handleAgentAccountsRelogin(req: IncomingMessage, res: Serv
 
 /** POST /api/agent/accounts/preferred — `{ id }`. New sessions start on this account. */
 export async function handleAgentAccountsPreferred(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!guard(req, res)) return;
+  if (!agentGuard(req, res)) return;
   const body = await parseJsonBody(req);
   const id = typeof body?.id === 'string' ? body.id : '';
   try {
     setPreferredClaudeAccount(id);
+    await claudeAccountsWritten(); // the cloud writes it as dcuser
   } catch (err) {
     sendError(res, err instanceof ClaudeAccountError ? 422 : 500, 'account_error', (err as Error).message);
     return;
@@ -419,13 +464,19 @@ export async function handleAgentAccountsRemove(req: IncomingMessage, res: Serve
 
 /** POST /api/agent/accounts/auto-switch — `{ enabled }`. Off means REPORT, never change. */
 export async function handleAgentAccountsAutoSwitch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!guard(req, res)) return;
+  if (!agentGuard(req, res)) return;
   const body = await parseJsonBody(req);
   if (typeof body?.enabled !== 'boolean') {
     sendError(res, 422, 'bad_request', '`enabled` must be true or false.');
     return;
   }
-  setAutoSwitchEnabled(body.enabled);
+  try {
+    setAutoSwitchEnabled(body.enabled);
+    await claudeAccountsWritten(); // the cloud writes it as dcuser; a failed write is not a 200
+  } catch (err) {
+    sendError(res, 500, 'account_error', (err as Error).message);
+    return;
+  }
   sendJson(res, 200, { autoSwitch: body.enabled });
 }
 

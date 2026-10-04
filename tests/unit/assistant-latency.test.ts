@@ -476,10 +476,12 @@ describe('effort', () => {
     expect(spawnEffortFor({ isAssistant: false, delegated: false, mode: 'basic', urlEffort: '' })).toBe('');
   });
 
-  it('the config accepts only low|medium|high|xhigh and defaults to medium', () => {
+  // `max` joined 2026-10-04: an effort the owner picks in the notch's composer (which offers
+  // max) becomes the Assistant's own default, so the config has to be able to hold it.
+  it('the config accepts only low|medium|high|xhigh|max and defaults to medium', () => {
     expect(DEFAULT_ASSISTANT_CONFIG.effort).toBe('medium');
-    for (const e of ['low', 'medium', 'high', 'xhigh']) expect(sanitizeConfigPatch({ effort: e }).effort).toBe(e);
-    for (const e of ['max', '', 'HIGH', 3, null]) expect(sanitizeConfigPatch({ effort: e }).effort).toBeUndefined();
+    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(sanitizeConfigPatch({ effort: e }).effort).toBe(e);
+    for (const e of ['ultra', '', 'HIGH', 3, null]) expect(sanitizeConfigPatch({ effort: e }).effort).toBeUndefined();
   });
 
   it('the __assistant__ spawn runs its configured effort, not the URL one', () => {

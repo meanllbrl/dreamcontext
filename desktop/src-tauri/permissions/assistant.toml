@@ -14,6 +14,11 @@ description = "Read where the notch (camera housing) is on the monitor the notch
 commands.allow = ["assistant_geometry"]
 
 [[permission]]
+identifier = "allow-assistant-haptic"
+description = "Play one light Force Touch trackpad tap when the notch announces something."
+commands.allow = ["assistant_haptic"]
+
+[[permission]]
 identifier = "allow-assistant-apply-hotkey"
 description = "Re-read the Assistant config and (re)register its global hotkey; returns the real registration result."
 commands.allow = ["assistant_apply_hotkey"]

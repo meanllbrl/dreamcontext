@@ -242,8 +242,33 @@ export type CaptureState =
   | 'error'
   | 'unconfigured';
 
+/**
+ * How many times a failed transcription is tried AGAIN before the owner is told (owner,
+ * 2026-10-04: "if transcription fails let's try 2 times before saying that it failed").
+ */
+export const STT_RETRIES = 2;
+/** The wait before retry n (1-based): a cold whisper server needs a moment, not a hammering. */
+export function sttRetryDelayMs(attempt: number): number {
+  return attempt <= 1 ? 700 : 1600;
+}
+
+/**
+ * Is this transcription failure worth another try? A network failure, the server being busy,
+ * a 5xx and `stt_failed` are this take's bad luck. `stt_unconfigured` (no dictation installed,
+ * a take in a format we refuse), a take too large, and a refusal of the caller are not: the
+ * same bytes would fail the same way.
+ */
+export function sttRetryable(status: number | null, error: string | undefined): boolean {
+  if (status === null) return true;                      // the request never answered
+  if (error === 'stt_unconfigured' || status === 413 || status === 403) return false;
+  if (status === 429 || status >= 500) return true;
+  return error === 'stt_failed' && status !== 400;
+}
+
 export interface VoiceCapture {
   state: CaptureState;
+  /** 0 on the first transcription attempt; 1..STT_RETRIES while a failed one is retried. */
+  attempt: number;
   /** Seconds elapsed in the current take, for the button's live readout. */
   elapsed: number;
   /** True while a take is anywhere in the pipeline — the busy guard's source of truth. */
@@ -277,6 +302,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
   onLevelRef.current = onLevel;
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -350,36 +376,56 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
   }, [teardown]);
 
   const upload = useCallback(async (blob: Blob) => {
+    const take = takeRef.current;
     try {
-      const res = await fetch('/api/agent/voice/stt', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'audio/wav',
-          ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
-        },
-        body: await blob.arrayBuffer(),
-      });
-      const body = await res.json().catch(() => ({})) as { text?: string; error?: string; message?: string };
-      if (!res.ok) {
+      const bytes = await blob.arrayBuffer();
+      // The take is held here, so a failed transcription is simply sent again: twice more,
+      // with a short wait, before the owner hears that it failed (`STT_RETRIES`).
+      for (let n = 0; ; n++) {
+        if (takeRef.current !== take) return;          // unmounted or superseded meanwhile
+        setAttempt(n);
+        let status: number | null = null;
+        let body: { text?: string; error?: string; message?: string } = {};
+        try {
+          const res = await fetch('/api/agent/voice/stt', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'audio/wav',
+              ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
+            },
+            body: bytes,
+          });
+          status = res.status;
+          body = await res.json().catch(() => ({})) as typeof body;
+          if (res.ok) {
+            const text = (body.text || '').trim();
+            if (!text) {
+              // A blank transcript is a silence the gate did not catch. Never submitted.
+              setState('silent');
+              return;
+            }
+            setState('idle');
+            onTranscript(text);
+            return;
+          }
+        } catch {
+          status = null;
+        }
+        if (n < STT_RETRIES && sttRetryable(status, body.error)) {
+          await new Promise((r) => setTimeout(r, sttRetryDelayMs(n + 1)));
+          continue;
+        }
         // `*_unconfigured` is PERMANENT until Settings changes — the mode degrades to text
-        // and says what is missing. Everything else is this take only, and retrying is fine.
+        // and says what is missing. Everything else is this take only.
         const permanent = body.error === 'stt_unconfigured';
         setState(permanent ? 'unconfigured' : 'error');
-        setError(body.message || 'That take did not go through. Try again.');
+        setError(body.message || (n > 0
+          ? `That take did not go through after ${n + 1} tries. Try again.`
+          : 'That take did not go through. Try again.'));
         return;
       }
-      const text = (body.text || '').trim();
-      if (!text) {
-        // A blank transcript is a silence the gate did not catch. Never submitted.
-        setState('silent');
-        return;
-      }
-      setState('idle');
-      onTranscript(text);
-    } catch {
-      setState('error');
-      setError('That take did not go through. Try again.');
     } finally {
+      setAttempt(0);
       inFlightRef.current = false;
       phaseRef.current = 'idle';
     }
@@ -594,6 +640,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
 
   return {
     state,
+    attempt,
     elapsed,
     busy: state === 'recording' || state === 'transcribing',
     error,

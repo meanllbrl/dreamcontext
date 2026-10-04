@@ -66,9 +66,16 @@ export interface AssistantConfig {
   /** The Assistant's own `--effort`. Deliberately NOT the owner's chat default: a notch turn
    *  is a relay, and xhigh (the CLI default this machine inherits) makes every relay slow. */
   effort?: AssistantEffort;
+  /** The Assistant's own `--model` (owner, 2026-10-04: sonnet + medium, not dreamcontext's chat
+   *  default). A model or effort picked in the notch's composer becomes the new default. */
+  model?: string;
 }
 
-export const ASSISTANT_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+export const ASSISTANT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** The Assistant's model when the owner has not picked one. */
+export const DEFAULT_ASSISTANT_MODEL = 'sonnet';
+/** The same shape `claude-args.ts sanitizeModel` lets through to `--model`. */
+const MODEL_RE = /^[A-Za-z0-9._-]{1,64}$/;
 export type AssistantEffort = typeof ASSISTANT_EFFORTS[number];
 
 export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
@@ -80,6 +87,7 @@ export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
   conversationId: null,
   speak: false,
   effort: 'medium',
+  model: DEFAULT_ASSISTANT_MODEL,
 };
 
 export function assistantConfigPath(home: string = homedir()): string {
@@ -105,6 +113,7 @@ export function sanitizeConfigPatch(raw: unknown): Partial<AssistantConfig> {
   if (typeof r.effort === 'string' && (ASSISTANT_EFFORTS as readonly string[]).includes(r.effort)) {
     out.effort = r.effort as AssistantEffort;
   }
+  if (typeof r.model === 'string' && MODEL_RE.test(r.model)) out.model = r.model;
   if (typeof r.autostart === 'boolean') out.autostart = r.autostart;
   if (typeof r.speak === 'boolean') out.speak = r.speak;
   if (typeof r.enabled === 'boolean') out.enabled = r.enabled;

@@ -18,6 +18,7 @@ describe('CHAT_QUESTION_ENV', () => {
 
   it('is spread into the chat spawn AFTER process.env, so an inherited value cannot override it', () => {
     const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf8');
-    expect(src).toMatch(/env: \{ \.\.\.process\.env, PATH: claudeAwarePath\(\), \.\.\.CHAT_QUESTION_ENV,/);
+    expect(src).toMatch(/const childEnv = \{ PATH: claudeAwarePath\(\), \.\.\.CHAT_QUESTION_ENV,/);
+    expect(src).toMatch(/env: \{ \.\.\.process\.env, \.\.\.childEnv,/);
   });
 });

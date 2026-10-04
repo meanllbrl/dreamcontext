@@ -5,6 +5,10 @@
 // pin the fixed lifecycle: socket gone → stdin EOF (graceful drain) → SIGTERM at
 // CLOSE_LINGER_MS → SIGKILL at +CLOSE_KILL_GRACE_MS, with every timer disarmed the moment
 // the child actually exits.
+//
+// Since socket resilience (agent-chat-live.ts) a PINNED project chat detaches on a dropped
+// socket instead — agent-chat-reattach.test.ts pins that. These sessions are unpinned, which
+// keeps the drain-on-close path below, and so does a pinned one whose client said goodbye.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -94,6 +98,19 @@ describe('agent-chat socket-gone reaping', () => {
     expect(child.stdin.end).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(CLOSE_LINGER_MS + CLOSE_KILL_GRACE_MS);
     // One SIGTERM + one SIGKILL — a double-armed drain would double both.
+    expect(child.kill).toHaveBeenCalledTimes(2);
+  });
+
+  it('a pinned session whose client said goodbye (`end`) drains on close exactly as before', () => {
+    const ws = new FakeWs();
+    startChatSession(ws as unknown as import('ws').WebSocket, '/tmp/agent-chat-close-reap-test', {
+      bypass: false, sessionId: '6f1c2e9a-1111-4a5b-8c9d-0123456789ab', resumeId: '', model: '', effort: '', initialPrompt: '', deferPrompt: false,
+    });
+    const child = spawned[spawned.length - 1];
+    ws.emit('message', JSON.stringify({ type: 'end' }));
+    ws.emit('close');
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(CLOSE_LINGER_MS + CLOSE_KILL_GRACE_MS);
     expect(child.kill).toHaveBeenCalledTimes(2);
   });
 

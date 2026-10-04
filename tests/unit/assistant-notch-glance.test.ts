@@ -179,12 +179,11 @@ describe('hand-offs: what the Assistant gave to whom, and where it stands', () =
 describe('the pill headline', () => {
   it('says the most urgent thing, the name only when nothing else', async () => {
     const { pillHeadline, handoffPhase, readHandoffs } = await import('../../dashboard/src/components/assistant/notchModel');
-    const base = { name: 'Dreamy', asker: null, proposals: 0, finished: null, handoffs: [], working: 0 };
+    const base = { name: 'Dreamy', asker: null, proposals: 0, finished: null, handoffs: [] };
     expect(pillHeadline(base)).toBe('Dreamy');
-    expect(pillHeadline({ ...base, working: 2 })).toBe('2 working');
     const hs = readHandoffs({ delegations: [{ sessionId: 's', vault: 'tilki', activity: 'working', startedAt: 1, endedAt: null, brief: '', lastText: '', ask: null }] });
     expect(handoffPhase(hs[0])).toBe('running');
-    expect(pillHeadline({ ...base, handoffs: hs, working: 1 })).toBe('tilki is on it');
+    expect(pillHeadline({ ...base, handoffs: hs })).toBe('tilki is on it');
     expect(pillHeadline({ ...base, handoffs: hs, finished: 'korus' })).toBe('korus finished');
     expect(pillHeadline({ ...base, proposals: 2, finished: 'korus' })).toBe('2 waiting for your yes');
     expect(pillHeadline({ ...base, asker: 'korus', proposals: 2 })).toBe('korus needs you');

@@ -26,7 +26,10 @@
       "kind:decisions",
       "kind:onboarding",
       "kind:pattern",
-      "kind:archive"
+      "kind:archive",
+      "kind:bug",
+      "kind:enhancement",
+      "kind:feature"
     ],
     "topic": [
       "topic:recall",
@@ -147,6 +150,12 @@
     "council": "topic:council",
     "performance": "domain:performance",
     "prioritization": "topic:pm",
-    "backlog": "topic:pm"
+    "backlog": "topic:pm",
+    "type:bug": "kind:bug",
+    "bug": "kind:bug",
+    "enhancement": "kind:enhancement",
+    "type:feature": "kind:feature",
+    "feature": "kind:feature",
+    "type:ux": "kind:design"
   }
 }

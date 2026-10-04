@@ -1,13 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join, dirname } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
+import { isCloud, workerRunner } from '../cloud-mode.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
+import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import { UUID_RE, resolveAgentSession } from '../../lib/agent-session-map.js';
-import { recordSessionTitles } from '../../lib/session-titles.js';
+import {
+  recordSessionTitles, recordSessionTitlesViaWorker, workerReadText, workerWriteAtomic, type WorkerRun,
+} from '../../lib/session-titles.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { isSafeAutomationSlug } from '../../lib/automations/store.js';
 import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
@@ -30,8 +34,15 @@ import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
  * usual home for a layout — is empty on the new origin. Without a server-side mirror, five
  * side-by-side panes reopen as one pane with one chat visible.
  *
- * Desktop-only (mirrors agent-drop / agent-terminal): a browser/npm dashboard never
- * reaches it (403). The loopback CSRF guard already fronts the PUT in the server entry.
+ * Agent hosts only: the desktop app (loopback) and the hands-free cloud (a device session —
+ * the phone reads and writes the roster there). A browser/npm dashboard never reaches it (403).
+ * The CSRF guard already fronts the PUT in the server entry.
+ *
+ * GENERATION. The file carries a top-level `generation` (absent = 0). Only a hands-free Return
+ * bumps it ({@link writeMergedRosterSurface}: the cloud's roster merged in); a PUT keeps it. A
+ * PUT names the generation it was based on (`baseGeneration`), so a laptop tab left open while
+ * away cannot overwrite the merged roster with the one it loaded before the trip: a stale base
+ * gets 409 `roster_stale` with the stored surface, and the client re-hydrates from it.
  */
 
 /**
@@ -123,7 +134,7 @@ const DEFAULT_TAB_TITLE_RE = /^(?:Agent|Chat)(?: \d+)?$/;
  * doesn't, and shells and automation runs are not conversations the history picker offers.
  * Exported for unit testing.
  */
-export function rosterTitleUpdates(contextRoot: string, sessions: readonly SavedMeta[]): Array<{ sessionId: string; title: string }> {
+export function rosterTitleUpdates(contextRoot: string | null, sessions: readonly SavedMeta[]): Array<{ sessionId: string; title: string }> {
   const out: Array<{ sessionId: string; title: string }> = [];
   for (const m of sessions) {
     if (!m.sessionId || m.kind === 'shell' || m.kind === 'automation') continue;
@@ -132,7 +143,8 @@ export function rosterTitleUpdates(contextRoot: string, sessions: readonly Saved
     // (AgentSurface's `resumePastSession`). That clip is a worse title than the one the listing
     // already derives, and storing it would bury the full prompt under its own stub.
     if (m.title.endsWith('…')) continue;
-    out.push({ sessionId: resolveAgentSession(contextRoot, m.sessionId) || m.sessionId, title: m.title });
+    // `null` (the cloud) skips the tab→session map: the server must not read dcuser's files.
+    out.push({ sessionId: (contextRoot ? resolveAgentSession(contextRoot, m.sessionId) : '') || m.sessionId, title: m.title });
   }
   return out;
 }
@@ -263,24 +275,49 @@ function coerceActivePane(raw: unknown): number | undefined {
     : undefined;
 }
 
-/** Read + sanitize the persisted surface. Missing/corrupt/hand-edited → empty + `'auto'`
+/** The stored surface plus its generation, as {@link readRosterSurface} returns it. */
+export interface StoredSurface extends SavedSurface {
+  generation: number;
+}
+
+/** A generation is a non-negative integer; anything else (absent, hand-edited) reads as 0. */
+function coerceGeneration(raw: unknown): number {
+  return typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
+}
+
+/** Sanitize a parsed blob. Missing/corrupt/hand-edited → empty + `'auto'` + generation 0
  *  (never throws), which is the fail-safe direction for the permission mode. */
-function readSurface(contextRoot: string): SavedSurface {
+function parseSurface(text: string | null): StoredSurface {
   try {
-    const raw = JSON.parse(readFileSync(storePath(contextRoot), 'utf-8')) as Record<string, unknown>;
+    if (text === null) throw new Error('absent');
+    const raw = JSON.parse(text) as Record<string, unknown>;
     const activePane = coerceActivePane(raw?.activePane);
     return {
       sessions: sanitizeRoster(raw) ?? [],
       ...(activePane !== undefined ? { activePane } : {}),
       chatPermissionMode: coercePermissionMode(raw?.chatPermissionMode),
+      generation: coerceGeneration(raw?.generation),
     };
   } catch {
-    return { sessions: [], chatPermissionMode: 'auto' };
+    return { sessions: [], chatPermissionMode: 'auto', generation: 0 };
   }
 }
 
+function readSurface(contextRoot: string): StoredSurface {
+  let text: string | null = null;
+  try { text = readFileSync(storePath(contextRoot), 'utf-8'); } catch { /* absent → empty */ }
+  return parseSurface(text);
+}
+
+/** The persisted file: the surface plus its generation (written only when non-zero, so a
+ *  roster that never went through a Return stays byte-identical to the legacy shape). */
+function serializeSurface(surface: SavedSurface, generation: number): string {
+  const sessionsFirst = { sessions: surface.sessions, ...(surface.activePane !== undefined ? { activePane: surface.activePane } : {}), chatPermissionMode: surface.chatPermissionMode };
+  return JSON.stringify(generation > 0 ? { ...sessionsFirst, generation } : sessionsFirst, null, 2) + '\n';
+}
+
 /** Atomically persist the surface (temp file + rename) so a crash can't leave a half-written blob. */
-function writeSurface(contextRoot: string, surface: SavedSurface): void {
+function writeSurface(contextRoot: string, surface: SavedSurface, generation: number): void {
   // The roster is PER-MACHINE state (renamed tabs + Claude resume ids), never committed.
   // User projects track `state/*.md` (task PRDs) but do NOT blanket-ignore state dotfiles,
   // so — mirroring the task-backend secrets pattern — ensure the ignore entry BEFORE
@@ -296,8 +333,184 @@ function writeSurface(contextRoot: string, surface: SavedSurface): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = storePath(contextRoot);
   const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(surface, null, 2) + '\n', 'utf-8');
+  writeFileSync(tmp, serializeSurface(surface, generation), 'utf-8');
   renameSync(tmp, path);
+}
+
+// ─── Roster I/O in the hands-free cloud: as the worker (dcuser) ───────────────
+//
+// Chosen over "lstat + realpath-contain every parent, open with O_NOFOLLOW": a parent can be
+// swapped for a link between the check and the open (Node has no openat), and a planted FIFO
+// would hang the server. Run as dcuser, a planted link only reaches what dcuser could reach
+// anyway. There is one cloud server, so an in-process queue serializes read-check-write.
+
+let rosterWorkerRun: WorkerRun = workerRunner;
+
+/** Tests only: a local runner instead of the cloud's `workerRunner`. */
+export function setRosterWorkerRunForTests(run: WorkerRun | null): void {
+  rosterWorkerRun = run ?? workerRunner;
+}
+
+const cloudQueues = new Map<string, Promise<unknown>>();
+
+/** Run `fn` after every earlier roster operation on `contextRoot` has settled. The entry is
+ *  dropped once the queue drains, so the map holds only vaults with work in flight. */
+function serializeCloud<T>(contextRoot: string, fn: () => Promise<T>): Promise<T> {
+  const prev = cloudQueues.get(contextRoot) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  const tail = next.catch(() => undefined);
+  cloudQueues.set(contextRoot, tail);
+  void tail.then(() => { if (cloudQueues.get(contextRoot) === tail) cloudQueues.delete(contextRoot); });
+  return next;
+}
+
+async function readSurfaceAsWorker(contextRoot: string): Promise<StoredSurface> {
+  return parseSurface(await workerReadText(rosterWorkerRun, storePath(contextRoot), MAX_BYTES * 2));
+}
+
+// ─── Laptop lock + the pinned surface API (hands-free Return, lane E) ──────────
+
+const ROSTER_LOCK_STALE_MS = 10_000;
+
+function rosterLockPath(contextRoot: string): string {
+  return `${storePath(contextRoot)}.lock`;
+}
+
+/**
+ * The stored roster surface and its generation (absent file = empty, `'auto'`, 0). Laptop-side,
+ * synchronous. Pinned for the hands-free Return merge.
+ */
+export function readRosterSurface(contextRoot: string): StoredSurface {
+  return readSurface(contextRoot);
+}
+
+/** The roster lock is held by another writer (a PUT in another process, or a CLI merge). */
+export class RosterBusyError extends Error {
+  readonly code = 'roster_busy';
+  constructor() {
+    super('session roster is locked by another writer; try again');
+    this.name = 'RosterBusyError';
+  }
+}
+
+type MergedSurface = { sessions: SavedMeta[]; activePane?: number; chatPermissionMode: ChatPermissionMode };
+
+/** The pid recorded in a lock file, or null (unreadable, no pid). */
+function lockOwnerPid(lock: string): number | null {
+  try {
+    const pid = (JSON.parse(readFileSync(lock, 'utf-8')) as { pid?: unknown }).pid;
+    return typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function pidIsDead(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
+/**
+ * One attempt at the roster lock, shared by the PUT and both merge writers. Besides the
+ * age-based reclaim (`acquireFileLock` with pid liveness), a lock whose recorded owner pid is
+ * DEAD is reclaimed at once rather than after {@link ROSTER_LOCK_STALE_MS}: a writer that crashed
+ * inside the lock must not leave every PUT answering 503 for 10 s. Re-read just before removal
+ * so a lock a live writer has since taken over is left alone.
+ */
+function tryAcquireRosterLockAt(lock: string): boolean {
+  if (acquireFileLock(lock, Date.now(), ROSTER_LOCK_STALE_MS, { verifyPidLiveness: true })) return true;
+  const owner = lockOwnerPid(lock);
+  if (owner === null || owner === process.pid || !pidIsDead(owner)) return false;
+  if (lockOwnerPid(lock) !== owner) return false;
+  try { rmSync(lock, { force: true }); } catch { return false; }
+  return acquireFileLock(lock, Date.now(), ROSTER_LOCK_STALE_MS, { verifyPidLiveness: true });
+}
+
+function tryAcquireRosterLock(contextRoot: string): string | null {
+  const lock = rosterLockPath(contextRoot);
+  return tryAcquireRosterLockAt(lock) ? lock : null;
+}
+
+/** Wait (awaited, never blocking) up to `waitMs` for the roster lock; the lock path, or null. */
+async function acquireRosterLockWithin(contextRoot: string, waitMs: number): Promise<string | null> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const lock = tryAcquireRosterLock(contextRoot);
+    if (lock) return lock;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => { setTimeout(r, 25); });
+  }
+}
+
+/** The locked read-bump-write. The caller holds the lock; synchronous, so nothing interleaves. */
+function writeMergedLocked(contextRoot: string, surface: MergedSurface): number {
+  const generation = readSurface(contextRoot).generation + 1;
+  const activePane = coerceActivePane(surface.activePane);
+  writeSurface(contextRoot, {
+    sessions: sanitizeRoster({ sessions: surface.sessions }) ?? [],
+    ...(activePane !== undefined ? { activePane } : {}),
+    chatPermissionMode: coercePermissionMode(surface.chatPermissionMode),
+  }, generation);
+  return generation;
+}
+
+/**
+ * Write a merged roster surface with generation = stored + 1 (atomic, under the roster lock so a
+ * concurrent PUT cannot interleave), and return the new generation. Every field is coerced like
+ * a PUT body; `chatPermissionMode` is exactly what the caller passes (the merge keeps the
+ * laptop's). Pinned for the hands-free Return merge.
+ *
+ * NEVER WAITS: one lock attempt, and {@link RosterBusyError} when another process holds it, so a
+ * caller inside the server never freezes the event loop. Within the server itself a PUT holds
+ * the lock only across synchronous code, so a busy lock there means another process (rare, and
+ * sub-millisecond). Callers that should ride it out use {@link writeMergedRosterSurfaceAsync}.
+ */
+export function writeMergedRosterSurface(contextRoot: string, surface: MergedSurface): number {
+  const lock = tryAcquireRosterLock(contextRoot);
+  if (!lock) throw new RosterBusyError();
+  try {
+    return writeMergedLocked(contextRoot, surface);
+  } finally {
+    releaseFileLock(lock);
+  }
+}
+
+/**
+ * {@link writeMergedRosterSurface} that waits for a busy lock without blocking: retries every
+ * 25 ms (awaited) for up to `waitMs` (5 s), then throws {@link RosterBusyError}.
+ */
+export async function writeMergedRosterSurfaceAsync(
+  contextRoot: string,
+  surface: MergedSurface,
+  opts: { waitMs?: number } = {},
+): Promise<number> {
+  const deadline = Date.now() + (opts.waitMs ?? 5_000);
+  for (;;) {
+    const lock = tryAcquireRosterLock(contextRoot);
+    if (lock) {
+      try {
+        return writeMergedLocked(contextRoot, surface);
+      } finally {
+        releaseFileLock(lock);
+      }
+    }
+    if (Date.now() >= deadline) throw new RosterBusyError();
+    await new Promise((r) => { setTimeout(r, 25); });
+  }
+}
+
+/**
+ * May a PUT based on `base` replace a roster stored at `stored`? A named base must equal the
+ * stored generation; a missing one (a client from before generations) only while nothing was
+ * ever merged (stored 0) — after a Return it would silently drop the phone's sessions.
+ */
+export function rosterBaseAccepted(base: unknown, stored: number): boolean {
+  if (base === undefined || base === null) return stored === 0;
+  return typeof base === 'number' && base === stored;
 }
 
 /**
@@ -324,6 +537,16 @@ export interface SessionRosterEntry extends SavedMeta {
 }
 
 /**
+ * The roster gate: an agent host, and in the hands-free cloud a device session. On the desktop
+ * it stays `isDesktop()` alone, as before: a non-loopback peer (the tailnet phone with remote
+ * access on) is already fronted by the server's network-auth gate, and requiring loopback here
+ * would cut that phone off its own roster.
+ */
+function rosterAllowed(req: IncomingMessage): boolean {
+  return isAgentHost() && (isDesktop() || isAgentRequest(req));
+}
+
+/**
  * GET /api/agent/sessions — return the persisted roster for the current vault as
  * `{ sessions: SessionRosterEntry[] }` (`[]` when absent/corrupt). Desktop-only.
  */
@@ -335,34 +558,45 @@ export async function handleAgentSessionsGet(
   /** Overridable only for tests — every real call resolves this machine's real HOME. */
   home: string = homedir(),
 ): Promise<void> {
-  if (!isDesktop()) {
+  if (!rosterAllowed(_req)) {
     sendError(res, 403, 'desktop_only', 'Agent session roster is only available in the desktop app.');
     return;
   }
-  const saved = readSurface(contextRoot);
+  const cloud = isCloud();
+  const saved = cloud ? await serializeCloud(contextRoot, () => readSurfaceAsWorker(contextRoot)) : readSurface(contextRoot);
+  sendJson(res, 200, surfaceBody(saved, (id) => !cloud && isAutomationBoundSession(id, home) !== null));
+}
+
+/** The GET body (also the 409 body): the surface, each entry with its `bound` flag, and the
+ *  generation. The cloud runs no automations, so nothing is bound there. */
+function surfaceBody(saved: StoredSurface, isBound: (sessionId: string) => boolean): Record<string, unknown> {
   const sessions: SessionRosterEntry[] = saved.sessions.map((m) => ({
     ...m,
-    bound: !!m.sessionId && isAutomationBoundSession(m.sessionId, home) !== null,
+    bound: !!m.sessionId && isBound(m.sessionId),
   }));
-  sendJson(res, 200, {
+  return {
     sessions,
     ...(saved.activePane !== undefined ? { activePane: saved.activePane } : {}),
     chatPermissionMode: saved.chatPermissionMode,
-  });
+    generation: saved.generation,
+  };
 }
 
 /**
- * PUT /api/agent/sessions — persist the roster for the current vault. Desktop-only and
+ * PUT /api/agent/sessions — persist the roster for the current vault. Agent hosts only and
  * behind the cross-site CSRF guard. Rejects a non-object body / non-array `sessions`
- * (400); otherwise caps, coerces, and strips before writing.
+ * (400); a stale or (after a merge) missing `baseGeneration` gets 409 `roster_stale` with the
+ * stored surface; otherwise caps, coerces, and strips before writing, keeping the generation.
  */
 export async function handleAgentSessionsPut(
   req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
+  /** Overridable only for tests — every real call resolves this machine's real HOME. */
+  home: string = homedir(),
 ): Promise<void> {
-  if (!isDesktop()) {
+  if (!rosterAllowed(req)) {
     sendError(res, 403, 'desktop_only', 'Agent session roster is only available in the desktop app.');
     return;
   }
@@ -391,11 +625,43 @@ export async function handleAgentSessionsPut(
     sendError(res, 400, 'too_large', 'session roster payload is too large.');
     return;
   }
+  const base = raw.baseGeneration;
+  const stale = (stored: StoredSurface): void => {
+    sendJson(res, 409, {
+      error: 'roster_stale',
+      message: 'The session roster changed since this tab loaded it (a hands-free Return merged it); reload it.',
+      surface: surfaceBody(stored, (id) => !isCloud() && isAutomationBoundSession(id, home) !== null),
+    });
+  };
   try {
-    writeSurface(contextRoot, surface);
+    if (isCloud()) {
+      await serializeCloud(contextRoot, async () => {
+        const stored = await readSurfaceAsWorker(contextRoot);
+        if (!rosterBaseAccepted(base, stored.generation)) { stale(stored); return; }
+        await workerWriteAtomic(rosterWorkerRun, storePath(contextRoot), serializeSurface(surface, stored.generation));
+        // The tab→session map is dcuser-writable, so the cloud titles the PINNED conversation.
+        await recordSessionTitlesViaWorker(rosterWorkerRun, contextRoot, rosterTitleUpdates(null, sessions), { home });
+        sendJson(res, 200, { ok: true, generation: stored.generation });
+      });
+      return;
+    }
+    const lock = await acquireRosterLockWithin(contextRoot, 5_000);
+    if (!lock) {
+      sendError(res, 503, 'roster_locked', 'The session roster is being written; try again.');
+      return;
+    }
+    let generation: number;
+    try {
+      const stored = readSurface(contextRoot);
+      if (!rosterBaseAccepted(base, stored.generation)) { stale(stored); return; }
+      generation = stored.generation;
+      writeSurface(contextRoot, surface, generation);
+    } finally {
+      releaseFileLock(lock);
+    }
     // The roster forgets a tab the moment it closes; this is what keeps its name for Past chats.
     recordSessionTitles(contextRoot, rosterTitleUpdates(contextRoot, sessions));
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true, generation });
   } catch (err) {
     console.error('[agent-sessions] roster write failed:', err);
     sendError(res, 500, 'write_failed', 'Failed to persist the session roster.');

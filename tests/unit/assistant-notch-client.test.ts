@@ -35,12 +35,12 @@ describe('pill glance (the tab strip\'s bubbles)', () => {
     expect(readRollup({ working: 1, stale: 5, idle: 'x', asking: -2, proposals: NaN })).toEqual(r({ working: 1, stale: 5 }));
     expect(readRollup(null)).toEqual(EMPTY_ROLLUP);
   });
-  it('one bubble per status in the strip\'s order; starting is working, stale is grey with idle', () => {
-    expect(pillBubbles(r({ working: 1, idle: 4, stale: 5 }))).toEqual([{ state: 'working', count: 1 }, { state: 'idle', count: 9 }]);
+  it('one bubble per status in the strip\'s order; starting is working, idle and stale draw none', () => {
+    expect(pillBubbles(r({ working: 1, idle: 4, stale: 5 }))).toEqual([{ state: 'working', count: 1 }]);
     expect(pillBubbles(r({ starting: 1, working: 2, asking: 1 }))).toEqual([{ state: 'asking', count: 1 }, { state: 'working', count: 3 }]);
   });
   it('a stale chat never lights the green ring, and an empty status draws no "0" bubble', () => {
-    expect(pillBubbles(r({ stale: 10 }))).toEqual([{ state: 'idle', count: 10 }]);
+    expect(pillBubbles(r({ stale: 10, idle: 3 }))).toEqual([]);
     expect(pillBubbles(r({ proposals: 2 }))).toEqual([]);
   });
   it('says the counts in words, stale apart from idle', () => {

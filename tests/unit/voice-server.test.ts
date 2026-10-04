@@ -498,6 +498,25 @@ describe('POST /api/agent/voice/stt — dictation is LOCAL and never calls an AP
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it('an installed whisper that does not answer is a RETRYABLE failure (503 stt_failed), not "not installed"', async () => {
+    // Owner, 2026-10-04: "if transcription fails let's try 2 times before saying that it failed".
+    // `stt_unconfigured` makes the composer give up for good, so it must mean only "not installed".
+    writeVoiceConfig({}, home);
+    vi.stubGlobal('fetch', (vi.fn(async (u: string) => {
+      const url = String(u);
+      if (url.endsWith('/inference')) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, status: 404, json: async () => ({}) };
+    })) as unknown as typeof globalThis.fetch);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.DREAMCONTEXT_WHISPER_BIN = whisperStub().bin;
+    process.env.DREAMCONTEXT_WHISPER_MODEL = whisperStub().model;
+    const r = makeRes();
+    await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
+    expect(r.status()).toBe(503);
+    expect(r.body().error).toBe('stt_failed');
+  });
+
   it('a voice.json that still says `cloud` (and a Groq key) is ignored — nothing leaves the machine', async () => {
     // Owner, 2026-09-27: "dikte sadece yerel olsun". The old fields may sit on disk; they mean nothing.
     mkdirSync(join(home, '.dreamcontext'), { recursive: true });

@@ -3,6 +3,7 @@ import { useServerHealth } from '../../hooks/useServerHealth';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
+import { trackPresence } from '../../lib/presence';
 import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
   focusThisWindow,
@@ -367,6 +368,20 @@ export function WindowChrome({ initialVault, initialLink }: {
     setChipActiveProbe((vault) => vault === activeRef.current);
     return () => setChipActiveProbe(null);
   }, []);
+
+  /**
+   * Tell the server which project the owner is looking at while this window is in front
+   * (`lib/presence.ts`): the notch only announces a finished chat from a project that is NOT
+   * on screen, and the Assistant knows where the owner is. Reads `activeRef` for the same
+   * reason the probe above does; a chip switch pokes it.
+   */
+  const presenceRef = useRef<ReturnType<typeof trackPresence> | null>(null);
+  useEffect(() => {
+    const p = trackPresence(() => activeRef.current || null);
+    presenceRef.current = p;
+    return () => { p.dispose(); presenceRef.current = null; };
+  }, []);
+  useEffect(() => { presenceRef.current?.poke(); }, [activeVault]);
 
   /**
    * Point the overlay stack at the project on screen, so Esc closes the panel the user can

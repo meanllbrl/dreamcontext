@@ -76,6 +76,17 @@ import {
   type TaskFilter,
   type GroupBy,
 } from '../../lib/task-query.js';
+import { handsfreeLockFor } from '../../lib/handsfree/trip-state.js';
+
+/**
+ * The one line a task-backend sync prints instead of running while the project is in
+ * hands-free mode (its task mirrors are on the cloud machine; a laptop pull would fork them),
+ * or null when it may run. Shared with `sleep done`'s post-sleep syncs. `home`: tests only.
+ */
+export function taskSyncHandsfreeSkip(contextRoot: string, home?: string): string | null {
+  const lock = handsfreeLockFor(dirname(contextRoot), home);
+  return lock ? `Task sync skipped: this project is in hands-free mode on the cloud machine (trip ${lock.tripId}); it resumes after Return.` : null;
+}
 
 function getStateDir(): string {
   const root = ensureContextRoot();
@@ -1803,6 +1814,12 @@ export function registerTasksCommand(program: Command): void {
       const dir = (direction ?? 'both') as 'push' | 'pull' | 'both';
       if (!['push', 'pull', 'both'].includes(dir)) {
         error('Direction must be one of: push, pull, both');
+        return;
+      }
+      const skip = taskSyncHandsfreeSkip(ensureContextRoot());
+      if (skip) {
+        if (opts.json) console.log(JSON.stringify({ skipped: 'handsfree', note: skip }, null, 2));
+        else console.log(chalk.dim(skip));
         return;
       }
       const syncOpts: SyncOptions = { reconcile: !!opts.reconcile, refreshMeta: !!opts.refreshMeta };

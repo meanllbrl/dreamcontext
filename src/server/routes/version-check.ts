@@ -5,6 +5,7 @@ import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shou
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../../lib/manifest.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
+import { readTripState } from '../../lib/handsfree/trip-state.js';
 
 /**
  * GET /api/version-check — Return cached update nudge data.
@@ -19,8 +20,17 @@ export async function handleVersionCheckGet(
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
+  /** Overridable only for tests — every real call reads this machine's real hands-free state. */
+  home?: string,
 ): Promise<void> {
   try {
+    // Hands-free (AC18): while the laptop is not home the cloud machine must keep running this
+    // exact build, so no upgrade is offered: the CLI nudge goes quiet, `cliOutdated` is false
+    // (the badge's one-click "Upgrade everything" never appears) and `upgradeBlocked` says why.
+    const trip = readTripState(home);
+    const upgradeBlocked = trip.phase === 'home'
+      ? null
+      : trip.unreadable ?? `Hands-free mode is ${trip.phase} (trip ${trip.tripId}); upgrades wait until Return, so the cloud machine keeps running this exact build.`;
     const projectRoot = dirname(contextRoot);
     const cache = readVersionCache(projectRoot);
     const fresh = isCacheFresh(cache);
@@ -60,6 +70,7 @@ export async function handleVersionCheckGet(
     // freshly in flight (returns if it failed). The new-skill-packs line stays.
     const marker = readAutoUpgradeMarker(projectRoot);
     const suppressCliNudge =
+      upgradeBlocked !== null ||
       process.env.DREAMCONTEXT_DESKTOP === '1' ||
       shouldSuppressCliNudge(fresh ? cache?.latestCli ?? null : null, marker, process.env);
     // Pass the OPTED-IN pack universe (relevantPacks), not the full catalog, so the
@@ -75,8 +86,11 @@ export async function handleVersionCheckGet(
     // published; the header badge uses this to show the one-click "Upgrade
     // everything" action even when the prose nudge is empty.
     const latestCli = fresh ? cache?.latestCli ?? null : null;
-    const cliOutdated = latestCli !== null && compareVersions(installedCli, latestCli) < 0;
-    sendJson(res, 200, { cache, fresh, nudge, newPacks, currentCli: installedCli, latestCli, cliOutdated });
+    const cliOutdated = upgradeBlocked === null && latestCli !== null && compareVersions(installedCli, latestCli) < 0;
+    sendJson(res, 200, {
+      cache, fresh, nudge, newPacks, currentCli: installedCli, latestCli, cliOutdated,
+      ...(upgradeBlocked !== null ? { upgradeBlocked } : {}),
+    });
   } catch {
     sendJson(res, 200, { cache: null, fresh: false, nudge: null });
   }

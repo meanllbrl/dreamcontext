@@ -1,5 +1,14 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isSameOriginAsHost, remoteAccessEnabled } from './remote-access.js';
+import { CLOUD_FORWARDED_ORIGIN, CLOUD_WS_PATHS, classifyCloudRoute, cloudPhase } from './cloud-mode.js';
+import {
+  TRANSFER_NONCE_HEADER,
+  carriesTransferAuth,
+  deviceCookieValue,
+  handsfreeAuth,
+  hasValidDeviceSession,
+  hasValidTransferProof,
+} from './handsfree-auth.js';
 
 const MAX_BODY_SIZE = 1_048_576; // 1MB
 
@@ -114,4 +123,134 @@ export function handleCors(req: IncomingMessage, res: ServerResponse): boolean {
     return true;
   }
   return false;
+}
+
+// ─── Cloud mode (hands-free): the public forwarded port ─────────────────────
+//
+// GitHub's forwarder connects on loopback with `Host: localhost:8080` (W0), so in cloud mode
+// NOTHING is trusted for being loopback and nothing is derived from Host. A request passes on
+// exactly one credential for its route class: none (public), the device cookie (the phone),
+// or the transfer proof (the laptop) — the last two are never interchangeable.
+
+/** The origins a cloud write or WS upgrade may carry: the forwarder's rewrite of our own
+ *  public origin, plus `DC_HF_ORIGIN` itself for a client that reaches us unrewritten. */
+export function cloudAllowedOrigins(): string[] {
+  const out = [CLOUD_FORWARDED_ORIGIN];
+  const own = process.env.DC_HF_ORIGIN;
+  if (own) out.push(own.replace(/\/+$/, ''));
+  return out;
+}
+
+/** A missing Origin is refused too: in the cloud every legitimate writer sends one. */
+export function isCloudOriginAllowed(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  return typeof origin === 'string' && cloudAllowedOrigins().includes(origin);
+}
+
+function isWriteMethod(method: string): boolean {
+  const m = method.toUpperCase();
+  return m !== 'GET' && m !== 'HEAD' && m !== 'OPTIONS';
+}
+
+function cloudPathname(req: IncomingMessage): string {
+  try {
+    return new URL(req.url || '/', 'http://localhost').pathname;
+  } catch {
+    return '/';
+  }
+}
+
+/** HTML navigations without a session go to the login page instead of a JSON 401. */
+function wantsHtml(req: IncomingMessage): boolean {
+  return /text\/html/.test(String(req.headers.accept || ''));
+}
+
+/**
+ * The cloud gate, replacing checkNetworkAuth → handleCors → isCrossSiteWrite in cloud mode.
+ * Returns true when the request may proceed; otherwise it has answered. Never logs headers,
+ * bodies or query strings.
+ */
+export function cloudGate(req: IncomingMessage, res: ServerResponse): boolean {
+  res.setHeader('X-Dreamcontext-Cloud', '1');
+  const method = (req.method || 'GET').toUpperCase();
+  // No CORS at all: the phone is same-origin, and a preflight answered without
+  // Access-Control-Allow-Origin makes the browser refuse any cross-site caller.
+  if (method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return false;
+  }
+  if (isWriteMethod(method) && !isCloudOriginAllowed(req)) {
+    sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
+    return false;
+  }
+
+  const pathname = cloudPathname(req);
+  const cls = classifyCloudRoute(method, pathname);
+  if (cls === 'unavailable') {
+    sendError(res, 403, 'cloud_unavailable', 'This is not available on the cloud machine.');
+    return false;
+  }
+  if (cls === 'public') {
+    // /api/health hands out the nonce the laptop's next transfer proof signs.
+    if (pathname === '/api/health') res.setHeader(TRANSFER_NONCE_HEADER, handsfreeAuth().issueNonce());
+    return true;
+  }
+  if (cls === 'transfer') {
+    if (deviceCookieValue(req) !== null) {
+      sendError(res, 403, 'credential_mismatch', 'A device session cannot call a transfer route.');
+      return false;
+    }
+    if (!hasValidTransferProof(req)) {
+      sendError(res, 401, 'unauthorized', 'Transfer proof required.');
+      return false;
+    }
+    return true;
+  }
+
+  // Device class: the phone's UI and its allow-listed API.
+  if (carriesTransferAuth(req)) {
+    sendError(res, 403, 'credential_mismatch', 'The transfer credential cannot call a device route.');
+    return false;
+  }
+  if (!hasValidDeviceSession(req)) {
+    if (!pathname.startsWith('/api/') && (method === 'GET' || method === 'HEAD') && wantsHtml(req)) {
+      res.writeHead(302, { Location: '/login', 'Cache-Control': 'no-store' });
+      res.end();
+      return false;
+    }
+    sendError(res, 401, 'unauthorized', 'Sign in on this device first.');
+    return false;
+  }
+  const phase = cloudPhase();
+  if (phase === 'sealed') {
+    sendError(res, 503, 'cloud_sealed', 'This project is back on your laptop.');
+    return false;
+  }
+  if (phase === 'quiescing' && isWriteMethod(method)) {
+    sendError(res, 423, 'cloud_quiescing', 'Your laptop is taking this project back.');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The cloud's WebSocket gate: the status to refuse an upgrade with, or null to let it
+ * through. Only the chat socket, only with a device session, our Origin and phase active.
+ */
+export function cloudUpgradeRefusal(req: IncomingMessage): number | null {
+  if (!CLOUD_WS_PATHS.includes(cloudPathname(req))) return 403;
+  if (!isCloudOriginAllowed(req)) return 403;
+  if (carriesTransferAuth(req)) return 403;
+  if (!hasValidDeviceSession(req)) return 401;
+  if (cloudPhase() !== 'active') return 403;
+  return null;
+}
+
+/** Answer a refused cloud upgrade on the raw socket, with the cloud header like every
+ *  other cloud response. */
+export function rejectCloudUpgrade(socket: import('node:stream').Duplex, code: number): void {
+  const text = code === 401 ? 'Unauthorized' : 'Forbidden';
+  socket.write(`HTTP/1.1 ${code} ${text}\r\nX-Dreamcontext-Cloud: 1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  socket.destroy();
 }

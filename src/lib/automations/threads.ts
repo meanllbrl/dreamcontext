@@ -707,10 +707,13 @@ export function allThreadUnread(
  * right in the channel and wrong in a banner: macOS draws `**` and `- ` literally and keeps
  * only the first line. So every line is kept, its list/quote/heading marker dropped, the
  * emphasis unwrapped, and the lines joined; a numbered item keeps its number, because
- * "1. bütçe 2. PIX" still reads as the list it was.
+ * "1. bütçe 2. PIX" still reads as the list it was. A fenced block (a `dream-view` card, a
+ * `dream-actions` row, code) is an object on the surface, not words: it is dropped whole, or a
+ * preview opens on raw JSON. So are the `==highlight==` marks.
  */
 export function plainPostText(markdown: string): string {
   return markdown
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[ \t]*$|(?![\s\S]))/gm, '')
     .split('\n')
     .map((line) => line.trim().replace(/^#{1,6}\s+/, '').replace(/^>\s*/, '').replace(/^[-*+]\s+/, ''))
     .filter(Boolean)
@@ -718,6 +721,7 @@ export function plainPostText(markdown: string): string {
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/__(.+?)__/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
+    .replace(/==[!+]?([^=]+)==/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/\s{2,}/g, ' ')
     .trim();

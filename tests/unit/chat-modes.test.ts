@@ -487,16 +487,24 @@ describe('modeBriefing', () => {
   // (a backtick in one failed and cost a 15 s retry). The test below keeps 150 chars of headroom.
   // Then 4000 → 4100 (2026-09-28, owner: "şu ekranıma bak"): the one `look` line that says the
   // assistant may screenshot the owner's screen ONLY on their own request.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 4100 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look
+  // Then 4100 → 4900 (2026-10-04, owner: "the agent decides" how each reply is shown, and
+  // "the assistant always knows every session"): the three notch cues and the live-context rule.
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 4900 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context
   const DEFAULT_CEILING = 1600;
 
   it('assistant: speaks before delegating, single-quotes --prompt, and stays 150 under its ceiling', () => {
     const brief = assistantBriefing({ name: 'Assistant', character: '', autonomy: 'ask', roster: '' });
-    expect(brief).toContain('Before chat, watch, send or broadcast, first write ONE short sentence');
-    expect(brief).toContain('it is read aloud while you wait');
+    expect(brief).toContain('Before chat, watch, send or broadcast, first write ONE short progress sentence');
+    expect(brief).toContain('the notch shows it while you wait');
+    // The Assistant decides how each block is shown (2026-10-04): the three cues and the rule.
+    expect(brief).toContain('<!-- notch:progress -->');
+    expect(brief).toContain('<!-- notch:present -->');
+    expect(brief).toContain('<!-- notch:present stay -->');
+    expect(brief).toContain("A turn's last block is present; earlier ones are progress.");
+    expect(brief).toContain('server-written `<live-context>`');
     expect(brief).toContain('Pass --prompt in single quotes; never backticks or $() inside it.');
     expect(brief).toContain('dreamcontext assistant look — ONLY when the owner asks you to see their screen');
-    expect(brief.length).toBeLessThanOrEqual(3950);
+    expect(brief.length).toBeLessThanOrEqual(4750);
   });
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { listVaults } from '../vaults.js';
-import { runPeerHeadless, type LiveRunResult, type PeerTarget } from '../peer-delivery.js';
+import { handsfreeSpawnRefusal, runPeerHeadless, type LiveRunResult, type PeerTarget } from '../peer-delivery.js';
 
 /**
  * Broadcast — "a rule stated once reaches every project and comes back as 'written in all N'".
@@ -71,6 +71,9 @@ export async function broadcast(
     if (!v || !existsSync(join(v.path, '_dream_context'))) {
       return { vault: name, status: 'missing', text: v ? `folder is gone: ${v.path}` : 'not a registered project' };
     }
+    // Checked here as well as inside `runPeerHeadless`: the runner is injectable.
+    const refused = handsfreeSpawnRefusal(v.path, opts.home);
+    if (refused) return { vault: name, status: 'failed', text: refused };
     try {
       const r = await runner({ name, contextRoot: join(v.path, '_dream_context'), projectRoot: v.path }, prompt, { timeoutMs });
       if (r.ok) return { vault: name, status: 'replied', text: r.reply };

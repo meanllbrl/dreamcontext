@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseChatLine } from '../../dashboard/src/lib/chatProtocol.js';
 import {
-  compactSummaryBody, historyChatItem,
+  compactSummaryBody, historyChatItem, mergeReplay, type ChatItem,
 } from '../../dashboard/src/components/sleepy/chatSession';
 import { parseTranscriptHistory, userPromptOf } from '../../src/lib/transcript-history.js';
 
@@ -96,5 +96,13 @@ describe('compaction in the transcript replay', () => {
       kind: 'compact', id: 'h1', status: 'done', ts: 5, trigger: 'manual', preTokens: 10, postTokens: 2,
       summary: '1. Primary Request and Intent:\n   Say hi.',
     });
+  });
+});
+
+describe('mergeReplay with a compaction', () => {
+  it('a live card still being written is the recorded one, not a second', () => {
+    const recorded: ChatItem = { kind: 'compact', id: 'h1', status: 'done', ts: 1, summary: 'x' };
+    const live: ChatItem = { kind: 'compact', id: 'l1', status: 'running', ts: 2 };
+    expect(mergeReplay([recorded], [live]).kept).toEqual([]);
   });
 });

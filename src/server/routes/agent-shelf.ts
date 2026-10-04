@@ -2,7 +2,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentHost } from '../desktop.js';
+import { isCloud } from '../cloud-mode.js';
+import { runWorkerOp } from '../cloud-worker.js';
 import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
 import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
@@ -162,7 +164,7 @@ export async function handleAgentTaskProgress(
     return;
   }
 
-  if (!isDesktop()) {
+  if (!isAgentHost()) {
     sendJson(res, 200, degraded(slug, 'unreadable', 'Task progress is only available in the desktop app.'));
     return;
   }
@@ -171,10 +173,25 @@ export async function handleAgentTaskProgress(
     return;
   }
 
+  if (isCloud()) {
+    // The task file sits in dcuser's tree: read it as dcuser (a planted symlink never makes
+    // dcserver read anything).
+    try {
+      sendJson(res, 200, await runWorkerOp({ op: 'read', params: { kind: 'task-progress', contextRoot, query: { slug } }, timeoutMs: 60_000 }));
+    } catch {
+      sendJson(res, 200, degraded(slug, 'unreadable', `"${slug}" could not be read from disk.`));
+    }
+    return;
+  }
+  sendJson(res, 200, computeTaskProgress(contextRoot, slug));
+}
+
+/** The task's progress (also run inside the cloud's dcuser worker). `slug` is already validated. */
+export function computeTaskProgress(contextRoot: string, slug: string): unknown {
+  if (!isSafeTaskSlug(slug)) return degraded(slug, 'unreadable', 'Task slug is missing or not a safe file name.');
   const file = join(contextRoot, 'state', `${slug}.md`);
   if (!existsSync(file)) {
-    sendJson(res, 200, degraded(slug, 'unknown-slug', `No task named "${slug}" exists in this project.`));
-    return;
+    return degraded(slug, 'unknown-slug', `No task named "${slug}" exists in this project.`);
   }
 
   let updatedAt = 0;
@@ -185,23 +202,20 @@ export async function handleAgentTaskProgress(
     criteria = readSection(file, 'Acceptance Criteria');
     changelog = readSection(file, 'Changelog');
   } catch {
-    sendJson(res, 200, degraded(slug, 'unreadable', `"${slug}" could not be read from disk.`, updatedAt));
-    return;
+    return degraded(slug, 'unreadable', `"${slug}" could not be read from disk.`, updatedAt);
   }
 
   if (criteria === null) {
-    sendJson(res, 200, degraded(slug, 'no-criteria',
+    return degraded(slug, 'no-criteria',
       `"${slug}" has no "## Acceptance Criteria" section — there is nothing to derive a percentage from.`,
-      updatedAt));
-    return;
+      updatedAt);
   }
 
   const { total, done } = countCheckboxes(criteria);
   if (total === 0) {
-    sendJson(res, 200, degraded(slug, 'no-criteria',
+    return degraded(slug, 'no-criteria',
       `"${slug}" has an Acceptance Criteria section with no checkboxes — there is nothing to count.`,
-      updatedAt));
-    return;
+      updatedAt);
   }
 
   const last = changelog ? newestChangelogEntry(changelog) : null;
@@ -218,20 +232,19 @@ export async function handleAgentTaskProgress(
   };
 
   if (done === total) {
-    sendJson(res, 200, {
+    return {
       slug, state: 'all-done', percent: 100, done, total,
       now: null, last, ...listing, updatedAt,
       notice: `Every one of "${slug}"'s ${total} criteria is ticked — this task reads as complete.`,
-    } satisfies TaskProgress);
-    return;
+    } satisfies TaskProgress;
   }
 
   const nextUp = firstUnticked(criteria);
-  sendJson(res, 200, {
+  return {
     slug, state: 'ok', percent, done, total,
     now: nextUp ? oneLine(nextUp) : null,
     last, ...listing, updatedAt, notice: null,
-  } satisfies TaskProgress);
+  } satisfies TaskProgress;
 }
 
 // ─── GET /api/agent/session-facts ────────────────────────────────────────────────────
@@ -265,7 +278,7 @@ export async function handleAgentSessionFacts(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
-  if (!isDesktop() || !contextRoot) { sendJson(res, 200, UNKNOWN_SESSION_FACTS); return; }
+  if (!isAgentHost() || !contextRoot) { sendJson(res, 200, UNKNOWN_SESSION_FACTS); return; }
 
   let session = '';
   try {
@@ -273,6 +286,18 @@ export async function handleAgentSessionFacts(
   } catch { /* unparseable URL — falls back to the project root, same as no id */ }
 
   const projectRoot = projectRootOf(contextRoot);
+  if (isCloud()) {
+    // The claim and the stream registry live in THIS process; the transcript and the git
+    // reading run as dcuser (a dcuser-planted fsmonitor or hook never runs as dcserver).
+    const known = claimedCheckout(session || null, projectRoot) ?? sessionCheckout(session || null, projectRoot);
+    let facts: unknown = UNKNOWN_SESSION_FACTS;
+    try {
+      facts = await runWorkerOp({ op: 'read', params: { kind: 'session-facts', contextRoot, query: { session, dir: known === projectRoot ? '' : known } }, timeoutMs: 60_000 });
+    } catch { /* unknown */ }
+    const dir = known ?? projectRoot;
+    sendJson(res, 200, { ...(facts as object), elsewhere: editsElsewhere(session || null, dir) });
+    return;
+  }
   // The facts are read AT the session's checkout; `worktreeAllowed` alone is asked of the
   // VAULT (third argument), because it is a property of the brain rather than of the folder
   // the agent happens to be standing in. See readSessionFacts.
@@ -319,4 +344,14 @@ export function resolveSessionDir(
   return claimedCheckout(session, projectRoot)
     ?? transcriptCheckout(session, projectRoot, opts)
     ?? sessionCheckout(session, projectRoot);
+}
+
+/** Cloud only, inside the dcuser worker: the facts of the session's checkout. */
+export function computeSessionFacts(contextRoot: string, q: Record<string, string>): unknown {
+  const projectRoot = projectRootOf(contextRoot);
+  const session = sanitizeUuid(q.session ?? null);
+  const dir = (q.dir && q.dir.startsWith('/') ? q.dir : null)
+    ?? transcriptCheckout(session || null, projectRoot)
+    ?? projectRoot;
+  return readSessionFacts(dir, Date.now(), projectRoot);
 }

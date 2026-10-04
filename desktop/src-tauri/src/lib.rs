@@ -10,6 +10,8 @@
 //    absolute node path isn't blocked by the shell capability scope). The server
 //    boots vault-agnostic — each window pins its own vault via ?vault=.
 // 4. Poll GET /api/health until ready, then open the LAUNCHER window at the port.
+//    The poll runs on a thread while the opening screen (src/splash.rs) plays; the
+//    Launcher is built hidden and shown when the splash hands over.
 // 5. Each project opens in its OWN window via the built-in WebviewWindow JS API
 //    (core:webview:allow-create-webview-window), pinned to ?vault=<name>. Custom
 //    Rust commands reach the remote-served (loopback) pages only when a
@@ -25,6 +27,7 @@
 mod app_link;
 mod assistant;
 mod frames;
+mod splash;
 
 use std::net::TcpListener;
 use std::path::Path;
@@ -70,18 +73,22 @@ pub fn run() {
             confirm_dialog,
             set_pinned,
             assistant::assistant_geometry,
+            assistant::assistant_haptic,
             assistant::assistant_apply_hotkey,
             assistant::assistant_set_autostart,
             assistant::assistant_wake,
             assistant::assistant_set_enabled,
             frames::set_frames,
             app_link::take_app_link,
+            splash::splash_done,
         ])
         // Managed before setup runs, so a link macOS hands over on a cold launch has
         // somewhere to wait even if the server never comes up.
         .manage(app_link::PendingLinks::default())
         // Per-label generations for `set_frames` (src/frames.rs): the last requested frame wins.
         .manage(frames::FramesState::default())
+        // The opening screen's two-key handoff to the Launcher (src/splash.rs).
+        .manage(splash::SplashGate::default())
         // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
         // and the Login Item. See src/assistant.rs.
         .plugin(tauri_nspanel::init())
@@ -100,11 +107,24 @@ pub fn run() {
         // via the permitted API (see the capability), so no custom command is needed.
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            // Never abort on a startup problem — surface it in a window.
-            match host_dashboard(app.handle().clone()) {
-                Err(msg) => show_error_window(app.handle(), &msg),
-                Ok(()) => {}
+            let handle = app.handle().clone();
+            // The opening screen plays while the server boots. A Login Item launch that
+            // only seats the notch opens no Launcher, so it gets no splash either.
+            if !notch_only_launch() {
+                splash::open(&handle);
             }
+            // Boot OFF the main thread: returning from setup is what starts the run loop,
+            // and only a running loop lets the splash paint and play during the health poll.
+            thread::spawn(move || {
+                // Never abort on a startup problem — surface it in a window.
+                if let Err(msg) = host_dashboard(handle.clone()) {
+                    let h = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        show_error_window(&h, &msg);
+                        splash::abort(&h);
+                    });
+                }
+            });
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -627,18 +647,33 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     }
     app.manage(DashboardPort(port));
 
-    // The Assistant: register its hotkey and seat the notch (no-op until it exists).
-    assistant::setup(&app, port);
+    // Window and AppKit work belongs on the main thread; this one runs there and hands
+    // its result back so a failure still reaches the error window.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let h = app.clone();
+    app.run_on_main_thread(move || {
+        // The Assistant: register its hotkey and seat the notch (no-op until it exists).
+        assistant::setup(&h, port);
 
-    // An autostart (Login Item) launch opens ONLY the notch — the owner did not ask for the
-    // Launcher, and the notch can open project windows itself.
-    let autostart = std::env::args().any(|a| a == "--autostart");
-    if autostart && assistant::assistant_enabled() {
-        return Ok(());
-    }
+        // An autostart (Login Item) launch opens ONLY the notch — the owner did not ask for
+        // the Launcher, and the notch can open project windows itself.
+        let result = if notch_only_launch() {
+            Ok(())
+        } else if splash::is_open(&h) {
+            // First window: the Launcher (no vault pinned), behind the opening screen.
+            splash::open_launcher_behind(&h, port)
+        } else {
+            open_launcher_window(&h, port)
+        };
+        let _ = tx.send(result);
+    })
+    .map_err(|e| format!("Could not reach the main thread: {e}"))?;
+    rx.recv().unwrap_or(Ok(()))
+}
 
-    // First window: the Launcher (no vault pinned).
-    open_launcher_window(&app, port)
+/// A Login Item launch with the notch enabled: no Launcher, no splash.
+fn notch_only_launch() -> bool {
+    std::env::args().any(|a| a == "--autostart") && assistant::assistant_enabled()
 }
 
 /// Build the Launcher window (label `main`, no vault pinned) at the dashboard port.
@@ -650,7 +685,20 @@ pub(crate) fn open_launcher_window(app: &AppHandle, port: u16) -> Result<(), Str
     if app.get_webview_window("main").is_some() {
         return Ok(());
     }
-    WebviewWindowBuilder::new(
+    launcher_builder(app, port)?
+        .build()
+        .map_err(|e| format!("Could not create the window: {e}"))?;
+
+    Ok(())
+}
+
+/// The Launcher window, configured but not built: shared by the plain path above and the
+/// hidden-behind-the-splash path in src/splash.rs.
+pub(crate) fn launcher_builder(
+    app: &AppHandle,
+    port: u16,
+) -> Result<WebviewWindowBuilder<'_, tauri::Wry, AppHandle>, String> {
+    Ok(WebviewWindowBuilder::new(
         app,
         "main",
         WebviewUrl::External(
@@ -668,11 +716,7 @@ pub(crate) fn open_launcher_window(app: &AppHandle, port: u16) -> Result<(), Str
     // Disable Tauri's OS-level drag/drop handler so the webview's own HTML5
     // drag-and-drop (Kanban / Eisenhower task cards) fires. With this left on
     // (the default), the native handler swallows dragover/drop events.
-    .disable_drag_drop_handler()
-    .build()
-    .map_err(|e| format!("Could not create the window: {e}"))?;
-
-    Ok(())
+    .disable_drag_drop_handler())
 }
 
 // ─── Error window (instead of crashing) ───────────────────────────────────────

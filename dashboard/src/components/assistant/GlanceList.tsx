@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ago, glanceStatus, handoffPhase, type GlanceChat, type Handoff } from './notchModel';
+import { openChat } from './InboxList';
 
 /**
  * The open notch's "what is happening" rows (GET /api/assistant/glance): one per chat that is
@@ -41,7 +42,7 @@ function GlanceRow({ c, keyed, onAnswered }: { c: GlanceChat; keyed: boolean; on
   };
   return (
     <li className="dc-glance__row" data-activity={c.activity}>
-      <button type="button" className="dc-glance__head" onClick={() => openProject(c.vault)} title={`Open ${c.vault}`}>
+      <button type="button" className="dc-glance__head" onClick={() => openChat(c.vault, c.sessionId)} title={`Open this chat in ${c.vault}`}>
         <span className="dc-glance__dot" aria-hidden />
         <span className="dc-glance__vault">{c.vault}</span>
         <span className="dc-glance__status">{glanceStatus(c)}</span>
@@ -62,7 +63,7 @@ function GlanceRow({ c, keyed, onAnswered }: { c: GlanceChat; keyed: boolean; on
             </div>
           ) : (
             <div className="dc-glance__actions">
-              <button type="button" className="dc-glance__btn" onClick={() => openProject(c.vault)}>Answer in {c.vault}</button>
+              <button type="button" className="dc-glance__btn" onClick={() => openChat(c.vault, c.sessionId)}>Answer in {c.vault}</button>
             </div>
           )}
         </div>
@@ -120,7 +121,7 @@ function HandoffRow({ h, onAnswered, onDismiss }: { h: Handoff; onAnswered: (ses
                 <button type="button" className="dc-glance__btn dc-glance__btn--primary" disabled={busy} onClick={() => void act('allow')}>Allow</button>
               </>
             )}
-            {phase !== 'closed' && <button type="button" className="dc-glance__btn" onClick={() => openProject(h.vault)}>Open {h.vault}</button>}
+            {phase !== 'closed' && <button type="button" className="dc-glance__btn" onClick={() => openChat(h.vault, h.sessionId)}>Open {h.vault}</button>}
             {phase === 'closed' && <button type="button" className="dc-glance__btn" onClick={() => onDismiss(h.sessionId)}>Clear</button>}
           </div>
         </div>

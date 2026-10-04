@@ -1,17 +1,23 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, dirname, basename, extname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
-  realpathSync, openSync, readSync, closeSync,
+  realpathSync, openSync, readSync, closeSync, lstatSync, fstatSync, constants as fsConstants,
 } from 'node:fs';
 import { sendJson, sendError, isForeignOriginUpgrade } from '../middleware.js';
 import { serveMedia } from '../media.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
+import { cloudPhase, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
+import { isCloudOriginAllowed } from '../middleware.js';
+import { recordCloudAction } from '../cloud-idle.js';
+import { runWorkerOp } from '../cloud-worker.js';
+import { handsfreeSpawnRefusal } from '../../lib/peer-delivery.js';
+import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { readHandoffRecord, stampHandoffRecord, writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, shouldRotateForHandoff } from '../../lib/context-watch.js';
@@ -49,8 +55,8 @@ import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '.
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
-import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, type Autonomy } from '../../lib/assistant/home.js';
-import { registerChat, isDelegatedConversation, type ChatHandle } from '../../lib/assistant/chat-registry.js';
+import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
+import { registerChat, isDelegatedConversation, listChats, type ChatHandle } from '../../lib/assistant/chat-registry.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -58,6 +64,13 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
+import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
+import { buildLiveContext } from '../../lib/assistant/live-context.js';
+import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
+import {
+  CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
+  signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
+} from './agent-chat-live.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
@@ -313,6 +326,16 @@ export function spawnEffortFor(o: {
 }
 
 /**
+ * The `--model` a spawn runs on ('' = none, the CLI's default). The Assistant has its OWN
+ * default (owner, 2026-10-04: sonnet, not dreamcontext's chat default), which the URL overrides
+ * only when the notch asked for a model explicitly; every other chat keeps what the URL said.
+ */
+export function spawnModelFor(o: { isAssistant: boolean; assistantModel?: string; urlModel: string }): string {
+  if (o.isAssistant) return o.urlModel || o.assistantModel || DEFAULT_ASSISTANT_MODEL;
+  return o.urlModel;
+}
+
+/**
  * Live `__assistant__` sessions, told when the owner changes autonomy. The permission mode
  * and `--allowedTools` are argv — fixed for a process's life — so a session spawned under
  * `auto` would keep pre-approving its verbs after a switch to `ask`. Each listener respawns
@@ -324,6 +347,29 @@ const assistantAutonomyListeners = new Set<(autonomy: Autonomy) => void>();
 export function notifyAssistantAutonomy(autonomy: Autonomy): void {
   for (const fn of [...assistantAutonomyListeners]) {
     try { fn(autonomy); } catch { /* one session's failure is its own */ }
+  }
+}
+
+/** The `<live-context>` block for one owner turn, or '' when it cannot be built (never fatal). */
+function assistantLiveContext(): string {
+  try {
+    let running: ReturnType<typeof runningAutomations> = [];
+    let posts = 0;
+    try { running = runningAutomations(); } catch { running = []; }
+    try { posts = unreadAutomationPosts().length; } catch { posts = 0; }
+    const events = listNotchEvents();
+    return buildLiveContext({
+      chats: listChats(),
+      lookingAt: lookingAt(),
+      running: running.map((r) => ({ vault: r.vault, slug: r.slug, since: r.since })),
+      waiting: {
+        finished: events.filter((e) => e.kind === 'finished').length,
+        posts,
+        account: events.filter((e) => e.kind === 'account').length,
+      },
+    });
+  } catch {
+    return '';
   }
 }
 
@@ -530,7 +576,14 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // branch runs BEFORE the tailnet OR below, so a remote peer holding a valid network token
     // never reaches the assistant — its session carries a credential that drives every project.
     const assistant = isAssistantVault(vault);
-    if (assistant) {
+    if (isCloud()) {
+      // Hands-free cloud: GitHub's forwarder makes every peer loopback, so only a live device
+      // session, our own Origin and phase active open a chat (the cloud gate checked these
+      // before the upgrade was emitted; checked again here so this listener never relies on
+      // its order). The Assistant never runs in the cloud.
+      if (assistant || !isAgentRequest(req) || !isCloudOriginAllowed(req)) { rejectUpgrade(socket, 403); return; }
+      if (cloudPhase() !== 'active') { rejectUpgrade(socket, 403); return; }
+    } else if (assistant) {
       if (!isDesktop() || !isLoopback(req)) { rejectUpgrade(socket, 403); return; }
       // …and only from the app's own pages: a website the owner visits is loopback too.
       if (isForeignOriginUpgrade(req)) { rejectUpgrade(socket, 403); return; }
@@ -582,20 +635,48 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     if (redeemed === null) { rejectUpgrade(socket, 401); return; }
     const initialPrompt = redeemed || sanitizePrompt(url.searchParams.get('prompt'));
     const deferPrompt = url.searchParams.get('deferPrompt') === '1';
+    // The client's own reconnect after a dropped socket (chatSession.ts): adopt the live child
+    // for `resume` if one is detached or still bound to a dead socket, never spawn a twin.
+    // The Assistant's notch never detaches (its socket is the relay's only channel).
+    const reattach = url.searchParams.get('reattach') === '1' && !!resumeId && !assistant;
 
     void (async () => {
       let WebSocketServer: typeof import('ws').WebSocketServer;
       try { ({ WebSocketServer } = await import('ws')); }
       catch { rejectUpgrade(socket, 501); return; }
 
+      // A live child for this conversation (see agent-chat-live.ts). A reattach adopts it; any
+      // OTHER connection naming it is a respawn (account, mode, Resume) and the child must give
+      // the conversation up, exactly as a closed socket made it do before detaching existed.
+      const live = findLiveChat(resumeId);
+      const adoptable = reattach && live && live.projectRoot === projectRoot ? live : null;
+      // PROVISIONAL: a second tab opening the same conversation is refused below while the
+      // first one still holds it, and a refused open must not cost the first pane its detach.
+      // So the mark is withdrawn unless this open is actually accepted.
+      let pendingSupersede = live && !reattach ? live.supersede() : null;
+      const settleSupersede = (accepted: boolean): void => {
+        pendingSupersede?.(accepted);
+        pendingSupersede = null;
+      };
+      // An upgrade that dies before it is handled (bad headers, a peer gone mid-wait) was never
+      // accepted either.
+      socket.once('close', () => settleSupersede(false));
+
       // A respawn-in-place (account switch, Resume, mode switch) opens this socket in the
       // same tick it closed the old one — wait out that hand-off before deciding the resume
       // target, or the conversation reads as still-held and the spawn silently starts a new,
       // unpinned one. No-op unless a resume was asked for and is genuinely still held.
-      await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
+      if (!adoptable) await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
+        if (adoptable && adoptable.adopt(ws)) return;
+        // A reattach that found nothing to adopt (the child exited while the client was away)
+        // resumes the conversation in a new process — and never re-submits an opening prompt.
+        if (reattach) {
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true });
+          return;
+        }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
         // spawn only, never into any other vault's chat.
         const address = server.address();
@@ -603,7 +684,11 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         const assistantEnv = assistant
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant });
+        let accepted = false;
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; } });
+        settleSupersede(accepted);
+        // D14: opening a session is a real owner action (a reattach is not: it is a reconnect).
+        if (accepted) recordCloudAction();
       });
     })();
   });
@@ -635,6 +720,13 @@ interface ChatSpawnOpts {
   fromAssistant?: boolean;
   /** Internal: the notch surface an in-place respawn of the Assistant hands its successor. */
   inheritedSurfaceDispose?: () => void;
+  /** Internal: this spawn answers a client's reattach that found no live child to adopt. The
+   *  client is told (`reattached`, `adopted:false`) so it settles its turn state. */
+  reattachFallback?: boolean;
+  /** Called once the open is ACCEPTED (a child was spawned) — never for a refusal (an unknown
+   *  account, a conversation still held elsewhere). The upgrade handler withdraws its
+   *  provisional supersede when this does not fire. */
+  onAccepted?: () => void;
 }
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
@@ -679,15 +771,43 @@ function closeLingerMs(): number {
 /** After the linger window's SIGTERM, how long to wait before SIGKILL. */
 export const CLOSE_KILL_GRACE_MS = 5000;
 
+/** Drop undefined values (the worker env takes strings only). */
+function definedEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (typeof v === 'string') out[k] = v;
+  return out;
+}
+
 /** Exported for tests (agent-chat-close-reap.test.ts drives it with a mocked spawn + a
  *  fake ws to pin the socket-gone → drain → kill lifecycle); production callers reach it
  *  only through `attachAgentChat`'s upgrade handler. */
 export function startChatSession(
-  ws: import('ws').WebSocket,
+  initialWs: import('ws').WebSocket,
   projectRoot: string,
   opts: ChatSpawnOpts,
 ): void {
+  // The socket this child is bound to RIGHT NOW. Reassigned only by `adoptSocket` (a client's
+  // reattach after a dropped socket); every send below reads it at call time, so output flows
+  // to whichever socket currently owns the child.
+  let ws = initialWs;
   const { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt } = opts;
+
+  // Hands-free cloud: only phase active spawns (quiescing = the laptop is taking the project
+  // back; sealed = it has). Covers a respawn in place too, not only a new socket.
+  if (isCloud() && cloudPhase() !== 'active') {
+    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'cloud_quiescing', message: 'Your laptop is taking this project back; no new agent starts now.' })); } catch { /* gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
+  // Hands-free (AC6): while this project is away in the cloud, the laptop never starts an
+  // agent inside it — the cloud copy is the live one, and work here would be lost at Return.
+  // One message for every spawn chokepoint (lane F's peer-delivery.ts).
+  const refusal = isCloud() ? null : handsfreeSpawnRefusal(projectRoot);
+  if (refusal) {
+    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'handsfree_away', message: `Refused: ${refusal}.` })); } catch { /* gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
   const contextRoot = join(projectRoot, '_dream_context');
   const isAssistant = mode === 'assistant';
   const assistantConfig = isAssistant ? (readAssistantConfig() ?? DEFAULT_ASSISTANT_CONFIG) : null;
@@ -709,7 +829,9 @@ export function startChatSession(
   let accountConfigDir: string;
   try {
     accountConfigDir = resolveConfigDir(account || null);
-    ensureSandbox(accountConfigDir);
+    // In the cloud the sandbox is dcuser's (0700): the entrypoint's `claude-login` built it as
+    // dcuser (D13), and dcserver must not write into it.
+    if (!isCloud()) ensureSandbox(accountConfigDir);
   } catch (err) {
     // A named refusal, not a silent fallback to some other account.
     try {
@@ -720,7 +842,7 @@ export function startChatSession(
   }
   const accountEnv = accountEnvFor(accountConfigDir);
   const isRealHomeAccount = isRealHomeConfigDir(accountConfigDir);
-  const mcpConfigPath = isRealHomeAccount ? null : ensureSharedMcpConfig();
+  const mcpConfigPath = isRealHomeAccount || isCloud() ? null : ensureSharedMcpConfig();
   // Recorded beside `spawnAuthEpoch` so the live panel can be labelled with the account it is
   // really billing, and so the chooser knows which account NOT to move away from on a tie.
   const activeAccountId = account
@@ -779,9 +901,12 @@ export function startChatSession(
 
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
+  /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
+   *  the conversation is not ours to release any more, so `releaseHeld` must leave it alone. */
+  let holdLent = false;
   let releaseHeld = () => {
     releaseHeld = () => { /* once */ };
-    if (heldConversation) liveConversations.delete(heldConversation);
+    if (heldConversation && !holdLent) liveConversations.delete(heldConversation);
   };
 
   // ── A FRESH session starts on the default branch ──────────────────────────────────────
@@ -909,6 +1034,7 @@ export function startChatSession(
   const spawnEffort = spawnEffortFor({
     isAssistant, assistantEffort: assistantConfig?.effort, delegated, mode, urlEffort: effort,
   });
+  const spawnModel = spawnModelFor({ isAssistant, assistantModel: assistantConfig?.model, urlModel: model });
   let recallEnv: Record<string, string> = {};
   if (isAssistant || delegated) {
     try {
@@ -936,7 +1062,7 @@ export function startChatSession(
     ...briefingArg,
     ...modeNoteArg,
     ...idArg,
-    ...(model ? ['--model', model] : []),
+    ...(spawnModel ? ['--model', spawnModel] : []),
     ...(spawnEffort ? ['--effort', spawnEffort] : []),
     ...(assistantConfig ? assistantAllowedTools(assistantConfig.autonomy) : []),
     // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
@@ -980,10 +1106,23 @@ export function startChatSession(
     }
   } catch { /* an unseeded pane falls back to the vault default — never a failed spawn */ }
 
-  const shell = process.env.SHELL || '/bin/zsh';
-  const child = spawn(shell, ['-ilc', script], {
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv } as Record<string, string | undefined>;
+  // The cloud spawns every agent as dcuser through the one worker chokepoint: an allow-listed
+  // env (never the server's own, so no DC_HF_*, transfer secret or GitHub token), only THIS
+  // account's CLAUDE_CONFIG_DIR, and bash (the image has no zsh). Its own process group either
+  // way, so a hands-free cut can end the whole tree (cutLiveChats).
+  const child: ChildProcessWithoutNullStreams = isCloud()
+    ? spawnAsWorker('/bin/bash', ['-ilc', script], {
+      cwd: projectRoot,
+      account: { configDir: accountConfigDir },
+      env: definedEnv(childEnv),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
+    }) as ChildProcessWithoutNullStreams
+    : spawn(process.env.SHELL || '/bin/zsh', ['-ilc', script], {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
     // claude-aware PATH: `claude` installs into ~/.local/bin, which no default PATH
     // contains — without this the login shell 127s whenever the install's `export
     // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
@@ -992,7 +1131,7 @@ export function startChatSession(
     // inherited can never leak into another mode. DREAMCONTEXT_CHAT_TAB (same rule) arms the
     // UserPromptSubmit reminder to name the tab (lib/chat-tab-title-nudge.ts); the Assistant
     // has no tab to name.
-    env: { ...process.env, PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...accountEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv } as NodeJS.ProcessEnv,
+    env: { ...process.env, ...childEnv, ...accountEnv } as NodeJS.ProcessEnv,
   });
 
   // Every chat but the Assistant's own is listed in the Assistant's chat registry, its status
@@ -1074,6 +1213,73 @@ export function startChatSession(
 
   const untrack = trackChild(child);
 
+  /** Resolves once the child has exited (cutChild waits on it). */
+  let markExited: () => void = () => { /* replaced below */ };
+  const exited = new Promise<void>((r) => { markExited = r; });
+  child.once('close', () => markExited());
+  child.once('error', () => markExited());
+  /** Hands-free cut: the whole process group, SIGTERM then SIGKILL. The transcript stays, so
+   *  the conversation is resumable exactly as after any other exit. */
+  const cutChild = async (): Promise<void> => {
+    if (!alive) return;
+    if (child.pid) {
+      // The whole group plus any descendant that left it; SIGKILL after the grace even when
+      // the leader already exited; resolves once every one of them is gone (D22).
+      await cutProcessGroups([child.pid], CUT_KILL_GRACE_MS);
+    } else {
+      signalGroup(child, 'SIGKILL');
+    }
+    await exited;
+  };
+
+  // ── Detach instead of dying with the socket (agent-chat-live.ts) ───────────────────
+  // A pinned project chat survives a dropped socket: the child keeps stdin, and a client's
+  // reattach adopts it. The Assistant (its socket is the relay's only channel) and an unpinned
+  // session (nothing to reattach by) keep the old drain-on-close lifecycle.
+  const live: LiveChatEntry | null = !isAssistant && pinId ? {
+    conversationId: pinId,
+    projectRoot,
+    busy: false,
+    turnStartedAt: null,
+    lastTurnEndedAt: null,
+    adopt: (next) => adoptSocket(next),
+    supersede: () => supersedeLive(),
+    cut: () => cutChild(),
+  } : null;
+  if (live) registerLiveChat(live);
+  /** No socket right now; the reap timers below decide how long that may last. */
+  let detached = false;
+  let detachedAt = 0;
+  /** The next socket-gone ends the child instead of detaching it: the client said goodbye
+   *  (`end`, a closed tab). A respawn's supersede is counted apart (`pendingSupersedes`). */
+  let endOnSocketGone = false;
+  /** Opens of this conversation that superseded it and were not refused. While any is
+   *  counted the next socket-gone drains; a refused open withdraws its own (`supersedeLive`). */
+  let pendingSupersedes = 0;
+  let detachIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  let detachCapTimer: ReturnType<typeof setTimeout> | null = null;
+  let pingTimer: ReturnType<typeof setInterval> | null = null;
+  /** Permission/question prompts the CLI is still waiting on, as the raw lines it printed. A
+   *  prompt printed while detached reached no socket, so an adopting socket is handed them
+   *  again — otherwise the turn would wait forever on a card nobody can see. */
+  const outstandingAsks = new Map<string, string>();
+
+  /** A turn edge — the ONLY place the live entry's activity fields move (see the contract in
+   *  agent-chat-live.ts: sockets, pings and replays never touch them). */
+  const openTurn = (): void => {
+    turnsInFlight += 1;
+    if (live) markTurnStarted(live);
+    armDetachReap();
+  };
+  const closeTurn = (): void => {
+    turnsInFlight = Math.max(0, turnsInFlight - 1);
+    if (turnsInFlight === 0) {
+      outstandingAsks.clear();
+      if (live) markTurnEnded(live);
+    }
+    armDetachReap();
+  };
+
   // Auto-submit the (non-deferred) initial prompt as the first stdin frame — see the
   // deferred-prompt note above for why this must NOT wait for `system:init`.
   if (submitPrompt) {
@@ -1081,7 +1287,7 @@ export function startChatSession(
       // A server-submitted opening prompt is a REAL turn, so it must set `turnInFlight` like
       // every other user frame — otherwise a switch decision arriving during it would read
       // "nothing running" and restart over live work.
-      turnsInFlight += 1;
+      openTurn();
       // A refused opening prompt is the worst one to lose: the user never typed it into a
       // composer they could scroll back to.
       lastSentText = submitPrompt;
@@ -1123,6 +1329,10 @@ export function startChatSession(
   // later in this stream carries the same field and simply supersedes this.
   const cachedSlash = readSlashCache(contextRoot);
   if (cachedSlash) sendMeta({ subtype: 'slash_commands', commands: cachedSlash });
+
+  // A reattach found no live child (it exited while the client was away), so this is a fresh
+  // resume: nothing is running, and the client replays the transcript it missed.
+  if (opts.reattachFallback) sendMeta({ subtype: 'reattached', adopted: false, busy: false });
 
   // The pane's context-handoff toggle, sent the same way and for the same reason: the
   // CLI's own `init` cannot carry a dreamcontext field, so this frame IS the augmented
@@ -1195,6 +1405,9 @@ export function startChatSession(
     turnsInFlight = 0;
     clearInterruptTimers();
     clearLingerTimers();
+    clearDetachTimers();
+    stopPing();
+    if (live) unregisterLiveChat(live);
     untrack();
     releaseHeld();
     cleanupDeferred();
@@ -1213,18 +1426,20 @@ export function startChatSession(
     if (pinId) { clearSessionCheckout(pinId); clearSessionEdits(pinId); }
   };
 
-  /** Socket gone (tab closed, app window died, network drop) → drain and reap the child.
-   *  The terminal route kills its PTY the moment the socket closes (agent-terminal.ts's
-   *  teardown); chat drains instead of killing so an in-flight turn can finish and land in
-   *  the transcript, but the END state is the same: no child outlives its tab for long.
-   *  See CLOSE_LINGER_MS for the leak this closes. The conversation hold is released
-   *  immediately — same moment as before this fix — so a re-opened tab can `--resume`
-   *  without waiting out the drain (the drain-vs-resume write race this leaves open is the
-   *  same documented beta limitation the terminal/chat double-attach already has). */
-  const onSocketGone = (): void => {
-    // The notch's socket is the relay's only channel: with it gone, nothing can execute.
-    disposeSurface();
+  /** End the child: drain and reap. The terminal route kills its PTY the moment the socket
+   *  closes (agent-terminal.ts's teardown); chat drains instead of killing so an in-flight turn
+   *  can finish and land in the transcript, but the END state is the same: no child lives on
+   *  for long. See CLOSE_LINGER_MS for the leak this closes. The conversation hold is released
+   *  immediately so a re-opened tab can `--resume` without waiting out the drain (the
+   *  drain-vs-resume write race this leaves open is the same documented beta limitation the
+   *  terminal/chat double-attach already has). */
+  function drain(): void {
     if (!alive || lingerTimer || lingerKillTimer) return;
+    clearDetachTimers();
+    stopPing();
+    // No longer adoptable (a reattach arriving now resumes in a new process instead), but still
+    // listed as running and cuttable until it actually exits (D22; teardown unregisters it).
+    if (live) markLiveChatDraining(live);
     releaseHeld();
     // EOF: nothing will ever write another stdin frame, and the CLI exits on its own once
     // its queue drains. An already-dead stream just means the close handler is on its way.
@@ -1239,7 +1454,153 @@ export function startChatSession(
         try { child.kill('SIGKILL'); } catch { /* already gone */ }
       }, CLOSE_KILL_GRACE_MS);
     }, closeLingerMs());
-  };
+  }
+
+  function clearDetachTimers(): void {
+    if (detachIdleTimer) { clearTimeout(detachIdleTimer); detachIdleTimer = null; }
+    if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
+  }
+
+  /** (Re)arm the reaping of a DETACHED child for its current state. A no-op while attached.
+   *  Idle: ended after `detachIdleMs()` (15 min) of continuous idleness. Busy: never reaped
+   *  for lack of a socket, up to `detachBusyCapMs()` (4 h) after it lost its socket. */
+  function armDetachReap(): void {
+    if (!detached || !alive) return;
+    if (turnsInFlight > 0) {
+      if (detachIdleTimer) { clearTimeout(detachIdleTimer); detachIdleTimer = null; }
+      if (!detachCapTimer) {
+        const left = Math.max(0, detachBusyCapMs() - (Date.now() - detachedAt));
+        detachCapTimer = setTimeout(() => { detachCapTimer = null; drain(); }, left);
+      }
+      return;
+    }
+    if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
+    if (!detachIdleTimer) {
+      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; drain(); }, detachIdleMs());
+    }
+  }
+
+  /** The pong listener of the socket being pinged, removed with the timer so repeated starts
+   *  (every reattach, every Assistant hand-off) never stack listeners on a socket. */
+  let pongOff: (() => void) | null = null;
+
+  function stopPing(): void {
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    if (pongOff) { pongOff(); pongOff = null; }
+  }
+
+  /** Ping the bound socket every `wsPingMs()` (25 s). A socket that did not answer the previous
+   *  ping is terminated, so a half-open connection (the phone vanished without a FIN) becomes a
+   *  detach now instead of a socket the server writes into for minutes. Pings are transport
+   *  only: they never touch the live entry's activity fields. */
+  function startPing(): void {
+    stopPing();
+    const sock = ws;
+    if (typeof sock.ping !== 'function') return;
+    let waiting = false;
+    const onPong = (): void => { waiting = false; };
+    sock.on('pong', onPong);
+    pongOff = () => { sock.off('pong', onPong); };
+    pingTimer = setInterval(() => {
+      if (sock !== ws || sock.readyState !== sock.OPEN) { stopPing(); return; }
+      if (waiting) { try { sock.terminate(); } catch { /* already gone */ } return; }
+      waiting = true;
+      try { sock.ping(); } catch { /* closing */ }
+    }, wsPingMs());
+    pingTimer.unref?.();
+  }
+
+  function bindSocket(): void {
+    ws.on('message', onWsMessage);
+    ws.on('close', onSocketGone);
+    ws.on('error', onSocketGone);
+    startPing();
+  }
+
+  /** A client's reattach: bind `next` to this very child. False when the child can no longer
+   *  be adopted (exiting, draining, or handing off) — the caller then spawns a resume. */
+  function adoptSocket(next: import('ws').WebSocket): boolean {
+    if (!alive || lingerTimer || lingerKillTimer || handedOff) return false;
+    const prev = ws;
+    prev.off('message', onWsMessage);
+    prev.off('close', onSocketGone);
+    prev.off('error', onSocketGone);
+    // A late error on the abandoned socket must not throw for want of a listener.
+    prev.on('error', () => { /* abandoned socket */ });
+    // Still "open" means half-open: the client already moved to `next`.
+    if (prev !== next && prev.readyState === prev.OPEN) {
+      try { if (typeof prev.terminate === 'function') prev.terminate(); else prev.close(); } catch { /* gone */ }
+    }
+    stopPing();
+    ws = next;
+    detached = false;
+    clearDetachTimers();
+    bindSocket();
+    // Tells the client it got the SAME process back and whether a turn is still running —
+    // what it missed meanwhile it replays from chat-history.
+    sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    for (const line of outstandingAsks.values()) {
+      try { ws.send(line); } catch { /* closing */ }
+    }
+    return true;
+  }
+
+  /** A respawn wants this conversation. Returns its settlement, called once the open is
+   *  decided: `true` = accepted (a child was spawned), `false` = refused.
+   *   • Detached and idle: drained now — nothing is running that a refusal could cost.
+   *   • Detached and BUSY: the hold is only LENT, so the new open can take the conversation;
+   *     the drain waits for acceptance. A refused open hands the hold back and leaves the turn
+   *     running and reattachable.
+   *   • Attached: the next socket-gone drains instead of detaching — unless the open is refused,
+   *     in which case this pane keeps its detach.
+   *  A drain already started is never undone. */
+  function supersedeLive(): (accepted: boolean) => void {
+    let settled = false;
+    const settleOnce = (fn: (accepted: boolean) => void) => (accepted: boolean): void => {
+      if (settled) return;
+      settled = true;
+      fn(accepted);
+    };
+    if (detached && turnsInFlight === 0) { drain(); return () => { /* already given up */ }; }
+    if (detached) {
+      if (heldConversation && liveConversations.has(heldConversation)) {
+        liveConversations.delete(heldConversation);
+        holdLent = true;
+      }
+      return settleOnce((accepted) => {
+        // Accepted: the new process holds the conversation now; `holdLent` keeps the drain
+        // from releasing its hold.
+        if (accepted) { drain(); return; }
+        if (!holdLent || !alive || !heldConversation) return;
+        // Refused: take the hold back — unless someone else took the conversation meanwhile,
+        // in which case it stays theirs and this child must never release it.
+        if (!liveConversations.has(heldConversation)) {
+          liveConversations.add(heldConversation);
+          holdLent = false;
+        }
+      });
+    }
+    pendingSupersedes += 1;
+    return settleOnce((accepted) => {
+      if (!accepted) pendingSupersedes = Math.max(0, pendingSupersedes - 1);
+    });
+  }
+
+  /** Socket gone (tab closed, app window died, network drop, phone locked). A pinned project
+   *  chat DETACHES — the child keeps running, keeps the conversation, and waits to be adopted
+   *  by the client's reattach; `armDetachReap` bounds how long. Everything else, and a client
+   *  that said goodbye (`end`), drains exactly as before. */
+  function onSocketGone(): void {
+    // The notch's socket is the relay's only channel: with it gone, nothing can execute.
+    disposeSurface();
+    if (!alive || lingerTimer || lingerKillTimer) return;
+    stopPing();
+    if (!live || endOnSocketGone || pendingSupersedes > 0) { drain(); return; }
+    if (detached) return;   // close and error both fired
+    detached = true;
+    detachedAt = Date.now();
+    armDetachReap();
+  }
 
   // ── claude stdout → ws (verbatim NDJSON relay) ─────────────────────────────────────
   // One watcher per session: correlating a tool_use id with the tool_result that carries the
@@ -1268,6 +1629,13 @@ export function startChatSession(
 
       registry?.observe(obj);
 
+      // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
+      if (typeof obj.request_id === 'string') {
+        const req = obj.request as { subtype?: unknown } | undefined;
+        if (obj.type === 'control_request' && req?.subtype === 'can_use_tool') outstandingAsks.set(obj.request_id, line);
+        else if (obj.type === 'control_cancel_request') outstandingAsks.delete(obj.request_id);
+      }
+
       // An interrupt resolves either as a `result` frame or the CLI's own control_response
       // acking the interrupt request — either is "the turn is winding down", so disarm the
       // escalation watchdog (the child's own exit is still tracked separately below).
@@ -1295,7 +1663,7 @@ export function startChatSession(
       }
 
       if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
-        turnsInFlight = Math.max(0, turnsInFlight - 1);
+        closeTurn();
         // An autonomy change waited for this boundary.
         // Through scheduleRespawn, never straight to respawnInPlace: a message may still be
         // deciding in the switch gate (an account probe takes seconds), and ending stdin under
@@ -1325,12 +1693,12 @@ export function startChatSession(
 
             // Both are USER frames, so both open turns — counted for the same reason
             // the opening prompt and `/effort` are (see turnsInFlight's header).
-            turnsInFlight += 1;
+            openTurn();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/clear' }] } });
 
             const continuePrompt = `Handoff: continue task ${pending.title} (${pending.task}). `
               + `Read _dream_context/state/${pending.task}.md first, then carry on from its latest changelog entry.`;
-            turnsInFlight += 1;
+            openTurn();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
 
             // Reuses the existing system-notice frame rather than inventing a second
@@ -1511,6 +1879,15 @@ export function startChatSession(
       // is not: the user is looking at a failed turn and is owed the reason plus, when we
       // know it, the time it comes back.
       if (choice.accountId === null || cause === 'limit_hit' || cause === 'limit_known') {
+        // The notch says so too: the owner may be nowhere near this pane (notch-inbox.ts).
+        if (choice.accountId === null) {
+          recordAccountSwitch({
+            fromAccountId: activeAccountId, toAccountId: null, exhausted: true,
+            vault: isAssistant ? null : (opts.vault ?? basename(projectRoot)),
+            sessionId: isAssistant ? null : registry?.sessionId ?? null,
+            until: choice.earliestResetAt ?? null,
+          });
+        }
         sendMeta({
           subtype: 'account_switch',
           switched: false,
@@ -1530,6 +1907,12 @@ export function startChatSession(
     // resubmits the held text.
     const target = accounts.find((a) => a.id === choice.accountId)!;
     switchPending = true;
+    recordAccountSwitch({
+      fromAccountId: activeAccountId, toAccountId: target.id,
+      vault: isAssistant ? null : (opts.vault ?? basename(projectRoot)),
+      sessionId: isAssistant ? null : registry?.sessionId ?? null,
+      until: previousResetAt ?? null,
+    });
     sendMeta({
       subtype: 'account_switch',
       switched: true,
@@ -1710,7 +2093,7 @@ export function startChatSession(
           .catch(() => false)
           .then((held) => {
             if (!alive || held) return resolve(false);
-            turnsInFlight += 1;
+            openTurn();
             lastSentText = null;
             markTainted();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -1820,7 +2203,17 @@ export function startChatSession(
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
+    // The client is closing this pane on purpose (a closed tab, a respawn): the socket's close
+    // that follows ends the child as it always did, instead of detaching it for a reattach.
+    if (msg.type === 'end') { endOnSocketGone = true; return; }
+
     if (msg.type === 'user' && typeof msg.text === 'string' && msg.text) {
+      if (isCloud() && cloudPhase() !== 'active') {
+        // Quiescing: no new turn starts (the return snapshot must not move under it).
+        try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'cloud_quiescing', message: 'Your laptop is taking this project back; this message was not sent.' })); } catch { /* closing */ }
+        return;
+      }
+      recordCloudAction(); // D14: a send or a steer
       // An autonomy respawn is waiting for the running turn to end: the owner's next message
       // is for the successor — it must not run under the old permissions. (Only user frames:
       // an answer or an interrupt belongs to the turn in flight.)
@@ -1843,10 +2236,18 @@ export function startChatSession(
           if (!alive || held) return;
           // Autonomy changed while this message waited in the gate: it belongs to the successor.
           if (respawnTo !== null || handedOff) { holdForSuccessor(raw); return; }
-          turnsInFlight += 1;
+          openTurn();
           lastSentText = text;
           registry?.userSent(text);
-          writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+          // The Assistant hears what is happening right now with every owner turn: a second,
+          // server-written block with no project text in it (live-context.ts), dropped from the
+          // replay because it starts with `<`.
+          const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text }];
+          if (isAssistant) {
+            const live = assistantLiveContext();
+            if (live) content.push({ type: 'text', text: live });
+          }
+          writeStdin({ type: 'user', message: { role: 'user', content } });
         }));
       return;
     }
@@ -1896,7 +2297,7 @@ export function startChatSession(
         // Delivered as a USER frame (there is no effort control request on 2.1.218), so it
         // starts a turn — the CLI answers with a synthetic assistant bubble and a `result`.
         // It must set the flag for the same reason the initial prompt does.
-        turnsInFlight += 1;
+        openTurn();
         writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `/effort ${effort}` }] } });
       }
       return;
@@ -1970,6 +2371,7 @@ export function startChatSession(
 
     if (msg.type === 'answer' && typeof msg.requestId === 'string' && msg.requestId && msg.requestId.length <= 200
       && (msg.behavior === 'allow' || msg.behavior === 'deny')) {
+      recordCloudAction(); // D14: answering the agent is the owner acting
       const response = msg.behavior === 'allow'
         ? { behavior: 'allow', updatedInput: msg.updatedInput ?? {} }
         : { behavior: 'deny', message: typeof msg.message === 'string' && msg.message ? msg.message : 'Denied' };
@@ -1977,6 +2379,7 @@ export function startChatSession(
         type: 'control_response',
         response: { subtype: 'success', request_id: msg.requestId, response },
       });
+      outstandingAsks.delete(msg.requestId);
       registry?.answered(msg.requestId);
       return;
     }
@@ -2006,6 +2409,7 @@ export function startChatSession(
     }
 
     if (msg.type === 'interrupt') {
+      recordCloudAction(); // D14: a stop is the owner acting
       // Empirically verified against claude 2.1.218 (scratch-dir experiment): a
       // control_request{subtype:'interrupt'} on stdin aborts the in-flight turn — the CLI
       // echoes a control_response, emits a synthetic rejected tool_result + "[Request
@@ -2030,9 +2434,8 @@ export function startChatSession(
     // must never crash an established session).
   }
 
-  ws.on('message', onWsMessage);
-  ws.on('close', onSocketGone);
-  ws.on('error', onSocketGone);
+  bindSocket();
+  opts.onAccepted?.();
 }
 
 // ─── Transcript history (GET /api/agent/chat-history) ─────────────────────────────────
@@ -2093,7 +2496,7 @@ export async function handleAgentChatHistory(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
-  if (!isDesktop()) { sendJson(res, 200, { items: [] }); return; }
+  if (!isAgentHost()) { sendJson(res, 200, { items: [] }); return; }
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!id) { sendJson(res, 200, { items: [] }); return; }
@@ -2107,7 +2510,7 @@ export async function handleAgentChatHistory(
     const subPath = safeChildPath(subagentsDir, `agent-${subagent}.jsonl`);
     if (!subPath || !existsSync(subPath)) { sendJson(res, 200, { items: [] }); return; }
     let subRaw = '';
-    try { subRaw = readFileSync(subPath, 'utf-8'); } catch { sendJson(res, 200, { items: [] }); return; }
+    try { subRaw = await readTranscript(subPath); } catch { sendJson(res, 200, { items: [] }); return; }
     // `sidechain: true` — this file IS the sub-agent's own transcript, so its universal
     // `isSidechain` marker is what we came for, not a foreign turn to filter out.
     sendJson(res, 200, { items: parseTranscriptHistory(subRaw, { sidechain: true }) });
@@ -2115,8 +2518,14 @@ export async function handleAgentChatHistory(
   }
 
   let raw = '';
-  try { raw = readFileSync(path, 'utf-8'); } catch { sendJson(res, 200, { items: [] }); return; }
+  try { raw = await readTranscript(path); } catch { sendJson(res, 200, { items: [] }); return; }
   sendJson(res, 200, { items: parseTranscriptHistory(raw) });
+}
+
+/** A transcript, read as dcuser in the cloud (the CLI writes them 0600 there). */
+async function readTranscript(path: string): Promise<string> {
+  if (isCloud()) return (await readFileAsWorker(path)).toString('utf-8');
+  return readFileSync(path, 'utf-8');
 }
 
 // ─── Background-shell output reader (GET /api/agent/bg-output) ──────────────────────
@@ -2148,7 +2557,7 @@ export async function handleAgentBackgroundOutput(
   contextRoot: string | null,
 ): Promise<void> {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+  if (!isAgentHost()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
   if (!contextRoot) { sendError(res, 400, 'no_vault', 'No vault resolved for this request.'); return; }
 
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
@@ -2157,6 +2566,21 @@ export async function handleAgentBackgroundOutput(
   const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!claudeId) { sendError(res, 400, 'invalid_claude_id', 'Query parameter "claudeId" is required.'); return; }
 
+  // In the cloud the CLI writes these files as dcuser under /tmp/claude-<dcuser uid>/: the path
+  // is derived from the READER's uid, so the whole read runs in the dcuser worker.
+  if (isCloud()) {
+    try {
+      sendJson(res, 200, await runWorkerOp({ op: 'read', params: { kind: 'bg-output', contextRoot, query: { taskId, claudeId } }, timeoutMs: 30_000 }));
+    } catch {
+      sendJson(res, 200, { taskId, content: '', size: 0, truncated: false, exists: false });
+    }
+    return;
+  }
+  sendJson(res, 200, computeBackgroundOutput(contextRoot, taskId, claudeId));
+}
+
+/** The tail of one background shell's output (also run inside the cloud's dcuser worker). */
+export function computeBackgroundOutput(contextRoot: string, taskId: string, claudeId: string): Record<string, unknown> {
   // The output directory is keyed by the LIVE conversation uuid, which is what the CLI was
   // spawned with — the roster id the client holds may be a stale pin, so resolve it the same
   // way the history route does before deriving the path.
@@ -2167,10 +2591,10 @@ export async function handleAgentBackgroundOutput(
   const found = [...new Set([liveId, claudeId])]
     .map((id) => backgroundOutputPath(cwd, id, taskId))
     .find((p): p is string => !!p && existsSync(p));
-  if (!found) { sendJson(res, 200, { taskId, content: '', size: 0, truncated: false, exists: false }); return; }
+  if (!found) { return { taskId, content: '', size: 0, truncated: false, exists: false }; }
 
   let st: ReturnType<typeof statSync>;
-  try { st = statSync(found); } catch { sendJson(res, 200, { taskId, content: '', size: 0, truncated: false, exists: false }); return; }
+  try { st = statSync(found); } catch { return { taskId, content: '', size: 0, truncated: false, exists: false }; }
 
   const start = Math.max(0, st.size - BG_OUTPUT_TAIL_BYTES);
   let content = '';
@@ -2187,11 +2611,10 @@ export async function handleAgentBackgroundOutput(
       } finally { closeSync(fd); }
     }
   } catch {
-    sendJson(res, 200, { taskId, content: '', size: st.size, truncated: false, exists: true });
-    return;
+    return { taskId, content: '', size: st.size, truncated: false, exists: true };
   }
 
-  sendJson(res, 200, { taskId, content, size: st.size, truncated: start > 0, exists: true });
+  return { taskId, content, size: st.size, truncated: start > 0, exists: true };
 }
 
 // ─── Project-root file reader (GET /api/agent/file) ────────────────────────────────
@@ -2331,7 +2754,10 @@ function addGrant(contextRoot: string, abs: string): void {
 function resolveServablePath(
   contextRoot: string,
   rawPath: string,
-): { abs: string } | { deny: 'invalid' | 'needs_grant'; abs?: string } {
+  /** The hands-free cloud passes false: project root only, grants refused (its grants file
+   *  lives in dcuser's tree, so an agent could plant one). */
+  opts: { grants: boolean } = { grants: true },
+): { abs: string } | { deny: 'invalid' | 'needs_grant' | 'outside'; abs?: string } {
   const ref = resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, rawPath);
   if (!ref) return { deny: 'invalid' };
 
@@ -2359,6 +2785,7 @@ function resolveServablePath(
     }
   }
   if (!outside) return { abs: ref.abs };
+  if (!opts.grants) return { deny: 'outside', abs: ref.abs };
   // The grant is keyed on the LEXICAL path the card named and the user approved. Prior
   // consent to a named file stands; re-deriving it per read would make grants meaningless.
   return readGrants(contextRoot).includes(ref.abs)
@@ -2386,11 +2813,13 @@ export async function handleAgentFile(
   contextRoot: string,
 ): Promise<void> {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+  if (!isAgentHost()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
 
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const rawPath = url.searchParams.get('path');
   if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
+
+  if (isCloud()) { await serveAgentFileCloud(req, res, rawPath, contextRoot, url.searchParams.get('raw') === '1'); return; }
 
   const resolved = resolveServablePath(contextRoot, rawPath);
   if ('deny' in resolved) {
@@ -2454,6 +2883,119 @@ export async function handleAgentFile(
   sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content });
 }
 
+/** Raw media the cloud streams through the worker is buffered: capped well below the desktop's. */
+const CLOUD_MEDIA_MAX_BYTES = 32 * 1024 * 1024;
+
+export type CloudFileRead =
+  | { kind: 'dir'; entries: Array<{ name: string; kind: 'dir' | 'file'; size: number | null }>; total: number; truncated: boolean }
+  | { kind: 'file'; size: number; base64?: string }
+  | { kind: 'refused'; status: number; code: string; message: string };
+
+/**
+ * One read of the hands-free cloud's file route, run INSIDE the dcuser worker (dcuser cannot
+ * open dcserver's 0700 files at all). Project root only, grants refused; the final path must
+ * not be a symlink, its parent's realpath must be inside the project's realpath, and the file
+ * is opened O_NOFOLLOW and checked with fstat on that very fd.
+ */
+export function cloudFileRead(contextRoot: string, rawPath: string, want: 'meta' | 'read', maxBytes: number): CloudFileRead {
+  const resolved = resolveServablePath(contextRoot, rawPath, { grants: false });
+  if ('deny' in resolved) {
+    if (resolved.abs) {
+      try {
+        if (lstatSync(resolved.abs).isSymbolicLink()) return { kind: 'refused', status: 403, code: 'symlink_refused', message: 'A symlink is not opened on the cloud machine.' };
+      } catch { /* absent: the refusal below */ }
+    }
+    return resolved.deny === 'outside'
+      ? { kind: 'refused', status: 403, code: 'outside_project', message: 'Only files inside the project can be opened on the cloud machine.' }
+      : { kind: 'refused', status: 400, code: 'invalid_path', message: 'That path cannot be read.' };
+  }
+  const abs = resolved.abs;
+  const notFound: CloudFileRead = { kind: 'refused', status: 404, code: 'not_found', message: `File not found: ${rawPath}` };
+  let lst: ReturnType<typeof lstatSync>;
+  try { lst = lstatSync(abs); } catch { return notFound; }
+  if (lst.isSymbolicLink()) return { kind: 'refused', status: 403, code: 'symlink_refused', message: 'A symlink is not opened on the cloud machine.' };
+  try {
+    const root = realpathSync.native(projectRootOf(contextRoot));
+    // A folder (never a link here) is checked itself, so the project root folder passes; a
+    // file through its parent, so the leaf is never followed.
+    const parent = realpathSync.native(lst.isDirectory() ? abs : dirname(abs));
+    if (parent !== root && !isInside(root, parent)) return { kind: 'refused', status: 403, code: 'outside_project', message: 'Only files inside the project can be opened on the cloud machine.' };
+  } catch { return notFound; }
+  if (lst.isDirectory()) {
+    const MAX_ENTRIES = 300;
+    let names: string[];
+    try { names = readdirSync(abs); } catch { return { kind: 'refused', status: 500, code: 'read_failed', message: 'Failed to read the folder.' }; }
+    const entries = names.slice(0, MAX_ENTRIES).map((name) => {
+      try {
+        const st = lstatSync(join(abs, name));
+        return { name, kind: st.isDirectory() ? 'dir' as const : 'file' as const, size: st.isDirectory() ? null : st.size };
+      } catch {
+        return { name, kind: 'file' as const, size: null };
+      }
+    });
+    entries.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1));
+    return { kind: 'dir', entries, total: names.length, truncated: names.length > MAX_ENTRIES };
+  }
+  if (!lst.isFile()) return { kind: 'refused', status: 404, code: 'not_found', message: `Not a file: ${rawPath}` };
+  let fd: number;
+  try { fd = openSync(abs, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch { return { kind: 'refused', status: 403, code: 'symlink_refused', message: 'That file cannot be opened.' }; }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.ino !== lst.ino || st.dev !== lst.dev) return { kind: 'refused', status: 409, code: 'changed', message: 'The file changed while it was opened.' };
+    if (want === 'meta') return { kind: 'file', size: st.size };
+    if (st.size > maxBytes) return { kind: 'refused', status: 413, code: 'too_large', message: 'File exceeds the size cap.' };
+    const buf = Buffer.alloc(st.size);
+    let got = 0;
+    while (got < st.size) {
+      const n = readSync(fd, buf, got, st.size - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return { kind: 'file', size: got, base64: buf.subarray(0, got).toString('base64') };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** The cloud's GET /api/agent/file: every byte read as dcuser (cloudFileRead in the worker). */
+async function serveAgentFileCloud(req: IncomingMessage, res: ServerResponse, rawPath: string, contextRoot: string, wantsRaw: boolean): Promise<void> {
+  const ext = extname(rawPath).toLowerCase();
+  const rawType = AGENT_FILE_RAW_CONTENT_TYPE[ext];
+  const raw = wantsRaw && (ext === '.svg' || !!rawType);
+  const maxBytes = raw && ext !== '.svg' ? CLOUD_MEDIA_MAX_BYTES : AGENT_FILE_MAX_BYTES;
+  let r: CloudFileRead;
+  try {
+    r = await runWorkerOp<CloudFileRead>({ op: 'read', params: { kind: 'agent-file', contextRoot, query: { path: rawPath, want: 'read', maxBytes: String(maxBytes) } }, timeoutMs: 60_000 });
+  } catch {
+    sendError(res, 500, 'read_failed', 'Failed to read file.');
+    return;
+  }
+  if (r.kind === 'refused') { sendError(res, r.status, r.code, r.message); return; }
+  if (r.kind === 'dir') { sendJson(res, 200, { path: rawPath, type: 'dir', entries: r.entries, truncated: r.truncated, total: r.total }); return; }
+  const buf = Buffer.from(r.base64 ?? '', 'base64');
+  if (raw) {
+    if (ext === '.svg') res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    if (ext === '.svg' || AGENT_FILE_DOC_CONTENT_TYPE[ext]) res.setHeader('Content-Disposition', 'inline');
+    res.writeHead(200, { 'Content-Type': ext === '.svg' ? 'image/svg+xml' : rawType, 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
+    res.end(req.method === 'HEAD' ? undefined : buf);
+    return;
+  }
+  sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content: buf.toString('utf-8') });
+}
+
+/** The board-assets read for the cloud's worker: project root only, grants refused. */
+export async function computeBoardAssetsCloud(contextRoot: string, rawPath: string): Promise<{ files: unknown }> {
+  const r = cloudFileRead(contextRoot, rawPath, 'read', AGENT_FILE_MAX_BYTES * 8);
+  if (r.kind === 'refused') throw Object.assign(new Error(r.message), { code: r.code, status: r.status });
+  if (r.kind !== 'file') throw Object.assign(new Error(`Board not found: ${rawPath}`), { code: 'not_found', status: 404 });
+  const resolved = resolveServablePath(contextRoot, rawPath, { grants: false }) as { abs: string };
+  const boardDir = dirname(resolved.abs);
+  const files = await resolveBoardAssets(Buffer.from(r.base64 ?? '', 'base64').toString('utf-8'), [
+    projectRootOf(contextRoot), contextRoot, boardDir, join(boardDir, 'assets'), join(boardDir, 'Attachments'),
+  ], rawPath);
+  return { files };
+}
+
 /** One directory's entries (capped), newest-looking first: folders, then files by name. */
 function sendDirListing(res: ServerResponse, rawPath: string, abs: string): void {
   const MAX_ENTRIES = 300;
@@ -2496,12 +3038,23 @@ export async function handleAgentBoardAssets(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+  if (!isAgentHost()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
 
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const rawPath = url.searchParams.get('path');
   if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
 
+  if (isCloud()) {
+    // The board and its images are dcuser's files: the whole read runs in the worker, project
+    // root only (grants refused).
+    try {
+      sendJson(res, 200, await runWorkerOp({ op: 'read', params: { kind: 'board-assets', contextRoot, query: { path: rawPath } }, timeoutMs: 60_000 }));
+    } catch (err) {
+      const e = err as { status?: number; code?: string; message?: string };
+      sendError(res, e.status && e.status < 500 ? e.status : 404, e.code ?? 'not_found', e.message ?? `Board not found: ${rawPath}`);
+    }
+    return;
+  }
   const resolved = resolveServablePath(contextRoot, rawPath);
   if ('deny' in resolved) {
     if (resolved.deny === 'needs_grant') {

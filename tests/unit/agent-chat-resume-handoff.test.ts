@@ -78,7 +78,7 @@ describe('startChatSession — a resume that cannot take its conversation REFUSE
 
   it('the refusal comes BEFORE the child is spawned, and returns', () => {
     const guardAt = body.indexOf('if (resumeId && !resumeTarget && !freshPin)');
-    const spawnAt = body.indexOf('const child = spawn(');
+    const spawnAt = body.indexOf('const child: ChildProcessWithoutNullStreams =');
     expect(guardAt).toBeGreaterThan(-1);
     expect(spawnAt).toBeGreaterThan(-1);
     expect(guardAt, 'a guard after the spawn has already started the orphan').toBeLessThan(spawnAt);

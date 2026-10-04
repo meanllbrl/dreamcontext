@@ -21,6 +21,7 @@ import { type ResolvedToken } from '../task-backend/secrets.js';
 import { BrainSyncTokenSession } from './token-fallback.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
 import { getPerson } from '../people-store.js';
+import { handsfreeLockFor } from '../handsfree/trip-state.js';
 
 /**
  * The sync-engine orchestrator — single entry point (`runBrainSync`) for
@@ -153,6 +154,8 @@ export interface SyncEngineDeps {
   readGlobalGitHubToken: typeof readGlobalGitHubToken;
   /** Stale-per-project-token self-heal: demote (never delete) the shadowing per-project `github.token`. */
   demoteProjectGitHubToken: typeof demoteProjectGitHubToken;
+  /** HOME whose hands-free state is checked. Tests only; production reads the real one. */
+  home?: string;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -283,6 +286,17 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   const d: SyncEngineDeps = { ...defaultDeps, ...depsOverride };
   const contextRoot = opts.cwd;
   const projectRoot = dirname(contextRoot);
+
+  // Hands-free: the project is on the cloud machine, so a laptop-side commit/merge here would
+  // fork its history from the phone's. Skipped (no git touched), reported like `disabled` so
+  // nothing reads it as an auth outcome; one log line.
+  const lock = handsfreeLockFor(projectRoot, d.home);
+  if (lock) {
+    const note = `Brain sync skipped: this project is in hands-free mode on the cloud machine (trip ${lock.tripId}); it resumes after Return.`;
+    console.error(`[brain-sync] ${note}`);
+    return { action: 'disabled', scrub: EMPTY_SCRUB, note };
+  }
+
   const config = readSetupConfig(projectRoot);
 
   const enabledResolution = resolveBrainSyncEnabled(projectRoot, config, d.git);

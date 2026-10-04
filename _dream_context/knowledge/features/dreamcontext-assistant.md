@@ -13,7 +13,7 @@ date: '2026-09-26'
 status: in_review
 product: desktop
 created: '2026-09-26'
-updated: '2026-10-03'
+updated: '2026-10-04'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -31,6 +31,8 @@ related_tasks:
   - >-
     desktop-windows-move-and-resize-in-one-smooth-animation-instead-of-frame-by-frame-jumps
   - sesli-asistan-ekrani-gorur-ve-acik-sekmedeki-projeye-baglanir
+  - >-
+    the-notch-becomes-a-notification-center-and-the-assistant-decides-how-each-reply-is-shown
 ---
 
 ## Why
@@ -66,6 +68,11 @@ the notch by a hotkey and answers there in two or three sentences.
 - [ ] As the owner, the assistant's own memory improves: its hidden vault sleeps like any other, so what it learned about me persists.
 - [x] As the owner, I hand a project's work to that project's OWN agent and am told when it asks something, finishes its turn or closes — without watching its window.
 - [x] As the owner, the assistant answers in a beat rather than after half a minute of plumbing.
+- [ ] As the owner, the notch tells me what happened while I was elsewhere (a chat that finished, an automation's unread post, an automation that started, an account that hit its limit) and one click lands me in that exact chat or thread.
+- [ ] As the owner, I keep an automation's posts in the notch until I mark them seen, open them, or ignore that automation for good.
+- [ ] As the owner, I hold the hotkey, see unmistakably that it listens, and once my words are sent the notch folds back to a pill that says what the Assistant is doing.
+- [ ] As the owner, the Assistant decides how each reply reaches me: a silent progress line that slips away, or a full answer that opens the notch, is read aloud, and stays open only when I have something to look at.
+- [ ] As the owner, the Assistant knows every live session and what I am looking at whenever I speak to it, and runs on its own default model (Sonnet, medium) that I can change.
 - [x] As the owner, I can switch the assistant OFF without deleting it, and switching it back on resumes where it left off.
 
 ## Acceptance Criteria
@@ -110,8 +117,24 @@ hands: a real key press, the real app, a reboot.
 - [x] **Server side is read-gated and taint-safe.** `GET /api/assistant/glance` is owner-gated and wraps project text as untrusted; `POST /api/assistant/delegations/dismiss` closes a hand-off; `delegations.ts` keeps the brief and remembers closed hand-offs (last 10, one hour — `pattern-every-store-key-needs-a-death`). `tests/unit/assistant-notch-glance.test.ts`.
 - [ ] Owner sign-off on the ticker, the peek and the Conversations menu in the installed .app.
 
+### The notch as a notification center; the Assistant decides how it is shown (2026-10-04)
+
+Task `the-notch-becomes-a-notification-center-and-the-assistant-decides-how-each-reply-is-shown`.
+Built and unit-tested; open on the owner running it in the installed .app.
+
+- [ ] No automatic pop-out (the side seat is gone); Pop out / Dock stay the owner's.
+- [ ] Inbox: finished chats off screen (presence-gated), unread automation posts until seen / opened / ignored, running automations with photos, account limit + switch as one row; clicks route through `dreamcontext://`.
+- [ ] Live context on every owner turn, with no project text (never taints).
+- [ ] Notch cues progress / present / present stay; voice take folds after send; the pill names what the Assistant is doing.
+- [ ] Listening state + earcons; STT retried twice; a silent whisper is `stt_failed` (503), not `stt_unconfigured`.
+- [ ] The Assistant's own default model sonnet + medium, persisted from the notch composer.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-10-04] The Assistant, not the notch, decides how a reply is shown, by a cue it writes.** Owner: "the agent decides … so that the experience is seamless." Each text block opens with an invisible `<!-- notch:progress|present[ stay] -->` line; the client strips it at its single text-update point and from the replay, and a progress block never reaches the speech queue. An HTML comment so an unparsed cue renders as nothing anywhere. No auto pop-out any more: the notch opens and folds in place, and the owner touching it makes it theirs.
+- **[2026-10-04] The live context carries no project text, by construction.** Session titles, replies and questions are other agents' words; putting them in the owner's own turn would either launder them as the owner's voice or taint every turn (turning every `auto` verb into a proposal). Ids, enums, durations and sanitised names only; the Assistant reads words through `assistant sessions`, which taints as designed.
+- **[2026-10-04] "Not in that window" is a presence report, not a guess.** The focused window reports the project it shows (60 s TTL, heartbeat 20 s); a finish in that project is not news, and looking at it later clears it. A delegated session's finish stays a hand-off row, never a second notice.
 
 - **[2026-09-28] A latency budget is a product requirement for this surface, not an optimisation.** The notch's premise is "hold a key, get two sentences" — 16.9 s of recall in front of that is the feature not working. The rule that came out of it: **nothing in a notch turn's critical path may do network I/O or a cold model download.** Recall degrades to `raw` rather than waiting, the embedding index builds in the background or not at all, and a lockfile serializes cache writes so the hook never blocks on another vault's build. A delegated project inherits the same budget, which is why the `origin=assistant` marker has to survive a resume.
 - **[2026-09-28] Delegation is only half a channel until the delegate can wake you.** The Assistant could start work in a project and then had to be asked what happened. Wakes are therefore pushed (asking immediately, idle debounced 2 s, gone after 3 s unless respawned), but every wake TAINTS the session and never clears the taint, and a wake is never handed back as `pendingText` — a project's own words must never arrive in the composer wearing the owner's voice. Spidey relays a question; it does not answer one on the owner's behalf.
@@ -164,6 +187,8 @@ drives all of it against the real built server on an isolated HOME.**
 
 - **The notch as a status surface (2026-10-03, `76f144a2`).** The open notch has two faces: **Now** (`GlanceList.tsx`) and **Chat**. Now is fed by `GET /api/assistant/glance` — owner-gated, project text wrapped as untrusted — and orders projects by what needs the owner first, then proposals (`ProposalList.tsx`), then the Assistant's own hand-offs with the brief it gave, their state (on it / waiting / done / closed), age and the project's last reply. A waiting permission prompt is answered from the notch through `POST /api/assistant/answer`, which **refuses a prompt that is no longer waiting** (the state is the safety predicate, not the rendered card). `POST /api/assistant/delegations/dismiss` closes a hand-off; `src/lib/assistant/delegations.ts` now stores the brief and keeps closed hand-offs for one hour, capped at 10. `ConversationMenu.tsx` lists the hidden vault's earlier chats — picking one resumes it, `+` starts a fresh one without losing the current. Collapsed, the pill is a ticker with a busy hairline while any project works, amber when something waits, green when the last turn ends; `NotchPeek.tsx` grows a peek on hover, by itself on a new prompt (until answered or waved away) and for a few seconds after a hand-off finishes, and the peek **never takes focus**. The decision logic is pure in `notchModel.ts` (`tests/unit/assistant-notch-glance.test.ts`).
 
+- **The notch inbox and cues (2026-10-04).** Server: `src/lib/assistant/notch-inbox.ts` (presence, finished events from `onChatChange` working→idle debounced 2.5 s, account events from `agent-chat.ts decideAndAnnounce` + `claude-account-limits.json` refusals since boot merged within 2 min, the mute list), `src/server/assistant-inbox.ts` (per-project running = `agentActivities`, unread posts = `buildFeed` unread && post/error/needs-you minus muted; cached 4 s / 15 s), routes `GET /api/assistant/inbox`, `POST /inbox/dismiss|seen|mute`, `POST /presence`; `src/lib/assistant/live-context.ts` appended as a second text block to each owner turn; `spawnModelFor` + `AssistantConfig.model` (default sonnet). Client: `lib/notchCue.ts`, `chatSession.onPresent`, `InboxList.tsx`, `ListeningOverlay.tsx` (+ `lib/voice/voiceActivity.ts` bus, `chime.ts playMicEarcon`), `lib/presence.ts` from `WindowChrome`, `useVoiceCapture` retries (`STT_RETRIES = 2`, `sttRetryable`). Tests: `tests/unit/assistant-notch-inbox.test.ts`, `voice-server.test.ts` (503), `chat-modes.test.ts`, `assistant-window-frames.test.ts`.
+
 ## Notes
 
 - **Open question the owner has not settled:** under `bypass`, should the assistant also act on text coming from OTHER projects without asking? The plan currently says yes, with warnings in the wizard.
@@ -171,6 +196,10 @@ drives all of it against the real built server on an isolated HOME.**
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-04 - The notch becomes a notification center, and the Assistant decides how each reply is shown
+
+- **Built** (task `the-notch-becomes-a-notification-center-…`): the side seat and automatic pop-out are removed; an inbox of finished chats (presence-gated), unread automation posts (seen / open / ignore), running automations with photos and account limit switches, each a peek and a "Now" row that routes through `dreamcontext://`; a `<live-context>` block on every owner turn with no project text; notch cues (`progress` / `present` / `present stay`) deciding peek vs. open-and-speak vs. stay; a voice take that folds to a pill naming what the Assistant does; a listening state with earcons; transcription retried twice and a silent whisper reported as retryable; the Assistant's own default model (sonnet, medium). Briefing ceiling 4100 → 4900. Owner sign-off in the installed .app still open.
 
 ### 2026-10-03 — The notch stops being only a chat: it tells you what needs you, and you answer from it
 

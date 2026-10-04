@@ -516,6 +516,29 @@
       ]
     },
     {
+      "path": "cloud",
+      "desc": "Hands-free cloud internals (run by the codespace, never by hand)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "cloud serve",
+      "desc": "Serve the hands-free cloud (started by the root supervisor)",
+      "args": [],
+      "valueFlags": [
+        "--listen-fd",
+        "--port",
+        "--mirror-prefix"
+      ]
+    },
+    {
+      "path": "cloud worker",
+      "desc": "One dcuser worker operation (spawned by the cloud server)",
+      "args": [
+        "<op>"
+      ]
+    },
+    {
       "path": "config",
       "desc": "View or change dreamcontext project configuration",
       "args": [],
@@ -1173,6 +1196,83 @@
       "valueFlags": [
         "--wave"
       ]
+    },
+    {
+      "path": "handsfree",
+      "desc": "Hands-free mode: move the project to your own cloud machine and drive it from the phone",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "handsfree abandon",
+      "desc": "Unlock the laptop now without returning (the cloud work is recovered by the next go)",
+      "args": []
+    },
+    {
+      "path": "handsfree account-login",
+      "desc": "Sign a Claude account in INSIDE the cloud machine (opens `gh codespace ssh`; nothing is captured or stored)",
+      "args": [
+        "[id]"
+      ]
+    },
+    {
+      "path": "handsfree devices",
+      "desc": "Phone devices signed in to the cloud machine",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "handsfree devices list",
+      "desc": "What this laptop knows about the phone sign-in (generation, pending changes)",
+      "args": []
+    },
+    {
+      "path": "handsfree devices revoke",
+      "desc": "Sign every device out (--all)",
+      "args": []
+    },
+    {
+      "path": "handsfree go",
+      "desc": "Take the active project to the cloud machine (locks it here until you return)",
+      "args": []
+    },
+    {
+      "path": "handsfree password",
+      "desc": "Generate a new phone passphrase (signs every device out); pending until the cloud confirms",
+      "args": []
+    },
+    {
+      "path": "handsfree resume",
+      "desc": "Finish an interrupted go or return from its journal",
+      "args": []
+    },
+    {
+      "path": "handsfree return",
+      "desc": "Bring every diff, session and file back from the cloud machine",
+      "args": []
+    },
+    {
+      "path": "handsfree rollback",
+      "desc": "Undo the interrupted return's own writes (back to away; the phone can continue)",
+      "args": []
+    },
+    {
+      "path": "handsfree setup",
+      "desc": "Sign in to GitHub (repo + codespace), create the private repo and the codespace, print the phone passphrase",
+      "args": [],
+      "valueFlags": [
+        "--machine"
+      ]
+    },
+    {
+      "path": "handsfree status",
+      "desc": "Where the project is (home / going / away / returning), the cloud machine, pending verifiers",
+      "args": []
+    },
+    {
+      "path": "handsfree teardown",
+      "desc": "Delete the cloud machine (recovers abandoned cloud work first)",
+      "args": []
     },
     {
       "path": "hook",

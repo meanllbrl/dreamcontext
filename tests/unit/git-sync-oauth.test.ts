@@ -8,6 +8,7 @@ import {
   PLACEHOLDER_CLIENT_ID,
   DEFAULT_BRAIN_OAUTH_CLIENT_ID,
   BRAIN_OAUTH_SCOPE,
+  HANDSFREE_OAUTH_SCOPE,
 } from '../../src/lib/git-sync/oauth.js';
 
 function jsonRes(status: number, body: unknown): Response {
@@ -40,6 +41,19 @@ describe('git-sync/oauth — device flow (injected fetch, zero network)', () => 
     expect(calls[0].url).toContain('login/device/code');
     expect(calls[0].body).toContain('client_id=Iv1.test');
     expect(calls[0].body).toContain(`scope=${BRAIN_OAUTH_SCOPE}`);
+  });
+
+  it('startDeviceFlow takes the scope as a parameter (hands-free asks for repo + codespace)', async () => {
+    const bodies: string[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body ?? ''));
+      return jsonRes(200, { device_code: 'D', user_code: 'U', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 5 });
+    }) as unknown as typeof fetch;
+    await startDeviceFlow('Iv1.test', fetchImpl, HANDSFREE_OAUTH_SCOPE);
+    expect(new URLSearchParams(bodies[0]).get('scope')).toBe('repo codespace');
+    // Brain sync is unchanged: the default stays `repo` alone.
+    await startDeviceFlow('Iv1.test', fetchImpl);
+    expect(new URLSearchParams(bodies[1]).get('scope')).toBe('repo');
   });
 
   it('pollDeviceFlow maps authorization_pending → pending', async () => {

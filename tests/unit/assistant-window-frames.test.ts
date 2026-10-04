@@ -253,16 +253,18 @@ describe('Notch seats (source scan)', () => {
     expect(src).toMatch(/withFlight\(async \(\) => setFrames\(/);
   });
 
-  it('autoPop and goHome land their frame in one step (0ms) behind the CSS animation', () => {
-    const autoPop = src.slice(src.indexOf('const autoPop'), src.indexOf('const goHome'));
-    const goHome = src.slice(src.indexOf('const goHome'), src.indexOf('const wasActive'));
-    expect(autoPop).toMatch(/seatWindow\([^;]*, false, 0, gen\)/);
-    expect(goHome).toMatch(/seat\(false, geo, 0, gen\)/);
+  it('never pops itself out: no side seat, no automatic trip to the window seat (owner, 2026-10-04)', () => {
+    expect(src).not.toMatch(/const autoPop|const goHome|function sideFrame|SIDE_W/);
+    // The only callers of the window seat are the owner's own Pop out and a presentation
+    // re-showing a window the owner already popped out (never focused, never a seat change).
+    const opens = src.slice(src.indexOf('const openForPresentation'), src.indexOf('useEffect(() => session?.onPresent'));
+    expect(opens).not.toMatch(/nativeSeat\(/);
+    expect(opens).toMatch(/seat\(true, geo, frameMotionMs\(\), undefined, false\)/);
   });
 
   it('pop-out and dock claim their seat change at the click, so the later one always wins', () => {
     const popOut = src.slice(src.indexOf('const popOut'), src.indexOf('const dock'));
-    const dock = src.slice(src.indexOf('const dock'), src.indexOf('WHILE IT WORKS'));
+    const dock = src.slice(src.indexOf('const dock'), src.indexOf('const [speaking, setSpeaking]'));
     expect(popOut).toMatch(/const gen = claimSeat\(null\);[\s\S]*seatWindow\([^;]*frameMotionMs\(\), gen\)/);
     expect(dock).toMatch(/const gen = claimSeat\(null\);[\s\S]*seat\(true, geo, frameMotionMs\(\), gen\)/);
   });

@@ -1,7 +1,8 @@
 import { cliAwarePath } from './cli-path.js';
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve as resolvePath, sep as pathSep } from 'node:path';
+import { handsfreeSpawnRefusal } from '../peer-delivery.js';
 import { homedir } from 'node:os';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
 import { recordNotification } from '../notification-log.js';
@@ -802,6 +803,149 @@ function waitForExit(
   });
 }
 
+// ─── Live detached runs (hands-free go/return cut them) ─────────────────────
+//
+// Every child `executeClaudeDetached` spawns is registered here at birth (the pid exists)
+// and removed at death ('exit' or 'error'), so the map is bounded by the live-run count.
+// Keyed by pid: a detached child leads its own process group, so pid === pgid.
+
+const detachedRuns = new Map<number, { pid: number; cwd: string }>();
+
+function registerDetachedRun(child: ChildProcess, cwd: string): void {
+  const pid = child.pid as number;
+  detachedRuns.set(pid, { pid, cwd });
+  const death = (): void => { detachedRuns.delete(pid); };
+  child.once('exit', death);
+  child.once('error', death);
+}
+
+function realpathOrResolve(p: string): string {
+  try { return realpathSync.native(p); } catch { return resolvePath(p); }
+}
+
+/** Is `path` inside (or equal to) any of `roots`, after realpath on both sides? Case-insensitive
+ *  on macOS and Windows, like the hands-free lock itself (`trip-state.ts`). */
+export function pathUnderAny(path: string, roots: readonly string[]): boolean {
+  const ci = process.platform === 'darwin' || process.platform === 'win32';
+  const norm = (s: string): string => (ci ? s.toLowerCase() : s);
+  const p = norm(realpathOrResolve(path));
+  return roots.some((r) => {
+    const root = norm(realpathOrResolve(r));
+    return p === root || p.startsWith(root.endsWith(pathSep) ? root : root + pathSep);
+  });
+}
+
+/** Detached `claude` runs whose cwd is under any of `roots`. */
+export function detachedRunsUnder(roots: string[]): Array<{ pid: number; cwd: string }> {
+  return [...detachedRuns.values()].filter((r) => pathUnderAny(r.cwd, roots)).map((r) => ({ ...r }));
+}
+
+/** Cut every detached run under `roots` (whole process group, plus the processes its hooks
+ *  detached from it) and resolve once they have all exited. Resolves to how many runs matched. */
+export async function cutDetachedRunsUnder(roots: string[]): Promise<number> {
+  const runs = detachedRunsUnder(roots);
+  if (runs.length > 0) await cutProcessGroups(runs.map((r) => r.pid));
+  return runs.length;
+}
+
+function signalAlive(target: number): boolean {
+  try {
+    process.kill(target, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Every process descending from `leaders` right now, with its group: a hook can detach a
+ *  child into its own group (setsid), which a signal to the leader's group would miss. */
+function descendantsOf(leaders: readonly number[]): Array<{ pid: number; pgid: number }> {
+  let table: string;
+  try {
+    table = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,pgid='], { encoding: 'utf-8', timeout: 5_000 });
+  } catch {
+    return []; // best-effort: the group signal still reaches everything that stayed in it
+  }
+  const kids = new Map<number, Array<{ pid: number; pgid: number }>>();
+  for (const line of table.split('\n')) {
+    const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number);
+    if (!pid || !Number.isFinite(ppid) || !Number.isFinite(pgid)) continue;
+    const list = kids.get(ppid) ?? [];
+    list.push({ pid, pgid });
+    kids.set(ppid, list);
+  }
+  const out: Array<{ pid: number; pgid: number }> = [];
+  const queue = [...leaders];
+  const seen = new Set<number>(leaders);
+  while (queue.length > 0) {
+    for (const k of kids.get(queue.shift() as number) ?? []) {
+      if (seen.has(k.pid)) continue;
+      seen.add(k.pid);
+      out.push(k);
+      queue.push(k.pid);
+    }
+  }
+  return out;
+}
+
+const CUT_GRACE_MS = 5_000;
+
+/** This process's own process group (`ps`), or null when it cannot be read. */
+function ownProcessGroup(): number | null {
+  try {
+    const pgid = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf-8', timeout: 5_000 }).trim());
+    return Number.isSafeInteger(pgid) && pgid > 0 ? pgid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** After SIGKILL nothing can refuse to die, so this cap only guards against a pid that never
+ *  disappears (a zombie whose parent is not us); it is not a grace period. */
+const CUT_KILL_WAIT_MS = 30_000;
+
+/**
+ * Stop whole process groups (the hands-free cut, D22; shared with the PTY route and the chat cut):
+ *  - SIGTERM to each leader's GROUP and to every descendant that left it (a hook's detached
+ *    child: its own group when it leads one, else the pid);
+ *  - after `graceMs`, SIGKILL to every one of those targets still alive, even when its leader
+ *    already exited (a group outlives its leader; `kill(-pgid)` still reaches the members);
+ *  - then wait until every target is gone (polling `kill(0)`, capped at
+ *    {@link CUT_KILL_WAIT_MS});
+ *  - NEVER this process or its own group: a leader or stray equal to our pid is dropped, and a
+ *    group equal to ours is never signalled as a group.
+ * Never throws.
+ */
+export async function cutProcessGroups(leaders: readonly number[], graceMs = CUT_GRACE_MS): Promise<void> {
+  const ownGroup = ownProcessGroup();
+  const isSelf = (pid: number): boolean => pid === process.pid || pid === ownGroup;
+  const groups = leaders.filter((p) => Number.isSafeInteger(p) && p > 1 && !isSelf(p));
+  const strays = descendantsOf(groups).filter((d) => !groups.includes(d.pgid) && d.pid !== process.pid);
+  const targets = [...new Set([
+    ...groups.map((p) => -p),
+    ...strays.map((d) => (d.pgid === d.pid && !isSelf(d.pgid) ? -d.pid : d.pid)),
+  ])];
+  const signal = (sig: NodeJS.Signals): void => {
+    for (const t of targets) {
+      try { process.kill(t, sig); } catch { /* ESRCH: already gone */ }
+    }
+  };
+  const allGone = (): boolean => !targets.some(signalAlive);
+  const waitGone = async (ms: number): Promise<boolean> => {
+    const until = Date.now() + ms;
+    while (!allGone()) {
+      if (Date.now() >= until) return false;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return true;
+  };
+  if (targets.length === 0) return;
+  signal('SIGTERM');
+  if (await waitGone(graceMs)) return;
+  signal('SIGKILL');
+  await waitGone(CUT_KILL_WAIT_MS);
+}
+
 // ─── The shared spawn core ──────────────────────────────────────────────────
 
 export type SpawnImpl = typeof import('node:child_process').spawn;
@@ -839,11 +983,15 @@ export interface ClaudeExecOptions {
    * collected, so there is no buffer to leak into a file, a response, or a log.
    */
   discardOutput?: boolean;
+  /** HOME whose hands-free state is checked. Tests only; production reads the real one. */
+  home?: string;
 }
 
 export interface ClaudeExecution {
   /** false ⇒ the exec itself failed (`child.pid` was null) and nothing ran. */
   spawned: boolean;
+  /** Set (with `spawned: false`) when the cwd is inside a hands-free locked root: nothing ran. */
+  refused?: string;
   timedOut: boolean;
   exitCode: number | null;
   stdout: string;
@@ -870,6 +1018,15 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
   const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
   const logFn = opts.log ?? (() => {});
   const nowFn = opts.now ?? (() => new Date());
+
+  // Hands-free: refused BEFORE anything spawns, reported as a failed exec (every caller
+  // already handles `spawned: false`) with the reason in `refused` and the stderr tail.
+  const refused = handsfreeSpawnRefusal(opts.cwd, opts.home);
+  if (refused) {
+    logFn(refused);
+    const at = nowFn();
+    return { spawned: false, refused, timedOut: false, exitCode: null, stdout: '', stderrTail: refused, startedAt: at, finishedAt: at, result: null };
+  }
 
   const spawnOptions: Parameters<SpawnImpl>[2] = {
     cwd: opts.cwd,
@@ -906,6 +1063,7 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     };
   }
 
+  registerDetachedRun(child, opts.cwd);
   opts.onSpawned?.(child, startedAt);
 
   const collectors = attachOutputCollectors(child);

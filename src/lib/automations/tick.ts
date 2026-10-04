@@ -55,6 +55,7 @@ import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from '
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
 import { pollTelegram, type PollResult } from './telegram.js';
+import { handsfreeLockFor } from '../handsfree/trip-state.js';
 
 /** The real poller. Cheap when Telegram is off: `readTelegramConfig` returns
  *  null and it returns without a single network call, which is the state every
@@ -125,6 +126,9 @@ export interface TickProjectResult {
    *  contributes nothing anywhere, which is correct: it is not in `considered`
    *  either, since it was never read back off disk this pass. */
   verdicts: SlugVerdict[];
+  /** Present when the project was not looked at: `handsfree` = its roots are on the cloud
+   *  machine (nothing read, nothing drained, nothing run). */
+  skipped?: 'handsfree';
 }
 
 export interface TickAllResult {
@@ -177,6 +181,14 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const logFn = opts.log ?? (() => {});
   const runImpl = opts.runImpl ?? runAutomation;
   const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
+
+  // Hands-free: the project is on the cloud machine. Skip BEFORE the drain, so a queued fire
+  // stays queued (owed) instead of running against roots the laptop does not own right now.
+  const lock = handsfreeLockFor(projectRoot, opts.home);
+  if (lock) {
+    logFn(`[automations] ${projectRoot} is in hands-free mode (trip ${lock.tripId}) — skipped until Return`);
+    return { projectRoot, contextRoot, considered: 0, ran: [], verdicts: [], skipped: 'handsfree' };
+  }
 
   const manifests = listAutomations(contextRoot);
   const verdicts: SlugVerdict[] = [];

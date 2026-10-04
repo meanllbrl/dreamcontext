@@ -18,6 +18,7 @@
     "skill-agent-core",
     "skill-packs",
     "agents",
+    "cloud",
     "README.md",
     "LICENSE",
     "NOTICE",
@@ -84,6 +85,7 @@
     "announce:shots:gap": "node e2e/announce-shots-gap.mjs",
     "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs",
     "verify:pane-widen": "node scripts/verify/pane-focus-widen.mjs",
+    "verify:chat-smooth": "node scripts/verify/chat-smooth.mjs",
     "verify:mobile-chat": "node scripts/verify/mobile-chat.mjs",
     "verify:sleep-debt": "vitest run --config eval/sleep-debt/vitest.config.ts"
   },

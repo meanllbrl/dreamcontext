@@ -55,7 +55,7 @@ import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
-import { maybeTriggerAppUpdate, readAppManifest } from './app.js';
+import { autoUpdateHandsfreeBlock, maybeTriggerAppUpdate, readAppManifest } from './app.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
@@ -72,6 +72,7 @@ import {
 import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-state-lock.js';
 import { shouldStartAutoSleep, currentAutoSleepFingerprint } from '../../lib/auto-sleep.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
+import { handsfreeLockFor } from '../../lib/handsfree/trip-state.js';
 import {
   recordAgentSession, UUID_RE,
 } from '../../lib/agent-session-map.js';
@@ -1599,6 +1600,24 @@ function spawnBrainPull(root: string): void {
   child.unref();
 }
 
+/**
+ * The top-of-snapshot warning for a claude started (from a terminal) inside a hands-free
+ * locked root, or null. The app's own spawns are refused at their chokepoints; a terminal
+ * claude is not, so this is the one place it hears that its edits will collide with the
+ * phone's work at Return. `home`: tests only.
+ */
+export function handsfreeSessionStartWarning(cwd: string, home?: string): string | null {
+  const lock = handsfreeLockFor(cwd, home);
+  if (!lock) return null;
+  if (lock.error) return `> ⚠️ HANDS-FREE: ${lock.error}\n`;
+  return [
+    `> ⚠️ HANDS-FREE MODE: this project is on the cloud machine (trip ${lock.tripId}, ${lock.phase}).`,
+    '> Edits made here collide with the work done on the phone and land as conflicts at Return.',
+    '> Tell the user before changing anything; run `dreamcontext handsfree return` first to bring the work home.',
+    '',
+  ].join('\n');
+}
+
 // ─── Command Registration ───────────────────────────────────────────────────
 
 export function registerHookCommand(program: Command): void {
@@ -1874,6 +1893,13 @@ export function registerHookCommand(program: Command): void {
     .description('Analyze previous session + output context snapshot (called by Claude Code SessionStart hook)')
     .action(() => {
       const input = readStdin();
+
+      // Hands-free: printed FIRST so it tops the snapshot. A warning, never a block — the
+      // session still starts (a terminal claude is outside every spawn chokepoint).
+      try {
+        const handsfree = handsfreeSessionStartWarning(process.cwd());
+        if (handsfree) console.log(handsfree);
+      } catch { /* the warning must never break the hook */ }
 
       const root = resolveContextRoot();
       if (!root) {
@@ -2375,6 +2401,8 @@ export function registerHookCommand(program: Command): void {
       if (process.env.DREAMCONTEXT_VERSION_CHECK !== '0') {
         try {
           const projectRoot = dirname(root);
+          // Hands-free (AC18): no npm upgrade and no app update while the laptop is not home.
+          const updateBlock = autoUpdateHandsfreeBlock();
           let vcache = readVersionCache(projectRoot);
           if (!isCacheFresh(vcache)) {
             const loaded = loadCatalog();
@@ -2390,7 +2418,8 @@ export function registerHookCommand(program: Command): void {
             // installed, trigger a best-effort background app update (rare —
             // only a new Tauri shell release replaces the bundle; the app runs
             // the global CLI for everything else). No-ops until releases exist.
-            maybeTriggerAppUpdate();
+            if (updateBlock) console.error(updateBlock);
+            else maybeTriggerAppUpdate();
             // Piggyback too: refresh the used-asset drift verdict in a detached
             // process so the SessionStart "stale assets" nag can stay silent when
             // a CLI bump didn't actually change any pack this project installs.
@@ -2400,7 +2429,7 @@ export function registerHookCommand(program: Command): void {
           // Auto-upgrade (DEFAULT ON; opt out with DREAMCONTEXT_AUTO_UPGRADE=0):
           // detached, non-blocking, at most once per target version per 24h.
           // Emits a one-line notice only when it actually fires.
-          const notice = maybeAutoUpgrade(projectRoot, dreamcontextVersion(), vcache);
+          const notice = updateBlock ? null : maybeAutoUpgrade(projectRoot, dreamcontextVersion(), vcache);
           if (notice) console.log(notice);
         } catch {
           // Version check must never break the hook.

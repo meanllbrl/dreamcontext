@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
+import { isAgentHost } from '../desktop.js';
 import { listVaults } from '../../lib/vaults.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
@@ -265,7 +265,9 @@ export async function handleAgentPromptToken(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  if (!isDesktop()) {
+  // The cloud gate already demanded a device session for this route; the desktop keeps its
+  // own posture (loopback, or a token-bearing tailnet peer when remote access is on).
+  if (!isAgentHost()) {
     sendError(res, 403, 'desktop_only', 'The embedded agent terminal is only available in the desktop app.');
     return;
   }

@@ -15,6 +15,7 @@ import { join, resolve, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import chalk from 'chalk';
 import { compareVersions } from '../../lib/version-check.js';
+import { readTripState } from '../../lib/handsfree/trip-state.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -616,6 +617,18 @@ function doStatus(): void {
 
 // ─── Registration ────────────────────────────────────────────────────────────
 
+/**
+ * Why the prompt hook's background auto-update (the npm CLI upgrade and the desktop app
+ * update) must not run, or null when it may: while the laptop is not hands-free `home`, the
+ * cloud machine runs this laptop's exact build (AC18). The one log line the prompt hook's
+ * refresh tick and `app update` print. `home`: tests only.
+ */
+export function autoUpdateHandsfreeBlock(home?: string): string | null {
+  const trip = readTripState(home);
+  if (trip.phase === 'home') return null;
+  return `[dreamcontext] auto-update skipped: hands-free mode is ${trip.phase} (trip ${trip.tripId ?? '?'}); it resumes after Return.`;
+}
+
 export function registerAppCommand(program: Command): void {
   const app = program.command('app').description('Manage the dreamcontext desktop app (install / update / status)');
 
@@ -634,6 +647,14 @@ export function registerAppCommand(program: Command): void {
     .option('--from <path>', 'Update from a local artifact instead of GitHub Releases')
     .option('--dir <dir>', 'Install directory (default: beside the installed app, else ~/Applications)')
     .action(async (opts: { from?: string; dir?: string }) => {
+      // Hands-free (AC18): every app self-update (the prompt hook's background tick, the
+      // badge's full upgrade, a manual run) lands here; none while the laptop is not home.
+      const blocked = autoUpdateHandsfreeBlock();
+      if (blocked) {
+        console.error(blocked);
+        process.exitCode = 1;
+        return;
+      }
       await doUpdate(opts.from, opts.dir);
     });
 

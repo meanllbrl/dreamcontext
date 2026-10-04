@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-29'
 status: in_review
 created: '2026-09-29'
-updated: '2026-10-03'
+updated: '2026-10-04'
 released_version: null
 tags:
   - 'topic:dashboard'
@@ -24,6 +24,7 @@ related_tasks:
     whiteboard-modulu-her-board-ajanin-ve-kullanicinin-birlikte-cizdigi-canli-widget-tasiyan-bir-excalidraw-kontrol-paneli-olur
   - >-
     whiteboard-wiki-olur-sayfalar-board-dan-cikmadan-popup-ta-wiki-menusunde-ve-tuval-wiki-modunda-okunur
+  - whiteboard-sekmeleri-chrome-gibi-yan-yana-durur-renkli-gruplara-ayrilir
 ---
 
 ## Why
@@ -40,6 +41,10 @@ The owner wanted one place that gathers the brain: a control panel, wiki and bra
 - [x] As the owner, I want a wiki card that holds the page list I chose — sections I name, pages I drag into order — so one board can carry several little wikis instead of one automatic knowledge tree.
 - [x] As the owner, I want any file to be a page (knowledge markdown, a PDF, an HTML export), so the board reads the things I actually keep in the project, not only brain entries.
 - [x] As the owner, I want to drag a widget to the exact box I need (a phone-width web embed), so the sizes help me instead of springing my box back to a preset.
+- [x] As the owner, I want my open boards side by side like Chrome tabs, in named and coloured groups I can fold away, so moving between boards is one click instead of a dropdown and a search.
+- [x] As the owner, I want closing a tab to ask first and say plainly that the board stays, so I never lose a board to a reflex click on an ×.
+- [x] As the owner, I want a deleted board to come back, so a delete is a mistake I can undo rather than a loss.
+- [x] As the owner, I want the wheel to keep panning the board even when the pointer drifts over a live HTML or web block, so a pan is not swallowed mid-gesture.
 
 ## Acceptance Criteria
 
@@ -78,9 +83,22 @@ Phase 1.5 — pages, wiki cards and the side panel (task `whiteboard-wiki-olur-�
 - [x] Unit tests (wikilinks, `agentFileKind` html, wiki payload/merge/reorder, nav CLI, board hash, panel pan rules) plus `verify:whiteboard` in both themes: 679 checks.
 - [ ] Owner sign-off on the panel and the wiki card in the installed .app.
 
+Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard-sekmeleri-…`):
+
+- [x] The header dropdown is replaced by a **Chrome-style tab strip**: open boards side by side, drag to reorder, and a close that is not a delete. Tabs can be grouped with a name and one of 8 colours (chart tokens); the chip is solid with dark ink (≥4.4:1 on every hue), one group line runs under chip + tabs, an open grouped tab is outlined in the group colour, and clicking the chip collapses the group. The layout is per machine + vault in `localStorage`.
+- [x] Every close path (×, middle click, Close tab, Close other tabs, Close group) asks in an in-app popover that states the board stays, with Cancel and Close and **nothing red** — nothing is lost.
+- [x] "All boards" carries a folding **Recently deleted** section: the trash listed with a relative time and Restore, which reopens the board (under `<slug>-2` when the old slug was taken since). `trash` is a reserved slug.
+- [x] The trash never syncs: `whiteboards/.trash/` carries its own `*` `.gitignore`, so a delete history stays on the machine that made it.
+- [x] A wheel pan that started on the canvas keeps panning **through** an active HTML or web block (the latch drops after 250 ms of quiet), instead of being eaten by the iframe's own document.
+- [x] Old `.wbs-*` selectors are kept so `scripts/verify/whiteboard.mjs` still drives the header. Evidence: `tests/unit/whiteboard-tab-strip.test.ts` 16/16, the whiteboard unit set 339/339, `scripts/verify/whiteboard-tabs.mjs` (21/21 ×3 for the strip, extended for close + trash), `verify:whiteboard` 679/679, root + dashboard `tsc` 0.
+- [ ] Owner sign-off on the tab strip, the close popover and Restore in the installed .app.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-04]** **Close is not delete, and delete is not loss.** Closing a tab never touched the board, but nothing on screen said so, so every close now asks in a popover that states the board stays — and deliberately uses no destructive red, because the dialog's whole job is to say nothing is lost. A delete already moved the board into `whiteboards/.trash/`, which had no way back; the trash is now listed under "All boards" with Restore (re-slugged to `<slug>-2` if the name was taken since). The trash keeps its own `*` `.gitignore`: a delete history is one machine's business and must never reach the team's repo.
+- **[2026-10-04]** **An active widget must not swallow a gesture that started on the canvas.** An active HTML or web block takes pointer events, so a wheel that drifted over it landed in the iframe and the pan died mid-gesture. The pan itself (wheel on canvas, momentum included) latches widgets open to the wheel, and the latch drops after 250 ms of quiet — the gesture's owner is where it STARTED, not where the pointer happens to be.
+- **[2026-10-03]** The board switcher became a **tab strip**, not a prettier dropdown: open boards are the state the owner wants to see, so they are side by side, draggable, and groupable with a name + colour; the group chip is a solid tinted chip with dark ink (≥4.4:1 on all 8 chart hues) and collapses its group. The layout is per machine + vault in `localStorage` — a tab arrangement is a workspace habit, not shared brain content. Old `.wbs-*` selectors are kept so the existing verify script keeps driving the header; closing the open tab remounts the strip, so the layout is written **synchronously** rather than from a state updater that the remount discards (caught by `verify:whiteboard-tabs`, not by review).
 - **[2026-10-03]** The opener stays visible: because the panel pushes the canvas, opening pans the board by the minimum that shows the whole opening card (zoom untouched), and closing restores the pre-open pan **unless** the user panned or zoomed while reading — in which case their board is the new place to return to. The rules are pure functions in `pagePopupModel.ts`, measured by `verify:whiteboard` in both themes.
 - **[2026-10-03]** A drag-resize is authoritative: the box stays where the user dragged it (4px step, 120×96 floor) and `dc.size` becomes a derived *content-layout* hint (nearest preset), not a geometry constraint. A free-form box shows no current preset; picking one snaps back deliberately.
 - **[2026-10-02]** The side panel **pushes** the canvas rather than overlaying it: overlaid it hid Excalidraw's + Add, Library and the right half of the toolbar. Expand still lays the panel over the full board width. The look stays the Brain `.brain-drawer` pattern (slide in from the right, border-left, shadow).
@@ -120,11 +138,18 @@ Phase 1.5 — pages, wiki cards and the side panel (task `whiteboard-wiki-olur-�
 - CLI: `whiteboard add <slug> wiki --title`, `whiteboard nav list|add|remove|move --card <id>`, `show --json` reporting `wikis`.
 - The default **Control Panel** board and its folder now ship inside the brain (`dbf94fd8`).
 
+**What shipped in Phase 1.6 — tabs, a close that asks, a local trash (2026-10-03/04)**
+- **The header is a tab strip.** `BoardTabs.{tsx,css}` with the pure `tabStripLogic.ts` replaced `BoardSwitcher`'s dropdown as the primary surface: tabs side by side, drag reorder, close ≠ delete, groups with a name and 8 chart-token colours, one group line under chip + tabs, an outline in the group colour on the open grouped tab, and a chip click that collapses the group. The arrangement is per machine + vault in `localStorage`, written synchronously because closing the open tab remounts the strip.
+- **Closing asks.** Every close path (×, middle click, Close tab, Close other tabs, Close group) opens an in-app popover: the question, one sentence that the board stays, Cancel and Close, nothing red.
+- **The trash is real and local.** `trash` / `list` / `restore` live in `src/lib/whiteboards/store.ts` under the board lock, exposed as `GET /api/whiteboards/trash` and `POST /api/whiteboards/trash/:id/restore`, with `trash` reserved as a slug; "All boards" grows a folding "Recently deleted" section (relative time + Restore, re-slugged to `<slug>-2` on a collision). `whiteboards/.trash/` carries its own `*` `.gitignore`.
+- **Pan beats an active widget.** While a canvas-started wheel pan runs (momentum included), widgets let the wheel through; the latch drops after 250 ms of quiet, so a pan is never swallowed by an active HTML or web block's iframe.
+- Verification: `tests/unit/whiteboard-tab-strip.test.ts`, `scripts/verify/whiteboard-tabs.mjs` (strip + close + trash), with `verify:whiteboard` unchanged at 679 checks because the `.wbs-*` selectors were kept.
+
 **Key files**
 - `src/lib/whiteboards/`: `format.ts` (parse/serialize, deterministic), `merge.ts` (`mergeElements`), `store.ts` (paths, lock, `mutateWhiteboard`, rev, git hygiene files), `widgets.ts` (`WIDGET_KINDS` incl. `wiki`, `makeWidgetElement`), `validate.ts` (slug/ref/tag/url/element/wiki-sections/PUT body), `nav.ts` (a wiki card's section+page list ops under the board lock), `pages.ts` (knowledge + project-file page search and title resolution), `ops.ts` (show incl. `wikis`, update, remove, draw import), `errors.ts`
 - `src/cli/commands/whiteboard.ts`, `src/server/routes/whiteboards.ts` (incl. `GET /api/whiteboards/pages`), `src/lib/git-sync/semantic-merge.ts`
 - `dashboard/src/components/appLink/DocumentReader.{tsx,css}` (shared reader, mounted by `ViewerWindow` too), `dashboard/src/lib/wikilinks.ts`, `dashboard/src/lib/agentFileKind.ts`, `dashboard/src/components/core/MarkdownPreview.tsx`, `dashboard/src/components/sleepy/chat/PdfViewer.tsx` (embedded mode)
-- `dashboard/src/pages/WhiteboardsPage.tsx`, `dashboard/src/pages/whiteboards/boardHash.ts`, `dashboard/src/hooks/useWhiteboards.ts`, `dashboard/src/hooks/useWhiteboardPages.ts`
+- `dashboard/src/pages/WhiteboardsPage.tsx`, `dashboard/src/pages/whiteboards/boardHash.ts`, `dashboard/src/pages/whiteboards/BoardTabs.{tsx,css}` + `tabStripLogic.ts` (tab strip, groups, close popover), `dashboard/src/pages/whiteboards/BoardSwitcher.{tsx,css}` ("All boards" + Recently deleted), `dashboard/src/hooks/useWhiteboards.ts`, `dashboard/src/hooks/useWhiteboardPages.ts`
 - `dashboard/src/components/whiteboard/**`: `PagePopup.{tsx,css}` + `pagePopupModel.ts` (panel + pan rules), `wikiCardModel.ts`, `widgets/WikiWidget.tsx` + `wikiWidget.css`, `PanelIcons.tsx`, `widgetSize.ts` (free-form resize), `widgets/{KnowledgeWidget,TaskWidget,WidgetFrame}.tsx`, `pageCard.css`
 - `dashboard/src/lib/whiteboardWidgets.ts` (mirror of `WIDGET_KINDS`, drift-tested)
 - Verification: `scripts/verify/whiteboard.mjs` (679 checks, both themes), `tests/unit/whiteboard-{nav,nav-cli,wiki-model,page-popup,page-title,board-hash,widget-size,widget-mirror}.test.ts`, `tests/unit/wikilinks.test.ts`, `tests/unit/agent-file-kind-html.test.ts`
@@ -142,6 +167,13 @@ Phase 1.5 — pages, wiki cards and the side panel (task `whiteboard-wiki-olur-�
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-04 — Phase 1.6: boards became tabs, a close asks, and a delete comes back
+
+- **Chrome-style board tabs** `0979ec13`: the switcher dropdown gave way to `BoardTabs` + `tabStripLogic` — tabs side by side, drag reorder, close ≠ delete, named groups in 8 chart-token colours with a collapsing chip, the arrangement per machine + vault in `localStorage` (written synchronously, since closing the open tab remounts the strip). Old `.wbs-*` selectors kept so `verify:whiteboard` still drives the header. 16/16 unit, `verify:whiteboard-tabs` 21/21 ×3, 679/679 whiteboard verify.
+- **A close that asks, and a trash with a way back** `51a44d9c`: every close path opens an in-app popover saying the board stays (nothing red); "All boards" grows a folding "Recently deleted" with relative times and Restore (`<slug>-2` on a collision); `trash`/`list`/`restore` in the store under the board lock behind `GET /api/whiteboards/trash` and `POST /api/whiteboards/trash/:id/restore`, `trash` reserved as a slug, and `whiteboards/.trash/` given its own `*` `.gitignore` so a delete history never syncs to the team.
+- **A pan survives an active widget** `f12cb471`: a canvas-started wheel pan latches widgets open to the wheel (dropped after 250 ms of quiet), so the gesture is not eaten by an HTML or web block's iframe.
+- **PRD reconciliation:** four user stories and a Phase 1.6 criteria block ticked from the shipped code and tests; three decisions recorded (close-is-not-delete / delete-is-not-loss with the local-only trash, a gesture belongs to where it started, and the tab strip as workspace-local state with the synchronous-write bug the verify script caught); Technical Details and Key files extended; `related_tasks` += the tabs task. `status` stays `in_review` and `released_version` stays `null` — owner sign-off in the installed .app is still open.
 
 ### 2026-10-03 — Phase 1.5: the board grew a wiki side, and reading a page stopped costing you the board
 

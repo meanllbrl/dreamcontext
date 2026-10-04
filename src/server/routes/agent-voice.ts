@@ -236,11 +236,15 @@ export async function handleVoiceStt(
       sendJson(res, 200, { text: local.text, ms: local.ms, engine: `local:${local.model}` });
       return;
     }
+    // Installed but silent is a TRANSIENT failure (a cold or busy whisper server): the composer
+    // retries it. Only a missing install is `stt_unconfigured`, which the mode reads as permanent.
+    if (findWhisper()) {
+      sendJson(res, 503, { error: 'stt_failed', message: 'Local transcription did not answer. Try again in a moment.' });
+      return;
+    }
     sendJson(res, 400, {
       error: 'stt_unconfigured',
-      message: findWhisper()
-        ? 'Local transcription did not answer. Try again in a moment.'
-        : 'Dictation is not installed yet. Install it in Settings → Voice (it downloads the speech model once).',
+      message: 'Dictation is not installed yet. Install it in Settings → Voice (it downloads the speech model once).',
     });
   } finally {
     sttGate.release();
