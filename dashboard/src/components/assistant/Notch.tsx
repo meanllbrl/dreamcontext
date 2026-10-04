@@ -3,8 +3,9 @@ import { createPortal, flushSync } from 'react-dom';
 import { ChatPaneHost, type ChatSurfaceActions } from '../sleepy/ChatPaneHost';
 import { createChatSession, type ChatSession, type NotchPresentation } from '../sleepy/chatSession';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
-import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
-import { isDesktop } from '../../lib/desktop';
+import { FALLBACK_MODEL_CONFIG, quotePath } from '../../lib/agentComposer';
+import { uploadAgentFile } from '../../lib/agentDrop';
+import { isDesktop, pickerOpen } from '../../lib/desktop';
 import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
 import { claimSeat, flying, guardHeal, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
@@ -430,6 +431,7 @@ export function Notch() {
   const [seatMode, setSeatMode] = useState<Seat>('notch');
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const hostRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<ChatSession | null>(null);
   const expandedRef = useRef(false);
   expandedRef.current = expanded;
@@ -709,6 +711,24 @@ export function Notch() {
     }
   }, []);
   useEffect(() => () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current); }, []);
+  // The OS says when the pointer crosses the notch (assistant.rs `watch_hover`): the webview's
+  // own pointerenter only comes while the panel is key, which it almost never is, so a hover
+  // from another app (or under a dragged file) used to drop the peek only sometimes.
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let off: (() => void) | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const fn = await listen<{ inside?: boolean }>('assistant://hover', ({ payload }) => {
+          if (payload?.inside) onHoverIn(); else onHoverOut();
+        });
+        if (cancelled) fn(); else off = fn;
+      } catch { /* no runtime */ }
+    })();
+    return () => { cancelled = true; off?.(); };
+  }, [onHoverIn, onHoverOut]);
 
   // Seat the peek to its content (re-measured as rows change), and fold back to the pill.
   // An event or progress peek with nothing left to say (its row was acted on) is no peek.
@@ -1021,7 +1041,10 @@ export function Notch() {
   // comes. The focus loss stays as the second way out (⌘-Tab away from a panel that had focus).
   useEffect(() => {
     if (!expanded || seatMode === 'window') return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) collapse(); };
+    // An open file picker is a sheet on this panel: it takes the focus, and its clicks land
+    // outside the notch's frame. Neither is the owner leaving, so nothing folds under it.
+    const fold = () => { if (!pickerOpen()) collapse(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) fold(); };
     window.addEventListener('keydown', onKey);
     const unlisteners: Array<() => void> = [];
     let cancelled = false;
@@ -1032,8 +1055,8 @@ export function Notch() {
           const { getCurrentWindow } = await import('@tauri-apps/api/window');
           const { listen } = await import('@tauri-apps/api/event');
           const fns = [
-            await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) collapse(); }),
-            await listen('assistant://outside-click', () => collapse()),
+            await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) fold(); }),
+            await listen('assistant://outside-click', () => fold()),
             // Esc held natively while open (assistant.rs `ESCAPE_GRAB_EVENT`): summoned over
             // another app the panel is never key, so the keydown would go to that app. The
             // native Esc is replayed here as a keydown on whatever has focus, so an open menu
@@ -1054,6 +1077,79 @@ export function Notch() {
       setEscapeGrab(false);
     };
   }, [expanded, collapse, seatMode]);
+
+  // ── A FILE DRAGGED ONTO THE NOTCH ───────────────────────────────────────────────────────
+  // A file dragged over the folded notch opens it on the chat, and dropping it anywhere on
+  // the notch hands it to the Assistant the way a drop on a project chat does (AgentSurface):
+  // the bytes go to the vault temp dir and the path lands in the composer. NATIVE listeners on
+  // the root, because the chat pane is portaled in and React drop props would miss it. A drag
+  // that opened the notch and then leaves without dropping folds it again: `dragover` fires
+  // continuously while a drag is over the page, so its silence means the drag went elsewhere.
+  const dragOpenedRef = useRef(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let leaveTimer = 0;
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+    const openForDrag = () => {
+      if (expandedRef.current) {
+        setTab('chat');
+        setConvosOpen(false);
+        return;
+      }
+      if (seatRef.current !== 'notch') return;
+      dragOpenedRef.current = true;
+      void expand('chat');
+    };
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      window.clearTimeout(leaveTimer);
+      openForDrag();
+    };
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = 'copy';
+      window.clearTimeout(leaveTimer);
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      window.clearTimeout(leaveTimer);
+      leaveTimer = window.setTimeout(() => {
+        if (!dragOpenedRef.current) return;
+        dragOpenedRef.current = false;
+        collapseRef.current();
+      }, 400);
+    };
+    const onDrop = (e: DragEvent) => {
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.clearTimeout(leaveTimer);
+      dragOpenedRef.current = false;
+      openForDrag();
+      void (async () => {
+        for (const file of files) {
+          const path = await uploadAgentFile(ASSISTANT_VAULT, file, file.name);
+          const s = sessionRef.current;
+          if (path && s) { s.sendText(quotePath(path) + ' '); s.focus(); }
+        }
+      })();
+    };
+    el.addEventListener('dragenter', onEnter);
+    el.addEventListener('dragover', onOver);
+    el.addEventListener('dragleave', onLeave);
+    el.addEventListener('drop', onDrop);
+    return () => {
+      window.clearTimeout(leaveTimer);
+      el.removeEventListener('dragenter', onEnter);
+      el.removeEventListener('dragover', onOver);
+      el.removeEventListener('dragleave', onLeave);
+      el.removeEventListener('drop', onDrop);
+    };
+  }, [expand]);
 
   // The seat guard (seatGuard.ts): a resize or move the notch did not ask for is undone at once,
   // and a slow check catches a frame that changed without telling anyone (a Space switch). A
@@ -1178,6 +1274,7 @@ export function Notch() {
 
   return (
     <div
+      ref={rootRef}
       data-mood={mood}
       className={`dc-notch surface-night${expanded ? ' dc-notch--open' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && (popped || expanded) ? ' dc-notch--working' : ''}${peekShown ? ' dc-notch--peek' : ''}${(busyCount > 0 || busy) && !expanded ? ' dc-notch--busy' : ''}`}
       onPointerEnter={onHoverIn}

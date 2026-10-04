@@ -330,8 +330,21 @@ export async function confirmAction(opts: ConfirmOptions): Promise<boolean> {
   return showWebviewConfirm({ title, body, confirmLabel, cancelLabel, destructive });
 }
 
+/** Pickers this page has open right now (each one is a sheet on this window). */
+let pickersOpen = 0;
+
+/**
+ * Is a native picker open on this window? The picker is a sheet: it takes the window's focus
+ * and its clicks can land outside the window's frame, so a surface that folds itself on focus
+ * loss or an outside click (the Assistant notch) must hold still while one is up.
+ */
+export function pickerOpen(): boolean {
+  return pickersOpen > 0;
+}
+
 /** Run a picker, recording — never throwing — a failure to present the panel. */
 async function pickSafely(directory: boolean, multiple: boolean): Promise<string[]> {
+  pickersOpen += 1;
   try {
     const picked = await pickNative(directory, multiple);
     lastPickerError = null;
@@ -340,6 +353,8 @@ async function pickSafely(directory: boolean, multiple: boolean): Promise<string
     lastPickerError = err instanceof Error ? err.message : String(err);
     console.error('[picker] native file picker failed:', lastPickerError);
     return [];
+  } finally {
+    pickersOpen -= 1;
   }
 }
 

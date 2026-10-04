@@ -57,6 +57,8 @@ pub(crate) const WINDOW_MIN_H: f64 = 360.0;
 pub const SEAT_EVENT: &str = "assistant://seat";
 /// Told to the notch webview when a mouse button goes down anywhere outside the OPEN panel.
 pub const OUTSIDE_CLICK_EVENT: &str = "assistant://outside-click";
+/// Told to the notch webview when the pointer enters or leaves the notch (`{ "inside": bool }`).
+pub const HOVER_EVENT: &str = "assistant://hover";
 /// The notch asks for Esc while it is open in the notch seat (`{ "on": bool }`), and lets it go
 /// when it folds. Summoned over another app the panel never becomes key, so a keydown never
 /// reaches the webview; a key MONITOR would need an Accessibility grant. A Carbon hotkey needs
@@ -294,8 +296,18 @@ pub fn ensure_notch<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         // window of a Prohibited app — the opening screen or the Launcher blinked out for
         // ~300ms and came back. Not focusing the new window is all that is needed to not
         // steal focus.
+        // `disable_drag_drop_handler`: with Tauri's handler on, a file dragged from Finder is
+        // swallowed natively and the page never sees `dragenter`/`drop`, so the notch could
+        // neither open under a dragged file nor take it (every other window is built with
+        // `dragDropEnabled: false` for the same reason, lib/desktop.ts).
         .with_window(|w| {
-            w.decorations(false).transparent(true).skip_taskbar(true).shadow(false).always_on_top(true).focused(false)
+            w.decorations(false)
+                .transparent(true)
+                .skip_taskbar(true)
+                .shadow(false)
+                .always_on_top(true)
+                .focused(false)
+                .disable_drag_drop_handler()
         })
         .add_style_mask(StyleMask::empty().nonactivating_panel())
         .transparent(true)
@@ -604,6 +616,8 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, port: u16) {
     });
     let h = app.clone();
     let _ = app.run_on_main_thread(move || watch_outside_clicks(&h));
+    let h = app.clone();
+    let _ = app.run_on_main_thread(move || watch_hover(&h));
     if assistant_enabled() {
         let _ = apply_hotkey(app);
         let _ = ensure_notch(app);
@@ -666,6 +680,63 @@ fn watch_outside_clicks<R: Runtime>(app: &AppHandle<R>) {
     std::mem::forget(unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &local) });
 }
 
+// ── Hover ───────────────────────────────────────────────────────────────────────────
+// WKWebView tracks the pointer only while its window is KEY (`NSTrackingActiveInKeyWindow`
+// whenever scrollbars are the overlay kind, i.e. on a trackpad). The notch is a non-activating
+// panel that is almost never key, so the page saw no `pointerenter` and the hover peek dropped
+// only sometimes — never with another app in front, never under a dragged file. Same remedy as
+// clicks: mouse-move monitors (no Accessibility grant for mouse events) report when the pointer
+// crosses the notch's frame, and only the crossing, never every move.
+
+static POINTER_INSIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Is `p` (screen coords) inside `frame` of a visible window?
+fn is_inside(visible: bool, frame: objc2_foundation::NSRect, p: objc2_foundation::NSPoint) -> bool {
+    visible
+        && p.x >= frame.origin.x
+        && p.x < frame.origin.x + frame.size.width
+        && p.y >= frame.origin.y
+        && p.y < frame.origin.y + frame.size.height
+}
+
+/// Main thread only (the monitors call back on it).
+fn report_hover<R: Runtime>(app: &AppHandle<R>) {
+    use objc2_app_kit::{NSEvent, NSWindow};
+    use std::sync::atomic::Ordering;
+    let Some(w) = app.get_webview_window(NOTCH_LABEL) else { return };
+    let Ok(ptr) = w.ns_window() else { return };
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: the notch's live NSWindow (a tauri-nspanel NSPanel), read on the main thread.
+    let win: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+    let inside = is_inside(win.isVisible(), win.frame(), NSEvent::mouseLocation());
+    if POINTER_INSIDE.swap(inside, Ordering::Relaxed) != inside {
+        let _ = app.emit_to(NOTCH_LABEL, HOVER_EVENT, serde_json::json!({ "inside": inside }));
+    }
+}
+
+/// Install both monitors once, for the app's lifetime (the tokens are never removed). Dragged
+/// moves count too: a file dragged from Finder is a held button, not a plain move.
+fn watch_hover<R: Runtime>(app: &AppHandle<R>) {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSEvent, NSEventMask};
+    use std::ptr::NonNull;
+    let mask = NSEventMask::MouseMoved | NSEventMask::LeftMouseDragged;
+
+    let g = app.clone();
+    let global = RcBlock::new(move |_e: NonNull<NSEvent>| report_hover(&g));
+    std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &global));
+
+    let l = app.clone();
+    let local = RcBlock::new(move |e: NonNull<NSEvent>| -> *mut NSEvent {
+        report_hover(&l);
+        e.as_ptr() // pass the event on untouched
+    });
+    // SAFETY: the handler returns the event it was given, so every move is still delivered.
+    std::mem::forget(unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &local) });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,6 +754,15 @@ mod tests {
     fn a_click_inside_the_panel_is_not() {
         assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(900.0, 800.0)));
         assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(610.0, 520.0)));
+    }
+
+    #[test]
+    fn hover_is_inside_a_visible_frame_only() {
+        let pill = NSRect::new(NSPoint::new(659.0, 1042.0), NSSize::new(300.0, 38.0));
+        assert!(is_inside(true, pill, NSPoint::new(700.0, 1060.0)));
+        assert!(!is_inside(true, pill, NSPoint::new(959.0, 1060.0)));
+        assert!(!is_inside(true, pill, NSPoint::new(700.0, 1000.0)));
+        assert!(!is_inside(false, pill, NSPoint::new(700.0, 1060.0)));
     }
 
     #[test]
