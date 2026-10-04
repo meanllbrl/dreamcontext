@@ -410,7 +410,7 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
   const legendShares = !box.ready || legendPos === 'bottom' || box.width >= 300;
   const legendItems = geo ? slices.map((s) => {
     const arc = geo.arcs.find((a) => a.id === s.id);
-    return { id: s.id, label: arc && legendShares ? `${s.label} ${shareText(arc.share, locale)}` : s.label, color: colors.color(s.id), shape: 'rect' as const };
+    return { id: s.id, label: s.label, value: arc && legendShares ? shareText(arc.share, locale) : undefined, color: colors.color(s.id), shape: 'rect' as const };
   }) : [];
   // A column beside the pie holds only so many rows: the rest become "+N" (the pie's hover still reads them).
   const fitted = legendPos === 'right' && box.ready

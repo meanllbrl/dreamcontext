@@ -292,6 +292,12 @@
   max-height: none;
 }
 
+/* A pie is round: beside it the plot rarely needs its width, so slice names get half the
+   frame before they truncate. The legend still takes only what its names need. */
+.lab-pie-chart[data-legend='right'] .lab-chart-legend {
+  max-width: 50%;
+}
+
 /* Size policy (fit.ts): a small frame's legend is ONE row (the items fit.ts counted, then
    "+N"), or a column beside the plot holding as many rows as the frame is tall. */
 .lab-chart-legend[data-form='row'] {
@@ -372,6 +378,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lab-chart-legend-value {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .lab-chart-legend-item:disabled {

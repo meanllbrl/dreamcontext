@@ -197,7 +197,8 @@ describe('PieChart', () => {
   it('labels: legend (toggle buttons with shares), outside (leader lines), inside, none', () => {
     const legend = html(createElement(PieChart, { rows: ROWS }));
     expect(count(legend, /class="lab-chart-legend-item"/g)).toBe(4);
-    expect(legend).toContain('organic 49%');
+    // The share is its own span, so a long name truncates without taking its share with it.
+    expect(legend).toMatch(/class="lab-chart-legend-label"[^>]*>organic<\/span><span class="lab-chart-legend-value">49%<\/span>/);
     const outside = html(createElement(PieChart, { rows: ROWS, labels: 'outside' }));
     expect(outside).not.toContain('lab-chart-legend');
     expect(count(outside, /class="lab-pie-leader"/g)).toBe(4);

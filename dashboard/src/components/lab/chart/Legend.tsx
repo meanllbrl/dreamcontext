@@ -12,6 +12,9 @@ export interface LegendItem {
   id: string;
   /** Untrusted data: rendered as text only. */
   label: string;
+  /** A short figure after the label (a pie slice's share). Never truncated: only the label
+   *  gives way, so a long name cannot push its number out of the row. Untrusted, text only. */
+  value?: string;
   color: string;
   /** Mirror the mark: 'rect' for bars/areas/slices, 'line' for lines. */
   shape?: KeyShape;
@@ -42,7 +45,12 @@ export function Legend({ items, hidden, onToggle, more = 0, form = 'wrap' }: Leg
       {items.map((it) => {
         const on = !hidden?.has(it.id);
         const key = <span className="lab-chart-key" data-shape={it.shape ?? 'rect'} style={{ color: it.color }} aria-hidden="true" />;
-        const text = <span className="lab-chart-legend-label" title={it.label}>{it.label}</span>;
+        const text = (
+          <>
+            <span className="lab-chart-legend-label" title={it.value ? `${it.label} ${it.value}` : it.label}>{it.label}</span>
+            {it.value && <span className="lab-chart-legend-value">{it.value}</span>}
+          </>
+        );
         return (
           <li key={it.id} style={{ minWidth: 0, maxWidth: '100%', display: 'flex' }}>
             {onToggle ? (
