@@ -1,6 +1,8 @@
 ---
 name: excalidraw
 description: >-
+  NOT for a dreamcontext whiteboard or control panel (`_dream_context/whiteboards/`): its metrics are
+  live insight widgets added with `dreamcontext whiteboard add`, never charts drawn here.
   Generate or extend Obsidian Excalidraw (.excalidraw.md) boards in this vault — visual-first diagrams,
   charts (line/bar/comparison/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline),
   funnels, device mockups (iPhone/iPad/Mac) and wireframes/prototypes, flowcharts, image/screenshot
@@ -27,6 +29,16 @@ Write `.excalidraw.md` files that render natively in this vault's Obsidian Excal
 **Do not hand-author the scene JSON.** Build a small spec and run the generator — it produces the
 frontmatter, `## Text Elements`, `## Embedded Files`, and the `%% ## Drawing … %%` JSON, with
 correct sha1 image links, fractional z-indices, and deterministic seeds (clean git diffs).
+
+> **STOP if the target is a dreamcontext whiteboard.** A file under `_dream_context/whiteboards/`, or
+> one whose frontmatter has `dreamcontext-whiteboard: 1`, is not this skill's output: read the
+> `dreamcontext` skill's `references/whiteboards.md` and edit it with `dreamcontext whiteboard …`.
+> **A number on a whiteboard (MRR, revenue, signups, a trend, a split) is a live `insight` widget**
+> (`dreamcontext whiteboard add <board> insight --ref <insight-slug>`), never a `kpi()`/`lineChart()`/
+> `donut()` drawn from today's values: a drawn number is stale the moment the board is saved. If the
+> metric has no insight yet, create the insight first (`dreamcontext lab create`), then add its widget.
+> This skill only feeds a whiteboard **data-free** drawings (a flow, a sketch, a wireframe) through
+> `dreamcontext whiteboard draw`.
 
 ## Design principles (read first)
 

@@ -8,6 +8,8 @@ A whiteboard is an editable Excalidraw canvas that carries **live widgets**: an 
 
 When the user says *board / whiteboard / control panel / pano* and means a place to put things and come back to, it is a whiteboard.
 
+**A number on a whiteboard is a live widget, never a drawing.** "Put current MRR, this month's revenue, the monthly trend, the split on the control panel" means one `insight` widget per metric, so the board re-reads the Lab cache every time it opens. Never draw the values with the `excalidraw` skill's `kpi()`/`lineChart()`/`donut()`, never write a generator script that bakes them, never hand-write the board: all three freeze today's numbers into shapes. A metric with no insight yet gets one first (`dreamcontext lab create`, offer-and-confirm), then its widget. Open work goes on as `task` widgets or a `todo`. Recipe (0) below.
+
 ---
 
 ## Storage and format
@@ -115,6 +117,19 @@ dreamcontext whiteboard nav remove <slug> --section <id|title> [--page <ref|#n>]
 
 ## Recipes
 
+### (0) A control panel of metrics: one insight widget per number
+
+```bash
+dreamcontext lab list                                # which metrics are already tracked
+dreamcontext lab create mrr-split --title "MRR split" # only for a metric with no insight yet
+dreamcontext whiteboard add control-panel insight --ref mrr --title "MRR" --size s --tag panel
+dreamcontext whiteboard add control-panel insight --ref revenue-monthly --title "Revenue by month" --size l --tag panel
+dreamcontext whiteboard add control-panel insight --ref mrr-split --size l --tag panel
+dreamcontext whiteboard add control-panel task --ref <urgent-task-slug> --tag panel
+```
+
+Size picks the view: `s` is the number alone, `m` adds the change and a sparkline, `l`/`xl` draw the chart. The insight's own `render` (`line`, `bar`, `pie`, `funnel`, …) decides the chart, so a split wants a `pie` insight, not a drawn donut. A heading or a short explanation is a `note`. Rebuilding the panel is `remove control-panel --tag panel` and the same adds.
+
 ### (a) The daily board: yesterday out, today in, same place
 
 ```bash
@@ -138,7 +153,7 @@ Carry the unticked items into tomorrow's list; report the ticked ones as done (a
 
 ### (c) Importing a drawing from the excalidraw skill
 
-Build the diagram with the `excalidraw` skill's builder as usual (it writes an `.excalidraw.md` or a scene `.json`), then:
+Only for a drawing with no live data in it (a flow, a sketch, a wireframe); a metric is recipe (0). Build the diagram with the `excalidraw` skill's builder as usual (it writes an `.excalidraw.md` or a scene `.json`), then:
 
 ```bash
 dreamcontext whiteboard draw gunluk --file /tmp/funnel.excalidraw.md --at 0,400 --tag funnel
