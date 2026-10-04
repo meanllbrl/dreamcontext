@@ -338,7 +338,9 @@ export function layoutBars({ model: fullModel, hidden, opts, width, height, font
   });
   const valueTicks = (len: number): AxisTick[] => {
     const s = valueScale(len);
-    const f = tickFormatter(s.ticks, s.step, fmt);
+    // A percent axis says so on every tick ("0%, 5%, 10%"): bare numbers under a % title read as counts.
+    // Other units stay in the title, where one copy is enough.
+    const f = tickFormatter(s.ticks, s.step, fmt, fmt.unit?.trim() === '%');
     return s.ticks.map((v) => ({ pos: s(v), label: f(v), value: v }));
   };
   const band = (len: number) => bandScale(nCat, [0, len], { paddingInner: SLOT_PADDING, paddingOuter: SLOT_PADDING / 2 });

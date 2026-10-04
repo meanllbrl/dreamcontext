@@ -229,6 +229,13 @@ export interface InsightManifest {
   source: InsightSource | null;
   refresh: RefreshConfig;
   tweaks: TweakDecl[];
+  /**
+   * `tweaks_from: <slug>`: this insight shares that insight's date window. A window change on
+   * any member of the group (the source or a follower) is written to all of them
+   * (`writeWindowTweaks`), so cards derived from one source never show different windows.
+   * Null when absent, or when it names itself.
+   */
+  tweaks_from: string | null;
   binding: Binding | null;
   credentials_used: string[];
   unit: string | null;

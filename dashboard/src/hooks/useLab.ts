@@ -128,6 +128,8 @@ export interface InsightDetail {
   insight: PublicManifest;
   meaning: string;
   resolvedTweaks: Record<string, string>;
+  /** The window the tweaks resolve to today (absent from an older server). */
+  resolvedRange?: { fromISO: string; toISO: string };
   cache: InsightCache | null;
   /** Previous-period values (server-computed: adapter `prev` wins, else the
    *  best equal-length history snapshot). Null for non-funnel insights. */
@@ -389,11 +391,17 @@ export function useApplyTweaks() {
     mutationFn: async ({ slug, tweaks }) => {
       // A rejection here means the value never landed — the caller says "could
       // not save", not "saved but stale".
-      await api.patch<{ insight: PublicManifest }>(`/lab/${slug}/tweaks`, { tweaks });
+      const patched = await api.patch<{ insight: PublicManifest; moved?: string[] }>(`/lab/${slug}/tweaks`, { tweaks });
       const data = await api.post<{ results: SyncResult[]; failed: SyncResult[] }>(
         '/lab/sync',
         { slug, force: 'user' },
       );
+      // tweaks_from: the insights sharing this window moved with it; their data follows too.
+      // One at a time, after the insight itself, so the card the user touched settles first;
+      // a follower's failed sync stamps its own cache and never fails this mutation.
+      for (const other of patched.moved ?? []) {
+        await api.post('/lab/sync', { slug: other, force: 'user' }).catch(() => undefined);
+      }
       const result = data.results[0];
       return result?.status === 'failed'
         ? { synced: false, error: result.error ?? 'unknown error' }

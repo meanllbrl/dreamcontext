@@ -288,6 +288,23 @@ export function boardFromWire(r: BoardResponse & { frameAliases?: Record<string,
 }
 
 /**
+ * One insight's funnel-explorer card as a one-card, read-only board
+ * (`GET /api/lab/explorer/:slug`): the blocks `--preset funnel-explorer` writes, resolved by the
+ * board engine, for a surface outside Lab. Under `['lab', …]`, so a sync or a tweak refetches it.
+ * A 422 (no funnel data yet) is an error the caller words.
+ */
+export function useLabExplorer(slug: string | null, locale: 'en' | 'tr') {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['lab', 'explorer', slug ?? '', locale] as const,
+    queryFn: () => api.get<BoardResponse>(`/lab/explorer/${encodeURIComponent(slug as string)}?locale=${locale}`).then(boardFromWire),
+    enabled: !!slug,
+    retry: 0,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/**
  * One board: spec + frames + summaries. Unsaved edits are laid over the
  * server's spec, so a refetch mid-save (a sync invalidating `['lab']`) never
  * snaps a card back to where it was before the drag.

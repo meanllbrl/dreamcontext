@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { password } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, header, warn } from '../../lib/format.js';
-import { createInsight, getInsight, listInsights, readCache, writeInsightTweaks } from '../../lib/lab/store.js';
+import { createInsight, getInsight, listInsights, readCache, writeWindowTweaks } from '../../lib/lab/store.js';
 import {
   bindInsight,
   normalizeSyncForce,
@@ -300,7 +300,13 @@ export type ExplorerSliceView = Omit<FunnelSlice, 'daily' | 'metrics' | 'bands'>
 export interface BoardExplorerView {
   /** The selection the slice honours (undeclared dims are in `slice.ignored`). */
   selection: Selection;
+  /**
+   * The selection's own slice. Absent on a segments block: its frame keeps only the paths that
+   * name its `by` dim, so the bare selection's path is not in it, and "not measured" would be a
+   * lie about data that exists. Its rows carry the measurement; `funnelName` names the funnel.
+   */
   slice?: ExplorerSliceView;
+  funnelName?: string;
   axes?: BreakdownAxis[];
   rows?: BenchmarkRow[] | SegmentRow[];
   /** Segments: the dim the rows split by. */
@@ -425,6 +431,8 @@ export function explorerBlockView(type: string, frame: FunnelFrame, options: Rec
       const picked = optList(options, 'metrics');
       const metricKeys = picked ? picked.filter((k) => k in levels) : Object.keys(levels);
       out.by = by;
+      delete out.slice;
+      out.funnelName = slice.funnelName;
       out.rows = sortSegmentRows(segmentRows(frame, pick, by, selection, metricKeys), options.sort, metricKeys, options.limit);
     }
   }
@@ -522,7 +530,8 @@ function notMeasuredLine(reason: string | null): string {
 function explorerLines(x: BoardExplorerView): string[] {
   const sel = Object.entries(x.selection).map(([k, v]) => `${k}=${v}`).join(', ');
   const s = x.slice;
-  const lines = [`${s ? `${s.funnelName} · ` : ''}${sel ? `selection ${sel}` : 'all traffic'}${s?.ignored.length ? chalk.dim(` · not split by ${s.ignored.join(', ')}`) : ''}`];
+  const name = s?.funnelName ?? x.funnelName;
+  const lines = [`${name ? `${name} · ` : ''}${sel ? `selection ${sel}` : 'all traffic'}${s?.ignored.length ? chalk.dim(` · not split by ${s.ignored.join(', ')}`) : ''}`];
   if (s && !s.measured) lines.push(notMeasuredLine(s.reason));
   else if (s?.lowSample) lines.push(chalk.dim(`low sample: ${s.users} users`));
   if (x.drops) {
@@ -1157,8 +1166,12 @@ export function registerLabCommand(program: Command): void {
     .action((slug: string, key: string, value: string) => {
       const root = ensureContextRoot();
       try {
-        writeInsightTweaks(root, slug, { [key]: value });
+        const { moved } = writeWindowTweaks(root, slug, { [key]: value });
         success(`${slug}: tweak "${key}" set to "${value}".`);
+        if (moved.length > 0) {
+          // tweaks_from: the window is shared, so the rest of the group moved with it.
+          console.log(chalk.dim(`  Same window now on: ${moved.join(', ')} (tweaks_from). Re-sync them: dreamcontext lab sync ${[slug, ...moved].join(' && dreamcontext lab sync ')}`));
+        }
       } catch (err) {
         handleLabError(err);
       }

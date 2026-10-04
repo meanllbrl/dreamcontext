@@ -12,8 +12,10 @@ import {
   unplacedInsights,
   type Board,
   type BoardResponse,
+  type Card,
 } from '../../lib/lab/boards.js';
-import { resolveBoardFrames } from '../../lib/lab/frames.js';
+import { resolveBoardFrames, resolveFrame } from '../../lib/lab/frames.js';
+import { FUNNEL_EXPLORER_SIZE, funnelExplorerBlocks } from '../../lib/lab/presets.js';
 import { shareFrames } from '../../lib/lab/frameOps.js';
 import {
   getLibraryBlock,
@@ -38,6 +40,7 @@ import { toSummary, withoutHistoryTrails } from './lab.js';
  *   PUT    /api/lab/boards/:slug        { rev, spec } -> strict-validated, rev-checked write
  *   DELETE /api/lab/boards/:slug[?rev=] delete (materializes the others first when derived)
  *   GET    /api/lab/caches?slugs=a,b    summaries + caches (no history trails), <= 60 slugs
+ *   GET    /api/lab/explorer/:slug      one insight's funnel-explorer card as a one-card board (read-only)
  *   GET    /api/lab/blocks[/:slug]      the vault's custom HTML block library
  *   PUT    /api/lab/blocks/:slug        { title, description?, inputs?, html, rev? }
  *
@@ -381,5 +384,74 @@ export async function handleLabBlockPut(
     }
     console.error('[lab] block save failed:', err);
     sendError(res, 500, 'blocks_failed', 'Failed to save the library block.');
+  }
+}
+
+/** The one-card board's slug prefix: never a file name (`~` fails `isSafeInsightSlug`), so it cannot collide. */
+export const EXPLORER_BOARD_PREFIX = '~explorer-';
+
+/**
+ * The funnel-explorer card of `insight` as a one-card, read-only board: the same blocks
+ * `lab board add-card --preset funnel-explorer` writes, resolved by the same frame engine, so a
+ * surface outside Lab (a whiteboard widget) draws the card exactly as a Lab board does. Nothing
+ * is written. Null when the insight's cache carries no funnel set (unsynced, or not a funnel).
+ */
+export function buildExplorerResponse(contextRoot: string, insight: string, locale: 'en' | 'tr'): BoardWireResponse | null {
+  const manifest = getInsight(contextRoot, insight);
+  if (!manifest) return null;
+  const frame = resolveFrame(contextRoot, insight, ['funnel']);
+  if (frame.kind !== 'funnel') return null;
+  const dims = (frame.dimensions ?? []).map((d) => ({ key: d.key, label: d.label }));
+  const card = {
+    id: `c-${insight}`,
+    at: { x: 0, y: 0, w: FUNNEL_EXPLORER_SIZE.w, h: FUNNEL_EXPLORER_SIZE.h },
+    title: manifest.title,
+    insight,
+    blocks: funnelExplorerBlocks(insight, dims, locale) as Card['blocks'],
+  } as Card;
+  const board: Board = {
+    slug: `${EXPLORER_BOARD_PREFIX}${insight}`,
+    title: manifest.title,
+    order: 0,
+    cards: [card],
+    body: '',
+    rev: '',
+    derived: true,
+    error: null,
+    warnings: [],
+  };
+  const { frames, aliases } = shareFrames(resolveBoardFrames(contextRoot, board));
+  return {
+    board,
+    frames,
+    ...(Object.keys(aliases).length > 0 ? { frameAliases: aliases } : {}),
+    summaries: boardSummaries(contextRoot, board),
+    unplaced: [],
+  };
+}
+
+/** GET /api/lab/explorer/:slug[?locale=en|tr] — the insight's funnel-explorer card (see buildExplorerResponse). */
+export async function handleLabExplorer(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const slug = slugParam(res, params, 'insight');
+  if (!slug) return;
+  const lang = new URL(req.url || '/', 'http://localhost').searchParams.get('locale');
+  try {
+    if (!getInsight(contextRoot, slug)) {
+      sendError(res, 404, 'not-found', `Insight not found: ${slug}`);
+      return;
+    }
+    const out = buildExplorerResponse(contextRoot, slug, lang === 'tr' ? 'tr' : 'en');
+    if (!out) {
+      sendError(res, 422, 'no-funnel', `${slug} has no funnel data: sync it, or it is not a funnel insight.`);
+      return;
+    }
+    sendJson(res, 200, out);
+  } catch (err) {
+    sendStoreError(res, err, 'build the funnel explorer');
   }
 }

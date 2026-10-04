@@ -5,7 +5,7 @@ import {
   getInsight,
   listInsights,
   readCache,
-  writeInsightTweaks,
+  writeWindowTweaks,
 } from '../../lib/lab/store.js';
 import { resolveTweaks } from '../../lib/lab/tweaks.js';
 import { computeFunnelPrev } from '../../lib/lab/funnel.js';
@@ -160,10 +160,13 @@ export async function handleLabShow(
     // best equal-length history snapshot) are computed HERE so the dashboard
     // and `lab show` share one delta implementation.
     const funnelPrev = cache?.funnel ? computeFunnelPrev(cache.funnel, cache.funnelHistory) : null;
+    const resolved = resolveTweaks(manifest);
     sendJson(res, 200, {
       insight: toPublicManifest(manifest),
       meaning: manifest.body,
-      resolvedTweaks: resolveTweaks(manifest).values,
+      resolvedTweaks: resolved.values,
+      // The window the tweaks resolve to today: what a surface prints when the cache carries no window of its own.
+      resolvedRange: resolved.range,
       cache: withoutHistoryTrails(cache),
       funnelPrev,
     });
@@ -420,8 +423,10 @@ export async function handleLabTweaks(
   const values: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawTweaks)) values[k] = String(v);
   try {
-    const manifest = writeInsightTweaks(contextRoot, params.slug, values);
-    sendJson(res, 200, { insight: toPublicManifest(manifest) });
+    // A window change moves the insight's whole tweaks_from group; `moved` names the others,
+    // which the caller re-syncs with it.
+    const { manifest, moved } = writeWindowTweaks(contextRoot, params.slug, values);
+    sendJson(res, 200, { insight: toPublicManifest(manifest), moved });
   } catch (err) {
     if (err instanceof LabError) {
       const notFound = /not found/i.test(err.message);

@@ -102,6 +102,7 @@ import {
   handleLabBlockShow,
   handleLabBlocksList,
   handleLabCaches,
+  handleLabExplorer,
 } from './routes/lab-boards.js';
 import { sweepBoardStaging } from '../lib/lab/boards.js';
 import {
@@ -674,6 +675,7 @@ export function buildRouter(): Router {
   router.put('/api/lab/boards/:slug', handleLabBoardPut);
   router.delete('/api/lab/boards/:slug', handleLabBoardDelete);
   router.get('/api/lab/caches', handleLabCaches);
+  router.get('/api/lab/explorer/:slug', handleLabExplorer);
   router.get('/api/lab/blocks', handleLabBlocksList);
   router.get('/api/lab/blocks/:slug', handleLabBlockShow);
   router.put('/api/lab/blocks/:slug', handleLabBlockPut);

@@ -250,6 +250,13 @@ function toStringArray(v: unknown): string[] {
   return [];
 }
 
+/** `tweaks_from`: a safe slug that is not the insight itself, else null (read stays lenient). */
+function parseTweaksFrom(v: unknown, self: string): string | null {
+  if (typeof v !== 'string') return null;
+  const slug = v.trim();
+  return slug && slug !== self && isSafeInsightSlug(slug) ? slug : null;
+}
+
 export function readInsightFile(filePath: string): InsightManifest {
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
   const slug = basename(filePath, '.md');
@@ -266,6 +273,7 @@ export function readInsightFile(filePath: string): InsightManifest {
     source: parseSource(data.source),
     refresh: parseRefresh(data.refresh),
     tweaks: parseTweaks(data.tweaks),
+    tweaks_from: parseTweaksFrom(data.tweaks_from, slug),
     binding: parseBinding(data.binding),
     credentials_used: toStringArray(data.credentials_used),
     unit: strOrNull(data.unit),
@@ -841,4 +849,53 @@ export function writeInsightTweaks(
   }
   updateFrontmatterFields(manifest.path, { tweaks: nextTweaks, updated_at: today() });
   return readInsightFile(manifest.path);
+}
+
+// ─── Shared windows (`tweaks_from`) ─────────────────────────────────────────
+
+/** The tweak keys that make up an insight's date window. */
+export const WINDOW_TWEAK_KEYS = ['range', 'from', 'to'] as const;
+
+/**
+ * The insights sharing `slug`'s date window: its source (its `tweaks_from`, else itself) and every
+ * insight whose `tweaks_from` names that source. One hop only: a source that itself follows
+ * another is still the group's root here, so a chain never loops. Sorted, source first.
+ */
+export function windowGroup(contextRoot: string, slug: string): string[] {
+  const self = getInsight(contextRoot, slug);
+  if (!self) return [];
+  const source = self.tweaks_from && getInsight(contextRoot, self.tweaks_from) ? self.tweaks_from : slug;
+  const followers = listInsights(contextRoot)
+    .filter((m) => m.tweaks_from === source && m.slug !== source)
+    .map((m) => m.slug)
+    .sort();
+  return [source, ...followers];
+}
+
+/**
+ * `writeInsightTweaks`, plus the shared window: the window keys (`range`, `from`, `to`) go to
+ * every insight of `slug`'s window group, the other keys to `slug` only. Each other member gets
+ * the written insight's window declarations as they now stand (options included), so a member
+ * whose own enum lacks the value still lands on the same window. Returns the written manifest
+ * and the OTHER members moved (the caller re-syncs them).
+ */
+export function writeWindowTweaks(
+  contextRoot: string,
+  slug: string,
+  values: Record<string, string>,
+): { manifest: InsightManifest; moved: string[] } {
+  const manifest = writeInsightTweaks(contextRoot, slug, values);
+  const touchesWindow = Object.keys(values).some((k) => (WINDOW_TWEAK_KEYS as readonly string[]).includes(k));
+  if (!touchesWindow) return { manifest, moved: [] };
+  const window = manifest.tweaks.filter((t) => (WINDOW_TWEAK_KEYS as readonly string[]).includes(t.key));
+  const moved: string[] = [];
+  for (const other of windowGroup(contextRoot, slug)) {
+    if (other === slug) continue;
+    const m = getInsight(contextRoot, other);
+    if (!m) continue;
+    const kept = m.tweaks.filter((t) => !(WINDOW_TWEAK_KEYS as readonly string[]).includes(t.key));
+    updateFrontmatterFields(m.path, { tweaks: [...kept, ...window.map((t) => ({ ...t }))], updated_at: today() });
+    moved.push(other);
+  }
+  return { manifest, moved };
 }
