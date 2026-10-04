@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { excalidrawWidgetLinkIcon } from './excalidraw-widget-link-icon';
 
 // The CLI package version this bundle ships with. The app compares it against
 // /api/health's `version` to detect a stale (upgraded-under) server process.
@@ -23,7 +24,7 @@ function excalidrawFonts(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), excalidrawFonts()],
+  plugins: [react(), excalidrawFonts(), excalidrawWidgetLinkIcon()],
   define: {
     __DC_VERSION__: JSON.stringify(pkg.version),
   },
