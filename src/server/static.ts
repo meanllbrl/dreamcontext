@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { mediaContentType, serveMedia } from './media.js';
+import { findRetainedAsset, retainBuildAssets } from './retained-assets.js';
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -61,6 +62,10 @@ export function serveStatic(
     filePath = join(filePath, 'index.html');
   }
 
+  // A chunk an older build named, still open in a tab, survives the rebuild that
+  // removed it (see retained-assets.ts).
+  if (!existsSync(filePath)) filePath = findRetainedAsset(url.pathname) ?? filePath;
+
   // Serve the file if it exists
   const stat = existsSync(filePath) ? statSync(filePath) : null;
   if (stat?.isFile()) {
@@ -79,6 +84,7 @@ export function serveStatic(
     }
 
     const content = readFileSync(filePath);
+    if (filePath === join(staticDir, 'index.html')) retainBuildAssets(staticDir, content);
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': content.length,
@@ -103,6 +109,7 @@ export function serveStatic(
     const indexPath = join(staticDir, 'index.html');
     if (existsSync(indexPath)) {
       const content = readFileSync(indexPath);
+      retainBuildAssets(staticDir, content);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': content.length,

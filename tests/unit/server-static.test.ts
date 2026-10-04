@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { serveStatic, cacheControlFor } from '../../src/server/static.js';
+import { resetRetainedAssetsForTests } from '../../src/server/retained-assets.js';
 
 let staticDir: string;
 
@@ -187,5 +188,63 @@ describe('serveStatic — video is streamed with byte ranges', () => {
   it('keeps a re-recorded clip revalidating rather than pinned for a year', async () => {
     const r = await runMedia(url);
     expect(r.header('Cache-Control')).toBe('no-cache');
+  });
+});
+
+describe('serveStatic — chunks of a build a tab is still running', () => {
+  let dir: string;
+  let snapshotRoot: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dc-static-rebuild-'));
+    snapshotRoot = mkdtempSync(join(tmpdir(), 'dc-static-snapshots-'));
+    resetRetainedAssetsForTests(snapshotRoot);
+    writeFileSync(join(dir, 'index.html'), '<script src="/assets/index-OLD.js"></script>');
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'assets', 'ExcalidrawCanvas-OLD.js'), 'export const board = "old";');
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(snapshotRoot, { recursive: true, force: true });
+  });
+
+  function get(url: string, accept = '*/*') {
+    const captured: { status?: number; headers?: Record<string, unknown>; body?: string } = {};
+    const req = { url, method: 'GET', headers: { host: 'localhost:4173', accept } } as unknown as IncomingMessage;
+    const res = {
+      writeHead(status: number, headers?: Record<string, unknown>) {
+        captured.status = status;
+        captured.headers = headers;
+        return this;
+      },
+      end(body?: Buffer | string) {
+        captured.body = body == null ? '' : body.toString();
+      },
+    } as unknown as ServerResponse;
+    serveStatic(req, res, dir);
+    return captured;
+  }
+
+  it('still serves a lazy chunk the rebuild removed, once its index.html was handed out', () => {
+    expect(get('/', 'text/html').status).toBe(200);
+
+    // The rebuild: remove-then-copy, new hashes.
+    rmSync(join(dir, 'assets'), { recursive: true, force: true });
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'assets', 'ExcalidrawCanvas-NEW.js'), 'export const board = "new";');
+    writeFileSync(join(dir, 'index.html'), '<script src="/assets/index-NEW.js"></script>');
+
+    const old = get('/assets/ExcalidrawCanvas-OLD.js');
+    expect(old.status).toBe(200);
+    expect(old.body).toBe('export const board = "old";');
+    expect(old.headers?.['Content-Type']).toBe('application/javascript; charset=utf-8');
+
+    expect(get('/assets/ExcalidrawCanvas-NEW.js').body).toBe('export const board = "new";');
+  });
+
+  it('a chunk no handed-out build ever had still 404s', () => {
+    expect(get('/assets/Never-XYZ.js').status).toBe(404);
+    expect(get('/assets/../index.html').status).not.toBe(500);
   });
 });
