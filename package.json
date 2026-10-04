@@ -35,6 +35,7 @@
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
     "verify:assistant": "node scripts/verify/assistant.mjs",
     "verify:chat-agent-title": "node scripts/verify/chat-agent-title.mjs",
+    "verify:chat-compact": "node scripts/verify/chat-compact.mjs",
     "verify:chat-questions": "node scripts/verify/chat-questions.mjs",
     "verify:train-me": "node scripts/verify/train-me.mjs",
     "verify:chat-scroll": "node scripts/verify/chat-scroll.mjs",

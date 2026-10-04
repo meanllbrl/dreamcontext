@@ -18,7 +18,7 @@
 /** One replayed transcript item — the wire shape of `chat-history`'s `items`, mirroring the
  *  client's ChatItem vocabulary (chatSession.ts) minus live-only bookkeeping. */
 export interface ChatHistoryItem {
-  kind: 'user' | 'text' | 'thinking' | 'tool';
+  kind: 'user' | 'text' | 'thinking' | 'tool' | 'compact';
   uuid?: string;
   text?: string;
   toolUseId?: string;
@@ -30,6 +30,11 @@ export interface ChatHistoryItem {
   at?: number;
   /** A tool's result row time, epoch ms: when the call finished. */
   endAt?: number;
+  /** A `compact` item: what started it and the window before and after. Its `text` is the raw
+   *  summary Claude Code wrote, which the client trims for display. */
+  trigger?: 'manual' | 'auto';
+  preTokens?: number;
+  postTokens?: number;
 }
 
 /** A transcript row's own `timestamp`, as epoch ms, or undefined. Never 0: that is no time. */
@@ -80,6 +85,8 @@ export function userPromptOf(obj: unknown): string {
   };
   if (o.type !== 'user') return '';
   if (o.isMeta === true || o.isSynthetic === true) return '';
+  // A compaction's summary: written as a `user` entry, never typed by anyone.
+  if ((o as { isCompactSummary?: unknown }).isCompactSummary === true) return '';
   const content = o.message?.content;
   if (typeof content === 'string') {
     const text = content.trim();
@@ -118,7 +125,8 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
     if (!s) continue;
     let obj: {
       type?: unknown; uuid?: unknown; isMeta?: unknown; isSynthetic?: unknown;
-      isSidechain?: unknown; timestamp?: unknown;
+      isSidechain?: unknown; timestamp?: unknown; subtype?: unknown; isCompactSummary?: unknown;
+      compactMetadata?: { trigger?: unknown; preTokens?: unknown; postTokens?: unknown };
       message?: { role?: unknown; content?: unknown };
     };
     try { obj = JSON.parse(s); } catch { continue; }
@@ -137,6 +145,30 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
     // Where the row sits in time: how a reopened chat places a card no call names.
     const at = rowTime(obj.timestamp);
     const when = at != null ? { at } : {};
+
+    // A compaction: the boundary row carries the token drop, the summary row right after it the
+    // text (CLI 2.1.261). One item from the pair; a summary with no boundary before it still shows.
+    if (obj.type === 'system' && obj.subtype === 'compact_boundary') {
+      const m = obj.compactMetadata ?? {};
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+      items.push({
+        kind: 'compact',
+        ...(m.trigger === 'manual' || m.trigger === 'auto' ? { trigger: m.trigger } : {}),
+        ...(num(m.preTokens) !== undefined ? { preTokens: num(m.preTokens) } : {}),
+        ...(num(m.postTokens) !== undefined ? { postTokens: num(m.postTokens) } : {}),
+        ...when,
+      });
+      continue;
+    }
+    if (obj.type === 'user' && obj.isCompactSummary === true) {
+      const content = obj.message?.content;
+      const text = typeof content === 'string' ? content
+        : Array.isArray(content) ? content.map((b) => (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join('\n') : '';
+      const last = items[items.length - 1];
+      if (last?.kind === 'compact' && last.text === undefined) items[items.length - 1] = { ...last, text };
+      else items.push({ kind: 'compact', text, ...when });
+      continue;
+    }
 
     if (obj.type === 'user') {
       if (obj.isMeta === true || obj.isSynthetic === true) continue;

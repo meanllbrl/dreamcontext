@@ -4,20 +4,20 @@ import { agentFileUrl, type ApiClient } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
-  inlineMediaKind, splitUserMedia, revealPath,
+  inlineMediaKind, splitUserMedia, revealPath, formatTokenCount,
 } from './chatEntities';
 import { parseChatActions, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
 import { BoardEmbed } from './BoardEmbed';
 import { MediaEmbed } from './MediaEmbed';
 import { ChatBlockSegment, ChatViewNotices } from './ChatViews';
-import { IconButton } from './atoms';
+import { Caret, IconButton } from './atoms';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
-  ChatItem, ChatUserItem, ChatTextItem, ChatThinkingItem, ChatSession,
+  ChatItem, ChatUserItem, ChatTextItem, ChatThinkingItem, ChatCompactItem, ChatSession,
 } from '../chatSession';
 
 /**
@@ -374,6 +374,47 @@ function ThinkingBlock({ item, stretch }: { item: ChatThinkingItem; stretch: Ste
   );
 }
 
+// ─── Compaction ─────────────────────────────────────────────────────────────────────
+
+/** `Conversation compacted · 281k → 19k tokens`, as far as the CLI said. */
+function compactLabel(item: ChatCompactItem): string {
+  if (item.status === 'running') return 'Compacting conversation…';
+  if (item.status === 'error') return 'Compaction failed';
+  const head = item.trigger === 'auto' ? 'Conversation auto-compacted' : 'Conversation compacted';
+  if (item.preTokens === undefined || item.postTokens === undefined) return head;
+  return `${head} · ${formatTokenCount(item.preTokens).replace(/ tokens?$/, '')} → ${formatTokenCount(item.postTokens)}`;
+}
+
+/**
+ * The line where the model's memory of this conversation turns into a summary. The summary is
+ * what the agent now works from, and the CLI never shows it to a person, so it opens here.
+ */
+function CompactDivider({ item }: { item: ChatCompactItem }) {
+  const [open, setOpen] = useState(false);
+  const summary = item.summary;
+  const label = <span className="chat-m-compact-label">{compactLabel(item)}</span>;
+  return (
+    <div className="chat-m-compact" data-status={item.status}>
+      <div className="chat-m-compact-rule">
+        {summary ? (
+          <button type="button" className="chat-m-compact-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+            {label}
+            <span className="chat-m-compact-hint">{open ? 'Hide summary' : 'Show summary'}</span>
+            <Caret open={open} />
+          </button>
+        ) : (
+          <span className="chat-m-compact-head">{label}</span>
+        )}
+      </div>
+      {open && summary && (
+        <div className="chat-m-compact-body">
+          <MarkdownPreview content={summary} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Dispatcher ─────────────────────────────────────────────────────────────────────
 
 /** Where a step line sits in its speaker's stretch — see `stepStretches` (toolAction.ts). */
@@ -446,6 +487,8 @@ function ItemViewInner({
           stretchRunning={stretchRunning}
         />
       );
+    case 'compact':
+      return <CompactDivider item={item} />;
     default:
       return null;
   }

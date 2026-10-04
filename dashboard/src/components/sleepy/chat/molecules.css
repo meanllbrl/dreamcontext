@@ -345,6 +345,53 @@
   white-space: pre-wrap;
 }
 
+/* ── Compaction divider ──────────────────────────────────────────────────────────── */
+
+.chat-m-compact { align-self: stretch; width: 100%; max-width: var(--chat-line-width, 100%); margin: var(--space-2) 0; }
+.chat-m-compact-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.chat-m-compact-rule::before,
+.chat-m-compact-rule::after { content: ''; flex: 1; height: 1px; background: var(--color-border); }
+.chat-m-compact-head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+button.chat-m-compact-head { cursor: pointer; }
+button.chat-m-compact-head:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+button.chat-m-compact-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-m-compact-hint { color: var(--color-text-tertiary); }
+.chat-m-compact[data-status='running'] .chat-m-compact-label {
+  background: linear-gradient(90deg, var(--color-text-tertiary) 0%, var(--color-text) 50%, var(--color-text-tertiary) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: chat-m-shimmer 1.6s linear infinite;
+}
+.chat-m-compact[data-status='error'] .chat-m-compact-head { color: var(--color-error); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-m-compact-label { animation: none !important; }
+}
+/* MarkdownPreview draws its own card; this only places and bounds it. */
+.chat-m-compact-body {
+  margin-top: var(--space-3);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
 /* ── Message chrome ──────────────────────────────────────────────────────────────── */
 
 /* Floats OUT of flow, hanging off its message's bottom-left (bottom-RIGHT for a user

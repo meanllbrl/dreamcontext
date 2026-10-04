@@ -91,7 +91,36 @@ export interface ChatToolItem {
 /** One ordered item in the transcript: a user message, an assistant text/thinking block
  *  (streamed in place as deltas arrive), or a tool call card (opened by block-start/
  *  assistant-tool-use, closed by tool-result). Rendered top-to-bottom by ChatPane. */
-export type ChatItem = ChatUserItem | ChatTextItem | ChatThinkingItem | ChatToolItem;
+/** A compaction: the line above which the model now reads only a summary. `running` while
+ *  the CLI writes it (minutes, on a big window), then the token drop and the summary itself,
+ *  which a person never sees otherwise: the CLI hands it to the model as a hidden message. */
+export interface ChatCompactItem {
+  kind: 'compact';
+  id: string;
+  status: 'running' | 'done' | 'error';
+  ts: number;
+  trigger?: 'manual' | 'auto';
+  preTokens?: number;
+  postTokens?: number;
+  /** The summary body, preamble and resume instructions cut (`compactSummaryBody`). */
+  summary?: string;
+}
+export type ChatItem = ChatUserItem | ChatTextItem | ChatThinkingItem | ChatToolItem | ChatCompactItem;
+
+/**
+ * The part of a compaction summary worth reading: Claude Code wraps it in a preamble ("This
+ * session is being continued… Summary:") and a tail of instructions to the model ("If you need
+ * specific details… Continue the conversation…"). Both cut; a text in another shape is
+ * returned trimmed, whole, rather than guessed at.
+ */
+export function compactSummaryBody(raw: string): string {
+  let body = raw;
+  const head = body.match(/^This session is being continued[^\n]*\n+(?:Summary:\s*\n)?/);
+  if (head) body = body.slice(head[0].length);
+  const tail = body.search(/\n(?:If you need specific details from before compaction|Please continue the conversation|Continue the conversation from where it left off)/);
+  if (tail >= 0) body = body.slice(0, tail);
+  return body.trim();
+}
 
 export interface PendingPermission {
   kind: 'permission';
@@ -581,7 +610,7 @@ function askSummary(entry: PendingQuestion | PendingPlan): string {
 /** One transcript item the resume replay reads (`/agent/chat-history`'s wire,
  *  `src/lib/transcript-history.ts`). */
 export interface HistoryEntry {
-  kind: 'user' | 'text' | 'thinking' | 'tool';
+  kind: 'user' | 'text' | 'thinking' | 'tool' | 'compact';
   uuid?: string;
   text?: string;
   toolUseId?: string;
@@ -592,6 +621,19 @@ export interface HistoryEntry {
   /** The transcript row's time, epoch ms (`transcript-history.ts`); absent on an older server. */
   at?: number;
   endAt?: number;
+  /** A `compact` entry's token drop and what started it. */
+  trigger?: 'manual' | 'auto';
+  preTokens?: number;
+  postTokens?: number;
+}
+
+/** The index of the last compaction card `match` accepts, or -1. */
+function lastCompactIndex(items: readonly ChatItem[], match: (c: ChatCompactItem) => boolean): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === 'compact' && match(it)) return i;
+  }
+  return -1;
 }
 
 /** A replayed transcript item as a chat item. Pure, so the replay's times are testable. */
@@ -607,6 +649,13 @@ export function historyChatItem(h: HistoryEntry, idStr: string): ChatItem | null
   }
   if (h.kind === 'thinking' && typeof h.text === 'string') {
     return { kind: 'thinking', id: idStr, index: -1, text: h.text, done: true, ts: at };
+  }
+  if (h.kind === 'compact') {
+    return {
+      kind: 'compact', id: idStr, status: 'done', ts: at, trigger: h.trigger,
+      preTokens: h.preTokens, postTokens: h.postTokens,
+      ...(typeof h.text === 'string' && h.text ? { summary: compactSummaryBody(h.text) } : {}),
+    };
   }
   if (h.kind === 'tool' && typeof h.toolUseId === 'string') {
     return {
@@ -1479,6 +1528,46 @@ export function createChatSession(
         // stuck true on a spawn/relay error would strand the composer disabled forever.
         session.busy = false;
         conv = { ...conv, lastError: ev.message };
+        return;
+      }
+      case 'compact-start': {
+        session.busy = true;
+        const item: ChatCompactItem = { kind: 'compact', id: nextItemId(), status: 'running', ts: Date.now() };
+        conv = { ...conv, items: [...conv.items, item] };
+        return;
+      }
+      case 'compact-failed': {
+        const at = lastCompactIndex(conv.items, (c) => c.status === 'running');
+        if (at < 0) return;
+        const items = conv.items.slice();
+        items[at] = { ...(items[at] as ChatCompactItem), status: 'error' };
+        conv = { ...conv, items };
+        return;
+      }
+      case 'compact-boundary': {
+        // Fills the card `compact-start` opened; an auto-compaction the stream never announced
+        // (or one that started before this socket) opens its own.
+        const at = lastCompactIndex(conv.items, (c) => c.status === 'running');
+        const base: ChatCompactItem = at >= 0
+          ? conv.items[at] as ChatCompactItem
+          : { kind: 'compact', id: nextItemId(), status: 'running', ts: Date.now() };
+        const done: ChatCompactItem = { ...base, status: 'done', trigger: ev.trigger, preTokens: ev.preTokens, postTokens: ev.postTokens };
+        const items = conv.items.slice();
+        if (at >= 0) items[at] = done; else items.push(done);
+        // The meter would otherwise keep showing the pre-compaction window until the next turn.
+        const context = conv.context && ev.postTokens !== undefined
+          ? { ...conv.context, used: ev.postTokens, pct: Math.min(100, Math.round((ev.postTokens / conv.context.limit) * 100)) }
+          : conv.context;
+        conv = { ...conv, items, context };
+        return;
+      }
+      case 'compact-summary': {
+        const at = lastCompactIndex(conv.items, (c) => c.summary === undefined);
+        const summary = compactSummaryBody(ev.text);
+        const items = conv.items.slice();
+        if (at >= 0) items[at] = { ...(items[at] as ChatCompactItem), status: 'done', summary };
+        else items.push({ kind: 'compact', id: nextItemId(), status: 'done', ts: Date.now(), summary });
+        conv = { ...conv, items };
         return;
       }
       case 'ignored':

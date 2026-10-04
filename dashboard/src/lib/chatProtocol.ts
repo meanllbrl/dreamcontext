@@ -187,6 +187,19 @@ export type ChatEvent =
    *  like "Set effort level to low", creates) the transcript item. */
   | { kind: 'assistant-text'; text: string; synthetic: boolean; parentToolUseId?: string; turnUsage?: TurnUsage }
   | { kind: 'assistant-thinking'; text: string; turnUsage?: TurnUsage }
+  /** The CLI is compacting the conversation (`system/status` with `status:'compacting'`). A big
+   *  window takes minutes to summarise, so the transcript says so instead of looking stuck. */
+  | { kind: 'compact-start' }
+  /** A compaction failed (`system/status` back to null with `compact_result` other than
+   *  `success`). A success needs no frame of its own: `compact-boundary` follows it. */
+  | { kind: 'compact-failed' }
+  /** The conversation was compacted (`system/compact_boundary`, captured from CLI 2.1.261):
+   *  everything above this line is now a summary to the model. Token counts are absent when
+   *  the CLI leaves `compact_metadata` out. */
+  | { kind: 'compact-boundary'; trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number }
+  /** The summary the compaction wrote: the `isSynthetic` user frame right after the boundary,
+   *  whose text starts with {@link COMPACT_SUMMARY_PREFIX}. Raw, preamble included. */
+  | { kind: 'compact-summary'; text: string }
   /** The CLI has no usable credentials, so the turn never reached the API. Empirically
    *  verified against CLI 2.1.220 in an isolated unauthenticated HOME: the frame is an
    *  ordinary `assistant` text block carrying `model:'<synthetic>'`, `is_api_error_message:
@@ -796,6 +809,10 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
   return ignored('assistant:' + (blockType ?? 'unknown'));
 }
 
+/** How Claude Code opens the summary message a compaction leaves behind (CLI 2.1.261). Live
+ *  frames carry only `isSynthetic` beside it; the transcript adds `isCompactSummary`. */
+export const COMPACT_SUMMARY_PREFIX = 'This session is being continued from a previous conversation';
+
 /**
  * A top-level `user` frame carries either a tool_result echo (rendered — routed through
  * the same block extraction as `assistant`), or local-command/synthetic chatter
@@ -804,6 +821,10 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
  * so this wrapper only lets tool_result extractions through.
  */
 function fromUserFrame(obj: Record<string, unknown>): ChatEvent {
+  const message = isRecord(obj.message) ? obj.message : {};
+  if (obj.isSynthetic === true && typeof message.content === 'string' && message.content.startsWith(COMPACT_SUMMARY_PREFIX)) {
+    return { kind: 'compact-summary', text: message.content };
+  }
   const ev = fromAssistant(obj);
   return ev.kind === 'tool-result' ? ev : ignored('user:non_tool_result');
 }
@@ -1056,6 +1077,20 @@ function fromSystem(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'task_progress') return fromTaskProgress(obj);
   if (subtype === 'task_notification') return fromTaskNotification(obj);
   if (subtype === 'background_tasks_changed') return fromBackgroundTasksChanged(obj);
+  if (subtype === 'compact_boundary') {
+    const meta = isRecord(obj.compact_metadata) ? obj.compact_metadata : {};
+    const trigger = str(meta.trigger);
+    return {
+      kind: 'compact-boundary',
+      trigger: trigger === 'manual' || trigger === 'auto' ? trigger : undefined,
+      preTokens: num(meta.pre_tokens),
+      postTokens: num(meta.post_tokens),
+    };
+  }
+  if (subtype === 'status' && obj.status === 'compacting') return { kind: 'compact-start' };
+  if (subtype === 'status' && typeof obj.compact_result === 'string' && obj.compact_result !== 'success') {
+    return { kind: 'compact-failed' };
+  }
   // hook_started / hook_response / status / thinking_tokens / any other subtype —
   // observed or future noise the parser must tolerate (global hooks + status pings
   // fire during a headless run).

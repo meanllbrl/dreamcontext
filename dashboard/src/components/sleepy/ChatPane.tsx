@@ -160,7 +160,7 @@ function primaryToolPath(input: unknown): string | null {
  *  Keying on this keeps the whole-conversation quest pass off the per-token render path. */
 function questItemsKey(items: readonly ChatItem[]): string {
   return items.map((it) => (
-    it.kind === 'tool' ? `${it.id}:${it.status}`
+    it.kind === 'tool' || it.kind === 'compact' ? `${it.id}:${it.status}`
       : it.kind === 'user' ? it.id
         : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}`
   )).join('|');
