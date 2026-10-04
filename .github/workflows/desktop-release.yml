@@ -1,13 +1,21 @@
 name: desktop-release
 
 # Faz 1 of the continuous app-update epic. Builds the dreamcontext-beta Tauri
-# .app, ad-hoc DEEP-signs it (with entitlements — NOT Apple Developer ID /
-# notarization), packages it as <name>.app.tar.gz + a mandatory .sha256, and
+# .app, DEEP-signs it with the project's one self-signed release certificate
+# (with entitlements — NOT Apple Developer ID / notarization), packages it as <name>.app.tar.gz + a mandatory .sha256, and
 # publishes both to a GitHub Release. The already-shipped `dreamcontext app
 # install|update` + `maybeTriggerAppUpdate` client code then works end-to-end:
 # it pulls the arch-matching .app.tar.gz from /releases/latest, verifies the
 # .sha256, and installs via ditto (no com.apple.quarantine → no Gatekeeper
-# notarization prompt; ad-hoc signature satisfies Apple Silicon).
+# notarization prompt; a valid signature satisfies Apple Silicon).
+#
+# Why a fixed certificate and not ad-hoc: an ad-hoc signature's designated
+# requirement is the bundle's cdhash, so every release is a new app to TCC and
+# users are asked for file / microphone / automation access after every update.
+# Signed with one certificate, the requirement is `identifier + certificate leaf`
+# and the grants survive. The certificate comes from scripts/release-signing-cert.sh
+# (secrets MACOS_SIGNING_P12 + MACOS_SIGNING_P12_PASSWORD, variable
+# MACOS_SIGNING_CERT_SHA1, all in the tag-only `release` environment). ROTATING IT costs every user one more round of grants.
 #
 # Why no notarization: the whole delivery path is curl/ditto (never a browser
 # download), so the quarantine bit is never set and Gatekeeper's notarization
@@ -32,10 +40,14 @@ jobs:
     # macos-14 is Apple Silicon → produces an aarch64 .app. Add an x86_64 matrix
     # leg later for Intel; the client picks the arch-matching asset by name.
     runs-on: macos-14
+    # The signing secrets live in this environment, which only `v*` TAGS may deploy to:
+    # a workflow pushed on any branch cannot read them. Dispatch from a tag ref, not main.
+    # Every action is pinned to a commit: a moved tag cannot run code next to the key.
+    environment: release
     env:
       ARCH: aarch64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve version + tag
         id: ver
@@ -50,15 +62,15 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved tag=$TAG version=$VERSION"
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '20'
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
 
       - name: Cache cargo build
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -81,17 +93,50 @@ jobs:
         working-directory: desktop
         run: npm run tauri build -- --bundles app
 
-      - name: Deep ad-hoc sign (with entitlements)
+      - name: Sign with the release certificate (with entitlements)
         # tauri build leaves the Mach-O only *linker-signed*; deep-sign the whole
         # bundle so `codesign --verify --deep` passes and entitlements (non-sandbox
         # + no hardened runtime, so the Node child has FS rights + JIT) are applied.
+        # No fallback to ad-hoc: an ad-hoc release would silently cost every user
+        # their permissions again, so a missing secret fails the release.
+        env:
+          P12_B64: ${{ secrets.MACOS_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          CERT_SHA1: ${{ vars.MACOS_SIGNING_CERT_SHA1 }}
         run: |
+          if [ -z "$P12_B64" ] || [ -z "$P12_PASSWORD" ] || [ -z "$CERT_SHA1" ]; then
+            echo "::error::Release signing secrets missing — run scripts/release-signing-cert.sh once."
+            exit 1
+          fi
           APP="desktop/src-tauri/target/release/bundle/macos/dreamcontext-beta.app"
-          codesign --deep --force --sign - \
+          KC="$RUNNER_TEMP/release-signing.keychain-db"
+          KC_PASS="$(openssl rand -hex 16)"
+          echo "$P12_B64" | base64 --decode > "$RUNNER_TEMP/release.p12"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          security import "$RUNNER_TEMP/release.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # codesign refuses an untrusted identity; trust this one for code signing on the runner.
+          security find-certificate -c "dreamcontext Release Signing" -p "$KC" > "$RUNNER_TEMP/release.cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "$RUNNER_TEMP/release.cert.pem"
+          rm -f "$RUNNER_TEMP/release.p12"
+          codesign --deep --force --sign "$(echo "$CERT_SHA1" | tr a-f A-F)" --keychain "$KC" \
             --entitlements desktop/src-tauri/entitlements.plist \
             "$APP"
           codesign --verify --deep --strict "$APP"
-          echo "✓ signature valid"
+          # The point of the step: the requirement names the pinned certificate, never a cdhash.
+          DR="$(codesign -d -r- "$APP" 2>&1 | grep '^designated')"
+          echo "$DR"
+          echo "$DR" | grep -q 'identifier "com.dreamcontext.beta"'
+          echo "$DR" | grep -qi "certificate leaf = H\"$CERT_SHA1\""
+          echo "✓ signed with the release certificate, designated requirement is stable"
+
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/release-signing.keychain-db" || true
 
       - name: Package .app.tar.gz + .sha256
         id: pkg
@@ -118,10 +163,11 @@ jobs:
           tar -xzf "$OUT/$ASSET" -C "$TMP"
           test -x "$TMP/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop"
           codesign --verify --deep --strict "$TMP/dreamcontext-beta.app"
-          echo "✓ artifact extracts, checksum matches, bundle is signed"
+          codesign -d -r- "$TMP/dreamcontext-beta.app" 2>&1 | grep -qi 'certificate leaf = H"${{ vars.MACOS_SIGNING_CERT_SHA1 }}"'
+          echo "✓ artifact extracts, checksum matches, bundle is signed with the release certificate"
 
       - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: dreamcontext-beta ${{ steps.ver.outputs.version }}

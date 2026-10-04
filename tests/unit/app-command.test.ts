@@ -21,6 +21,8 @@ import {
   maybeTriggerAppUpdate,
   downloadLatestArtifact,
   APP_BUNDLE_NAME,
+  LOCAL_SIGNING_IDENTITY,
+  parseSigningIdentity,
   type AppManifest,
 } from '../../src/cli/commands/app.js';
 import { createHash } from 'node:crypto';
@@ -28,6 +30,22 @@ import { createHash } from 'node:crypto';
 const isDarwin = process.platform === 'darwin';
 
 // ─── Pure helpers (run everywhere) ─────────────────────────────────────────────
+
+describe('parseSigningIdentity', () => {
+  const sha = '6F8FBB11177AD8F3FB8FE31F68B78F9228C9ADFA';
+  it('finds the valid local identity among others', () => {
+    const out = [
+      '  1) 1111111111111111111111111111111111111111 "Apple Development: someone@example.com (ABC)"',
+      `  2) ${sha} "${LOCAL_SIGNING_IDENTITY}"`,
+      '     2 valid identities found',
+    ].join('\n');
+    expect(parseSigningIdentity(out)).toBe(sha);
+  });
+  it('returns null when only an untrusted copy is listed, or none', () => {
+    expect(parseSigningIdentity(`  1) ${sha} "${LOCAL_SIGNING_IDENTITY}" (CSSMERR_TP_NOT_TRUSTED)`)).toBeNull();
+    expect(parseSigningIdentity('     0 valid identities found')).toBeNull();
+  });
+});
 
 describe('detectPlatform', () => {
   it('maps arm64 → aarch64 on darwin', () => {
@@ -279,7 +297,7 @@ describe.skipIf(!isDarwin)('installAppBundle (macOS, real ditto/swap)', () => {
 
   it('installs to <installDir>/dreamcontext-beta.app, no quarantine, writes manifest', () => {
     const src = makeFakeApp(root, 'whatever.app', '0.8.0');
-    const res = installAppBundle(src, { installDir, home });
+    const res = installAppBundle(src, { installDir, home, signIdentity: null });
 
     const target = join(installDir, APP_BUNDLE_NAME);
     expect(res.path).toBe(target);
@@ -298,8 +316,8 @@ describe.skipIf(!isDarwin)('installAppBundle (macOS, real ditto/swap)', () => {
   });
 
   it('replaces an existing install atomically and bumps the version', () => {
-    installAppBundle(makeFakeApp(join(root, 'a'), 'a.app', '0.8.0'), { installDir, home });
-    const res = installAppBundle(makeFakeApp(join(root, 'b'), 'b.app', '0.9.0'), { installDir, home });
+    installAppBundle(makeFakeApp(join(root, 'a'), 'a.app', '0.8.0'), { installDir, home, signIdentity: null });
+    const res = installAppBundle(makeFakeApp(join(root, 'b'), 'b.app', '0.9.0'), { installDir, home, signIdentity: null });
 
     expect(res.replaced).toBe(true);
     expect(res.version).toBe('0.9.0');

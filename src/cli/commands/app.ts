@@ -21,6 +21,14 @@ import { readTripState } from '../../lib/handsfree/trip-state.js';
 
 /** Bundle name installed on disk (matches the Tauri productName). */
 export const APP_BUNDLE_NAME = 'dreamcontext-beta.app';
+/**
+ * Common name of the self-signed code-signing certificate `app sign-setup` puts in the login
+ * keychain. An ad-hoc signature's designated requirement is the bundle's cdhash, so every new
+ * build is a stranger to TCC and macOS asks for files, microphone and automation again. Signed
+ * with this one certificate, the requirement becomes `identifier + certificate`, which every
+ * build shares, and the grants stay.
+ */
+export const LOCAL_SIGNING_IDENTITY = 'dreamcontext Local Signing';
 /** GitHub repo that publishes the desktop releases. */
 export const APP_RELEASE_REPO = 'meanllbrl/dreamcontext';
 
@@ -191,6 +199,94 @@ export function materializeAppBundle(source: string, workDir: string): string {
   return app;
 }
 
+// ─── Stable local signing (TCC grants survive updates) ──────────────────────────
+
+/**
+ * The SHA-1 of the valid {@link LOCAL_SIGNING_IDENTITY} in `security find-identity -v`
+ * output, or null. Only VALID identities count: codesign refuses an untrusted one.
+ */
+export function parseSigningIdentity(findIdentityOutput: string, name: string = LOCAL_SIGNING_IDENTITY): string | null {
+  for (const line of findIdentityOutput.split('\n')) {
+    const m = line.match(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"\s*$/);
+    if (m && m[2] === name) return m[1];
+  }
+  return null;
+}
+
+/** The installed local signing identity's SHA-1, or null when `app sign-setup` has not run. */
+export function findLocalSigningIdentity(): string | null {
+  try {
+    return parseSigningIdentity(runCapture('security', ['find-identity', '-v', '-p', 'codesigning']));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the bundle's designated requirement names a certificate rather than a cdhash —
+ * i.e. TCC grants carry over to the next build. Null when codesign could not answer.
+ */
+export function hasStableDesignatedRequirement(appDir: string): boolean | null {
+  try {
+    // An explicit requirement prints as `designated => …`; ad-hoc's implicit one as `# designated => cdhash …`.
+    const out = execFileSync('codesign', ['-d', '-r-', appDir], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const dr = out.split('\n').find((l) => /^(#\s*)?designated =>/.test(l));
+    if (!dr) return null;
+    return !dr.includes('cdhash') && dr.includes('certificate');
+  } catch {
+    return null;
+  }
+}
+
+/** Re-sign a bundle in place with `identity`, keeping the entitlements it was built with. */
+export function signWithIdentity(appDir: string, identity: string): void {
+  run('codesign', ['--force', '--deep', '--sign', identity, '--preserve-metadata=entitlements', appDir]);
+}
+
+/**
+ * Create {@link LOCAL_SIGNING_IDENTITY} in the login keychain: a 10-year self-signed
+ * code-signing certificate, imported with codesign pre-authorised, then trusted for code
+ * signing. The trust step shows macOS's password dialog once. Returns the identity's SHA-1.
+ */
+export function createLocalSigningIdentity(): string {
+  const work = mkdtempSync(join(tmpdir(), 'dc-sign-'));
+  try {
+    const cfg = join(work, 'cert.cnf');
+    writeFileSync(
+      cfg,
+      [
+        '[req]',
+        'distinguished_name=dn',
+        'prompt=no',
+        'x509_extensions=ext',
+        '[dn]',
+        `CN=${LOCAL_SIGNING_IDENTITY}`,
+        '[ext]',
+        'basicConstraints=critical,CA:false',
+        'keyUsage=critical,digitalSignature',
+        'extendedKeyUsage=critical,codeSigning',
+        '',
+      ].join('\n'),
+    );
+    const key = join(work, 'key.pem');
+    const cert = join(work, 'cert.pem');
+    const p12 = join(work, 'id.p12');
+    // The system LibreSSL writes a PKCS#12 that `security import` reads; OpenSSL 3 does not by default.
+    run('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '3650', '-config', cfg]);
+    run('/usr/bin/openssl', ['pkcs12', '-export', '-inkey', key, '-in', cert, '-out', p12, '-passout', 'pass:dreamcontext']);
+    const keychain = join(homedir(), 'Library', 'Keychains', 'login.keychain-db');
+    run('security', ['import', p12, '-k', keychain, '-P', 'dreamcontext', '-T', '/usr/bin/codesign']);
+    execFileSync('security', ['add-trusted-cert', '-r', 'trustRoot', '-p', 'codeSign', '-k', keychain, cert], {
+      stdio: 'inherit',
+    });
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  const id = findLocalSigningIdentity();
+  if (!id) throw new Error(`"${LOCAL_SIGNING_IDENTITY}" was created but is not a valid code-signing identity.`);
+  return id;
+}
+
 // ─── Core install (atomic swap, no-quarantine) ─────────────────────────────────
 
 export interface InstallResult {
@@ -200,6 +296,8 @@ export interface InstallResult {
   wasRunning: boolean;
   /** Result of `codesign --verify` on the installed bundle (null = check errored). */
   signatureValid: boolean | null;
+  /** True when re-signed with the stable local identity; false leaves the build's ad-hoc signature. */
+  locallySigned: boolean;
 }
 
 /** Verify a bundle's code signature. Returns true/false, or null if codesign errored unexpectedly. */
@@ -289,7 +387,13 @@ export function isAppRunning(path?: string): boolean {
  */
 export function installAppBundle(
   source: string,
-  opts: { installDir?: string; sourceLabel?: string; home?: string } = {},
+  opts: {
+    installDir?: string;
+    sourceLabel?: string;
+    home?: string;
+    /** Signing identity SHA-1; null keeps the ad-hoc signature. Default: the local identity, if set up. */
+    signIdentity?: string | null;
+  } = {},
 ): InstallResult {
   if (detectPlatform().os !== 'darwin') {
     throw new Error('Desktop app install is currently macOS-only.');
@@ -313,6 +417,7 @@ export function installAppBundle(
 
     let wasRunning: boolean;
     let replaced: boolean;
+    let locallySigned = false;
     try {
       // Copy into the install volume (ditto preserves signature + metadata).
       run('ditto', [appDir, staging]);
@@ -321,6 +426,17 @@ export function installAppBundle(
         run('xattr', ['-dr', 'com.apple.quarantine', staging]);
       } catch {
         /* no quarantine attr present — fine */
+      }
+      // Re-sign with the stable identity so TCC keeps this build's grants. A failure keeps the
+      // build's own signature: the app still launches, macOS just asks again.
+      const identity = opts.signIdentity !== undefined ? opts.signIdentity : findLocalSigningIdentity();
+      if (identity) {
+        try {
+          signWithIdentity(staging, identity);
+          locallySigned = true;
+        } catch {
+          locallySigned = false;
+        }
       }
 
       wasRunning = isAppRunning();
@@ -356,7 +472,7 @@ export function installAppBundle(
     );
 
     const signatureValid = verifyCodesign(target);
-    return { version, path: target, replaced, wasRunning, signatureValid };
+    return { version, path: target, replaced, wasRunning, signatureValid, locallySigned };
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
@@ -556,6 +672,12 @@ async function doInstall(from: string | undefined, dir: string | undefined): Pro
         ),
       );
     }
+    if (!res.locallySigned && hasStableDesignatedRequirement(res.path) === false) {
+      console.log(
+        chalk.yellow('Ad-hoc signed: macOS will ask for file and microphone access again after every update.\n') +
+          chalk.dim('Run `dreamcontext app sign-setup` once so the grants survive updates.'),
+      );
+    }
     if (res.wasRunning) {
       console.log(chalk.yellow('The app is currently running — restart it to apply the update.'));
     } else {
@@ -602,6 +724,40 @@ async function doUpdate(from: string | undefined, dir: string | undefined): Prom
   }
 }
 
+function doSignSetup(): void {
+  if (detectPlatform().os !== 'darwin') {
+    console.log(chalk.yellow('Signing setup is macOS-only.'));
+    return;
+  }
+  let identity = findLocalSigningIdentity();
+  if (identity) {
+    console.log(chalk.dim(`"${LOCAL_SIGNING_IDENTITY}" already exists (${identity}).`));
+  } else {
+    console.log(chalk.cyan(`Creating "${LOCAL_SIGNING_IDENTITY}" in your login keychain — macOS asks for your password once.`));
+    identity = createLocalSigningIdentity();
+    console.log(chalk.green(`✓ Signing identity ready (${identity}).`));
+  }
+  const installed = readAppManifest();
+  if (!installed || !existsSync(installed.path)) {
+    console.log(chalk.dim('No installed app to re-sign; the next `dreamcontext app install` signs with it.'));
+    return;
+  }
+  const res = installAppBundle(installed.path, {
+    installDir: dirname(installed.path),
+    sourceLabel: installed.source,
+    signIdentity: identity,
+  });
+  if (!res.locallySigned) throw new Error(`Re-signing ${res.path} failed.`);
+  console.log(chalk.green(`✓ Re-signed ${res.path}`));
+  console.log(
+    chalk.yellow(
+      'macOS asks for file, microphone and automation access ONE more time (the app changed identity);\n' +
+        'after that, every update keeps the grants.',
+    ),
+  );
+  if (res.wasRunning) console.log(chalk.yellow('Restart the app now.'));
+}
+
 function doStatus(): void {
   const installed = readAppManifest();
   if (!installed) {
@@ -613,6 +769,7 @@ function doStatus(): void {
   console.log(`  path:      ${installed.path}${onDisk ? '' : chalk.red('  (missing!)')}`);
   console.log(`  source:    ${installed.source}`);
   console.log(`  running:   ${isAppRunning(installed.path) ? 'yes' : 'no'}`);
+  console.log(`  signing:   ${findLocalSigningIdentity() ? `stable (${LOCAL_SIGNING_IDENTITY})` : 'ad-hoc — run `dreamcontext app sign-setup`'}`);
 }
 
 // ─── Registration ────────────────────────────────────────────────────────────
@@ -656,6 +813,13 @@ export function registerAppCommand(program: Command): void {
         return;
       }
       await doUpdate(opts.from, opts.dir);
+    });
+
+  app
+    .command('sign-setup')
+    .description('Create a stable local signing identity so macOS remembers the app\'s permissions across updates')
+    .action(() => {
+      doSignSetup();
     });
 
   app

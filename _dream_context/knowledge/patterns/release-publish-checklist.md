@@ -9,7 +9,9 @@ description: >-
   the registry confirms; `released` means the registry has it; never blind-run
   the diagram generator; a skipped list becomes a SUPERSEDED row), and three
   non-code gates: the SKILL.md byte ceiling, a polluted Chat-tab shell, and
-  announcement shots from a synthetic vault.
+  announcement shots from a synthetic vault. The desktop release is signed
+  with ONE fixed self-signed certificate so macOS keeps users' permissions
+  across updates; never ship it ad-hoc, never rotate that certificate.
 type: knowledge
 tags:
   - 'kind:pattern'
@@ -122,14 +124,47 @@ record, because a `planning` row describing shipped work is scar 2 in slower mot
 
 **Announcement shots need a synthetic vault, and some surfaces cannot be shot at all.** The 0.30.0 story was captured from the fictional **"orbit"** demo vault (`marketing/build-demo-vault-v2.sh`) plus a funnel fixture (`scripts/verify/fixtures/funnel-explorer-demo.mjs`), driven by `e2e/announce-shots-0-30.mjs`. The exception worth remembering: **agents-channel posts cannot be shot in an isolated home**, because `automations post` needs a real run behind it — plan a real-vault capture for those, or drop the claim per the step-4 rule.
 
+## The desktop app's signature is part of the release (2026-10-04)
+
+**Every published `.app` must carry the same certificate.** An ad-hoc signature's
+designated requirement is the bundle's `cdhash`, so each release is a new app to macOS
+TCC and every user is asked for file, microphone and automation access again after every
+update — the owner hit exactly this. `desktop-release.yml` now signs with the one
+self-signed **"dreamcontext Release Signing"** certificate, which turns the requirement
+into `identifier "com.dreamcontext.beta" and certificate leaf = H"<sha1>"`, shared by
+every release, so grants survive.
+
+- **One-time setup (owner, already a user-gated step):** `scripts/release-signing-cert.sh`
+  creates the certificate, backs it up under `~/.dreamcontext/release-signing/`, and sets
+  secrets `MACOS_SIGNING_P12`, `MACOS_SIGNING_P12_PASSWORD` + variable
+  `MACOS_SIGNING_CERT_SHA1` via `gh` in the **`release` environment, deployable only from
+  `v*` tags** — the repo is public, so no branch workflow or fork PR may read the key.
+  Re-running reuses the backup. A manual `workflow_dispatch` must run from a tag ref.
+- **The key is the app's identity on users' machines.** Whoever holds it can sign a binary
+  macOS treats as dreamcontext-beta and inherit its file/microphone grants. Keep it only in
+  the environment and the backup; every action in that job is pinned to a commit SHA, and
+  the temp keychain is deleted before the third-party release action runs.
+- **The workflow fails rather than falls back.** Missing secrets fail the sign step, and
+  both the sign step and the artifact check assert the requirement names the pinned SHA-1.
+  An ad-hoc release would silently cost every user their permissions again.
+- **Never rotate the certificate casually.** A new one is a new identity: every user
+  re-grants once. Lose the backup folder and that is the price.
+- **On the owner's machine** `app install|update` re-signs with the local
+  **"dreamcontext Local Signing"** identity (`dreamcontext app sign-setup`, done
+  2026-10-04), so local `--from` builds keep grants too. `app status` shows which.
+- **Not covered:** no Developer ID, no notarization — a browser-downloaded copy still
+  meets Gatekeeper. Delivery stays CLI-driven (`curl`/`ditto`, no quarantine).
+
 ## A local-only rollout is a different thing
 
 "Bump and install locally so I can test" is **not** a publish and must not touch the
 registry, the tags, or the release status. It is: bump the five surfaces → `npm run
 build` → the global CLI is an `npm link` to this checkout, so the rebuild **is** the
 install → `dreamcontext update` each registered vault so their `setupVersion` matches →
-rebuild + ad-hoc sign the desktop app and `dreamcontext app update --from <path>` if the
-app is in scope.
+rebuild the desktop app and `dreamcontext app update --from <path>` if the app is in
+scope — the install re-signs it with the local identity, so the owner's macOS
+permissions survive the rebuild (if `app status` says `ad-hoc`, run
+`dreamcontext app sign-setup` once).
 
 Two things to re-check every time, because both have bitten before: the **bundled CLI
 must report the real version** (it shipped as the `0.0.0` sentinel on 2026-08-02), and the
@@ -148,7 +183,9 @@ trace to this checkout's `dist`, not a stale duplicate.
 
 ## Last Verified
 
-2026-10-02 (the 0.30.0 cut followed this list: five version surfaces + both lockfiles moved
+2026-10-04 (desktop signing section: local identity verified on the installed app —
+`designated => identifier "com.dreamcontext.beta" and certificate leaf = H"8a17…"`; the
+CI release-certificate path is written but has not run on a tag yet). 2026-10-02 (the 0.30.0 cut followed this list: five version surfaces + both lockfiles moved
 together, `RELEASES.json` reconciled and left at `planning`, the What's New story authored
 from this build's own shots. The npm publish is the open user-gated step). Distilled
 originally from the 0.25.0 checklist run; the 0.26.0 local-only rollout stayed off the
