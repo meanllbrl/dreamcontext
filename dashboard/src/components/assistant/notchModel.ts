@@ -326,6 +326,34 @@ export function readInbox(raw: unknown): Inbox {
   return { lookingAt: typeof o.lookingAt === 'string' ? o.lookingAt : null, notices, posts, running, muted };
 }
 
+/** How long an unread finished chat keeps its name on the collapsed pill ("acme finished"). */
+export const FINISHED_PILL_MS = 10 * 60_000;
+
+/**
+ * The project of the newest finished chat the owner has not acted on yet, if it is recent. The
+ * peek folds after a while; the pill keeps saying it, so a finish missed at a glance is not lost.
+ */
+export function recentFinishedVault(notices: InboxNotice[], now = Date.now()): string | null {
+  for (const n of notices) {
+    if (n.kind === 'finished' && now - n.at <= FINISHED_PILL_MS) return n.vault;
+  }
+  return null;
+}
+
+/** An announcement that waits for the peek to be free holds this many; the oldest drop first. */
+export const PEEK_QUEUE_CAP = 3;
+
+/**
+ * Add new arrivals to the announcement queue: deduped by id, newest kept when over the cap.
+ * Arrivals that land while the peek is busy (a waiting prompt, a progress line, the notch open,
+ * another announcement) wait here instead of being listed silently.
+ */
+export function enqueuePeeks<T extends { id: string }>(queue: T[], fresh: T[], cap = PEEK_QUEUE_CAP): T[] {
+  const ids = new Set(queue.map((q) => q.id));
+  const next = [...queue, ...fresh.filter((f) => !ids.has(f.id))];
+  return next.length > cap ? next.slice(next.length - cap) : next;
+}
+
 /** A running automation's identity across polls: a new `since` is a new turn. */
 export const runKey = (r: Pick<RunningAutomation, 'vault' | 'slug' | 'since'>) => `${r.vault}::${r.slug}::${r.since}`;
 

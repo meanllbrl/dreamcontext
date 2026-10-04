@@ -15,8 +15,8 @@ import { NotchPeek, peekItem, type PeekItem } from './NotchPeek';
 import { AgentAvatar, InboxList } from './InboxList';
 import { ListeningOverlay } from './ListeningOverlay';
 import {
-  EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
-  readGlance, readHandoffs, readInbox, readRollup, runKey,
+  EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
+  readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
 } from './notchModel';
 import { readingTimeMs } from '../../lib/notchCue';
@@ -79,8 +79,9 @@ const WINDOW_H = 640;
 const FOLD_AFTER_SPOKEN_MS = 2200;
 /** A voice take was sent: this long for the owner to see it land, then the notch folds. */
 const FOLD_AFTER_SEND_MS = 450;
-/** An event peek (a chat finished, an automation posted, an account notice) stays this long. */
-const EVENT_PEEK_MS = 6500;
+/** An event peek (a chat finished, an automation posted, an account notice) stays this long:
+ *  long enough to catch from the corner of an eye (owner, 2026-10-04: 6.5 s was too short). */
+const EVENT_PEEK_MS = 20_000;
 /** "<automation> started" is a shorter peek: it is news, not something to act on. */
 const STARTED_PEEK_MS = 4500;
 /** How long the island stays green after the last turn across every project ends. */
@@ -250,6 +251,63 @@ async function seatPeek(geo: Geometry | null, h: number, ms: number = frameMotio
     if (!isCurrentSeat(gen)) return;
     await applyFrame(f, ms, 'clear');
   } catch { /* ACL / no runtime */ }
+}
+
+/**
+ * Is the pointer over the notch window right now? Asked of the OS, not of hover events: the
+ * notch is a panel of an app that is usually NOT in front, and such a window gets no
+ * mouseenter, so `hoverRef` stays false while the owner reaches for a button. A peek that
+ * folded on its timer under the pointer turned the click into a miss (owner, 2026-10-04:
+ * "Open the chat" on a finished session did nothing, coming from another app).
+ */
+async function pointerOverNotch(): Promise<boolean> {
+  if (!isDesktop()) return false;
+  try {
+    const { cursorPosition, getCurrentWindow } = await import('@tauri-apps/api/window');
+    const w = getCurrentWindow();
+    const [c, p, s] = await Promise.all([cursorPosition(), w.outerPosition(), w.outerSize()]);
+    return c.x >= p.x && c.x < p.x + s.width && c.y >= p.y && c.y < p.y + s.height;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ask the native side to hold Esc while the notch is open, or let it go (assistant.rs
+ * `ESCAPE_GRAB_EVENT`). Chained, so a fold and the next open can never land out of order and
+ * leave an open notch without its Esc, or a folded one holding every other app's Esc.
+ */
+let escapeGrab: Promise<void> = Promise.resolve();
+function setEscapeGrab(on: boolean): void {
+  if (!isDesktop()) return;
+  escapeGrab = escapeGrab
+    .then(async () => {
+      const { emit } = await import('@tauri-apps/api/event');
+      await emit('assistant://escape-grab', { on });
+    })
+    .catch(() => { /* no runtime */ });
+}
+
+/** How often a peek whose time ran out under the pointer looks again. */
+const FOLD_RECHECK_MS = 800;
+
+/**
+ * Fold after `ms`, but never while the pointer rests on the notch (hover, or the OS says so);
+ * then keep looking until it leaves. Returns the canceller.
+ */
+function foldWhenAway(ms: number, hovered: () => boolean, fold: () => void): () => void {
+  let alive = true;
+  let t = 0;
+  const tryFold = async () => {
+    if (!alive) return;
+    if (hovered() || await pointerOverNotch()) {
+      if (alive) t = window.setTimeout(() => void tryFold(), FOLD_RECHECK_MS);
+      return;
+    }
+    if (alive) fold();
+  };
+  t = window.setTimeout(() => void tryFold(), ms);
+  return () => { alive = false; window.clearTimeout(t); };
 }
 
 /**
@@ -566,8 +624,7 @@ export function Notch() {
   }, [finishedId]);
   useEffect(() => {
     if (peek !== 'finished') return;
-    const t = window.setTimeout(() => { if (!hoverRef.current) setPeek((p) => (p === 'finished' ? null : p)); }, FINISHED_PEEK_MS);
-    return () => window.clearTimeout(t);
+    return foldWhenAway(FINISHED_PEEK_MS, () => hoverRef.current, () => setPeek((p) => (p === 'finished' ? null : p)));
   }, [peek, finishedId]);
 
   // ── INBOX PEEKS: something happened elsewhere ─────────────────────────────────────────
@@ -578,27 +635,39 @@ export function Notch() {
   const peekExpiredRef = useRef(false);
   const peekReasonRef = useRef<PeekReason | null>(peek);
   peekReasonRef.current = peek;
-  const showEvent = useCallback((item: PeekItem) => {
-    if (!canPeekRef.current) return;
-    const p = peekReasonRef.current;
-    if (p === 'ask' || p === 'progress') return;
-    setEventPeek(item);
-    setPeek('event');
-  }, []);
+  // Arrivals wait in a queue until the peek is free, then speak one at a time: an arrival that
+  // lands under a waiting prompt, a progress line, the open notch or another announcement used
+  // to be listed silently, and the owner never heard about the finish (2026-10-04).
+  const [peekQueue, setPeekQueue] = useState<Array<{ id: string; item: PeekItem }>>([]);
   const seenInbox = useRef<{ booted: boolean; ids: Set<string>; runs: Set<string> }>({ booted: false, ids: new Set(), runs: new Set() });
   useEffect(() => {
     const seen = seenInbox.current;
-    const fresh: PeekItem[] = [];
-    for (const n of inbox.notices) if (!seen.ids.has(n.id)) { seen.ids.add(n.id); fresh.push({ kind: 'notice', notice: n }); }
-    for (const p of inbox.posts) if (!seen.ids.has(p.key)) { seen.ids.add(p.key); fresh.push({ kind: 'post', post: p }); }
+    const fresh: Array<{ id: string; item: PeekItem }> = [];
+    for (const n of inbox.notices) if (!seen.ids.has(n.id)) { seen.ids.add(n.id); fresh.push({ id: n.id, item: { kind: 'notice', notice: n } }); }
+    for (const p of inbox.posts) if (!seen.ids.has(p.key)) { seen.ids.add(p.key); fresh.push({ id: p.key, item: { kind: 'post', post: p } }); }
     const liveRuns = new Set(inbox.running.map(runKey));
-    for (const r of inbox.running) if (!seen.runs.has(runKey(r))) { seen.runs.add(runKey(r)); fresh.push({ kind: 'started', run: r }); }
+    const starts: Array<{ id: string; item: PeekItem }> = [];
+    for (const r of inbox.running) if (!seen.runs.has(runKey(r))) { seen.runs.add(runKey(r)); starts.push({ id: `run:${runKey(r)}`, item: { kind: 'started', run: r } }); }
     for (const k of [...seen.runs]) if (!liveRuns.has(k)) seen.runs.delete(k);
     if (!seen.booted) { seen.booted = true; return; }   // what was already there at launch is listed, not announced
-    // The newest arrival speaks; the rest are listed. A post or notice outranks a start.
-    const pick = fresh.find((f) => f.kind !== 'started') ?? fresh[0];
-    if (pick) showEvent(pick);
-  }, [inbox, showEvent]);
+    // Server order is newest first; the queue speaks oldest first. A start is news only when
+    // nothing else is: it never waits in the queue behind (or ahead of) a finish or a post.
+    const arrivals = fresh.reverse();
+    if (arrivals.length) setPeekQueue((q) => enqueuePeeks(q, arrivals));
+    else if (starts.length && canPeekRef.current && !peekReasonRef.current) { setEventPeek(starts[0].item); setPeek('event'); }
+  }, [inbox]);
+  // Drain: the next waiting arrival speaks once the peek is free. One the owner already acted on
+  // (opened, dismissed, gone from the server) is dropped instead of announced late.
+  useEffect(() => {
+    if (!peekQueue.length || !canPeek) return;
+    if (peek === 'ask' || peek === 'progress' || peek === 'event') return;
+    const listed = new Set([...notices.map((n) => n.id), ...posts.map((p) => p.key)]);
+    const [next, ...rest] = peekQueue;
+    setPeekQueue(rest);
+    if (!listed.has(next.id)) return;
+    setEventPeek(next.item);
+    setPeek('event');
+  }, [peekQueue, peek, canPeek, notices, posts]);
 
   // The event / progress peek folds by itself — never while the pointer rests on it.
   useEffect(() => {
@@ -606,11 +675,11 @@ export function Notch() {
     peekExpiredRef.current = false;
     const ms = eventPeek.kind === 'progress' ? readingTimeMs(eventPeek.text)
       : eventPeek.kind === 'started' ? STARTED_PEEK_MS : EVENT_PEEK_MS;
-    const t = window.setTimeout(() => {
-      if (hoverRef.current) { peekExpiredRef.current = true; return; }
-      setPeek((p) => (p === 'event' || p === 'progress' ? null : p));
-    }, ms);
-    return () => window.clearTimeout(t);
+    // A hover the webview DID see folds on leave (onHoverOut); otherwise the OS is asked.
+    return foldWhenAway(ms, () => {
+      if (hoverRef.current) peekExpiredRef.current = true;
+      return hoverRef.current;
+    }, () => setPeek((p) => (p === 'event' || p === 'progress' ? null : p)));
   }, [peek, eventPeek]);
 
   // Hover: rest on the pill and it drops; leave and it folds (an event peek for a prompt stays).
@@ -949,6 +1018,7 @@ export function Notch() {
     window.addEventListener('keydown', onKey);
     const unlisteners: Array<() => void> = [];
     let cancelled = false;
+    setEscapeGrab(true);
     if (isDesktop()) {
       void (async () => {
         try {
@@ -957,12 +1027,25 @@ export function Notch() {
           const fns = [
             await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (!focused) collapse(); }),
             await listen('assistant://outside-click', () => collapse()),
+            // Esc held natively while open (assistant.rs `ESCAPE_GRAB_EVENT`): summoned over
+            // another app the panel is never key, so the keydown would go to that app. The
+            // native Esc is replayed here as a keydown on whatever has focus, so an open menu
+            // (slash, mention, find) still takes it first and only a free Esc folds the notch.
+            await listen('assistant://escape', () => {
+              const target = document.activeElement ?? document.body;
+              target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+            }),
           ];
           for (const fn of fns) { if (cancelled) fn(); else unlisteners.push(fn); }
         } catch { /* no runtime */ }
       })();
     }
-    return () => { cancelled = true; window.removeEventListener('keydown', onKey); unlisteners.forEach((fn) => fn()); };
+    return () => {
+      cancelled = true;
+      window.removeEventListener('keydown', onKey);
+      unlisteners.forEach((fn) => fn());
+      setEscapeGrab(false);
+    };
   }, [expanded, collapse, seatMode]);
 
   // The seat guard (seatGuard.ts): a resize or move the notch did not ask for is undone at once,
@@ -1062,7 +1145,8 @@ export function Notch() {
   const label = pillLabel(rollup);
   // Asking, the pill says WHO in place of the assistant's own name: "acme needs you".
   const asker = glance.find((c) => c.activity === 'asking');
-  const finishedVault = finishedId ? handoffs.find((h) => h.sessionId === finishedId)?.vault ?? null : null;
+  const finishedVault = (finishedId ? handoffs.find((h) => h.sessionId === finishedId)?.vault ?? null : null)
+    ?? recentFinishedVault(notices);
   // Folded while it works on the owner's request, the pill says WHAT it is doing.
   const self = session && busy && !expanded
     ? assistantActivityLine(session.getModel().items as unknown as ActivityItem[], progressLine)

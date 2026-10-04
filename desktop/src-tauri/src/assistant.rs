@@ -57,6 +57,13 @@ pub(crate) const WINDOW_MIN_H: f64 = 360.0;
 pub const SEAT_EVENT: &str = "assistant://seat";
 /// Told to the notch webview when a mouse button goes down anywhere outside the OPEN panel.
 pub const OUTSIDE_CLICK_EVENT: &str = "assistant://outside-click";
+/// The notch asks for Esc while it is open in the notch seat (`{ "on": bool }`), and lets it go
+/// when it folds. Summoned over another app the panel never becomes key, so a keydown never
+/// reaches the webview; a key MONITOR would need an Accessibility grant. A Carbon hotkey needs
+/// none, but it takes Esc from every app while held, so it is held only while the notch is open.
+pub const ESCAPE_GRAB_EVENT: &str = "assistant://escape-grab";
+/// Told to the notch webview when the grabbed Esc is pressed.
+pub const ESCAPE_EVENT: &str = "assistant://escape";
 /// Taller than any collapsed pill (the camera housing is ~38 px): below this the panel is closed
 /// and a click elsewhere has nothing to dismiss, so it is not reported.
 const OPEN_MIN_H: f64 = 100.0;
@@ -221,10 +228,32 @@ fn log_edge(state: &str) {
     }
 }
 
+fn escape_shortcut() -> Shortcut {
+    Shortcut::new(None, Code::Escape)
+}
+
+/// Hold or release Esc for the open notch (see `ESCAPE_GRAB_EVENT`). Idempotent.
+fn set_escape_grab<R: Runtime>(app: &AppHandle<R>, on: bool) {
+    let gs = app.global_shortcut();
+    let sc = escape_shortcut();
+    if on && !gs.is_registered(sc) {
+        let _ = gs.register(sc);
+    } else if !on && gs.is_registered(sc) {
+        let _ = gs.unregister(sc);
+    }
+}
+
 /// The global-shortcut plugin, with the Rust-side handler that forwards BOTH edges.
 pub fn shortcut_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app, _shortcut, event| {
+        .with_handler(|app, shortcut, event| {
+            // The open notch's Esc (never the summoning chord: that one needs a modifier).
+            if shortcut.id() == escape_shortcut().id() {
+                if matches!(event.state(), ShortcutState::Pressed) {
+                    let _ = app.emit_to(NOTCH_LABEL, ESCAPE_EVENT, serde_json::json!({}));
+                }
+                return;
+            }
             let state = match event.state() {
                 ShortcutState::Pressed => "pressed",
                 ShortcutState::Released => "released",
@@ -391,6 +420,8 @@ pub fn assistant_set_enabled<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Re
     if let Ok(panel) = app.get_webview_panel(NOTCH_LABEL) {
         panel.hide();
     }
+    // A notch hidden while open never folds, so it would never let Esc go.
+    set_escape_grab(&app, false);
     let _ = app.autolaunch().disable();
     Ok(apply_hotkey(&app))
 }
@@ -443,6 +474,15 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, port: u16) {
         let h = handle.clone();
         // AppKit only on the main thread.
         let _ = handle.run_on_main_thread(move || apply_seat(&h, window));
+    });
+    let handle = app.clone();
+    app.listen(ESCAPE_GRAB_EVENT, move |event| {
+        let on = serde_json::from_str::<serde_json::Value>(event.payload())
+            .ok()
+            .and_then(|v| v.get("on").and_then(|b| b.as_bool()));
+        if let Some(on) = on {
+            set_escape_grab(&handle, on);
+        }
     });
     let h = app.clone();
     let _ = app.run_on_main_thread(move || watch_outside_clicks(&h));

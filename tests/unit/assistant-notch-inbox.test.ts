@@ -33,7 +33,7 @@ const { spawnModelFor } = await import('../../src/server/routes/agent-chat.js');
 const { DEFAULT_ASSISTANT_CONFIG, sanitizeConfigPatch } = await import('../../src/lib/assistant/home.js');
 const { splitNotchCue, stripNotchCue, readingTimeMs } = await import('../../dashboard/src/lib/notchCue');
 const { sttRetryable, STT_RETRIES } = await import('../../dashboard/src/lib/voice/useVoiceCapture');
-const { assistantActivityLine, pillHeadline, readInbox, accountLine } = await import('../../dashboard/src/components/assistant/notchModel');
+const { assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
 
 function makeRes() {
   let status = 0;
@@ -327,5 +327,20 @@ describe('owner routes: /api/assistant/inbox, /presence, /inbox/dismiss', () => 
     r = makeRes();
     await routes.handleAssistantInboxSeen(req('POST', '/api/assistant/inbox/seen', { vault: 'zzz', slug: 'a', upToId: '1' }), r.res);
     expect(r.status()).toBe(400);
+  });
+});
+
+describe('a finish is not lost at a glance (notchModel.ts)', () => {
+  const fin = (id: string, vault: string, at: number) => ({ id, kind: 'finished' as const, at, sessionId: id, vault, mode: 'basic', title: '', lastText: '' });
+  it('the pill keeps naming the newest recent finish, and lets an old one go', () => {
+    const now = 1_000_000_000;
+    expect(recentFinishedVault([fin('a', 'acme', now - 1000), fin('b', 'demo', now - 2000)], now)).toBe('acme');
+    expect(recentFinishedVault([fin('a', 'acme', now - FINISHED_PILL_MS - 1)], now)).toBeNull();
+    expect(recentFinishedVault([], now)).toBeNull();
+  });
+  it('arrivals queue in order, deduped, keeping the newest when over the cap', () => {
+    const q = enqueuePeeks([{ id: 'a' }], [{ id: 'a' }, { id: 'b' }]);
+    expect(q.map((x) => x.id)).toEqual(['a', 'b']);
+    expect(enqueuePeeks(q, [{ id: 'c' }, { id: 'd' }]).map((x) => x.id)).toEqual(['b', 'c', 'd']);
   });
 });
