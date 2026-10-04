@@ -866,6 +866,36 @@ async function runThemeIn(browser, base, theme, report) {
   ok('…the header counts "3 phases · 7 agents"', ((await board().locator('.chat-team-board-sum').innerText().catch(() => '')) || '').includes('3 phases · 7 agents'),
     await board().locator('.chat-team-board-sum').innerText().catch(() => '<no board>'));
   await shot(board(), 'team-board-live');
+  // The columns share the width: they reach the board's right edge (unless every chip track is
+  // at its 240px cap), and a column folds its chips into tracks instead of a tall stack.
+  const boardFill = () => board().evaluate((el) => {
+    const cols = el.querySelector('.chat-team-board-cols');
+    const style = getComputedStyle(cols);
+    const edge = cols.getBoundingClientRect().right - parseFloat(style.paddingRight);
+    const colEls = [...cols.querySelectorAll('.chat-team-board-col')];
+    const chips = [...cols.querySelectorAll('.chat-team-board-chip')].map((c) => c.getBoundingClientRect());
+    const rows = (col) => new Set([...col.querySelectorAll('.chat-team-board-chip')].map((c) => Math.round(c.getBoundingClientRect().top))).size;
+    return {
+      gap: Math.round(edge - colEls[colEls.length - 1].getBoundingClientRect().right),
+      capped: chips.every((r) => r.width >= 239),
+      widths: [...new Set(chips.map((r) => Math.round(r.width)))],
+      rows: colEls.map(rows),
+      counts: colEls.map((c) => c.querySelectorAll('.chat-team-board-chip').length),
+      overflow: cols.scrollWidth > cols.clientWidth + 1,
+    };
+  });
+  for (const w of [null, 760, 560]) {
+    if (w) await board().evaluate((el, px) => { el.style.width = `${px}px`; }, w);
+    await page.waitForTimeout(150);
+    const fill = await boardFill();
+    // At 760px the 1+3+3 chips fit two rows (1, 2 and 2 tracks): the 3-agent rounds fold.
+    ok(`team board ${w ? `at ${w}px` : 'on the rail'}: columns fill the width, every chip one width${w === 760 ? ', rounds folded to 2 rows' : ''}`,
+      (fill.gap <= 2 || fill.capped) && !fill.overflow && fill.widths.length <= 2
+        && (w !== 760 || JSON.stringify(fill.rows) === '[1,2,2]'),
+      JSON.stringify(fill));
+    await shot(board(), `team-board-fill-${w ?? 'rail'}`);
+  }
+  await board().evaluate((el) => { el.style.width = ''; });
   // Responsive: squeezed to a narrow pane, the header sheds the tally and the landed phases'
   // names, so the running phase stays named and nothing in the header overflows.
   for (const w of [560, 380]) {

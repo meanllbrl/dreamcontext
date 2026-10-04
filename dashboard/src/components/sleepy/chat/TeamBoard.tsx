@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { formatClock, isAgentRun, type SubAgentRun } from './chatEntities';
 import { AGENT_ROLES } from '../../../lib/agentRoles';
 import { AgentAvatar } from './atoms';
@@ -17,6 +17,10 @@ import './teamBoard.css';
  * "4 phases · 11 agents". Open, the columns appear under their phase. A chip's click is the
  * card row's click (the drill-in). Shown only once a chat has sent two parties or more: one
  * party is already one card.
+ *
+ * The columns share the pane's width: a phase's agents fold into as many chip tracks as the
+ * width allows, so a wide pane reads four reviewers as a 2x2 block instead of a tall stack
+ * beside an empty half (see boardTracks).
  */
 
 type Tone = 'running' | 'good' | 'bad' | 'ended';
@@ -38,6 +42,26 @@ function chipTone(run: SubAgentRun): Tone {
 }
 
 const MARKS: Record<Tone, string> = { running: '', good: '✓', bad: '!', ended: '■' };
+
+/** A chip's narrowest readable width, and the gaps the stylesheet draws between chips and columns. */
+const CHIP_MIN = 124;
+const CHIP_GAP = 4;
+const COL_GAP = 8;
+
+/**
+ * How many chip tracks each phase's column gets: the fewest rows whose columns all fit `width`,
+ * so the board is as short as the pane allows and every phase keeps its own column. A pane too
+ * narrow even for one track a phase scrolls sideways, as before.
+ */
+export function boardTracks(counts: number[], width: number): number[] {
+  const tallest = Math.max(1, ...counts);
+  for (let rows = 1; rows <= tallest; rows++) {
+    const tracks = counts.map((n) => Math.max(1, Math.ceil(n / rows)));
+    const need = tracks.reduce((w, t) => w + t * CHIP_MIN + (t - 1) * CHIP_GAP, 0) + (counts.length - 1) * COL_GAP;
+    if (need <= width) return tracks;
+  }
+  return counts.map(() => 1);
+}
 
 function teamPhases(parties: Party[], runsOf: (p: Party) => SubAgentRun[]) {
   return parties
@@ -71,6 +95,14 @@ export function TeamBoard({ parties, runsOf, onDrillIn, onExpand }: {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const open = userOpen ?? running > 0;
   const [now, setNow] = useState(() => Date.now());
+  const [colsEl, setColsEl] = useState<HTMLDivElement | null>(null);
+  const [colsWidth, setColsWidth] = useState(0);
+  useEffect(() => {
+    if (!colsEl) return undefined;
+    const ro = new ResizeObserver(([entry]) => setColsWidth(entry.contentRect.width));
+    ro.observe(colsEl);
+    return () => ro.disconnect();
+  }, [colsEl]);
   useEffect(() => {
     if (running === 0) return undefined;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
@@ -79,6 +111,7 @@ export function TeamBoard({ parties, runsOf, onDrillIn, onExpand }: {
 
   if (phases.length < 2) return null;
   const clock = partyClockMs(all, now);
+  const tracks = boardTracks(phases.map((ph) => ph.runs.length), colsWidth);
 
   return (
     <div className="chat-team-board" data-open={open || undefined} data-running={running > 0 || undefined}>
@@ -123,10 +156,16 @@ export function TeamBoard({ parties, runsOf, onDrillIn, onExpand }: {
       )}
       </div>
       {open && (
-        <div className="chat-team-board-cols">
-          {phases.map(({ party, runs }) => (
-            <div className="chat-team-board-col" key={party.id} data-tone={phaseTone(partyOutcome(party))}>
+        <div className="chat-team-board-cols" ref={setColsEl}>
+          {phases.map(({ party, runs }, i) => (
+            <div
+              className="chat-team-board-col"
+              key={party.id}
+              data-tone={phaseTone(partyOutcome(party))}
+              style={{ '--tracks': tracks[i] } as CSSProperties}
+            >
               <div className="chat-team-board-col-head">{partyTitle(party)}</div>
+              <div className="chat-team-board-chips">
               {runs.map((run) => {
                 const { role } = runIdentity(run);
                 const tone = chipTone(run);
@@ -147,6 +186,7 @@ export function TeamBoard({ parties, runsOf, onDrillIn, onExpand }: {
                   </button>
                 );
               })}
+              </div>
             </div>
           ))}
         </div>
