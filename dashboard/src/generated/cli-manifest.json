@@ -17,6 +17,11 @@
       ]
     },
     {
+      "path": "app sign-setup",
+      "desc": "Create a stable local signing identity so macOS remembers the app's permissions across updates",
+      "args": []
+    },
+    {
       "path": "app status",
       "desc": "Show the installed desktop app version and state",
       "args": []
@@ -68,6 +73,17 @@
       "valueFlags": [
         "--prompt",
         "--mode"
+      ]
+    },
+    {
+      "path": "assistant close",
+      "desc": "Close a chat, or every chat --vault/--status picks; idle chats close directly, working/asking ones need --force (and the owner's approval)",
+      "args": [
+        "[sessionId]"
+      ],
+      "valueFlags": [
+        "--vault",
+        "--status"
       ]
     },
     {

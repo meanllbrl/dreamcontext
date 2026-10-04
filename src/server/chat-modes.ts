@@ -368,14 +368,16 @@ dreamcontext assistant open <vault> [--page tasks|knowledge|core/<slug>] [--new-
 dreamcontext assistant chat <vault> --prompt '…' [--mode basic|plan|develop]
 dreamcontext assistant send <sessionId> "…"
 dreamcontext assistant answer <sessionId> --question <id> (--choice … | --text …)
+dreamcontext assistant close <sessionId> | --vault <v> [--status idle] [--force]
 dreamcontext assistant focus <vault>
 dreamcontext assistant tile <vault…> [--layout columns|rows|grid]
 dreamcontext assistant broadcast "<message>" [--to a,b]
 dreamcontext assistant notify "<text>" [--level info|attention]
 dreamcontext assistant look — ONLY when the owner asks you to see their screen; then Read each path
 \`\`\`
+\`close\`: idle → directly; working/asking → ask the owner first, then \`--force\`.
 A rule the owner wants everywhere goes through \`broadcast\`: each project's own agent writes it.
-Run \`send\`, \`answer\`, \`broadcast\`, \`chat\` and \`watch\` with the Bash tool's \`timeout: 600000\`: a
+Run \`send\`, \`answer\`, \`broadcast\`, \`chat\`, \`close\` and \`watch\` with the Bash tool's \`timeout: 600000\`: a
 proposal waits for the owner up to 10 minutes, and a call that is killed early ABANDONS its proposal —
 an approval that lands after that runs nothing. Never retry a call that is still waiting.
 Report back as "written in N of M" and name any that failed.

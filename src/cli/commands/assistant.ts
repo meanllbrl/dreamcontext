@@ -10,7 +10,7 @@ import { request } from 'node:http';
  * anywhere else — a terminal, another project's agent — it refuses with the same named error
  * the server would give.
  *
- * `node:http`, not `fetch`: a gated verb (`send`, `answer`, `broadcast`) BLOCKS until the
+ * `node:http`, not `fetch`: a gated verb (`send`, `answer`, `broadcast`, `close`) BLOCKS until the
  * owner approves it in the notch, up to ten minutes, and undici's fetch gives up waiting for
  * response headers after five.
  *
@@ -141,6 +141,20 @@ export function registerAssistantCommand(program: Command): void {
     .option('--text <text>', 'A free-text answer')
     .action((sessionId: string, o: { question: string; choice?: string; text?: string }) =>
       ui('answer', { sessionId, question: o.question, choice: o.choice, text: o.text }));
+
+  a.command('close [sessionId]')
+    .description('Close a chat, or every chat --vault/--status picks; idle chats close directly, working/asking ones need --force (and the owner\'s approval)')
+    .option('--vault <vault>', 'Every chat in this project')
+    .option('--status <status>', 'Only chats in this status: starting | working | asking | idle')
+    .option('--force', 'Also close working/asking chats — only after the owner said so')
+    .action((sessionId: string | undefined, o: { vault?: string; status?: string; force?: boolean }) => {
+      if (!sessionId && !o.vault && !o.status) {
+        process.stderr.write('name a sessionId, or pick chats with --vault and/or --status\n');
+        process.exitCode = 1;
+        return;
+      }
+      return ui('close', { sessionId, vault: o.vault, status: o.status, force: !!o.force });
+    });
 
   a.command('focus <vault>')
     .description('Bring a project\'s window to the front')

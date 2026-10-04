@@ -2254,6 +2254,12 @@ export function AgentSurface() {
       if (vault) windowChrome.activate(vault);
       onOpenAppPage(page, id);
     },
+    closeChat: (claudeId) => {
+      const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
+      if (!entry) return false;
+      closeSessionById(entry.id);
+      return true;
+    },
   });
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────

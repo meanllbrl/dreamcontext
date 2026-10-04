@@ -119,6 +119,34 @@ describe('delegated verbs (notch → project window)', () => {
     expect(events.emitTo).not.toHaveBeenCalled();
   });
 
+  it('close for a project live in a tab: rings THAT window, no new window', async () => {
+    server.labels = ['main'];
+    const out = await executeAssistantCommand({ id: 'c9', verb: 'close', args: { vault: 'acme', sessionId: 's' } });
+    expect(out).toBeNull();
+    expect(desktop.openVaultWindow).not.toHaveBeenCalled();
+    expect(binds).toEqual([{ id: 'c9', vault: 'acme', label: 'main' }]);
+    expect(rang()).toEqual([['main', 'dream://assistant-command', { commandId: 'c9', vault: 'acme' }]]);
+  });
+
+  it('close for a COLD tab: woken in place and rung there — the tab exists, so it may close', async () => {
+    registry.resolveLiveWindowForVault.mockResolvedValue('main');
+    const out = await executeAssistantCommand({ id: 'c10', verb: 'close', args: { vault: 'acme', sessionId: 's' } });
+    expect(out).toBeNull();
+    expect(desktop.openVaultWindow).not.toHaveBeenCalled();
+    expect(rang().map(([label, event]) => [label, event])).toEqual([
+      ['main', 'dream://assistant-wake'],
+      ['main', 'dream://assistant-command'],
+    ]);
+  });
+
+  it('close for a project open nowhere: NO window is built, nothing bound or rung, a plain refusal', async () => {
+    const out = await executeAssistantCommand({ id: 'c11', verb: 'close', args: { vault: 'acme', sessionId: 's' } });
+    expect(out).toEqual({ ok: false, error: 'acme is not open in any window — nothing to close' });
+    expect(desktop.openVaultWindow).not.toHaveBeenCalled();
+    expect(binds).toEqual([]);
+    expect(events.emitTo).not.toHaveBeenCalled();
+  });
+
   it('no project named → refused before anything opens', async () => {
     const out = await executeAssistantCommand({ id: 'c5', verb: 'focus', args: {} });
     expect(out).toEqual({ ok: false, error: 'no project named' });

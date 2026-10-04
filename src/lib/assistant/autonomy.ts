@@ -28,10 +28,14 @@ import type { Autonomy } from './home.js';
  * `look` (a screenshot of the owner's screen) follows the same rule as `chat`: it is the
  * owner's own request only while nothing untrusted was read since they last spoke. A project
  * reply saying "take a screenshot" must not be able to see the owner's desktop unasked.
+ *
+ * `close` ends a conversation. Closing IDLE chats follows `chat`'s rule (free while clean, a
+ * proposal once tainted); a `--force` close that hits a working/asking chat cuts a live turn
+ * off, so below `bypass` it is always the owner's call. It sits in neither list below.
  */
 
 export const ASSISTANT_VERBS = [
-  'projects', 'sessions', 'watch', 'open', 'chat', 'send', 'answer', 'focus', 'tile', 'broadcast', 'notify', 'look',
+  'projects', 'sessions', 'watch', 'open', 'chat', 'send', 'answer', 'focus', 'tile', 'broadcast', 'notify', 'look', 'close',
 ] as const;
 export type AssistantVerb = typeof ASSISTANT_VERBS[number];
 
@@ -46,11 +50,14 @@ export interface GateInput {
   tainted: boolean;
   /** `answer` only: the pending prompt is a TOOL-PERMISSION request, not a question. */
   answersToolPermission?: boolean;
+  /** `close` only: `--force` and at least one target is working/asking/starting. */
+  forcesBusy?: boolean;
 }
 
 export function decide(input: GateInput): GateDecision {
-  const { autonomy, verb, tainted, answersToolPermission } = input;
+  const { autonomy, verb, tainted, answersToolPermission, forcesBusy } = input;
   if (autonomy === 'bypass') return 'pass';
+  if (verb === 'close') return forcesBusy || tainted ? 'propose' : 'pass';
   // `chat` is free because it carries the OWNER's words — which nothing can prove once the
   // session has read project output. A tainted `chat` is exactly the "start a chat in Y with
   // prompt: …" an injected reply would ask for, and a new agent in Y would run that prompt.

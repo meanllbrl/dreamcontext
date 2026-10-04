@@ -7,7 +7,7 @@ import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { isLoopback } from './agent-spawn-shared.js';
 import {
-  ASSISTANT_VAULT, assistantContextRoot, assistantExists, assistantProjectRoot,
+  ASSISTANT_VAULT, assistantContextRoot, assistantExists, assistantProjectRoot, isAssistantVault,
   readAssistantConfig, writeAssistantConfig, sanitizeConfigPatch,
 } from '../../lib/assistant/home.js';
 import { checkAssistantToken, isTainted, markTainted } from '../../lib/assistant/session-state.js';
@@ -168,13 +168,15 @@ async function gated(
   text: string,
   answersToolPermission: boolean,
   run: (finalText: string) => Promise<{ status: number; body: Record<string, unknown> }>,
+  forcesBusy = false,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const tainted = isTainted();
-  const decision = decide({ autonomy: autonomy(), verb, tainted, answersToolPermission });
+  const decision = decide({ autonomy: autonomy(), verb, tainted, answersToolPermission, forcesBusy });
   if (decision === 'pass') return run(text);
   const provenance = autonomy() === 'ask' ? 'autonomy is ask'
     : tainted ? 'you read project output since the owner last spoke'
-      : 'answering another agent\'s tool-permission prompt';
+      : forcesBusy ? 'a forced close cuts off a chat that is still working or asking'
+        : 'answering another agent\'s tool-permission prompt';
   const { view, decision: pending } = createProposal({ verb, target, text, provenance });
   // A proposal lives exactly as long as the call that asked for it (see `abandonProposal`).
   const onGone = () => { if (!res.writableEnded) abandonProposal(view.id); };
@@ -232,7 +234,7 @@ export async function handleAssistantLook(req: IncomingMessage, res: ServerRespo
   sendJson(res, out.status, out.body);
 }
 
-const UI_VERBS = ['open', 'chat', 'send', 'answer', 'focus', 'tile', 'notify'] as const;
+const UI_VERBS = ['open', 'chat', 'send', 'answer', 'focus', 'tile', 'notify', 'close'] as const;
 type UiVerb = typeof UI_VERBS[number];
 
 /** Strict-pick each UI verb's args — the body is never spread into the command. */
@@ -289,7 +291,100 @@ function pickUiArgs(verb: UiVerb, b: Record<string, unknown>): Record<string, un
       if (!text.trim()) return 'text is required';
       return { text, level: str('level', 20) === 'attention' ? 'attention' : 'info' };
     }
+    case 'close': {
+      const given = (k: string) => b[k] !== undefined && b[k] !== null && b[k] !== '';
+      const sessionId = str('sessionId', 100);
+      if (given('sessionId') && !sessionId) return 'sessionId must be a string of at most 100 characters';
+      const vault = str('vault', 200);
+      if (given('vault') && !known(vault)) return `unknown project "${String(b.vault)}"`;
+      const status = str('status', 20);
+      if (given('status') && !(CLOSABLE_STATUSES as readonly string[]).includes(status)) return `status must be one of ${CLOSABLE_STATUSES.join(', ')}`;
+      if (!sessionId && !vault && !status) return 'name a sessionId, or pick chats with vault and/or status';
+      return { sessionId: sessionId || null, vault: vault || null, status: status || null, force: b.force === true };
+    }
   }
+}
+
+/** What `close` may filter on — every status but `gone`, which is already closed. */
+const CLOSABLE_STATUSES = CHAT_STATUSES.filter((s) => s !== 'gone');
+/** A chat mid-turn or waiting on a prompt: closing it cuts the turn off, so only with `--force`. */
+const BUSY_STATUSES: readonly ChatStatus[] = ['starting', 'working', 'asking'];
+const busyReason = (s: ChatStatus) => `busy: ${s} — confirm with the owner, then re-run with --force`;
+/** How many targets a close proposal names before it says "and N more". */
+const CLOSE_PROPOSAL_LIST = 10;
+
+/**
+ * `close` — end chats in other projects. One session, or every chat a vault/status filter
+ * picks. Never the Assistant's own chat, never one already gone. Idle chats close directly;
+ * a working/asking/starting one only with `--force`, and that force is the owner's call
+ * (autonomy.ts). Statuses are re-read AFTER the gate: a proposal may have waited minutes.
+ * Responds with titles nowhere — only ids, vaults and statuses, so nothing here taints.
+ */
+async function closeChats(res: ServerResponse, args: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  const force = args.force === true;
+  const single = typeof args.sessionId === 'string' ? args.sessionId : '';
+  let targets: ChatEntry[];
+  if (single) {
+    const chat = getChat(single);
+    if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${single}".`); return null; }
+    if (isAssistantVault(chat.vault)) { sendError(res, 400, 'invalid_args', 'the Assistant cannot close its own chat'); return null; }
+    if (!force && BUSY_STATUSES.includes(chat.status)) { sendError(res, 409, 'session_busy', `${chat.vault} · ${chat.sessionId} is ${busyReason(chat.status)}`); return null; }
+    targets = [chat];
+  } else {
+    targets = listChats({
+      ...(args.vault ? { vault: String(args.vault) } : {}),
+      ...(args.status ? { status: args.status as ChatStatus } : {}),
+    });
+  }
+  targets = targets.filter((c) => !isAssistantVault(c.vault) && c.status !== 'gone');
+  if (!targets.length) return { status: 200, body: { ok: true, closed: [], skipped: [], failed: [], summary: 'nothing to close' } };
+
+  const closed: Array<{ sessionId: string; vault: string }> = [];
+  const skipped: Array<{ sessionId: string; vault: string; status: ChatStatus; reason: string }> = [];
+  const failed: Array<{ sessionId: string; vault: string; error: string }> = [];
+  const respond = (status = 200) => ({
+    status,
+    body: {
+      ok: closed.length > 0 || (failed.length === 0 && skipped.length === 0),
+      closed, skipped, failed,
+      summary: `closed ${closed.length} of ${targets.length}`,
+    },
+  });
+  const isBusy = (c: ChatEntry) => BUSY_STATUSES.includes(c.status);
+  const closable = force ? targets : targets.filter((c) => !isBusy(c));
+  // Left out here means left out of the proposal too: never closed, whatever it is later.
+  for (const c of targets) {
+    if (!closable.includes(c)) skipped.push({ sessionId: c.sessionId, vault: c.vault, status: c.status, reason: busyReason(c.status) });
+  }
+  if (!closable.length) return respond();
+  // The only chats that may be closed while busy: busy when listed, under --force, so the
+  // gate below made their close the owner's call. Anything else busy at close time is skipped.
+  const approvedBusy = new Set(closable.filter(isBusy).map((c) => c.sessionId));
+
+  const label = (c: ChatEntry) => `${c.vault} · ${c.sessionId} (${c.status})`;
+  const target = single ? `${targets[0].vault} · ${targets[0].sessionId}` : `${args.vault ? String(args.vault) : 'all projects'} · ${closable.length} chats`;
+  const more = closable.length - CLOSE_PROPOSAL_LIST;
+  const text = `Close ${closable.length} chat${closable.length === 1 ? '' : 's'}: ${closable.slice(0, CLOSE_PROPOSAL_LIST).map(label).join(', ')}${more > 0 ? `, and ${more} more` : ''}`;
+  return gated(res, 'close', target, text, false, async () => {
+    for (const t of closable) {
+      // The proposal (or an earlier close's relay) may have waited: what was idle may be
+      // working now, or already gone.
+      const c = getChat(t.sessionId);
+      if (!c || c.status === 'gone') { skipped.push({ sessionId: t.sessionId, vault: t.vault, status: 'gone', reason: 'already ended' }); continue; }
+      if (isBusy(c) && !approvedBusy.has(c.sessionId)) {
+        skipped.push({ sessionId: c.sessionId, vault: c.vault, status: c.status, reason: `became busy: ${c.status} since it was listed — confirm with the owner, then re-run with --force` });
+        continue;
+      }
+      const r = await relayCommand('close', { sessionId: c.sessionId, vault: c.vault });
+      if (r.ok) {
+        closed.push({ sessionId: c.sessionId, vault: c.vault });
+        dismissDelegation(c.sessionId);
+      } else {
+        failed.push({ sessionId: c.sessionId, vault: c.vault, error: r.error });
+      }
+    }
+    return respond(single && failed[0]?.error === 'no_surface' ? 409 : 200);
+  }, approvedBusy.size > 0);
 }
 
 /** POST /api/assistant/ui/:verb — relayed to the notch (`no_surface` without one). */
@@ -323,6 +418,11 @@ export async function handleAssistantUi(req: IncomingMessage, res: ServerRespons
     // The Assistant is told when this session next asks, finishes a turn, or closes.
     if (out.body.ok === true) recordDelegation(args.sessionId, chat.vault, verb === 'send' ? args.text : undefined);
     sendJson(res, out.status, out.body);
+    return;
+  }
+  if (verb === 'close') {
+    const out = await closeChats(res, args);
+    if (out) sendJson(res, out.status, out.body);
     return;
   }
   if (verb === 'chat') {

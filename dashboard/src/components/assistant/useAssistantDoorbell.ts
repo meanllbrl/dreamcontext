@@ -24,6 +24,8 @@ export interface AssistantDoorbellDeps {
   reveal: () => void;
   /** Bring this project to the front on one of its pages (a notch detail button, `open --page`). */
   openPage: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  /** Close this chat's tab through the surface's one end-of-conversation path; false when no tab holds it. */
+  closeChat: (claudeId: string) => boolean;
 }
 
 /** `tasks/<slug>` → its parts; anything else → null (the server already refused it). */
@@ -99,6 +101,14 @@ export async function runVerb(
       ? { behavior: 'allow', updatedInput: pending.input }
       : { behavior: 'deny', message: 'Declined by the owner through the Assistant.' });
     return { ok: true, result: { answered: allow ? 'allow' : 'deny' } };
+  }
+  if (verb === 'close') {
+    // No focus: closing a tab in the background is the whole point, the owner stays where they are.
+    const sessionId = typeof args.sessionId === 'string' ? args.sessionId : '';
+    if (!sessionId || !deps.findChat(sessionId) || !deps.closeChat(sessionId)) {
+      return { ok: false, error: 'that chat is not open in this project any more' };
+    }
+    return { ok: true, result: { sessionId, closed: true } };
   }
   return { ok: false, error: `this project cannot run "${verb}"` };
 }

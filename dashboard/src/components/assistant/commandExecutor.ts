@@ -3,7 +3,7 @@
  * socket (`chatSession.setCommandHandler`).
  *
  * Verbs the notch finishes itself (`notify`, `tile`) answer UP the socket. Verbs a PROJECT has
- * to carry out (`open`, `chat`, `send`, `answer`, `focus`) are DELEGATED: the notch finds or
+ * to carry out (`open`, `chat`, `send`, `answer`, `focus`, `close`) are DELEGATED: the notch finds or
  * opens that project's window, binds the command id to it on the server (by the window's real
  * Tauri label — the server looks up the nonce that window registered, the notch never holds
  * one), and rings the window's doorbell. The window claims the command from the server and
@@ -20,6 +20,9 @@
  * NEVER A CHIP IN SOMEBODY'S WINDOW. A project that is not open anywhere gets its OWN window
  * (`openVaultWindow`), so the per-window chip ceiling can never refuse the assistant; if even
  * the own window cannot be built, the answer is `ceiling`, which the assistant says aloud.
+ *
+ * EXCEPT `close`: a live chat lives in a project that is already open, so a project open nowhere
+ * has nothing to close and never gets a window built just to say so.
  */
 import type { AssistantCommandHandler } from '../sleepy/chatSession';
 import { openVaultWindow, sendDesktopNotification, vaultWindowLabel } from '../../lib/desktop';
@@ -32,7 +35,7 @@ import { tileWindows, type TileLayout } from './tile';
 const BIND_WINDOW_MS = 15_000;
 const BIND_RETRY_MS = 250;
 
-const DELEGATED = new Set(['open', 'chat', 'send', 'answer', 'focus']);
+const DELEGATED = new Set(['open', 'chat', 'send', 'answer', 'focus', 'close']);
 
 type Out = Awaited<ReturnType<AssistantCommandHandler>>;
 
@@ -63,8 +66,8 @@ async function emitDoorbell(id: string, vault: string, label: string): Promise<O
   return null;
 }
 
-/** Find (or build) the window that holds `vault`, bind the command to it, ring it. */
-async function ringDoorbell(id: string, vault: string, newWindow: boolean): Promise<Out> {
+/** Find (or, when `mayOpen`, build) the window that holds `vault`, bind the command to it, ring it. */
+async function ringDoorbell(id: string, vault: string, newWindow: boolean, mayOpen: boolean): Promise<Out> {
   if (!newWindow) {
     const { live, cold } = await findOpenProject(vault);
     // Already live in a tab somewhere: that instance registered its nonce when it mounted.
@@ -81,6 +84,7 @@ async function ringDoorbell(id: string, vault: string, newWindow: boolean): Prom
       } catch { /* the window went away — fall through to its own window */ }
     }
   }
+  if (!mayOpen) return { ok: false, error: `${vault} is not open in any window — nothing to close` };
   try {
     await openVaultWindow(vault);
   } catch (err) {
@@ -102,7 +106,7 @@ export const executeAssistantCommand: AssistantCommandHandler = async ({ id, ver
   if (DELEGATED.has(verb)) {
     const vault = typeof args.vault === 'string' ? args.vault : '';
     if (!vault) return { ok: false, error: 'no project named' };
-    return ringDoorbell(id, vault, verb === 'open' && args.newWindow === true);
+    return ringDoorbell(id, vault, verb === 'open' && args.newWindow === true, verb !== 'close');
   }
   if (verb === 'notify') {
     const text = typeof args.text === 'string' ? args.text : '';

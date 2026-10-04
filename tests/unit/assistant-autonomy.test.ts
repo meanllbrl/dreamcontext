@@ -47,8 +47,9 @@ describe('decide — the full matrix', () => {
       for (const tainted of [false, true]) {
         const gated = GATED_VERBS.includes(verb);
         const expected = autonomy === 'bypass' ? 'pass'
-          // chat (and look) carry the owner's request only while nothing untrusted was read since.
-          : verb === 'chat' || verb === 'look' ? (tainted ? 'propose' : 'pass')
+          // chat (and look, and an idle-only close) carry the owner's request only while nothing
+          // untrusted was read since.
+          : verb === 'chat' || verb === 'look' || verb === 'close' ? (tainted ? 'propose' : 'pass')
             : !gated ? 'pass'
               : autonomy === 'ask' ? 'propose'
                 : tainted ? 'propose' : 'pass';
@@ -62,6 +63,16 @@ describe('decide — the full matrix', () => {
   it('auto: answering a TOOL-PERMISSION prompt always needs approval, even clean', () => {
     expect(decide({ autonomy: 'auto', verb: 'answer', tainted: false, answersToolPermission: true })).toBe('propose');
     expect(decide({ autonomy: 'auto', verb: 'answer', tainted: false, answersToolPermission: false })).toBe('pass');
+  });
+
+  it('close: a forced close of a busy chat is the owner\'s call at ask and auto, passes at bypass', () => {
+    for (const tainted of [false, true]) {
+      expect(decide({ autonomy: 'ask', verb: 'close', tainted, forcesBusy: true })).toBe('propose');
+      expect(decide({ autonomy: 'auto', verb: 'close', tainted, forcesBusy: true })).toBe('propose');
+      expect(decide({ autonomy: 'bypass', verb: 'close', tainted, forcesBusy: true })).toBe('pass');
+    }
+    expect(decide({ autonomy: 'ask', verb: 'close', tainted: false, forcesBusy: false })).toBe('pass');
+    expect(decide({ autonomy: 'auto', verb: 'close', tainted: true, forcesBusy: false })).toBe('propose');
   });
 
   it('bypass passes even a tainted tool-permission answer (the owner\'s explicit choice)', () => {
