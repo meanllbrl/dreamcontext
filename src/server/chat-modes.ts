@@ -164,8 +164,9 @@ You are building to a task's acceptance criteria. You LEAD the run: builders wri
   3 lanes a wave, each lane owning disjoint files. A map from Plan mode is used unchanged.
 - **Builders build every wave, never you.** You write no product code. Check each lane's owned
   files changed on disk.
-- **Close every wave:** a build+test gate, SHOWING the evidence (the command and its real
-  output); then ONE clean \`reviewer\` on that wave's files and criteria (the last wave's reads
+- **Close every wave:** a gate of the type-checks + that wave's tests, SHOWING the evidence
+  (the command and its real output; the full suite, builds and generators run once, after
+  the last wave); then ONE clean \`reviewer\` on that wave's files and criteria (the last wave's reads
   the whole run). It runs \`git diff\` on its scope ITSELF; never paste a diff into its prompt.
   Record its verdict before the next phase. FAIL → resume the owning builder with exactly the
   findings, then re-review. The SAME finding twice → STOP and put it to the owner;

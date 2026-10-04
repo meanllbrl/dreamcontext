@@ -1,3 +1,6 @@
+import { BUILDER_BRIEF, BUILDER_CHECK_RULES } from './builder-brief.js';
+import { BUILDER_NO_BACKGROUND_ENV } from './builder-tools.js';
+
 /**
  * The Develop-mode run recipe, printed by `dreamcontext goal-live recipe develop`.
  *
@@ -69,13 +72,17 @@ takes minutes (a huge untracked file): tell the owner once.
 ### 2b. Spawn the builders (never write the code yourself)
 
   dreamcontext goal-live phase impl --wave N --waves M || true
+  dreamcontext builder load --reap
+
+\`busy\` (1-min load above the core count) = at most 1-2 lanes at a time this wave; the rest
+start as those finish. Every builder shares one machine with whatever else is running.
 
 Per lane L (ids are wave-qualified: \`wN-L\`, never a bare lane name):
 
   SID="$( (uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid) | tr 'A-Z' 'a-z')"
   CFG="\${CLAUDE_CONFIG_DIR:--}"      # the RAW value: - = the machine's own account
   # the brief: write it to $ROOT/tmp/develop/$S/wN-L.md (section 5)
-  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT DREAMCONTEXT_SPAWNED=develop nohup claude -p "$(cat "$ROOT/tmp/develop/$S/wN-L.md")" --session-id "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json > "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
+  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT DREAMCONTEXT_SPAWNED=develop ${BUILDER_NO_BACKGROUND_ENV} nohup claude -p "$(cat "$ROOT/tmp/develop/$S/wN-L.md")" --session-id "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json > "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
   PID=$!
   dreamcontext tasks log "$S" "wN-L spawned sid $SID pid $PID cfg $CFG"
   dreamcontext goal-live actor wN-L="<what it builds>" --kind spawn --role implementer --wave N --session "$SID" || true
@@ -83,6 +90,9 @@ Per lane L (ids are wave-qualified: \`wN-L\`, never a bare lane name):
 The env strip is REQUIRED: a nohup'd builder otherwise hijacks this pane's resume id.
 DREAMCONTEXT_SPAWNED=develop is REQUIRED too: it keeps the builder's session out of sleep debt
 and out of sleep directives, even before its goal-live registration below lands.
+${BUILDER_NO_BACKGROUND_ENV} is REQUIRED on every spawn and resume: without it a check that hits
+the Bash timeout is moved to the background of a session about to exit, and the builder ends
+"waiting" with no report.
 \`cfg -\` means CLAUDE_CONFIG_DIR was unset (the primary account): never record or set it to
 $HOME/.claude, since any value relocates ~/.claude.json and loses the login.
 Never start a builder with the Bash tool's run_in_background: it reads as finished at once,
@@ -94,10 +104,21 @@ it refused never appears in the chat.
 
 ### 2c. Wait, then gate
 
-Wait for every lane (section 4). Each builder ends with a "files changed" list.
+Wait for every lane (section 4). Then, per lane, read how it ended:
+
+  dreamcontext builder report "$ROOT/tmp/develop/$S/wN-L.log" wN-L
+
+\`reported\` = its final message opened with \`## wN-L report\` and a "files changed:" list.
+\`unfinished\` = it ended its turn with a check still running, or never wrote the report: resume
+it ONCE (section 4) with "Run your pending checks in the foreground and write your final
+report." \`stopped\` with a usage limit = a pause, resume the same sid later; any other
+\`stopped\` or a second \`unfinished\` = run that lane's checks yourself (step 2), then decide.
 
 1. Owned files changed on disk? A lane whose owned files did not change did not build.
-2. Build + test: run them, SHOW the command and its real output.
+2. Check gate, run once by you, one check per Bash call, each through the heavy lock
+   (\`dreamcontext builder heavy -- <cmd>\`): the type-checks (root + every package the wave
+   touched) and the tests this wave's lanes own or affect. SHOW the command and its real output.
+   The full suite, builds, integration and generator scripts run ONCE, in section 3.
 3. Take the same snapshot again as NOW (same three commands, into the same $IDX), then:
 
   git -c core.quotePath=false diff-tree -r -z --name-status "$BASE" "$NOW"
@@ -137,7 +158,18 @@ The SAME finding twice = STOP and put it to the owner.
 Only after PASS: tick that wave's criteria (only what is demonstrably true), log it, and
 start wave N+1.
 
-## 3. After the last wave: validate
+## 3. After the last wave: the final gate, then validate
+
+First the final gate, once, on a quiet machine:
+
+  dreamcontext builder load --reap     # orphaned checkers of this repo are killed and listed
+
+\`busy\` (1-min load above the core count): check again every ~60 s, for at most 15 min; still
+busy = run anyway, through the heavy lock with at most 2 test workers, and record the load line
+next to the result. Then the heavy steps the task's Validation method does NOT already run (the
+validator runs those itself; never twice): the full suite, builds, integration, generators,
+browser. A red that is a timeout under load is the machine, not the code: record the load line,
+wait for quiet, re-run it before you resume anyone. Then:
 
   dreamcontext goal-live phase validate || true
   dreamcontext goal-live actor validator --kind fresh --role validator || true
@@ -190,7 +222,7 @@ Resume (always under the recorded cfg; \`cfg -\` = UNSET the variable, never set
   # -u flags, before DREAMCONTEXT_SPAWNED: "$@" may be -u, and env takes everything after a
   # NAME=value as the command to run
   if [ "$cfg" = "-" ]; then set -- -u CLAUDE_CONFIG_DIR; else set -- CLAUDE_CONFIG_DIR="$cfg"; fi
-  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT "$@" DREAMCONTEXT_SPAWNED=develop nohup claude -p "<exactly the findings, or: continue>" --resume "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json >> "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
+  env -u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT "$@" DREAMCONTEXT_SPAWNED=develop ${BUILDER_NO_BACKGROUND_ENV} nohup claude -p "<exactly the findings, or: continue>" --resume "$SID" --model opus --permission-mode acceptEdits --allowedTools "Read Glob Grep Write Edit MultiEdit Bash" --output-format json >> "$ROOT/tmp/develop/$S/wN-L.log" 2>&1 &
   dreamcontext tasks log "$S" "wN-L resumed sid $SID pid $! cfg $cfg"
   dreamcontext goal-live actor wN-L --kind resume --role implementer --wave N --round <r> --session "$SID" || true
 
@@ -200,9 +232,13 @@ tell the owner.
 ## 5. Briefs
 
 BUILDER: "You are builder wN-L on task <slug>. Read _dream_context/state/<slug>.md. Your lane:
-<criteria>. You own ONLY: <files>. Build exactly that, run the build and tests, and do not
-touch other files. Never call dreamcontext goal-live. End with a line 'files changed:'
-followed by every path you created, edited or deleted."
+<criteria>. You own ONLY: <files>. Build exactly that and do not touch other files.
+Never call dreamcontext goal-live. Your checks: <type-check command for each package you touch>; <test
+command> on the test files you write or change and the existing tests of the modules you touch.
+${BUILDER_CHECK_RULES}
+Your final message starts with the exact heading '## wN-L report', then a line 'files changed:'
+followed by every path you created, edited or deleted, then each check you ran with its real
+result."
 
 REVIEWER: "Review wave N of <slug> against criteria <list>. Base tree <BASE>, current tree
 <NOW>. Scope (read these yourself with git diff <BASE> <NOW> -- <path>): <files>. Files with
@@ -225,4 +261,5 @@ conversation id.
 /** Every recipe `goal-live recipe <name>` knows. */
 export const GOAL_LIVE_RECIPES: Readonly<Record<string, string>> = {
   develop: DEVELOP_RECIPE,
+  'builder-brief': BUILDER_BRIEF,
 };

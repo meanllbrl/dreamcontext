@@ -79,7 +79,7 @@ Build **exactly** what the task's acceptance criteria require — no more, no le
 
 - Honor your task's `files owned` and `depends on` cells in the dependency-map table —
   they are the safety contract that makes parallel waves safe. Don't assume an
-  upstream lane's file is done until the wave's build+test gate has passed.
+  upstream lane's file is done until the orchestrator's wave gate has passed.
 - **Report back to the orchestrator; do not edit the dependency-map table yourself.**
   The orchestrator is the map's **single writer** — implementers report progress and
   findings, they don't write concurrent updates into the task doc's map.
@@ -94,6 +94,37 @@ You are a **CLI builder session** (`claude -p`), forked from the planner via
 **resumes this same session** (`claude -p --resume <yourSessionId>`) — you already have
 full context, so fix only the **specific** reported failure; don't re-read files you
 already read or re-derive decisions already settled in this session.
+
+**A `claude -p` session ends the moment your turn ends.** Nothing you put in the background
+ever reports back: there is no next turn for a notification to wake. A builder that ended on
+"waiting for the tests" looked hung for 39 minutes and then closed with no report
+(2026-10-04). The orchestrator forks you with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, so a
+check that hits its timeout is killed instead of moved away; the rules below still bind you.
+They are the same rules as the brief you were forked with (`dreamcontext goal-live recipe
+builder-brief`), which is what a `-p` builder actually reads:
+
+- **Never background a check.** No Bash `run_in_background`, no trailing `&`, no `nohup`, no
+  Monitor wait. Every check runs in the foreground with an explicit `timeout` under
+  600000 ms, one check per Bash call: never chain two type-checks, or a type-check and a
+  test run. A check that times out gets a narrower scope, never the background.
+- **Your turn never ends before every check you started has finished.** A final message
+  like "waiting for X" or "I'll continue when it finishes" is a FAILED run, not a pause. If
+  a tool result says a command "was moved to the background", poll its output file with
+  short foreground calls until it shows the result.
+- **Run only your lane's checks.** Up to three builders share one machine; a full suite
+  per builder pushed the load average past 100 and timed out a suite that is green on a
+  quiet machine. Your scope is exactly:
+  - the test files you wrote or changed;
+  - the existing tests of the modules you touched;
+  - the type-check of each package you touched (e.g. `npx tsc --noEmit` at the root, and
+    `cd dashboard && npx tsc --noEmit` when you edited `dashboard/`).
+- **Through the heavy lock.** Run every type-check and test run as
+  `dreamcontext builder heavy -- <command>`, test runners with at most 2 workers (e.g.
+  `--maxWorkers=2`). Builders of one repo take turns instead of running three type-checkers
+  at once. Exit 75 means the lock stayed busy and NOTHING ran: run it again.
+- **Not yours: the full unit suite, `build` / `build:cli`, integration tests that need a
+  compiled `dist/`, and any `gen:*` script.** The orchestrator runs them once, at the
+  final gate. If your criteria seem to need one, say so in the report instead of running it.
 
 ## Hard limits
 
@@ -120,5 +151,11 @@ whatever tree the orchestrator forked you into and never create one yourself. Re
 
 ## Output
 
-A tight report: files changed (1 line each), what the build/tests now show, which
-acceptance criteria are met, and anything you couldn't complete (with the reason).
+Your final message **starts with the exact heading `## <TaskId> report`** (e.g.
+`## T4 report`). The orchestrator looks for that line to tell a finished builder from one
+that closed without reporting; a final message without it is treated as unfinished and
+resumed.
+
+Under it, a tight report: files changed (1 line each), each check you ran (the command and
+its real result), which acceptance criteria are met, and anything you couldn't complete
+(with the reason).

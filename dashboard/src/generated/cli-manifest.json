@@ -514,6 +514,35 @@
       ]
     },
     {
+      "path": "builder",
+      "desc": "Helpers for headless builder sessions: machine load, the heavy-check lock, and whether a builder reported",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "builder heavy",
+      "desc": "Run a type-check or test run holding this repo's heavy lock, one at a time across builders (exit: the command's, or 75 = lock busy, nothing ran)",
+      "args": [
+        "<command...>"
+      ],
+      "valueFlags": [
+        "--max-wait"
+      ]
+    },
+    {
+      "path": "builder load",
+      "desc": "Print cores, the 1-min load average and busy|quiet, plus orphaned checkers of this repo (always exits 0)",
+      "args": []
+    },
+    {
+      "path": "builder report",
+      "desc": "Did the builder finish? reported (exit 0) | unfinished | stopped | missing (exit 3)",
+      "args": [
+        "<file>",
+        "<taskId>"
+      ]
+    },
+    {
       "path": "changelog",
       "desc": "Browse core/CHANGELOG.json chronologically (newest first)",
       "args": [],

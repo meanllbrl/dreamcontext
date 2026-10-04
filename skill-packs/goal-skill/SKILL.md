@@ -82,12 +82,25 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
    claude -p --resume <session_id> "<the delta — new findings only>" --output-format json < /dev/null
    ```
 
-3. **Fork an implementer from the planner session** (Phase 4, once per task in a wave):
+3. **Fork an implementer from the planner session** (Phase 4, once per task in a wave).
+   `RUN=tmp/goal/<slug>` holds every brief and every run's JSON output:
    ```
-   claude -p --resume <plannerId> --fork-session --session-id <implId> "<task Tn from the dep map>" \
+   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <implId> \
+     "$(cat "$RUN/brief-<TaskId>.md")" \
      --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
-     --output-format json --model sonnet < /dev/null
+     --output-format json --model sonnet < /dev/null > "$RUN/<TaskId>-r1.json"
    ```
+   The prompt is the builder brief (Phase 4) read from a file, never retyped: a `-p` fork
+   never loads the `goal-implementer` agent file, so the brief is ALL it sees, and a brief
+   pasted into a double-quoted argument loses its backticks and quotes.
+
+   **`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` is not optional**, on every fork and every
+   resume of a builder. Without it, a check that hits the Bash tool's timeout is not killed
+   but MOVED TO THE BACKGROUND; the builder then ends its turn "waiting", the `-p` process
+   exits with the turn, and the notification never comes (2026-10-04: two builders looked
+   hung for 39 minutes, closed with no report, and left their type-checkers running).
+   With it, the same check is killed and reported as timed out, which the builder can see.
+
    `--fork-session` starts a **new** session that inherits the planner's full context, and
    `--session-id <implId>` (a fresh uuid you minted) names it, so you know the id before it
    runs. The planner's original session is untouched and stays resumable. Record the id in
@@ -110,6 +123,36 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
    silent error. Resume or re-fork it; never let the report stand in for the work.
    (Both failure modes are real: the 2026-07-18 permission stall and the earlier 7-lane
    role-binding drift were each caught exactly this way.)
+
+6. **Check the report sentinel every time a builder exits.** A finished implementer's
+   final message opens with `## <TaskId> report` (the builder brief requires it).
+   `subtype: success` only means the turn ended, so ask the run itself:
+   ```
+   dreamcontext builder report "$RUN/<TaskId>-r<N>.json" <TaskId>
+   ```
+   It prints one line and exits 0 only for `reported`:
+   - **`reported`**: on to rule 5 (`git status --porcelain` on its owned files).
+   - **`unfinished`**: it ended without the sentinel, or its last line is a promise
+     ("waiting for…", "still running"). Resume it ONCE, with the same flags it was forked
+     with:
+     ```
+     CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <implId> "Run your pending checks in the foreground and write your final report." \
+       --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
+       --output-format json --model sonnet < /dev/null > "$RUN/<TaskId>-r<N+1>.json"
+     ```
+     A resume without the permission flags stalls at its first Bash call, exactly like
+     the fork described in rule 3.
+   - **`stopped`**: the run itself errored. A usage limit is a pause: resume the same
+     session once the limit resets. Max turns: resume as for `unfinished`. Anything else:
+     read the detail and decide.
+   - **`missing`**: no result yet. Process still alive = it is working, wait. Gone = it
+     crashed: re-fork it (rule 4).
+
+   **Second miss, then escalate.** If the resumed run is `unfinished` again, stop resuming:
+   run that lane's checks yourself (one per Bash call, through `dreamcontext builder
+   heavy`). Green: accept the on-disk work and write its report into the task log
+   yourself. Red: re-fork the lane once from the planner with the exact failures. A re-fork
+   that misses too → ESCALATE to the user with both outputs.
 
 **Fork base = the PLANNER session, never the orchestrator's own chat.** The
 orchestrator's Claude Code conversation is not CLI-resumable — builders always branch
@@ -187,11 +230,14 @@ flowchart TD
     RF1 --> P1
     P2 -->|still stuck after re-fork, or valve at 8 rounds| ESC1[ESCALATE to user — do NOT proceed]
     P2 -->|all SOLID| P3[Phase 3 — persist plan + dep map + session registry as a dreamcontext task]
-    P3 --> P4[Phase 4 — implementers FORK per task, parallel waves, high]
-    P4 --> GATE{build + test gate between waves}
+    P3 --> P4[Phase 4 — implementers FORK per task, parallel waves, high, load-aware]
+    P4 --> GATE{wave gate, orchestrator once: type-checks + the wave's tests}
     GATE -->|FAIL| R2[RESUME the owning implementer]
     R2 --> P4
-    GATE -->|pass, last wave done| P5{Phase 5 — reviewer, clean, once: PASS?}
+    GATE -->|pass, more waves| P4
+    GATE -->|pass, last wave done| FG{final gate, once, load below cores: full suite, build, integration, generators, browser}
+    FG -->|FAIL| R2
+    FG -->|PASS| P5{Phase 5 — reviewer, clean, once: PASS?}
     P5 -->|FAIL, new findings| R3[RESUME the owning implementer]
     R3 --> P4
     P5 -->|FAIL, same findings repeat| RF2[re-fork the implementer fresh]
@@ -251,6 +297,11 @@ Safety rules the planner must apply when building the map:
   parallel tasks can't diverge.
 - **Bounded.** Max ~3 concurrent implementers per wave. The map exists only for M/L
   tiers — S is one serial implement, no map.
+- **Compiled artifacts marked.** A wave consumes the source of earlier waves, not their
+  build output. When a task genuinely consumes a compiled artifact (it runs `dist/`, reads
+  a generated manifest), its `depends on` cell says so explicitly, e.g.
+  `T2 + build:cli`. That mark is the only thing that pulls a heavy step forward into a
+  wave gate.
 
 ### Phase 2 — PLAN REVIEW (judges, clean, parallel)
 
@@ -314,15 +365,69 @@ the mechanics above (`--resume <plannerId> --fork-session`), at sonnet, thinking
 Capture each fork's `session_id` into the registry under `impl-<taskId>`. **Every
 implementer must load the engineering skill** — non-negotiable.
 
+**Builder brief — printed, filled, passed as a file.** Print the template with
+`dreamcontext goal-live recipe builder-brief`, fill its `<placeholders>` (the task id, the
+slug, the lane's owned files, its type-check and test commands), write it to
+`$RUN/brief-<TaskId>.md` and fork with `"$(cat "$RUN/brief-<TaskId>.md")"` (mechanics rule
+3). Never retype it: it ships with the CLI, so it matches this install, and a retyped brief
+is how the 2026-10-04 builders were told to scope their checks and still ran the full
+suite. Its rules, in short:
+
+- **Foreground only, never end early.** Every check in the foreground with a timeout under
+  600000 ms, one check per Bash call; no `run_in_background`, `&`, `nohup` or Monitor wait;
+  the turn never ends while a check runs. A timed-out check gets a narrower scope.
+- **The lane's checks only**: the tests it wrote or changed, the existing tests of the
+  modules it touched, and the type-check of each package it touched. Never the full suite,
+  a build, integration tests that need compiled output, or a generator script.
+- **Through the heavy lock**: every type-check and test run goes through
+  `dreamcontext builder heavy -- <command>`, test runners with at most 2 workers. Builders
+  of one repo take turns on the type-checker instead of running three at once; exit 75 =
+  the lock stayed busy, nothing ran, run it again.
+- **The sentinel**: the final message opens with `## <TaskId> report`.
+
+**Load check before every wave**, and before the final gate:
+
+```bash
+dreamcontext builder load --reap
+```
+
+It prints `cores N load1 X busy|quiet` (from Node, so no `uptime` locale or `nproc`
+surprises) and kills, listing each, the type-checkers and test runners of this repo whose
+parent is gone: what a builder's backgrounded check leaves behind when its session exits.
+On 2026-10-04 three builders plus other sessions pushed the load to 50–107 on 8 cores: one
+CLI call went from 0.3 s to 20 s and an integration suite that is 42/42 on a quiet machine
+went red on 29 timeouts. `busy` = run the wave with **1–2 builders instead of 3**; the rest
+of the wave starts as those finish.
+
 Wave execution rules (mirrors the dependency map exactly):
-- **Max 3 concurrent implementers.**
+- **Max 3 concurrent implementers**, 1–2 when the load check says the machine is busy.
 - Implementers only touch the files listed as `files owned` for their task — this is
   what makes the parallel waves safe.
-- **Build + test gate between waves.** A gate FAIL routes back to `--resume` on the
-  **specific owning implementer** for that file — not a broader re-implement.
-- **Report ≠ work.** Before running the gate, verify each implementer's owned files
-  actually changed on disk (`git status --porcelain` — mechanics rule 5). Empty diff +
-  confident report = the fork stalled or drifted; resume/re-fork before anything else.
+- **Report ≠ work.** When a builder exits, first the sentinel (mechanics rule 6), then
+  verify its owned files actually changed on disk (`git status --porcelain` — mechanics
+  rule 5). Empty diff + confident report = the fork stalled or drifted; resume/re-fork
+  before anything else.
+- **Wave gate = the type-checks + this wave's tests, run once by you.** After every
+  builder of the wave has reported, run the type-checks (root, plus every other package
+  the wave touched) and the test files the wave's lanes own or affect, one per Bash call,
+  each through `dreamcontext builder heavy`. You run it once, not each builder. A gate
+  FAIL routes back to `--resume` on the **specific owning implementer** for that file —
+  not a broader re-implement.
+- **Heavy steps run once, at the final gate**, after the last wave and before Phase 5:
+  the full unit suite, `build` / `build:cli`, the integration suite, `gen:*` scripts
+  (e.g. `gen:cli-manifest`) and browser verification. A later wave works from source, so
+  a wave gate does not need them. The one exception: a task whose `depends on` cell the
+  planner marked with a compiled artifact (`+ build:cli`) gets that build pulled forward
+  into the gate of the wave before it.
+- **Never twice.** A heavy step the task's `Validation method:` already runs (an
+  autonomous run's default is the test suite plus a build) is left to the Phase 6
+  validator; the final gate runs only the rest.
+- **Run the final gate on a quiet machine, but not forever.** `dreamcontext builder load
+  --reap` until it says `quiet`, checking every ~60 s for at most 15 minutes. Still
+  `busy` after that: run it anyway, through the heavy lock with at most 2 test workers,
+  and record the load line next to the results. A red that is a timeout under load is
+  not "the code is broken": record the load line, wait, and re-run it before you route
+  anything to an implementer.
 - **You are the single writer of the task doc and dependency map.** Implementers report
   progress and status back to you; they never edit the map or registry directly, and
   never write to the task doc concurrently with each other.
@@ -337,8 +442,8 @@ Log a phase timestamp at the start and end of each wave.
 
 ### Phase 5 — CODE REVIEW (judge, clean, once)
 
-**Full code review runs once, after the last wave** — per-wave gates are build+test
-only, not a full review. Dispatch the existing **`reviewer`** agent (do NOT create a new
+**Full code review runs once, after the last wave and its final gate** — per-wave gates
+are type-checks + the wave's tests only, not a full review. Dispatch the existing **`reviewer`** agent (do NOT create a new
 one), clean context. Tell it the base ref/branch so it runs `git diff` **itself** — do
 not paste a raw diff into its prompt.
 
@@ -353,9 +458,12 @@ not paste a raw diff into its prompt.
 
 ### Phase 6 — VALIDATE (judge, clean, evidence — the real gate)
 
+Run `dreamcontext builder load --reap` first and dispatch on `quiet` (the same bounded
+wait as the final gate): the validator runs the heavy steps the final gate left to it.
 Dispatch **one** `goal-validator` (sonnet, clean context). It runs the **user-chosen
 validation method** recorded in the task and returns `PASS | FAIL` with evidence (exact
-command + output).
+command + output). A FAIL that is a timeout under a `busy` load line is re-run on a quiet
+machine before it is routed to anyone.
 
 - **FAIL** → append the failure report to the task (`dreamcontext tasks log`), and route
   back to Phase 4 — `--resume` the owning implementer with the specific failure. Loop
@@ -413,7 +521,7 @@ dreamcontext goal-live state critic=NEEDS_WORK pragmatist=SOLID edge-cases=SOLID
 
 ```bash
 # Implementer forks: one actor call per lane (a --session names ONE run), each lane its own minted id
-dreamcontext goal-live phase impl --wave 1 --waves 3 && dreamcontext goal-live actor "T1=Role registry" --role implementer --kind fork --from planner --context-of <plannerId> --session <T1Id> && dreamcontext goal-live actor "T2=Tokens" --role implementer --kind fork --from planner --context-of <plannerId> --session <T2Id> && (claude -p --resume <plannerId> --fork-session --session-id <T1Id> "<task T1>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & claude -p --resume <plannerId> --fork-session --session-id <T2Id> "<task T2>" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null & wait)
+dreamcontext goal-live phase impl --wave 1 --waves 3 && dreamcontext goal-live actor "T1=Role registry" --role implementer --kind fork --from planner --context-of <plannerId> --session <T1Id> && dreamcontext goal-live actor "T2=Tokens" --role implementer --kind fork --from planner --context-of <plannerId> --session <T2Id> && (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <T1Id> "$(cat "$RUN/brief-T1.md")" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null > "$RUN/T1-r1.json" & CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <T2Id> "$(cat "$RUN/brief-T2.md")" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model sonnet < /dev/null > "$RUN/T2-r1.json" & wait)
 ```
 
 ```bash
@@ -463,7 +571,8 @@ dreamcontext goal-live start --goal <slug> [--mode goal|develop]
 dreamcontext goal-live phase <plan|review|task|impl|codereview|validate|done> [--wave N] [--waves N]
 dreamcontext goal-live actor <id[=name],…> --kind <spawn|fork|resume|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>] [--session <uuid>] [--wave N]
 dreamcontext goal-live state <id=word> [<id=word> …] [--wave N]
-dreamcontext goal-live recipe develop
+dreamcontext goal-live recipe develop|builder-brief
+dreamcontext builder load [--reap] | heavy [--max-wait <s>] -- <cmd> | report <file> <TaskId>
 dreamcontext goal-live clear
 ```
 
@@ -478,6 +587,8 @@ dreamcontext goal-live clear
 - `--session <uuid>`: the actor's own `claude -p --session-id` (a UUID). One id per call,
   since a run belongs to one actor. For a `resume` it is the resumed run's existing id.
 - `clear` is for escalation and abort only, never for the success path.
+- `recipe builder-brief` prints the brief every implementer is forked with (Phase 4). `builder`
+  is not telemetry: `heavy` and `report` exit non-zero on purpose (see Phase 4 and mechanics rule 6).
 - `--mode develop`, `--wave` and `recipe develop` belong to **Develop mode chats**, not to
   this orchestrator. A Develop run writes the same file with `mode: develop`: builders per
   wave (`w<N>-<lane>`, `--wave N`), a clean reviewer after EVERY wave (`w<N>-reviewer`,
@@ -557,6 +668,9 @@ Standalone viewer and demo:
 | "Two implementers can both touch the task doc, I'll sort it out after." | You are the single writer. Implementers report to you; they never write the map/registry. |
 | "I'll mark it complete because I *think* it's done." | Done is defined by Phase 6 validation passing with evidence — not by your hunch. |
 | "The implementer's report says it built everything — on to review." | Reports lie when forks stall (permission gate) or drift (role-binding). `git status` its owned files first; empty diff = nothing happened. |
+| "The builder exited with `success`, so it's done." / "It's been 30 minutes, it must be hung." | `success` only means the turn ended. Ask `dreamcontext builder report`: `unfinished` = it ended with a check in flight or without its report. Resume it once, with the fork's permission flags. |
+| "Let every builder run the full suite, more coverage is safer." | Three full suites at once choke the machine and turn green tests red on timeouts. Builders run their lane's checks through `dreamcontext builder heavy`, one at a time; you run the heavy steps once, at the final gate. |
+| "The integration suite is red, route it to the implementer." | Check the load first (`dreamcontext builder load`). A timeout red under load is the machine, not the code: record the load line, wait for `quiet` (at most 15 min), re-run. |
 
 ## Rationalization table
 
@@ -586,8 +700,17 @@ Standalone viewer and demo:
   repeated → one re-fork → escalate. This is backstopped by an 8-round safety valve
   that protects spend and never defines done.
 - **Same file → same lane.** Wave-parallel implementers never share a file.
-- **Full code review runs once**, after the last wave — per-wave gates are build+test
-  only.
+- **Full code review runs once**, after the last wave — per-wave gates are the
+  type-checks + the wave's tests, run once by the orchestrator, never by each builder.
+- **Heavy steps run once, at the final gate** (full suite, `build` / `build:cli`,
+  integration, `gen:*`, browser), on a quiet machine (`dreamcontext builder load`, bounded
+  wait), and never a second time when the validation method already runs them. Only a
+  `depends on` cell marked with a compiled artifact pulls a build forward.
+- **Builders run with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, from a printed brief
+  (`goal-live recipe builder-brief`), their checks through `dreamcontext builder heavy`,
+  and end on `## <TaskId> report`.** `dreamcontext builder report` not `reported` = one
+  resume with the fork's flags; a second miss = you run the lane's checks, then re-fork
+  once, then escalate.
 - **Every implementer loads the engineering skill.** Non-negotiable.
 - **Feature goals end with integration wiring.** When the goal ships a new feature/subsystem, the plan and the final wave MUST apply the project's `knowledge/patterns/feature-integration-pattern.md` checklist (skill docs, Entity Router, reference section, sleep docs, sub-agent contracts, skill-pack scan) — a feature the skill doesn't describe is invisible to future sessions.
 - **Use the `dreamcontext` skill** throughout — the task doc is the source of truth.

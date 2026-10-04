@@ -87,13 +87,14 @@ export function acquireFileLock(
  */
 export async function acquireFileLockWithin(
   lockPath: string,
-  opts: { waitMs: number; staleMs: number; pollMs?: number; now?: () => number },
+  opts: { waitMs: number; staleMs: number; pollMs?: number; now?: () => number; verifyPidLiveness?: boolean },
 ): Promise<boolean> {
   const now = opts.now ?? Date.now;
   const pollMs = opts.pollMs ?? 25;
   const deadline = now() + Math.max(0, opts.waitMs);
+  const lockOpts = opts.verifyPidLiveness ? { verifyPidLiveness: true } : undefined;
   for (;;) {
-    if (acquireFileLock(lockPath, now(), opts.staleMs)) return true;
+    if (acquireFileLock(lockPath, now(), opts.staleMs, lockOpts)) return true;
     if (now() >= deadline) return false;
     await new Promise((r) => { setTimeout(r, pollMs); });
   }

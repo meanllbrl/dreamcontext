@@ -14,7 +14,11 @@ const goalLiveLines = lines.filter((l) => /dreamcontext goal-live\b|(?:^|\s|`)go
 describe('the builder spawn (R6)', () => {
   const UNSETS = '-u DREAMCONTEXT_TAB_SESSION -u DREAMCONTEXT_SERVER_PID -u DREAMCONTEXT_DEVELOP_LEAD -u CLAUDE_CODE_SESSION_ID -u DREAMCONTEXT_DEFERRED_PROMPT';
   const SPAWNED = 'DREAMCONTEXT_SPAWNED=develop';
-  const STRIP = `env ${UNSETS} ${SPAWNED} nohup claude -p`;
+  // CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 (2026-10-04): without it a check that hits the Bash
+  // timeout is moved to the background of a session about to exit, and the builder ends
+  // "waiting" with no report. Asserted on every spawn AND resume line.
+  const NO_BG = 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1';
+  const STRIP = `env ${UNSETS} ${SPAWNED} ${NO_BG} nohup claude -p`;
 
   it('every claude -p a builder runs under carries the full env strip', () => {
     const spawns = lines.filter((l) => /claude -p/.test(l) && !/^\s*BUILDER:|"You are/.test(l));
@@ -24,7 +28,7 @@ describe('the builder spawn (R6)', () => {
     // everything after a NAME=value as the command, so a -u after an assignment would exec "-u".
     // DREAMCONTEXT_SPAWNED=develop is what keeps the builder out of sleep debt and directives
     // from its first SessionStart, before its goal-live registration exists.
-    for (const l of spawns) expect(l, l).toMatch(new RegExp(`\\benv ${UNSETS} (?:"\\$@" )?${SPAWNED} nohup claude -p`));
+    for (const l of spawns) expect(l, l).toMatch(new RegExp(`\\benv ${UNSETS} (?:"\\$@" )?${SPAWNED} ${NO_BG} nohup claude -p`));
   });
 
   it('the spawn template: session id, opus, acceptEdits, Write/Edit/Bash allowed, json, log + $! pid', () => {

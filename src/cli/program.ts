@@ -22,6 +22,7 @@ import { registerAutomationsCommand } from './commands/automations.js';
 import { registerTriggerCommand } from './commands/trigger.js';
 import { registerTranscriptCommand } from './commands/transcript.js';
 import { registerGoalLiveCommand } from './commands/goal-live.js';
+import { registerBuilderCommand } from './commands/builder.js';
 import { registerReflectCommand } from './commands/reflect.js';
 import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
@@ -161,6 +162,7 @@ export function createProgram(): Command {
   registerTriggerCommand(program);
   registerTranscriptCommand(program);
   registerGoalLiveCommand(program);
+  registerBuilderCommand(program);
   registerReflectCommand(program);
   registerCouncilCommand(program);
   registerMarketingCommand(program);
