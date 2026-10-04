@@ -83,6 +83,7 @@ pub fn run() {
             app_link::take_app_link,
             splash::splash_done,
             page_focus::focus_diag,
+            page_focus::page_wants_focus,
         ])
         // Managed before setup runs, so a link macOS hands over on a cold launch has
         // somewhere to wait even if the server never comes up.

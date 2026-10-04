@@ -4,7 +4,7 @@ import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
 import { trackPresence } from '../../lib/presence';
-import { armFocusDiag } from '../../lib/focusDiag';
+import { armFocusDiag, healUnfocusedPresses } from '../../lib/focusDiag';
 import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
   focusThisWindow,
@@ -383,6 +383,8 @@ export function WindowChrome({ initialVault, initialLink }: {
     return () => { p.dispose(); presenceRef.current = null; };
   }, []);
   useEffect(() => { presenceRef.current?.poke(); }, [activeVault]);
+  // A press in this page while it believes it is unfocused activates the app (lib/focusDiag.ts).
+  useEffect(() => healUnfocusedPresses(), []);
 
   /**
    * Point the overlay stack at the project on screen, so Esc closes the panel the user can

@@ -43,6 +43,29 @@ function focusState(): string {
   return `hasFocus=${document.hasFocus()} visible=${document.visibilityState} active=${describe(document.activeElement)}`;
 }
 
+/**
+ * The remedy the probe found the need for: a press in a page that believes it is NOT focused
+ * asks the shell to activate the app (`page_wants_focus`, desktop/src-tauri/src/page_focus.rs).
+ * The 2026-10-04 log had nine presses on the composer, each landing on the field itself, with
+ * `document.hasFocus()` false before and after every one: the window was key, its app was not
+ * active, and AppKit does not activate an app for a click on a window that is already key. A
+ * press while focused costs nothing. Installed once per window; returns the disposer.
+ */
+export function healUnfocusedPresses(): () => void {
+  if (!isDesktop()) return () => {};
+  const onDown = () => {
+    if (document.hasFocus()) return;
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('page_wants_focus');
+      } catch { /* an older shell: nothing to ask */ }
+    })();
+  };
+  document.addEventListener('pointerdown', onDown, true);
+  return () => document.removeEventListener('pointerdown', onDown, true);
+}
+
 /** Arm the probe for the next two minutes (re-arming restarts it). */
 export function armFocusDiag(reason: string): void {
   if (!isDesktop()) return;

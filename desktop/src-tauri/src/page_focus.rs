@@ -51,6 +51,15 @@ pub fn focus_diag(window: tauri::Window, line: String) {
     diag_line(&format!("[{}] {}", window.label(), line));
 }
 
+/// A press landed in a page that believes it is not focused (`lib/focusDiag.ts` asks): the
+/// window is key but its app is not active, and AppKit does not activate an app for a click
+/// on a window that is already key. Same remedy as a window coming forward.
+#[tauri::command]
+pub fn page_wants_focus<R: Runtime>(app: AppHandle<R>, window: tauri::Window<R>) {
+    diag_line(&format!("[{}] page pressed while unfocused", window.label()));
+    give_keyboard_to_page(&app, window.label());
+}
+
 /// Called on every `Focused(true)` of a window that is not the notch.
 #[cfg(target_os = "macos")]
 pub fn give_keyboard_to_page<R: Runtime>(app: &AppHandle<R>, label: &str) {
@@ -81,12 +90,31 @@ pub fn give_keyboard_to_page<R: Runtime>(app: &AppHandle<R>, label: &str) {
                     d
                 }
             };
-            if inside {
-                diag_line(&format!("[{owned}] key; responder {name} is inside the page"));
-                return;
+            if !inside {
+                let ok: bool = msg_send![win, makeFirstResponder: view];
+                diag_line(&format!("[{owned}] key; responder was {name}, handed to the page: {ok}"));
             }
-            let ok: bool = msg_send![win, makeFirstResponder: view];
-            diag_line(&format!("[{owned}] key; responder was {name}, handed to the page: {ok}"));
+            // The 2026-10-04 log: responder inside the page, window key, yet the page said
+            // `hasFocus() === false` on every press. WebKit only calls a page focused while
+            // the APP is active, and a window brought forward from the non-activating notch
+            // can be key in an app that never became active (macOS refuses a cooperative
+            // activation the user's click did not ask for: the click went to a panel that
+            // does not activate). So the window coming forward activates its app.
+            let nsapp: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let was_active: bool = msg_send![nsapp, isActive];
+            let is_key: bool = msg_send![win, isKeyWindow];
+            if !was_active {
+                let modern: bool = msg_send![nsapp, respondsToSelector: objc2::sel!(activate)];
+                if modern {
+                    let _: () = msg_send![nsapp, activate];
+                }
+                let _: () = msg_send![nsapp, activateIgnoringOtherApps: true];
+                let _: () = msg_send![win, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
+            }
+            let now_active: bool = msg_send![nsapp, isActive];
+            diag_line(&format!(
+                "[{owned}] key={is_key}; responder {name} inside={inside}; app active before={was_active} after={now_active}"
+            ));
         }
     });
 }

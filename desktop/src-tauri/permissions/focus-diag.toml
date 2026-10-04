@@ -4,5 +4,5 @@
 # label. The composer focus probe (dashboard/src/lib/focusDiag.ts). See src/page_focus.rs.
 [[permission]]
 identifier = "allow-focus-diag"
-description = "Append one diagnostic line about keyboard focus to the local focus log."
-commands.allow = ["focus_diag"]
+description = "Append one diagnostic line about keyboard focus to the local focus log, and ask the shell to activate the app when a press lands in a page that is not focused."
+commands.allow = ["focus_diag", "page_wants_focus"]

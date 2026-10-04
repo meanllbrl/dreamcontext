@@ -304,8 +304,40 @@ pub fn ensure_notch<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .works_when_modal(true)
         .build()
         .map_err(|e| format!("could not build the notch: {e}"))?;
+    prevent_activation(app);
     panel.show();
     Ok(())
+}
+
+/// tauri-nspanel turns an already-built NSWindow into a panel and sets `nonactivatingPanel`
+/// on its style mask AFTER creation. AppKit then treats the panel as non-activating, but the
+/// window server's own flag is only set when the mask is given at init, so the two disagree:
+/// after the owner clicks a notch row, a project window brought forward could be key in an
+/// app that never became active, and its page stayed unfocused (no caret, no typing) through
+/// every click (~/.dreamcontext/logs/focus-diag.log, 2026-10-04). The private
+/// `_setPreventsActivation:` sets the window-server flag to match. Skipped when AppKit does not
+/// answer it.
+fn prevent_activation<R: Runtime>(app: &AppHandle<R>) {
+    let h = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        use objc2::runtime::AnyObject;
+        use objc2::{msg_send, sel};
+        let Some(w) = h.get_webview_window(NOTCH_LABEL) else { return };
+        let Ok(ptr) = w.ns_window() else { return };
+        let win = ptr as *mut AnyObject;
+        if win.is_null() {
+            return;
+        }
+        // SAFETY: the notch's live NSWindow, on the main thread; the selector is checked
+        // before it is sent.
+        unsafe {
+            let can: bool = msg_send![win, respondsToSelector: sel!(_setPreventsActivation:)];
+            if can {
+                let _: () = msg_send![win, _setPreventsActivation: true];
+            }
+            crate::page_focus::diag_line(&format!("[assistant] window-server prevents-activation set: {can}"));
+        }
+    });
 }
 
 /// Top-centre of the monitor under the cursor (falls back to the primary), in logical px,
