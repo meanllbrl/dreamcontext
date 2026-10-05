@@ -8,6 +8,11 @@
   `Splash-konsolidasyon`) while the dashboard server boots, then tells the shell it is done.
   The shell (src/splash.rs) shows the Launcher once this page is done AND the Launcher has
   loaded, then calls window.__dcSplashExit() to fade this card and closes the window.
+
+  The page never starts the clip itself. In macOS Low Power Mode WebKit refuses any <video>
+  play() that no user gesture started, muted or not, and wry's autoplay setting does not lift
+  that. A script the shell runs through evaluateJavaScript counts as a gesture, so the page
+  readies the clip, asks the shell (`splash_play`), and the shell calls window.__dcSplashPlay().
 -->
 <style>
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; cursor: default; -webkit-user-select: none; user-select: none; }
@@ -48,6 +53,9 @@
   var clip = document.getElementById('clip');
   var hint = document.getElementById('hint');
   var reported = false;
+  var asked = false;    // __dcSplashPlay ran: the clip is played at most once
+  var started = false;  // the clip is actually playing
+  var stilled = false;
   // The app's theme follows the system by default, and the dashboard's own choice lives on
   // an origin this page cannot read, so the opening screen follows macOS appearance.
   var light = !matchMedia('(prefers-color-scheme: dark)').matches;
@@ -62,11 +70,18 @@
   }
   // Show the finished lockup instead of the clip, and report shortly after.
   function still() {
+    if (stilled) return;
+    stilled = true;
     card.classList.add('still');
+    try { clip.pause(); } catch (e) { /* nothing is playing */ }
     setTimeout(done, 1100);
   }
   function waitingHint() {
     setTimeout(function () { hint.classList.add('on'); }, 1500);
+  }
+  function finished() {
+    done();
+    waitingHint();
   }
 
   // Called by the shell once the Launcher behind this card is ready.
@@ -75,11 +90,27 @@
     card.classList.add('out');
   };
 
+  // Called by the shell from `splash_play`, inside its evaluateJavaScript: that is what makes
+  // this play() a user gesture, which Low Power Mode demands. So play() is called right here,
+  // synchronously, never after an await. Called directly (no shell, a refused IPC) it is an
+  // ordinary script play and runs the same ladder: sound, then silent, then the still.
+  window.__dcSplashPlay = function () {
+    if (asked || stilled) return;
+    asked = true;
+    function silent() {
+      // Sound refused: play silent rather than not at all.
+      if (stilled) return;
+      clip.muted = true;
+      try { clip.play().catch(still); } catch (e) { still(); }
+    }
+    clip.muted = false;
+    clip.volume = 0.5;
+    try { clip.play().catch(silent); } catch (e) { silent(); }
+  };
+
   // A click or a key skips the rest of the clip.
   addEventListener('mousedown', done);
   addEventListener('keydown', done);
-  // Never hold the app back if the clip stalls.
-  setTimeout(function () { done(); waitingHint(); }, 4500);
   requestAnimationFrame(function () { card.classList.add('in'); });
 
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -87,23 +118,43 @@
     return;
   }
 
-  clip.volume = 0.5;
-  clip.addEventListener('ended', function () { done(); waitingHint(); });
+  // Never hold the app back: a clip that has not started within 3s gives way to the still.
+  // A clip that HAS started is never cut short by a timer: it reports on `ended`, with a
+  // safety net of its own length plus a second, counted from the moment it started.
+  setTimeout(function () { if (!started) still(); }, 3000);
+  clip.addEventListener('playing', function () {
+    if (started || stilled) return;
+    started = true;
+    var length = isFinite(clip.duration) && clip.duration > 0 ? clip.duration : 2.6;
+    setTimeout(finished, (length - clip.currentTime) * 1000 + 1000);
+  });
+  clip.addEventListener('ended', finished);
   clip.addEventListener('error', still);
+
+  // Ask the shell to start the clip; with no shell, or a shell that says no, start it here.
+  function askShell() {
+    var tauri = window.__TAURI_INTERNALS__;
+    if (!tauri || typeof tauri.invoke !== 'function') return window.__dcSplashPlay();
+    try {
+      tauri.invoke('splash_play').then(function () {
+        // The shell's eval normally lands at once; one that never comes must not leave the
+        // clip waiting for the 3s still.
+        setTimeout(function () { window.__dcSplashPlay(); }, 1200);
+      }, function () { window.__dcSplashPlay(); });
+    } catch (e) {
+      window.__dcSplashPlay();
+    }
+  }
+
   // Played from a blob URL: WebKit's media loader wants byte-range responses, which the
   // app's custom-scheme asset handler does not give. A blob it can seek freely.
   fetch('splash' + suffix + '.mp4')
     .then(function (r) { return r.blob(); })
     .then(function (blob) {
       clip.src = URL.createObjectURL(blob);
-      var playing = clip.play();
-      if (playing && playing.catch) {
-        playing.catch(function () {
-          // Sound refused: play silent rather than not at all.
-          clip.muted = true;
-          clip.play().catch(still);
-        });
-      }
+      // Ask only once the clip can play: a gesture spent on a clip still loading is lost.
+      if (clip.readyState >= 3) askShell();
+      else clip.addEventListener('canplay', askShell, { once: true });
     })
     .catch(still);
 })();

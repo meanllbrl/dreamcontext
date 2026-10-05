@@ -6,3 +6,11 @@
 identifier = "allow-splash-done"
 description = "Tell the shell the opening screen is done, so it can hand over to the Launcher."
 commands.allow = ["splash_done"]
+
+# The opening screen's clip is ready and it asks the shell to start it: played from the
+# shell's eval it counts as a user gesture, which macOS Low Power Mode requires before any
+# video may play. See `splash_play` in src/splash.rs.
+[[permission]]
+identifier = "allow-splash-play"
+description = "Ask the shell to start the opening screen's clip, so it plays even in Low Power Mode."
+commands.allow = ["splash_play"]

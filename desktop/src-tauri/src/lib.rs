@@ -82,6 +82,7 @@ pub fn run() {
             frames::set_frames,
             app_link::take_app_link,
             splash::splash_done,
+            splash::splash_play,
             page_focus::focus_diag,
             page_focus::page_wants_focus,
         ])

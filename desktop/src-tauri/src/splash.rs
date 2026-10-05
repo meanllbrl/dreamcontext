@@ -5,10 +5,20 @@
 // opening screen fills exactly that gap with the logo reveal (frontend-placeholder/splash.*,
 // rendered from marketing/remotion `Splash-konsolidasyon`).
 //
+// The page does not start its own clip. In macOS Low Power Mode WebKit refuses every <video>
+// play() no user gesture started, muted or not (`video low power mode restriction` ->
+// `UserGestureRequired`), and wry's `autoplay: true` does not lift it: the owner saw only the
+// final still, without sound. A script run through `-[WKWebView evaluateJavaScript:]` DOES
+// count as a gesture, and that is what `WebviewWindow::eval` uses. So the page loads the clip,
+// and once it can play it invokes `splash_play`; the shell answers by evaluating
+// `window.__dcSplashPlay()`, whose play() then runs inside the gesture. Measured in a real
+// WKWebView under Low Power Mode: unmuted, start to `ended`.
+//
 // The handoff is a two-key gate. The Launcher is built HIDDEN once the server answers, and
 // is shown only when BOTH keys have turned:
-//   1. the splash is done — its clip ended, the user skipped it (a click or a key), or the
-//      page's own fallback timer fired;
+//   1. the splash is done — its clip ended, the user skipped it (a click or a key), the clip
+//      never started within 3s and the page showed the still instead, or the page's safety
+//      timer (the clip's length plus a second, from when it started) fired;
 //   2. the Launcher's page has finished loading.
 // Then the Launcher is shown under the always-on-top splash, which fades and closes.
 //
@@ -24,10 +34,13 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub(crate) const LABEL: &str = "splash";
 
-/// The clip runs 2.6s; past this the splash counts as done whatever the page says.
-const SPLASH_DEADLINE: Duration = Duration::from_secs(6);
-/// A Launcher that has not reported its load by now is shown anyway.
-const LAUNCHER_DEADLINE: Duration = Duration::from_secs(8);
+/// Past this the splash counts as done whatever the page says. The page's worst case is a
+/// clip that starts at its 3s limit, runs 2.6s and then waits out its 1s safety net (6.6s),
+/// plus the moment the webview takes to load the page; a timer here must never cut that clip.
+const SPLASH_DEADLINE: Duration = Duration::from_secs(8);
+/// A Launcher that has not reported its load by now is shown anyway. Counted from when it is
+/// built, after the server answers, so it trails the splash deadline.
+const LAUNCHER_DEADLINE: Duration = Duration::from_secs(10);
 /// Matches the `.out` fade in splash.html.
 const FADE: Duration = Duration::from_millis(340);
 
@@ -123,6 +136,21 @@ pub(crate) fn abort(app: &AppHandle) {
 #[tauri::command]
 pub(crate) fn splash_done(app: AppHandle) {
     turn(&app, |k| k.splash_done = true);
+}
+
+/// The page's clip can play and it asks to be started. Played from here, inside the
+/// webview's evaluateJavaScript, the play() counts as a user gesture, which is what Low Power
+/// Mode demands even of a muted clip (see the top of this file). Only the splash window may
+/// ask; its capability is the only one that grants this command.
+#[tauri::command]
+pub(crate) fn splash_play(window: tauri::WebviewWindow) {
+    if window.label() != LABEL {
+        return;
+    }
+    if let Err(e) = window.eval("window.__dcSplashPlay && window.__dcSplashPlay()") {
+        // The page's own fallback plays it (or shows the still) without the shell.
+        eprintln!("[splash] could not start the clip: {e}");
+    }
 }
 
 /// Turn one key; when both have turned, hand over exactly once.

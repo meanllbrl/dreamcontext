@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "splash-window",
-  "description": "Capability for the opening screen (label `splash`), the bundled local page that plays the logo reveal while the dashboard server boots. It needs exactly one thing: to say its clip is done. No core window controls (the shell shows, fades and closes it from Rust), no events, no shell:*, and no remote URL — it is a local page only.",
+  "description": "Capability for the opening screen (label `splash`), the bundled local page that plays the logo reveal while the dashboard server boots. It needs exactly two things: to ask the shell to start its clip (`splash_play`: played from the shell's eval it counts as a user gesture, which Low Power Mode requires) and to say its clip is done (`splash_done`). No core window controls (the shell shows, fades and closes it from Rust), no events, no shell:*, and no remote URL — it is a local page only.",
   "windows": ["splash"],
-  "permissions": ["allow-splash-done"]
+  "permissions": ["allow-splash-done", "allow-splash-play"]
 }
