@@ -159,6 +159,14 @@
   color: var(--color-text);
 }
 
+/* The same notice docked above the Chat composer (ClaudeUpdateChatNotice): tighter, and inset
+   from the pane's edges instead of a settings section's. */
+.sysdep-notice--chat {
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
 .sysdep-notice-link {
   padding: 0;
   border: none;

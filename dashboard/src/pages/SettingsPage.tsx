@@ -256,6 +256,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     // that still asks for the old target.
     if (focus?.id === 'brain' || focus?.id === 'teamsync') setActiveSection('teamsync');
     else if (focus?.id === 'github') setActiveSection('github');
+    else if (focus?.id === 'system') setActiveSection('system');
   }, [focus?.id, focus?.nonce]);
 
   if (configLoading) {

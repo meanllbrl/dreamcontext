@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
-import { useApi, useVault } from '../../context/VaultContext';
+import { emitInstance, useApi, useVault } from '../../context/VaultContext';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { claudeAuthRow, requestClaudeSignIn } from '../../lib/claudeAuth';
+import { claudeUpdateRow, shouldWarnInChat } from '../../lib/claudeUpdate';
 import type { Capabilities } from '../sleepy/agentSession';
 import './SystemDependencies.css';
 
@@ -27,9 +28,10 @@ type DepKey = 'git' | 'claude' | 'pty';
  * What the server's installer can be asked to do. `claude-path` is not a package —
  * it writes the `export PATH="$HOME/.local/bin:$PATH"` line the CLI's own install
  * ends with, which is what makes a shell (and the user's own terminal) able to find
- * an already-installed `claude`.
+ * an already-installed `claude`. `claude-update` runs `claude update` now, the same run the
+ * background updater does when the CLI falls behind.
  */
-type InstallTarget = DepKey | 'claude-path';
+type InstallTarget = DepKey | 'claude-path' | 'claude-update';
 
 interface DepMeta {
   key: DepKey;
@@ -211,6 +213,52 @@ function ClaudeAccountRow({ caps }: { caps: Capabilities }) {
   );
 }
 
+/**
+ * Claude Code's VERSION, under its install row. The background updater normally keeps it
+ * current without anyone looking; this row exists for when it couldn't (the update failed,
+ * or the user turned auto-updates off) and is otherwise one quiet line with the version.
+ * See `claudeUpdateRow` for the state mapping.
+ */
+function ClaudeVersionRow({ caps }: { caps: Capabilities }) {
+  const { t } = useI18n();
+  const { install, running, error } = useSystemInstall();
+  const row = claudeUpdateRow(caps.claudeUpdate);
+  if (!row) return null;
+  const fill = (key: string) => t(key).replace('{installed}', row.vars.installed).replace('{latest}', row.vars.latest);
+  const updating = running === 'claude-update';
+
+  return (
+    <div className="sysdep-row">
+      <span
+        className={`sysdep-dot${row.tone === 'ok' ? ' sysdep-dot--ok' : row.tone === 'warn' ? ' sysdep-dot--warn' : ''}`}
+        aria-hidden="true"
+      />
+      <span className="sysdep-name">{t('system.update.title')}</span>
+      <span className={`sysdep-status${row.tone === 'ok' ? ' sysdep-status--ok' : row.tone === 'warn' ? ' sysdep-status--missing' : ''}`}>
+        {updating ? fill('system.update.updating') : fill(row.statusKey)}
+      </span>
+      {row.offerUpdate && (
+        caps.desktop ? (
+          <button
+            className="btn btn--primary btn--sm"
+            onClick={() => install('claude-update')}
+            disabled={running !== null}
+          >
+            {updating ? t('system.update.updating') : t('system.update.updateNow')}
+          </button>
+        ) : (
+          <span className="sysdep-manual">
+            {t('system.dep.manualHint')} <code>{caps.claudeUpdate?.updateCommand || 'claude update'}</code>
+          </span>
+        )
+      )}
+      {row.disabledBy && <p className="sysdep-note">{t('system.update.autoOff').replace('{source}', row.disabledBy)}</p>}
+      {row.detail && !updating && <p className="sysdep-error">{row.detail}</p>}
+      {error && running === null && <p className="sysdep-error">{t('system.update.failed')}: {error}</p>}
+    </div>
+  );
+}
+
 /** Which features need this dependency (desktop-only ones only count on desktop). */
 function featuresNeeding(dep: DepKey, caps: Capabilities): FeatureMeta[] {
   return FEATURES.filter((f) => f.deps.includes(dep) && (!f.desktopOnly || caps.desktop));
@@ -245,6 +293,38 @@ export function FeatureDepsNotice({ feature, onOpenMachine }: { feature: string;
   );
 }
 
+/**
+ * The Chat surface's one-line "your Claude Code is behind" notice. Chat is where an old CLI
+ * actually costs something (older CLIs run older models), and nobody opens Settings to check
+ * a version. Never blocks the composer: it sits above it and only points at the fix.
+ *
+ * The link rides the instance bus to the Shell's page bridge (`dreamcontext-agent-open-page`,
+ * the same channel "Open in app" uses), asking for Settings → System.
+ */
+export function ClaudeUpdateChatNotice() {
+  const { t } = useI18n();
+  const { bus } = useVault();
+  const { data: caps } = useAgentCapabilities();
+  const u = caps?.claudeUpdate;
+  if (!u || !shouldWarnInChat(u)) return null;
+  const text = (u.state === 'failed' ? t('chat.update.failed') : t('chat.update.outdated'))
+    .replace('{installed}', u.installed ?? '?')
+    .replace('{latest}', u.latest ?? '?');
+
+  return (
+    <p className="sysdep-notice sysdep-notice--chat" role="status">
+      {text}
+      <button
+        type="button"
+        className="sysdep-notice-link"
+        onClick={() => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: 'system' })}
+      >
+        {t('chat.update.open')}
+      </button>
+    </p>
+  );
+}
+
 export function SystemDependencies() {
   const { t } = useI18n();
   const { data: caps } = useAgentCapabilities();
@@ -263,6 +343,7 @@ export function SystemDependencies() {
       {depKeys.map((d) => (
         <div key={d} className="sysdep-item">
           <DepRow dep={DEPS[d]} caps={caps} />
+          {d === 'claude' && caps.claudeCli && <ClaudeVersionRow caps={caps} />}
           <p className="sysdep-neededby">
             {t('system.dep.neededBy').replace(
               '{features}',

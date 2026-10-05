@@ -67,6 +67,30 @@ export interface Capabilities {
      *  no email either. Absent on a server that predates the watcher. */
     epoch?: number;
   };
+  /**
+   * Whether the installed `claude` is current, and what the background updater last did
+   * about it (src/lib/claude-update.ts, read from ~/.dreamcontext/claude-update.json, so
+   * every window agrees). Absent when the CLI isn't present, this isn't the desktop app,
+   * or the server predates the updater. Every spawn dreamcontext makes is headless, and
+   * Claude Code's own updater only runs in its interactive TUI, so without this the CLI
+   * silently froze on an old version.
+   *
+   * `disabled` = behind, but the user opted out of auto-updates (`disabledBy` says where);
+   * it is still outdated, just not ours to fix unasked.
+   */
+  claudeUpdate?: {
+    installed: string | null;
+    latest: string | null;
+    channel: 'latest' | 'stable';
+    outdated: boolean;
+    state: 'current' | 'outdated' | 'updating' | 'updated' | 'failed' | 'disabled' | 'unknown';
+    disabledBy?: string;
+    /** Last lines of a failed `claude update`. */
+    error?: string;
+    checkedAt?: number;
+    /** The command a manual-only machine is told to run. */
+    updateCommand: string;
+  };
   npm: boolean;
   /** git presence probed with the server's own env — exactly how cloud sync invokes it. */
   git: boolean;

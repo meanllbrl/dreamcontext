@@ -5,6 +5,7 @@ import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
 import { useAgentGoalLive, useHeadlessTeammates } from '../../hooks/useAgentCapabilities';
 import { normalizeGoalLive } from '../../lib/goalLive';
+import { ClaudeUpdateChatNotice } from '../settings/SystemDependencies';
 import { anchorsBySession, launchedSessionIds, withTeammates } from './chat/teammates';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { ChatMode } from '../../lib/chatModes';
@@ -2079,6 +2080,9 @@ export function ChatPane({
           `shelved` is the same question as the shell's own `has-rows`, which is why it comes
           off the shelf handle rather than being computed twice. */}
       {!bare && <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} />}
+      {/* An outdated or failed-to-update Claude Code CLI: one line above the composer, never in
+          place of it (older CLIs run older models, which is worth knowing, not worth blocking). */}
+      {!bare && <ClaudeUpdateChatNotice />}
       {needsSignIn ? (
         <SignInBanner
           canSignInInApp={canSignInInApp}
