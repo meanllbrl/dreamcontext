@@ -67,7 +67,8 @@ import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
-import { buildLiveContext } from '../../lib/assistant/live-context.js';
+import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
+import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
@@ -370,7 +371,7 @@ function assistantLiveContext(): string {
     try { running = runningAutomations(); } catch { running = []; }
     try { posts = unreadAutomationPosts().length; } catch { posts = 0; }
     const events = listNotchEvents();
-    return buildLiveContext({
+    const live = buildLiveContextParts({
       chats: listChats(),
       lookingAt: lookingAt(),
       running: running.map((r) => ({ vault: r.vault, slug: r.slug, since: r.since })),
@@ -380,6 +381,10 @@ function assistantLiveContext(): string {
         account: events.filter((e) => e.kind === 'account').length,
       },
     });
+    // A chat's `topic:` is other agents' words (fenced): the turn it rides in is tainted. The
+    // owner's message cleared the taint before this block was built, so the turn ends tainted.
+    if (live.carriesProjectText) markTainted();
+    return live.text;
   } catch {
     return '';
   }
@@ -1242,13 +1247,22 @@ export function startChatSession(
   });
 
   // Every chat but the Assistant's own is listed in the Assistant's chat registry, its status
-  // derived from the frames this bridge already parses (see chat-registry.ts).
+  // derived from the frames this bridge already parses (see chat-registry.ts). A resumed
+  // conversation replays no history, so its title and last texts are seeded from disk
+  // (chat-seed.ts); a failed read registers it unseeded, never fails the spawn.
+  let seed: ReturnType<typeof seedForConversation> = {};
+  if (!isAssistant && !card && heldConversation) {
+    try {
+      seed = seedForConversation(contextRoot, [heldConversation, pinId ? resolveAgentSession(contextRoot, pinId) : '']);
+    } catch { seed = {}; }
+  }
   const registry: ChatHandle | null = isAssistant || card ? null : registerChat({
     sessionId: pinId || randomUUID(),
     conversationId: heldConversation || null,
     vault: opts.vault ?? basename(projectRoot),
     mode,
     ...(delegated ? { origin: 'assistant' as const } : {}),
+    seed,
   });
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
@@ -1453,8 +1467,8 @@ export function startChatSession(
     lastSentText = text;
     registry?.userSent(text);
     // The Assistant hears what is happening right now with every owner turn: a second,
-    // server-written block with no project text in it (live-context.ts), dropped from the
-    // replay because it starts with `<`.
+    // server-written block whose only project text is each chat's fenced `topic:`
+    // (live-context.ts), dropped from the replay because it starts with `<`.
     const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text }];
     if (isAssistant) {
       const live = assistantLiveContext();

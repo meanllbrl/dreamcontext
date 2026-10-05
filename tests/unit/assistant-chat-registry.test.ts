@@ -250,6 +250,47 @@ describe('chat registry — status derived at the agent-chat.ts parse point', ()
   });
 });
 
+describe('a seeded chat: what a restored conversation is about, before any frame', () => {
+  beforeEach(() => { registry._resetChatRegistry(); });
+
+  it('lists the seeded title and texts, one-lined and capped, with status still starting', () => {
+    registry.registerChat({
+      sessionId: SID, conversationId: SID, vault: 'acme-app', mode: 'basic',
+      seed: { title: `  fix\n  the   login ${'x'.repeat(100)}`, lastAssistantText: Array.from({ length: 25 }, (_, i) => `t${i}`) },
+    });
+    const [c] = registry.listChats();
+    expect(c.status).toBe('starting');
+    expect(c.title.startsWith('fix the login x')).toBe(true);
+    expect(c.title).toHaveLength(81);                       // cap(…, 80) + '…'
+    expect(c.lastAssistantText).toHaveLength(registry.TEXT_RING);
+    expect(c.lastAssistantText.at(-1)).toBe('t24');
+  });
+
+  it('a later live prompt does not replace a seeded title', () => {
+    const h = registry.registerChat({ sessionId: SID, conversationId: SID, vault: 'acme-app', mode: 'basic', seed: { title: 'The stored tab title' } });
+    h.userSent('continue');
+    expect(registry.getChat(SID)!.title).toBe('The stored tab title');
+    expect(registry.getChat(SID)!.status).toBe('working');
+  });
+
+  it('an empty seed registers exactly like no seed', () => {
+    registry.registerChat({ sessionId: SID, conversationId: null, vault: 'acme-app', mode: 'basic', seed: {} });
+    expect(registry.getChat(SID)).toMatchObject({ title: '', lastAssistantText: [], status: 'starting' });
+  });
+});
+
+describe('chatTopic: title, else the newest reply\'s first line, else nothing', () => {
+  it('falls back in order and clips with a trailing …', () => {
+    expect(registry.chatTopic({ title: 'Login  bug', lastAssistantText: ['older', 'newer'] })).toBe('Login bug');
+    expect(registry.chatTopic({ title: '', lastAssistantText: ['older', '\n\n  Fixed   the bug.\nMore detail'] })).toBe('Fixed the bug.');
+    expect(registry.chatTopic({ title: '', lastAssistantText: [] })).toBe('');
+    const long = registry.chatTopic({ title: 'a'.repeat(300), lastAssistantText: [] });
+    expect(long).toHaveLength(100);
+    expect(long.endsWith('…')).toBe(true);
+    expect(registry.chatTopic({ title: 'abcdefghij', lastAssistantText: [] }, 5)).toBe('abcd…');
+  });
+});
+
 const ask = (child: FakeChild, requestId: string, question = 'Which DB?') =>
   line(child, { type: 'control_request', request_id: requestId, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question, options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] } } });
 

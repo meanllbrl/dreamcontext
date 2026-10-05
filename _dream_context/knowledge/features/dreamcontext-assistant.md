@@ -13,7 +13,7 @@ date: '2026-09-26'
 status: in_review
 product: desktop
 created: '2026-09-26'
-updated: '2026-10-04'
+updated: '2026-10-05'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -34,6 +34,7 @@ related_tasks:
   - sesli-asistan-ekrani-gorur-ve-acik-sekmedeki-projeye-baglanir
   - >-
     the-notch-becomes-a-notification-center-and-the-assistant-decides-how-each-reply-is-shown
+  - spidey-sees-what-every-open-chat-is-about-even-after-a-restart
 ---
 
 ## Why

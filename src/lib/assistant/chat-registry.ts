@@ -212,8 +212,19 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
   return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'] };
 }
 
-/** Register a live chat. Returns the handle the bridge feeds. */
-export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant' }): ChatHandle {
+/** What a chat is about, in one line: its title, else the first line of its newest assistant
+ *  text, else ''. Whitespace collapsed, clipped to `max` with a trailing `…`. */
+export function chatTopic(e: Pick<ChatEntry, 'title' | 'lastAssistantText'>, max = 100): string {
+  const newest = e.lastAssistantText[e.lastAssistantText.length - 1] ?? '';
+  const raw = e.title.trim() || newest.split('\n').find((l) => l.trim()) || '';
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/** Register a live chat. Returns the handle the bridge feeds. `seed` carries what an existing
+ *  conversation is already about (a `--resume` respawn replays no history, chat-seed.ts reads it
+ *  from disk); it sets title and texts only — never status or updatedAt. */
+export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant'; seed?: { title?: string; lastAssistantText?: string[] } }): ChatHandle {
   const existingDeath = deathTimers.get(init.sessionId);
   if (existingDeath) { clearTimeout(existingDeath); deathTimers.delete(init.sessionId); }
   const e: ChatEntry = {
@@ -221,9 +232,9 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     conversationId: init.conversationId,
     vault: init.vault,
     mode: init.mode,
-    title: '',
+    title: init.seed?.title?.trim() ? cap(init.seed.title.trim().replace(/\s+/g, ' '), 80) : '',
     status: 'starting',
-    lastAssistantText: [],
+    lastAssistantText: (init.seed?.lastAssistantText ?? []).filter((t) => typeof t === 'string' && t).map((t) => cap(t)).slice(-TEXT_RING),
     pendingQuestion: null,
     updatedAt: new Date().toISOString(),
     lastFrameAt: new Date().toISOString(),

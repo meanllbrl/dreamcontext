@@ -13,7 +13,7 @@ import {
 import { checkAssistantToken, isTainted, markTainted } from '../../lib/assistant/session-state.js';
 import { decide, wrapUntrusted, type AssistantVerb } from '../../lib/assistant/autonomy.js';
 import { abandonProposal, createProposal, listProposals, resolveProposal } from '../../lib/assistant/proposals.js';
-import { getChat, listChats, watchChat, activityOf, CHAT_STATUSES, type ChatEntry, type ChatStatus, type WatchUntil } from '../../lib/assistant/chat-registry.js';
+import { getChat, listChats, watchChat, activityOf, chatTopic, CHAT_STATUSES, type ChatEntry, type ChatStatus, type WatchUntil } from '../../lib/assistant/chat-registry.js';
 import { collectRoster } from '../../lib/assistant/roster.js';
 import { broadcast, type BroadcastRow } from '../../lib/assistant/broadcast.js';
 import { AvatarError, findAvatar, writeAvatar, AVATAR_MAX_BYTES } from '../../lib/assistant/avatar.js';
@@ -102,6 +102,7 @@ function viewChat(c: ChatEntry, lastN = 3): Record<string, unknown> {
     updatedAt: c.updatedAt,
     lastFrameAt: c.lastFrameAt,
     title: c.title ? wrapUntrusted(c.vault, c.title) : '',
+    topic: chatTopic(c) ? wrapUntrusted(c.vault, chatTopic(c)) : '',
     lastAssistantText: c.lastAssistantText.slice(-lastN).map((t) => wrapUntrusted(c.vault, t)),
     pendingQuestion: c.pendingQuestion
       ? { id: c.pendingQuestion.requestId, kind: c.pendingQuestion.isPermission ? 'permission' : 'question', tool: c.pendingQuestion.toolName, text: wrapUntrusted(c.vault, c.pendingQuestion.text), options: c.pendingQuestion.options.map((o) => wrapUntrusted(c.vault, o)) }
