@@ -8,7 +8,6 @@ import { isLoopback } from './agent-spawn-shared.js';
 import { executeClaudeDetached } from '../../lib/automations/runner.js';
 import {
   ClaudeAccountError,
-  claudeAccountsWritten,
   accountIdFromEmail,
   accountEnvFor,
   autoSwitchEnabled,
@@ -375,8 +374,7 @@ export async function handleAgentAccountsPreferred(req: IncomingMessage, res: Se
   const body = await parseJsonBody(req);
   const id = typeof body?.id === 'string' ? body.id : '';
   try {
-    setPreferredClaudeAccount(id);
-    await claudeAccountsWritten(); // the cloud writes it as dcuser
+    await setPreferredClaudeAccount(id); // the cloud writes it as dcuser: THIS write must land
   } catch (err) {
     sendError(res, err instanceof ClaudeAccountError ? 422 : 500, 'account_error', (err as Error).message);
     return;
@@ -471,8 +469,7 @@ export async function handleAgentAccountsAutoSwitch(req: IncomingMessage, res: S
     return;
   }
   try {
-    setAutoSwitchEnabled(body.enabled);
-    await claudeAccountsWritten(); // the cloud writes it as dcuser; a failed write is not a 200
+    await setAutoSwitchEnabled(body.enabled); // the cloud writes it as dcuser; a failed write is not a 200
   } catch (err) {
     sendError(res, 500, 'account_error', (err as Error).message);
     return;

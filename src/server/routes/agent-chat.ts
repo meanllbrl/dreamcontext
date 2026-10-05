@@ -15,6 +15,7 @@ import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cloudPhase, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
 import { isCloudOriginAllowed } from '../middleware.js';
 import { recordCloudAction } from '../cloud-idle.js';
+import { deviceIdHash, handsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
 import { runWorkerOp } from '../cloud-worker.js';
 import { handsfreeSpawnRefusal } from '../../lib/peer-delivery.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
@@ -25,6 +26,7 @@ import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setu
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
+import { parseCardRef, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
@@ -66,6 +68,7 @@ import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContext } from '../../lib/assistant/live-context.js';
+import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
@@ -291,6 +294,15 @@ export function assistantPermissionMode(autonomy: Autonomy): 'default' | 'auto' 
  */
 export function assistantAllowedTools(autonomy: Autonomy): string[] {
   return autonomy === 'auto' ? ['--allowedTools', 'Bash(dreamcontext assistant:*)'] : [];
+}
+
+/**
+ * `--mcp-config` is variadic (`<configs...>`): every file rides in ONE flag, and the flag must
+ * stay the LAST argv element or it swallows whatever follows. Null entries drop out.
+ */
+export function mcpConfigArgs(paths: Array<string | null>): string[] {
+  const files = paths.filter((p): p is string => !!p);
+  return files.length ? ['--mcp-config', ...files] : [];
 }
 
 /**
@@ -554,6 +566,43 @@ export function shouldRejectAutomationResume(
 
 // ─── WS upgrade ─────────────────────────────────────────────────────────────────────
 
+// ─── Cloud device sockets follow their device (AC3) ─────────────────────────────────
+//
+// The cloud checks a device session when a chat socket opens. A socket already open, and the
+// child it drives (detached or not), must not outlive its device: revoke-all, a password
+// change and a single logout notify handsfree-auth's listener, and every session whose owning
+// device is no longer valid is closed with 4401 and cut. Each frame re-checks too (defence in
+// depth: a device that expired between notifications). Laptop sockets are never tagged.
+
+/** WS close code for "your device was signed out". */
+export const DEVICE_REVOKED_CLOSE = 4401;
+
+/** The sha256 of the device id each cloud chat socket authenticated with (never the cookie). */
+const socketDevice = new WeakMap<object, string>();
+const cloudDeviceSessions = new Set<{ device: () => string | null; revoke: () => void }>();
+let deviceRevocationArmed = false;
+
+export function tagCloudDeviceSocket(ws: object, idSha256: string): void {
+  socketDevice.set(ws, idSha256);
+}
+
+function armDeviceRevocation(): void {
+  if (deviceRevocationArmed) return;
+  deviceRevocationArmed = true;
+  onDeviceSessionsChanged(() => { revokeStaleDeviceSessions(); });
+}
+
+/** Close and cut every cloud chat session whose device is no longer valid. Returns how many. */
+export function revokeStaleDeviceSessions(): number {
+  const store = handsfreeAuth().store;
+  let n = 0;
+  for (const s of [...cloudDeviceSessions]) {
+    const d = s.device();
+    if (d && !store.isValidDeviceHash(d)) { s.revoke(); n++; }
+  }
+  return n;
+}
+
 /**
  * Attach the agent-chat WebSocket upgrade handler to the shared http server.
  * Path: `/api/agent/chat?vault=<name>&bypass=0|1&(sessionId|resume)=<uuid>&model=<alias>
@@ -617,6 +666,14 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // The origin is read only for project chats. It lowers recall cost and the effort default
     // and grants no capability, so a forged one from a loopback page buys nothing.
     const fromAssistant = !assistant && url.searchParams.get('origin') === 'assistant';
+    // A whiteboard agent card's own conversation (lib/whiteboards/card-chat.ts). The client
+    // names the card; the server decides the agent's envelope from the slugs. A malformed pair,
+    // or one aimed at the Assistant's vault, is refused rather than opened as a plain chat.
+    const cardAsked = url.searchParams.has('cardAgent') || url.searchParams.has('cardBoard');
+    const card = cardAsked && !assistant
+      ? parseCardRef(url.searchParams.get('cardAgent'), url.searchParams.get('cardBoard'))
+      : null;
+    if (cardAsked && !card) { rejectUpgrade(socket, 400); return; }
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -669,12 +726,15 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       if (!adoptable) await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
 
       const wss = new WebSocketServer({ noServer: true });
+      // Cloud: the device this socket proved (its id's hash) owns whatever it opens or adopts.
+      const deviceHash = isCloud() ? deviceIdHash(req) : null;
       wss.handleUpgrade(req, socket, head, (ws) => {
+        if (deviceHash) tagCloudDeviceSocket(ws, deviceHash);
         if (adoptable && adoptable.adopt(ws)) return;
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}) });
           return;
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
@@ -685,7 +745,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
         let accepted = false;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; } });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}) });
         settleSupersede(accepted);
         // D14: opening a session is a real owner action (a reattach is not: it is a reconnect).
         if (accepted) recordCloudAction();
@@ -727,6 +787,10 @@ interface ChatSpawnOpts {
    *  account, a conversation still held elsewhere). The upgrade handler withdraws its
    *  provisional supersede when this does not fire. */
   onAccepted?: () => void;
+  /** A whiteboard agent card's own conversation: the agent speaks under its approved identity,
+   *  and a home-board agent under its board scope (lib/whiteboards/card-chat.ts). Kept out of
+   *  the Assistant's chat registry and off the default-branch move; never the Assistant's. */
+  card?: CardRef;
 }
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
@@ -801,6 +865,8 @@ export function startChatSession(
   // reattach after a dropped socket); every send below reads it at call time, so output flows
   // to whichever socket currently owns the child.
   let ws = initialWs;
+  /** Cloud: the device whose socket drives this child (updated when another socket adopts it). */
+  let ownerDevice: string | null = isCloud() ? socketDevice.get(initialWs) ?? null : null;
   const { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt } = opts;
 
   // Hands-free cloud: only phase active spawns (quiescing = the laptop is taking the project
@@ -854,6 +920,9 @@ export function startChatSession(
   const accountEnv = accountEnvFor(accountConfigDir);
   const isRealHomeAccount = isRealHomeConfigDir(accountConfigDir);
   const mcpConfigPath = isRealHomeAccount || isCloud() ? null : ensureSharedMcpConfig();
+  // The Assistant's hands (mouse, keyboard, screen — computer-mcp.ts): its spawn ONLY, macOS
+  // only. Each call is an MCP tool call, so under `ask` the owner approves it in the notch.
+  const computerMcpPath = isAssistant && process.platform === 'darwin' && !isCloud() ? ensureComputerMcpConfig() : null;
   // Recorded beside `spawnAuthEpoch` so the live panel can be labelled with the account it is
   // really billing, and so the chooser knows which account NOT to move away from on a tie.
   const activeAccountId = account
@@ -910,6 +979,28 @@ export function startChatSession(
     return;
   }
 
+  // ── A whiteboard agent card's envelope (lib/whiteboards/card-chat.ts) ────────────────
+  // Decided HERE, from disk, at every spawn (Resume and account switch included): the agent's
+  // approval is checked, its board resolved, and a home-board agent gets the run's own scope.
+  // A refusal ends the open with a named reason; nothing is spawned.
+  let card: Extract<ReturnType<typeof prepareCardChat>, { ok: true }> | null = null;
+  if (opts.card) {
+    const prep = prepareCardChat(contextRoot, opts.card);
+    // The rules ride the login-shell script in double quotes, so a `$` or backtick in a real
+    // path would be expanded there; forbiddenPathReason already refuses `"`, `\` and `!`.
+    const unsafe = prep.ok && prep.permissionArgs?.some((a) => /[$`]/.test(a));
+    if (!prep.ok || unsafe) {
+      if (prep.ok) prep.dispose();
+      const reason = prep.ok ? 'its folders contain a character the shell would expand' : prep.reason;
+      // `_meta`, not `dc_meta`: the card shows the parser's `lastError`, so the owner reads why.
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'card_refused', message: `This agent cannot talk here: ${reason}.` })); } catch { /* gone */ }
+      try { ws.close(); } catch { /* already closed */ }
+      return;
+    }
+    card = prep;
+  }
+  const scopedCard = !!card?.permissionArgs;
+
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
   /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
@@ -935,7 +1026,7 @@ export function startChatSession(
   // than swallowed. A `git checkout` on the user's tree is not something to do quietly, and
   // the refusal arm matters even more than the success one: in this repo `_dream_context/`
   // rides the working tree, so "staying put, the tree is dirty" is the common answer.
-  const freshStart = resumeTarget ? null : freshSessionOnDefaultBranch(projectRoot);
+  const freshStart = resumeTarget || card ? null : freshSessionOnDefaultBranch(projectRoot);
 
   // Deferred initial prompt ("the user speaks first"): mirrors
   // agent-terminal.ts's parking pattern exactly. A non-deferred prompt is instead sent as
@@ -985,7 +1076,8 @@ export function startChatSession(
       if (roster.carriesProjectText) markTainted();
       assistantCtx = { name: assistantConfig.name, character: readAssistantCharacter(), autonomy: assistantConfig.autonomy, roster: renderRoster(roster) };
     }
-    const modeBrief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
+    // A card speaks as its agent: the card briefing takes the mode brief's place.
+    const modeBrief = card ? card.briefing : modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
     const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
@@ -1006,7 +1098,7 @@ export function startChatSession(
   let modeNoteArg: string[] = [];
   let cleanupModeNote = () => { /* nothing written */ };
   const tmpFiles: string[] = [];
-  if (resumeTarget && !isAssistant) {
+  if (resumeTarget && !isAssistant && !card) {
     try {
       const transcript = findFirstTranscriptPath([resumeTarget]);
       const state = transcript ? heldModeFromTranscript(readFileSync(transcript, 'utf-8')) : null;
@@ -1069,9 +1161,12 @@ export function startChatSession(
     '--verbose',
     '--include-partial-messages',
     '--permission-prompt-tool', 'stdio',
-    '--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass),
+    // A home-board card runs under its board's rules (dontAsk, project settings only, an exact
+    // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
+    ...(card?.permissionArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
     ...briefingArg,
-    ...modeNoteArg,
+    // The `--settings` file is a flag source the scope cannot narrow: a scoped card goes without.
+    ...(scopedCard ? [] : modeNoteArg),
     ...idArg,
     ...(spawnModel ? ['--model', spawnModel] : []),
     ...(spawnEffort ? ['--effort', spawnEffort] : []),
@@ -1081,7 +1176,8 @@ export function startChatSession(
     // server the user has; copying them per account would multiply the secrets instead.
     // Account #0 reads the real config directly and needs nothing. `--strict-mcp-config` is
     // deliberately NOT passed, so a project's own `.mcp.json` still applies.
-    ...(mcpConfigPath ? ['--mcp-config', mcpConfigPath] : []),
+    // No MCP for a scoped card (its allowlist names no MCP tool; out of scope by decision).
+    ...(scopedCard ? [] : mcpConfigArgs([mcpConfigPath, computerMcpPath])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -1117,7 +1213,7 @@ export function startChatSession(
     }
   } catch { /* an unseeded pane falls back to the vault default — never a failed spawn */ }
 
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv } as Record<string, string | undefined>;
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(card?.env ?? {}) } as Record<string, string | undefined>;
   // The cloud spawns every agent as dcuser through the one worker chokepoint: an allow-listed
   // env (never the server's own, so no DC_HF_*, transfer secret or GitHub token), only THIS
   // account's CLAUDE_CONFIG_DIR, and bash (the image has no zsh). Its own process group either
@@ -1147,7 +1243,7 @@ export function startChatSession(
 
   // Every chat but the Assistant's own is listed in the Assistant's chat registry, its status
   // derived from the frames this bridge already parses (see chat-registry.ts).
-  const registry: ChatHandle | null = isAssistant ? null : registerChat({
+  const registry: ChatHandle | null = isAssistant || card ? null : registerChat({
     sessionId: pinId || randomUUID(),
     conversationId: heldConversation || null,
     vault: opts.vault ?? basename(projectRoot),
@@ -1247,6 +1343,21 @@ export function startChatSession(
     await exited;
   };
 
+  /** The owning device was signed out: close its socket (4401) and end what it started. */
+  let deviceRevoked = false;
+  const revokeForDevice = (): void => {
+    if (deviceRevoked) return;
+    deviceRevoked = true;
+    endOnSocketGone = true;
+    try { ws.close(DEVICE_REVOKED_CLOSE, 'device signed out'); } catch { /* gone */ }
+    void cutChild().catch(() => { /* already gone */ });
+  };
+  const deviceSession = { device: () => ownerDevice, revoke: revokeForDevice };
+  if (ownerDevice) {
+    armDeviceRevocation();
+    cloudDeviceSessions.add(deviceSession);
+  }
+
   // ── Detach instead of dying with the socket (agent-chat-live.ts) ───────────────────
   // A pinned project chat survives a dropped socket: the child keeps stdin, and a client's
   // reattach adopts it. The Assistant (its socket is the relay's only channel) and an unpinned
@@ -1260,6 +1371,7 @@ export function startChatSession(
     adopt: (next) => adoptSocket(next),
     supersede: () => supersedeLive(),
     cut: () => cutChild(),
+    pid: child.pid,
   } : null;
   if (live) registerLiveChat(live);
   /** No socket right now; the reap timers below decide how long that may last. */
@@ -1434,6 +1546,7 @@ export function startChatSession(
   const teardown = (): void => {
     if (!alive) return;
     alive = false;
+    cloudDeviceSessions.delete(deviceSession);
     // A gone child cannot be mid-turn. `armAccountSwitch` checks `exited` too, but leaving a
     // stale count here would be a lie about the one thing only this side can report.
     turnsInFlight = 0;
@@ -1448,6 +1561,7 @@ export function startChatSession(
     cleanupDeferred();
     cleanupBriefing();
     cleanupModeNote();
+    card?.dispose();
     unwatchAuth();
     registry?.exited();
     // A respawn in place hands the notch's surface to its successor on the same socket.
@@ -1556,7 +1670,7 @@ export function startChatSession(
   /** A client's reattach: bind `next` to this very child. False when the child can no longer
    *  be adopted (exiting, draining, or handing off) — the caller then spawns a resume. */
   function adoptSocket(next: import('ws').WebSocket): boolean {
-    if (!alive || lingerTimer || lingerKillTimer || handedOff) return false;
+    if (!alive || lingerTimer || lingerKillTimer || handedOff || deviceRevoked) return false;
     const prev = ws;
     prev.off('message', onWsMessage);
     prev.off('close', onSocketGone);
@@ -1569,6 +1683,7 @@ export function startChatSession(
     }
     stopPing();
     ws = next;
+    ownerDevice = socketDevice.get(next) ?? ownerDevice;
     detached = false;
     clearDetachTimers();
     bindSocket();
@@ -2338,6 +2453,8 @@ export function startChatSession(
   // ── ws → claude stdin (client control frames) ──────────────────────────────────────
   function onWsMessage(raw: Buffer | string): void {
     if (!alive) return;
+    // Defence in depth (AC3): a frame from a device that is no longer signed in acts on nothing.
+    if (ownerDevice && !handsfreeAuth().store.isValidDeviceHash(ownerDevice)) { revokeForDevice(); return; }
     const str = typeof raw === 'string' ? raw : raw.toString('utf-8');
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
@@ -2410,7 +2527,7 @@ export function startChatSession(
     // new mode) is LOAD-BEARING for every switch INTO bypass, not just a courtesy for an older
     // CLI. Verified end to end: the respawned `--resume` session boots on `bypassPermissions`.
     // The Assistant's permission mode is its AUTONOMY setting — a pane switch must not move it.
-    if (msg.type === 'setPermissionMode' && !isAssistant && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+    if (msg.type === 'setPermissionMode' && !isAssistant && !scopedCard && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       writeStdin({
         type: 'control_request',

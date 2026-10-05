@@ -1115,8 +1115,10 @@ export function Composer({
   const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
     if (!isConnected) return;
+    // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
+    // filesystem path: it goes out as written, never shell-quoted.
     const pathsText = readScratch(convId).attachments.filter((a) => !!a.path)
-      .map((a) => quotePath(a.path ?? '')).join(' ');
+      .map((a) => (a.kind === 'ref' ? a.path ?? '' : quotePath(a.path ?? ''))).join(' ');
     const bodyText = pathsText ? (text.trim() ? `${text.trim()} ${pathsText}` : pathsText) : text.trim();
     const message = liveQuote ? `> ${liveQuote}\n\n${bodyText}` : bodyText;
     if (!message.trim()) return;
@@ -1440,7 +1442,7 @@ export function Composer({
                 {a.kind === 'image' ? (
                   <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
                 ) : (
-                  <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : '📄'}</span>
+                  <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : '📄'}</span>
                 )}
                 {/* An attachment says what will happen to it. A picture that can't be sent
                     must never look like one that can — that is the whole bug this row grew

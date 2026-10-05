@@ -583,6 +583,7 @@ dreamcontext assistant broadcast "<rule>" [--to a,b]  # each project's OWN agent
 dreamcontext assistant open <vault> [--page tasks|knowledge|core/<slug>] [--new-window]
 dreamcontext assistant chat <vault> --prompt "…" [--mode basic|plan|develop]
 dreamcontext assistant send <sessionId> "<text>"
+dreamcontext assistant agent <vault> "<text>" (--board <b> | --slug <s>)  # a board's home agent, or any agent by slug; gated like send
 dreamcontext assistant answer <sessionId> --question <id> (--choice <label> | --text "…")
 dreamcontext assistant focus <vault>
 dreamcontext assistant tile <vault…> [--layout columns|rows|grid]
@@ -607,7 +608,7 @@ that fails the answer is `ceiling`). The notch binds the command id to that wind
 and rings a doorbell carrying only the id. The window claims the command from the server with the nonce it registered at
 bootstrap and posts the result. A forged, reused, unbound or mis-addressed id lands nothing.
 
-**Autonomy and taint.** `ask` — send, answer and broadcast become PROPOSALS the owner approves,
+**Autonomy and taint.** `ask` — send, agent, answer and broadcast become PROPOSALS the owner approves,
 edits or rejects in the notch. `auto` — they run, EXCEPT right after the assistant has read
 project-derived text (then they become proposals until the owner speaks again), and answering
 another agent's tool-permission prompt always asks. `bypass` — everything runs (the wizard

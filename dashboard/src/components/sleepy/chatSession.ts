@@ -392,6 +392,10 @@ export interface ChatSession {
    * session object rather than mutating this one.
    */
   readonly accountId: string;
+  /** The composer's own chip and draft bucket, for a host whose conversation id is not the
+   *  right key (a whiteboard agent card: a dragged board element lands in the card's bucket
+   *  before any conversation exists). Absent = the conversation id. */
+  scratchId?: string;
   /**
    * How this conversation's agent is BRIEFED to work — the per-mode system-prompt append the
    * server writes at spawn (`src/server/chat-modes.ts`).
@@ -797,6 +801,9 @@ export function createChatSession(
   mode: ChatMode = DEFAULT_CHAT_MODE,
   accountId = '',
   origin: '' | 'assistant' = '',
+  /** A whiteboard agent card's own conversation: the agent and the board it sits on. The
+   *  server decides everything else from these two (lib/whiteboards/card-chat.ts). */
+  card: { agent: string; board: string } | null = null,
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -827,6 +834,9 @@ export function createChatSession(
   // capability, so a forged one costs nothing. A respawn of this chat re-derives the marker on
   // the server from its --resume id; nothing else ever sends it.
   const originParam = origin ? `&origin=${origin}` : '';
+  // On BOTH URLs: a reconnect that found its child gone respawns it, and must respawn it as
+  // the same card (its agent's identity and its board's scope), never as a plain chat.
+  const cardParam = card ? `&cardAgent=${encodeURIComponent(card.agent)}&cardBoard=${encodeURIComponent(card.board)}` : '';
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -836,14 +846,14 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach=1` so the server
    *  adopts the live child instead of spawning a twin. Never carries the opening prompt (it
    *  already went out) nor `origin` (the server re-derives it). `bypass` is read now, not at
    *  construction: a live permission switch may have moved it. */
   const reconnectUrl = (): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=1`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 

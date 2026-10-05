@@ -2354,6 +2354,17 @@ export interface UserMedia {
  *
  * Pure: string in, strings out. No filesystem, no network — safe on every render.
  */
+/**
+ * A board element the owner dragged onto a whiteboard agent card rides the message as a
+ * `dcref:wb/<board>/<element id>` token (the server expands it for the agent). In the owner's
+ * own bubble it is a chip, not a token: the text without them and how many there were.
+ */
+export function splitUserBoardRefs(raw: string): { text: string; refs: number } {
+  let refs = 0;
+  const text = raw.replace(/\s*dcref:wb\/[a-z0-9][a-z0-9-]{0,63}\/[A-Za-z0-9_-]{1,64}/g, () => { refs += 1; return ''; });
+  return refs ? { text: text.trim(), refs } : { text: raw, refs: 0 };
+}
+
 export function splitUserMedia(raw: string): UserMedia {
   const tokens = tokenizeQuoted(raw);
   const isAttachment = (t: Token) => !!inlineMediaKind(t.value) && (t.quoted || t.value.startsWith('/'));

@@ -64,7 +64,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand,
+  signInCommand, bare, idlePlaceholder,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -83,6 +83,9 @@ function ChatPaneHostInner({
   permissionMode: 'auto' | 'bypass';
   canSignInInApp: boolean;
   signInCommand: string;
+  /** See ChatPane's `bare`: a host that fixes the agent's envelope (a whiteboard agent card). */
+  bare?: boolean;
+  idlePlaceholder?: string;
 }) {
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);
@@ -122,6 +125,8 @@ function ChatPaneHostInner({
       onSignIn={onSignIn}
       canSignInInApp={canSignInInApp}
       signInCommand={signInCommand}
+      bare={bare}
+      idlePlaceholder={idlePlaceholder}
     />
   );
 }

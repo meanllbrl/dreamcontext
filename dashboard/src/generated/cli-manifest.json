@@ -42,6 +42,18 @@
       "group": true
     },
     {
+      "path": "assistant agent",
+      "desc": "Call an agent in a project: a board's home agent (--board) or any agent by slug (--slug)",
+      "args": [
+        "<vault>",
+        "<text>"
+      ],
+      "valueFlags": [
+        "--board",
+        "--slug"
+      ]
+    },
+    {
       "path": "assistant answer",
       "desc": "Answer a chat's pending question or permission prompt",
       "args": [
@@ -85,6 +97,11 @@
         "--vault",
         "--status"
       ]
+    },
+    {
+      "path": "assistant computer-mcp",
+      "desc": "Run the Assistant's computer-control MCP server on stdio",
+      "args": []
     },
     {
       "path": "assistant focus",
@@ -203,7 +220,8 @@
         "--timeout",
         "--catchup",
         "--prompt-file",
-        "--review"
+        "--review",
+        "--whiteboard"
       ]
     },
     {
@@ -3289,7 +3307,7 @@
     },
     {
       "path": "whiteboard add",
-      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web | wiki | lab-card",
+      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web | wiki | lab-card | agent",
       "args": [
         "<slug>",
         "<kind>"

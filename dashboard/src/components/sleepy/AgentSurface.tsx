@@ -62,6 +62,10 @@ import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../li
 import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
 import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
+import { useHandsfree } from '../handsfree/handsfreeStore';
+import { generationOf, mergeStoredRoster, putOutcome, rehydrateOnPhase, withBaseGeneration } from '../handsfree/rosterRehydrate';
+import { CloudChip } from '../handsfree/phone/CloudChip';
+import { QuiesceOverlay } from '../handsfree/phone/QuiesceOverlay';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -244,6 +248,8 @@ interface SavedSurface {
   sessions: SavedMeta[];
   activePane?: number;
   chatPermissionMode?: ChatPermissionMode;
+  /** Bumped only by a hands-free Return's merge; every PUT names the one it was based on. */
+  generation?: number;
 }
 
 /**
@@ -565,6 +571,25 @@ export function AgentSurface() {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
+  // The roster generation the last GET answered (`baseGeneration` of every PUT). A hands-free
+  // Return merges the phone's sessions in and bumps it, so a PUT from before that is refused
+  // (409 `roster_stale`) and this surface re-hydrates instead of overwriting the merge.
+  const rosterGenRef = useRef<number | undefined>(undefined);
+  // Bumped to pull the roster again (a stale PUT, or the laptop coming home from a trip).
+  const [rehydrateNonce, setRehydrateNonce] = useState(0);
+  const rehydrateRoster = useCallback(() => {
+    hydratedRef.current = false;
+    setRehydrateNonce((n) => n + 1);
+  }, []);
+  // Home again after a trip (away/returning -> home): sessions started on the phone appear, and
+  // whatever this tab did while its PUTs were refused (the lock) gives way to the merged roster.
+  const handsfreePhase = useHandsfree().status?.phase ?? null;
+  const handsfreePhaseRef = useRef(handsfreePhase);
+  useEffect(() => {
+    const prev = handsfreePhaseRef.current;
+    handsfreePhaseRef.current = handsfreePhase;
+    if (rehydrateOnPhase(prev, handsfreePhase)) rehydrateRoster();
+  }, [handsfreePhase, rehydrateRoster]);
   // ── The Claude account changed underneath us ───────────────────────────────────────
   //
   // `claude` reads its credentials once, at startup, so signing into a different account
@@ -891,6 +916,7 @@ export function AgentSurface() {
     (async () => {
       try {
         const res = await scopedApi.get<SavedSurface>('/agent/sessions');
+        if (!cancelled) rosterGenRef.current = generationOf(res);
         // The remembered permission mode is restored REGARDLESS of "Reopen past tabs": it is a
         // preference about how the next chat opens, not a tab. localStorage cannot carry it —
         // the desktop app picks a fresh loopback port every launch, so the origin (and the
@@ -926,8 +952,12 @@ export function AgentSurface() {
         // other's turns — the dual-attach guard every other resume path in this file
         // enforces. Filtered BEFORE the map, because the map is where `spawn` happens; a
         // dedupe after it would already have started the duplicate process.
-        const alreadyOpen = new Set(sessionListRef.current.map((m) => m.claudeId));
-        const fresh = saved.filter((m) => !m.sessionId || !alreadyOpen.has(m.sessionId));
+        // A re-hydrate (rosterRehydrate.ts) also adopts the stored titles of tabs already open
+        // (renamed on the phone); tabs only here are kept; new ones are restored below.
+        const { fresh } = mergeStoredRoster(sessionListRef.current, saved, { adoptTitles: false });
+        if (!cancelled && rehydrateNonce > 0) {
+          setSessionList((prev) => mergeStoredRoster(prev, saved, { adoptTitles: true }).open ?? prev);
+        }
         if (!cancelled && fresh.length > 0) {
           // A saved tab WITH a pinned conversation id auto-RESUMES its real Claude session
           // on launch (reopening the app reopens the work via `claude --resume`); a legacy
@@ -1062,7 +1092,7 @@ export function AgentSurface() {
       finally { if (!cancelled) { hydratedRef.current = true; } }
     })();
     return () => { cancelled = true; };
-  }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi]);
+  }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi, rehydrateNonce]);
 
   // Persist on every roster OR LAYOUT change (post-hydrate), debounced. AGENTS and CHATS are
   // remembered — plain TERMINALS are session-local and never reopened on launch (the server
@@ -1074,6 +1104,7 @@ export function AgentSurface() {
   useEffect(() => {
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
+      if (!hydratedRef.current) return; // a re-hydrate started: never send the stale payload
       // The layout, flattened to what survives a relaunch: which pane (by POSITION, since pane
       // ids are minted per page load and mean nothing tomorrow) and which tab was visible in
       // it. A session in no pane — minimized — has no placement and defaults to pane 0 on the
@@ -1108,13 +1139,22 @@ export function AgentSurface() {
             ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
           })),
       };
-      void scopedApi.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
+      // `baseGeneration` = the last GET's; a 409 roster_stale re-hydrates and never re-sends
+      // this body; anything else stays best-effort (rosterRehydrate.ts `putOutcome`).
+      const settle = (o: ReturnType<typeof putOutcome>) => {
+        if (o.kind === 'adopt' && o.generation !== undefined) rosterGenRef.current = o.generation;
+        else if (o.kind === 'rehydrate') rehydrateRoster();
+      };
+      void scopedApi.put<unknown>('/agent/sessions', withBaseGeneration(payload, rosterGenRef.current)).then(
+        (body) => settle(putOutcome({ ok: true, body })),
+        (err: unknown) => settle(putOutcome(err instanceof RequestError ? { ok: false, status: err.status, code: err.code } : { ok: false, status: 0, code: '' })),
+      );
     }, 400);
     return () => clearTimeout(handle);
     // `panes`/`activePaneId`/`chatPermissionMode` join the roster in the deps because they are
     // now part of what is persisted — a split, a tab drag or a permission change has to reach
     // disk, and the 400ms debounce is what keeps a drag from writing once per frame.
-  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi]);
+  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster]);
 
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
@@ -3506,6 +3546,7 @@ export function AgentSurface() {
         {/* Overlay chrome — ONE row: collapse, the session TABS themselves (one group per
             pane; the header IS the tab strip, so there's no separate title row and no
             second 38px bar), and the "New" split action. */}
+        <QuiesceOverlay />
         <div className="agent-overlay-head">
           {/* The phone header: [☰ sessions] [active session name] [＋ new chat]. It REPLACES
               the desktop trio rather than restyling it — the tab strip's per-tab ✕/minimize
@@ -3528,6 +3569,7 @@ export function AgentSurface() {
                 {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
                 {mobileActive?.title ?? 'Chat'}
               </span>
+              <CloudChip />
               <button
                 className="mchat-head-btn"
                 onClick={() => addSession(claudeKind)}

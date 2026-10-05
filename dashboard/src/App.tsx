@@ -5,6 +5,7 @@ import { LauncherPage } from './pages/LauncherPage';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner';
+import { HandsfreeBanner } from './components/handsfree/HandsfreeBanner';
 import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { WindowChrome } from './components/layout/WindowChrome';
 import { ChecklistWindow } from './components/checklist/ChecklistWindow';
@@ -173,6 +174,7 @@ export function App() {
           <ThemeProvider>
             <I18nProvider>
               <UpgradeRelaunchBanner />
+              <HandsfreeBanner />
               <LauncherPage />
               <ProjectSwitcher />
             </I18nProvider>

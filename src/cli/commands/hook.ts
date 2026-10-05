@@ -2329,6 +2329,19 @@ export function registerHookCommand(program: Command): void {
       const root = resolveContextRoot();
       if (!root) process.exit(0);
 
+      // ── A whiteboard agent card: the board, fresh, beside this message ────
+      // Only a card session's child carries the two env vars (card-chat.ts), so
+      // every other chat stays silent. Before the sleep-lock return: the board is
+      // what the agent is being asked about. Nested-guarded like the lines above.
+      try {
+        if (process.env.DREAMCONTEXT_CARD_AGENT && !isNestedClaudeHook()) {
+          // Loaded only here: every other prompt pays nothing for the runner's imports.
+          const { cardTurnContext } = await import('../../lib/whiteboards/card-chat.js');
+          const board = cardTurnContext(root, process.env, String((input as Record<string, unknown>).prompt ?? ''));
+          if (board) console.log(board);
+        }
+      } catch { /* a missing board degrades to the message alone */ }
+
       // Standing sub-agent authorization (see SUBAGENT_DISPATCH_AUTHORIZATION).
       // Emitted BEFORE the consolidation-lock early return below, deliberately: a
       // prompt sent mid-sleep is exactly when the orchestrator is deciding whether

@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { mediaContentType, serveMedia } from './media.js';
+import { isCloud } from './cloud-mode.js';
 import { findRetainedAsset, retainBuildAssets } from './retained-assets.js';
 
 const MIME_TYPES: Record<string, string> = {
@@ -37,6 +38,23 @@ function isAuthoredContent(pathname: string): boolean {
 export function cacheControlFor(pathname: string, ext: string): string {
   if (ext === '.html' || isAuthoredContent(pathname)) return 'no-cache';
   return 'public, max-age=31536000, immutable';
+}
+
+/** The flag the dashboard reads synchronously before its first render (`dashboard/src/lib/cloudSurface.ts`). */
+export const CLOUD_SURFACE_META = '<meta name="dreamcontext-surface" content="cloud" />';
+
+/**
+ * The SPA's index.html as served: on the hands-free CLOUD only, it carries
+ * {@link CLOUD_SURFACE_META} so the page never calls a route the cloud refuses (AC4). The SPA
+ * index has no CSP (only the cloud's own login/sealed pages do), so a plain meta tag is safe.
+ */
+export function indexHtmlFor(content: Buffer, cloud: boolean = isCloud()): Buffer {
+  if (!cloud) return content;
+  const html = content.toString('utf8');
+  const at = html.search(/<head[^>]*>/i);
+  if (at < 0) return Buffer.from(CLOUD_SURFACE_META + html, 'utf8');
+  const end = html.indexOf('>', at) + 1;
+  return Buffer.from(html.slice(0, end) + CLOUD_SURFACE_META + html.slice(end), 'utf8');
 }
 
 /**
@@ -83,8 +101,10 @@ export function serveStatic(
       return;
     }
 
-    const content = readFileSync(filePath);
-    if (filePath === join(staticDir, 'index.html')) retainBuildAssets(staticDir, content);
+    const raw = readFileSync(filePath);
+    const isIndex = filePath === join(staticDir, 'index.html');
+    if (isIndex) retainBuildAssets(staticDir, raw);
+    const content = isIndex ? indexHtmlFor(raw) : raw;
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': content.length,
@@ -108,8 +128,9 @@ export function serveStatic(
   if (acceptsHtml || !looksLikeFile) {
     const indexPath = join(staticDir, 'index.html');
     if (existsSync(indexPath)) {
-      const content = readFileSync(indexPath);
-      retainBuildAssets(staticDir, content);
+      const raw = readFileSync(indexPath);
+      retainBuildAssets(staticDir, raw);
+      const content = indexHtmlFor(raw);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': content.length,

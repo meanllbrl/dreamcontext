@@ -239,11 +239,13 @@ import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, 
 import { startOrphanSweep } from './orphan-sweep.js';
 import { registerHandsfreeCloudRoutes } from './routes/handsfree-cloud.js';
 import { handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
+import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
 import {
   handleHandsfreeStatus, handleHandsfreeJob, handleHandsfreeReceipt, handleHandsfreeGo, handleHandsfreeReturn, handleHandsfreeResume,
   handleHandsfreeRollback, handleHandsfreeAbandon, handleHandsfreeRevokeAll, handsfreeLockRefusal, sendHandsfreeAway,
   isBodySelectorRoute, screenBodySelectedVault,
 } from './routes/handsfree.js';
+import { handleHandsfreePreflight, handleHandsfreeCut } from './routes/handsfree.js';
 import { isAway } from '../lib/handsfree/trip-state.js';
 import { handleAdminShutdown } from './routes/admin.js';
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../lib/manifest.js';
@@ -286,8 +288,11 @@ export function buildRouter(): Router {
     if (!isCloud()) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/logout'); return; }
     handleHandsfreeLogout(req, res);
   });
+  router.get('/api/handsfree/phone', handleHandsfreePhone);
   router.get('/api/handsfree/status', handleHandsfreeStatus);
   router.get('/api/handsfree/jobs/current', handleHandsfreeJob);
+  router.post('/api/handsfree/jobs/current/cut', handleHandsfreeCut);
+  router.get('/api/handsfree/preflight', handleHandsfreePreflight);
   router.get('/api/handsfree/receipt', handleHandsfreeReceipt);
   router.post('/api/handsfree/go', handleHandsfreeGo);
   router.post('/api/handsfree/return', handleHandsfreeReturn);
@@ -1022,6 +1027,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
           }
           return;
         }
+
+        // The phone's login, service worker and offline page (cloud only; the SW and the
+        // offline page are 404 off the cloud).
+        if (handlePhonePages(req, res, url)) return;
 
         // Static files (dashboard SPA)
         serveStatic(req, res, dashboardDir);

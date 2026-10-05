@@ -215,8 +215,8 @@ export function autoSwitchEnabled(home: string = homedir()): boolean {
 }
 
 /** Turn auto-switch on or off, preserving the accounts. */
-export function setAutoSwitchEnabled(enabled: boolean, home: string = homedir()): void {
-  writeClaudeAccounts(listClaudeAccounts(home), home, enabled);
+export function setAutoSwitchEnabled(enabled: boolean, home: string = homedir()): Promise<void> {
+  return writeClaudeAccounts(listClaudeAccounts(home), home, enabled);
 }
 
 /** The registry object, or null when there is no readable file. Never throws. */
@@ -279,7 +279,7 @@ export function writeClaudeAccounts(
   autoSwitch?: boolean,
   /** The switch policy to store. Omitted = keep whatever is on disk. */
   policy?: { strategy: SwitchStrategy; weights: SwitchWeights },
-): void {
+): Promise<void> {
   const filePath = claudeAccountsFilePath(home);
   // Preserve the existing settings when the caller is only touching the accounts. Every
   // account mutation in this file goes through here, so a reorder or a removal must not be
@@ -296,21 +296,23 @@ export function writeClaudeAccounts(
   if (isCloud()) {
     // The cloud: ~/.dreamcontext is dcuser's tree, so dcserver never writes into it; the
     // worker does (temp + rename as dcuser), in order. Reads see the newest queued text at
-    // once, so read-modify-write calls stay serial; a failed write surfaces through
-    // {@link claudeAccountsWritten} and the disk stays the truth.
+    // once, so read-modify-write calls stay serial; the returned promise is THIS write (a
+    // failure rejects it) and the disk stays the truth.
     pendingText.set(filePath, text);
     const write = writeChain.then(() => workerWriteAtomic(workerRunner, filePath, text));
-    writeChain = write.catch(() => { /* surfaced through lastWrite */ });
-    lastWrite = write.finally(() => {
+    writeChain = write.catch(() => { /* reported through this call's own promise */ });
+    const done = write.finally(() => {
       if (pendingText.get(filePath) === text) pendingText.delete(filePath);
     });
-    lastWrite.catch((err) => { console.warn(`[claude-accounts] cloud registry write failed: ${(err as Error).message}`); });
-    return;
+    done.catch((err) => { console.warn(`[claude-accounts] cloud registry write failed: ${(err as Error).message}`); });
+    lastWrite = done;
+    return done;
   }
   mkdirSync(dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmp, text, 'utf-8');
   renameSync(tmp, filePath);
+  return Promise.resolve();
 }
 
 let writeChain: Promise<void> = Promise.resolve();
@@ -318,8 +320,8 @@ let lastWrite: Promise<void> = Promise.resolve();
 /** Cloud: registry text queued for the worker and not yet confirmed on disk. */
 const pendingText = new Map<string, string>();
 
-/** Resolves once the latest queued registry write landed; REJECTS when it failed (the route
- *  must not answer success for a change that was never saved). */
+/** The latest queued registry write (any caller's). A caller that needs ITS change saved
+ *  awaits the promise its own mutation returned instead. */
 export function claudeAccountsWritten(): Promise<void> {
   return lastWrite;
 }
@@ -408,12 +410,12 @@ export function reloginLandedOnOtherAccount(expectedEmail: string, reportedEmail
 }
 
 /** Mark `id` preferred and clear every sibling. Unknown id ⇒ throws (never a silent no-op). */
-export function setPreferredClaudeAccount(id: string, home?: string): void {
+export function setPreferredClaudeAccount(id: string, home?: string): Promise<void> {
   const accounts = listClaudeAccounts(home);
   if (!accounts.some((a) => a.id === id)) {
     throw new ClaudeAccountError(`No such account: ${id}`);
   }
-  writeClaudeAccounts(accounts.map((a) => ({ ...a, preferred: a.id === id })), home ?? homedir());
+  return writeClaudeAccounts(accounts.map((a) => ({ ...a, preferred: a.id === id })), home ?? homedir());
 }
 
 /**

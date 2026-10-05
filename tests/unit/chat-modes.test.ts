@@ -493,10 +493,10 @@ describe('modeBriefing', () => {
   // "the assistant always knows every session"): the three notch cues and the live-context rule.
   // Then 4900 → 5050 (2026-10-04, owner: close finished chats in other projects): the `close`
   // tool line, its idle-vs-busy rule line, and `close` in the long-timeout list.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 5050 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 5800 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list
   const DEFAULT_CEILING = 1600;
 
-  it('assistant: speaks before delegating, single-quotes --prompt, and stays 150 under its ceiling', () => {
+  it('assistant: speaks before delegating, single-quotes --prompt, takes meeting notes through a tool, and stays 150 under its ceiling', () => {
     const brief = assistantBriefing({ name: 'Assistant', character: '', autonomy: 'ask', roster: '' });
     expect(brief).toContain('Before chat, watch, send or broadcast, first write ONE short progress sentence');
     expect(brief).toContain('the notch shows it while you wait');
@@ -508,7 +508,14 @@ describe('modeBriefing', () => {
     expect(brief).toContain('server-written `<live-context>`');
     expect(brief).toContain('Pass --prompt in single quotes; never backticks or $() inside it.');
     expect(brief).toContain('dreamcontext assistant look — ONLY when the owner asks you to see their screen');
-    expect(brief.length).toBeLessThanOrEqual(4900);
+    // Meeting notes come from the owner's notetaker MCP, never a recording of its own (2026-10-04).
+    expect(brief).toContain('Never record, transcribe or summarise a meeting yourself');
+    expect(brief).toContain('Never record or transcribe audio yourself');
+    expect(brief).toContain('work from notes or a transcript the owner hands you');
+    // A board's home agent, or any agent by slug, gated like send (2026-10-04).
+    expect(brief).toContain('dreamcontext assistant agent <vault> "…" (--board <b> | --slug <s>)');
+    expect(brief).toContain('Run `send`, `agent`, `answer`');
+    expect(brief.length).toBeLessThanOrEqual(5650);
   });
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

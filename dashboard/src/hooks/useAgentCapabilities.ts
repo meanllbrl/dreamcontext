@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { cloudAllows } from '../lib/cloudSurface';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import {
   FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats, type UsageLimitsResponse,
@@ -328,8 +329,9 @@ export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean)
   return useQuery({
     queryKey: ['agent-goal-live', claudeId],
     queryFn: () => api.get<GoalLiveResponse>(`/agent/goal-live?claudeId=${encodeURIComponent(claudeId!)}`),
-    enabled: enabled && !!claudeId,
-    refetchInterval: enabled ? 2_000 : false,
+    // Not served on the hands-free cloud (cloudSurface.ts): no poll there at all.
+    enabled: enabled && !!claudeId && cloudAllows('GET', '/api/agent/goal-live'),
+    refetchInterval: enabled && cloudAllows('GET', '/api/agent/goal-live') ? 2_000 : false,
     staleTime: 1_500,
     retry: false,
     placeholderData: GOAL_LIVE_INACTIVE,
@@ -382,8 +384,9 @@ export function useAgentCouncilLive(claudeId: string | undefined, enabled: boole
   return useQuery({
     queryKey: ['agent-council-live', claudeId],
     queryFn: () => api.get<CouncilLiveResponse>(`/agent/council-live?claudeId=${encodeURIComponent(claudeId!)}`),
-    enabled: enabled && !!claudeId,
-    refetchInterval: enabled ? 2_000 : false,
+    // Not served on the hands-free cloud (cloudSurface.ts): no poll there at all.
+    enabled: enabled && !!claudeId && cloudAllows('GET', '/api/agent/council-live'),
+    refetchInterval: enabled && cloudAllows('GET', '/api/agent/council-live') ? 2_000 : false,
     staleTime: 1_500,
     retry: false,
     placeholderData: COUNCIL_LIVE_INACTIVE,

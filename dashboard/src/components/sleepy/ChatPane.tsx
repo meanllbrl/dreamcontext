@@ -551,7 +551,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand,
+  canSignInInApp, signInCommand, bare = false, idlePlaceholder,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -618,6 +618,12 @@ export function ChatPane({
    *  (`Capabilities.claudeAuth.loginCommand`) — so the banner can never name a command this
    *  machine doesn't have. */
   signInCommand: string;
+  /** A pane whose agent's envelope is fixed by its host (a whiteboard agent card): no mode,
+   *  permission or model controls in the composer, since none of them would reach it, and no
+   *  live rail (quest, team), pinned shelf (branch) or empty-state hero; the host draws its own. */
+  bare?: boolean;
+  /** The composer's idle placeholder, when the host names who is listening. */
+  idlePlaceholder?: string;
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
   useEffect(() => session.subscribe(() => force()), [session]);
@@ -1781,13 +1787,15 @@ export function ChatPane({
 
   return (
     <div className="chat-pane" ref={paneRef} data-status={session.status}>
-      <ChatLiveRail
-        session={session}
-        taskSlug={taskSlug}
-        quest={quest}
-        lineage={lineage}
-        team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn, inView: teamInView }}
-      />
+      {!bare && (
+        <ChatLiveRail
+          session={session}
+          taskSlug={taskSlug}
+          quest={quest}
+          lineage={lineage}
+          team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn, inView: teamInView }}
+        />
+      )}
       {session.status === 'connecting' && <ReconnectingChip />}
       <div className="chat-transcript">
         <div
@@ -1939,7 +1947,7 @@ export function ChatPane({
                 onOpenFile={handleOpenFile}
               />
             )}
-            {isEmpty && <EmptyState />}
+            {isEmpty && !bare && <EmptyState />}
             {/* The window's ceiling, made visible and operable. Scrolling to the top does
                 this for you (see the scroll handler); the button is what makes the omission
                 honest for a reader who hasn't scrolled yet. */}
@@ -2070,7 +2078,7 @@ export function ChatPane({
           at all when it holds nothing (no zero-height strip), and one bare tag line at rest.
           `shelved` is the same question as the shell's own `has-rows`, which is why it comes
           off the shelf handle rather than being computed twice. */}
-      <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} />
+      {!bare && <PinShelf shelf={shelf} onOpenUrl={openExternalUrl} />}
       {needsSignIn ? (
         <SignInBanner
           canSignInInApp={canSignInInApp}
@@ -2122,9 +2130,11 @@ export function ChatPane({
           // value goes down beside the session's, and the menu's note states the scope.
           permissionMode={inBypass ? 'bypass' : 'auto'}
           projectPermissionMode={permissionMode}
-          onPermissionModeChange={onPermissionModeChange}
+          onPermissionModeChange={bare ? undefined : onPermissionModeChange}
           mode={mode}
-          onModeChange={onModeChange}
+          onModeChange={bare ? undefined : onModeChange}
+          showModel={!bare}
+          idlePlaceholder={idlePlaceholder}
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}

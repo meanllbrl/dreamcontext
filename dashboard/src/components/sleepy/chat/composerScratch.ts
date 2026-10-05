@@ -33,7 +33,11 @@
 
 export interface Attachment {
   id: string;
-  kind: 'image' | 'file' | 'folder';
+  /** `ref` is a pointer to a whiteboard element (an agent card's drag-to-ask), not a file:
+   *  its `path` is the `dcref:wb/<board>/<id>` token the server expands into the element's
+   *  content, and `name` is what the chip reads ("Note · Q3 plan"). It has no preview and no
+   *  upload, so it is sendable the moment it is staged. */
+  kind: 'image' | 'file' | 'folder' | 'ref';
   name: string;
   /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
    *  the picture itself while its bytes are still on their way to disk. Revoked when the entry

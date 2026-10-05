@@ -84,6 +84,8 @@ export interface LiveChatEntry {
   /** Kill the child's whole process group (SIGTERM, SIGKILL after {@link CUT_KILL_GRACE_MS}),
    *  resolving once it exited. The conversation stays resumable (its transcript is on disk). */
   cut?: () => Promise<void>;
+  /** The child's pid (it leads its own process group): labels what a process scan finds. */
+  pid?: number;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */
@@ -176,4 +178,13 @@ export function signalGroup(child: { pid?: number; kill: (s?: NodeJS.Signals) =>
     if (child.pid) { process.kill(-child.pid, signal); return; }
   } catch { /* not a group leader (or gone): signal the child itself */ }
   try { child.kill(signal); } catch { /* gone */ }
+}
+
+/** Live and draining chats by their child's pid (= its process group), for labelling a
+ *  process scan (D22: the scan finds the work, the registry only names it). */
+export function liveChatsByPgid(): Map<number, { conversationId: string; busy: boolean; startedAt: number | null; draining: boolean }> {
+  const out = new Map<number, { conversationId: string; busy: boolean; startedAt: number | null; draining: boolean }>();
+  for (const e of liveChats.values()) if (e.pid) out.set(e.pid, { conversationId: e.conversationId, busy: e.busy, startedAt: e.turnStartedAt, draining: false });
+  for (const e of drainingChats) if (e.pid) out.set(e.pid, { conversationId: e.conversationId, busy: true, startedAt: e.turnStartedAt ?? drainingSince.get(e) ?? null, draining: true });
+  return out;
 }

@@ -1,3 +1,5 @@
+import { cloudAllows } from '../lib/cloudSurface';
+
 const BASE_URL = '/api';
 
 interface ApiError {
@@ -120,6 +122,11 @@ export class ApiClient {
   constructor(private readonly vault: string | null) {}
 
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    // On the hands-free cloud only the allow-listed routes exist for this page (AC4): answer the
+    // server's own refusal locally instead of sending a request it is built to refuse.
+    if (!cloudAllows(options?.method ?? 'GET', `${BASE_URL}${path}`)) {
+      throw new RequestError('Not available on the cloud machine.', 403, 'cloud_unavailable');
+    }
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options?.headers as Record<string, string> | undefined),

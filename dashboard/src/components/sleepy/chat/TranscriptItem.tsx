@@ -4,7 +4,7 @@ import { agentFileUrl, type ApiClient } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
-  inlineMediaKind, splitUserMedia, revealPath, formatTokenCount,
+  inlineMediaKind, splitUserBoardRefs, splitUserMedia, revealPath, formatTokenCount,
 } from './chatEntities';
 import { parseChatActions, type ChatAction } from './chatActions';
 import { ActionRow } from './ActionRow';
@@ -117,12 +117,22 @@ function UserMessage({
   const [confirming, setConfirming] = useState(false);
   // What was attached is drawn; what was typed stays in the bubble. Copy/quote/rewind all
   // keep `item.text` — the real message, paths and all, is what was sent.
-  const { text, media } = useMemo(() => splitUserMedia(item.text), [item.text]);
+  const { text, media, refs } = useMemo(() => {
+    const board = splitUserBoardRefs(item.text);
+    return { ...splitUserMedia(board.text), refs: board.refs };
+  }, [item.text]);
   return (
     <div className="chat-msg-user-row">
       {media.length > 0 && (
         <div className="chat-msg-user-media">
           {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}
+        </div>
+      )}
+      {refs > 0 && (
+        <div className="chat-msg-user-media">
+          {Array.from({ length: refs }, (_, i) => (
+            <span key={i} className="chat-msg-user-ref">Board element</span>
+          ))}
         </div>
       )}
       {text && <div className="chat-msg-user-bubble">{text}</div>}

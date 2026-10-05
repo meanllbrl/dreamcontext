@@ -90,7 +90,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory — fire reminders when context matches | this file |
-| **Whiteboard** | live boards (`dreamcontext whiteboard`), default Control Panel | [whiteboards.md](references/whiteboards.md) |
+| **Whiteboard** | live boards (`whiteboard`) with agent cards; default Control Panel | [whiteboards.md](references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
 | **Taxonomy** | Project tag vocabulary that drives recall precision | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
@@ -442,12 +442,13 @@ Open these with `Read` when the task needs depth:
 - **[cli-reference.md](references/cli-reference.md)**: every command, every flag, env vars, the snapshot ladder and the sub-agent briefing budget.
 - **[tasks-and-features.md](references/tasks-and-features.md)**: task protocol depth, RICE, due dates, people/assignees, Workflow flowchart, Lab insights, context handoff, features, versioning, multi-product.
 - **[knowledge-and-recall.md](references/knowledge-and-recall.md)**: knowledge files, pinning, recall modes, patterns, taxonomy, Excalidraw/diagrams, reading PDFs.
-- **[sleep.md](references/sleep.md)** — full consolidation flow, specialist contracts, deep sleep, epoch safety, reflect, marketing/council passes.
-- **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (read when a rule's edge case is unclear).
+- **[sleep.md](references/sleep.md)**: full consolidation flow, specialist contracts, deep sleep, epoch safety, reflect, marketing/council passes.
+- **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (for a rule's edge case).
 - **[learning.md](references/learning.md)**: theses (hypotheses): the quality bar, evidence ledger, derived confidence, flips and promotion.
 - **[automations.md](references/automations.md)**: scheduled headless runs: capture, the `## Flow` graph and its questions, per-automation Telegram, sharing, the channel, approval, stopping a run.
-- **[whiteboards.md](references/whiteboards.md)**: widgets, format, daily and todo recipes.
+- **[whiteboards.md](references/whiteboards.md)**: widgets, board agents, format, recipes.
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
-- **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync (one cloud backend at a time), dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing. (Brain sync has its own reference above.)
+- **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync (one cloud backend at a time), dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.
+- **[hands-free.md](references/hands-free.md)**: phone trips.
 - **[troubleshooting.md](references/troubleshooting.md)**: symptom, cause and careful fix for broken-brain states: duplicate tasks, sync ledger refusals, a stuck brain sync, structure and version drift.
-- **[improving-dreamcontext.md](references/improving-dreamcontext.md)** — the feedback loop, when and how to file.
+- **[improving-dreamcontext.md](references/improving-dreamcontext.md)**: the feedback loop, when and how to file.

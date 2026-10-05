@@ -197,6 +197,16 @@
   gap: var(--space-2);
   max-width: 100%;
 }
+/* A board element dragged onto a whiteboard agent card (splitUserBoardRefs). */
+.chat-msg-user-ref {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.8;
+}
 .chat-msg-user-media-el {
   max-width: min(320px, 100%);
   max-height: 240px;

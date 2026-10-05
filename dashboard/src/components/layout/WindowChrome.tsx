@@ -22,6 +22,8 @@ import type { ProjectRollup } from '../sleepy/agentStatus';
 import { ProjectInstance, type PendingAppLink } from '../../ProjectInstance';
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
 import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
+import { HandsfreeBanner } from '../handsfree/HandsfreeBanner';
+import { HandsfreeButton } from '../handsfree/HandsfreeButton';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
 import './ProjectTabs.css';
@@ -843,6 +845,7 @@ export function WindowChrome({ initialVault, initialLink }: {
       <ChromeSlotsProvider value={chromeSlots}>
       <div className="window-chrome">
         <UpgradeRelaunchBanner />
+        <HandsfreeBanner />
         <StaleServerBanner />
 
         {/*
@@ -881,6 +884,7 @@ export function WindowChrome({ initialVault, initialLink }: {
           <div className="window-chrome-right">
             {/* The active project's sleep tracker + update badge land here. */}
             <div className="chrome-slot" ref={setRightSlot} />
+            <HandsfreeButton vault={activeVault} />
             <div className="zoom-controls">
               <button className="zoom-btn" onClick={() => changeZoom(-1)} disabled={zoomIndex <= 0} title="Zoom out">-</button>
               <span className="zoom-label">{Math.round(zoom * 100)}%</span>

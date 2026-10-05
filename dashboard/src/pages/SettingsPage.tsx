@@ -22,6 +22,7 @@ import { SystemDependencies, FeatureDepsNotice } from '../components/settings/Sy
 import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
 import { McpServers } from '../components/settings/McpServers';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
+import { HandsfreeSettingsCard } from '../components/handsfree/HandsfreeSettingsCard';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
 import {
@@ -628,6 +629,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
         <SettingGroup title={t('settings.github.issues.title')} note={t('settings.github.issues.note')}>
           <CloudTaskSync provider="github" />
         </SettingGroup>
+        <HandsfreeSettingsCard />
       </section>
       )}
 

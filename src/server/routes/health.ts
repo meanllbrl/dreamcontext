@@ -48,6 +48,7 @@ export async function handleHealthGet(
         laptopId: rec.laptopId,
         epoch: rec.epoch,
         sealedEpoch: rec.sealedEpoch,
+        sealBlocked: rec.sealBlocked,
         verifierGeneration: handsfreeAuth().store.generation,
         supersededLaptopIds: rec.supersededLaptopIds,
       });
