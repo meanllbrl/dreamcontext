@@ -207,6 +207,7 @@ export class HandsfreeAuthStore {
     }
     this.state = { generation: push.generation, passphrase: push.passphrase, transferSha256: push.transferSha256, devices: [] };
     this.save();
+    notifyDeviceSessionsChanged(); // a password change signs every device out, live sockets included
     return { ok: true, generation: push.generation, changed: true };
   }
 
@@ -216,6 +217,7 @@ export class HandsfreeAuthStore {
     if (!Number.isInteger(generation) || generation <= cur) return { ok: false, error: 'stale_generation', generation: cur };
     this.state = { ...this.state, generation, devices: [] };
     this.save();
+    notifyDeviceSessionsChanged();
     return { ok: true, generation, changed: true };
   }
 
@@ -225,15 +227,23 @@ export class HandsfreeAuthStore {
     const now = this.now();
     const live = this.state.devices.filter((d) => d.expiresAt > now);
     live.push({ idSha256: sha256Hex(id), createdAt: now, expiresAt: now + DEVICE_TTL_MS });
+    const evicted = live.length > MAX_DEVICES;
     while (live.length > MAX_DEVICES) live.shift();
     this.state = { ...this.state, devices: live };
     this.save();
+    if (evicted) notifyDeviceSessionsChanged(); // the oldest device was signed out
     return id;
   }
 
   isValidDevice(id: string | null | undefined): boolean {
     if (!id || id.length > 128) return false;
-    const h = Buffer.from(sha256Hex(id), 'hex');
+    return this.isValidDeviceHash(sha256Hex(id));
+  }
+
+  /** The same check by the id's sha256 (what a live socket keeps; never the raw cookie). */
+  isValidDeviceHash(idSha256: string | null | undefined): boolean {
+    if (typeof idSha256 !== 'string' || !SHA256_HEX_RE.test(idSha256)) return false;
+    const h = Buffer.from(idSha256, 'hex');
     const now = this.now();
     let found = false;
     for (const d of this.state.devices) {
@@ -249,12 +259,40 @@ export class HandsfreeAuthStore {
     if (devices.length === this.state.devices.length) return;
     this.state = { ...this.state, devices };
     this.save();
+    notifyDeviceSessionsChanged();
   }
 
   deviceCount(): number {
     const now = this.now();
     return this.state.devices.filter((d) => d.expiresAt > now).length;
   }
+}
+
+// ─── Live device connections follow the store (AC3) ─────────────────────────
+//
+// A device session is checked when a socket opens; a socket that is already open must not
+// outlive its device. Every change that signs a device out (revoke-all, a password change,
+// one device's logout, an eviction) notifies these listeners, which close the sockets of
+// devices that are no longer valid and end what they started (agent-chat.ts). Module-level,
+// so a store swapped in by a test or rebuilt by the service keeps notifying the same way.
+
+const deviceListeners = new Set<() => void>();
+
+export function onDeviceSessionsChanged(listener: () => void): () => void {
+  deviceListeners.add(listener);
+  return () => { deviceListeners.delete(listener); };
+}
+
+function notifyDeviceSessionsChanged(): void {
+  for (const l of deviceListeners) {
+    try { l(); } catch (err) { console.warn(`[handsfree-auth] device listener failed: ${(err as Error).message}`); }
+  }
+}
+
+/** The sha256 of the device id a request carries (what a live socket is tagged with), or null. */
+export function deviceIdHash(req: IncomingMessage): string | null {
+  const id = deviceCookieValue(req);
+  return id && id.length <= 128 ? sha256Hex(id) : null;
 }
 
 // ─── Login limiter ──────────────────────────────────────────────────────────

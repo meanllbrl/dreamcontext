@@ -8,7 +8,9 @@ import {
   handsfreeAuth,
   hasValidDeviceSession,
   hasValidTransferProof,
+  clearDeviceCookieHeader,
 } from './handsfree-auth.js';
+import { redirectToTripChat, sendSealedPage } from './handsfree-login.js';
 
 const MAX_BODY_SIZE = 1_048_576; // 1MB
 
@@ -213,9 +215,23 @@ export function cloudGate(req: IncomingMessage, res: ServerResponse): boolean {
     sendError(res, 403, 'credential_mismatch', 'The transfer credential cannot call a device route.');
     return false;
   }
+  const htmlNavigation = !pathname.startsWith('/api/') && (method === 'GET' || method === 'HEAD') && wantsHtml(req);
+  // AC3: a sealed cloud serves only the sealed page to a navigation, signed in or not (it also
+  // forgets the offline worker); the API keeps the JSON 503 below.
+  if (htmlNavigation && cloudPhase() === 'sealed') {
+    sendSealedPage(req, res);
+    return false;
+  }
   if (!hasValidDeviceSession(req)) {
-    if (!pathname.startsWith('/api/') && (method === 'GET' || method === 'HEAD') && wantsHtml(req)) {
-      res.writeHead(302, { Location: '/login', 'Cache-Control': 'no-store' });
+    if (htmlNavigation) {
+      // A cookie the server no longer accepts (revoked, password changed, expired): the login
+      // page is told so it unregisters the offline worker (AC16). No cookie: a plain first visit.
+      const stale = deviceCookieValue(req) !== null;
+      res.writeHead(302, {
+        Location: stale ? '/login?revoked=1' : '/login',
+        'Cache-Control': 'no-store',
+        ...(stale ? { 'Set-Cookie': clearDeviceCookieHeader() } : {}),
+      });
       res.end();
       return false;
     }
@@ -231,6 +247,8 @@ export function cloudGate(req: IncomingMessage, res: ServerResponse): boolean {
     sendError(res, 423, 'cloud_quiescing', 'Your laptop is taking this project back.');
     return false;
   }
+  // AC3: `/` on the phone opens the trip's project chat, never the launcher.
+  if (htmlNavigation && redirectToTripChat(req, res)) return false;
   return true;
 }
 

@@ -101,12 +101,14 @@ async function serve(opts: ServeOpts): Promise<void> {
   const idle = routes.createCloudIdle(idleMod.currentBootId());
   idleMod.setCloudIdle(idle);
   idle.start();
+  // One tick now, so the phone's chip knows the planned stop time from the first request.
+  try { idle.tick(); } catch { /* the interval ticks again */ }
   const sweep = setInterval(() => { try { routes.cloudServices().transfers.sweep(); } catch { /* next hour */ } }, 60 * 60_000);
   sweep.unref?.();
   try { routes.cloudServices().transfers.sweep(); } catch { /* next hour */ }
 
-  // A spool left by a runtime swap that already happened is not ours to keep.
-  rmSync(resolve(cloudMode.cloudServerDir(), routes.RUNTIME_SPOOL_NAME), { force: true });
+  // A runtime request left by a swap that already happened is not ours to keep.
+  rmSync(resolve(cloudMode.cloudServerDir(), routes.RUNTIME_REQUEST_NAME), { force: true });
 
   const { startDashboardServer } = await import('../../server/index.js');
   const listenFd = opts.listenFd !== undefined ? Number(opts.listenFd) : undefined;

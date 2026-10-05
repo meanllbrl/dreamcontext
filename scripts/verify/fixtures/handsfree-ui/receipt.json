@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "tripId": "t-20261004-0a1b2c3d",
+  "createdAt": "2026-10-04T09:30:00.000Z",
+  "pass": 1,
+  "repos": [
+    {
+      "rootId": "r-acme-app",
+      "path": "/Users/sample/projects/acme-app",
+      "outcome": "applied",
+      "parkReasons": [],
+      "parkedRefs": {},
+      "cloudHeads": [],
+      "branches": [{ "ref": "refs/heads/feature/onboarding", "from": null, "to": "4f1c2a9e0b7d3c5a8e6f1029384756abcdef0123" }],
+      "written": ["src/onboarding.ts", "README.md"],
+      "deleted": ["src/old-flow.ts"],
+      "conflicts": [{ "path": "src/config.ts", "reason": "changed on both sides" }],
+      "refused": [],
+      "verifyMismatch": [],
+      "worktreesAdded": [],
+      "worktreesRemoved": []
+    },
+    {
+      "rootId": "r-acme-api",
+      "path": "/Users/sample/projects/acme-api",
+      "outcome": "parked",
+      "parkReasons": ["the laptop committed to main while away"],
+      "parkedRefs": { "refs/handsfree/t-20261004-0a1b2c3d/heads/main": "9a8b7c6d5e4f30211234567890abcdef12345678" },
+      "cloudHeads": [],
+      "branches": [],
+      "written": [],
+      "deleted": [],
+      "conflicts": [],
+      "refused": [],
+      "verifyMismatch": [],
+      "worktreesAdded": [],
+      "worktreesRemoved": []
+    }
+  ],
+  "files": [
+    {
+      "rootId": "r-acme-app",
+      "path": "/Users/sample/projects/acme-app",
+      "written": ["_dream_context/state/notes.md"],
+      "conflicts": [],
+      "refused": [{ "path": "_dream_context/state/.secrets.json", "reason": "dreamcontext credentials never come back" }],
+      "deletedInCloud": ["drafts/scratch.md"],
+      "notReturned": [".env.local"],
+      "secrets": [".env"],
+      "transcriptCopies": []
+    }
+  ],
+  "sessions": [{ "rootId": "r-acme-app", "roster": { "closedOnPhone": ["Old idea"], "openedOnPhone": ["Phone: fix login"], "updated": 1 }, "titlesChanged": 2, "mapFilesWritten": 1 }],
+  "autoExec": [
+    {
+      "rootId": "r-acme-app",
+      "path": ".claude/settings.json",
+      "diff": "--- a/.claude/settings.json\n+++ b/.claude/settings.json\n@@ -1,3 +1,4 @@\n {\n+  \"hooks\": \"<script>alert('x')</script><b>bold</b>\",\n   \"model\": \"opus\"\n }\n"
+    }
+  ],
+  "links": [{ "rootId": "r-acme-app", "undone": [], "escaping": [] }],
+  "ignoredRoots": [],
+  "deletedInCloudReason": "Return never deletes a laptop file; delete it by hand if you meant to.",
+  "conflictsDir": "/Users/sample/.dreamcontext/handsfree/trips/t-20261004-0a1b2c3d/conflicts",
+  "backupDir": "/Users/sample/.dreamcontext/handsfree/trips/t-20261004-0a1b2c3d/backup",
+  "finalization": { "secretsWiped": true, "sealed": true, "stopped": false, "queued": ["stop"] }
+}

@@ -132,7 +132,11 @@ export function journalStatus(j: Journal): JournalStatus {
 export async function runJournal(
   path: string,
   handlers: OpHandlers,
-  o: { onOp?: (op: JournalOp) => void } = {},
+  o: {
+    onOp?: (op: JournalOp) => void;
+    /** Runs right after an op is persisted `started`, before its handler (fault-injection tests). */
+    beforeOp?: (op: JournalOp) => void | Promise<void>;
+  } = {},
 ): Promise<Journal> {
   const j = loadJournal(path);
   if (!j) throw new JournalError(`no journal at ${path}`);
@@ -151,6 +155,7 @@ export async function runJournal(
     op.state = 'started';
     persist(path, j);
     try {
+      await o.beforeOp?.(op);
       const result = await h.apply(op);
       if (result !== undefined) op.result = result;
       op.state = 'done';

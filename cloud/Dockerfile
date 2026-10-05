@@ -1,6 +1,8 @@
 # dreamcontext hands-free cloud. Copied verbatim into <owner>/dreamcontext-handsfree/.devcontainer/.
 # The container is never rebuilt on purpose: the dreamcontext build is installed at runtime
-# into /opt/dreamcontext by the root supervisor (the laptop uploads its own `npm pack`).
+# into /opt/dreamcontext by the root supervisor, always from npm at the laptop's EXACT version
+# (the repo's .devcontainer/bootstrap/version.json pin, or a go's {version, integrity}), its
+# sha512 checked against npm's integrity before anything is installed (D25).
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \

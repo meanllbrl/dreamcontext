@@ -792,26 +792,83 @@ async function opSnapshotFiles(base: WorkerBase, p: Record<string, unknown>, out
 
 async function opWipeSecrets(base: WorkerBase, p: Record<string, unknown>): Promise<unknown> {
   const run = workerGitRunner(base);
-  const roots = Array.isArray(p.roots) ? p.roots as Array<{ root: unknown; rootKind: unknown; include?: unknown }> : [];
+  const given = Array.isArray(p.roots) ? p.roots as Array<{ root: unknown; rootKind: unknown; include?: unknown }> : [];
+  const home = typeof p.home === 'string' && p.home.startsWith('/') ? resolve(p.home) : null;
+  // D21/D7: the trip's roots PLUS every worktree of every repo found right now (a worktree the
+  // phone created holds secrets too), deduped by path.
+  const roots: Array<{ root: string; kind: RootKind; include: string[] }> = [];
+  const seen = new Set<string>();
+  const add = (root: string, kind: RootKind, inc: string[]) => {
+    const key = resolve(root);
+    if (seen.has(key)) return;
+    seen.add(key);
+    roots.push({ root: key, kind, include: inc });
+  };
+  for (const r of given) add(absPath(r.root, 'root'), rootKind(r.rootKind), includes(r.include));
+  for (const r of [...roots]) {
+    if (!hasGitDir(r.root)) continue;
+    try {
+      for (const w of await listWorktrees(run, r.root)) {
+        if (w.bare || !existsSync(w.path)) continue;
+        if (home && !isUnder(home, w.path)) continue;
+        add(w.path, 'worktree', r.include);
+      }
+    } catch { /* not a usable repo: its own root is still wiped */ }
+  }
   let wiped = 0;
   const failed: string[] = [];
   for (const r of roots) {
-    const root = absPath(r.root, 'root');
-    const sel = await selectRoot(run, root, rootKind(r.rootKind), includes(r.include));
-    for (const e of sel.entries) {
-      if (!isSecretClass(e.path)) continue;
+    const root = r.root;
+    const found = await secretClassPaths(run, root);
+    // D20/D21(a): a path the walk could not look into may hold a secret; the wipe fails.
+    failed.push(...found.refused);
+    for (const rel of found.paths) {
       try {
-        rmSync(join(root, ...e.path.split('/')), { force: true });
+        rmSync(join(root, ...rel.split('/')), { force: true });
         wiped++;
       } catch {
-        failed.push(e.path);
+        failed.push(rel);
       }
     }
   }
   return { wiped, failed };
 }
 
-export interface ScopeProcess { pid: number; pgid: number; cwd: string }
+/**
+ * Every secret-class path of a root that is not tracked (D21(a): a sealed cloud never holds
+ * the secret class). Unlike the transfer selection, the WIPE walks INTO collapsed ignored and
+ * untracked directories (`config/.env` under an ignored `config/`) and the secret class wins
+ * over never-travel (`_dream_context/lab/credentials.json` made in the cloud goes too). Tracked
+ * files belong to Transport 1 and come back on the next go. Bounded: lstat walk, links never
+ * followed, `.git` never entered, dependency trees (`node_modules`) skipped (they are installed,
+ * not the owner's files). Every path the walk refused (unreadable, or a name the guard refuses)
+ * comes back in `refused`: it may hide a secret, so it is never dropped silently (D20). A real
+ * `.git` entry is the one exception: it is never entered by design and holds no secret class.
+ */
+async function secretClassPaths(run: ProcessRunner, root: string): Promise<{ paths: string[]; refused: string[] }> {
+  if (!existsSync(root)) return { paths: [], refused: [] };
+  const descend = (rel: string) => rel.split('/').pop() !== 'node_modules';
+  const isGit = existsSync(join(root, '.git'));
+  let starts: string[] = ['.'];
+  if (isGit) {
+    const res = await run('git', ['ls-files', '-z', '--others', '--directory', '--no-empty-directory'], {
+      cwd: root, env: { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+    });
+    if (res.code !== 0) throw new WorkerOpError('wipe_failed', `git ls-files failed in ${root}: ${res.stderr.toString().trim().slice(0, 300)}`, 500);
+    starts = res.stdout.toString('utf8').split('\0').filter(Boolean).map((x) => x.replace(/\/$/, ''));
+  }
+  const out = new Set<string>();
+  const refused = new Set<string>();
+  for (const start of starts) {
+    if (start !== '.' && !descend(start)) continue;
+    const w = walk(root, [start], { side: 'cloud', descend, include: (rel) => isSecretClass(rel) });
+    for (const e of w.entries) out.add(e.path);
+    for (const r of w.refused) if (r.path.split('/').pop() !== '.git') refused.add(r.path);
+  }
+  return { paths: [...out].sort(), refused: [...refused].sort() };
+}
+
+export interface ScopeProcess { pid: number; pgid: number; cwd: string; command?: string }
 
 /** Every process of THIS uid with its group and cwd (Linux /proc; ps + lsof elsewhere). */
 export function listOwnProcesses(): ScopeProcess[] {
@@ -824,17 +881,21 @@ export function listOwnProcesses(): ScopeProcess[] {
         if (lstatSync(`/proc/${name}`).uid !== uid) continue;
         const stat = readFileSync(`/proc/${name}/stat`, 'utf8');
         const rest = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-        out.push({ pid: Number(name), pgid: Number(rest[2]), cwd: readlinkSync(`/proc/${name}/cwd`) });
+        let command = '';
+        try { command = readFileSync(`/proc/${name}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' ').slice(0, 200); } catch { /* gone */ }
+        out.push({ pid: Number(name), pgid: Number(rest[2]), cwd: readlinkSync(`/proc/${name}/cwd`), command });
       } catch { /* gone, or not ours */ }
     }
     return out;
   }
   let table = '';
-  try { table = execFileSync('ps', ['-A', '-o', 'pid=,pgid=,uid='], { encoding: 'utf-8', timeout: 10_000 }); } catch { return out; }
+  try { table = execFileSync('ps', ['-A', '-o', 'pid=,pgid=,uid=,command='], { encoding: 'utf-8', timeout: 10_000 }); } catch { return out; }
   const mine = new Map<number, number>();
+  const commands = new Map<number, string>();
   for (const line of table.split('\n')) {
-    const [pid, pgid, u] = line.trim().split(/\s+/).map(Number);
-    if (pid && u === uid) mine.set(pid, pgid);
+    const parts = line.trim().split(/\s+/);
+    const [pid, pgid, u] = parts.slice(0, 3).map(Number);
+    if (pid && u === uid) { mine.set(pid, pgid); commands.set(pid, parts.slice(3).join(' ').slice(0, 200)); }
   }
   if (mine.size === 0) return out;
   let lsof = '';
@@ -846,7 +907,7 @@ export function listOwnProcesses(): ScopeProcess[] {
   let pid = 0;
   for (const line of lsof.split('\n')) {
     if (line.startsWith('p')) pid = Number(line.slice(1));
-    else if (line.startsWith('n') && mine.has(pid)) out.push({ pid, pgid: mine.get(pid)!, cwd: line.slice(1) });
+    else if (line.startsWith('n') && mine.has(pid)) out.push({ pid, pgid: mine.get(pid)!, cwd: line.slice(1), command: commands.get(pid) ?? '' });
   }
   return out;
 }
@@ -867,6 +928,8 @@ async function opCutScope(p: Record<string, unknown>): Promise<unknown> {
   const procs = listOwnProcesses();
   const ownPgid = procs.find((x) => x.pid === process.pid)?.pgid ?? -1;
   const found = procs.filter((x) => x.pid !== process.pid && x.pgid !== ownPgid && roots.some((r) => isUnder(r, x.cwd)));
+  // The dry run (quiesce's `running`, snapshot's guard): who would be cut, nothing signalled.
+  if (p.dryRun === true) return { found: found.map((x) => ({ pid: x.pid, pgid: x.pgid, cwd: x.cwd, command: x.command ?? '' })) };
   if (found.length === 0) return { cut: [] };
   const groups = [...new Set(found.map((x) => x.pgid).filter((g) => g > 1 && g !== ownPgid))];
   const signal = (sig: NodeJS.Signals) => {

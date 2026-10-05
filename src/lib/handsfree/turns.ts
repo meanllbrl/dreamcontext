@@ -50,6 +50,9 @@ export interface ProcessScanOptions {
 
 interface Found { pid: number; cwd: string; pgid: number | null; fromSelf: boolean }
 
+/** The id of the entry a failed process scan reports: running work that could not be checked. */
+export const UNKNOWN_WORK_ID = 'unknown';
+
 /**
  * D22: running work by the PROCESS TREE. Every process whose cwd is inside a scope root
  * (claude and every descendant, hooks included), whether or not it descends from this
@@ -74,9 +77,10 @@ export function processTurnControl(run: ProcessRunner, o: ProcessScanOptions = {
     }
     return m;
   };
-  const scan = async (roots: string[]): Promise<{ found: Found[]; ownGroup: number | null }> => {
+  const scan = async (roots: string[]): Promise<{ found: Found[]; ownGroup: number | null; unknown?: true }> => {
     const res = await run('lsof', ['-a', '-d', 'cwd', '-F', 'pn'], { cwd: '/', timeoutMs: 30_000 }).catch(() => null);
-    if (!res || (res.code !== 0 && res.code !== 1)) return { found: [], ownGroup: null };
+    // Fail CLOSED: a scan that failed or timed out is "unknown running work", never "nothing".
+    if (!res || res.signal || (res.code !== 0 && res.code !== 1)) return { found: [], ownGroup: null, unknown: true };
     const hits: Array<{ pid: number; cwd: string }> = [];
     let pid = 0;
     for (const line of res.stdout.toString().split('\n')) {
@@ -112,7 +116,9 @@ export function processTurnControl(run: ProcessRunner, o: ProcessScanOptions = {
   };
   return {
     async list(roots) {
-      return (await scan(roots)).found.map((f) => ({ kind: 'process' as const, id: String(f.pid), pid: f.pid, cwd: f.cwd, busy: true, fromSelf: f.fromSelf }));
+      const r = await scan(roots);
+      if (r.unknown) return [{ kind: 'process' as const, id: UNKNOWN_WORK_ID, busy: true }];
+      return r.found.map((f) => ({ kind: 'process' as const, id: String(f.pid), pid: f.pid, cwd: f.cwd, busy: true, fromSelf: f.fromSelf }));
     },
     async cut(roots, c) {
       if (!c.all) return 0;

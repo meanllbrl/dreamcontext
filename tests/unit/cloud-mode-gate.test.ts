@@ -198,6 +198,7 @@ describe('cloud API allow-list (static)', () => {
       'GET /api/agent/usage-limits',
       'GET /api/chat/html-kit',
       'GET /api/config',
+      'GET /api/handsfree/phone',
       'GET /api/vaults',
       'POST /api/agent/accounts/auto-switch',
       'POST /api/agent/accounts/preferred',
@@ -307,6 +308,50 @@ describe('cloudGate', () => {
     phase = 'quiescing';
     expect(gate(req('GET', '/api/agent/chat-history', cookie())).passed).toBe(true);
     expect(gate(req('PUT', '/api/agent/sessions', { ...cookie(), origin: OWN })).status()).toBe(423);
+  });
+
+  it('sealed: an HTML navigation gets the sealed page (signed in or not), the API keeps JSON 503', async () => {
+    const { CloudStateStore } = await import('../../src/server/cloud-state.js');
+    const { TransferStore } = await import('../../src/server/cloud-transfers.js');
+    const { setCloudServicesForTests } = await import('../../src/server/routes/handsfree-cloud.js');
+    setCloudServicesForTests({ state: new CloudStateStore({ dir }), transfers: new TransferStore({ dir }) });
+    try {
+      phase = 'sealed';
+      for (const h of [{ ...cookie(), accept: 'text/html' }, { accept: 'text/html', 'accept-language': 'tr' }]) {
+        const g = gate(req('GET', '/agents', h));
+        expect(g.passed).toBe(false);
+        expect(g.status()).toBe(503);
+        expect(g.headers['content-type']).toMatch(/^text\/html/);
+        expect(g.headers['x-dreamcontext-cloud']).toBe('1');
+        expect(g.body()).toMatch(/This project is back on your laptop\.|Bu proje laptopuna döndü\./);
+        expect(g.body()).toContain('.unregister()');
+      }
+      const api = gate(req('GET', '/api/agent/chat-history', { ...cookie(), accept: 'text/html' }));
+      expect(api.status()).toBe(503);
+      expect(JSON.parse(api.body()).error).toBe('cloud_sealed');
+    } finally {
+      setCloudServicesForTests(null);
+    }
+  });
+
+  it('a navigation with a cookie the server no longer accepts lands on /login flagged, and the cookie is cleared', () => {
+    auth.store.revokeAllDevices(2);
+    const g = gate(req('GET', '/', { ...cookie(), accept: 'text/html' }));
+    expect(g.status()).toBe(302);
+    expect(g.headers.location).toBe('/login?revoked=1');
+    expect(g.headers['set-cookie']).toMatch(/^__Host-dc_hf_session=;.*Max-Age=0/);
+    // An API call with the stale cookie stays a plain 401.
+    expect(gate(req('GET', '/api/agent/chat-history', cookie())).status()).toBe(401);
+    // A first visit (no cookie) is not flagged and clears nothing.
+    const first = gate(req('GET', '/', { accept: 'text/html' }));
+    expect(first.headers.location).toBe('/login');
+    expect(first.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('the phone route is device class: a signed-in phone reaches it, nobody else', () => {
+    expect(classifyCloudRoute('GET', '/api/handsfree/phone')).toBe('device');
+    expect(gate(req('GET', '/api/handsfree/phone', cookie())).passed).toBe(true);
+    expect(gate(req('GET', '/api/handsfree/phone')).status()).toBe(401);
   });
 
   it('fails closed until the phase source is wired', () => {

@@ -38,7 +38,8 @@ export interface HandsfreeConfig {
   machine: string;
   owner?: string;
   repo?: { fullName: string; fileShas: Record<string, string> };
-  codespace?: { name: string; machine: string; url: string; webUrl: string; retentionExpiresAt: string | null };
+  /** `healthyAt`: first time the laptop saw it answer /api/health (D24: never set = never healthy). */
+  codespace?: { name: string; machine: string; url: string; webUrl: string; retentionExpiresAt: string | null; healthyAt?: string };
   verifier?: {
     push: VerifierPush;
     /** Highest generation the cloud confirmed. */

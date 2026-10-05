@@ -136,6 +136,26 @@ describe('cloud account registry write (dcserver never writes into dcuser\'s tre
   });
 });
 
+describe('cloud account registry: each caller learns the fate of ITS write', () => {
+  it('a failed write rejects its own promise, the next one resolves on its own', async () => {
+    const { setPreferredClaudeAccount, setAutoSwitchEnabled } = await import('../../src/lib/claude-accounts.js');
+    writeClaudeAccounts([account('first', true), account('second', false)], home);
+    process.env.DREAMCONTEXT_CLOUD = '1';
+    const a = setPreferredClaudeAccount('second', home);
+    const b = setAutoSwitchEnabled(false, home);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(spawned).toHaveLength(1); // serialised: the second waits for the first
+    spawned[0].child.emit('close', 1, null);
+    await new Promise((r) => setTimeout(r, 0));
+    spawned[1].child.emit('close', 0, null); // the failed write's own temp cleanup (rm -f)
+    await expect(a).rejects.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(spawned).toHaveLength(3);
+    spawned[2].child.emit('close', 0, null);
+    await expect(b).resolves.toBeUndefined();
+  });
+});
+
 describe('cloud phase gate', () => {
   it('a quiescing cloud spawns nothing and says why', () => {
     process.env.DREAMCONTEXT_CLOUD = '1';

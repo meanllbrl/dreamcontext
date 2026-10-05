@@ -28,8 +28,9 @@ import {
 import { CloudError, CloudUnreachableError, manifestDigest, PortPrivateError, type CloudClient, type CloudHealth, type SnapshotReply, type SnapshotRoot } from './cloud-client.js';
 import { addWorktreeNoCheckout, baseTips, gitOpHandlers, parkRefFor, planRepoApply, planWorktree, setBaseRefs, verifyIncoming, type RepoApplyPlan } from './git-apply.js';
 import {
-  createBundle, emptyTree, fetchBundle, git, gitOut, gitPreflight, HandsfreeRefusal, lsTree, parseRepoSnapshot, snapRefPrefix, snapshotBundleRefs,
-  snapshotId, snapshotRepo, snapStashRef, type PreflightProblem, type ProcessRunner, type RepoSnapshot,
+  BundlePrerequisiteError, createBundle, emptyTree, fetchBundle, git, GitError, gitOut, gitPreflight, HandsfreeRefusal, incomingRefFor, isAllowedRef,
+  isWellFormedRef, lsTree, parseRepoSnapshot, snapRefPrefix, snapshotBundleRefs, snapshotId, snapshotRepo, snapStashRef, type PreflightProblem,
+  type ProcessRunner, type RepoSnapshot,
 } from './git-snapshot.js';
 import { stageGlobalSet } from './global-set.js';
 import {
@@ -44,13 +45,14 @@ import {
   allowedNewWorktreePath, buildManifest, encodeProjectDir, isSecretClass, manifestFromJSON, manifestToJSON, rootFor, rootIdFor, sameContent, selectNonGitEntries, walk,
   type GoManifest, type Manifest, type ManifestEntry, type RootSpec,
 } from './manifest.js';
+import { NpmPinError, PIN_PATH, pinFile, registryPin, type VersionPin } from './npm-pin.js';
 import { readPack, writePack } from './pack.js';
-import { atomicWriteFile } from './paths.js';
-import { coresFor, ProviderError, ProviderQuotaError, type CloudProvider, type MachineInfo, type TemplateRepo } from './provider.js';
+import { atomicWriteFile, checkRelPath } from './paths.js';
+import { coresFor, gitBlobSha, ProviderError, ProviderQuotaError, type CloudProvider, type MachineInfo, type TemplateRepo } from './provider.js';
 import { computeScope, dirBytes, estimateRepoBytes, goManifestFor, type TripScope } from './scope.js';
 import { isSessionStatePath, ROSTER_REL, SESSION_MAP_REL, sessionMergeHandlers, TITLES_REL, type RosterIO, type RosterMergeReport } from './session-merge.js';
 import { beginGoing, handsfreeDir, readTripState, setPhase, updateTripState, type TripState } from './trip-state.js';
-import type { RunningWork, TurnControl } from './turns.js';
+import { UNKNOWN_WORK_ID, type RunningWork, type TurnControl } from './turns.js';
 
 // ---------------------------------------------------------------- environment + errors
 
@@ -66,10 +68,10 @@ export interface HandsfreeEnv {
   roster: RosterIO;
   /** The devcontainer files for the template repo (repo path -> bytes), without the verifiers. */
   templateFiles(): Record<string, Buffer>;
-  /** This build's fingerprint (fingerprint.ts), null when it cannot be computed (no dist/). */
-  localFingerprint(): string | null;
-  /** `npm pack` of this build into `destDir`; returns the tarball path. */
-  packRuntime(destDir: string): Promise<string>;
+  /** This laptop's dreamcontext version: the exact version the cloud must run (D25, AC18). */
+  localVersion(): string;
+  /** The npm registry lookup (D25). Tests and the round trip inject a fake: never the network. */
+  registryFetch: typeof globalThis.fetch;
   claudeProjectsDir?: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -77,12 +79,14 @@ export interface HandsfreeEnv {
   waitTimeoutMs?: number;
   /** How long to wait for the cloud's health after a start (default 5 min). */
   healthTimeoutMs?: number;
+  /** Tests only (fault injection): runs before every go/return journal op's handler. */
+  beforeOp?: (op: JournalOp) => void | Promise<void>;
 }
 
 export type HandsfreeErrorCode =
   | 'not_setup' | 'not_home' | 'not_away' | 'busy' | 'preflight' | 'disk' | 'quota' | 'port_private' | 'tampered' | 'ownership'
-  | 'confirm_take_over' | 'superseded' | 'turns_running' | 'equality' | 'parity' | 'cloud_preflight' | 'trip_lost' | 'write_started'
-  | 'nothing_to_resume' | 'nothing_to_roll_back' | 'needs_recovery' | 'unreadable_state' | 'cloud';
+  | 'confirm_take_over' | 'superseded' | 'turns_running' | 'equality' | 'parity' | 'cloud_preflight' | 'trip_lost' | 'write_started' | 'cloud_content'
+  | 'nothing_to_resume' | 'nothing_to_roll_back' | 'needs_recovery' | 'unreadable_state' | 'cloud' | 'not_published' | 'registry';
 
 export class HandsfreeError extends Error {
   constructor(readonly code: HandsfreeErrorCode, message: string, readonly detail: Record<string, unknown> = {}) {
@@ -94,6 +98,9 @@ export class HandsfreeError extends Error {
 export type Progress = (e: { step: string; detail?: string; running?: RunningWork[] }) => void;
 
 const BOOTSTRAP_VERIFIERS = '.devcontainer/bootstrap/verifiers.json';
+const verifiersFile = (push: VerifierPush) => Buffer.from(JSON.stringify(push, null, 2) + '\n');
+/** How long go waits for the cloud to come back on the pinned version (an npm install + restart). */
+const PARITY_WAIT_MS = 10 * 60_000;
 /** The package's `cloud/` files copied verbatim into the repo's `.devcontainer/` (and blob-sha checked). */
 export const TEMPLATE_FILE_NAMES = ['devcontainer.json', 'Dockerfile', 'entrypoint.sh', 'poststart.sh', 'stop-helper.sh', 'supervisor.mjs'];
 /** Wire v1.1: cap on each `.git/info/` file sent with git/receive. */
@@ -176,6 +183,41 @@ async function checkTemplateRepo(env: HandsfreeEnv, cfg: HandsfreeConfig): Promi
   }
 }
 
+/**
+ * D25: this laptop's exact version on npm, with the registry's integrity. Refuses (nothing
+ * written, nothing locked) when the version is not published or the registry cannot answer:
+ * the cloud only ever installs a published version, so there is no fallback.
+ */
+async function lookupPin(env: HandsfreeEnv, verb: 'go' | 'setup'): Promise<VersionPin> {
+  const v = env.localVersion();
+  try {
+    return await registryPin(v, env.registryFetch);
+  } catch (err) {
+    if (err instanceof NpmPinError && (err.kind === 'not_published' || err.kind === 'bad_version')) {
+      throw new HandsfreeError('not_published', `this laptop runs dreamcontext ${v}, which is not on npm yet. Publish it (or update this laptop to a published version), then run ${verb} again.`, { version: v });
+    }
+    throw new HandsfreeError('registry', `the npm registry could not confirm dreamcontext ${v} (${(err as Error).message}); nothing was written or started. Run ${verb} again once npm answers.`, { version: v });
+  }
+}
+
+/**
+ * D25: the version pin in the private repo (`.devcontainer/bootstrap/version.json`), the
+ * supervisor's first-boot install. Rewritten only when this laptop's record or the repo's blob
+ * differs from the pin (a repo deleted or changed on GitHub is rewritten); its blob sha joins
+ * fileShas, so AC19 checks it before every start/create. The go runs it after its own AC19
+ * check, so a tampered repo is reported, never overwritten.
+ */
+async function ensurePin(env: HandsfreeEnv, pin: VersionPin, onProgress?: Progress): Promise<void> {
+  const cfg = readConfig(env.home);
+  if (!cfg?.repo) return;
+  const bytes = pinFile(pin);
+  const want = gitBlobSha(bytes);
+  if (cfg.repo.fileShas[PIN_PATH] === want && (await env.repo.blobShas([PIN_PATH]))[PIN_PATH] === want) return;
+  onProgress?.({ step: 'pin', detail: `pinning dreamcontext ${pin.version} for the cloud machine` });
+  const shas = await env.repo.writeFiles({ [PIN_PATH]: bytes }, `dreamcontext handsfree: pin dreamcontext ${pin.version}`);
+  await updateConfig(env.home, (c) => (c.repo ? { ...c, repo: { ...c.repo, fileShas: { ...c.repo.fileShas, ...shas } } } : c));
+}
+
 async function waitHealthy(env: HandsfreeEnv, client: CloudClient): Promise<void> {
   const deadline = nowOf(env) + (env.healthTimeoutMs ?? 5 * 60_000);
   for (;;) {
@@ -243,6 +285,11 @@ async function ensureRunning(env: HandsfreeEnv, o: { needCoreMinutes?: number; a
   if (startedByUs || recreated) client.markStarted(nowOf(env));
   o.onProgress?.({ step: 'health', detail: info.url });
   await waitHealthy(env, client);
+  if (!cfg.codespace.healthyAt || info.name !== cfg.codespace.name) {
+    const at = new Date(nowOf(env)).toISOString();
+    const name = info.name;
+    await updateConfig(env.home, (c) => (c.codespace?.name === name && !c.codespace.healthyAt ? { ...c, codespace: { ...c.codespace, healthyAt: at } } : c));
+  }
   if (info.retentionExpiresAt !== cfg.codespace.retentionExpiresAt) {
     const r = info.retentionExpiresAt;
     await updateConfig(env.home, (c) => (c.codespace ? { ...c, codespace: { ...c.codespace, retentionExpiresAt: r } } : c));
@@ -313,7 +360,8 @@ export async function ensureCloudSealed(client: CloudClient, trip: string, epoch
     try {
       if (steps[i] === 'wipe-secrets') await client.wipeSecrets(epoch);
       else await client.seal(epoch);
-    } catch {
+    } catch (err) {
+      if (!isReachabilityError(err)) throw err; // a local fault (a crash): Resume retries
       const obs = await observeFinalization(client, trip, epoch);
       if (obs === 'sealed' || obs === 'delta' || obs === 'recover' || obs === 'other') return { kind: obs };
       return { kind: 'queue', remaining: steps.slice(i) };
@@ -386,6 +434,9 @@ export async function setup(env: HandsfreeEnv, o: { token?: string; login?: stri
     await updateCredentials(env.home, (c) => ({ ...c, githubToken: token, githubLogin: login }));
   }
   if (!readCredentials(env.home).githubToken && !o.token) throw new HandsfreeError('not_setup', 'sign in to GitHub first (device flow, scopes repo + codespace)');
+  // D25: the cloud installs this exact version from npm; an unpublished one refuses here,
+  // before anything is written to the repo or a machine is created.
+  const pin = await lookupPin(env, 'setup');
   const secret = await ensureTransferSecret(env.home);
   let cfg = await updateConfig(env.home, (c) => ({ ...c, owner: o.login ?? c.owner, machine: o.machine ?? c.codespace?.machine ?? c.machine }));
   let passphrase: string | null = null;
@@ -394,36 +445,97 @@ export async function setup(env: HandsfreeEnv, o: { token?: string; login?: stri
     const push: VerifierPush = { generation: 1, passphrase: await hashPassphrase(passphrase), transferSha256: sha256Hex(secret) };
     cfg = await updateConfig(env.home, (c) => ({ ...c, verifier: { push, confirmed: 0, pending: { kind: 'password', generation: 1, since: new Date(nowOf(env)).toISOString() } } }));
   }
-  o.onProgress?.({ step: 'repo' });
-  const full = await env.repo.ensure();
-  const files = { ...env.templateFiles(), [BOOTSTRAP_VERIFIERS]: Buffer.from(JSON.stringify(cfg.verifier!.push, null, 2) + '\n') };
-  const shas = await env.repo.writeFiles(files, 'dreamcontext handsfree setup');
-  cfg = await updateConfig(env.home, (c) => ({ ...c, repo: { fullName: full, fileShas: shas } }));
+  let step: SetupStep = 'repo';
+  let machineName: string | null = null;
+  try {
+    o.onProgress?.({ step: 'repo' });
+    const full = await env.repo.ensure();
+    const files = { ...env.templateFiles(), [BOOTSTRAP_VERIFIERS]: verifiersFile(cfg.verifier!.push), [PIN_PATH]: pinFile(pin) };
+    const shas = await env.repo.writeFiles(files, 'dreamcontext handsfree setup');
+    cfg = await updateConfig(env.home, (c) => ({ ...c, repo: { fullName: full, fileShas: shas } }));
 
-  let info = cfg.codespace ? await env.provider.get(cfg.codespace.name) : null;
-  let created = false;
-  if (info && o.machine && info.machine !== o.machine) {
-    throw new HandsfreeError('cloud', `the codespace runs on ${info.machine}; a different --machine needs \`dreamcontext handsfree teardown\` first (the idle timeout is fixed at creation)`);
-  }
-  if (!info) {
-    o.onProgress?.({ step: 'create', detail: cfg.machine });
-    try {
-      info = await env.provider.create({ machine: cfg.machine });
-    } catch (err) {
-      if (err instanceof ProviderQuotaError) throw new HandsfreeError('quota', err.message, { resetsAt: err.resetsAt });
-      throw err;
+    step = 'codespace';
+    cfg = readConfig(env.home)!;
+    let info = cfg.codespace ? await env.provider.get(cfg.codespace.name) : null;
+    let created = false;
+    // D24: a codespace's image (its /opt/dc-hf supervisor and poststart) is built ONCE, at
+    // creation; it never sees a later repo change. One that never answered health and never
+    // held a trip holds nothing, so it is re-created from the current repo. A codespace that
+    // ever became healthy or held a trip is never deleted here.
+    if (info && !cfg.codespace?.healthyAt && !cfg.lastTrip && !cfg.queued) {
+      o.onProgress?.({ step: 'recreate', detail: `${info.name} never became healthy and never held a trip; re-creating it so it boots this laptop's build` });
+      await env.provider.delete(info.name);
+      info = null;
     }
-    created = true;
-    const fresh = info;
-    await updateConfig(env.home, (c) => ({ ...c, codespace: { name: fresh.name, machine: fresh.machine, url: fresh.url, webUrl: fresh.webUrl, retentionExpiresAt: fresh.retentionExpiresAt } }));
+    if (info && o.machine && info.machine !== o.machine) {
+      throw new HandsfreeError('cloud', `the codespace runs on ${info.machine}; a different --machine needs \`dreamcontext handsfree teardown\` first (the idle timeout is fixed at creation)`);
+    }
+    if (info) machineName = info.name;
+    else {
+      o.onProgress?.({ step: 'create', detail: cfg.machine });
+      try {
+        info = await env.provider.create({ machine: cfg.machine });
+      } catch (err) {
+        if (err instanceof ProviderQuotaError) throw new HandsfreeError('quota', err.message, { resetsAt: err.resetsAt });
+        throw err;
+      }
+      created = true;
+      const fresh = info;
+      machineName = fresh.name;
+      await updateConfig(env.home, (c) => ({ ...c, codespace: { name: fresh.name, machine: fresh.machine, url: fresh.url, webUrl: fresh.webUrl, retentionExpiresAt: fresh.retentionExpiresAt } }));
+    }
+    // Start once (the in-codespace gh makes 8080 public), push the verifiers, leave it stopped.
+    step = 'start';
+    const up = await ensureRunning(env, { allowCreate: true, onProgress: o.onProgress });
+    machineName = up.info.name;
+    step = 'verifiers';
+    const health = await up.client.health();
+    assertOwnership(readConfig(env.home)!, health, {});
+    await deliverVerifiers(env, up.client, health);
+    step = 'stop';
+    if (readTripState(env.home).phase === 'home') await stopMachine(env, up.info.name);
+    return { passphrase, repo: full, codespace: up.info, created };
+  } catch (err) {
+    throw await setupFailed(env, err, step, machineName);
   }
-  // Start once (the in-codespace gh makes 8080 public), push the verifiers, leave it stopped.
-  const up = await ensureRunning(env, { allowCreate: true, onProgress: o.onProgress });
-  const health = await up.client.health();
-  assertOwnership(readConfig(env.home)!, health, {});
-  await deliverVerifiers(env, up.client, health);
-  if (readTripState(env.home).phase === 'home') await stopMachine(env, up.info.name);
-  return { passphrase, repo: full, codespace: up.info, created };
+}
+
+type SetupStep = 'repo' | 'codespace' | 'start' | 'verifiers' | 'stop';
+
+const SETUP_STEP_TEXT: Record<SetupStep, string> = {
+  repo: 'writing the private repo',
+  codespace: 'creating the codespace',
+  start: 'starting the codespace and waiting for its health',
+  verifiers: 'delivering the phone passphrase to the codespace',
+  stop: 'stopping the codespace',
+};
+
+/**
+ * D24: setup never leaves a running machine behind. The codespace is stopped (except when it
+ * runs another laptop's live trip), and the error names the failed step and the next step.
+ */
+async function setupFailed(env: HandsfreeEnv, err: unknown, step: SetupStep, machineName: string | null): Promise<HandsfreeError> {
+  const code: HandsfreeErrorCode = err instanceof HandsfreeError ? err.code : 'cloud';
+  const why = ((err as Error)?.message ?? String(err)).replace(/\.$/, '');
+  let machine = '';
+  let stopped = false;
+  if (machineName && code !== 'ownership' && code !== 'superseded' && readTripState(env.home).phase === 'home') {
+    try {
+      await stopMachine(env, machineName);
+      stopped = true;
+      machine = ` The codespace ${machineName} was stopped (no machine is left running).`;
+    } catch (e) {
+      machine = ` Stopping the codespace ${machineName} failed too (${(e as Error).message}): stop it at https://github.com/codespaces.`;
+    }
+  }
+  const webUrl = readConfig(env.home)?.codespace?.webUrl;
+  let next = 'fix the cause above, then run `dreamcontext handsfree setup` again.';
+  if (code === 'quota') next = 'wait for the quota reset (above) or raise the Codespaces spending limit, then run `dreamcontext handsfree setup` again.';
+  else if (code === 'tampered') next = 'check who changed the private repo, then run `dreamcontext handsfree setup` again to rewrite it.';
+  else if (code === 'ownership' || code === 'superseded') next = 'see above: the machine belongs to another laptop\'s trip.';
+  else if (step === 'start') next = `run \`dreamcontext handsfree setup\` again: a codespace that never became healthy and never held a trip is re-created and installs the pinned dreamcontext version from npm. If it fails again, open ${webUrl ?? 'the codespace'} and read /workspaces/dc-runtime/supervisor.log (sudo) and /tmp/dc-poststart.log.`;
+  const detail = err instanceof HandsfreeError ? err.detail : {};
+  return new HandsfreeError(code, `setup failed while ${SETUP_STEP_TEXT[step]}: ${why}.${machine} Next: ${next}`, { ...detail, step, stopped });
 }
 
 /** AC24: a live trip of another laptop refuses go/setup/teardown unless taken over. */
@@ -468,7 +580,7 @@ async function bumpVerifiers(env: HandsfreeEnv, kind: 'password' | 'revoke'): Pr
   }
   await updateConfig(env.home, (c) => ({ ...c, verifier: { push, confirmed: c.verifier!.confirmed, pending: { kind, generation, since: new Date(nowOf(env)).toISOString() } } }));
   // The bootstrap copy in the repo follows, so a rebuild never installs an older generation.
-  const shas = await env.repo.writeFiles({ [BOOTSTRAP_VERIFIERS]: Buffer.from(JSON.stringify(push, null, 2) + '\n') }, `dreamcontext handsfree ${kind}`);
+  const shas = await env.repo.writeFiles({ [BOOTSTRAP_VERIFIERS]: verifiersFile(push) }, `dreamcontext handsfree ${kind}`);
   await updateConfig(env.home, (c) => (c.repo ? { ...c, repo: { ...c.repo, fileShas: { ...c.repo.fileShas, ...shas } } } : c));
   return { passphrase, generation };
 }
@@ -501,7 +613,11 @@ export interface GoResult {
   warnings: string[];
 }
 
-interface GoOpts { contextRoot: string; cutRunning?: boolean; takeOver?: boolean; confirmTakeOverLive?: boolean; onProgress?: Progress }
+/**
+ * `shouldCut` is the live twin of `cutRunning`: read on every wait round, so the owner can choose
+ * Cut while a go/return is already waiting (the dashboard's `POST jobs/current/cut`).
+ */
+interface GoOpts { contextRoot: string; cutRunning?: boolean; shouldCut?: () => boolean; takeOver?: boolean; confirmTakeOverLive?: boolean; onProgress?: Progress }
 
 async function preflightAll(env: HandsfreeEnv, scope: TripScope): Promise<Array<PreflightProblem & { repo: string }>> {
   const out: Array<PreflightProblem & { repo: string }> = [];
@@ -511,8 +627,25 @@ async function preflightAll(env: HandsfreeEnv, scope: TripScope): Promise<Array<
   return out;
 }
 
+/** How the owner resolves each refusal (AC9: name the repository, the path, and the fix). */
+const PREFLIGHT_FIX: Partial<Record<PreflightProblem['kind'], (path: string | undefined) => string>> = {
+  submodule: (p) => (p ? `"${p}" is a nested git repository (submodule or nested clone): add "${p}/" to .gitignore (or .git/info/exclude), or remove it, then try again` : 'submodules do not travel: remove .gitmodules or the submodules, then try again'),
+  unmerged: () => 'finish or abort the merge (git merge --abort / commit the resolution), then try again',
+  in_progress: () => 'finish or abort it (e.g. git rebase --abort, git merge --abort, git cherry-pick --abort, git bisect reset), then try again',
+  lock: (p) => `${p ?? 'a git lock file'} is held: close the program using git there, or delete the stale lock if no git process runs, then try again`,
+  bad_path: (p) => `"${p ?? '?'}" cannot travel (a .git segment or a refused spelling): rename or remove it, then try again`,
+  filter: (p) => `${p ?? 'a filter driver'}: custom filter drivers do not travel; remove the filter= attribute, then try again`,
+  lfs: () => 'Git LFS does not travel in hands-free mode v1',
+  shallow: () => 'unshallow the clone (git fetch --unshallow), then try again',
+  partial: () => 'partial clones do not travel: fetch every object (git fetch --refetch), then try again',
+};
+
 function preflightError(problems: Array<PreflightProblem & { repo: string }>): HandsfreeError {
-  const lines = problems.map((p) => `${p.repo}: ${p.detail}`);
+  const lines = problems.map((p) => {
+    const where = p.path && !p.detail.includes(p.path) ? ` (${p.path})` : '';
+    const fix = PREFLIGHT_FIX[p.kind]?.(p.path);
+    return `${p.repo}: ${p.detail}${where}${fix && !p.detail.includes('try again') ? ` — ${fix}` : ''}`;
+  });
   return new HandsfreeError('preflight', `cannot go hands-free yet:\n  ${lines.join('\n  ')}`, { problems });
 }
 
@@ -539,7 +672,7 @@ async function diskFit(env: HandsfreeEnv, scope: TripScope, machine: string): Pr
 }
 
 /** Wait for (or cut) running work in the roots; idle chats are cut without asking. */
-async function settleTurns(env: HandsfreeEnv, roots: string[], cutRunning: boolean, onProgress?: Progress): Promise<number> {
+async function settleTurns(env: HandsfreeEnv, roots: string[], cutRunning: boolean, onProgress?: Progress, shouldCut?: () => boolean): Promise<number> {
   const deadline = nowOf(env) + (env.waitTimeoutMs ?? 2 * 60 * 60_000);
   let cut = 0;
   for (;;) {
@@ -547,7 +680,9 @@ async function settleTurns(env: HandsfreeEnv, roots: string[], cutRunning: boole
     if (work.some((w) => !w.busy)) cut += await env.turns.cut(roots, { all: false });
     const busy = work.filter((w) => w.busy);
     if (busy.length === 0) return cut;
-    if (cutRunning) {
+    if (cutRunning || shouldCut?.()) {
+      // A failed process scan cannot be cut: refuse instead of looping (fail closed).
+      if (busy.some((w) => w.id === UNKNOWN_WORK_ID)) throw new HandsfreeError('turns_running', 'running work in the project could not be checked (the process scan failed); try again', { running: busy });
       cut += await env.turns.cut(roots, { all: true });
       continue;
     }
@@ -738,6 +873,12 @@ export async function go(env: HandsfreeEnv, o: GoOpts): Promise<GoResult> {
   const problems = await preflightAll(env, scope);
   if (problems.length) throw preflightError(problems);
   await diskFit(env, scope, cfg.codespace.machine);
+  // D25: this exact version on npm (refused before anything is written or locked), the AC19
+  // check, then the version pin in the repo (after the check: a tampered repo is reported,
+  // never overwritten). It touches no local folder.
+  const pin = await lookupPin(env, 'go');
+  await checkTemplateRepo(env, cfg);
+  await ensurePin(env, pin, o.onProgress);
   // Step 2: LOCK FIRST.
   const tripId = newTripId(nowOf(env));
   await beginGoing(tripId, scope.roots.filter((r) => r.kind !== 'transcripts').map((r) => ({ rootId: r.rootId, path: r.absPath })), env.home);
@@ -747,25 +888,103 @@ export async function go(env: HandsfreeEnv, o: GoOpts): Promise<GoResult> {
   if (!lock) throw new HandsfreeError('busy', 'another go or return is running for this trip');
   let up: Running | null = null;
   try {
-    return await goAfterLock(env, o, scope, tripId, dir, (r) => { up = r; });
+    return await goAfterLock(env, o, scope, tripId, dir, pin, (r) => { up = r; });
   } catch (err) {
-    // Before the go journal exists nothing was sent: unlock (home). After it: resume/abandon.
+    // Before the go journal exists nothing was sent: unlock (home). After it: resume/abandon,
+    // except a failed verification, which can never succeed on retry: back home (below).
     if (!existsSync(journalPath(dir, 'go'))) {
-      await setPhase('home', tripId, env.home).catch(() => {});
+      await transition(env, tripId, 'home').catch(() => {});
       const u = up as Running | null;
-      if (u?.startedByUs) await stopMachine(env, u.info.name).catch(() => {});
-    }
+      if (err instanceof HandsfreeError && err.code === 'trip_lost') await stopOrQueue(env, tripId).catch(() => {});
+      else if (u?.startedByUs) await stopMachine(env, u.info.name).catch(() => {});
+    } else await abortGoOnVerification(env, tripId, dir, err);
     throw err;
   } finally {
     lock.release();
   }
 }
 
-async function goAfterLock(env: HandsfreeEnv, o: GoOpts, scope: TripScope, tripId: string, dir: string, onUp: (r: Running) => void): Promise<GoResult> {
+/**
+ * A go whose cloud copy does not verify (AC2 equality) after the lock: a retry would fail the
+ * same way, so the trip is dropped and the laptop goes home through the guarded transition
+ * (the cloud never activated; the next go mirrors again). The go journal is archived, the
+ * machine stopped (queued when GitHub is unreachable). Any other failure stays resumable.
+ */
+/**
+ * A recovery the cloud cannot run (its trip marker is missing and its folders are not on disk:
+ * `mirror_absent`; or an older cloud's `trip_lost`): NEVER seal or wipe. The trip stays
+ * abandoned + unrecovered (the next go retries the recovery and refuses meanwhile), with the
+ * owner's explicit way out. Any other error is returned unchanged.
+ */
+async function lostTripRefusal(env: HandsfreeEnv, err: unknown, oldTrip: string, report: RecoveryReport): Promise<unknown> {
+  if (!(err instanceof CloudError && (err.code === 'trip_lost' || err.code === 'mirror_absent'))) return err;
+  report.lost = true;
+  await markLastTrip(env, oldTrip, { status: 'abandoned', recovered: false });
+  const why = err.code === 'mirror_absent'
+    ? 'its trip marker is missing and its folders are not on the cloud machine (is the mirror mounted?)'
+    : 'its trip marker is missing and this cloud cannot snapshot it';
+  return new HandsfreeError(
+    'needs_recovery',
+    `the cloud machine cannot recover trip ${oldTrip}: ${why}. Nothing was sealed or wiped, and nothing will be mirrored over that work. Try again once the machine has its folders back (the next go retries the recovery first), or discard that work explicitly: \`dreamcontext handsfree teardown --discard-abandoned-work\`.`,
+    { oldTrip, cause: err.code },
+  );
+}
+
+/** The go manifest's roots as a recovery scope (destinations stay the laptop's own, AC10). */
+function scopeFromGo(goM: GoManifest): TripScope {
+  const inside = (parent: string, child: string) => child !== parent && child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+  return {
+    vaultRoot: goM.roots.find((r) => r.kind === 'vault' || r.kind === 'repo')?.absPath ?? goM.home,
+    roots: goM.roots,
+    repos: goM.roots.filter((r) => r.kind === 'repo').map((r) => ({
+      rootId: r.rootId, path: r.absPath,
+      nested: goM.roots.filter((x) => x !== r && x.kind !== 'worktree' && x.kind !== 'transcripts' && inside(r.absPath, x.absPath)).map((x) => x.absPath),
+    })),
+    include: [],
+  };
+}
+
+/**
+ * A Return that met `trip_lost`: run the full D12 recovery of this trip (recovery quiesce ->
+ * cut -> tolerant snapshot -> park into refs/handsfree/<trip>/* and trips/<trip>/orphaned/ ->
+ * seal). Returns what happened, for the owner's message; never seals without the snapshot.
+ */
+async function recoverLostOnReturn(env: HandsfreeEnv, getClient: () => Promise<CloudClient>, trip: string, dir: string): Promise<{ recovered: boolean; message: string }> {
+  const goM = readJson<GoManifest>(join(dir, 'go-manifest.json'));
+  try {
+    const rep = await recoverTrip(env, await getClient(), trip, scopeFromGo(goM));
+    return { recovered: true, message: `the cloud lost this trip's marker; its work was recovered into refs/handsfree/${trip}/* and trips/${trip}/orphaned/ (${rep.parked.length} repo(s), ${rep.orphaned.reduce((n, o) => n + o.files, 0)} file(s)), then the cloud was sealed` };
+  } catch (err) {
+    if (err instanceof HandsfreeError && err.code === 'needs_recovery') return { recovered: false, message: err.message };
+    if (!isReachabilityError(err)) throw err;
+    await markLastTrip(env, trip, { status: 'abandoned', recovered: false });
+    return { recovered: false, message: `the cloud lost this trip's marker and could not be recovered now (${(err as Error).message}); nothing was sealed or wiped: the next go recovers it first, or \`dreamcontext handsfree teardown --discard-abandoned-work\` discards it` };
+  }
+}
+
+/** Stop the machine now, or queue the stop with its trip id when GitHub cannot be reached. */
+async function stopOrQueue(env: HandsfreeEnv, tripId: string): Promise<void> {
+  const name = readConfig(env.home)?.codespace?.name;
+  if (!name) return;
+  try { await stopMachine(env, name); } catch (e) {
+    if (!isReachabilityError(e)) throw e;
+    await updateConfig(env.home, (c) => ({ ...c, queued: { tripId, epoch: 0, steps: ['stop'], since: new Date(nowOf(env)).toISOString() } }));
+  }
+}
+
+async function abortGoOnVerification(env: HandsfreeEnv, tripId: string, dir: string, err: unknown): Promise<boolean> {
+  if (!(err instanceof HandsfreeError && err.code === 'equality')) return false;
+  if (existsSync(journalPath(dir, 'go'))) renameSync(journalPath(dir, 'go'), join(dir, `go-journal.failed-${nowOf(env)}.json`));
+  await transition(env, tripId, 'home');
+  await stopOrQueue(env, tripId);
+  return true;
+}
+
+async function goAfterLock(env: HandsfreeEnv, o: GoOpts, scope: TripScope, tripId: string, dir: string, pin: VersionPin, onUp: (r: Running) => void): Promise<GoResult> {
   const warnings: string[] = [];
   // Step 3: wait for or cut in-scope turns; re-run the git preflight after a cut.
   const codeRoots = scope.roots.filter((r) => r.kind !== 'transcripts').map((r) => r.absPath);
-  const cut = await settleTurns(env, codeRoots, !!o.cutRunning, o.onProgress);
+  const cut = await settleTurns(env, codeRoots, !!o.cutRunning, o.onProgress, o.shouldCut);
   if (cut > 0) {
     const again = await preflightAll(env, scope);
     if (again.length) throw preflightError(again);
@@ -789,21 +1008,26 @@ async function goAfterLock(env: HandsfreeEnv, o: GoOpts, scope: TripScope, tripI
     o.onProgress?.({ step: 'recovery', detail: health.tripId! });
     recovery = await recoverTrip(env, client, health.tripId!, scope, o.onProgress);
     health = await client.health();
+    if (recovery.lost && health.phase !== 'sealed') {
+      // The cloud lost the old trip's marker and refuses to quiesce it, so it can never be sealed
+      // from here, and POST trip needs a sealed cloud. Nothing was sent: home, machine stopped.
+      throw new HandsfreeError('trip_lost', `the cloud machine lost the marker of trip ${recovery.oldTrip} and is still ${health.phase}; it cannot be sealed from this laptop, so a new trip cannot start. Everything on this laptop was kept. The cloud side must be able to quiesce and seal a lost-marker trip (or \`dreamcontext handsfree teardown --discard-abandoned-work\` re-creates the machine).`, { oldTrip: recovery.oldTrip, phase: health.phase });
+    }
   }
-  // Build-fingerprint parity (AC18).
-  const mine = env.localFingerprint();
-  if (mine === null) warnings.push('this build has no dist/ fingerprint (a source checkout?): build parity was not checked');
-  else if (health.fingerprint !== mine) {
-    o.onProgress?.({ step: 'parity' });
-    const tarball = await env.packRuntime(dir);
-    await client.runtime(await client.uploadFile(tarball));
+  // Version parity (AC18, D25): the cloud runs this laptop's exact version, from npm. The
+  // request carries only {version, integrity}; the root supervisor fetches and verifies it.
+  if (health.version !== pin.version) {
+    o.onProgress?.({ step: 'parity', detail: `installing dreamcontext ${pin.version} on the cloud machine (it runs ${health.version})` });
+    await client.runtime(pin);
     client.markStarted(nowOf(env));
-    const deadline = nowOf(env) + 5 * 60_000;
+    const deadline = nowOf(env) + PARITY_WAIT_MS;
     for (;;) {
       await sleepOf(env)(3000);
       const h = await client.publicHealth().catch(() => null);
-      if (h?.fingerprint === mine) break;
-      if (nowOf(env) > deadline) throw new HandsfreeError('parity', 'the cloud did not come back on this laptop\'s build within 5 minutes');
+      if (h?.version === pin.version) break;
+      if (nowOf(env) > deadline) {
+        throw new HandsfreeError('parity', `the cloud machine did not come back on dreamcontext ${pin.version} within 10 minutes (it reports ${h?.version ?? 'nothing'}); it keeps its last good build. Nothing was sent: run go again.`, { version: pin.version });
+      }
     }
     health = await client.health();
   }
@@ -873,13 +1097,13 @@ async function finishGo(
   env: HandsfreeEnv, client: CloudClient, up: Running, goM: GoManifest, dir: string,
   extra: Pick<GoResult, 'staysHome' | 'signedOutAccounts' | 'recovery' | 'warnings'> & { onProgress?: Progress },
 ): Promise<GoResult> {
-  const j = await runJournal(journalPath(dir, 'go'), goHandlers(env, client, goM), { onOp: (op) => extra.onProgress?.({ step: op.kind, detail: op.id }) });
+  const j = await runJournal(journalPath(dir, 'go'), goHandlers(env, client, goM), { onOp: (op) => extra.onProgress?.({ step: op.kind, detail: op.id }), beforeOp: env.beforeOp });
   const cloudRefused: GoResult['cloudRefused'] = [];
   for (const op of j.ops) {
     if (op.kind !== 'go.files') continue;
     for (const r of ((op.result as { refused?: Array<{ path: string; reason: string }> } | undefined)?.refused ?? [])) cloudRefused.push({ rootId: (op.params as { rootId: string }).rootId, ...r });
   }
-  await setPhase('away', goM.tripId, env.home);
+  await transition(env, goM.tripId, 'away');
   await updateConfig(env.home, (c) => ({ ...c, lastTrip: { tripId: goM.tripId, status: 'away', at: new Date(nowOf(env)).toISOString() } }));
   writeJson(join(dir, 'go-result.json'), { url: up.info.url, staysHome: extra.staysHome, cloudRefused, signedOutAccounts: extra.signedOutAccounts });
   return { tripId: goM.tripId, url: up.info.url, webUrl: up.info.webUrl, recreated: up.recreated, cloudRefused, ...extra };
@@ -894,6 +1118,10 @@ export interface RecoveryReport {
   orphaned: Array<{ rootId: string; dir: string; files: number; deletions: string[] }>;
   /** Cloud roots this laptop has no root for (take-over from another laptop): kept as downloads. */
   unmapped: string[];
+  /** A lost-marker trip the cloud let us seal (recovery quiesce answered tripLost). */
+  sealed?: boolean;
+  /** Cloud refs whose content the laptop refused (fsck, a .git path): left in the cloud, named here. */
+  refused: Array<{ rootId: string; repo: string; refs: string[]; paths: string[] }>;
 }
 
 /**
@@ -904,20 +1132,19 @@ export interface RecoveryReport {
  * everything and treats the trip as abandoned.
  */
 export async function recoverTrip(env: HandsfreeEnv, client: CloudClient, oldTrip: string, scope: TripScope, onProgress?: Progress): Promise<RecoveryReport> {
-  const report: RecoveryReport = { oldTrip, lost: false, parked: [], orphaned: [], unmapped: [] };
+  const report: RecoveryReport = { oldTrip, lost: false, parked: [], orphaned: [], unmapped: [], refused: [] };
   const dir = tripDirFor(env, oldTrip);
   mkdirSync(dir, { recursive: true });
   for (let attempt = 0; attempt < 2; attempt++) {
     let epoch: number;
     try {
-      epoch = (await client.quiesce(oldTrip, true)).epoch;
+      const q = await client.quiesce(oldTrip, true);
+      // A lost marker (`tripLost`) runs the SAME full recovery under this epoch: cut -> tolerant
+      // snapshot -> park -> seal. "Marker missing" never means "nothing to recover".
+      if (q.tripLost) report.lost = true;
+      epoch = q.epoch;
     } catch (err) {
-      if (err instanceof CloudError && err.code === 'trip_lost') {
-        report.lost = true;
-        await markLastTrip(env, oldTrip, { status: 'lost', recovered: true });
-        return report;
-      }
-      throw err;
+      throw await lostTripRefusal(env, err, oldTrip, report);
     }
     await client.cut(epoch);
     const knownTips: Record<string, string[]> = {};
@@ -926,12 +1153,7 @@ export async function recoverTrip(env: HandsfreeEnv, client: CloudClient, oldTri
     try {
       snap = await client.snapshot({ epoch, tolerant: true, knownTips });
     } catch (err) {
-      if (err instanceof CloudError && err.code === 'trip_lost') {
-        report.lost = true;
-        await markLastTrip(env, oldTrip, { status: 'lost', recovered: true });
-        return report;
-      }
-      throw err;
+      throw await lostTripRefusal(env, err, oldTrip, report);
     }
     const rdir = join(dir, 'recovery', `e${epoch}`);
     mkdirSync(rdir, { recursive: true });
@@ -946,9 +1168,19 @@ export async function recoverTrip(env: HandsfreeEnv, client: CloudClient, oldTri
       if (r.kind === 'repo') {
         if (!repo) { report.unmapped.push(r.rootId); continue; }
         onProgress?.({ step: 'recovery-park', detail: repo.path });
-        const s = parseRepoSnapshot(r.snapshot, oldTrip);
+        let s: RepoSnapshot;
+        try {
+          s = parseRepoSnapshot(r.snapshot, oldTrip);
+        } catch (err) {
+          if (!(err instanceof HandsfreeRefusal)) throw err;
+          report.refused.push({ rootId: r.rootId, repo: repo.path, refs: [], paths: err.path ? [err.path] : [] });
+          continue;
+        }
         const bundle = join(rdir, `${r.rootId}.bundle`);
-        const fetched = existsSync(bundle) ? await fetchBundle(env.run, repo.path, bundle, { trip: oldTrip }) : {};
+        // Refused content never makes recovery a dead end: park what can be parked, report the rest.
+        const tolerant = existsSync(bundle) ? await fetchBundleTolerant(env.run, repo.path, bundle, oldTrip, join(rdir, `diagnose-${r.rootId}`)) : { fetched: {}, refused: [], paths: [] };
+        const fetched = tolerant.fetched;
+        if (tolerant.refused.length) report.refused.push({ rootId: r.rootId, repo: repo.path, refs: tolerant.refused, paths: tolerant.paths });
         const all: Record<string, string> = { ...s.refs };
         s.stash.forEach((e, i) => { all[snapStashRef(oldTrip, i)] = e.oid; });
         for (const c of s.checkouts) {
@@ -994,11 +1226,103 @@ export async function recoverTrip(env: HandsfreeEnv, client: CloudClient, oldTri
       if (err instanceof CloudError && err.code === 'epoch_mismatch' && attempt === 0) continue;
       throw err;
     }
-    await markLastTrip(env, oldTrip, { recovered: true });
+    // Recovered ONLY now: the snapshot was parked locally, then the cloud sealed.
+    report.sealed = true;
+    await markLastTrip(env, oldTrip, { recovered: true, ...(report.lost ? { status: 'lost' as const } : {}) });
     writeJson(join(dir, 'recovery-report.json'), report);
     return report;
   }
   throw new HandsfreeError('cloud', 'the recovery could not seal the cloud under one epoch');
+}
+
+/**
+ * Unpack a bundle WITHOUT fsck into a scratch bare repository that borrows `repo`'s objects
+ * through alternates (so a thin bundle's prerequisites resolve). Never a checkout, never the
+ * real repository's refs: only for diagnosing and for the per-ref recovery fetch.
+ */
+async function unbundleToScratch(run: ProcessRunner, repo: string, bundlePath: string, scratch: string): Promise<boolean> {
+  rmSync(scratch, { recursive: true, force: true });
+  mkdirSync(scratch, { recursive: true });
+  await git(run, scratch, ['init', '--bare', '-q']);
+  const common = (await gitOut(run, repo, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
+  atomicWriteFile(join(scratch, 'objects', 'info', 'alternates'), join(common, 'objects') + '\n', 0o644);
+  const r = await git(run, scratch, ['-c', 'transfer.fsckObjects=false', '-c', 'fetch.fsckObjects=false', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', resolve(bundlePath), '+refs/*:refs/*'], { allowFail: true });
+  return r.code === 0;
+}
+
+/** Paths the shared guard refuses among the objects reachable from `revs` in a scratch repo. */
+async function refusedPathsIn(run: ProcessRunner, scratch: string, revs: string[] = ['--all']): Promise<string[]> {
+  const r = await git(run, scratch, ['rev-list', '--objects', ...revs], { allowFail: true });
+  const bad = new Set<string>();
+  for (const line of r.stdout.toString('utf8').split('\n')) {
+    const sp = line.indexOf(' ');
+    if (sp < 0) continue;
+    const path = line.slice(sp + 1);
+    if (path && !checkRelPath(path).ok) bad.add(path);
+  }
+  return [...bad].sort().slice(0, 20);
+}
+
+/** The cloud sent content this laptop refuses: a HandsfreeError naming the repository and the paths. */
+async function cloudContentError(run: ProcessRunner, repo: string, bundlePath: string, scratch: string, cause: unknown): Promise<HandsfreeError> {
+  let paths: string[] = [];
+  try {
+    if (existsSync(bundlePath) && (await unbundleToScratch(run, repo, bundlePath, scratch))) paths = await refusedPathsIn(run, scratch);
+  } catch { /* diagnosis only */ } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  const refusalPath = cause instanceof HandsfreeRefusal && cause.path ? [cause.path] : [];
+  const named = [...new Set([...refusalPath, ...paths])];
+  const reason = cause instanceof HandsfreeRefusal ? cause.message
+    : cause instanceof GitError ? (cause.stderr.split('\n').find((l: string) => /error|fatal/i.test(l)) ?? cause.stderr).trim().slice(0, 200)
+      : (cause as Error).message;
+  return new HandsfreeError(
+    'cloud_content',
+    `the cloud copy of ${repo} holds content this laptop refuses${named.length ? `: ${named.map((p) => JSON.stringify(p)).join(', ')}` : ''} (${reason}). Nothing of it was written here: remove or rename it on the phone (and commit the fix), then return again.`,
+    { repo, paths: named },
+  );
+}
+
+/**
+ * Recovery's bundle fetch (D12) that never dead-ends. A bundle is ONE pack, so one refused
+ * object refuses every ref fetched from it; when that happens the bundle is unpacked into a
+ * scratch repo (no fsck) and each allow-listed ref is fetched from there on its own, still
+ * with fsck, so only the objects that ref reaches are checked: clean refs park, the refs whose
+ * content is refused are reported and stay in the cloud.
+ */
+async function fetchBundleTolerant(run: ProcessRunner, repo: string, bundlePath: string, trip: string, scratch: string): Promise<{ fetched: Record<string, string>; refused: string[]; paths: string[] }> {
+  try {
+    return { fetched: await fetchBundle(run, repo, bundlePath, { trip }), refused: [], paths: [] };
+  } catch (err) {
+    if (!(err instanceof GitError || err instanceof BundlePrerequisiteError)) throw err;
+  }
+  const fetched: Record<string, string> = {};
+  const refused: string[] = [];
+  const heads = await git(run, repo, ['bundle', 'list-heads', resolve(bundlePath)], { allowFail: true });
+  const snapPrefix = snapRefPrefix(trip) + '/';
+  const wanted: Array<[string, string]> = [];
+  for (const line of heads.stdout.toString('utf8').split('\n')) {
+    const sp = line.indexOf(' ');
+    if (sp < 0) continue;
+    const ref = line.slice(sp + 1);
+    if (isAllowedRef(ref) || (ref.startsWith(snapPrefix) && isWellFormedRef(ref))) wanted.push([ref, line.slice(0, sp)]);
+  }
+  let paths: string[] = [];
+  try {
+    if (!(await unbundleToScratch(run, repo, bundlePath, scratch))) return { fetched, refused: wanted.map(([r]) => r), paths };
+    for (const [ref, oid] of wanted) {
+      const r = await git(run, repo, [
+        '-c', 'transfer.fsckObjects=true', '-c', 'fetch.fsckObjects=true', '-c', 'gc.auto=0',
+        'fetch', '-q', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', scratch, `+${ref}:${incomingRefFor(trip, ref)}`,
+      ], { allowFail: true });
+      if (r.code === 0) fetched[ref] = oid;
+      else refused.push(ref);
+    }
+    if (refused.length) paths = await refusedPathsIn(run, scratch, refused);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return { fetched, refused, paths };
 }
 
 async function presentObjects(run: ProcessRunner, repo: string, oids: string[]): Promise<Set<string>> {
@@ -1217,8 +1541,18 @@ async function planReturnPass(env: HandsfreeEnv, goM: GoManifest, dir: string, p
     meta.repos.push(rec);
     const incoming = parseRepoSnapshot(entry.snapshot, trip);
     const bundle = join(pdir, `${entry.rootId}.bundle`);
-    const fetched = existsSync(bundle) ? await fetchBundle(env.run, repoPath, bundle, { trip }) : {};
-    await verifyIncoming(env.run, repoPath, incoming, fetched);
+    // Content the laptop refuses (fsck: a .git path, a bad object; a refused ref or path) is the
+    // CLOUD's to fix on the phone, never a crash: the Return cancels with the repo + path named.
+    let fetched: Record<string, string> = {};
+    try {
+      fetched = existsSync(bundle) ? await fetchBundle(env.run, repoPath, bundle, { trip }) : {};
+      await verifyIncoming(env.run, repoPath, incoming, fetched);
+    } catch (err) {
+      if (err instanceof GitError || err instanceof BundlePrerequisiteError || err instanceof HandsfreeRefusal) {
+        throw await cloudContentError(env.run, repoPath, bundle, join(pdir, `diagnose-${entry.rootId}`), err);
+      }
+      throw err;
+    }
     rec.cloudHeads = incoming.checkouts.map((c) => ({ checkout: rootIdToPath(goM, c.checkoutId) ?? c.path, head: c.head.kind === 'symref' ? `${c.head.ref} @ ${c.head.oid ?? 'unborn'}` : `detached @ ${c.head.oid}` }));
     rec.branchesTo = incoming.refs;
     const startS = readJson<RepoSnapshot>(join(dir, 'agreed', `${entry.rootId}.git.json`));
@@ -1515,7 +1849,7 @@ async function connectFor(env: HandsfreeEnv): Promise<CloudClient> {
 }
 
 /** `handsfree return`: Return + Journal, exactly. */
-export async function returnTrip(env: HandsfreeEnv, o: { cutRunning?: boolean; onProgress?: Progress } = {}): Promise<ReturnResult> {
+export async function returnTrip(env: HandsfreeEnv, o: { cutRunning?: boolean; shouldCut?: () => boolean; onProgress?: Progress } = {}): Promise<ReturnResult> {
   const st = requireState(env);
   if (st.phase === 'returning') return resumeTrip(env, o);
   if (st.phase !== 'away') throw new HandsfreeError('not_away', `nothing to return: the laptop is ${st.phase}`);
@@ -1527,8 +1861,8 @@ export async function returnTrip(env: HandsfreeEnv, o: { cutRunning?: boolean; o
     const up = await ensureRunning(env, { allowCreate: false, onProgress: o.onProgress });
     const health = await up.client.health();
     if (health.supersededLaptopIds.includes(requireConfig(env).laptopId)) return await becomeSuperseded(env, trip);
-    await setPhase('returning', trip, env.home);
-    return await runReturnPasses(env, up.client, trip, dir, { ...o, startPass: 1 });
+    await transition(env, trip, 'returning');
+    return await runReturnPasses(env, async () => up.client, trip, dir, { ...o, startPass: 1 });
   } finally {
     lock.release();
   }
@@ -1536,108 +1870,189 @@ export async function returnTrip(env: HandsfreeEnv, o: { cutRunning?: boolean; o
 
 async function becomeSuperseded(env: HandsfreeEnv, trip: string): Promise<ReturnResult> {
   // The old laptop came back after a take-over: unlock, return nothing, local files untouched.
-  await updateTripState((c) => ({ ...c, phase: 'home' }), { home: env.home });
+  await transition(env, trip, 'home');
   await markLastTrip(env, trip, { status: 'superseded', recovered: true });
   return { tripId: trip, outcome: 'superseded', receipt: null, message: 'another laptop took this trip over; this laptop was unlocked and nothing came back' };
 }
 
-async function runReturnPasses(env: HandsfreeEnv, client: CloudClient, trip: string, dir: string, o: { cutRunning?: boolean; onProgress?: Progress; startPass: number; resume?: ReturnProgress }): Promise<ReturnResult> {
+/**
+ * D23 (a): the ONE guarded laptop phase change. Once any pass of this trip's Return wrote to
+ * the laptop, `returning` only ever leaves through finishReturnHome (`finishing`) or Roll back
+ * (which first undoes every write): never back to away, never home by any other path.
+ */
+async function transition(env: HandsfreeEnv, trip: string, to: TripState['phase'], o: { finishing?: boolean } = {}): Promise<TripState> {
+  const dir = tripDirFor(env, trip);
+  return updateTripState((c) => {
+    if (c.tripId !== trip && c.phase !== 'home') throw new HandsfreeError('busy', `trip mismatch: the laptop is on ${c.tripId ?? 'no trip'}`);
+    if (c.phase === 'returning' && to !== 'returning' && returnWriteStarted(dir)) {
+      if (to === 'away') throw new HandsfreeError('write_started', 'the return already wrote to the laptop: only Resume or Roll back');
+      if (to === 'home' && !o.finishing) throw new HandsfreeError('write_started', 'the return already wrote to the laptop: it ends home only by finishing (Resume) or through Roll back');
+    }
+    return { ...c, phase: to, tripId: to === 'home' ? null : trip };
+  }, { home: env.home });
+}
+
+/** Errors that mean "the cloud or GitHub could not be reached or refused": never a local fault. */
+function isReachabilityError(err: unknown): boolean {
+  return err instanceof CloudError || err instanceof CloudUnreachableError || err instanceof PortPrivateError
+    || err instanceof ProviderError || err instanceof ProviderQuotaError
+    || (err instanceof HandsfreeError && ['quota', 'cloud', 'port_private', 'tampered', 'turns_running', 'cloud_preflight', 'trip_lost', 'cloud_content'].includes(err.code));
+}
+
+/** The highest applied pass of this Return (0 = none). */
+function lastAppliedPass(dir: string): number {
+  return passJournals(dir).reduce((m, p) => Math.max(m, p.pass), 0);
+}
+
+async function runReturnPasses(env: HandsfreeEnv, getClient: () => Promise<CloudClient>, trip: string, dir: string, o: { cutRunning?: boolean; shouldCut?: () => boolean; onProgress?: Progress; startPass: number; resume?: ReturnProgress }): Promise<ReturnResult> {
   const goM = readJson<GoManifest>(join(dir, 'go-manifest.json'));
-  let pass = o.startPass;
+  // Never reuse an earlier pass's number: its journal and backup scopes stay as they are.
+  let pass = Math.max(o.startPass, existsSync(journalPath(dir, 'return')) ? 0 : lastAppliedPass(dir) + 1);
   let resume = o.resume;
   let receipt: Receipt | null = null;
+  const cutNow = () => !!o.cutRunning || !!o.shouldCut?.();
   for (;;) {
     let epoch: number;
     let meta: PassMeta;
     let snap: SnapshotReply;
     if (resume && existsSync(journalPath(dir, 'return'))) {
+      // Offline-first (D23 b): the whole payload of this pass is already in trips/<trip>/.
+      pass = resume.pass;
       epoch = resume.epoch;
       ({ meta, snap } = readJson<{ meta: PassMeta; snap: SnapshotReply }>(join(dir, `return-${pass}`, 'plan.json')));
     } else {
-      // Quiesce (persisted cloud side), wait for or cut running turns.
-      let q;
+      let quiescedEpoch: number | null = null;
       try {
-        q = await client.quiesce(trip);
+        const client = await getClient();
+        let q;
+        try {
+          q = await client.quiesce(trip);
+        } catch (err) {
+          if (err instanceof CloudError && err.code === 'trip_lost') throw new HandsfreeError('trip_lost', 'the cloud no longer has this trip (trip_lost)');
+          throw err;
+        }
+        quiescedEpoch = q.epoch;
+        const deadline = nowOf(env) + (env.waitTimeoutMs ?? 2 * 60 * 60_000);
+        while (q.running.length && !cutNow()) {
+          if (nowOf(env) > deadline) throw new HandsfreeError('turns_running', `${q.running.length} turn(s) or process(es) are still running on the phone; wait or use Cut`);
+          // The same RunningWork shape go's wait reports (the job's `running[]`): a turn by its
+          // conversation, a scanned process (D22) by its pid.
+          const running: RunningWork[] = q.running.map((r) => (r.conversationId
+            ? { kind: 'chat' as const, id: r.conversationId, busy: true, ...(r.pid !== undefined ? { pid: r.pid } : {}) }
+            : { kind: 'process' as const, id: r.pid !== undefined ? String(r.pid) : UNKNOWN_WORK_ID, busy: true, ...(r.pid !== undefined ? { pid: r.pid } : {}) }));
+          o.onProgress?.({ step: 'waiting', detail: `${q.running.length} running on the phone`, running });
+          await sleepOf(env)(10_000);
+          q = await client.quiesce(trip);
+          quiescedEpoch = q.epoch;
+        }
+        // The owner chose Cut: ALWAYS cut before the snapshot (the cloud's own process scan decides).
+        if (cutNow() || q.running.length) await client.cut(q.epoch);
+        epoch = q.epoch;
+        writeJson(progressPath(dir), { epoch, pass, receipts: readJsonSafe<ReturnProgress>(progressPath(dir))?.receipts ?? [] } satisfies ReturnProgress);
+        const knownTips: Record<string, string[]> = {};
+        for (const r of goM.roots.filter((x) => x.kind === 'repo')) knownTips[r.rootId] = await baseTips(env.run, r.absPath);
+        o.onProgress?.({ step: 'snapshot' });
+        try {
+          snap = await client.snapshot({ epoch, knownTips });
+        } catch (err) {
+          if (err instanceof CloudError && err.code === 'turns_running' && cutNow()) {
+            await client.cut(epoch);
+            snap = await client.snapshot({ epoch, knownTips });
+          } else if (err instanceof CloudError && err.code === 'turns_running') {
+            throw new HandsfreeError('turns_running', 'processes are still running on the phone; wait or use Cut');
+          } else if (err instanceof CloudError && err.code === 'preflight') {
+            const problems = (err.body as { problems?: unknown })?.problems ?? null;
+            throw new HandsfreeError('cloud_preflight', `the cloud copy is not ready to come back; resolve it on the phone, then return again: ${problems ? JSON.stringify(problems) : err.message}`, { problems });
+          } else throw err;
+        }
+        // Download EVERYTHING before the first write, into a clean dir: an earlier cancelled
+        // attempt of this (never applied) pass must not leave a stale bundle or pack behind.
+        const pdir = join(dir, `return-${pass}`);
+        rmSync(pdir, { recursive: true, force: true });
+        mkdirSync(pdir, { recursive: true });
+        o.onProgress?.({ step: 'download' });
+        for (const r of snap.roots) {
+          if (r.kind === 'repo' && r.bundle) await client.downloadTo(r.bundle, join(pdir, `${r.rootId}.bundle`));
+          if (r.kind === 'files' && r.pack) await client.downloadTo(r.pack, join(pdir, `${r.rootId}.pack`));
+        }
+        o.onProgress?.({ step: 'plan' });
+        // The agreed baseline as it was before this pass (Roll back puts it back).
+        const agreedBefore = join(dir, `agreed.before-pass-${pass}`);
+        if (!existsSync(agreedBefore)) cpSync(join(dir, 'agreed'), agreedBefore, { recursive: true });
+        const planned = await planReturnPass(env, goM, dir, pdir, snap, pass);
+        // Each pass backs up into its own stores, so rolling back pass N restores pass N's own writes.
+        if (pass > 1) planned.ops = planned.ops.map((op) => withPassScopes(op, pass));
+        meta = planned.meta;
+        // The plan, then the journal, persisted before the first laptop write.
+        writeJson(join(pdir, 'plan.json'), { meta, snap });
+        createJournal(journalPath(dir, 'return'), { trip, direction: 'return', ops: planned.ops });
       } catch (err) {
-        if (err instanceof CloudError && err.code === 'trip_lost') {
-          await updateTripState((c) => ({ ...c, phase: 'home' }), { home: env.home });
-          await markLastTrip(env, trip, { status: 'lost', recovered: true });
-          return { tripId: trip, outcome: 'lost', receipt: null, message: 'the cloud no longer has this trip (trip_lost): everything on the laptop was kept and the trip is treated as abandoned' };
-        }
-        throw err;
+        if (!isReachabilityError(err)) throw err; // a local fault: Resume picks this pass up again
+        return await cancelBeforeWrite(env, getClient, trip, dir, err, quiescedEpoch);
       }
-      const deadline = nowOf(env) + (env.waitTimeoutMs ?? 2 * 60 * 60_000);
-      while (q.running.length && !o.cutRunning) {
-        if (nowOf(env) > deadline) {
-          await client.unquiesce(q.epoch).catch(() => {});
-          await setPhase('away', trip, env.home);
-          throw new HandsfreeError('turns_running', `${q.running.length} turn(s) are still running on the phone; wait or use Cut`);
-        }
-        o.onProgress?.({ step: 'waiting', detail: `${q.running.length} running on the phone` });
-        await sleepOf(env)(10_000);
-        q = await client.quiesce(trip);
-      }
-      if (q.running.length) await client.cut(q.epoch);
-      epoch = q.epoch;
-      writeJson(progressPath(dir), { epoch, pass, receipts: readJsonSafe<ReturnProgress>(progressPath(dir))?.receipts ?? [] } satisfies ReturnProgress);
-      const knownTips: Record<string, string[]> = {};
-      for (const r of goM.roots.filter((x) => x.kind === 'repo')) knownTips[r.rootId] = await baseTips(env.run, r.absPath);
-      o.onProgress?.({ step: 'snapshot' });
-      try {
-        snap = await client.snapshot({ epoch, knownTips });
-      } catch (err) {
-        if (err instanceof CloudError && err.code === 'preflight') {
-          // A merge/rebase in progress or a stale lock in the cloud: cancel back to active (AC13).
-          await client.unquiesce(epoch).catch(() => {});
-          await setPhase('away', trip, env.home);
-          throw new HandsfreeError('cloud_preflight', `the cloud copy is not ready to come back; resolve it on the phone, then return again: ${(err.body as { problems?: unknown })?.problems ? JSON.stringify((err.body as { problems: unknown }).problems) : err.message}`, { problems: (err.body as { problems?: unknown })?.problems ?? null });
-        }
-        throw err;
-      }
-      // Download EVERYTHING before the first write.
-      const pdir = join(dir, `return-${pass}`);
-      mkdirSync(pdir, { recursive: true });
-      o.onProgress?.({ step: 'download' });
-      for (const r of snap.roots) {
-        if (r.kind === 'repo' && r.bundle) await client.downloadTo(r.bundle, join(pdir, `${r.rootId}.bundle`));
-        if (r.kind === 'files' && r.pack) await client.downloadTo(r.pack, join(pdir, `${r.rootId}.pack`));
-      }
-      o.onProgress?.({ step: 'plan' });
-      // The agreed baseline as it was before this pass (Roll back puts it back).
-      const agreedBefore = join(dir, `agreed.before-pass-${pass}`);
-      if (!existsSync(agreedBefore)) cpSync(join(dir, 'agreed'), agreedBefore, { recursive: true });
-      const planned = await planReturnPass(env, goM, dir, pdir, snap, pass);
-      // Each pass backs up into its own stores, so rolling back pass N restores pass N's own writes.
-      if (pass > 1) planned.ops = planned.ops.map((op) => withPassScopes(op, pass));
-      meta = planned.meta;
-      // The plan, then the journal, persisted before the first laptop write.
-      writeJson(join(pdir, 'plan.json'), { meta, snap });
-      createJournal(journalPath(dir, 'return'), { trip, direction: 'return', ops: planned.ops });
     }
     resume = undefined;
     o.onProgress?.({ step: 'apply' });
-    const j = await runJournal(journalPath(dir, 'return'), returnOpsHandlers(env, dir), { onOp: (op) => o.onProgress?.({ step: op.kind, detail: op.id }) });
+    const j = await runJournal(journalPath(dir, 'return'), returnOpsHandlers(env, dir), {
+      onOp: (op) => o.onProgress?.({ step: op.kind, detail: op.id }),
+      beforeOp: env.beforeOp,
+    });
     receipt = await buildReceipt(env, goM, dir, j, meta, pass);
     advanceAgreed(dir, snap, meta, trip);
     const receiptPath = join(dir, `receipt-${pass}.json`);
     writeJson(receiptPath, receipt);
+    const prog: ReturnProgress = { epoch, pass, receipts: [...new Set([...(readJsonSafe<ReturnProgress>(progressPath(dir))?.receipts ?? []), receiptPath])] };
+    writeJson(progressPath(dir), prog);
     // This pass is done: archive its journal so a second delta pass starts a fresh one.
     renameSync(journalPath(dir, 'return'), join(dir, `return-journal.pass-${pass}.json`));
-    const prog: ReturnProgress = { epoch, pass, receipts: [...(readJsonSafe<ReturnProgress>(progressPath(dir))?.receipts ?? []), receiptPath] };
-    writeJson(progressPath(dir), prog);
-    // Finalize: wipe-secrets, seal (same epoch), stop. Unreachable -> home + queued.
-    const fin = await finalizeCloud(env, client, trip, epoch, o.onProgress);
+    // Cloud steps only after the local journal finished; unreachable -> queued, home.
+    const fin = await finalizeCloud(env, await getClient(), trip, epoch, o.onProgress);
     if (fin === 'epoch_mismatch' && pass < MAX_RETURN_PASSES) {
       pass++;
       o.onProgress?.({ step: 'delta-return', detail: `pass ${pass}` });
       continue;
     }
-    await finishReturnHome(env, trip, dir, receipt, prog, fin);
-    return { tripId: trip, outcome: 'home', receipt };
+    return await finishReturnHome(env, trip, dir, receipt, prog, fin);
   }
 }
 
-type FinalizeResult = Receipt['finalization'] | 'epoch_mismatch' | 'recover';
+/**
+ * A pass could not get its payload (unreachable cloud, quota, preflight, running work,
+ * trip_lost). Before ANY write of this Return: back to away (the cloud unquiesced when it can
+ * be told). After an earlier pass wrote (D23): never away; home with the earlier passes'
+ * receipt, the cloud's later work recovered by the next go (D12).
+ */
+async function cancelBeforeWrite(env: HandsfreeEnv, getClient: () => Promise<CloudClient>, trip: string, dir: string, err: unknown, quiescedEpoch: number | null): Promise<ReturnResult> {
+  const lost = err instanceof HandsfreeError && err.code === 'trip_lost';
+  if (returnWriteStarted(dir)) {
+    const prog = readJsonSafe<ReturnProgress>(progressPath(dir)) ?? { epoch: quiescedEpoch ?? 0, pass: lastAppliedPass(dir), receipts: [] };
+    const last = prog.receipts.length ? readJsonSafe<Receipt>(prog.receipts[prog.receipts.length - 1]) : null;
+    const r = await finishReturnHome(env, trip, dir, last, { ...prog, receipts: prog.receipts }, 'recover');
+    if (lost) {
+      // The marker is gone: recover the cloud's later work NOW (full D12, snapshot before seal).
+      const rec = await recoverLostOnReturn(env, getClient, trip, dir);
+      await stopOrQueue(env, trip);
+      return { ...r, message: `Everything earlier passes brought back is kept; ${rec.message}.` };
+    }
+    // finishReturnHome('recover') left the trip abandoned + unrecovered: the next go's recovery
+    // (D12) parks the cloud's later work before anything is mirrored over it.
+    return { ...r, message: `${(err as Error).message}. Everything earlier passes brought back is kept; the cloud's later work stays on the cloud and the next go recovers it into refs/handsfree/${trip}/* and trips/${trip}/orphaned/ before it starts.` };
+  }
+  if (lost) {
+    await transition(env, trip, 'home');
+    const rec = await recoverLostOnReturn(env, getClient, trip, dir);
+    await stopOrQueue(env, trip);
+    return { tripId: trip, outcome: 'lost', receipt: null, message: `${rec.message}. Everything on the laptop was kept.` };
+  }
+  if (quiescedEpoch !== null) {
+    try { await (await getClient()).unquiesce(quiescedEpoch); } catch { /* the cloud reverts on its own (AC13) */ }
+  }
+  rmSync(progressPath(dir), { force: true });
+  await transition(env, trip, 'away');
+  throw err;
+}
+
+type FinalizeResult = Receipt['finalization'] | 'epoch_mismatch' | 'recover' | 'other';
 
 /**
  * The end of every Return (normal and finalize-only Resume): the final receipt with every
@@ -1645,13 +2060,19 @@ type FinalizeResult = Receipt['finalization'] | 'epoch_mismatch' | 'recover';
  * allowed pass (or sealed under another epoch) is recovered by the next go (D12).
  */
 async function finishReturnHome(env: HandsfreeEnv, trip: string, dir: string, receipt: Receipt | null, prog: ReturnProgress, fin: FinalizeResult): Promise<ReturnResult> {
-  const unfinished = fin === 'epoch_mismatch' || fin === 'recover';
+  const unfinished = fin === 'epoch_mismatch' || fin === 'recover' || fin === 'other';
+  if (fin === 'other') {
+    // Nothing of ours was confirmed on the cloud; the machine is still ours to stop.
+    await updateConfig(env.home, (c) => ({ ...c, queued: { tripId: trip, epoch: prog.epoch, steps: ['stop'], since: new Date(nowOf(env)).toISOString() } }));
+  }
   if (receipt) {
-    receipt.finalization = unfinished ? { secretsWiped: false, sealed: false, stopped: false, queued: ['recovery at the next go'] } : fin;
+    receipt.finalization = fin === 'other'
+      ? { secretsWiped: false, sealed: false, stopped: false, queued: ['stop'] }
+      : unfinished ? { secretsWiped: false, sealed: false, stopped: false, queued: ['recovery at the next go'] } : fin;
     receipt.previousPasses = prog.receipts.slice(0, -1).map((p) => readJsonSafe<Receipt>(p)).filter((r): r is Receipt => !!r);
     writeJson(join(dir, 'receipt.json'), receipt);
   }
-  await updateTripState((c) => ({ ...c, phase: 'home' }), { home: env.home });
+  await transition(env, trip, 'home', { finishing: true });
   // Everything came home; a cloud left unsealed is sealed by the queue at the next contact
   // (a newer epoch there flips this back to abandoned + unrecovered).
   if (unfinished) await markLastTrip(env, trip, { status: 'abandoned', recovered: false });
@@ -1666,7 +2087,9 @@ async function finalizeCloud(env: HandsfreeEnv, client: CloudClient, trip: strin
   const r = await ensureCloudSealed(client, trip, epoch, onProgress);
   if (r.kind === 'delta') return 'epoch_mismatch';
   if (r.kind === 'recover') return 'recover';
-  if (r.kind === 'other') return fin; // another trip holds the cloud: nothing of ours to finalize or stop
+  // Another trip (or none) holds the cloud: nothing of ours to seal, nothing confirmed; the
+  // machine is still ours to stop, so that is queued.
+  if (r.kind === 'other') return 'other';
   const queue: Array<'wipe-secrets' | 'seal' | 'stop'> = r.kind === 'queue' ? [...r.remaining, 'stop'] : ['stop'];
   if (r.kind === 'sealed') {
     fin.secretsWiped = true;
@@ -1676,7 +2099,9 @@ async function finalizeCloud(env: HandsfreeEnv, client: CloudClient, trip: strin
       await stopMachine(env, name);
       fin.stopped = true;
       queue.length = 0;
-    } catch { /* queued */ }
+    } catch (err) {
+      if (!isReachabilityError(err)) throw err;
+    }
   }
   if (queue.length) {
     fin.queued = [...queue];
@@ -1688,13 +2113,13 @@ async function finalizeCloud(env: HandsfreeEnv, client: CloudClient, trip: strin
 // ---------------------------------------------------------------- resume / roll back / abandon
 
 /** Resume an interrupted go or return from its journal (AC11). */
-export async function resumeTrip(env: HandsfreeEnv, o: { cutRunning?: boolean; onProgress?: Progress } = {}): Promise<ReturnResult> {
+export async function resumeTrip(env: HandsfreeEnv, o: { cutRunning?: boolean; shouldCut?: () => boolean; onProgress?: Progress } = {}): Promise<ReturnResult> {
   let restart = false;
   const r = await resumeLocked(env, o, () => { restart = true; });
   return restart ? returnTrip(env, o) : r;
 }
 
-async function resumeLocked(env: HandsfreeEnv, o: { cutRunning?: boolean; onProgress?: Progress }, onRestart: () => void): Promise<ReturnResult> {
+async function resumeLocked(env: HandsfreeEnv, o: { cutRunning?: boolean; shouldCut?: () => boolean; onProgress?: Progress }, onRestart: () => void): Promise<ReturnResult> {
   let restart = false;
   const st = requireState(env);
   const trip = st.tripId;
@@ -1705,34 +2130,43 @@ async function resumeLocked(env: HandsfreeEnv, o: { cutRunning?: boolean; onProg
   try {
     if (st.phase === 'going') {
       if (!existsSync(journalPath(dir, 'go'))) {
-        await setPhase('home', trip, env.home);
+        await transition(env, trip, 'home');
         return { tripId: trip, outcome: 'cancelled', receipt: null, message: 'the go was interrupted before anything was sent; the laptop is home again, run go again' };
       }
       const up = await ensureRunning(env, { allowCreate: false, onProgress: o.onProgress });
       const goM = readJson<GoManifest>(join(dir, 'go-manifest.json'));
-      await finishGo(env, up.client, up, goM, dir, { staysHome: [], signedOutAccounts: [], recovery: null, warnings: [], onProgress: o.onProgress });
+      try {
+        await finishGo(env, up.client, up, goM, dir, { staysHome: [], signedOutAccounts: [], recovery: null, warnings: [], onProgress: o.onProgress });
+      } catch (err) {
+        await abortGoOnVerification(env, trip, dir, err);
+        throw err;
+      }
       return { tripId: trip, outcome: 'cancelled', receipt: null, message: `the go finished: the trip is away at ${up.info.url}` };
     }
-    // returning
+    // returning — offline-first (D23 b): finishing the local journal never needs the cloud or
+    // GitHub; the client is built lazily (no start, no blob-sha check, no health read).
     const prog = readJsonSafe<ReturnProgress>(progressPath(dir));
     const j = loadJournal(journalPath(dir, 'return'));
-    if (!prog) {
-      // Interrupted before the snapshot: nothing was written; start the return over.
-      await setPhase('away', trip, env.home);
-      restart = true;
-      return { tripId: trip, outcome: 'cancelled', receipt: null };
-    }
-    const up = await ensureRunning(env, { allowCreate: false, onProgress: o.onProgress });
-    if (j) return await runReturnPasses(env, up.client, trip, dir, { ...o, startPass: prog.pass, resume: prog });
-    if (existsSync(join(dir, `return-journal.pass-${prog.pass}.json`))) {
-      // The local apply finished; only the cloud finalization is left.
-      const fin = await finalizeCloud(env, up.client, trip, prog.epoch, o.onProgress);
-      if (fin === 'epoch_mismatch' && prog.pass < MAX_RETURN_PASSES) return await runReturnPasses(env, up.client, trip, dir, { ...o, startPass: prog.pass + 1 });
+    let client: CloudClient | null = null;
+    const getClient = async () => (client ??= await connectFor(env));
+    if (j && prog) return await runReturnPasses(env, getClient, trip, dir, { ...o, startPass: prog.pass, resume: prog });
+    if (prog && existsSync(join(dir, `return-journal.pass-${prog.pass}.json`))) {
+      // The local apply finished; only the cloud finalization is left (queued when unreachable).
+      const fin = await finalizeCloud(env, await getClient(), trip, prog.epoch, o.onProgress);
+      if (fin === 'epoch_mismatch' && prog.pass < MAX_RETURN_PASSES) return await runReturnPasses(env, getClient, trip, dir, { ...o, startPass: prog.pass + 1 });
       const receipt = readJsonSafe<Receipt>(prog.receipts[prog.receipts.length - 1]);
       return await finishReturnHome(env, trip, dir, receipt, prog, fin);
     }
-    // Snapshot taken but the plan never persisted: plan this pass again.
-    return await runReturnPasses(env, up.client, trip, dir, { ...o, startPass: prog.pass });
+    if (!returnWriteStarted(dir)) {
+      // Nothing of this Return was written: back to away, then start the return over.
+      rmSync(progressPath(dir), { force: true });
+      await transition(env, trip, 'away');
+      restart = true;
+      return { tripId: trip, outcome: 'cancelled', receipt: null };
+    }
+    // An earlier pass applied; this pass never got its plan: plan it again (or, without the
+    // cloud, go home with the earlier passes' receipt).
+    return await runReturnPasses(env, getClient, trip, dir, { ...o, startPass: prog?.pass ?? lastAppliedPass(dir) + 1 });
   } finally {
     lock.release();
     if (restart) onRestart();
@@ -1790,7 +2224,7 @@ export async function rollbackTrip(env: HandsfreeEnv): Promise<RollbackResult> {
       }
     }
     rmSync(progressPath(dir), { force: true });
-    await setPhase('away', trip, env.home);
+    await transition(env, trip, 'away');
     rmSync(rollbackMarker(dir), { force: true });
     let cloudUnquiesced = false;
     try {
@@ -1824,7 +2258,7 @@ export async function abandonTrip(env: HandsfreeEnv): Promise<{ tripId: string; 
       if (returnWriteStarted(dir)) throw new HandsfreeError('write_started', 'the return already wrote to the laptop: only Resume or Roll back');
       if (existsSync(journalPath(dir, 'return'))) renameSync(journalPath(dir, 'return'), join(dir, `return-journal.abandoned-${nowOf(env)}.json`));
     }
-    await updateTripState((c) => ({ ...c, phase: 'home' }), { home: env.home });
+    await transition(env, trip, 'home');
     await markLastTrip(env, trip, { status: 'abandoned', recovered: false });
   } finally {
     lock.release();

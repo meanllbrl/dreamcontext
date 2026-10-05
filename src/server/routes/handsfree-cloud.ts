@@ -14,7 +14,8 @@ import { CloudIdle, cloudIdle } from '../cloud-idle.js';
 import { CHUNK_MAX, TransferError, TransferStore, readRawBody } from '../cloud-transfers.js';
 import { WorkerOpError, parseGitDirSpec, runWorkerOp } from '../cloud-worker.js';
 import { checkRelPath } from '../../lib/handsfree/paths.js';
-import { cutLiveChats, liveChatsSnapshot } from './agent-chat-live.js';
+import { isVersionPin } from '../../lib/handsfree/npm-pin.js';
+import { cutLiveChats, liveChatsByPgid, liveChatsSnapshot } from './agent-chat-live.js';
 import { assertTripId, HandsfreeRefusal, type RepoSnapshot } from '../../lib/handsfree/git-snapshot.js';
 import { encodeProjectDir, rootIdFor, type GoManifest, type ManifestEntry, type RootKind, type RootSpec } from '../../lib/handsfree/manifest.js';
 import { listClaudeAccounts, sandboxDirFor } from '../../lib/claude-accounts.js';
@@ -38,9 +39,10 @@ const ROOT_ID_RE = /^r-[0-9a-f]{16}$/;
 const SNAPSHOT_TIMEOUT_MS = 30 * 60_000;
 const SMALL_OP_TIMEOUT_MS = 5 * 60_000;
 export const TRIP_MARKER_NAME = '.dreamcontext-handsfree-trip.json';
-/** `runtime` exits with this code; the root supervisor then installs the spooled tarball. */
+/** `runtime` exits with this code; the root supervisor then installs the requested version. */
 export const RUNTIME_EXIT_CODE = 75;
-export const RUNTIME_SPOOL_NAME = 'runtime-next.tgz';
+/** D25: the `{version, integrity}` the root supervisor fetches from npm and verifies (no tarball upload). */
+export const RUNTIME_REQUEST_NAME = 'runtime-request.json';
 
 // ─── process-wide services (cloud serve builds them over the dcserver dir) ────
 
@@ -356,29 +358,21 @@ const postRevokeAll: Handler = async (req, res) => {
   sendJson(res, r.ok ? 200 : 409, r);
 };
 
-/** The spooled tarball must at least be a gzip stream; the root supervisor checks it is an
- *  npm pack of dreamcontext before installing. */
-function looksLikeGzip(path: string): boolean {
-  const fd = openSync(path, 'r');
-  try {
-    const b = Buffer.alloc(2);
-    return readSync(fd, b, 0, 2, 0) === 2 && b[0] === 0x1f && b[1] === 0x8b;
-  } finally {
-    closeSync(fd);
-  }
-}
-
+/**
+ * D25 (AC18): install this exact dreamcontext version from npm. The laptop sends only
+ * `{version, integrity}` (strict semver, npm's sha512 integrity); the request is written for the
+ * root supervisor, which fetches exactly that version, checks its sha512 against the integrity
+ * before installing, and falls back to the last good build when health fails.
+ */
 const postRuntime: Handler = async (req, res) => {
   const body = await readJson(req);
-  const up = cloudServices().transfers.consume(body.uploadId);
-  if (!looksLikeGzip(up.path)) {
-    rmSync(up.path, { force: true });
-    throw new RouteError(400, 'bad_runtime', 'The runtime upload is not an npm pack tarball.');
+  if (!isVersionPin(body) || Object.keys(body).some((k) => k !== 'version' && k !== 'integrity')) {
+    throw new RouteError(400, 'bad_runtime', 'The runtime request needs an exact dreamcontext version and its npm sha512 integrity.');
   }
-  renameSync(up.path, join(cloudServerDir(), RUNTIME_SPOOL_NAME));
+  writePrivateJson(join(cloudServerDir(), RUNTIME_REQUEST_NAME), { version: body.version, integrity: body.integrity });
   sendJson(res, 200, { ok: true, restarting: true });
   // Exit once the reply is out; the supervisor installs, restarts, and health shows the new
-  // fingerprint (or the last good one when the new build fails its health check).
+  // version (or the last good one when the new build fails its health check).
   res.on('finish', () => setTimeout(() => exitForRuntime(RUNTIME_EXIT_CODE), 200));
 };
 
@@ -546,12 +540,45 @@ const postQuiesce: Handler = async (req, res) => {
   const body = await readJson(req);
   const tripId = tripIdOf(body.tripId);
   const { go } = currentTrip(tripId);
-  await assertMarker(go, tripId);
-  const r = cloudServices().state.quiesce(tripId, { recovery: body.recovery === true });
+  const recovery = body.recovery === true;
+  // The trip marker: present for THIS trip (normal), missing, or naming another trip (never
+  // quiesced). A missing marker refuses a normal quiesce (trip_lost). A RECOVERY quiesce from
+  // the laptop's transfer credential still quiesces under a new epoch and says so (`tripLost`)
+  // so the laptop runs the full D12 recovery (cut -> tolerant snapshot -> park -> seal) —
+  // but only while the trip's roots are on disk: "marker missing" is not "mirror gone" (a
+  // deleted or unreadable marker, an unmounted HOME). No roots = nothing to recover from: 409
+  // mirror_absent, nothing changes, nothing is ever sealed or wiped.
+  const lost = await markerVerdict(go, tripId, { recovery, tolerant: true });
+  const r = cloudServices().state.quiesce(tripId, { recovery });
   if (!r.ok) throw new RouteError(409, r.error, 'That is not the trip this cloud holds.');
-  const running = liveChatsSnapshot().filter((e) => e.busy).map((e) => ({ conversationId: e.conversationId, startedAt: e.turnStartedAt }));
-  sendJson(res, 200, { epoch: r.epoch, running });
+  // D4: an idle chat is cut without asking (it stays resumable from its transcript), so
+  // `running` keeps its wire meaning: running turns, plus work nobody registered.
+  await cutIdleChats();
+  sendJson(res, 200, { epoch: r.epoch, running: await runningInScope(go), ...(lost ? { tripLost: true } : {}) });
 };
+
+/** Every non-transcript root of the trip is on disk in the mirror (a missing one may hold work). */
+function rootsPresent(go: GoManifest): boolean {
+  return go.roots.filter((r) => r.kind !== 'transcripts').every((r) => {
+    try { return lstatSync(cloudLocalPath(r.absPath)).isDirectory(); } catch { return false; }
+  });
+}
+
+/**
+ * The trip marker rule for quiesce and snapshot. Present for this trip: ok (false). Naming
+ * another trip: trip_lost. Missing: trip_lost unless this is the laptop's recovery (a recovery
+ * quiesce, a tolerant snapshot) AND the roots are on disk; then true (`tripLost`). Roots absent:
+ * mirror_absent (never quiesced, never snapshotted, never sealed).
+ */
+async function markerVerdict(go: GoManifest, tripId: string, o: { recovery: boolean; tolerant: boolean }): Promise<boolean> {
+  const m = await runWorkerOp<{ present: boolean; tripId?: string | null }>({ op: 'marker', params: { action: 'check', file: markerPath(go) }, timeoutMs: SMALL_OP_TIMEOUT_MS });
+  if (m.present && m.tripId === tripId) return false;
+  if (m.present || !o.recovery || !o.tolerant) throw new RouteError(409, 'trip_lost', 'The cloud mirror lost this trip (its marker is missing).');
+  if (!rootsPresent(go)) {
+    throw new RouteError(409, 'mirror_absent', 'The trip marker is missing and the trip\'s folders are not on this machine (is the mirror mounted?): nothing can be recovered, so nothing is sealed or wiped.');
+  }
+  return true;
+}
 
 const postCut: Handler = async (req, res) => {
   const body = await readJson(req);
@@ -572,15 +599,75 @@ async function cutCloudScope(go: GoManifest): Promise<{ conversations: string[];
   const conversations = await cutLiveChats(() => true);
   const r = await runWorkerOp<{ cut: number[] }>({
     op: 'cut-scope',
-    params: { roots: [homeLocal(go), ...go.roots.map((x) => cloudLocalPath(x.absPath))], graceMs: 5_000 },
+    params: { roots: scopeRoots(go), graceMs: 5_000 },
     timeoutMs: SMALL_OP_TIMEOUT_MS,
   });
   return { conversations, processes: r.cut };
 }
 
+function scopeRoots(go: GoManifest): string[] {
+  return [homeLocal(go), ...go.roots.map((x) => cloudLocalPath(x.absPath))];
+}
+
+/** One entry of quiesce's `running` (wire: `{conversationId, startedAt}` plus additive fields). */
+interface RunningEntry {
+  conversationId: string | null;
+  startedAt: number | null;
+  pid: number;
+  pgid: number;
+  command: string;
+}
+
+/**
+ * D22: what runs in the cloud's scope = the PROCESS SCAN (a dry run of the cut over dcuser
+ * processes with cwd in the mirror home or a trip root), one entry per process group, named by
+ * the chat registry where a chat child leads that group. A background task, a dev server or an
+ * orphaned hook shows up here too, so the laptop waits for it and offers Cut.
+ */
+async function runningInScope(go: GoManifest): Promise<RunningEntry[]> {
+  const r = await runWorkerOp<{ found: Array<{ pid: number; pgid: number; cwd: string; command: string }> }>({
+    op: 'cut-scope', params: { roots: scopeRoots(go), dryRun: true }, timeoutMs: SMALL_OP_TIMEOUT_MS,
+  });
+  const chats = liveChatsByPgid();
+  const byGroup = new Map<number, RunningEntry>();
+  for (const f of r.found) {
+    if (byGroup.has(f.pgid)) continue;
+    const chat = chats.get(f.pgid);
+    // A chat with no turn running is not running work (cutIdleChats ends it before a snapshot).
+    if (chat && !chat.busy) continue;
+    byGroup.set(f.pgid, {
+      conversationId: chat?.conversationId ?? null,
+      startedAt: chat?.startedAt ?? null,
+      pid: chat ? f.pgid : f.pid,
+      pgid: f.pgid,
+      command: f.command,
+    });
+  }
+  return [...byGroup.values()];
+}
+
+/** Registered chats with no turn running: cut (awaited, whole groups), never counted as running. */
+async function cutIdleChats(): Promise<string[]> {
+  return cutLiveChats((e) => !e.busy);
+}
+
+/** Seals and wipes in flight: while any runs, the cloud may not go active again. */
+let finalizing = 0;
+
+async function finalizingWhile<T>(fn: () => Promise<T>): Promise<T> {
+  finalizing++;
+  try {
+    return await fn();
+  } finally {
+    finalizing--;
+  }
+}
+
 const postUnquiesce: Handler = async (req, res) => {
   const body = await readJson(req);
   requireEpoch(body.epoch);
+  // A wipe must never run inside a trip that went active again.
+  if (finalizing > 0) throw new RouteError(409, 'finalizing', 'The cloud is wiping and sealing this return; it cannot go back to active now.');
   if (!cloudServices().state.unquiesce()) throw new RouteError(409, 'not_quiescing', 'The cloud is not quiescing.');
   sendJson(res, 200, { ok: true, phase: 'active' });
 };
@@ -595,7 +682,13 @@ const postSnapshot: Handler = async (req, res) => {
   const body = await readJson(req);
   const epoch = requireQuiescing(body.epoch);
   const { go, tripId } = currentTrip();
-  await assertMarker(go, tripId);
+  // A missing marker is accepted only for the laptop's tolerant RECOVERY snapshot of roots that
+  // are on disk (same rule as the lost-marker quiesce).
+  await markerVerdict(go, tripId, { recovery: body.tolerant === true, tolerant: body.tolerant === true });
+  // D22: never a snapshot over live work.
+  await cutIdleChats(); // a chat that went idle after quiesce is cut, not counted
+  const running = await runningInScope(go);
+  if (running.length > 0) throw new RouteError(409, 'turns_running', 'Work is still running in the cloud; wait for it or cut it first.', { running });
   const tolerant = body.tolerant === true;
   const knownTips = (body.knownTips && typeof body.knownTips === 'object' ? body.knownTips : {}) as Record<string, unknown>;
   const repos = go.roots.filter((r) => isRepoRoot(r, cloudLocalPath(r.absPath)));
@@ -679,6 +772,7 @@ async function wipeSecretClass(go: GoManifest, tripId: string): Promise<{ wiped:
     op: 'wipe-secrets',
     params: {
       ...workerBase(),
+      home: homeLocal(go),
       roots: go.roots.map((s) => ({ root: cloudLocalPath(s.absPath), rootKind: s.kind, include: includesFor(tripId, s.rootId, recordedAtGo(tripId, s.rootId)) })),
     },
     timeoutMs: SNAPSHOT_TIMEOUT_MS,
@@ -690,15 +784,26 @@ async function wipeSecretClass(go: GoManifest, tripId: string): Promise<{ wiped:
  * a wipe that leaves a file behind does not seal (a sealed cloud never holds the secret class).
  */
 export async function wipeAndSeal(): Promise<{ wiped: number }> {
+  return finalizingWhile(() => wipeAndSealNow());
+}
+
+async function wipeAndSealNow(): Promise<{ wiped: number }> {
+  const svc = cloudServices();
+  const start = svc.state.get();
+  if (start.phase !== 'quiescing') throw new RouteError(409, 'not_quiescing', 'Only a quiescing cloud is sealed.');
   const { go, tripId } = currentTrip();
+  // Order (D21/D22): nothing runs (it could write a secret back) → wipe → the return is still
+  // the one we started for → seal.
+  await cutCloudScope(go);
   const w = await wipeSecretClass(go, tripId);
   if (w.failed.length > 0) throw new RouteError(500, 'wipe_failed', `The secret class could not be wiped (${w.failed.length} file(s)); not sealed.`);
-  const svc = cloudServices();
+  const now = svc.state.get();
+  if (now.phase !== 'quiescing' || now.epoch !== start.epoch || now.tripId !== start.tripId) {
+    throw new RouteError(409, 'seal_aborted', 'The cloud left this return while the secret class was wiped; not sealed.');
+  }
   svc.state.seal();
   svc.transfers.clearDownloads();
   servedDownloads.clear();
-  // Nothing runs on a sealed cloud.
-  void cutCloudScope(go).catch(() => { /* best effort */ });
   return { wiped: w.wiped };
 }
 
@@ -710,12 +815,31 @@ function finalizeVerdict(epoch: unknown): 'do' | 'already_done' {
   return v;
 }
 
+/**
+ * A lost-marker trip is only ever wiped or sealed AFTER its recovery snapshot was served under
+ * this epoch (D12: quiesce -> cut -> snapshot -> seal): otherwise the phone's work is destroyed.
+ */
+async function requireSnapshotIfLost(go: GoManifest, tripId: string, epoch: unknown): Promise<void> {
+  const m = await runWorkerOp<{ present: boolean; tripId?: string | null }>({ op: 'marker', params: { action: 'check', file: markerPath(go) }, timeoutMs: SMALL_OP_TIMEOUT_MS });
+  if (m.present && m.tripId === tripId) return;
+  if (cloudServices().state.get().servedEpoch !== epoch) {
+    throw new RouteError(409, 'snapshot_first', 'This trip lost its marker: its recovery snapshot must be taken under this epoch before it is wiped or sealed.');
+  }
+}
+
 const postWipeSecrets: Handler = async (req, res) => {
   const body = await readJson(req);
   const v = finalizeVerdict(body.epoch);
   const { go, tripId } = currentTrip();
+  if (v === 'do') await requireSnapshotIfLost(go, tripId, body.epoch);
   // Idempotent: sealed at this epoch re-runs the (no-op) wipe and says so.
-  const r = await wipeSecretClass(go, tripId);
+  const r = await finalizingWhile(() => wipeSecretClass(go, tripId));
+  if (r.failed.length > 0) {
+    // A partial wipe is never "done": 500 wipe_failed (the code seal answers for the same
+    // case), ok:false, the files that stayed listed.
+    sendJson(res, 500, { ok: false, error: 'wipe_failed', message: `The secret class could not be wiped (${r.failed.length} file(s)).`, wiped: r.wiped, failed: r.failed });
+    return;
+  }
   if (v === 'already_done') { sendJson(res, 200, { ok: true, alreadyDone: true, wiped: r.wiped, failed: r.failed }); return; }
   sendJson(res, 200, { ok: true, wiped: r.wiped, failed: r.failed });
 };
@@ -723,6 +847,8 @@ const postWipeSecrets: Handler = async (req, res) => {
 const postSeal: Handler = async (req, res) => {
   const body = await readJson(req);
   if (finalizeVerdict(body.epoch) === 'already_done') { sendJson(res, 200, { ok: true, alreadyDone: true, phase: 'sealed' }); return; }
+  const { go, tripId } = currentTrip();
+  await requireSnapshotIfLost(go, tripId, body.epoch);
   await wipeAndSeal();
   sendJson(res, 200, { ok: true, phase: 'sealed' });
 };
@@ -773,9 +899,18 @@ export function createCloudIdle(bootId: string, now?: () => number): CloudIdle {
       const r = svc.state.get();
       return { phase: r.phase, goingSince: r.goingSince, quiescingSince: r.quiescingSince, servedEpoch: r.servedEpoch, epoch: r.epoch, lastLaptopProgressAt: r.lastLaptopProgressAt, noRevert: r.noRevert };
     },
-    onRevert: () => { svc.state.unquiesce(); },
+    // Never while a wipe/seal runs (it would put a trip being wiped back to active).
+    onRevert: () => { if (finalizing === 0) svc.state.unquiesce(); },
     // D21: the self-seal (the 2 h quiescing cap) wipes the secret class first.
-    onSeal: async () => { await wipeAndSeal(); },
+    onSeal: async () => {
+      try {
+        await wipeAndSeal();
+      } catch (err) {
+        // A self-seal that cannot finish is visible (health: sealBlocked) and retried next tick.
+        if (!(err instanceof RouteError && err.code === 'seal_aborted')) svc.state.recordSealBlocked((err as Error).message);
+        throw err;
+      }
+    },
     publicDir: cloudPublicDir(),
     bootId,
   });

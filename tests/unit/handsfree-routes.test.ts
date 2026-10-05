@@ -27,13 +27,19 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { buildRouter } from '../../src/server/index.js';
 import {
   currentHandsfreeJob, handleHandsfreeAbandon, makeServerTurns, handleHandsfreeStatus, laptopRouteRefusal, setHandsfreeEnvForTests,
+  handleHandsfreeCut, handleHandsfreeGo, handleHandsfreePreflight,
 } from '../../src/server/routes/handsfree.js';
+import { updateConfig } from '../../src/lib/handsfree/local-store.js';
+import { readTripState } from '../../src/lib/handsfree/trip-state.js';
+import type { TurnControl } from '../../src/lib/handsfree/turns.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { FakeCloudProvider } from '../../src/lib/handsfree/provider.js';
 import { NO_TURNS, processTurnControl, under } from '../../src/lib/handsfree/turns.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HandsfreeEnv } from '../../src/lib/handsfree/orchestrator.js';
+import { FAKE_CLOUD_VERSION, fakeRegistry } from '../helpers/handsfree-fake-cloud.js';
 
 function req(o: { method?: string; url?: string; remote?: string; headers?: Record<string, string> } = {}): IncomingMessage {
   const sock = new Socket();
@@ -110,7 +116,7 @@ describe('handlers and registration', () => {
       setHandsfreeEnvForTests(() => ({
         home, run: async () => ({ code: 0, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }), provider, repo: provider,
         connect: () => { throw new Error('no cloud'); }, turns: NO_TURNS, roster: { read: () => ({ sessions: [], chatPermissionMode: 'auto', generation: 0 }), write: () => 1 },
-        templateFiles: () => ({}), localFingerprint: () => null, packRuntime: async () => '',
+        templateFiles: () => ({}), localVersion: () => '0.30.0', registryFetch: (async () => { throw new Error('no npm in this test'); }) as unknown as typeof fetch,
       }) as HandsfreeEnv);
       const r = res();
       await handleHandsfreeStatus(req(), r);
@@ -138,6 +144,7 @@ describe('handlers and registration', () => {
       ['GET', '/api/handsfree/status'], ['GET', '/api/handsfree/jobs/current'], ['GET', '/api/handsfree/receipt'], ['POST', '/api/handsfree/go'],
       ['POST', '/api/handsfree/return'], ['POST', '/api/handsfree/resume'], ['POST', '/api/handsfree/rollback'], ['POST', '/api/handsfree/abandon'],
       ['POST', '/api/handsfree/devices/revoke-all'], ['POST', '/api/handsfree/login'], ['POST', '/api/handsfree/logout'],
+      ['GET', '/api/handsfree/preflight'], ['POST', '/api/handsfree/jobs/current/cut'],
       ['POST', '/api/handsfree/cloud/seal'], ['GET', '/api/handsfree/cloud/state'],
     ] as const) {
       expect(router.match(m, p), `${m} ${p}`).not.toBeNull();
@@ -231,5 +238,137 @@ describe('D22: running work by the process tree', () => {
     const ci = process.platform === 'darwin' || process.platform === 'win32';
     expect(under(['/Users/X/App'], '/users/x/app/src')).toBe(ci);
     expect(under(['/home/u/app'], '/home/u/app2')).toBe(false);
+  });
+});
+
+describe('round 3: the process scan fails CLOSED', () => {
+  it('an lsof failure or timeout is unknown running work (never "nothing"), and Cut cannot pretend it cut it', async () => {
+    const failing = (async (cmd: string) => (cmd === 'lsof'
+      ? { code: null, signal: 'SIGKILL', stdout: Buffer.alloc(0), stderr: Buffer.from('timed out') }
+      : { code: 0, signal: null, stdout: Buffer.from('  10 1 10\n'), stderr: Buffer.alloc(0) })) as never;
+    const scan = processTurnControl(failing, { self: 10, kill: () => {} });
+    expect(await scan.list(['/home/u/app'])).toEqual([{ kind: 'process', id: 'unknown', busy: true }]);
+    expect(await scan.cut(['/home/u/app'], { all: true })).toBe(0);
+    const crashed = (async () => { throw new Error('spawn lsof ENOENT'); }) as never;
+    expect(await processTurnControl(crashed, { self: 10 }).list(['/x'])).toEqual([{ kind: 'process', id: 'unknown', busy: true }]);
+  });
+});
+
+describe('wave 3: preflight and the live Cut', () => {
+  const okRun = (async () => ({ code: 0, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) })) as never;
+  let home: string;
+  let ctx: string;
+  beforeEach(async () => {
+    home = mkdtempSync(join(tmpdir(), 'hf-routes-w3-'));
+    const vault = join(home, 'projects', 'app');
+    ctx = join(vault, '_dream_context');
+    mkdirSync(join(ctx, 'core'), { recursive: true });
+    writeFileSync(join(ctx, 'core', '0.soul.md'), 'soul '.repeat(200));
+    await updateConfig(home, (c) => ({
+      ...c, repo: { fullName: 'owner/dreamcontext-handsfree', fileShas: {} },
+      codespace: { name: 'fake-hf-1', machine: 'basicLinux32gb', url: 'http://127.0.0.1:9', webUrl: 'https://example.invalid/fake-hf-1', retentionExpiresAt: null },
+    }));
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  function envWith(o: { turns?: TurnControl; provider?: FakeCloudProvider } = {}): () => HandsfreeEnv {
+    const provider = o.provider ?? new FakeCloudProvider({ url: 'http://127.0.0.1:9' });
+    return () => ({
+      home, run: okRun, provider, repo: provider,
+      connect: () => { throw new Error('no cloud in this test'); }, turns: o.turns ?? NO_TURNS,
+      roster: { read: () => ({ sessions: [], chatPermissionMode: 'auto', generation: 0 }), write: () => 1 },
+      // D25: go looks this version up before it locks; the injected registry publishes it (never npm).
+      templateFiles: () => ({}), localVersion: () => FAKE_CLOUD_VERSION, registryFetch: fakeRegistry().fetchImpl,
+      sleep: (ms: number) => new Promise((r) => setTimeout(r, Math.min(ms, 5))), waitTimeoutMs: 10_000,
+    }) as HandsfreeEnv;
+  }
+
+  it('preflight: scope + size estimate, machine and quota, running turns; never starts anything or writes', async () => {
+    const provider = new FakeCloudProvider({ url: 'http://127.0.0.1:9' });
+    const turns: TurnControl = { list: async () => [{ kind: 'chat', id: 'c1', busy: true }], cut: async () => 0 };
+    setHandsfreeEnvForTests(envWith({ turns, provider }));
+    const r = res();
+    await handleHandsfreePreflight(req({ url: '/api/handsfree/preflight' }), r, {}, ctx);
+    expect(r.status).toBe(200);
+    const body = r.body as { roots: Array<{ kind: string; bytes: number }>; totalBytes: number; machine: Record<string, unknown>; runningTurns: unknown[]; refusal: unknown };
+    expect(body.roots).toEqual([expect.objectContaining({ kind: 'files', bytes: 1000 })]);
+    expect(body.totalBytes).toBe(1000);
+    expect(body.machine).toMatchObject({ name: 'basicLinux32gb', needBytes: 1300, quotaSource: 'laptop', running: false });
+    expect(body.runningTurns).toEqual([{ kind: 'chat', id: 'c1', busy: true }]);
+    expect(body.refusal).toBeNull();
+    expect(provider.calls).toEqual([]); // no create, no start
+    expect(readTripState(home).phase).toBe('home');
+
+    const noVault = res();
+    await handleHandsfreePreflight(req({ url: '/api/handsfree/preflight' }), noVault, {}, null);
+    expect(noVault.status).toBe(400);
+    const tailnet = res();
+    await handleHandsfreePreflight(req({ url: '/api/handsfree/preflight', remote: '100.64.0.2' }), tailnet, {}, ctx);
+    expect(tailnet.status).toBe(403);
+  });
+
+  it('preflight: a provider that throws synchronously (not signed in to GitHub) is a warning, never a 500', async () => {
+    const provider = new FakeCloudProvider({ url: 'http://127.0.0.1:9' });
+    const boom = () => { throw new Error('hands-free mode is not signed in to GitHub'); };
+    Object.assign(provider, { get: boom, machineTypes: boom, remainingQuotaCoreMinutes: boom });
+    setHandsfreeEnvForTests(envWith({ provider }));
+    const r = res();
+    await handleHandsfreePreflight(req({ url: '/api/handsfree/preflight' }), r, {}, ctx);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ refusal: null, machine: { freeBytes: null, quotaSource: 'laptop' } });
+    expect((r.body as { warnings: string[] }).warnings.join(' ')).toMatch(/not signed in/);
+  });
+
+  it('preflight refuses when the trip does not fit the disk (names a bigger machine) and when not set up', async () => {
+    const provider = new FakeCloudProvider({ url: 'http://127.0.0.1:9', types: [
+      { name: 'basicLinux32gb', cpus: 2, storageBytes: 21 * 2 ** 30 + 100 },
+      { name: 'premiumLinux', cpus: 8, storageBytes: 64 * 2 ** 30 },
+    ] });
+    setHandsfreeEnvForTests(envWith({ provider }));
+    const r = res();
+    await handleHandsfreePreflight(req({ url: '/api/handsfree/preflight' }), r, {}, ctx);
+    expect(r.body).toMatchObject({ refusal: { code: 'disk', detail: { biggerMachine: 'premiumLinux' } } });
+
+    await updateConfig(home, (c) => { const { codespace: _gone, ...rest } = c; return rest as typeof c; });
+    const r2 = res();
+    await handleHandsfreePreflight(req({ url: '/api/handsfree/preflight' }), r2, {}, ctx);
+    expect(r2.body).toMatchObject({ refusal: { code: 'not_setup' }, machine: null });
+  });
+
+  it('jobs/current/cut: 409 not_waiting with no waiting job; a go waiting on a running turn cuts it once asked', async () => {
+    const idle = res();
+    await handleHandsfreeCut(req({ method: 'POST', url: '/api/handsfree/jobs/current/cut' }), idle);
+    expect(idle.status).toBe(409);
+    expect(idle.body).toMatchObject({ error: 'not_waiting' });
+
+    const cuts: boolean[] = [];
+    let busy = true;
+    const turns: TurnControl = {
+      list: async () => (busy ? [{ kind: 'chat', id: 'c1', busy: true }] : []),
+      cut: async (_r, o) => { cuts.push(o.all); if (o.all) busy = false; return o.all ? 1 : 0; },
+    };
+    setHandsfreeEnvForTests(envWith({ turns }));
+    const goReq = req({ method: 'POST', url: '/api/handsfree/go' });
+    setImmediate(() => { goReq.push('{}'); goReq.push(null); });
+    const started = res();
+    await handleHandsfreeGo(goReq, started, {}, ctx);
+    expect(started.status).toBe(202);
+    const deadline = Date.now() + 10_000;
+    while (currentHandsfreeJob()?.step !== 'waiting' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    expect(currentHandsfreeJob()).toMatchObject({ kind: 'go', status: 'running', step: 'waiting', running: [{ id: 'c1' }] });
+    expect(cuts).toEqual([]);
+
+    const cut = res();
+    await handleHandsfreeCut(req({ method: 'POST', url: '/api/handsfree/jobs/current/cut' }), cut);
+    expect(cut.status).toBe(200);
+    while (currentHandsfreeJob()?.status === 'running' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    expect(cuts).toContain(true);
+    // Past the cut the go needs the (absent) cloud: it fails and unlocks, home again.
+    expect(currentHandsfreeJob()?.status).toBe('error');
+    expect(readTripState(home).phase).toBe('home');
+
+    const after = res();
+    await handleHandsfreeCut(req({ method: 'POST', url: '/api/handsfree/jobs/current/cut' }), after);
+    expect(after.status).toBe(409);
   });
 });

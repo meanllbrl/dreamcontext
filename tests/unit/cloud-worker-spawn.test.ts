@@ -131,5 +131,62 @@ describe('cloud worker over the real wire', () => {
       for (const c of [tree, stubborn, bystander]) { try { process.kill(-c.pid!, 'SIGKILL'); } catch { /* gone */ } }
     }
   }, 60_000);
+
+  it('the wipe walks into collapsed ignored dirs, wipes never-travel secrets too, keeps tracked and dependency files (D21a)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { existsSync } = await import('node:fs');
+    const root = join(dir, 'wipe-root');
+    mkdirSync(join(root, 'config', 'deep'), { recursive: true });
+    mkdirSync(join(root, '_dream_context', 'lab'), { recursive: true });
+    mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const g = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...a], { cwd: root, env });
+    g('init', '-q');
+    writeFileSync(join(root, '.gitignore'), 'config/\nnode_modules/\n_dream_context/lab/\n');
+    writeFileSync(join(root, '.env.example'), 'TRACKED=1\n');
+    g('add', '.gitignore', '.env.example');
+    g('commit', '-q', '-m', 'init');
+    writeFileSync(join(root, 'config', '.env'), 'SECRET=1\n');
+    writeFileSync(join(root, 'config', 'deep', 'server.pem'), 'pem');
+    writeFileSync(join(root, '_dream_context', 'lab', 'credentials.json'), '{}');
+    writeFileSync(join(root, 'node_modules', 'pkg', 'ca.pem'), 'dependency cert');
+    writeFileSync(join(root, '.env'), 'UNTRACKED=1\n');
+    const r = await runWorkerOp<{ wiped: number; failed: string[] }>({
+      op: 'wipe-secrets',
+      params: { gitConfigPath: '/dev/null', workDir: join(dir, 'work'), mirrorPrefix: null, roots: [{ root, rootKind: 'repo' }] },
+      timeoutMs: 60_000,
+    });
+    expect(r.failed).toEqual([]);
+    expect(existsSync(join(root, 'config', '.env'))).toBe(false);
+    expect(existsSync(join(root, 'config', 'deep', 'server.pem'))).toBe(false);
+    expect(existsSync(join(root, '_dream_context', 'lab', 'credentials.json'))).toBe(false);
+    expect(existsSync(join(root, '.env'))).toBe(false);
+    expect(existsSync(join(root, '.env.example'))).toBe(true); // tracked: Transport 1's, back next go
+    expect(existsSync(join(root, 'node_modules', 'pkg', 'ca.pem'))).toBe(true); // the bound: dependencies
+    expect(r.wiped).toBe(4);
+  }, 60_000);
+
+  it('a dir the walk cannot read fails the wipe instead of keeping its .env silently (D20, D21a)', async () => {
+    const { chmodSync, existsSync } = await import('node:fs');
+    const root = join(dir, 'wipe-unreadable');
+    mkdirSync(join(root, 'config'), { recursive: true });
+    mkdirSync(join(root, 'nested', '.git'), { recursive: true }); // a nested repo's own .git: not a refusal
+    writeFileSync(join(root, 'config', '.env'), 'SECRET=1\n');
+    writeFileSync(join(root, '.env'), 'TOP=1\n');
+    chmodSync(join(root, 'config'), 0o000);
+    try {
+      const r = await runWorkerOp<{ wiped: number; failed: string[] }>({
+        op: 'wipe-secrets',
+        params: { gitConfigPath: '/dev/null', workDir: join(dir, 'work'), mirrorPrefix: null, roots: [{ root, rootKind: 'vault' }] },
+        timeoutMs: 60_000,
+      });
+      expect(r.failed).toEqual(['config']);
+      expect(r.wiped).toBe(1);
+      expect(existsSync(join(root, '.env'))).toBe(false);
+    } finally {
+      chmodSync(join(root, 'config'), 0o755);
+    }
+    expect(existsSync(join(root, 'config', '.env'))).toBe(true); // kept, and now reported
+  }, 60_000);
 });
 

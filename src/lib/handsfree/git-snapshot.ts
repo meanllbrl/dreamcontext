@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync } from 'node:fs';
-import { linkStaysHome, symlinkTargetInside } from './paths.js';
+import { foldPath, linkStaysHome, symlinkTargetInside } from './paths.js';
 import { join, relative, resolve, sep } from 'node:path';
 
 // ---------------------------------------------------------------- PINNED runner contract
@@ -416,6 +416,25 @@ export async function gitPreflight(run: ProcessRunner, checkout: string, o: { si
   if (promisor.code === 0 && promisor.stdout.toString().trim()) problems.push({ kind: 'partial', detail: 'partial clone' });
   if (existsSync(join(checkout, '.gitmodules'))) problems.push({ kind: 'submodule', detail: '.gitmodules present' });
   const staged = await gitOut(run, checkout, ['ls-files', '-s', '-z']);
+  if (side === 'laptop') {
+    // Two tracked paths that differ only by case or Unicode normalization are ONE path on this
+    // laptop's filesystem (APFS/HFS+): they cannot round-trip (the cloud holds both, the laptop
+    // one), so the go equality check could never hold. Refused up front, naming both.
+    // (git on macOS may print an NFD entry precomposed, so two stage-0 entries that PRINT the
+    // same are the same collision.)
+    const byKey = new Map<string, { path: string; stage: string }>();
+    for (const rec of staged.split('\0')) {
+      if (!rec) continue;
+      const tab = rec.indexOf('\t');
+      const stage = rec.slice(0, tab).split(' ')[2] ?? '0';
+      const path = rec.slice(tab + 1);
+      const key = foldPath(path);
+      const other = byKey.get(key);
+      if (other !== undefined && (other.path !== path || (other.stage === '0' && stage === '0'))) {
+        problems.push({ kind: 'bad_path', detail: `"${other.path}" and "${path}" are the same path on this laptop (they differ only by case or Unicode normalization): rename or remove one of them (git mv), commit, then try again`, path });
+      } else if (!other) byKey.set(key, { path, stage });
+    }
+  }
   for (const rec of staged.split('\0')) {
     if (rec.startsWith('160000 ')) problems.push({ kind: 'submodule', detail: 'gitlink in the index', path: rec.slice(rec.indexOf('\t') + 1) });
   }

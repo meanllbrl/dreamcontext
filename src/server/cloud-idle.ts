@@ -111,6 +111,13 @@ export class CloudIdle {
   private busySeen = new Set<string>();
   private stopWritten = false;
   private sealing: Promise<void> | null = null;
+  private lastStopAt: number | null = null;
+
+  /** The stop time the last tick computed (epoch ms), or null before the first tick. A pure
+   *  read: the phone's chip shows it, and reading it never moves the clock. */
+  plannedStopAt(): number | null {
+    return this.lastStopAt;
+  }
 
   /** The self-seal in flight, if any (tests wait on it). */
   sealInFlight(): Promise<void> | null {
@@ -203,6 +210,7 @@ export class CloudIdle {
         .finally(() => { this.sealing = null; });
     }
     const stopAt = computeStopAt(this.inputs());
+    this.lastStopAt = stopAt;
     // Never stop while the self-seal is still wiping: a stopped cloud must not keep secrets.
     if (this.now() >= stopAt && !this.stopWritten && !this.sealing) {
       writeStopRequest(this.deps.publicDir, this.bootId(), Math.floor(this.now() / 1000));

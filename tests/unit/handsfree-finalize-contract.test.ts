@@ -19,9 +19,9 @@ import { CloudStateStore } from '../../src/server/cloud-state.js';
 import { TransferStore } from '../../src/server/cloud-transfers.js';
 import { setWorkerInProcessForTests } from '../../src/server/cloud-worker.js';
 import { rootIdFor, type GoManifest } from '../../src/lib/handsfree/manifest.js';
-import { CloudUnreachableError, HttpCloudClient, type CloudClient, type CloudHealth } from '../../src/lib/handsfree/cloud-client.js';
+import { CloudError, CloudUnreachableError, HttpCloudClient, type CloudClient, type CloudHealth } from '../../src/lib/handsfree/cloud-client.js';
 import { ensureCloudSealed } from '../../src/lib/handsfree/orchestrator.js';
-import { fakeFinalize, fakeFinalizeVerdict, fakeSelfSeal, type FakePhaseRecord } from '../helpers/handsfree-fake-cloud-state.js';
+import { fakeFinalize, fakeFinalizeVerdict, fakeMarkerVerdict, fakeQuiesce, fakeRequireSnapshotIfLost, fakeSelfSeal, type FakePhaseRecord } from '../helpers/handsfree-fake-cloud-state.js';
 
 const TRIP = 't-20261004-c0ffee01';
 const LAPTOP = 'lp-contract';
@@ -35,6 +35,10 @@ interface Harness {
   selfSeal(): Promise<void>;
   /** A newer quiesce of the same trip (the cloud moved past our epoch). */
   moveEpoch(): Promise<void>;
+  /** The mirror loses the trip marker. */
+  loseMarker(): Promise<void>;
+  /** The trip's folders are not on the cloud machine (an unmounted mirror). */
+  removeRoots(): Promise<void>;
   secretPresent(): boolean;
   phase(): string;
   close(): Promise<void>;
@@ -46,6 +50,9 @@ function fakeHarness(): Harness {
   const r: FakePhaseRecord & { tripId: string | null } = { phase: 'sealed', epoch: 0, sealedEpoch: null, tripId: null };
   let secret = false;
   let lose = false;
+  let markerLost = false;
+  let rootsPresent = true;
+  let servedEpoch: number | null = null;
   const wipe = () => { secret = false; };
   const client = {
     async health(): Promise<CloudHealth> {
@@ -53,9 +60,21 @@ function fakeHarness(): Harness {
     },
     async wipeSecrets(epoch: number) { await fakeFinalize(r, 'wipe-secrets', epoch, wipe); },
     async seal(epoch: number) {
+      if (fakeFinalizeVerdict(r, epoch) === 'do') fakeRequireSnapshotIfLost({ markerLost, servedEpoch, epoch });
       await fakeFinalize(r, 'seal', epoch, wipe);
       if (lose) { lose = false; throw new CloudUnreachableError('reply lost'); }
     },
+    async quiesce(tripId: string, recovery?: boolean) {
+      if (tripId !== r.tripId) throw new CloudError(409, 'trip_mismatch', 'other trip');
+      return { ...fakeQuiesce(r, { markerLost, recovery: !!recovery, rootsPresent }), running: [] };
+    },
+    async snapshot(b: { epoch: number; tolerant?: boolean }) {
+      if (fakeFinalizeVerdict(r, b.epoch) !== 'do') throw new CloudError(409, 'epoch_mismatch', 'epoch');
+      fakeMarkerVerdict({ markerLost, recovery: !!b.tolerant, rootsPresent });
+      servedEpoch = b.epoch;
+      return { epoch: b.epoch, roots: [] };
+    },
+    async cut() {},
   } as unknown as CloudClient;
   return {
     client,
@@ -63,6 +82,8 @@ function fakeHarness(): Harness {
     loseNextSealReply() { lose = true; },
     async selfSeal() { await fakeSelfSeal(r, wipe); },
     async moveEpoch() { r.epoch++; r.phase = 'quiescing'; },
+    async loseMarker() { markerLost = true; },
+    async removeRoots() { rootsPresent = false; },
     secretPresent: () => secret,
     phase: () => r.phase,
     async close() {},
@@ -135,6 +156,9 @@ async function realHarness(): Promise<Harness> {
     loseNextSealReply() { lose = true; },
     async selfSeal() { await wipeAndSeal(); },
     async moveEpoch() { const q = state.quiesce(TRIP); if (!q.ok) throw new Error('quiesce'); },
+    // This harness starts the trip through the store, so the mirror never got a marker: lost.
+    async loseMarker() { rmSync(join(mirror, HOME, '.dreamcontext-handsfree-trip.json'), { force: true }); },
+    async removeRoots() { rmSync(join(mirror, PROJ), { recursive: true, force: true }); },
     secretPresent: () => existsSync(secretFile),
     phase: () => state.get().phase,
     async close() {
@@ -195,6 +219,35 @@ for (const [name, make] of [['fake rules', async () => fakeHarness()], ["lane D'
       await h.moveEpoch();
       expect(await ensureCloudSealed(h.client, TRIP, e)).toEqual({ kind: 'delta' });
       expect(h.phase()).toBe('quiescing');
+    });
+
+    it('a lost trip marker: a normal quiesce is trip_lost; a recovery quiesce answers tripLost, then cut + seal: sealed, secrets gone', async () => {
+      h = await make();
+      await h.begin();
+      await h.loseMarker();
+      await expect(h.client.quiesce(TRIP)).rejects.toMatchObject({ code: 'trip_lost' });
+      const q = await h.client.quiesce(TRIP, true);
+      expect(q.tripLost).toBe(true);
+      await h.client.cut(q.epoch);
+      // The recovery snapshot comes BEFORE the seal: never sealed first; a tolerant snapshot is accepted, a normal one not.
+      await expect(h.client.seal(q.epoch)).rejects.toMatchObject({ code: 'snapshot_first' });
+      await expect(h.client.snapshot({ epoch: q.epoch, knownTips: {} })).rejects.toMatchObject({ code: 'trip_lost' });
+      expect(await h.client.snapshot({ epoch: q.epoch, tolerant: true, knownTips: {} })).toMatchObject({ epoch: q.epoch });
+      expect(await ensureCloudSealed(h.client, TRIP, q.epoch)).toEqual({ kind: 'sealed' });
+      expect(h.phase()).toBe('sealed');
+      expect(h.secretPresent()).toBe(false);
+      expect((await h.client.health()).sealedEpoch).toBe(q.epoch);
+    }, 120_000);
+
+    it('a lost marker with the roots ABSENT: the recovery quiesce and snapshot refuse mirror_absent; nothing is quiesced, snapshotted or sealed', async () => {
+      h = await make();
+      const e = await h.begin();
+      await h.loseMarker();
+      await h.removeRoots();
+      await expect(h.client.quiesce(TRIP, true)).rejects.toMatchObject({ code: 'mirror_absent' });
+      await expect(h.client.snapshot({ epoch: e, tolerant: true, knownTips: {} })).rejects.toMatchObject({ code: 'mirror_absent' });
+      expect(h.phase()).toBe('quiescing');
+      expect((await h.client.health()).sealedEpoch).toBeNull();
     });
   });
 }

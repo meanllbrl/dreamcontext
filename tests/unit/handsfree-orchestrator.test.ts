@@ -22,14 +22,15 @@ import {
   type Manifest, type ManifestEntry,
 } from '../../src/lib/handsfree/manifest.js';
 import { readPack, writePack } from '../../src/lib/handsfree/pack.js';
-import { fakeFinalize, fakeUnquiesce } from '../helpers/handsfree-fake-cloud-state.js';
+import { createFakeCloud, FAKE_CLOUD_VERSION, FAKE_INTEGRITY, fakeRegistry, type FakeCloud } from '../helpers/handsfree-fake-cloud.js';
 import { CloudError, CloudUnreachableError, PortPrivateError, manifestDigest, type GitReceiveBody, type CloudClient, type CloudHealth, type CloudPhaseName, type RunningTurn, type SnapshotRoot } from '../../src/lib/handsfree/cloud-client.js';
-import { FakeCloudProvider, ProviderQuotaError } from '../../src/lib/handsfree/provider.js';
+import { FakeCloudProvider, gitBlobSha, ProviderQuotaError } from '../../src/lib/handsfree/provider.js';
+import { PIN_PATH, pinFile } from '../../src/lib/handsfree/npm-pin.js';
 import {
   abandonTrip, go, HandsfreeError, resumeTrip, returnTrip, rollbackTrip, setup, status, type HandsfreeEnv,
 } from '../../src/lib/handsfree/orchestrator.js';
 import { readTripState } from '../../src/lib/handsfree/trip-state.js';
-import { readConfig } from '../../src/lib/handsfree/local-store.js';
+import { readConfig, updateConfig } from '../../src/lib/handsfree/local-store.js';
 import { acquireTripRunLock, journalPath, tripDir, loadJournal } from '../../src/lib/handsfree/journal.js';
 import { NO_TURNS, type TurnControl } from '../../src/lib/handsfree/turns.js';
 import { readRosterSurface, writeMergedRosterSurface } from '../../src/server/routes/agent-sessions.js';
@@ -63,223 +64,6 @@ function gitState(repo: string) {
 
 // ---------------------------------------------------------------- the fake cloud (lane D's semantics)
 
-class FakeCloud implements CloudClient {
-  readonly origin = 'https://fake-hf-1-8080.app.github.dev';
-  phase: CloudPhaseName = 'sealed';
-  tripId: string | null = null;
-  laptopId: string | null = null;
-  epoch = 0;
-  superseded: string[] = [];
-  verifierGeneration = 0;
-  lost = false;
-  running: RunningTurn[] = [];
-  goM: GoManifest | null = null;
-  recorded = new Map<string, ManifestEntry[]>();
-  agreedGit = new Map<string, RepoSnapshot>();
-  uploads = new Map<string, string>();
-  downloads = new Map<string, string>();
-  /** Runs right before seal answers (the phone wakes it after the snapshot). */
-  beforeSeal: (() => void) | null = null;
-  preflightProblem: string | null = null;
-  includes: Record<string, string[]> = {};
-  gitBodies: Array<Omit<GitReceiveBody, 'snapshot'>> = [];
-  mirrorPending = 0;
-  sealedEpoch: number | null = null;
-  loseSealReply = false;
-  privateTimes = 0;
-  beforeWipe: (() => void) | null = null;
-  failWipe: Error | null = null;
-  forged: SnapshotRoot | null = null;
-  calls: string[] = [];
-  private n = 0;
-
-  constructor(private readonly scratch: string) {
-    mkdirSync(join(scratch, 'up'), { recursive: true });
-    mkdirSync(join(scratch, 'dl'), { recursive: true });
-  }
-
-  markStarted(): void {}
-  async publicHealth() {
-    if (this.privateTimes > 0) { this.privateTimes--; throw new PortPrivateError(this.origin); }
-    return { version: '0', fingerprint: 'fp' };
-  }
-  async health(): Promise<CloudHealth> {
-    return { version: '0', fingerprint: 'fp', phase: this.phase, tripId: this.tripId, laptopId: this.laptopId, epoch: this.epoch, verifierGeneration: this.verifierGeneration, supersededLaptopIds: this.superseded, sealedEpoch: this.sealedEpoch };
-  }
-  async uploadFile(path: string) {
-    const id = `up-${String(++this.n).padStart(8, '0')}`;
-    copyFileSync(path, join(this.scratch, 'up', id));
-    this.uploads.set(id, join(this.scratch, 'up', id));
-    return id;
-  }
-  async downloadTo(blob: { id: string; size: number; sha256: string }, path: string) {
-    const src = this.downloads.get(blob.id)!;
-    copyFileSync(src, path);
-    if (createHash('sha256').update(readFileSync(path)).digest('hex') !== blob.sha256) throw new Error('bad download');
-  }
-  private blob(path: string) {
-    const id = `dl-${String(++this.n).padStart(8, '0')}`;
-    this.downloads.set(id, path);
-    const b = readFileSync(path);
-    return { id, size: b.length, sha256: createHash('sha256').update(b).digest('hex') };
-  }
-  async verifiers(push: { generation: number }) { this.verifierGeneration = push.generation; return { ok: true as const, generation: push.generation, changed: true }; }
-  async revokeAll(generation: number) { this.verifierGeneration = generation; return { ok: true as const, generation, changed: true }; }
-  async runtime() {}
-  async trip(b: { tripId: string; laptopId: string; go: GoManifest; takeOver?: boolean; includes: Record<string, string[]> }) {
-    this.calls.push('trip');
-    if (this.mirrorPending > 0) { this.mirrorPending--; throw new CloudUnreachableError('503 mirror_pending', 'mirror_pending'); }
-    this.includes = JSON.parse(JSON.stringify(b.includes));
-    if (this.phase !== 'sealed') throw new CloudError(409, 'not_sealed', 'not sealed');
-    if (b.takeOver && this.laptopId && this.laptopId !== b.laptopId) this.superseded.push(this.laptopId);
-    this.tripId = b.tripId;
-    this.laptopId = b.laptopId;
-    this.goM = JSON.parse(JSON.stringify(b.go));
-    this.lost = false;
-  }
-  spec(rootId: string) {
-    const s = this.goM!.roots.find((r) => r.rootId === rootId);
-    if (!s) throw new CloudError(404, 'unknown_root', rootId);
-    return s;
-  }
-  async currentFiles(rootId: string) {
-    const s = this.spec(rootId);
-    const r = toCloud(s.absPath);
-    if (!existsSync(r)) return { manifest: new Map() as Manifest, refused: [] as Array<{ path: string; reason: string }> };
-    const sel = s.kind === 'transcripts' ? walk(r, [''], { side: 'cloud' }) : await selectNonGitEntries(run, r, { isGitRepo: s.kind === 'repo', side: 'cloud', include: this.includes[rootId] ?? [] });
-    const refused = [...sel.refused];
-    return { manifest: await buildManifest(r, sel.entries, undefined, refused), refused };
-  }
-  async state(rootId: string) {
-    const s = this.spec(rootId);
-    if (s.kind === 'repo') {
-      const c = toCloud(s.absPath);
-      return { kind: 'repo' as const, snapshot: null, baseTips: existsSync(join(c, '.git')) ? await baseTips(run, c) : [] };
-    }
-    return { kind: 'files' as const, manifest: manifestToJSON((await this.currentFiles(rootId)).manifest) };
-  }
-  async gitReceive(b: GitReceiveBody) {
-    const s = this.spec(b.rootId);
-    const C = toCloud(s.absPath);
-    this.gitBodies.push(JSON.parse(JSON.stringify({ ...b, snapshot: null })));
-    if (!existsSync(join(C, '.git'))) { mkdirSync(C, { recursive: true }); sh(C, 'init', '-q'); }
-    // v1.1: the GENERATED .git/info/ and remotes (a URL that still carries userinfo is refused).
-    for (const k of ['exclude', 'attributes'] as const) {
-      if (b.info[k] !== undefined) { mkdirSync(join(C, '.git', 'info'), { recursive: true }); writeFileSync(join(C, '.git', 'info', k), b.info[k]!); }
-    }
-    for (const r of b.remotes) {
-      if (/^[a-z][a-z0-9+.-]*:\/\/[^/]*@/i.test(r.url) || /^[^/@:]+@[^/:]+:/.test(r.url)) throw new CloudError(400, 'bad_remote', 'userinfo');
-      try { sh(C, 'remote', 'set-url', r.name, r.url); } catch { sh(C, 'remote', 'add', r.name, r.url); }
-    }
-    // A merge left in progress (already captured by the D12 recovery) is cleared before S lands.
-    if (existsSync(join(C, '.git', 'MERGE_HEAD'))) sh(C, 'merge', '--abort');
-    // Reach S from whatever the cloud holds NOW (the phone may have worked since the last trip).
-    const hasHead = (() => { try { sh(C, 'rev-parse', '-q', '--verify', 'HEAD'); return true; } catch { return false; } })();
-    const current = hasHead ? await snapshotRepo(run, C, { trip: b.tripId, side: 'cloud', checkoutIdFor: cloudId, writeRefs: false }) : null;
-    const fetched = b.uploadId ? await fetchBundle(run, C, this.uploads.get(b.uploadId)!, { trip: b.tripId, acceptRemotes: true }) : {};
-    const incoming = parseRepoSnapshot(JSON.parse(JSON.stringify(b.snapshot)), b.tripId);
-    await verifyIncoming(run, C, incoming, fetched);
-    const plan = await planRepoApply(run, {
-      repoPath: C, trip: b.tripId, incoming, fetched, receiverStart: current, receiverNow: null,
-      localCheckouts: { [cloudId(C)]: C }, policy: 'overwrite', strict: false,
-    });
-    const h = gitOpHandlers(run, { tripDir: join(this.scratch, 'trips', b.tripId) });
-    for (const op of plan.ops) await h[op.kind].apply({ ...op, state: 'pending' } as JournalOp);
-    if (incoming.remoteRefs) await applyRemoteRefs(run, C, incoming.remoteRefs);
-    const cs = await snapshotRepo(run, C, { trip: b.tripId, side: 'cloud', checkoutIdFor: cloudId });
-    this.agreedGit.set(b.rootId, cs);
-    await setBaseRefs(run, C, Object.fromEntries(Object.values(cs.refs).map((o, i) => [`refs/handsfree/base/c${i}`, o])));
-    return { snapshotId: snapshotId(cs) };
-  }
-  async filesReceive(b: { tripId: string; rootId: string; uploadId?: string; expected: ManifestEntry[] }) {
-    const s = this.spec(b.rootId);
-    const r = toCloud(s.absPath);
-    mkdirSync(r, { recursive: true });
-    const incoming = manifestFromJSON(b.expected);
-    const now = (await this.currentFiles(b.rootId)).manifest;
-    const plan = planMirror(now, incoming);
-    const res = await applyPack(() => createReadStream(this.uploads.get(b.uploadId!)!), {
-      root: r, plan, expected: now, incoming, conflictsDir: join(this.scratch, 'conf'), backup: new BackupStore(join(this.scratch, 'bk', b.rootId, String(++this.n))),
-      policy: 'overwrite', maxBytes: 1 << 30,
-    });
-    this.recorded.set(b.rootId, b.expected);
-    const after = (await this.currentFiles(b.rootId)).manifest;
-    return { refused: res.refused, digest: manifestDigest(after.values()) };
-  }
-  async global(uploadId: string) { await readPack(createReadStream(this.uploads.get(uploadId)!), async () => {}, { maxBytes: 1 << 30 }); }
-  async activate() { this.phase = 'active'; }
-  async quiesce(tripId: string) {
-    this.calls.push('quiesce');
-    if (this.lost) throw new CloudError(409, 'trip_lost', 'trip marker missing');
-    if (tripId !== this.tripId) throw new CloudError(409, 'trip_mismatch', 'other trip');
-    this.phase = 'quiescing';
-    this.epoch++;
-    return { epoch: this.epoch, running: this.running };
-  }
-  async cut() { this.running = []; }
-  async unquiesce() { this.calls.push('unquiesce'); fakeUnquiesce(this); }
-  async snapshot(b: { epoch: number; tolerant?: boolean; knownTips: Record<string, string[]> }) {
-    if (this.lost) throw new CloudError(409, 'trip_lost', 'trip marker missing');
-    if (b.epoch !== this.epoch) throw new CloudError(409, 'epoch_mismatch', 'epoch');
-    if (this.preflightProblem) throw new CloudError(409, 'preflight', 'preflight', { problems: [this.preflightProblem] });
-    const trip = this.tripId!;
-    const roots: SnapshotRoot[] = [];
-    for (const s of this.goM!.roots.filter((x) => x.kind === 'repo')) {
-      const C = toCloud(s.absPath);
-      const cs = await snapshotRepo(run, C, { trip, side: 'cloud', checkoutIdFor: cloudId, tolerant: !!b.tolerant });
-      const out = join(this.scratch, 'dl', `${++this.n}.bundle`);
-      const made = await createBundle(run, C, { refs: snapshotBundleRefs(cs), knownTips: b.knownTips[s.rootId] ?? [], out });
-      // v1.1: worktrees created in the cloud (absolute paths) + their transcript dirs, keyed by rootIdFor(path).
-      const added = cs.checkouts.filter((c) => !c.isMain).map((c) => toLaptop(c.path));
-      roots.push({ rootId: s.rootId, kind: 'repo', snapshot: JSON.parse(JSON.stringify(cs)), worktreesAdded: added, ...(made.created ? { bundle: this.blob(out) } : {}) });
-      for (const lp of added) {
-        const tdir = join(cloudHome, '.claude', 'projects', encodeProjectDir(lp));
-        if (!existsSync(tdir)) continue;
-        const m = await buildManifest(tdir, walk(tdir, [''], { side: 'cloud' }).entries);
-        const out2 = join(this.scratch, 'dl', `${++this.n}.pack`);
-        await writePack(createWriteStream(out2), { root: tdir, entries: m.values() });
-        roots.push({ rootId: rootIdFor(lp), kind: 'files', manifest: manifestToJSON(m), refused: [], pack: this.blob(out2) });
-      }
-    }
-    if (this.forged) roots.push(this.forged);
-    for (const s of this.goM!.roots) {
-      const { manifest, refused } = await this.currentFiles(s.rootId);
-      const atGo = manifestFromJSON(this.recorded.get(s.rootId) ?? []);
-      const changed = [...manifest.values()].filter((e) => !sameContent(atGo.get(e.path), e));
-      const deletions = [...atGo.keys()].filter((p) => !manifest.has(p));
-      let pack;
-      if (changed.length || deletions.length) {
-        const out = join(this.scratch, 'dl', `${++this.n}.pack`);
-        await writePack(createWriteStream(out), { root: toCloud(s.absPath), entries: changed, deletions });
-        pack = this.blob(out);
-      }
-      roots.push({ rootId: s.rootId, kind: 'files', manifest: manifestToJSON(manifest), refused, ...(pack ? { pack } : {}) });
-    }
-    return { epoch: b.epoch, roots };
-  }
-  async doWipe() {
-    for (const s of this.goM!.roots) {
-      const { manifest } = await this.currentFiles(s.rootId);
-      for (const p of manifest.keys()) if (isSecretClass(p)) rmSync(join(toCloud(s.absPath), p), { force: true });
-    }
-  }
-  // Lane D's D21 rules (tests/helpers/handsfree-fake-cloud-state.ts, held to the real store by
-  // handsfree-finalize-contract.test.ts).
-  async wipeSecrets(epoch: number) {
-    this.calls.push('wipe');
-    if (this.failWipe) { const e = this.failWipe; this.failWipe = null; throw e; }
-    if (this.beforeWipe) { const f = this.beforeWipe; this.beforeWipe = null; f(); }
-    return fakeFinalize(this, 'wipe-secrets', epoch, () => this.doWipe());
-  }
-  async seal(epoch: number) {
-    this.calls.push('seal');
-    if (this.beforeSeal) { const f = this.beforeSeal; this.beforeSeal = null; f(); }
-    await fakeFinalize(this, 'seal', epoch, () => this.doWipe());
-    if (this.loseSealReply) { this.loseSealReply = false; throw new CloudUnreachableError('the reply was lost'); }
-  }
-  async accounts() { return [{ id: 'main', label: 'main', signedIn: false }]; }
-}
-
 // ---------------------------------------------------------------- fixtures
 
 let vault: string;
@@ -292,7 +76,7 @@ function makeEnv(over: Partial<HandsfreeEnv> = {}): HandsfreeEnv {
     home: laptopHome, run, provider, repo: provider, connect: () => fake, turns: NO_TURNS,
     roster: { read: readRosterSurface, write: writeMergedRosterSurface },
     templateFiles: () => ({ '.devcontainer/devcontainer.json': Buffer.from('{"name":"hf"}\n') }),
-    localFingerprint: () => 'fp', packRuntime: async () => { throw new Error('no pack in tests'); },
+    localVersion: () => FAKE_CLOUD_VERSION, registryFetch: fakeRegistry().fetchImpl,
     claudeProjectsDir: join(laptopHome, '.claude', 'projects'), sleep: async () => {}, healthTimeoutMs: 1000,
     ...over,
   };
@@ -340,7 +124,7 @@ beforeEach(async () => {
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('GIT_')) gitenv[k] = v;
   Object.assign(gitenv, { HOME: root, GIT_CONFIG_GLOBAL: cfg, GIT_CONFIG_NOSYSTEM: '1' });
   run = createSpawnRunner({ baseEnv: gitenv });
-  fake = new FakeCloud(join(root, 'fake'));
+  fake = createFakeCloud({ run, laptopHome, cloudHome, gitenv, scratch: join(root, 'fake') });
   provider = new FakeCloudProvider({ url: fake.origin });
   makeVault();
   await setup(makeEnv(), { token: 'gho_test', login: 'owner' });
@@ -646,6 +430,50 @@ describe('quota and the run lock', () => {
     expect(cuts).toBe(1);
     expect(readTripState(laptopHome).phase).toBe('away');
   });
+
+  it('live Cut (shouldCut): a go already waiting cuts on its next round once the owner chooses Cut', async () => {
+    let cuts = 0;
+    let busy = true;
+    let asked = false;
+    const turns: TurnControl = {
+      list: async () => (busy ? [{ kind: 'chat', id: 'c1', busy: true }] : []),
+      cut: async (_r, o) => { if (o.all) { cuts++; busy = false; } return o.all ? 1 : 0; },
+    };
+    const waits: string[] = [];
+    const env = makeEnv({ turns, waitTimeoutMs: 5_000 });
+    const onProgress = (e: { step: string }) => { if (e.step === 'waiting') { waits.push(e.step); asked = true; } };
+    await go(env, { contextRoot: ctx, onProgress, shouldCut: () => asked });
+    expect(waits).toHaveLength(1);
+    expect(cuts).toBe(1);
+    expect(readTripState(laptopHome).phase).toBe('away');
+  });
+
+  it('a return waiting on the phone reports what runs there in the job shape go uses (running[])', async () => {
+    const env = makeEnv({ waitTimeoutMs: 5_000 });
+    await go(env, { contextRoot: ctx });
+    fake.running = [{ conversationId: 'phone-1', startedAt: 0 }, { conversationId: '', startedAt: 0, pid: 4242, command: 'npm test' }];
+    const seen: unknown[] = [];
+    const onProgress = (e: { step: string; running?: unknown[] }) => { if (e.step === 'waiting') seen.push(e.running); };
+    const r = await returnTrip(env, { onProgress, shouldCut: () => seen.length > 0 });
+    expect(r.outcome).toBe('home');
+    expect(seen[0]).toEqual([
+      { kind: 'chat', id: 'phone-1', busy: true },
+      { kind: 'process', id: '4242', busy: true, pid: 4242 },
+    ]);
+  });
+
+  it('live Cut (shouldCut): a return waiting on running work in the cloud cuts it, then lands', async () => {
+    const env = makeEnv({ waitTimeoutMs: 5_000 });
+    await go(env, { contextRoot: ctx });
+    fake.running = [{ conversationId: 'phone-1', startedAt: 0 }];
+    let asked = false;
+    const onProgress = (e: { step: string }) => { if (e.step === 'waiting') asked = true; };
+    const r = await returnTrip(env, { onProgress, shouldCut: () => asked });
+    expect(asked).toBe(true);
+    expect(r.outcome).toBe('home');
+    expect(fake.calls.indexOf('cut')).toBeGreaterThan(-1);
+    expect(fake.calls.indexOf('cut')).toBeLessThan(fake.calls.indexOf('seal'));
+  });
 });
 
 describe('take-over and superseded (AC24)', () => {
@@ -760,6 +588,158 @@ describe('wire v1.1', () => {
     provider.repoFiles.set('.devcontainer/supervisor.mjs', Buffer.from('// planted\n'));
     await expect(go(env, { contextRoot: ctx })).rejects.toMatchObject({ code: 'tampered' });
     expect(readTripState(laptopHome).phase).toBe('home');
+  });
+});
+
+describe('D25: the cloud runs this laptop\'s exact npm version (AC18), and a setup that fails', () => {
+  const PIN = { version: FAKE_CLOUD_VERSION, integrity: FAKE_INTEGRITY };
+  const I31 = `sha512-${createHash('sha512').update('0.31.0').digest('base64')}`;
+  /** Records every repo write (path list) into provider.calls, with the laptop's phase at that moment. */
+  const spyWrites = () => {
+    const phases: string[] = [];
+    const orig = provider.writeFiles.bind(provider);
+    provider.writeFiles = async (f, m) => { phases.push(readTripState(laptopHome).phase); provider.calls.push(`write:${Object.keys(f).join(',')}`); return orig(f, m); };
+    return phases;
+  };
+
+  it('setup pins the exact version + the registry\'s integrity in the repo and records its blob sha; an unchanged pin is never rewritten', async () => {
+    expect(provider.repoFiles.get(PIN_PATH)?.equals(pinFile(PIN))).toBe(true);
+    expect(JSON.parse(provider.repoFiles.get(PIN_PATH)!.toString('utf8'))).toEqual(PIN);
+    expect(readConfig(laptopHome)!.repo!.fileShas[PIN_PATH]).toBe(gitBlobSha(pinFile(PIN)));
+    spyWrites();
+    provider.calls = [];
+    provider.quotaRefusal = new ProviderQuotaError('quota used up', '2026-11-01T00:00:00.000Z'); // stop the go at the start
+    const reg = fakeRegistry();
+    await expect(go(makeEnv({ registryFetch: reg.fetchImpl }), { contextRoot: ctx })).rejects.toMatchObject({ code: 'quota' });
+    expect(reg.seen).toEqual([FAKE_CLOUD_VERSION]);
+    expect(provider.calls.filter((c) => c.startsWith('write:'))).toEqual([]);
+  });
+
+  it('a newer laptop version: the go rewrites the pin AFTER the AC19 check, BEFORE the lock and before the machine starts', async () => {
+    const phases = spyWrites();
+    provider.calls = [];
+    provider.quotaRefusal = new ProviderQuotaError('quota used up', '2026-11-01T00:00:00.000Z');
+    const env = makeEnv({ localVersion: () => '0.31.0', registryFetch: fakeRegistry({ '0.31.0': I31 }).fetchImpl });
+    await expect(go(env, { contextRoot: ctx })).rejects.toMatchObject({ code: 'quota' });
+    expect(phases).toEqual(['home']); // never 'going'
+    expect(provider.calls.findIndex((c) => c === `write:${PIN_PATH}`)).toBeLessThan(provider.calls.findIndex((c) => c.startsWith('start:')));
+    expect(JSON.parse(provider.repoFiles.get(PIN_PATH)!.toString('utf8'))).toEqual({ version: '0.31.0', integrity: I31 });
+    expect(readConfig(laptopHome)!.repo!.fileShas[PIN_PATH]).toBe(gitBlobSha(pinFile({ version: '0.31.0', integrity: I31 })));
+  });
+
+  it('a version that is not on npm: go refuses BEFORE anything is written or locked, naming the version', async () => {
+    spyWrites();
+    provider.calls = [];
+    const err = await go(makeEnv({ localVersion: () => '0.31.0' }), { contextRoot: ctx }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'not_published', detail: { version: '0.31.0' } });
+    expect(err.message).toBe('this laptop runs dreamcontext 0.31.0, which is not on npm yet. Publish it (or update this laptop to a published version), then run go again.');
+    expect(provider.calls).toEqual([]); // no write, no start, no create
+    expect(readTripState(laptopHome).phase).toBe('home');
+    expect(existsSync(join(laptopHome, '.dreamcontext', 'handsfree', 'trips'))).toBe(false); // never locked: no trip dir
+  });
+
+  it('the registry unreachable (or failing): go and setup refuse with that reason, never a fallback', async () => {
+    spyWrites();
+    provider.calls = [];
+    const down = (async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch;
+    const e1 = await go(makeEnv({ registryFetch: down }), { contextRoot: ctx }).catch((e) => e);
+    expect(e1).toMatchObject({ code: 'registry' });
+    expect(e1.message).toMatch(/^the npm registry could not confirm dreamcontext 0\.30\.0 \(the npm registry is unreachable \(fetch failed\)\); nothing was written or started\. Run go again once npm answers\.$/);
+    const e500 = (async () => new Response('', { status: 503 })) as unknown as typeof fetch;
+    const e2 = await setup(makeEnv({ registryFetch: e500 })).catch((e) => e);
+    expect(e2).toMatchObject({ code: 'registry' });
+    expect(e2.message).toMatch(/answered 503/);
+    expect(provider.calls).toEqual([]);
+    expect(readTripState(laptopHome).phase).toBe('home');
+  });
+
+  it('setup with an unpublished version refuses before any repo write or machine', async () => {
+    spyWrites();
+    provider.calls = [];
+    const err = await setup(makeEnv({ localVersion: () => '0.31.0' })).catch((e) => e);
+    expect(err).toMatchObject({ code: 'not_published' });
+    expect(err.message).toMatch(/then run setup again\.$/);
+    expect(provider.calls).toEqual([]);
+  });
+
+  it('a tampered pin in the repo refuses the go before any start or create, and a newer laptop version never overwrites it first', async () => {
+    for (const v of [FAKE_CLOUD_VERSION, '0.31.0']) {
+      provider.repoFiles.set(PIN_PATH, Buffer.from('{"version":"0.1.0","integrity":"planted"}\n'));
+      provider.calls = [];
+      spyWrites();
+      const err = await go(makeEnv({ localVersion: () => v, registryFetch: fakeRegistry({ [FAKE_CLOUD_VERSION]: FAKE_INTEGRITY, '0.31.0': I31 }).fetchImpl }), { contextRoot: ctx }).catch((e) => e);
+      expect(err).toMatchObject({ code: 'tampered' });
+      expect(err.detail.files).toEqual([PIN_PATH]);
+      expect(provider.calls.filter((c) => /^(start|create|write):/.test(c))).toEqual([]);
+      expect(provider.repoFiles.get(PIN_PATH)!.toString()).toContain('planted'); // reported, not overwritten
+      expect(readTripState(laptopHome).phase).toBe('home');
+    }
+  });
+
+  it('a repo deleted (or emptied) on GitHub: setup rewrites the pin and goes on without a tampered loop', async () => {
+    provider.repoFiles.clear();
+    const r = await setup(makeEnv());
+    expect(r.created).toBe(false);
+    expect(JSON.parse(provider.repoFiles.get(PIN_PATH)!.toString('utf8'))).toEqual(PIN);
+    expect((await setup(makeEnv())).created).toBe(false);
+  });
+
+  it('parity: a cloud on another version gets ONE {version, integrity} request (no upload) and the go waits until it reports that version', async () => {
+    fake.version = '0.29.0';
+    const g = await go(makeEnv(), { contextRoot: ctx });
+    expect(fake.runtimeRequests).toEqual([PIN]);
+    expect(fake.version).toBe(FAKE_CLOUD_VERSION);
+    expect(fake.tripId).toBe(g.tripId);
+  });
+
+  it('parity: a cloud that never comes back on the version fails the go, naming it, and the laptop stays home', async () => {
+    fake.version = '0.29.0';
+    fake.runtime = async (pin) => { fake.runtimeRequests.push(pin); }; // the install "fails": last good stays
+    let clock = Date.now();
+    const err = await go(makeEnv({ now: () => clock, sleep: async (ms) => { clock += ms; } }), { contextRoot: ctx }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'parity', detail: { version: FAKE_CLOUD_VERSION } });
+    expect(err.message).toMatch(/did not come back on dreamcontext 0\.30\.0 within 10 minutes \(it reports 0\.29\.0\)/);
+    expect(fake.runtimeRequests).toHaveLength(1);
+    expect(readTripState(laptopHome).phase).toBe('home');
+  });
+
+  it('setup re-creates a codespace that never became healthy and never held a trip; when health still fails it stops the machine and names the failed step and the next step', async () => {
+    const old = readConfig(laptopHome)!.codespace!.name;
+    expect(readConfig(laptopHome)!.codespace!.healthyAt).toBeTruthy();
+    // The smoke-#1 machine: created before the bootstrap existed, never healthy, no trip.
+    await updateConfig(laptopHome, (c) => ({ ...c, codespace: { ...c.codespace!, healthyAt: undefined } }));
+    provider.calls = [];
+    const down = new Proxy(fake, { get: (t, p) => (p === 'publicHealth' ? async () => { throw new CloudUnreachableError('the cloud is not answering'); } : Reflect.get(t, p)) });
+    const err = await setup(makeEnv({ connect: () => down as CloudClient })).catch((e) => e);
+    expect(err).toBeInstanceOf(HandsfreeError);
+    expect(err.message).toMatch(/^setup failed while starting the codespace and waiting for its health: /);
+    expect(err.message).toMatch(/was stopped \(no machine is left running\)/);
+    expect(err.message).toMatch(/Next: run `dreamcontext handsfree setup` again/);
+    expect(err.detail).toMatchObject({ step: 'start', stopped: true });
+    const fresh = readConfig(laptopHome)!.codespace!.name;
+    expect(provider.calls[0]).toBe(`delete:${old}`);
+    expect(provider.calls).toContain(`stop:${fresh}`);
+    expect(provider.machines.has(old)).toBe(false);
+    expect(provider.machines.get(fresh)!.state).toBe('stopped');
+    expect(readConfig(laptopHome)!.codespace!.healthyAt).toBeUndefined();
+
+    // The re-run with a healthy cloud heals it (re-created again: it never answered health).
+    provider.calls = [];
+    const ok = await setup(makeEnv());
+    expect(ok.created).toBe(true);
+    expect(provider.calls[0]).toBe(`delete:${fresh}`);
+    expect(readConfig(laptopHome)!.codespace!.healthyAt).toBeTruthy();
+    expect([...provider.machines.values()].map((m) => m.state)).toEqual(['stopped']);
+  });
+
+  it('a codespace that ever held a trip is never deleted by setup, healthy or not', async () => {
+    const name = readConfig(laptopHome)!.codespace!.name;
+    await updateConfig(laptopHome, (c) => ({ ...c, codespace: { ...c.codespace!, healthyAt: undefined }, lastTrip: { tripId: 't-20261004-aaaaaaaa', status: 'sealed', at: new Date().toISOString() } }));
+    provider.calls = [];
+    const r = await setup(makeEnv());
+    expect(r.created).toBe(false);
+    expect(provider.calls.some((c) => c.startsWith('delete:'))).toBe(false);
+    expect(provider.machines.has(name)).toBe(true);
   });
 });
 
@@ -947,5 +927,250 @@ describe('round 2: D21 finalization never wedges', () => {
     expect(readFileSync(join(dir, 'agreed', `${rootIdFor(vault)}.git.json`), 'utf8')).toBe(agreedBefore);
     expect(existsSync(join(dir, 'rollback-in-progress'))).toBe(false);
     expect(read(vault, 'b.txt')).toBe('b1\n');
+  });
+});
+
+describe('round 3: D23 guarded phase + cut before snapshot', () => {
+  it('a pass-2 cancel (cloud preflight) after pass 1 wrote goes HOME with pass 1\'s receipt: never away, no Abandon', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    put(C(), 'b.txt', 'pass one\n');
+    fake.beforeSeal = () => { put(C(), 'late.txt', 'later\n'); fake.epoch++; fake.preflightProblem = 'MERGE_HEAD is in progress'; };
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(r.receipt!.pass).toBe(1);
+    expect(read(vault, 'b.txt')).toBe('pass one\n');
+    expect(readTripState(laptopHome).phase).toBe('home');
+    expect(readConfig(laptopHome)!.lastTrip).toMatchObject({ status: 'abandoned', recovered: false });
+  });
+
+  it('a pass-1 cancel (nothing written) goes back to away and the cloud is unquiesced', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    fake.preflightProblem = 'stale lock';
+    await expect(returnTrip(env)).rejects.toMatchObject({ code: 'cloud_preflight' });
+    expect(readTripState(laptopHome).phase).toBe('away');
+    expect(fake.calls).toContain('unquiesce');
+  });
+
+  it('Cut: POST cut runs before the snapshot even when quiesce reports nothing running; a 409 turns_running is cut then retried', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    fake.liveProcesses = 1;
+    const r = await returnTrip(env, { cutRunning: true });
+    expect(r.outcome).toBe('home');
+    expect(fake.calls.indexOf('cut')).toBeGreaterThan(-1);
+    expect(fake.calls.indexOf('cut')).toBeLessThan(fake.calls.indexOf('seal'));
+  });
+
+  it('without Cut, a 409 turns_running before any write cancels back to away', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    fake.liveProcesses = 1;
+    await expect(returnTrip(env)).rejects.toMatchObject({ code: 'turns_running' });
+    expect(readTripState(laptopHome).phase).toBe('away');
+  });
+
+  it('the guarded transition refuses returning -> away and a plain home once a return wrote', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    put(C(), 'b.txt', 'cloud b\n');
+    const onProgress = (e: { step: string }) => { if (e.step === 'wipe-secrets') throw new Error('killed'); };
+    await expect(returnTrip(env, { onProgress })).rejects.toThrow(/killed/);
+    await expect(abandonTrip(env)).rejects.toMatchObject({ code: 'write_started' });
+    expect(readTripState(laptopHome).phase).toBe('returning');
+  });
+
+  it('finalize "other" (the cloud holds another trip) is not recorded as sealed and queues stop', async () => {
+    const env = makeEnv();
+    const g = await go(env, { contextRoot: ctx });
+    fake.beforeWipe = () => { fake.tripId = 't-20990101-0ther000'; throw new CloudError(409, 'trip_mismatch', 'other'); };
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(r.receipt!.finalization).toEqual({ secretsWiped: false, sealed: false, stopped: false, queued: ['stop'] });
+    expect(readConfig(laptopHome)!.lastTrip).toMatchObject({ tripId: g.tripId, status: 'abandoned', recovered: false });
+    expect(readConfig(laptopHome)!.queued).toMatchObject({ tripId: g.tripId, steps: ['stop'] });
+  });
+});
+
+describe('wave 3 round-trip findings (lane I r2, items 2-6)', () => {
+  const evilBranch = () => {
+    const blob = (data: string) => execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: C(), env: gitenv, input: data, encoding: 'utf8' }).trim();
+    const mktree = (entries: Array<[string, string, string]>) => execFileSync('git', ['mktree'], {
+      cwd: C(), env: gitenv, input: entries.map(([m, o, n]) => `${m} ${m === '040000' ? 'tree' : 'blob'} ${o}\t${n}`).join('\n') + '\n', encoding: 'utf8',
+    }).trim();
+    const evil = mktree([['040000', mktree([['100644', blob('[core]\n'), 'config']]), '.GIT']]);
+    const commit = sh(C(), 'commit-tree', evil, '-m', 'evil').trim();
+    sh(C(), 'update-ref', 'refs/heads/evil', commit);
+  };
+
+  it('(a) AC9: the gitlink refusal names the repository, the path and how to resolve it', async () => {
+    const lib = join(vault, 'vendor', 'lib');
+    mkdirSync(lib, { recursive: true });
+    sh(lib, 'init', '-q');
+    put(lib, 'x.txt', 'x\n');
+    sh(lib, 'add', '.');
+    sh(lib, 'commit', '-qm', 'lib');
+    sh(vault, 'add', 'vendor/lib');
+    const err = await go(makeEnv(), { contextRoot: ctx }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'preflight' });
+    expect(err.message).toContain(vault);
+    expect(err.message).toContain('vendor/lib');
+    expect(err.message).toMatch(/\.gitignore/);
+    expect(readTripState(laptopHome).phase).toBe('home');
+  });
+
+  it('(b) AC13: a cloud commit carrying a .git path cancels the Return back to away (cloud active), names repo + path, never loops; the phone\'s fix then returns', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    evilBranch();
+    const err = await returnTrip(env).catch((e) => e);
+    expect(err).toMatchObject({ code: 'cloud_content' });
+    expect(err.message).toContain(vault);
+    expect(err.message).toContain('.GIT/config');
+    expect(readTripState(laptopHome).phase).toBe('away');
+    expect(fake.phase).toBe('active');
+    expect(fake.calls).toContain('unquiesce');
+    // Retrying is the same clean cancel, never a stuck `returning`.
+    await expect(returnTrip(env)).rejects.toMatchObject({ code: 'cloud_content' });
+    expect(readTripState(laptopHome).phase).toBe('away');
+    // The phone removes the bad commit: the Return now lands.
+    sh(C(), 'update-ref', '-d', 'refs/heads/evil');
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+  });
+
+  it('(c) the same content never wedges a later go: recovery parks what it can, names the refused ref + path, and the new trip starts', async () => {
+    const env = makeEnv();
+    const g1 = await go(env, { contextRoot: ctx });
+    put(C(), 'c.txt', 'cloud\n');
+    sh(C(), 'add', 'c.txt');
+    sh(C(), 'commit', '-qm', 'good cloud commit');
+    const good = sh(C(), 'rev-parse', 'HEAD').trim();
+    evilBranch();
+    provider.machines.forEach((m) => { m.state = 'available'; });
+    await abandonTrip(env);
+    const g2 = await go(env, { contextRoot: ctx });
+    expect(g2.recovery?.oldTrip).toBe(g1.tripId);
+    expect(g2.recovery?.refused).toEqual([expect.objectContaining({ repo: vault, refs: ['refs/heads/evil'], paths: expect.arrayContaining(['.GIT/config']) })]);
+    expect(sh(vault, 'rev-parse', `refs/handsfree/${g1.tripId}/heads/main`).trim()).toBe(good);
+    expect(readTripState(laptopHome).phase).toBe('away');
+  });
+
+  it('(d)(a) trip_lost with the roots on disk: the full D12 recovery parks the phone work (refs + orphaned, secrets backed up) BEFORE the seal; the next go starts', async () => {
+    const env = makeEnv();
+    const g1 = await go(env, { contextRoot: ctx });
+    put(C(), 'src/lost.ts', 'export const lost = 1;\n');
+    sh(C(), 'add', 'src/lost.ts');
+    sh(C(), 'commit', '-qm', 'phone: work on a machine that loses its marker');
+    const phoneCommit = sh(C(), 'rev-parse', 'HEAD').trim();
+    put(C(), '.env', 'TOKEN=phone\n');
+    put(C(), '_dream_context/state/notes.md', 'phone note\n');
+    fake.lost = true;
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('lost');
+    expect(r.message).toMatch(/recovered into refs\/handsfree\//);
+    expect(readTripState(laptopHome).phase).toBe('home');
+    // Parked locally: the phone commit, and the files (secret class included) in orphaned/.
+    expect(sh(vault, 'rev-parse', `refs/handsfree/${g1.tripId}/heads/main`).trim()).toBe(phoneCommit);
+    const orphan = join(tripDirOf(g1.tripId), 'orphaned', rootIdFor(vault));
+    expect(read(orphan, '.env')).toBe('TOKEN=phone\n');
+    expect(read(orphan, '_dream_context/state/notes.md')).toBe('phone note\n');
+    // The order: snapshot, then the seal (which wipes the secret class).
+    expect(fake.calls.lastIndexOf('snapshot')).toBeGreaterThan(-1);
+    expect(fake.calls.lastIndexOf('snapshot')).toBeLessThan(fake.calls.lastIndexOf('seal'));
+    expect(fake.phase).toBe('sealed');
+    expect(existsSync(join(C(), '.env'))).toBe(false);
+    expect(readConfig(laptopHome)!.lastTrip).toMatchObject({ tripId: g1.tripId, status: 'lost', recovered: true });
+    expect([...provider.machines.values()][0].state).toBe('stopped');
+    const g2 = await go(env, { contextRoot: ctx });
+    expect(g2.tripId).not.toBe(g1.tripId);
+    expect(readTripState(laptopHome).phase).toBe('away');
+  });
+
+  it('(d)(b) trip_lost with the roots ABSENT: no seal, no wipe, the trip stays unrecovered, and the next go refuses with the teardown way out (never mirrors over it)', async () => {
+    const env = makeEnv();
+    const g1 = await go(env, { contextRoot: ctx });
+    put(C(), '.env', 'TOKEN=phone\n');
+    fake.lost = true;
+    fake.mirrorAbsent = true;
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('lost');
+    expect(r.message).toMatch(/teardown --discard-abandoned-work/);
+    expect(readTripState(laptopHome).phase).toBe('home');
+    expect(fake.calls).not.toContain('seal');
+    expect(fake.calls).not.toContain('wipe');
+    expect(fake.phase).not.toBe('sealed');
+    expect(read(C(), '.env')).toBe('TOKEN=phone\n');
+    expect(readConfig(laptopHome)!.lastTrip).toMatchObject({ tripId: g1.tripId, recovered: false });
+    const callsBefore = fake.calls.length;
+    const err = await go(env, { contextRoot: ctx }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'needs_recovery' });
+    expect(err.message).toMatch(/teardown --discard-abandoned-work/);
+    expect(readTripState(laptopHome).phase).toBe('home');
+    expect(fake.calls.slice(callsBefore)).not.toContain('trip'); // nothing mirrored over it
+    expect(fake.calls).not.toContain('seal');
+    expect(readConfig(laptopHome)!.lastTrip).toMatchObject({ tripId: g1.tripId, recovered: false });
+  });
+
+  it('(d) an older cloud that cannot snapshot a lost-marker trip: never sealed, the later go refuses HOME with the teardown way out', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    fake.lost = true;
+    fake.oldCloudNoLostRecovery = true;
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('lost');
+    expect(fake.calls).not.toContain('seal');
+    const err = await go(env, { contextRoot: ctx }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'needs_recovery' });
+    expect(err.message).toMatch(/teardown --discard-abandoned-work/);
+    expect(readTripState(laptopHome).phase).toBe('home');
+    expect([...provider.machines.values()][0].state).toBe('stopped');
+  });
+
+  it('(d) an ABANDONED trip whose marker the cloud lost is recovered (parked) and sealed by the next go, which then starts', async () => {
+    const env = makeEnv();
+    const g1 = await go(env, { contextRoot: ctx });
+    put(C(), 'phone.txt', 'phone\n');
+    sh(C(), 'add', 'phone.txt');
+    sh(C(), 'commit', '-qm', 'phone work');
+    const phoneCommit = sh(C(), 'rev-parse', 'HEAD').trim();
+    provider.machines.forEach((m) => { m.state = 'stopped'; });
+    await abandonTrip(env); // machine stopped: the cloud stays active, nothing sealed
+    fake.lost = true;
+    const g2 = await go(env, { contextRoot: ctx });
+    expect(g2.recovery).toMatchObject({ oldTrip: g1.tripId, lost: true, sealed: true });
+    expect(sh(vault, 'rev-parse', `refs/handsfree/${g1.tripId}/heads/main`).trim()).toBe(phoneCommit);
+    expect(readTripState(laptopHome).phase).toBe('away');
+  });
+
+  it('(e) paths differing only by Unicode normalization or case are refused at the preflight, naming both', async () => {
+    const nfc = 'café.txt';
+    const nfd = 'café.txt';
+    const oid = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: vault, env: gitenv, input: 'x\n', encoding: 'utf8' }).trim();
+    // As a commit made on Linux brings them: both spellings in the index (precompose off to add).
+    sh(vault, '-c', 'core.precomposeunicode=false', 'update-index', '--add', '--cacheinfo', `100644,${oid},${nfc}`);
+    sh(vault, '-c', 'core.precomposeunicode=false', 'update-index', '--add', '--cacheinfo', `100644,${oid},${nfd}`);
+    sh(vault, 'update-index', '--add', '--cacheinfo', `100644,${oid},Readme.txt`);
+    sh(vault, 'update-index', '--add', '--cacheinfo', `100644,${oid},README.TXT`);
+    const err = await go(makeEnv(), { contextRoot: ctx }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'preflight' });
+    expect(err.message.normalize('NFC')).toContain(nfc);
+    expect(err.message).toMatch(/Readme\.txt" and "README\.TXT"|README\.TXT" and "Readme\.txt"/);
+    expect(readTripState(laptopHome).phase).toBe('home');
+  });
+
+  it('(e) a post-lock verification failure (AC2 equality) goes home through the guarded transition, never stays going', async () => {
+    const env = makeEnv();
+    const real = fake.gitReceive.bind(fake);
+    fake.gitReceive = async (b) => ({ ...(await real(b)), snapshotId: 'f'.repeat(64) });
+    await expect(go(env, { contextRoot: ctx })).rejects.toMatchObject({ code: 'equality' });
+    expect(readTripState(laptopHome).phase).toBe('home');
+    expect([...provider.machines.values()][0].state).toBe('stopped');
+    expect(fake.phase).not.toBe('active');
+    // The next go mirrors again and succeeds.
+    fake.gitReceive = real;
+    await go(env, { contextRoot: ctx });
+    expect(readTripState(laptopHome).phase).toBe('away');
   });
 });

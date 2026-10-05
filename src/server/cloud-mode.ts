@@ -366,6 +366,8 @@ export const CLOUD_DEVICE_API_ROUTES: readonly string[] = [
   'GET /api/chat/html-kit',
   // The phone signs itself out
   'POST /api/handsfree/logout',
+  // The phone's chip and quiesce overlay (a pure read: never an owner action)
+  'GET /api/handsfree/phone',
 ];
 
 /** Transfer routes: the laptop's bearer channel, proven by HMAC, never a device cookie. */

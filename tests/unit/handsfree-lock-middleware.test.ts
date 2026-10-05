@@ -113,3 +113,45 @@ describe('vault named in the body or query of a vault-agnostic route (round 2)',
     if ('req' in ok) expect(await parseJsonBody(ok.req)).toEqual({ url: 'https://x/y.git', parentDir: other });
   });
 });
+
+describe('round 3: the body screen', () => {
+  const mk = (body: string | null, path = '/api/launcher/clone') => {
+    const r = new IncomingMessage(new Socket());
+    r.method = 'POST';
+    r.url = path;
+    r.headers = { 'content-type': 'application/json' };
+    if (body !== null) setImmediate(() => { r.push(body); r.push(null); });
+    return r;
+  };
+
+  it('screens /api/peer/send (body vault)', () => {
+    expect(isBodySelectorRoute('POST', '/api/peer/send')).toBe(true);
+  });
+
+  it('a body not finished in time is refused while away', async () => {
+    await beginGoing('t-9', [{ rootId: rootIdFor(vault), path: vault }], home);
+    const r = await screenBodySelectedVault(mk(null), new URL('http://localhost/api/launcher/clone'), home, { timeoutMs: 50 });
+    expect('lock' in r && r.lock.error).toMatch(/not received in time/);
+  });
+
+  it('padding never pushes a selector out: every string is scanned, deep nesting and huge arrays included', async () => {
+    await beginGoing('t-9', [{ rootId: rootIdFor(vault), path: vault }], home);
+    let deep: unknown = { parentDir: vault };
+    for (let i = 0; i < 50; i++) deep = { x: deep };
+    const padded = { pad: Array.from({ length: 5000 }, (_, i) => `filler-${i}`), deep };
+    expect(bodySelectedVaultLock(padded, new URLSearchParams(), home)).toMatchObject({ tripId: 't-9' });
+    // Nesting JSON.parse itself refuses still has its quoted strings scanned.
+    const raw = '['.repeat(20000) + JSON.stringify(vault) + ']'.repeat(20000);
+    const r = await screenBodySelectedVault(mk(raw), new URL('http://localhost/api/launcher/clone'), home);
+    expect('lock' in r).toBe(true);
+  });
+
+  it('a relative path resolves against the server cwd; vault names match case-insensitively', async () => {
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'App', path: vault }] }));
+    await beginGoing('t-9', [{ rootId: rootIdFor(vault), path: vault }], home);
+    expect(bodySelectedVaultLock({ vault: 'APP' }, new URLSearchParams(), home)).toMatchObject({ tripId: 't-9' });
+    expect(bodySelectedVaultLock({ parentDir: './app/sub' }, new URLSearchParams(), home, { cwd: join(home, 'projects') })).toMatchObject({ tripId: 't-9' });
+    expect(bodySelectedVaultLock({ text: 'app is great' }, new URLSearchParams(), home, { cwd: join(home, 'projects') })).toBeNull();
+  });
+});

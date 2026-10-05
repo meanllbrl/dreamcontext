@@ -81,7 +81,7 @@ describe('retries and the private port', () => {
   it('retries 503/504 and network errors with a fresh nonce each time', async () => {
     let n = 0;
     const { seen, fetchImpl } = server(() => (++n < 3 ? { status: 503, json: {} } : { status: 200, json: { ok: true, restarting: true } }));
-    await client(fetchImpl).runtime('up-12345678');
+    await client(fetchImpl).runtime({ version: '0.30.0', integrity: `sha512-${'A'.repeat(86)}==` });
     expect(seen.filter((s) => s.ok).length).toBe(3);
   });
 

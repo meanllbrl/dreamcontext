@@ -35,6 +35,8 @@ export interface CloudTripRecord {
   sealedEpoch: number | null;
   /** This quiesce must never auto-revert to active: a recovery, or a quiesce of a sealed cloud. */
   noRevert: boolean;
+  /** The self-seal keeps failing (its wipe could not finish): when it started and why. */
+  sealBlocked: { since: number; error: string } | null;
   /** Last transfer call of the laptop (any route): "laptop progress" for AC13 and the 2 h seal. */
   lastLaptopProgressAt: number | null;
   updatedAt: number;
@@ -54,6 +56,7 @@ export const SEALED_EMPTY: CloudTripRecord = {
   servedEpoch: null,
   sealedEpoch: null,
   noRevert: false,
+  sealBlocked: null,
   lastLaptopProgressAt: null,
   updatedAt: 0,
 };
@@ -89,6 +92,10 @@ export function parseTripRecord(raw: unknown): CloudTripRecord {
     servedEpoch: numOrNull(r.servedEpoch),
     sealedEpoch: numOrNull(r.sealedEpoch),
     noRevert: r.noRevert === true,
+    sealBlocked: r.sealBlocked && typeof r.sealBlocked === 'object'
+      && typeof (r.sealBlocked as { since?: unknown }).since === 'number' && typeof (r.sealBlocked as { error?: unknown }).error === 'string'
+      ? { since: (r.sealBlocked as { since: number }).since, error: (r.sealBlocked as { error: string }).error.slice(0, 500) }
+      : null,
     lastLaptopProgressAt: numOrNull(r.lastLaptopProgressAt),
     updatedAt: numOrNull(r.updatedAt) ?? 0,
   };
@@ -181,6 +188,9 @@ export class CloudStateStore {
       quiescingSince: null,
       servedEpoch: null,
       noRevert: false,
+      // A new trip: a stale finalization for the previous trip's sealed epoch must never act on it.
+      sealedEpoch: null,
+      sealBlocked: null,
       lastLaptopProgressAt: this.now(),
     });
     return { ok: true, record };
@@ -221,7 +231,13 @@ export class CloudStateStore {
 
   /** Sealed under the current epoch (callers wipe the secret class FIRST, D21). */
   seal(): void {
-    this.commit({ ...this.rec, phase: 'sealed', sealedEpoch: this.rec.epoch, quiescingSince: null, goingSince: null, noRevert: false });
+    this.commit({ ...this.rec, phase: 'sealed', sealedEpoch: this.rec.epoch, quiescingSince: null, goingSince: null, noRevert: false, sealBlocked: null });
+  }
+
+  /** A self-seal that could not finish: recorded (kept from its first failure) for health. */
+  recordSealBlocked(error: string): void {
+    const since = this.rec.sealBlocked?.since ?? this.now();
+    this.commit({ ...this.rec, sealBlocked: { since, error: error.slice(0, 500) } });
   }
 
   /**

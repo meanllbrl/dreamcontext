@@ -1,5 +1,6 @@
 /**
- * Build-fingerprint parity (AC18): after go the cloud runs the laptop's exact build.
+ * The build fingerprint the cloud's health reports (D25: parity itself now compares the npm
+ * VERSION, see npm-pin.ts; the fingerprint stays an identity of the installed files).
  *
  * {@link buildFingerprint} follows the algorithm lane D pinned in
  * `src/server/cloud-fingerprint.ts` (and the root supervisor computes over what it
@@ -11,7 +12,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ProcessRunner } from './git-snapshot.js';
 
 /** The installed/checked-out dreamcontext package root (walks up to its package.json). */
 export function packageRoot(from: string = dirname(fileURLToPath(import.meta.url))): string {
@@ -47,13 +47,4 @@ export function buildFingerprint(root: string = packageRoot()): string | null {
   const h = createHash('sha256');
   for (const l of lines.sort()) h.update(l);
   return h.digest('hex');
-}
-
-/** `npm pack` of the package into `destDir`; returns the tarball path. */
-export async function npmPack(run: ProcessRunner, root: string, destDir: string): Promise<string> {
-  const res = await run('npm', ['pack', '--silent', '--pack-destination', destDir], { cwd: root, timeoutMs: 10 * 60_000 });
-  if (res.code !== 0) throw new Error(`npm pack failed: ${res.stderr.toString().trim().slice(0, 300)}`);
-  const name = res.stdout.toString().trim().split('\n').pop() ?? '';
-  if (!/^[A-Za-z0-9._@-]+\.tgz$/.test(name)) throw new Error(`npm pack printed an unexpected name ${JSON.stringify(name)}`);
-  return join(destDir, name);
 }

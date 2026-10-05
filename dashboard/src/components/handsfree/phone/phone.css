@@ -1,0 +1,96 @@
+/* The phone's hands-free surfaces (cloud only). Theme tokens only, no baked colours. */
+.dc-hf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.dc-hf-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+}
+
+.dc-hf-chip[data-phase='quiescing'] .dc-hf-chip-dot,
+.dc-hf-chip[data-phase='going'] .dc-hf-chip-dot {
+  background: var(--color-warning);
+}
+
+.dc-hf-quiesce {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(var(--space-6), env(safe-area-inset-top)) var(--space-5) max(var(--space-6), env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.dc-hf-quiesce-card {
+  max-width: 360px;
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+  text-align: center;
+}
+
+.dc-hf-quiesce-card h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+}
+
+.dc-hf-quiesce-card p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.dc-hf-quiesce-spinner {
+  width: 20px;
+  height: 20px;
+  margin: 0 auto var(--space-4);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  animation: dc-hf-spin 0.9s linear infinite;
+}
+
+@keyframes dc-hf-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-hf-quiesce-spinner { animation: none; }
+}
+
+.dc-hf-back {
+  position: fixed;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  z-index: 1000;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}

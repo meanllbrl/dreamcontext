@@ -12,7 +12,8 @@ import {
   HandsfreeAuth, hashPassphrase, setHandsfreeAuthForTests, sha256Hex, transferAuthorization, transferKeyFromSecret,
 } from '../../src/server/handsfree-auth.js';
 import {
-  TRIP_MARKER_NAME, cloudPhaseFromStore, createCloudIdle, registerHandsfreeCloudRoutes, setCloudServicesForTests,
+  RUNTIME_EXIT_CODE, RUNTIME_REQUEST_NAME, setRuntimeExitForTests,
+  TRIP_MARKER_NAME, cloudPhaseFromStore, cloudServices, createCloudIdle, registerHandsfreeCloudRoutes, setCloudServicesForTests, wipeAndSeal,
 } from '../../src/server/routes/handsfree-cloud.js';
 import { handleHealthGet } from '../../src/server/routes/health.js';
 import { CloudStateStore } from '../../src/server/cloud-state.js';
@@ -23,6 +24,7 @@ import { createBundle, createSpawnRunner, snapshotBundleRefs, snapshotId, snapsh
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { writePack } from '../../src/lib/handsfree/pack.js';
+import { registerLiveChat, unregisterLiveChat, type LiveChatEntry } from '../../src/server/routes/agent-chat-live.js';
 
 const OWN = 'https://dc-hf-test-8080.app.github.dev';
 const SECRET = 'transfer-secret-for-tests';
@@ -288,6 +290,60 @@ describe('trip lifecycle', () => {
     const again = await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T });
     expect(again.status).toBe(409);
     expect(again.json().error).toBe('trip_lost');
+  });
+
+  it('a lost marker, roots ABSENT (unmounted mirror): recovery quiesce and snapshot refuse mirror_absent; nothing quiesced, nothing sealed', async () => {
+    await startTrip();
+    await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T });
+    rmSync(join(scratch, 'mirror', HOME, TRIP_MARKER_NAME));
+    rmSync(join(scratch, 'mirror', PROJ), { recursive: true, force: true });
+    const q = await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T, recovery: true });
+    expect(q.status).toBe(409);
+    expect(q.json().error).toBe('mirror_absent');
+    expect((await transfer('GET', '/api/health')).json()).toMatchObject({ phase: 'active', sealedEpoch: null });
+  });
+
+  it('a lost marker, roots present: a RECOVERY quiesce still quiesces (tripLost); the seal waits for the tolerant snapshot (D12 order); a later go starts', async () => {
+    await startTrip();
+    await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T });
+    mkdirSync(join(scratch, 'mirror', PROJ, '_dream_context'), { recursive: true });
+    rmSync(join(scratch, 'mirror', HOME, TRIP_MARKER_NAME));
+    // A normal quiesce still refuses (the existing trip_lost rule).
+    expect((await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json().error).toBe('trip_lost');
+    const q = await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T, recovery: true });
+    expect(q.status).toBe(200);
+    expect(q.json()).toMatchObject({ tripLost: true, running: [] });
+    // Idempotent on retry: a repeated recovery quiesce answers again (a newer epoch).
+    const q2 = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T, recovery: true })).json();
+    expect(q2.tripLost).toBe(true);
+    expect(q2.epoch).toBeGreaterThan(q.json().epoch);
+    expect((await transfer('POST', '/api/handsfree/cloud/cut', { epoch: q2.epoch })).status).toBe(200);
+    // Never wiped or sealed before the recovery snapshot of this epoch.
+    expect((await transfer('POST', '/api/handsfree/cloud/seal', { epoch: q2.epoch })).json().error).toBe('snapshot_first');
+    expect((await transfer('POST', '/api/handsfree/cloud/wipe-secrets', { epoch: q2.epoch })).json().error).toBe('snapshot_first');
+    expect((await transfer('POST', '/api/handsfree/cloud/snapshot', { epoch: q2.epoch, knownTips: {} })).json().error).toBe('trip_lost');
+    expect((await transfer('POST', '/api/handsfree/cloud/snapshot', { epoch: q2.epoch, tolerant: true, knownTips: {} })).status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/wipe-secrets', { epoch: q2.epoch })).status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/seal', { epoch: q2.epoch })).status).toBe(200);
+    const h = (await transfer('GET', '/api/health')).json();
+    expect(h).toMatchObject({ phase: 'sealed', sealedEpoch: q2.epoch, tripId: T });
+    expect((await transfer('POST', '/api/handsfree/cloud/seal', { epoch: q2.epoch })).json()).toMatchObject({ ok: true, alreadyDone: true });
+    // POST trip needs a sealed cloud: the next go starts.
+    expect((await startTrip('laptop-a', false, 'trip-two')).status).toBe(200);
+  });
+
+  it('a recovery quiesce is transfer-credential only, and never quiesces over a marker of ANOTHER trip', async () => {
+    await startTrip();
+    await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T });
+    const viaCookie = await raw('POST', '/api/handsfree/cloud/quiesce', { Cookie: `__Host-dc_hf_session=${deviceId}`, Origin: OWN, 'Content-Type': 'application/json' }, JSON.stringify({ tripId: T, recovery: true }));
+    expect(viaCookie.status).toBe(403);
+    const markerFile = join(scratch, 'mirror', HOME, TRIP_MARKER_NAME);
+    const marker = JSON.parse(readFileSync(markerFile, 'utf8')) as Record<string, unknown>;
+    writeFileSync(markerFile, JSON.stringify({ ...marker, tripId: 'trip-someone-else' }));
+    const r = await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T, recovery: true });
+    expect(r.status).toBe(409);
+    expect(r.json().error).toBe('trip_lost');
+    expect((await transfer('GET', '/api/health')).json().phase).toBe('active');
   });
 
   it('files travel: receive gives the digest of what landed, a later snapshot packs the cloud edit', async () => {
@@ -630,3 +686,237 @@ describe('D21: finalization is idempotent and a sealed cloud holds no secrets', 
   }, 60_000);
 });
 
+describe('round 3: process-tree running, every worktree wiped, seal order', () => {
+  const T = 'trip-r3';
+  const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const gitIn = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd, env: GIT_ENV }).toString();
+
+  async function startActive(): Promise<void> {
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: T, laptopId: 'laptop-a', go: goManifest(T, 'laptop-a') })).status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T })).status).toBe(200);
+  }
+
+  it('quiesce lists a process nobody registered (a background task), snapshot refuses until it is cut', async () => {
+    await startActive();
+    const cwd = join(scratch, 'mirror', PROJ);
+    mkdirSync(cwd, { recursive: true });
+    const { spawn } = await import('node:child_process');
+    const bg = spawn('/bin/sh', ['-c', 'exec sleep 30'], { cwd, detached: true, stdio: 'ignore' });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+      const entry = q.running.find((e: { pid: number }) => e.pid === bg.pid);
+      expect(entry).toMatchObject({ conversationId: null, startedAt: null, pid: bg.pid });
+      expect(entry.command).toContain('sleep');
+      const snap = await transfer('POST', '/api/handsfree/cloud/snapshot', { epoch: q.epoch, knownTips: {} });
+      expect(snap.status).toBe(409);
+      expect(snap.json().error).toBe('turns_running');
+      const cut = (await transfer('POST', '/api/handsfree/cloud/cut', { epoch: q.epoch })).json();
+      expect(cut.processes).toContain(bg.pid);
+      expect((await transfer('POST', '/api/handsfree/cloud/snapshot', { epoch: q.epoch, knownTips: {} })).status).toBe(200);
+    } finally {
+      try { process.kill(-bg.pid!, 'SIGKILL'); } catch { /* gone */ }
+    }
+  }, 60_000);
+
+  it('the seal wipes the secret class from a worktree the phone created too', async () => {
+    const repo = join(laptop, 'proj');
+    mkdirSync(repo, { recursive: true });
+    gitIn(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    gitIn(repo, 'add', 'a.txt');
+    gitIn(repo, 'commit', '-q', '-m', 'first');
+    const run = createSpawnRunner({ baseEnv: GIT_ENV });
+    const go: GoManifest = { ...goManifest(T, 'laptop-a'), roots: [{ rootId: rootIdFor(PROJ), kind: 'repo', absPath: PROJ }] };
+    const snap = await snapshotRepo(run, repo, { trip: T, checkoutIdFor: () => rootIdFor(PROJ), side: 'laptop' });
+    const bundlePath = join(scratch, 'r3.bundle');
+    await createBundle(run, repo, { refs: snapshotBundleRefs(snap), knownTips: [], out: bundlePath });
+    await upload('bundle-r3aaaaa', readFileSync(bundlePath));
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: T, laptopId: 'laptop-a', go })).status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/git/receive', { tripId: T, rootId: rootIdFor(PROJ), uploadId: 'bundle-r3aaaaa', snapshot: { ...snap, repoPath: PROJ, checkouts: snap.checkouts.map((c) => ({ ...c, path: PROJ })) } })).status).toBe(200);
+    await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T });
+    const wt = join(scratch, 'mirror', HOME, 'proj-feature');
+    gitIn(join(scratch, 'mirror', PROJ), 'worktree', 'add', '-q', '-b', 'feature', wt);
+    mkdirSync(join(wt, '.claude'), { recursive: true });
+    writeFileSync(join(wt, '.claude', '.env'), 'COPIED=1\n');
+    const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+    expect((await transfer('POST', '/api/handsfree/cloud/seal', { epoch: q.epoch })).status).toBe(200);
+    expect(existsSync(join(wt, '.claude', '.env'))).toBe(false);
+    expect(existsSync(join(wt, 'a.txt'))).toBe(true);
+  }, 60_000);
+
+  it('a return cancelled while the wipe runs aborts the seal', async () => {
+    await startActive();
+    const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+    const sealing = wipeAndSeal();
+    cloudServices().state.unquiesce(); // lands during the cut/wipe
+    await expect(sealing).rejects.toMatchObject({ code: 'seal_aborted' });
+    const h = (await transfer('GET', '/api/health')).json();
+    expect(h.phase).toBe('active');
+    expect(h.epoch).toBe(q.epoch + 1);
+    expect(h.sealedEpoch).toBeNull();
+  }, 60_000);
+
+  it('a self-seal whose wipe keeps failing is reported in health as sealBlocked', async () => {
+    await startActive();
+    const locked = join(scratch, 'mirror', PROJ, '.claude');
+    mkdirSync(locked, { recursive: true });
+    writeFileSync(join(locked, '.env'), 'KEY=1\n');
+    const { chmodSync } = await import('node:fs');
+    chmodSync(locked, 0o555); // the file cannot be removed
+    try {
+      const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+      expect((await transfer('POST', '/api/handsfree/cloud/snapshot', { epoch: q.epoch, knownTips: {} })).status).toBe(200);
+      const idle = createCloudIdle('boot-test', () => Date.now() + 3 * 60 * 60_000);
+      idle.tick();
+      await idle.sealInFlight();
+      const h = (await transfer('GET', '/api/health')).json();
+      expect(h.phase).toBe('quiescing');
+      expect(h.sealBlocked.error).toMatch(/could not be wiped/);
+      expect(typeof h.sealBlocked.since).toBe('number');
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  }, 60_000);
+
+  it('a new trip resets sealedEpoch: a stale wipe-secrets for the old sealed epoch never acts on it', async () => {
+    await startActive();
+    const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+    expect((await transfer('POST', '/api/handsfree/cloud/seal', { epoch: q.epoch })).status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: 'trip-r3b', laptopId: 'laptop-a', go: goManifest('trip-r3b', 'laptop-a') })).status).toBe(200);
+    expect((await transfer('GET', '/api/health')).json().sealedEpoch).toBeNull();
+    const stale = await transfer('POST', '/api/handsfree/cloud/wipe-secrets', { epoch: q.epoch });
+    expect(stale.status).toBe(409);
+  }, 60_000);
+});
+
+describe('round 4: running = running turns; the wipe leaves no secret; finalization guards', () => {
+  const T = 'trip-r4';
+  async function startActive(): Promise<void> {
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: T, laptopId: 'laptop-a', go: goManifest(T, 'laptop-a') })).status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T })).status).toBe(200);
+  }
+  const cwd = () => { const d = join(scratch, 'mirror', PROJ); mkdirSync(d, { recursive: true }); return d; };
+
+  /** A registered chat around a REAL process in the mirror (cut = whole group, awaited). */
+  async function fakeChat(id: string, busy: boolean, script = 'exec sleep 30'): Promise<{ entry: LiveChatEntry; pid: number }> {
+    const { spawn } = await import('node:child_process');
+    const child = spawn('/bin/sh', ['-c', script], { cwd: cwd(), detached: true, stdio: 'ignore' });
+    const exited = new Promise<void>((r) => child.once('exit', () => r()));
+    const entry: LiveChatEntry = {
+      conversationId: id, projectRoot: cwd(), busy, turnStartedAt: busy ? Date.now() : null, lastTurnEndedAt: null,
+      adopt: () => false, supersede: () => () => { /* none */ }, pid: child.pid,
+      cut: async () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* gone */ } await exited; unregisterLiveChat(entry); },
+    };
+    registerLiveChat(entry);
+    await new Promise((r) => setTimeout(r, 300));
+    return { entry, pid: child.pid! };
+  }
+
+  it('quiesce cuts an idle chat (it is not running work) and the snapshot is not refused for it', async () => {
+    await startActive();
+    const idle = await fakeChat('6f1c2e9a-6666-4a5b-8c9d-0123456789ab', false);
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    try {
+      const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+      expect(q.running).toEqual([]);
+      expect(alive(idle.pid)).toBe(false);
+      expect((await transfer('POST', '/api/handsfree/cloud/snapshot', { epoch: q.epoch, knownTips: {} })).status).toBe(200);
+    } finally {
+      unregisterLiveChat(idle.entry);
+      try { process.kill(-idle.pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+  }, 60_000);
+
+  it('a BUSY chat is listed as a running turn by its conversation and keeps the snapshot refused', async () => {
+    await startActive();
+    const id = '6f1c2e9a-7777-4a5b-8c9d-0123456789ab';
+    const busy = await fakeChat(id, true);
+    try {
+      const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+      expect(q.running).toHaveLength(1);
+      expect(q.running[0]).toMatchObject({ conversationId: id, pid: busy.pid });
+      expect(q.running[0].startedAt).toEqual(expect.any(Number));
+      // It finishes its turn after quiesce: the snapshot cuts it instead of counting it.
+      busy.entry.busy = false;
+      expect((await transfer('POST', '/api/handsfree/cloud/snapshot', { epoch: q.epoch, knownTips: {} })).status).toBe(200);
+    } finally {
+      unregisterLiveChat(busy.entry);
+      try { process.kill(-busy.pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+  }, 60_000);
+
+  it('a partial wipe answers 500 ok:false with the files that stayed', async () => {
+    await startActive();
+    const locked = join(cwd(), '.claude');
+    mkdirSync(locked, { recursive: true });
+    writeFileSync(join(locked, '.env'), 'KEY=1\n');
+    const { chmodSync } = await import('node:fs');
+    chmodSync(locked, 0o555);
+    try {
+      const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+      const r = await transfer('POST', '/api/handsfree/cloud/wipe-secrets', { epoch: q.epoch });
+      expect(r.status).toBe(500);
+      expect(r.json()).toMatchObject({ ok: false, error: 'wipe_failed', failed: ['.claude/.env'] });
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  }, 60_000);
+
+  it('unquiesce is refused (409 finalizing) while a seal is wiping', async () => {
+    await startActive();
+    // Something in scope that ignores SIGTERM keeps the seal's cut busy for the grace.
+    const { spawn } = await import('node:child_process');
+    const stubborn = spawn('/bin/sh', ['-c', 'trap "" TERM; while true; do sleep 1; done'], { cwd: cwd(), detached: true, stdio: 'ignore' });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+      const sealing = wipeAndSeal();
+      const un = await transfer('POST', '/api/handsfree/cloud/unquiesce', { epoch: q.epoch });
+      expect(un.status).toBe(409);
+      expect(un.json().error).toBe('finalizing');
+      await sealing;
+      expect((await transfer('GET', '/api/health')).json()).toMatchObject({ phase: 'sealed', sealedEpoch: q.epoch });
+    } finally {
+      try { process.kill(-stubborn.pid!, 'SIGKILL'); } catch { /* gone */ }
+    }
+  }, 60_000);
+});
+
+describe('POST runtime (D25): an exact npm version + its sha512 integrity, never a tarball', () => {
+  const INTEGRITY = `sha512-${createHash('sha512').update('a published dreamcontext').digest('base64')}`;
+  let exits: number[];
+  beforeEach(() => { exits = []; setRuntimeExitForTests((c) => { exits.push(c); }); });
+  afterEach(() => setRuntimeExitForTests((c) => process.exit(c)));
+  const reqFile = () => join(process.env.DC_HF_SERVER_DIR!, RUNTIME_REQUEST_NAME);
+
+  it('writes {version, integrity} for the root supervisor and exits 75 once the reply is out', async () => {
+    const r = await transfer('POST', '/api/handsfree/cloud/runtime', { version: '0.30.0', integrity: INTEGRITY });
+    expect(r.status).toBe(200);
+    expect(r.json()).toEqual({ ok: true, restarting: true });
+    expect(JSON.parse(readFileSync(reqFile(), 'utf8'))).toEqual({ version: '0.30.0', integrity: INTEGRITY });
+    await new Promise((res) => setTimeout(res, 400));
+    expect(exits).toEqual([RUNTIME_EXIT_CODE]);
+  });
+
+  it('rejects a bad version or integrity shape, an extra field, and the old upload body: nothing written, no exit', async () => {
+    for (const body of [
+      { version: 'latest', integrity: INTEGRITY },
+      { version: '^0.30.0', integrity: INTEGRITY },
+      { version: '0.30', integrity: INTEGRITY },
+      { version: '0.30.0', integrity: 'sha1-abc' },
+      { version: '0.30.0', integrity: `${INTEGRITY}x` },
+      { version: '0.30.0' },
+      { version: '0.30.0', integrity: INTEGRITY, tarballUrl: 'https://evil.example/x.tgz' },
+      { uploadId: 'up-12345678' },
+    ]) {
+      const r = await transfer('POST', '/api/handsfree/cloud/runtime', body);
+      expect(r.status).toBe(400);
+      expect(r.json().error).toBe('bad_runtime');
+    }
+    await new Promise((res) => setTimeout(res, 300));
+    expect(existsSync(reqFile())).toBe(false);
+    expect(exits).toEqual([]);
+  });
+});

@@ -31,33 +31,10 @@ mirror_root() {
   if [[ "$m" =~ ^/(Users|home)/[A-Za-z0-9._-]{1,64}$ ]] && mountpoint -q "$m"; then echo "$m"; fi
 }
 
-# Copy the private repo's bootstrap verifiers into the dcserver dir ONLY when it holds none or a
-# lower generation; sanitized to the three fields `cloud serve` installs (never pulled, never
-# trusted as a path).
-copy_verifiers() {
-  local src
-  for src in /workspaces/*/.devcontainer/bootstrap/verifiers.json; do
-    [ -f "$src" ] && [ ! -L "$src" ] || continue
-    case "$src" in /workspaces/dc-*) continue ;; esac
-    python3 - "$src" "$SRV/bootstrap-verifiers.json" <<'PY' || true
-import json, os, sys
-src, dst = sys.argv[1], sys.argv[2]
-if os.path.getsize(src) > 16384: sys.exit(0)
-try: new = json.load(open(src))
-except Exception: sys.exit(0)
-g = new.get("generation")
-if not isinstance(g, int) or g < 1 or not isinstance(new.get("passphrase"), dict) or not isinstance(new.get("transferSha256"), str): sys.exit(0)
-try: old = json.load(open(dst)).get("generation", 0)
-except Exception: old = 0
-if isinstance(old, int) and old >= g: sys.exit(0)
-tmp = dst + ".tmp"
-with open(tmp, "w") as f: json.dump({"generation": g, "passphrase": new["passphrase"], "transferSha256": new["transferSha256"]}, f)
-os.chmod(tmp, 0o600); os.rename(tmp, dst)
-PY
-  done
-  [ -f "$SRV/bootstrap-verifiers.json" ] && chown dcserver:dcserver "$SRV/bootstrap-verifiers.json" && chmod 0600 "$SRV/bootstrap-verifiers.json"
-}
-
+# The repo checkout (/workspaces/<repo>) sits under the default ACL other::rwx (W0 b): the
+# supervisor's `prepare` locks its .devcontainer tree down AS ROOT (root:root, no group/other
+# write, ACLs stripped, links removed; fd-based, never following a link) BEFORE anything reads
+# it, then copies the bootstrap verifiers through its no-follow, owner-checked reader.
 repair_owners() {
   chown -R -P dcserver:dcserver "$SRV" "$PUB"; chmod 0700 "$SRV"; chmod 0755 "$PUB"
   chown dcuser:dcwork "$HM" "$WORK"; chmod 2775 "$HM"; chmod 2770 "$WORK"
@@ -77,7 +54,7 @@ start)
   chmod 0700 /workspaces/.codespaces /home/codespace 2>/dev/null
   # A stop request left from an earlier boot must never stop this one.
   rm -f "$PUB/stop-request"
-  copy_verifiers
+  /usr/bin/node /opt/dc-hf/supervisor.mjs prepare < /dev/null >> "$RUNTIME/supervisor.out" 2>&1
   printf '%s\n' "$ORIGIN" > "$RUNTIME/origin"
   # Everything below outlives this lifecycle step.
   pkill -f '/opt/dc-hf/supervisor.mjs' 2>/dev/null
@@ -98,6 +75,7 @@ start)
 for p in (\"/workspaces/dc-server\",\"/workspaces/dc-server-pub\",\"/workspaces/dc-work\",\"/workspaces/dc-home\",\"/workspaces/dc-runtime\"):
     try: os.removexattr(p, \"system.posix_acl_default\")
     except OSError: pass"
+        /usr/bin/node /opt/dc-hf/supervisor.mjs lockdown < /dev/null >> /workspaces/dc-runtime/supervisor.out 2>&1
         pkill -TERM -u dcserver 2>/dev/null
         echo "$(date -u +%FT%TZ) settle: re-own repaired after ${i}x5s" >> /workspaces/dc-runtime/settle.log
         exit 0

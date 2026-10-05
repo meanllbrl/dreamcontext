@@ -70,7 +70,8 @@ export interface GitReceiveBody {
   remotes: GitRemote[];
 }
 
-export interface RunningTurn { conversationId: string; startedAt: number }
+/** A running turn or (lane D, D22) a live process from the cloud's process scan (pid + command, maybe no conversation). */
+export interface RunningTurn { conversationId: string; startedAt: number; pid?: number; command?: string }
 export interface CloudAccount { id: string; label: string; signedIn: boolean }
 
 export interface CloudClient {
@@ -83,7 +84,8 @@ export interface CloudClient {
   downloadTo(blob: BlobRef, path: string): Promise<void>;
   verifiers(push: VerifierPush): Promise<InstallResultWire>;
   revokeAll(generation: number): Promise<InstallResultWire>;
-  runtime(uploadId: string): Promise<void>;
+  /** D25: install this exact npm version (the root supervisor fetches + verifies it), then restart. */
+  runtime(pin: { version: string; integrity: string }): Promise<void>;
   /** v1.1: `includes` = each root's `handsfree.include` patterns, root-relative. */
   trip(body: { tripId: string; laptopId: string; go: GoManifest; takeOver?: boolean; includes: Record<string, string[]> }): Promise<void>;
   state(rootId: string): Promise<RootState>;
@@ -92,7 +94,8 @@ export interface CloudClient {
   filesReceive(body: { tripId: string; rootId: string; uploadId?: string; expected: ManifestEntry[] }): Promise<{ refused: Array<{ path: string; reason: string }>; digest: string }>;
   global(uploadId: string): Promise<void>;
   activate(tripId: string): Promise<void>;
-  quiesce(tripId: string, recovery?: boolean): Promise<{ epoch: number; running: RunningTurn[] }>;
+  /** `tripLost`: a RECOVERY quiesce of a cloud whose trip marker is missing (it still quiesced). */
+  quiesce(tripId: string, recovery?: boolean): Promise<{ epoch: number; running: RunningTurn[]; tripLost?: boolean }>;
   cut(epoch: number): Promise<void>;
   unquiesce(epoch: number): Promise<void>;
   snapshot(body: { epoch: number; tolerant?: boolean; knownTips: Record<string, string[]> }): Promise<SnapshotReply>;
@@ -394,8 +397,8 @@ export class HttpCloudClient implements CloudClient {
     return installResult(await this.json('POST', '/api/handsfree/cloud/revoke-all', { generation }));
   }
 
-  async runtime(uploadId: string): Promise<void> {
-    const r = await this.json('POST', '/api/handsfree/cloud/runtime', { uploadId });
+  async runtime(pin: { version: string; integrity: string }): Promise<void> {
+    const r = await this.json('POST', '/api/handsfree/cloud/runtime', { version: pin.version, integrity: pin.integrity });
     if (!isObj(r) || r.ok !== true) throw bad('runtime');
   }
 
@@ -437,12 +440,17 @@ export class HttpCloudClient implements CloudClient {
     await this.json('POST', '/api/handsfree/cloud/activate', { tripId });
   }
 
-  async quiesce(tripId: string, recovery?: boolean): Promise<{ epoch: number; running: RunningTurn[] }> {
+  async quiesce(tripId: string, recovery?: boolean): Promise<{ epoch: number; running: RunningTurn[]; tripLost?: boolean }> {
     const r = await this.json('POST', '/api/handsfree/cloud/quiesce', { tripId, ...(recovery ? { recovery: true } : {}) });
     if (!isObj(r) || !isInt(r.epoch) || !Array.isArray(r.running)) throw bad('quiesce');
-    const running = (r.running as unknown[]).filter((x): x is Record<string, unknown> => isObj(x) && typeof x.conversationId === 'string')
-      .map((x) => ({ conversationId: x.conversationId as string, startedAt: Number(x.startedAt) || 0 }));
-    return { epoch: r.epoch, running };
+    // Every entry counts as running work (a process entry may carry only pid + command).
+    const running = (r.running as unknown[]).filter(isObj).map((x) => ({
+      conversationId: typeof x.conversationId === 'string' ? x.conversationId : '',
+      startedAt: Number(x.startedAt) || 0,
+      ...(isInt(x.pid) ? { pid: x.pid } : {}),
+      ...(typeof x.command === 'string' ? { command: x.command.slice(0, 200) } : {}),
+    }));
+    return { epoch: r.epoch, running, ...(r.tripLost === true ? { tripLost: true } : {}) };
   }
 
   async cut(epoch: number): Promise<void> {
