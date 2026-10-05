@@ -56,6 +56,14 @@ rejections. The step-by-step production line (VO, Remotion, SFX, QA, archive) li
    mid-capture. Drive Playwright at DPR 2, light. Clip real cards to their own box instead of
    hand-cropping. Type a question at DPR 3 and never send it (no Claude turn, no cost). Record one
    live chat turn as frames.
+   - **When a claim needs the brain to DO something** ("the brain did", a hypothesis that moves),
+     run it for real in the demo vault: real day sessions, then a real sleep (v5, 2026-10-05). Launch
+     every `claude -p` with `env -i` (HOME = the fake home, `CLAUDE_CONFIG_DIR` = the account,
+     `--strict-mcp-config`, an appended "orbit is a fictional demo" note) and DETACHED. Without that,
+     the parent session's `DREAMCONTEXT_*` env and its Claude profile leak in (company connectors, a
+     tab-title block), and dreamcontext scores the run as a spawned child (score 0), so the sleep
+     never sees it. Never pad the debt meter with `sleep add` lines: the sleep treats them as real
+     events and reports on things that never happened.
 5. **Gate every capture for privacy and truth before it reaches `public/`.**
    - Grep each chat frame's page text for `@`: an account-change banner printed the owner's
      email on every live-chat frame. Reload to drop it, or crop below it.

@@ -183,7 +183,7 @@ trace to this checkout's `dist`, not a stale duplicate.
 
 ## Last Verified
 
-2026-10-04 (desktop signing section: local identity verified on the installed app —
+2026-10-05 (0.30.0 published end to end: npm from gitHead 02fa749a, ~9.5 min before the registry served it while the local `npm view` cache still said 0.28.0, so verify against registry.npmjs.org; tag pushed only after that; the release-certificate CI path ran on a tag for the first time and passed, and the downloaded asset's requirement names `certificate leaf = H"8fcf5eee…"`. An unannounced feature can ship hidden for testing: one revertable commit gates its UI on local setup, hides the CLI command from --help, and moves its docs out of the package; revert it on main right after the tag). 2026-10-04 (desktop signing section: local identity verified on the installed app —
 `designated => identifier "com.dreamcontext.beta" and certificate leaf = H"8a17…"`; the
 CI release-certificate path is written but has not run on a tag yet). 2026-10-02 (the 0.30.0 cut followed this list: five version surfaces + both lockfiles moved
 together, `RELEASES.json` reconciled and left at `planning`, the What's New story authored

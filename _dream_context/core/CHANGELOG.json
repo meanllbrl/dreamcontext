@@ -1,5 +1,193 @@
 [
   {
+    "date": "2026-10-05",
+    "type": "docs",
+    "scope": "marketing",
+    "description": "Deliver the light-mode IntroV4 promo (49.4s, SFX and music cuts, QA by measurement) and capture the reusable workflow as knowledge/patterns/promo-video-from-a-reference-reel.md. Save the owner's v5 brief verbatim at _dream_context/marketing/videos/dreamcontext-intro-v5-brief.md: locked VO, sleep model centrepiece, at most 60s.",
+    "breaking": false,
+    "summary": "Promo IntroV4 delivered (SFX and music cuts); the v5 revision brief is saved with a locked VO and the sleep model as centrepiece",
+    "references": [
+      "knowledge:patterns/promo-video-from-a-reference-reel",
+      "file:_dream_context/marketing/videos/dreamcontext-intro-v5-brief.md",
+      "task:a-light-mode-dreamcontext-promo-video-is-cut-from-real-app-footage-in-the-reel-grammar-the-owner-keeps-sending"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix the chat team board's duplicate phase labels and unnamed agents, and fold it while the live card is visible.",
+    "breaking": false,
+    "summary": "The team board names each phase once, names every agent, and folds while the live card is on screen",
+    "references": [
+      "commit:bb5dc63d"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "fix",
+    "scope": "goal-skill",
+    "description": "Tighten the goal skill's builder contract: checks run in the foreground, heavy checks are serialised across builders, and every builder ends with a report.",
+    "breaking": false,
+    "summary": "Builders never background a check, take turns on heavy checks, and end on a report",
+    "references": [
+      "commit:a241f5cb",
+      "feature:context-gate-and-goal-skill"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "fix",
+    "scope": "accounts",
+    "description": "Fix multi-account switching so a pending switch is always carried out rather than left owed after the triggering turn.",
+    "breaking": false,
+    "summary": "An account switch is never left owed",
+    "references": [
+      "commit:2dea0266",
+      "feature:claude-multi-account"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "fix",
+    "scope": "whiteboard",
+    "description": "Guard the Excalidraw builder against overwriting a whiteboard that is open live, and fix the server so a board opened after a dashboard rebuild loads rather than forcing an app reload.",
+    "breaking": false,
+    "summary": "The Excalidraw builder refuses to overwrite a live board, and a board opened after a rebuild loads instead of reloading the app",
+    "references": [
+      "commit:6de92e15",
+      "commit:5d38fa09",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Add shared date windows, a funnel-explorer endpoint and percent bar ticks to Lab, and let whiteboards render a funnel as its explorer and any Lab card as a widget with its date window on the card.",
+    "breaking": false,
+    "summary": "Funnels draw as their explorer on a board, any Lab card is a widget, and date windows are shared and sit on the card",
+    "references": [
+      "commit:82da8340",
+      "commit:ab6752c2",
+      "feature:lab-analytics-insights",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "docs",
+    "scope": "announcements",
+    "description": "Rewrite the 0.30.0 What's New entry to lead with the Assistant (dashboard/public/announcements.json), in line with announcing the release through a narrated video instead of a screenshot page.",
+    "breaking": false,
+    "summary": "The 0.30.0 story leads with the Assistant; the release is announced by a narrated video",
+    "references": [
+      "commit:99d95a18",
+      "task:the-0-30-0-release-is-announced-by-a-narrated-video-instead-of-a-screenshot-page"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Fix the desktop splash so its animation starts only after the page is ready, instead of playing behind a blank window.",
+    "breaking": false,
+    "summary": "The splash plays only once the page is ready to show it",
+    "references": [
+      "commit:bf861388",
+      "feature:desktop-splash-screen"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "Add screen viewing and computer use to the desktop Assistant so it can see what is on screen and act on it.",
+    "breaking": false,
+    "summary": "The Assistant can look at your screen and use your computer",
+    "references": [
+      "commit:97043e4d",
+      "feature:dreamcontext-assistant"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Add board agents: an agent attached to a whiteboard reads and edits only that board, documented in skill/references/whiteboards.md.",
+    "breaking": false,
+    "summary": "An agent lives on a board and acts only on that board",
+    "references": [
+      "commit:f51f3daf",
+      "commit:66736f24",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "change",
+    "scope": "handsfree",
+    "description": "Hide the handsfree command from --help (commands still work), remove the Hands-free Mode README section and the SKILL.md reference link, and move skill/references/hands-free.md to docs/unannounced/hands-free.md; the dashboard button and settings card follow suit. Keeps the feature dark until it is ready to announce.",
+    "breaking": false,
+    "summary": "Uncommitted: 0.30.0 ships hands-free unannounced — command hidden from --help, README section and skill reference pulled",
+    "references": [
+      "file:src/cli/commands/handsfree.ts",
+      "file:docs/unannounced/hands-free.md",
+      "file:README.md",
+      "file:skill/SKILL.md",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "type": "feat",
+    "scope": "handsfree",
+    "description": "Add the end-to-end hands-free trip: go moves the vault, linked repos, worktrees and Claude sessions to the user's own codespace, the phone signs in with a passphrase and drives Chat, and return brings every diff and session back with a receipt. The window-bar button, settings card and away banner are wired into the desktop shell (src/cli/commands/handsfree.ts, dashboard/src/components/handsfree/).",
+    "breaking": false,
+    "summary": "Hands-free takes a project to your own GitHub Codespace and the phone drives it; wired into the shell, chat and docs",
+    "references": [
+      "commit:6e0b9c32",
+      "commit:66736f24",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-10-04",
     "type": "change",
     "scope": "handsfree",
