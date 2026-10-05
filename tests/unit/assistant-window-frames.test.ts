@@ -259,7 +259,38 @@ describe('Notch seats (source scan)', () => {
     // re-showing a window the owner already popped out (never focused, never a seat change).
     const opens = src.slice(src.indexOf('const openForPresentation'), src.indexOf('useEffect(() => session?.onPresent'));
     expect(opens).not.toMatch(/nativeSeat\(/);
-    expect(opens).toMatch(/seat\(true, geo, frameMotionMs\(\), undefined, false\)/);
+    // In the notch seat a presentation opens through the motion plan, never focused, and
+    // never with the old animated frame (the transparent window's growth was never seen).
+    expect(opens).toMatch(/runMotion\('open', \{ focus: false \}\)/);
+    expect(opens).not.toMatch(/seat\(true, geo, frameMotionMs\(\)/);
+  });
+
+  it('the notch seat opens and folds through runMotion: the window lands at 0 ms, the island moves in CSS', async () => {
+    const { planMotion } = await import('../../dashboard/src/components/assistant/notchMotion');
+    const runAt = src.indexOf('const runMotion = useCallback');
+    expect(runAt, 'runMotion not found').toBeGreaterThan(-1);
+    const run = src.slice(runAt, src.indexOf('}, [geo, foldedRect, haltIsland, setMotion]);', runAt));
+    // Every frame step of the plan becomes ONE seat() call at 0 ms: open on the panel (focus as
+    // asked), fold on the pill under the claim the fold took at its start.
+    expect(run).toMatch(/step\.kind === 'frame'[\s\S]*seat\(true, geo, 0, undefined, opts\.focus \?\? true\)[\s\S]*seat\(false, geo, 0, foldClaim, false\)/);
+    expect(run).toMatch(/const foldClaim = request === 'fold' \? claimSeat\(notchFrame\(true, geo\)\)/);
+    expect(run).not.toMatch(/frameMotionMs\(\)/);
+    // A superseded run stops before its next step (a late frame never lands).
+    expect(run).toMatch(/for \(const step of plan\.steps\) \{\s*if \(gen !== motionGen\.current\) return;/);
+    // The plan run here: open = frame THEN css, fold = css THEN frame, every frame at 0 ms.
+    const open = planMotion('closed', 'open', { reduced: false })!.steps.map((s) => s.kind);
+    const fold = planMotion('open', 'fold', { reduced: false })!.steps.map((s) => s.kind);
+    expect(open).toEqual(['frame', 'css', 'settle']);
+    expect(fold).toEqual(['css', 'frame', 'settle']);
+    for (const s of [...planMotion('closed', 'open', { reduced: false })!.steps, ...planMotion('open', 'fold', { reduced: false })!.steps]) {
+      if (s.kind === 'frame') expect(s.ms).toBe(0);
+    }
+    // Who calls it: the owner's open and fold in the notch seat; the window seat keeps its own path.
+    const expand = src.slice(src.indexOf('const expand = useCallback'), src.indexOf('const collapse = useCallback'));
+    expect(expand).toMatch(/seatRef\.current === 'window' \? seatWindow\(geo, frameRef\.current\) : runMotion\('open', \{ focus: true, from \}\)/);
+    const collapse = src.slice(src.indexOf('const collapse = useCallback'), src.indexOf('const collapseRef'));
+    expect(collapse).toMatch(/runMotion\('fold'\)/);
+    expect(collapse).not.toMatch(/seat\(false, geo\)/);
   });
 
   it('pop-out and dock claim their seat change at the click, so the later one always wins', () => {

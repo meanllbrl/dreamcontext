@@ -10,7 +10,7 @@ import { request } from 'node:http';
  * anywhere else — a terminal, another project's agent — it refuses with the same named error
  * the server would give.
  *
- * `node:http`, not `fetch`: a gated verb (`send`, `answer`, `broadcast`, `close`) BLOCKS until the
+ * `node:http`, not `fetch`: a gated verb (`send`, `agent`, `answer`, `broadcast`, `close`) BLOCKS until the
  * owner approves it in the notch, up to ten minutes, and undici's fetch gives up waiting for
  * response headers after five.
  *
@@ -134,6 +134,19 @@ export function registerAssistantCommand(program: Command): void {
     .description('Send a follow-up into a live chat')
     .action((sessionId: string, text: string) => ui('send', { sessionId, text }));
 
+  a.command('agent <vault> <text>')
+    .description('Call an agent in a project: a board\'s home agent (--board) or any agent by slug (--slug)')
+    .option('--board <board>', 'The whiteboard whose home agent gets the message')
+    .option('--slug <slug>', 'The agent\'s slug')
+    .action((vault: string, text: string, o: { board?: string; slug?: string }) => {
+      if (!o.board === !o.slug) {
+        process.stderr.write('name exactly one of --board or --slug\n');
+        process.exitCode = 1;
+        return;
+      }
+      return ui('agent', { vault, text, ...(o.board ? { board: o.board } : { slug: o.slug }) });
+    });
+
   a.command('answer <sessionId>')
     .description('Answer a chat\'s pending question or permission prompt')
     .requiredOption('--question <id>', 'The pending question id (from sessions/watch)')
@@ -169,6 +182,15 @@ export function registerAssistantCommand(program: Command): void {
     .description('Screenshot the owner\'s screen(s) and print the image paths to Read — only when the owner asks')
     .option('--display <n>', 'Only this display (1 = main); default every display')
     .action(async (o: { display?: string }) => print(await callAssistant('POST', '/api/assistant/look', o.display ? { display: Number(o.display) } : {})));
+
+  // Not a verb the Assistant types: its own claude spawn launches this as an MCP server
+  // (`--mcp-config`, agent-chat.ts) to get mouse, keyboard and screen. Hidden from --help.
+  a.command('computer-mcp', { hidden: true })
+    .description('Run the Assistant\'s computer-control MCP server on stdio')
+    .action(async () => {
+      const { runComputerMcpServer } = await import('../../lib/assistant/computer-mcp.js');
+      runComputerMcpServer();
+    });
 
   a.command('notify <text>')
     .description('Show a notice in the notch')

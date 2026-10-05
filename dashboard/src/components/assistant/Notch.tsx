@@ -15,6 +15,7 @@ import { ConversationMenu } from './ConversationMenu';
 import { NotchPeek, peekItem, type PeekItem } from './NotchPeek';
 import { AgentAvatar, InboxList } from './InboxList';
 import { ListeningOverlay } from './ListeningOverlay';
+import { NOTCH_GROW_EASE, drawsOpen, islandClip, planMotion, type IslandRect, type MotionPhase, type MotionRequest } from './notchMotion';
 import {
   EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
   readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
@@ -110,6 +111,8 @@ interface AssistantStatus {
     name: string; conversationId: string | null; hotkey: { mode: 'hold' | 'toggle' } | null;
     /** The Assistant's own default (sonnet + medium unless the owner picked otherwise). */
     model?: string; effort?: string;
+    /** ask | auto | bypass — the Assistant's own permission mode (src/lib/assistant/home.ts). */
+    autonomy?: Autonomy;
   } | null;
   avatar: string | null;
 }
@@ -118,8 +121,11 @@ interface AssistantStatus {
 const ASSISTANT_MODEL = 'sonnet';
 const ASSISTANT_EFFORT = 'medium';
 
-/** Persist the Assistant's own default model or effort (picked in the notch's composer). */
-async function saveProfile(patch: { model?: string; effort?: string }): Promise<void> {
+type Autonomy = 'ask' | 'auto' | 'bypass';
+
+/** Persist the Assistant's own default model, effort or autonomy (picked in the notch's composer).
+ *  An autonomy change respawns the live session server-side before its next turn. */
+async function saveProfile(patch: { model?: string; effort?: string; autonomy?: Autonomy }): Promise<void> {
   try {
     await fetch('/api/assistant/profile', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
@@ -171,6 +177,20 @@ function notchFrame(expanded: boolean, geo: Geometry | null): { width: number; h
   const width = expanded ? Math.max(PANEL_W, earsW) : earsW;
   const height = expanded ? PANEL_H : pillHeight(geo);
   return geo ? { width, height, x: geo.x + (geo.width - width) / 2, y: geo.y } : { width, height };
+}
+
+/** The owner asked the OS for less motion: the island then opens and folds at once. */
+function reducedMotion(): boolean {
+  try {
+    return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+}
+
+/** A design token as the element sees it (the Web Animations API cannot take `var()`). */
+function cssToken(el: Element, name: string, fallback: string): string {
+  return getComputedStyle(el).getPropertyValue(name).trim() || fallback;
 }
 
 /**
@@ -404,6 +424,10 @@ async function saveConversationId(conversationId: string): Promise<void> {
 
 export function Notch() {
   const [status, setStatus] = useState<AssistantStatus | null>(null);
+  // The composer's Auto/Bypass segment reads and WRITES this — it used to be hardcoded to
+  // 'auto' with a no-op setter, so picking Bypass snapped straight back (owner, 2026-10-04).
+  // `ask` has no segment of its own and shows as Auto: both still stop for risky commands.
+  const [autonomy, setAutonomy] = useState<Autonomy>('ask');
   const [expanded, setExpanded] = useState(false);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [rollup, setRollup] = useState<Rollup>(EMPTY_ROLLUP);
@@ -432,6 +456,14 @@ export function Notch() {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const hostRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  /** The island's motion in the notch seat (notchMotion.ts): drawn open while it grows, while
+   *  it is open, and while it shrinks back — `expanded` is what was last ASKED for. */
+  const [motion, setMotionState] = useState<MotionPhase>('closed');
+  const motionRef = useRef<MotionPhase>('closed');
+  /** Every motion request takes a new generation; a superseded run stops at its next step. */
+  const motionGen = useRef(0);
+  const islandAnims = useRef<Animation[]>([]);
   const sessionRef = useRef<ChatSession | null>(null);
   const expandedRef = useRef(false);
   expandedRef.current = expanded;
@@ -472,6 +504,7 @@ export function Notch() {
         const st = await res.json() as AssistantStatus;
         if (!alive) return;
         setStatus(st);
+        if (st.config?.autonomy) setAutonomy(st.config.autonomy);
         profileRef.current = {
           model: st.config?.model || ASSISTANT_MODEL,
           effort: st.config?.effort || ASSISTANT_EFFORT,
@@ -593,7 +626,8 @@ export function Notch() {
 
   // ── THE PEEK: the collapsed notch says one thing without being opened ──────────────────
   // Only from the notch seat: popped out, the window IS the surface and a hidden one stays hidden.
-  const canPeek = !expanded && seatMode === 'notch';
+  // Not while the island is still folding: the peek would re-seat the window under the shrink.
+  const canPeek = !expanded && seatMode === 'notch' && motion === 'closed';
   const canPeekRef = useRef(canPeek);
   canPeekRef.current = canPeek;
   const hoverRef = useRef(false);
@@ -794,17 +828,113 @@ export function Notch() {
     return () => window.removeEventListener('keydown', onKey);
   }, [expanded, glance, proposals, dropRow]);
 
+  // ── THE ISLAND GROWS AND FOLDS (notchMotion.ts) ──────────────────────────────────────────
+  // The window is transparent, so a growing window frame was never what the owner saw. In the
+  // notch seat the window lands on its frame in one step and the black island itself grows in
+  // CSS: a clip-path on the root, so the layout (and the chat pane) stays at the final size.
+  const setMotion = useCallback((p: MotionPhase) => { motionRef.current = p; setMotionState(p); }, []);
+  /** Stop the island where it is: the clip and the content opacity it was painting. */
+  const haltIsland = useCallback((): { clip: string | null; opacity: number } => {
+    const root = rootRef.current;
+    const panel = panelRef.current;
+    const clip = root ? getComputedStyle(root).clipPath : 'none';
+    const opacity = panel ? Number(getComputedStyle(panel).opacity) : 1;
+    for (const a of islandAnims.current) a.cancel();
+    islandAnims.current = [];
+    if (root) root.style.clipPath = '';
+    if (panel) panel.style.opacity = '';
+    return { clip: clip && clip !== 'none' ? clip : null, opacity: Number.isFinite(opacity) ? opacity : 1 };
+  }, []);
+  /** Leave any grow or fold at once and stand still in `phase` (a seat change, the off switch). */
+  const stillIsland = useCallback((phase: MotionPhase) => {
+    motionGen.current++;
+    haltIsland();
+    setMotion(phase);
+  }, [haltIsland, setMotion]);
+  /** The folded island as drawn now: the pill, or the peek grown down out of it. */
+  const foldedRect = useCallback((withPeek: boolean): IslandRect => {
+    const pill = notchFrame(false, geo);
+    const peekEl = withPeek ? peekRef.current : null;
+    const r = peekEl ? { width: Math.max(PEEK_W, pill.width), height: pill.height + peekEl.getBoundingClientRect().height } : pill;
+    return { width: Math.min(r.width, window.innerWidth), height: Math.min(r.height, window.innerHeight) };
+  }, [geo]);
+  /**
+   * Run one open or fold (notchMotion.ts `planMotion`). Resolves once it has settled, or once a
+   * newer request took over. Open: the window lands on the panel at once, then the island grows
+   * from `from` (the pill or the peek; measured here when not given). Fold: the island shrinks
+   * to the pill first, then the window lands on the pill. The window frame is the guard's
+   * `wanted` the whole time: the CSS never moves the window, so it is not drift.
+   */
+  const runMotion = useCallback(async (request: MotionRequest, opts: { focus?: boolean; from?: IslandRect } = {}): Promise<void> => {
+    const plan = planMotion(motionRef.current, request, { reduced: reducedMotion() });
+    if (!plan) return;
+    const gen = ++motionGen.current;
+    const root = rootRef.current;
+    const panel = panelRef.current;
+    const from = request === 'open' ? (opts.from ?? foldedRect(true)) : null;
+    const was = haltIsland();
+    setMotion(plan.phase);
+    const pillR = root ? cssToken(root, '--radius-xl', '16px') : '16px';
+    const panelR = root ? cssToken(root, '--radius-2xl', '24px') : '24px';
+    const ease = root ? cssToken(root, '--ease-out', NOTCH_GROW_EASE) : NOTCH_GROW_EASE;
+    const css = plan.steps.find((s) => s.kind === 'css');
+    const startClip = css?.from === 'current' && was.clip ? was.clip : request === 'open' ? islandClip(from, pillR) : islandClip(null, panelR);
+    const startOpacity = css?.from === 'current' ? was.opacity : request === 'open' ? 0 : 1;
+    // Opening: hold the island at its start before the open island first paints (this runs
+    // before any await, so even the hotkey's flushSync'd open never shows the full panel early).
+    if (css && request === 'open' && root && panel) {
+      root.style.clipPath = startClip;
+      panel.style.opacity = String(startOpacity);
+    }
+    // Folding: the window stays on the panel frame until the shrink is over, and this claim
+    // makes any open still on its way stop before it lands a frame.
+    const foldClaim = request === 'fold' ? claimSeat(notchFrame(true, geo)) : undefined;
+    for (const step of plan.steps) {
+      if (gen !== motionGen.current) return;
+      if (step.kind === 'frame') {
+        await (step.to === 'panel'
+          ? seat(true, geo, 0, undefined, opts.focus ?? true)
+          : seat(false, geo, 0, foldClaim, false));
+      } else if (step.kind === 'css') {
+        if (!root || !panel) continue;
+        const toClip = step.to === 'panel' ? islandClip(null, panelR) : islandClip(foldedRect(false), pillR);
+        const grow = step.to === 'panel';
+        root.style.clipPath = '';
+        panel.style.opacity = '';
+        const anims = [
+          root.animate([{ clipPath: startClip }, { clipPath: toClip }], { duration: step.ms, easing: ease, fill: grow ? 'none' : 'forwards' }),
+          // The content fades in with the grow (a beat behind it), and out ahead of the shrink.
+          panel.animate(
+            grow ? [{ opacity: startOpacity }, { opacity: startOpacity, offset: 0.3 }, { opacity: 1 }] : [{ opacity: startOpacity }, { opacity: 0 }],
+            { duration: grow ? step.ms : Math.round(step.ms * 0.6), easing: 'ease-out', fill: grow ? 'none' : 'forwards' },
+          ),
+        ];
+        islandAnims.current = anims;
+        await Promise.all(anims.map((a) => a.finished.catch(() => undefined)));
+      } else {
+        // Settled. A fold flips to the pill in the same frame its shrink lets go, so the
+        // panel-sized island never paints again in the pill-sized window.
+        flushSync(() => setMotion(step.phase));
+        for (const a of islandAnims.current) a.cancel();
+        islandAnims.current = [];
+        root?.style.removeProperty('clip-path');
+        panel?.style.removeProperty('opacity');
+      }
+    }
+  }, [geo, foldedRect, haltIsland, setMotion]);
+
   // Opening lands on what matters: "Now" when something waits on the owner, else the chat.
-  // The OWNER opened it (a click, the hotkey): it never folds by itself.
-  const expand = useCallback((to?: 'now' | 'chat') => {
+  // The OWNER opened it (a click, the hotkey): it never folds by itself. `from` is the island
+  // as it was drawn before the open (the hotkey measures it before its flushSync).
+  const expand = useCallback((to?: 'now' | 'chat', from?: IslandRect) => {
     setTab(to ?? (waitingRef.current ? 'now' : 'chat'));
     setPeek(null);
     setExpanded(true);
     setAttention(false);
     autoOpenRef.current = null;
-    const seated = seatRef.current === 'window' ? seatWindow(geo, frameRef.current) : seat(true, geo);
+    const seated = seatRef.current === 'window' ? seatWindow(geo, frameRef.current) : runMotion('open', { focus: true, from });
     return seated.then(() => sessionRef.current?.focus());
-  }, [geo]);
+  }, [geo, runMotion]);
   // Popped out, "collapse" hides the window (still mounted, still connected) instead of
   // shrinking it to a pill; the next summon brings the window back.
   const collapse = useCallback(() => {
@@ -815,11 +945,12 @@ export function Notch() {
     engagedRef.current = false;
     voiceSummonRef.current = false;
     if (seatRef.current === 'window') {
+      stillIsland('closed');
       void readFrame().then((f) => { if (f) frameRef.current = f; return hideWindow(); });
     } else {
-      void seat(false, geo);
+      void runMotion('fold');
     }
-  }, [geo]);
+  }, [runMotion, stillIsland]);
   /** For timers armed before a re-render: always the current `collapse`. */
   const collapseRef = useRef(collapse);
   collapseRef.current = collapse;
@@ -834,21 +965,23 @@ export function Notch() {
     seatRef.current = 'window';
     setSeatMode('window');
     setExpanded(true);
+    stillIsland('open');                    // a window is drawn whole; its seat change animates natively
     void nativeSeat('window')
       .then(() => seatWindow(geo, frameRef.current, true, frameMotionMs(), gen))
       .then(() => sessionRef.current?.focus());
-  }, [geo]);
+  }, [geo, stillIsland]);
   const dock = useCallback(() => {
     autoOpenRef.current = null;
     const gen = claimSeat(null);
     seatRef.current = 'notch';
     setSeatMode('notch');
     setExpanded(true);
+    stillIsland('open');
     void readFrame()
       .then((f) => { if (f) frameRef.current = f; return nativeSeat('notch'); })
       .then(() => seat(true, geo, frameMotionMs(), gen))
       .then(() => sessionRef.current?.focus());
-  }, [geo]);
+  }, [geo, stillIsland]);
 
   // ── THE ASSISTANT DECIDES HOW IT IS SHOWN (owner, 2026-10-04) ─────────────────────────
   // "Auto pop out is not needed; it opens and closes by itself." Nothing here moves the notch
@@ -901,8 +1034,8 @@ export function Notch() {
     setPeek(null);
     setExpanded(true);
     if (seatRef.current === 'window') void seatWindow(geo, frameRef.current, false);
-    else void seat(true, geo, frameMotionMs(), undefined, false);
-  }, [geo]);
+    else void runMotion('open', { focus: false });
+  }, [geo, runMotion]);
 
   useEffect(() => session?.onPresent((p: NotchPresentation) => {
     if (p.kind === 'progress') {
@@ -971,13 +1104,13 @@ export function Notch() {
         const { listen } = await import('@tauri-apps/api/event');
         const fn = await listen<{ enabled: boolean }>('assistant://enabled', (e) => {
           switchedOff = e.payload?.enabled === false;
-          if (switchedOff) setExpanded(false);
+          if (switchedOff) { setExpanded(false); stillIsland('closed'); }
         });
         if (cancelled) fn(); else unlisten = fn;
       } catch { /* no runtime */ }
     })();
     return () => { cancelled = true; unlisten?.(); };
-  }, []);
+  }, [stillIsland]);
 
   // Hotkey edges from Rust (assistant://hotkey) — the ONE chord that summons the notch AND
   // talks to it. Hold: press summons and opens the mic, release closes it (a tap just opens
@@ -1009,11 +1142,13 @@ export function Notch() {
           heldRef.current = true;
           const press = ++pressRef.current;
           if (!expandedRef.current) {
+            // The island as drawn before the flushSync below takes the peek away: the grow starts there.
+            const from = motionRef.current === 'closed' ? foldedRect(true) : undefined;
             flushSync(() => setExpanded(true));
             // Summoned to talk: once the words are sent the notch folds to the pill.
             voiceSummonRef.current = true;
             engagedRef.current = false;
-            void expand('chat').then(() => {
+            void expand('chat', from).then(() => {
               if (!summonTakeDue(mode, heldRef.current, expandedRef.current, press === pressRef.current)) return;
               emitExternalPushToTalk({ edge, mode, summon: true });
             });
@@ -1032,7 +1167,7 @@ export function Notch() {
       } catch { /* no runtime */ }
     })();
     return () => { cancelled = true; unlisten?.(); };
-  }, [expand, collapse, status]);
+  }, [expand, collapse, status, foldedRect]);
 
   // Esc and click-outside collapse the notch. Never an unmount. A popped-out window is a
   // window: it stays open when the owner clicks elsewhere or presses Esc in it.
@@ -1227,7 +1362,10 @@ export function Notch() {
       cs.dispose();
       startSession(cs.claudeId);
     },
-    changePermissionMode: () => { /* governed by the autonomy setting */ },
+    changePermissionMode: (_sid, next) => {
+      setAutonomy(next);
+      void saveProfile({ autonomy: next });
+    },
     changeMode: () => { /* the assistant is always in assistant mode */ },
     changeAccount: () => { /* follows the default account */ },
     handoffToDevelop: () => { /* projects hand off, the assistant does not */ },
@@ -1271,12 +1409,14 @@ export function Notch() {
   // Popped out there is no camera housing to straddle: the top row is a plain title bar.
   const hasNotch = !popped && !!geo && geo.notch_width > 0;
   const hotkeyMode = status?.config?.hotkey?.mode === 'toggle' ? 'toggle' : 'hold';
+  // Folding, the island is still drawn open until its shrink is over (and the panel stays mounted either way).
+  const drawnOpen = expanded || drawsOpen(motion);
 
   return (
     <div
       ref={rootRef}
       data-mood={mood}
-      className={`dc-notch surface-night${expanded ? ' dc-notch--open' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && (popped || expanded) ? ' dc-notch--working' : ''}${peekShown ? ' dc-notch--peek' : ''}${(busyCount > 0 || busy) && !expanded ? ' dc-notch--busy' : ''}`}
+      className={`dc-notch surface-night${drawnOpen ? ' dc-notch--open' : ''}${motion === 'opening' || motion === 'folding' ? ' dc-notch--moving' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && (popped || expanded) ? ' dc-notch--working' : ''}${peekShown ? ' dc-notch--peek' : ''}${(busyCount > 0 || busy) && !expanded ? ' dc-notch--busy' : ''}`}
       onPointerEnter={onHoverIn}
       onPointerLeave={onHoverOut}
       onPointerDown={engage}
@@ -1356,7 +1496,7 @@ export function Notch() {
 
       {/* Hidden, never unmounted, while collapsed — see the header. Two faces: "Now" (what
           every project is doing and what waits on the owner) and the conversation. */}
-      <div className="dc-notch__panel" hidden={!expanded}>
+      <div className="dc-notch__panel" ref={panelRef} hidden={!drawnOpen}>
         <div className="dc-notch__bar">
           <div className="dc-notch__tabs" role="tablist">
             <button type="button" role="tab" aria-selected={tab === 'now'} className="dc-notch__tab" onClick={() => { setTab('now'); setConvosOpen(false); }}>
@@ -1422,7 +1562,7 @@ export function Notch() {
           model={session.model || modelConfig.defaultModel}
           effort={session.effort || modelConfig.defaultEffort}
           mode="assistant"
-          permissionMode="auto"
+          permissionMode={autonomy === 'bypass' ? 'bypass' : 'auto'}
           canSignInInApp={false}
           signInCommand="claude /login"
         />,

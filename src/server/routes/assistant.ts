@@ -32,6 +32,10 @@ import {
 import { markThreadRead, plainPostText } from '../../lib/automations/threads.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { automationProject, invalidateAutomationInbox, runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
+import { sayToAgent } from './automations.js';
+import { boardAgents } from '../../lib/whiteboards/agents.js';
+import { listWhiteboards } from '../../lib/whiteboards/store.js';
+import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 
 /**
  * `/api/assistant/*` — the dreamcontext Assistant's server surface.
@@ -234,7 +238,7 @@ export async function handleAssistantLook(req: IncomingMessage, res: ServerRespo
   sendJson(res, out.status, out.body);
 }
 
-const UI_VERBS = ['open', 'chat', 'send', 'answer', 'focus', 'tile', 'notify', 'close'] as const;
+const UI_VERBS = ['open', 'chat', 'send', 'agent', 'answer', 'focus', 'tile', 'notify', 'close'] as const;
 type UiVerb = typeof UI_VERBS[number];
 
 /** Strict-pick each UI verb's args — the body is never spread into the command. */
@@ -265,6 +269,18 @@ function pickUiArgs(verb: UiVerb, b: Record<string, unknown>): Record<string, un
       const text = str('text');
       if (!sessionId || !text.trim()) return 'sessionId and text are required';
       return { sessionId, text };
+    }
+    case 'agent': {
+      const vault = str('vault', 200);
+      if (!known(vault)) return `unknown project "${vault}"`;
+      const text = str('text');
+      if (!text.trim()) return 'text is required';
+      const board = str('board', 200);
+      const slug = str('slug', 200);
+      if (!board === !slug) return 'name exactly one of board or slug';
+      if (board && !isValidWhiteboardSlug(board)) return `"${board}" is not a whiteboard slug`;
+      if (slug && !SLUG_RE.test(slug)) return `"${slug}" is not an agent slug`;
+      return { vault, text, board: board || null, slug: slug || null };
     }
     case 'answer': {
       const sessionId = str('sessionId', 100);
@@ -387,6 +403,52 @@ async function closeChats(res: ServerResponse, args: Record<string, unknown>): P
   }, approvedBusy.size > 0);
 }
 
+/**
+ * `agent` — call one agent in a project, the way the `#agents` composer does. `board` reaches
+ * only that board's HOME agents (manifest `whiteboard` names it), never one merely attached:
+ * none is a 404 naming the boards that have one, more than one a 409 naming them. `slug`
+ * reaches any agent. Gated like `send`; `sayToAgent` then keeps the disabled and approval
+ * refusals. Errors before the gate name boards and agents by slug only, so nothing here
+ * taints; a refusal after it can carry an agent's title, which is wrapped and taints.
+ */
+async function callAgent(res: ServerResponse, args: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  const vault = String(args.vault);
+  const p = automationProject(vault);
+  if (!p) { sendError(res, 400, 'invalid_args', `unknown project "${vault}"`); return null; }
+  const board = typeof args.board === 'string' ? args.board : null;
+  let slug = typeof args.slug === 'string' ? args.slug : '';
+  if (board) {
+    const homes = boardAgents(p.contextRoot, board).filter((a) => a.home && !a.missing).map((a) => a.slug);
+    const unique = [...new Set(homes)];
+    if (unique.length === 0) {
+      const withHome = listWhiteboards(p.contextRoot)
+        .filter((w) => !w.corrupt && boardAgents(p.contextRoot, w.slug).some((a) => a.home && !a.missing))
+        .map((w) => w.slug);
+      sendJson(res, 404, {
+        error: 'no_agent',
+        message: `no home agent on board "${board}" in ${vault}${withHome.length ? `; boards with one: ${withHome.join(', ')}` : '; no board has one'}`,
+        boards: withHome,
+      });
+      return null;
+    }
+    if (unique.length > 1) {
+      sendJson(res, 409, {
+        error: 'ambiguous',
+        message: `board "${board}" has ${unique.length} home agents: ${unique.join(', ')}. Name one with --slug.`,
+        agents: unique,
+      });
+      return null;
+    }
+    slug = unique[0];
+  }
+  return gated(res, 'send', `${vault} · ${slug}`, String(args.text), false, async (finalText) => {
+    const r = sayToAgent(p.contextRoot, { slug, text: finalText, via: 'assistant', board });
+    if (r.ok) return { status: 200, body: { ok: true, vault, ...r.body } };
+    markTainted();
+    return { status: r.status, body: { ok: false, error: r.code, message: wrapUntrusted(vault, r.message) } };
+  });
+}
+
 /** POST /api/assistant/ui/:verb — relayed to the notch (`no_surface` without one). */
 export async function handleAssistantUi(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {
   if (!assistantGate(req, res)) return;
@@ -422,6 +484,11 @@ export async function handleAssistantUi(req: IncomingMessage, res: ServerRespons
   }
   if (verb === 'close') {
     const out = await closeChats(res, args);
+    if (out) sendJson(res, out.status, out.body);
+    return;
+  }
+  if (verb === 'agent') {
+    const out = await callAgent(res, args);
     if (out) sendJson(res, out.status, out.body);
     return;
   }

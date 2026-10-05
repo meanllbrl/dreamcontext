@@ -50,6 +50,13 @@ html:has(.dc-notch) #root {
   border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
   overflow: hidden;
 }
+/* Growing out of the pill or folding back into it (Notch.tsx `runMotion`): the clip-path on
+   this root IS the motion, so the black is there at once instead of fading in behind it.
+   Two classes: it must outrank the mood's `.dc-notch` transition further down. */
+.dc-notch.dc-notch--moving {
+  transition: none;
+  will-change: clip-path;
+}
 
 .dc-notch__pill {
   display: grid;
