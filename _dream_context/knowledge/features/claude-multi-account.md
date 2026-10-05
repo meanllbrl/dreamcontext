@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-10-04'
+updated: '2026-10-05'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -35,6 +35,8 @@ related_tasks:
     automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands
   - >-
     an-account-switch-is-never-left-owed-held-messages-ride-it-it-is-said-again-and-a-stalled-one-gives-the-messages-back
+  - >-
+    claude-code-cli-keeps-itself-up-to-date-the-app-checks-the-version-and-runs-claude-update
 ---
 
 ## Why
