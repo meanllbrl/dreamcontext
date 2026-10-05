@@ -22,6 +22,7 @@ import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { claudeAwarePath, findClaudeBin, ensureClaudeOnShellPath, claudePathExportLine } from '../../lib/claude-path.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
+import { readClaudeUpdateStatus, runClaudeUpdateCheck } from '../../lib/claude-update.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt, EFFORT_LEVELS,
@@ -273,6 +274,9 @@ export async function handleAgentCapabilities(
     // having to diff email/subscription strings itself (and without mistaking a probe that
     // merely started answering for a switch). See claude-auth-watch.ts's epoch note.
     ...(claudeAuth ? { claudeAuth: { ...claudeAuth, epoch: claudeAuthWatcher.epoch() } } : {}),
+    // Is the CLI current? Read from the background job's state file only (no network, no
+    // spawn here); the job and the Update now button below are what refresh it.
+    ...(desktop && claudeCli ? { claudeUpdate: readClaudeUpdateStatus() } : {}),
     npm,
     git: gitOk,
   });
@@ -381,7 +385,7 @@ export async function handleOpenTerminal(
 // the package names are FIXED internal literals, never user input. The only body
 // field is `target`, validated against a closed whitelist.
 
-type InstallTarget = 'claude' | 'pty' | 'git' | 'claude-path';
+type InstallTarget = 'claude' | 'pty' | 'git' | 'claude-path' | 'claude-update';
 
 /**
  * The step every Claude Code install ends with and the in-app installer used to
@@ -477,8 +481,9 @@ export function cliPackageRoot(entry: string | undefined = process.argv[1]): str
 }
 
 /** Build the shell command + cwd for a target. Returns null if it can't be run here.
- *  (`claude-path` is not here: it writes a shell rc, it doesn't run an installer.) */
-function installPlan(target: Exclude<InstallTarget, 'claude-path'>): { script: string; cwd?: string } | null {
+ *  (`claude-path` is not here: it writes a shell rc, it doesn't run an installer; nor is
+ *  `claude-update`, which runs through `runClaudeUpdateCheck`.) */
+function installPlan(target: Exclude<InstallTarget, 'claude-path' | 'claude-update'>): { script: string; cwd?: string } | null {
   if (target === 'claude') {
     // Anthropic's official Claude Code distribution.
     return { script: 'npm install -g @anthropic-ai/claude-code' };
@@ -522,8 +527,30 @@ export async function handleAgentInstall(
     target = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { target?: unknown }).target : undefined;
   } catch { /* invalid body → 400 below */ }
 
-  if (target !== 'claude' && target !== 'pty' && target !== 'git' && target !== 'claude-path') {
-    sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'claude-path' | 'pty' | 'git' }.");
+  if (target !== 'claude' && target !== 'pty' && target !== 'git' && target !== 'claude-path' && target !== 'claude-update') {
+    sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'claude-path' | 'claude-update' | 'pty' | 'git' }.");
+    return;
+  }
+
+  // `claude-update` is the Update now button: a forced check + `claude update` that ignores
+  // the user's opt-out (they clicked). It records its outcome in the shared state file, so the
+  // next capabilities poll agrees; the run here only carries the readable result.
+  if (target === 'claude-update') {
+    pruneInstallRuns();
+    const updateRunId = randomUUID();
+    const updateRun: InstallRun = { state: 'running', target, output: 'Updating Claude Code...', startedAt: Date.now() };
+    installRuns.set(updateRunId, updateRun);
+    void runClaudeUpdateCheck({ force: true })
+      .then((result) => {
+        updateRun.state = result.ok ? 'done' : 'error';
+        updateRun.output = result.message;
+      })
+      .catch(() => {
+        updateRun.state = 'error';
+        updateRun.output = `Couldn't update Claude Code. Run manually: claude update`;
+      })
+      .finally(() => { updateRun.endedAt = Date.now(); });
+    sendJson(res, 200, { ok: true, runId: updateRunId });
     return;
   }
 

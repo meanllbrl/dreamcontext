@@ -237,6 +237,7 @@ import {
 import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
+import { startClaudeUpdateJob } from './claude-update-job.js';
 import { registerHandsfreeCloudRoutes } from './routes/handsfree-cloud.js';
 import { handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
 import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
@@ -1112,10 +1113,12 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       }
 
       let shuttingDown = false;
+      let stopClaudeUpdate: (() => void) | undefined;
       const shutdown = () => {
         if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
         shuttingDown = true;
         console.log('\n  Shutting down...');
+        stopClaudeUpdate?.();
         // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
         // when this server exits — SIGKILL from the parent would skip this, but a
         // graceful SIGTERM or the parent-death watchdog both route through here.
@@ -1146,6 +1149,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
       startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
       startOrphanSweep();
+      // Headless claude spawns never run the CLI's TUI-only updater; this does. Self-gates to desktop.
+      stopClaudeUpdate = startClaudeUpdateJob();
     };
     if (options.listenFd !== undefined) server.listen({ fd: options.listenFd }, onListening);
     else server.listen(port, host, onListening);
