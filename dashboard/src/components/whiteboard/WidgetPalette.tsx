@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WidgetPayload } from '../../lib/whiteboardWidgets';
-import { InsightPicker, KnowledgePicker, LabCardPicker, TaskPicker, WebPicker } from './WidgetPickers';
+import { AgentPicker, InsightPicker, KnowledgePicker, LabCardPicker, TaskPicker, WebPicker } from './WidgetPickers';
 import { useWbText } from './whiteboardHost';
 
-type Stage = 'menu' | 'insight' | 'lab-card' | 'knowledge' | 'task' | 'web';
+type Stage = 'menu' | 'insight' | 'lab-card' | 'knowledge' | 'task' | 'web' | 'agent';
 
 /**
  * The component library (D8): what a right-click on empty canvas, or the "+ Add" button, opens.
@@ -11,13 +11,15 @@ type Stage = 'menu' | 'insight' | 'lab-card' | 'knowledge' | 'task' | 'web';
  * Positioned in the canvas wrapper's own pixel space. The last item hands the same right-click
  * back to Excalidraw, so paste and select-all stay one step away.
  */
-export function WidgetPalette({ left, top, onPick, onClose, onCanvasMenu }: {
+export function WidgetPalette({ left, top, onPick, onClose, onCanvasMenu, onNewAgent }: {
   left: number;
   top: number;
   onPick: (payload: WidgetPayload) => void;
   onClose: () => void;
   /** Present only when the palette came from a right-click (there is a menu to fall back to). */
   onCanvasMenu?: () => void;
+  /** "New agent" in the agent stage: the canvas opens the create dialog for this board. */
+  onNewAgent: () => void;
 }) {
   const tx = useWbText();
   const [stage, setStage] = useState<Stage>('menu');
@@ -66,6 +68,7 @@ export function WidgetPalette({ left, top, onPick, onClose, onCanvasMenu }: {
           {item(tx('whiteboard.palette.note', 'Note'), () => onPick({ v: 1, kind: 'note', title: tx('whiteboard.kind.note', 'Note'), markdown: '' }))}
           {item(tx('whiteboard.palette.html', 'HTML block'), () => onPick({ v: 1, kind: 'html', title: tx('whiteboard.kind.html', 'HTML block'), html: '' }))}
           {item(tx('whiteboard.palette.web', 'Web embed…'), () => setStage('web'))}
+          {item(tx('whiteboard.palette.agent', 'Agent…'), () => setStage('agent'))}
           {/* A wiki card starts empty and is filled from inside it; each one keeps its own list. */}
           {item(tx('whiteboard.palette.wiki', 'Wiki'), () => onPick({ v: 1, kind: 'wiki', title: tx('whiteboard.kind.wiki', 'Wiki'), sections: [] }))}
           {onCanvasMenu && (
@@ -85,6 +88,7 @@ export function WidgetPalette({ left, top, onPick, onClose, onCanvasMenu }: {
           {stage === 'knowledge' && <KnowledgePicker onPick={onPick} />}
           {stage === 'task' && <TaskPicker onPick={onPick} />}
           {stage === 'web' && <WebPicker onPick={onPick} />}
+          {stage === 'agent' && <AgentPicker onPick={onPick} onNew={onNewAgent} />}
         </>
       )}
     </div>

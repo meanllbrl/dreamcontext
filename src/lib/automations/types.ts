@@ -367,6 +367,21 @@ export interface AutomationManifest {
    * upgrade costs no re-approval anywhere.
    */
   flow: FlowGraph | null;
+  /**
+   * The whiteboard this agent LIVES on (its home board), or null for an
+   * ordinary agent. A home-board agent may write only to that board, its own
+   * output folder and a per-spawn scratch folder.
+   *
+   * Read leniently (any non-empty trimmed string is kept, so a hand edit to a
+   * bad value still blocks on approval rather than silently unscoping), written
+   * strictly (`validateAutomationForWrite` requires a valid whiteboard slug and
+   * refuses it together with `outputDir`).
+   *
+   * IS approval-hashed, and like `flow` it is `null`, never `undefined`, on
+   * every read path: the hash omits it when null so every manifest written
+   * before this field existed keeps its exact hash.
+   */
+  whiteboard: string | null;
   path: string;
   body: string;
 }
@@ -400,7 +415,7 @@ export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked
 /** Where an entry came from. Provenance, for the same reason `ReviewChannel`
  *  exists: "the agent said this" and "the runner said this on the agent's
  *  behalf" are different claims and a reader is entitled to tell them apart. */
-export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat';
+export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant';
 
 /** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
  *  not a free-form block: a summary the agent can write at any length is a
@@ -834,6 +849,27 @@ export interface ApprovalPayloadFields {
    *  DISPLAY, so there is no byte-identity constraint to preserve and a
    *  reviewer must be able to see that a flow exists at all. */
   flow: FlowGraph | null;
+  /** Hashed because it decides the run's whole permission envelope: a
+   *  home-board agent runs scoped to that board, an agent without one runs
+   *  unscoped. A teammate's synced edit that removes or re-points it must block
+   *  until a human here re-approves. Present as `null` when unset, for the same
+   *  display reason as `flow`. */
+  whiteboard: string | null;
+}
+
+/** Env var naming a home-board agent's board for its spawned child; the CLI's
+ *  whiteboard write verbs refuse any other board while it is set. */
+export const AGENT_BOARD_ENV = 'DREAMCONTEXT_AGENT_BOARD';
+/** Env var naming the running agent's own slug; `automations post|learn|propose`
+ *  refuse any other slug while it is set. */
+export const AGENT_SELF_ENV = 'DREAMCONTEXT_AGENT_SELF';
+/** Env var naming the per-spawn scratch folder a home-board agent may write. */
+export const AGENT_SCRATCH_ENV = 'DREAMCONTEXT_AGENT_SCRATCH';
+
+/** The board a single turn is about: a home agent's own board, or the board an
+ *  attached agent's card was talking from. Absent/null ⇒ no board context. */
+export interface BoardTurnInput {
+  board?: string | null;
 }
 
 /** Domain error for the automations subsystem — thrown only by strict
@@ -881,9 +917,10 @@ export const APPROVAL_PAYLOAD_VERSION = 'automation-approval/v1';
  *  ApprovalPayloadFields so the CLI's review surface can never diverge from
  *  what is actually hashed. `effort` sits between `model` and
  *  `timeoutMinutes`: all three are execution-envelope levers on an
- *  already-approved prompt. `flow` is LAST, mirroring its position in
- *  `canonicalApprovalPayload`'s literal — the two orders must not drift, or the
- *  surface a human reviews stops matching the bytes that were hashed. */
+ *  already-approved prompt. `flow` then `whiteboard` are LAST, mirroring their
+ *  position in `canonicalApprovalPayload`'s literal — the two orders must not
+ *  drift, or the surface a human reviews stops matching the bytes that were
+ *  hashed. */
 export const APPROVAL_DIFF_FIELDS = [
   'prompt',
   'outputInstructions',
@@ -894,6 +931,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'learning',
   'review',
   'flow',
+  'whiteboard',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
 import { LazyWhiteboardCanvas } from '../components/whiteboard/LazyWhiteboardCanvas';
 import { PagePopupProvider } from '../components/whiteboard/PagePopup';
+import { dropBoardAgentScratch } from '../components/whiteboard/boardAgentScratch';
 import { BoardTabs } from './whiteboards/BoardTabs';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import './WhiteboardsPage.css';
@@ -33,6 +34,9 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
     () => focus?.id ?? (instanceId === 'inst-1' ? parseBoardHash(window.location.hash) : null),
   );
   useFocusTarget(focus, setOpenSlug);
+  // Agent cards keep their composer buckets across remounts and board switches; they die with
+  // the page (boardAgentScratch.ts).
+  useEffect(() => dropBoardAgentScratch, []);
   const fallback = useDefaultWhiteboard(openSlug === null);
 
   useEffect(() => {
@@ -126,7 +130,7 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
         <PagePopupProvider>
           <div className="wbp-canvas">
             <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
-              <LazyWhiteboardCanvas initialScene={load.scene} onApi={onApi} onSceneChange={onSceneChange} />
+              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onApi} onSceneChange={onSceneChange} />
             </Suspense>
           </div>
         </PagePopupProvider>

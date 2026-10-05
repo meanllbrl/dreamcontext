@@ -18,6 +18,7 @@ import {
   DEFAULT_CATCHUP_HOURS,
   MAX_CATCHUP_HOURS,
   PATTERN_LESSON_LIMIT,
+  AGENT_SELF_ENV,
   type Weekday,
   type EffortLevel,
   type ScheduleSlot,
@@ -118,6 +119,9 @@ import {
   removeNotifierApp,
   NOTIFY_SOUND_OK,
 } from '../../lib/automations/notifier.js';
+import { scopedReadablePath } from '../../lib/automations/scoped-file.js';
+import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
+import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 
 /**
  * `dreamcontext automations` — the scheduled-headless-claude-run CLI. Mirrors
@@ -191,6 +195,37 @@ function requireAutomation(root: string, slug: string): AutomationManifest | nul
     return null;
   }
   return manifest;
+}
+
+/** Does `slug` name a board that exists in this brain? Only through
+ *  `resolveWhiteboardPath`, which refuses an invalid slug, a symlink and an
+ *  escaping path; any refusal is "no". The same check the HTTP create route
+ *  makes, so neither surface can home an agent on a board that is not there. */
+function boardExists(contextRoot: string, slug: string): boolean {
+  if (!isValidWhiteboardSlug(slug)) return false;
+  try {
+    resolveWhiteboardPath(contextRoot, slug);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Second layer behind the run's permission rules: while a run carries
+ * `AGENT_SELF_ENV`, the verbs that write as an agent (`post`, `learn`,
+ * `propose`) only accept that agent's own slug, so a scoped run cannot speak
+ * in, rewrite the pattern of, or stop another agent. Unset ⇒ a human at a
+ * terminal, nothing to check. Any other value, empty included, refuses: the
+ * runner never sets an empty one, so it is not a value to trust. Returns true
+ * when it refused, so the caller returns without acting.
+ */
+export function refuseOtherAgent(slug: string, verb: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const self = env[AGENT_SELF_ENV];
+  if (self === undefined || self === slug) return false;
+  error(`This run is the agent "${self}". It can only ${verb} for itself, not for "${slug}".`);
+  process.exitCode = 1;
+  return true;
 }
 
 /** One transcript item, one terminal line. A session replay is for scanning
@@ -675,14 +710,30 @@ export function registerAutomationsCommand(program: Command): void {
       '--review <mode>',
       `Stop and ask a human before the work takes effect: ${REVIEW_MODES.join('|')} (default off)`,
     )
+    .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): every run is scoped to that board')
     .action((slug: string, opts: {
       title: string; slot: string[]; days?: string; at?: string; mode?: string; photo?: string; model?: string;
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
-      learning?: boolean; review?: string;
+      learning?: boolean; review?: string; whiteboard?: string;
     }) => {
       const root = ensureContextRoot();
       try {
+        // Checked first, before anything is parsed or written: the same two
+        // refusals, in the same order, as the HTTP create route. The store
+        // re-checks the shape on write; only a caller can check existence.
+        const whiteboard = opts.whiteboard?.trim() || null;
+        if (opts.whiteboard !== undefined && !whiteboard) {
+          throw new AutomationError('--whiteboard needs a board slug, for example control-panel.');
+        }
+        if (whiteboard && !isValidWhiteboardSlug(whiteboard)) {
+          throw new AutomationError(`Invalid whiteboard "${whiteboard}": it must be a whiteboard slug.`);
+        }
+        if (whiteboard && !boardExists(root, whiteboard)) {
+          throw new AutomationError(
+            `There is no whiteboard "${whiteboard}" in this project. See \`dreamcontext whiteboard list\`.`,
+          );
+        }
         const mode = parseModeFlag(opts.mode);
         const slotSpecs = opts.slot ?? [];
         if (slotSpecs.length > 0 && (opts.days || opts.at)) {
@@ -730,6 +781,7 @@ export function registerAutomationsCommand(program: Command): void {
           // Validated in the store's strict write path, so a typo'd mode is a
           // refusal here rather than a gate the owner believes they installed.
           review: opts.review as ReviewMode | undefined,
+          whiteboard,
         });
 
         // Every fresh automation gets a `## Flow` block that actually
@@ -749,6 +801,9 @@ export function registerAutomationsCommand(program: Command): void {
         approveAutomation(projectRoot, manifest, new Date());
 
         success(`Automation created: automations/${manifest.slug}.md (auto-approved on this machine).`);
+        if (manifest.whiteboard) {
+          console.log(chalk.dim(`  Home board: ${manifest.whiteboard}. Every run is scoped to that board.`));
+        }
         console.log(chalk.dim('  Private by default — nothing publishes unless you `automations share` it. No secrets'));
         console.log(chalk.dim('  in the manifest either way: a SHARED automation\'s outputs are brain-synced, and the'));
         console.log(chalk.dim('  pre-push scrub blocks credential-SHAPED strings, but PII/hostnames/bespoke tokens'));
@@ -877,6 +932,16 @@ export function registerAutomationsCommand(program: Command): void {
         if (next) console.log(`  next fire: ${next}`);
       }
       console.log(`  enabled: ${manifest.enabled}`);
+      // Only when set: an ordinary agent has no board, and a "(none)" line on
+      // every agent would read as something missing. A board that has gone
+      // away (deleted, or not synced here yet) is called out: the spawn refuses it.
+      if (manifest.whiteboard) {
+        console.log(
+          `  whiteboard: ${manifest.whiteboard}${boardExists(root, manifest.whiteboard)
+            ? chalk.dim(' · runs scoped to this board')
+            : chalk.red(' · board not found, runs are refused')}`,
+        );
+      }
       console.log(`  model: ${manifest.model ?? '(default)'}`);
       console.log(`  effort: ${manifest.effort ?? '(default)'}`);
       console.log(`  timeout: ${manifest.timeoutMinutes}m · catchup: ${manifest.catchupHours}h`);
@@ -1057,6 +1122,7 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--playbook <text>', 'Replace the standing playbook (how this job is best done)')
     .option('--playbook-file <path>', 'Read the playbook from a file instead')
     .action((slug: string, opts: { lesson?: string; playbook?: string; playbookFile?: string }) => {
+      if (refuseOtherAgent(slug, 'learn')) return;
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);
@@ -1075,7 +1141,9 @@ export function registerAutomationsCommand(program: Command): void {
           if (!existsSync(opts.playbookFile)) {
             throw new AutomationError(`--playbook-file not found: ${opts.playbookFile}`);
           }
-          playbook = readFileSync(opts.playbookFile, 'utf-8');
+          // A board agent may run `learn <self>`; its playbook lands in the synced
+          // manifest, so the file must come from its own writable folders.
+          playbook = readFileSync(scopedReadablePath(root, opts.playbookFile, '--playbook-file'), 'utf-8');
         }
         const updated = recordLesson(root, slug, { lesson: opts.lesson, playbook });
         const pattern = readPattern(updated);
@@ -1104,6 +1172,7 @@ export function registerAutomationsCommand(program: Command): void {
       [],
     )
     .action((slug: string, opts: { title?: string; summary?: string; body?: string; bodyFile?: string; choice: string[] }) => {
+      if (refuseOtherAgent(slug, 'propose')) return;
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);
@@ -1139,7 +1208,8 @@ export function registerAutomationsCommand(program: Command): void {
         let body = opts.body;
         if (opts.bodyFile) {
           if (!existsSync(opts.bodyFile)) throw new AutomationError(`--body-file not found: ${opts.bodyFile}`);
-          body = readFileSync(opts.bodyFile, 'utf-8');
+          // Same rule as `learn --playbook-file`: the body is stored in the brain.
+          body = readFileSync(scopedReadablePath(root, opts.bodyFile, '--body-file'), 'utf-8');
         }
         if (!opts.title?.trim() || !body?.trim()) {
           error('A proposal needs both --title and --body (or --body-file).');
@@ -1183,6 +1253,7 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--kv <pair>', `A key=value summary row (repeatable, max ${THREAD_SUMMARY_MAX_ROWS})`, collectKv, [])
     .option('--run <id>', 'The run this belongs to (default: this run, from the environment)')
     .action((slug: string, text: string, opts: { file: string[]; kv: ThreadSummaryRow[]; run?: string }) => {
+      if (refuseOtherAgent(slug, 'post')) return;
       const root = ensureContextRoot();
       try {
         const manifest = requireAutomation(root, slug);

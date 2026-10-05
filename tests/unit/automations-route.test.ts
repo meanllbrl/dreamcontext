@@ -31,6 +31,10 @@ import { createAutomation, writeFlowSection, deriveFlowFromManifest } from '../.
 import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { APPROVAL_DIFF_FIELDS, FLOW_GRAPH_VERSION, type FlowGraph } from '../../src/lib/automations/types.js';
 import { createQuestion, claimQuestion } from '../../src/lib/automations/hitl.js';
+import { createWhiteboard } from '../../src/lib/whiteboards/store.js';
+import { getAutomation } from '../../src/lib/automations/store.js';
+import { getApproval } from '../../src/lib/automations/registry.js';
+import { symlinkSync } from 'node:fs';
 import { enqueueFire } from '../../src/lib/automations/queue.js';
 import { recordRun } from '../../src/lib/automations/store.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
@@ -1108,5 +1112,61 @@ describe('schedule slots over the dashboard routes', () => {
     );
     expect(bad.status()).toBe(400);
     expect(JSON.stringify(bad.body())).toMatch(/slot 3/);
+  });
+});
+
+describe('whiteboard over the dashboard routes (a board agent)', () => {
+  const createBody = (whiteboard: unknown) => ({ title: 'Board helper', prompt: 'Help on this board.', mode: 'call', whiteboard });
+
+  it('create writes the home board, approves it with the board recorded, and list/show carry it', async () => {
+    const { slug: board } = createWhiteboard(contextRoot, 'Growth');
+    const { res, status, body } = makeRes();
+    await handleAutomationsCreate(makePostReqWithBody(createBody(board)), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    const created = body().automation as Record<string, unknown>;
+    expect(created).toMatchObject({ slug: 'board-helper', whiteboard: board, approved: true });
+    expect(getAutomation(contextRoot, 'board-helper')!.whiteboard).toBe(board);
+    expect(getApproval(projectRoot, 'board-helper')?.whiteboard).toBe(board);
+
+    const list = makeRes();
+    await handleAutomationsList(getReq, list.res, {}, contextRoot);
+    const summary = (list.body().automations as Array<Record<string, unknown>>).find((a) => a.slug === 'board-helper');
+    expect(summary?.whiteboard).toBe(board);
+
+    const show = makeRes();
+    await handleAutomationsShow(getReq, show.res, { slug: 'board-helper' }, contextRoot);
+    expect((show.body().automation as Record<string, unknown>).whiteboard).toBe(board);
+  });
+
+  it('an ordinary agent carries whiteboard: null on the summary and the detail', async () => {
+    makeAutomation('plain');
+    const list = makeRes();
+    await handleAutomationsList(getReq, list.res, {}, contextRoot);
+    expect((list.body().automations as Array<Record<string, unknown>>)[0].whiteboard).toBeNull();
+    const show = makeRes();
+    await handleAutomationsShow(getReq, show.res, { slug: 'plain' }, contextRoot);
+    const detail = show.body().automation as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(detail, 'whiteboard')).toBe(true);
+    expect(detail.whiteboard).toBeNull();
+  });
+
+  it('create refuses an invalid slug, a missing board, a symlinked board and a non-string, writing nothing', async () => {
+    const { slug: real } = createWhiteboard(contextRoot, 'Real');
+    symlinkSync(join(contextRoot, 'whiteboards', real), join(contextRoot, 'whiteboards', 'linked'));
+    for (const whiteboard of ['Not A Slug', 'no-such-board', 'linked', 42]) {
+      const { res, status, body } = makeRes();
+      await handleAutomationsCreate(makePostReqWithBody(createBody(whiteboard)), res, {}, contextRoot);
+      expect(status(), String(whiteboard)).toBe(400);
+      expect(body().error).toBe('invalid');
+      expect(getAutomation(contextRoot, 'board-helper')).toBeNull();
+    }
+  });
+
+  it('create without a whiteboard is unchanged: no key, an ordinary agent', async () => {
+    const { res, status, body } = makeRes();
+    await handleAutomationsCreate(makePostReqWithBody({ title: 'Plain', prompt: 'Do it.', mode: 'call' }), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect((body().automation as Record<string, unknown>).whiteboard).toBeNull();
+    expect(getApproval(projectRoot, 'plain')).not.toHaveProperty('whiteboard');
   });
 });

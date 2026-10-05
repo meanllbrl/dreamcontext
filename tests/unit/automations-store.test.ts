@@ -22,6 +22,7 @@ import {
   readAutomationCache,
   readAutomationFile,
   readRunSidecar,
+  recordLesson,
   recordRun,
   removeAutomation,
   resolveOutputDir,
@@ -29,6 +30,7 @@ import {
   setAutomationShared,
   shareStateFor,
   sidecarPathFor,
+  updateAutomation,
   validateAutomationForWrite,
   writeFlowSection,
   writeAutomationCache,
@@ -1150,6 +1152,64 @@ describe('flow on the manifest', () => {
 
   it('refuses to write a flow for an automation that does not exist', () => {
     expect(() => writeFlowSection(contextRoot, 'nope', parseFlowSection(flowSection(VALID_FLOW))!)).toThrow(/No such automation/);
+  });
+});
+
+describe('whiteboard (a board agent\'s home board)', () => {
+  const base = { slug: 'board-helper', title: 'Board helper', mode: 'call' as const };
+
+  it('is null, NEVER undefined, and the key is not written when unset', () => {
+    const m = createAutomation(contextRoot, base);
+    expect(m.whiteboard).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(m, 'whiteboard')).toBe(true);
+    expect(readFileSync(m.path, 'utf-8')).not.toMatch(/^whiteboard:/m);
+  });
+
+  it('round-trips a valid board slug through create and read', () => {
+    const m = createAutomation(contextRoot, { ...base, whiteboard: 'growth-board' });
+    expect(m.whiteboard).toBe('growth-board');
+    expect(readFileSync(m.path, 'utf-8')).toMatch(/^whiteboard: growth-board$/m);
+  });
+
+  it('refuses an invalid board slug on write, before anything is written', () => {
+    for (const whiteboard of ['Growth Board', '../escape', '-lead', 'a/b']) {
+      expect(() => createAutomation(contextRoot, { ...base, whiteboard })).toThrow(AutomationError);
+      expect(() => validateAutomationForWrite({ ...base, whiteboard })).toThrow(/Invalid whiteboard/);
+    }
+    expect(existsSync(automationPath(contextRoot, base.slug))).toBe(false);
+  });
+
+  it('refuses whiteboard together with outputDir', () => {
+    expect(() => createAutomation(contextRoot, { ...base, whiteboard: 'growth', outputDir: 'reports/x' }))
+      .toThrow(/cannot also set an output dir/);
+    expect(existsSync(automationPath(contextRoot, base.slug))).toBe(false);
+  });
+
+  it('reads leniently: any non-empty string is kept (trimmed), anything else is null', () => {
+    const m = createAutomation(contextRoot, base);
+    const write = (line: string) => {
+      const raw = readFileSync(m.path, 'utf-8').replace(/^whiteboard:.*\n/m, '');
+      writeFileSync(m.path, raw.replace(/^---\n/, `---\n${line}\n`), 'utf-8');
+      return readAutomationFile(m.path).whiteboard;
+    };
+    // Kept even when it is not a valid slug: dropping it would silently unscope the agent.
+    expect(write('whiteboard: "  Not A Slug  "')).toBe('Not A Slug');
+    expect(write('whiteboard: ""')).toBeNull();
+    expect(write('whiteboard: 42')).toBeNull();
+    expect(write('whiteboard: [a, b]')).toBeNull();
+    expect(write('whiteboard: null')).toBeNull();
+  });
+
+  it('survives learn, a schedule change and a dialog edit untouched', () => {
+    createAutomation(contextRoot, { ...base, whiteboard: 'growth' });
+    recordLesson(contextRoot, base.slug, { lesson: 'Keep notes short.', now: new Date('2026-10-01T09:00:00Z') });
+    expect(getAutomation(contextRoot, base.slug)!.whiteboard).toBe('growth');
+    updateAutomation(contextRoot, base.slug, { mode: 'sched', slots: [{ kind: 'weekly', days: 'daily', at: '08:00' }] });
+    expect(getAutomation(contextRoot, base.slug)!.whiteboard).toBe('growth');
+    updateAutomation(contextRoot, base.slug, { title: 'Renamed', prompt: 'A new prompt.', model: 'sonnet' });
+    const after = getAutomation(contextRoot, base.slug)!;
+    expect(after.whiteboard).toBe('growth');
+    expect(after.title).toBe('Renamed');
   });
 });
 

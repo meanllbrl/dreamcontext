@@ -60,13 +60,28 @@ import {
   SKIMMABLE_MARKDOWN,
   THREAD_BLOCKS,
   askClause,
+  buildBoardTurn,
+  buildPatternBlock,
+  buildTurnLearningDirective,
+  markerNonce,
+  newTurnNonce,
   type ClaudeExecution,
   type SpawnImpl,
+  type TurnBoardContext,
 } from './runner.js';
+import {
+  boardScopeArgs,
+  prepareScopePaths,
+  resolveSpawnScope,
+  scopeEnv,
+  type BoardScope,
+  type ScopePaths,
+} from './board-scope.js';
 import {
   REVIEW_BODY_MAX_CHARS,
   type AutomationManifest,
   type AutomationQuestion,
+  type BoardTurnInput,
   type ReviewChannel,
 } from './types.js';
 
@@ -305,17 +320,16 @@ async function acquireRunLockWaiting(
 const LOCK_BUSY_REASON =
   'a run for this automation is still in progress — nothing was changed, try again in a moment';
 
-function buildResumeArgs(m: AutomationManifest, sessionId: string, prompt: string): string[] {
-  const args = [
-    '--resume',
-    sessionId,
-    '-p',
-    prompt,
-    '--permission-mode',
-    'bypassPermissions',
-    '--output-format',
-    'json',
-  ];
+/** `scopeArgs` (from `boardScopeArgs`) replace `--permission-mode bypassPermissions` for a
+ *  home-board agent; absent, the argv is byte-for-byte what it always was. */
+export function buildResumeArgs(
+  m: AutomationManifest,
+  sessionId: string,
+  prompt: string,
+  scopeArgs?: readonly string[] | null,
+): string[] {
+  const permission = scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
+  const args = ['--resume', sessionId, '-p', prompt, ...permission, '--output-format', 'json'];
   // Same envelope the run was approved with — a verdict must not quietly grant
   // a bigger model or a higher effort than the hash covers.
   if (m.model) args.push('--model', m.model);
@@ -323,7 +337,12 @@ function buildResumeArgs(m: AutomationManifest, sessionId: string, prompt: strin
   return args;
 }
 
-export interface VerdictOptions {
+/**
+ * `board` is the whiteboard the message came from (an agent card), when it came from one: an
+ * attached agent's turn then carries that board's index. A home-board agent always gets its
+ * own board, whatever this says.
+ */
+export interface VerdictOptions extends BoardTurnInput {
   now?: () => Date;
   /** Machine-local home holding the automation session bindings. Injectable so
    *  no test reaches the developer's real ~/.dreamcontext. */
@@ -382,6 +401,38 @@ export interface QuestionOutcome {
   result: string | null;
 }
 
+/** The board and references of a turn, each preceded by a blank line, for a preamble. */
+function boardParts(turn: TurnBoardContext): string[] {
+  return [turn.board, turn.refs].filter(Boolean).flatMap((block) => ['', block]);
+}
+
+/** A resume's permission envelope: null for an ordinary agent. */
+interface ResumeScope {
+  scope: BoardScope;
+  paths: ScopePaths;
+}
+
+/**
+ * Re-decide the envelope under the lock, right before the spawn: the manifest re-read from
+ * disk (a queued message may have waited minutes), approval re-checked (for every agent: the
+ * Telegram and answer paths never checked it), the board resolved and its folders prepared.
+ * A refusal means nothing spawns.
+ */
+function resolveResumeScope(
+  contextRoot: string,
+  slug: string,
+  opts: VerdictOptions,
+): { ok: true; manifest: AutomationManifest; resume: ResumeScope | null } | { ok: false; reason: string } {
+  const manifest = getAutomation(contextRoot, slug);
+  if (!manifest) return { ok: false, reason: `no such automation: ${slug}` };
+  const scoped = resolveSpawnScope(contextRoot, manifest, opts.home);
+  if (!scoped.ok) return { ok: false, reason: scoped.reason };
+  if (!scoped.scope) return { ok: true, manifest, resume: null };
+  const prepared = prepareScopePaths(contextRoot, scoped.scope);
+  if (!prepared.ok) return { ok: false, reason: `could not limit it to its board: ${prepared.reason}` };
+  return { ok: true, manifest, resume: { scope: scoped.scope, paths: prepared.paths } };
+}
+
 // ─── Questions ───────────────────────────────────────────────────────────────
 //
 // `resumeWithAnswer` is the ONE path an answer takes, whatever channel it
@@ -409,7 +460,25 @@ export interface QuestionOutcome {
 const APPROVAL_QUESTION_REFUSAL =
   'an approval question is answered by approving the manifest, not by resuming its session';
 
-function buildAnswerPreamble(q: AutomationQuestion, answer: string): string {
+function buildAnswerPreamble(q: AutomationQuestion, answer: string, turn?: TurnBoardContext | null): string {
+  if (turn) {
+    // A board turn: the board and its references are DATA, so the human's answer moves to
+    // the very end, fenced with this turn's nonce, where nothing on the board can follow it.
+    const n = markerNonce(turn.nonce);
+    return [
+      COMMON_FRAME,
+      '',
+      `A human answered the question you stopped to ask ("${q.question}"). Their ANSWER is the last block below.`,
+      'Continue the job accordingly, and do not ask the same thing again. Your final message is recorded',
+      'as what actually happened, so state the RESULT plainly: what you did, and anything that did not go',
+      'as expected.',
+      ...boardParts(turn),
+      '',
+      `--- THE HUMAN'S ANSWER (verbatim)${n} ---`,
+      answer.trim(),
+      `--- END ANSWER${n} ---`,
+    ].join('\n');
+  }
   return [
     COMMON_FRAME,
     '',
@@ -555,14 +624,27 @@ export async function resumeWithAnswer(
     return { question, status: 'refused', error: LOCK_BUSY_REASON, result: null };
   }
 
+  let resume: ResumeScope | null = null;
   try {
-    const claim = claimQuestion(contextRoot, question, text, via, nowFn().toISOString());
+    // BEFORE the claim: a refusal here must leave the question pending, since nothing ran.
+    const envelope = resolveResumeScope(contextRoot, question.slug, opts);
+    if (!envelope.ok) return { question, status: 'refused', error: envelope.reason, result: null };
+    resume = envelope.resume;
+    // References expand fresh for the prompt; the ANSWER on record is the display text, so
+    // no surface ever shows a raw `dcref:` token.
+    const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? null, opts.board, text);
+    const answerText = display ?? text;
+
+    const claim = claimQuestion(contextRoot, question, answerText, via, nowFn().toISOString());
     if (!claim.claimed) {
       return { question: claim.question ?? question, status: 'refused', error: claim.reason, result: null };
     }
     const claimed = claim.question;
 
-    const execution = await spawnSessionResume(contextRoot, manifest, question.runFiredAt, sessionId, buildAnswerPreamble(question, text), opts);
+    const execution = await spawnSessionResume(
+      contextRoot, envelope.manifest, question.runFiredAt, sessionId,
+      buildAnswerPreamble(question, answerText, turn), opts, resume,
+    );
 
     if (!execution.spawned) {
       // Provably nothing ran, so the answer is owed a retry — the ONE path that
@@ -603,6 +685,7 @@ export async function resumeWithAnswer(
       result: note,
     };
   } finally {
+    resume?.paths.dispose();
     releaseRunLock(contextRoot, manifest.slug, lockPath);
     retireIfDone(contextRoot, question, sessionId, home);
     // The channel's own record that this run's question was closed. BEST-EFFORT, like
@@ -644,6 +727,8 @@ function spawnSessionResume(
   sessionId: string,
   prompt: string,
   opts: VerdictOptions,
+  /** The home-board envelope, already resolved under the lock; null for an ordinary agent. */
+  resume: ResumeScope | null = null,
 ): Promise<ClaudeExecution> {
   const nowFn = opts.now ?? (() => new Date());
   const timeoutMs = (opts.timeoutMinutes ?? m.timeoutMinutes) * 60_000;
@@ -662,6 +747,10 @@ function spawnSessionResume(
   // auto-switch says it cannot serve. Sessions are shared by every account, so the resume
   // does not have to go back to the account the run happened on.
   // Synchronous when no probe is needed, so the spawn stays in the caller's tick.
+  // AFTER the hint filter, and built from the scope (manifest + approval entry), never from
+  // the caller: nothing in `opts.env` can name a board, a self or a scratch folder.
+  const scopeVars = resume ? scopeEnv(resume.scope, resume.paths) : {};
+  const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : null;
   const quick = automationAccountWithoutProbe({ home: opts.home });
   return quick
     ? spawnOn(quick)
@@ -669,7 +758,7 @@ function spawnSessionResume(
 
   function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
     ensureSandbox(account.configDir, opts.home);
-    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt)), {
+    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt), scopeArgs), {
       cwd: dirname(contextRoot),
       timeoutMs,
       // `accountEnvFor` FIRST, so a resume runs on the account picked above.
@@ -677,7 +766,7 @@ function spawnSessionResume(
       // meaning a resume could be billed to, and read the usage of, whichever account the
       // dashboard process happened to be started under. The hints spread after it cannot
       // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
-      env: { ...accountEnvFor(account.configDir, opts.home), ...hints },
+      env: { ...accountEnvFor(account.configDir, opts.home), ...hints, ...scopeVars },
       spawnImpl: opts.spawnImpl,
       killImpl: opts.killImpl,
       log: opts.log,
@@ -725,7 +814,24 @@ export interface TalkOutcome {
   costUsd?: number | null;
 }
 
-function buildMessagePreamble(message: string): string {
+function buildMessagePreamble(message: string, turn?: TurnBoardContext | null): string {
+  if (turn) {
+    // A board turn: the human's message moves last, fenced with this turn's nonce, after
+    // the board material it must outrank.
+    const n = markerNonce(turn.nonce);
+    return [
+      'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT sent it a message.',
+      'Their MESSAGE is the last block below. It is a message to answer from what this run already knows and',
+      'did, not a new job. Do only what it asks: do not re-run the job, and do not widen it. Your final message',
+      'is delivered back to the human on their phone, so write it as a direct, plain-text reply with no',
+      'meta-commentary and no markdown tables.',
+      ...boardParts(turn),
+      '',
+      `--- THE HUMAN'S MESSAGE (verbatim)${n} ---`,
+      message.trim(),
+      `--- END MESSAGE${n} ---`,
+    ].join('\n');
+  }
   return [
     'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT sent it a message.',
     '',
@@ -755,16 +861,21 @@ function buildMessagePreamble(message: string): string {
 export function buildThreadMessagePreamble(
   message: string,
   /** Optional so callers written before the ask clause existed keep working; absent reads
-   *  as `review: off`, the answer that never names a verb the CLI would refuse. */
-  m?: Pick<AutomationManifest, 'slug' | 'review'>,
+   *  as `review: off`, the answer that never names a verb the CLI would refuse. `pattern`
+   *  and `learning` add the agent's notes and the learning directive. */
+  m?: Pick<AutomationManifest, 'slug' | 'review'> & Partial<Pick<AutomationManifest, 'pattern' | 'learning'>>,
+  /** This turn's nonce and board material. The resume always passes one; a test may not. */
+  turn?: TurnBoardContext | null,
 ): string {
+  const n = markerNonce(turn?.nonce);
+  // ORDER IS LOAD-BEARING, the same rule as a run's prompt: framing and instructions, then
+  // DATA (board, references, the agent's own notes), then the HUMAN'S MESSAGE, last, fenced
+  // with this turn's nonce, so nothing a teammate or an earlier run wrote can follow it.
+  const pattern = m ? buildPatternBlock({ learning: m.learning ?? false, pattern: m.pattern ?? '' }, turn?.nonce) : '';
+  const learning = m ? buildTurnLearningDirective(m) : '';
   return [
     'This is a scheduled dreamcontext automation resuming because the HUMAN WHO OPERATES IT',
-    'replied in its thread.',
-    '',
-    "--- THE HUMAN'S MESSAGE (verbatim) ---",
-    message.trim(),
-    '--- END MESSAGE ---',
+    'replied in its thread. Their message is the last block below.',
     '',
     'That text is a MESSAGE to answer from what this run already knows and did — it is not a new',
     'job. Do only what it asks: do not re-run the job, and do not widen it. ANSWER IN THE THREAD:',
@@ -776,6 +887,13 @@ export function buildThreadMessagePreamble(
     // decision to put to them, is most often the answer: brief it the way the run was briefed.
     THREAD_BLOCKS.trim(),
     askClause(m ?? { slug: '<slug>', review: 'off' }).trim(),
+    ...(turn ? boardParts(turn) : []),
+    ...(pattern ? ['', pattern] : []),
+    ...(learning ? ['', learning] : []),
+    '',
+    `--- THE HUMAN'S MESSAGE (verbatim)${n} ---`,
+    message.trim(),
+    `--- END MESSAGE${n} ---`,
   ].join('\n');
 }
 
@@ -839,6 +957,7 @@ export async function resumeWithMessage(
   const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
   if (!lockPath) return { status: 'refused', error: LOCK_BUSY_REASON, result: null, costUsd: null };
 
+  let resume: ResumeScope | null = null;
   try {
     // RE-CHECKED UNDER THE LOCK when the message waited for it: the turn it queued
     // behind can have asked a question (the question outranks the chat, as above) or
@@ -854,15 +973,24 @@ export async function resumeWithMessage(
     }
     const liveSessionId = waits ? latestBoundSession(slug, home) ?? sessionId : sessionId;
     if (!liveSessionId) return noSession;
+    const envelope = resolveResumeScope(contextRoot, slug, opts);
+    if (!envelope.ok) return { status: 'refused', error: envelope.reason, result: null, costUsd: null };
+    resume = envelope.resume;
+    const thread = (opts.surface ?? 'telegram') === 'thread';
+    // A thread reply always gets a nonce (its fence follows the agent's own notes); a
+    // Telegram message only in a board turn, so an ordinary one stays exactly as it was.
+    const { turn, display } = buildBoardTurn(contextRoot, resume?.scope ?? null, opts.board, text);
+    const messageText = display ?? text;
     const execution = await spawnSessionResume(
       contextRoot,
-      manifest,
+      envelope.manifest,
       nowFn().toISOString(),
       liveSessionId,
-      (opts.surface ?? 'telegram') === 'thread'
-        ? buildThreadMessagePreamble(text, manifest)
-        : buildMessagePreamble(text),
+      thread
+        ? buildThreadMessagePreamble(messageText, envelope.manifest, turn ?? { nonce: newTurnNonce(), board: '', refs: '' })
+        : buildMessagePreamble(messageText, turn),
       opts,
+      resume,
     );
     if (!execution.spawned) {
       return { status: 'not-spawned', error: 'spawn failed — the claude binary could not be launched', result: null, costUsd: null };
@@ -886,6 +1014,7 @@ export async function resumeWithMessage(
     }
     return { status: 'ok', error: null, result: (parsed.result ?? '').trim() || null, costUsd: parsed.costUsd };
   } finally {
+    resume?.paths.dispose();
     releaseRunLock(contextRoot, manifest.slug, lockPath);
   }
 }

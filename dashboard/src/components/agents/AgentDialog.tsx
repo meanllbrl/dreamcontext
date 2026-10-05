@@ -183,6 +183,10 @@ export interface AgentDialogInitial {
   mode: AutomationMode;
   days?: Weekday[];
   at?: string;
+  /** The home board, when the create starts from a whiteboard ("New agent" on its canvas).
+   *  Sent with the create and never shown as a field: the board the dialog was opened on IS
+   *  the answer, and an edit never changes it. */
+  whiteboard?: string;
 }
 
 /**
@@ -269,8 +273,9 @@ export function AgentDialog({
    * what you typed the moment you go back to fix a typo in the description.
    */
   // A starter's name and time were chosen for it, so they count as the owner's: editing its
-  // description must not rename it to the description's first clause.
-  const titleTouched = useRef(editing || !!start);
+  // description must not rename it to the description's first clause. An empty starting name
+  // (the whiteboard's "New agent") was chosen by nobody, so Name still follows the description.
+  const titleTouched = useRef(editing || !!start?.title.trim());
   const atTouched = useRef(editing || !!start?.at);
 
   const [armedDelete, setArmedDelete] = useState(false);
@@ -383,6 +388,8 @@ export function AgentDialog({
     ...(mode === 'sched' && !('error' in parsedSlots) ? { slots: parsedSlots.slots } : {}),
     model,
     effort: effort as AgentDraft['effort'],
+    // Create only: `start` is undefined on an edit, and the server never moves a home board.
+    ...(start?.whiteboard ? { whiteboard: start.whiteboard } : {}),
   };
 
   /**

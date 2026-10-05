@@ -308,17 +308,60 @@ export function dropThreadScratch(): void {
   threadDrafts.clear();
 }
 
+/**
+ * Unsent drafts of the hosts that brought their OWN bucket id (`opts.scratchId`), keyed by
+ * that id. Apart from {@link threadDrafts} because those are the Agents page's and leave with
+ * it: a board's agent card is not on that page, and leaving the page must not empty its field.
+ */
+const ownBucketDrafts = new Map<string, string>();
+
+/** Where one thread host keeps its chips and its draft. */
+interface ThreadBucket {
+  scratchId: string;
+  drafts: Map<string, string>;
+  draftKey: string;
+}
+
+/**
+ * The bucket for one host. Given an id, that id is BOTH the scratch bucket and the draft key,
+ * and it is not put on the Agents page's revoke list: whoever minted it owns its death, through
+ * {@link dropThreadBucket}. Without one, the per-slug page bucket as before.
+ */
+function threadBucket(slug: string, ownId: string | undefined): ThreadBucket {
+  return ownId
+    ? { scratchId: ownId, drafts: ownBucketDrafts, draftKey: ownId }
+    : { scratchId: threadScratchId(slug), drafts: threadDrafts, draftKey: slug };
+}
+
+/**
+ * Release one bucket a caller passed as `scratchId`: its staged chips (previews revoked) and
+ * its unsent draft. The caller calls it when the surface that owns the id ends for good (a
+ * board page unmounting), never on a remount, for the same reason the page buckets above are
+ * not dropped by the hook. Idempotent.
+ */
+export function dropThreadBucket(id: string): void {
+  dropScratch(id);
+  ownBucketDrafts.delete(id);
+}
+
 export function useAgentThreadHost(
   target: { slug: string; title: string; runId: string },
   send: (text: string) => void,
   slashCommands: string[] = [],
+  /** `scratchId`: a bucket id the caller owns (a board's agent card), used for the chips
+   *  AND the draft instead of the per-slug page bucket. Read once, at mount. */
+  opts?: { scratchId?: string },
 ): AgentsChannelComposer {
   const live = useRef({ target, send, slashCommands });
   live.current.target = target;
   live.current.send = send;
   live.current.slashCommands = slashCommands;
 
-  const draft = useRef(threadDrafts.get(target.slug) ?? '');
+  // Chosen ONCE: the host is stable for the panel's life and the panel remounts when the slug
+  // changes, so the bucket cannot go stale under itself. A lazy initialiser rather than a
+  // `useMemo` because minting the page bucket registers it, which must not repeat per render.
+  const [bucket] = useState(() => threadBucket(target.slug, opts?.scratchId));
+  const draft = useRef(bucket.drafts.get(bucket.draftKey) ?? '');
   const lastSent = useRef('');
   const epoch = useRef(0);
   const [, rerender] = useReducer((n: number) => n + 1, 0);
@@ -327,11 +370,10 @@ export function useAgentThreadHost(
 
   const host = useMemo<ComposerHost>(() => ({
     claudeId: '',
-    // Read through the ref, but computed ONCE: the host is stable for the panel's life and
-    // the panel remounts when the slug changes, so this cannot go stale under itself. Minting
-    // it through `threadScratchId` is what puts it on the page's revoke list — see that
-    // function for why the drop does NOT hang off this hook's own unmount.
-    scratchId: threadScratchId(live.current.target.slug),
+    // Computed ONCE, in `threadBucket`. Minting a page bucket through `threadScratchId` is what
+    // puts it on the page's revoke list — see that function for why the drop does NOT hang off
+    // this hook's own unmount; a caller's own id is dropped by that caller.
+    scratchId: bucket.scratchId,
     getModel: (): ComposerHostModel => ({
       draft: draft.current,
       draftEpoch: epoch.current,
@@ -345,8 +387,8 @@ export function useAgentThreadHost(
     }),
     syncDraft: (text) => {
       draft.current = text;
-      if (text) threadDrafts.set(live.current.target.slug, text);
-      else threadDrafts.delete(live.current.target.slug);
+      if (text) bucket.drafts.set(bucket.draftKey, text);
+      else bucket.drafts.delete(bucket.draftKey);
     },
     setFocusTarget: (el) => { focusTarget.current = el; },
     send: (text) => {
@@ -359,7 +401,7 @@ export function useAgentThreadHost(
       }
       lastSent.current = text;
       draft.current = '';
-      threadDrafts.delete(live.current.target.slug);
+      bucket.drafts.delete(bucket.draftKey);
       setNote(null);
       live.current.send(body);
       return undefined;
@@ -372,7 +414,7 @@ export function useAgentThreadHost(
   const restoreLastSent = () => {
     if (!lastSent.current) return;
     draft.current = lastSent.current;
-    threadDrafts.set(target.slug, lastSent.current);
+    bucket.drafts.set(bucket.draftKey, lastSent.current);
     epoch.current += 1;
     rerender();
   };

@@ -317,8 +317,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — nine hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the nine-tuple including effort, learning, review and flow', () => {
+describe('approval surface — ten hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the ten-tuple including effort, learning, review, flow and whiteboard', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -333,6 +333,10 @@ describe('approval surface — nine hashed fields, everywhere it is claimed', ()
       // `review` back to `off` does. LAST, because appending is the only
       // position that keeps every pre-`## Flow` manifest's hash byte-identical.
       'flow',
+      // A board agent's home board decides its whole permission envelope
+      // (scoped to one board vs unscoped). Appended after `flow` for the same
+      // byte-identity reason, and omitted from the hash when absent.
+      'whiteboard',
     ]);
   });
 
@@ -417,7 +421,7 @@ describe('dashboard approval-review surface — every hashed field reaches the h
  * T22 — the flow graph, HITL questions, per-automation Telegram, the run queue,
  * session bindings, and the three approval paths. This surface replaced the
  * review-card board entirely; these assertions are the lockstep guard for it,
- * the same role the nine-hashed-fields block above plays for the approval
+ * the same role the ten-hashed-fields block above plays for the approval
  * payload. Several assertions derive their expectation from `types.ts`
  * (`FLOW_GRAPH_VERSION`, `QUESTION_KINDS`, `HITL_CHANNELS`, `HITL_DIR`) rather
  * than hardcoding a string, so a future rename of any of them fails the doc

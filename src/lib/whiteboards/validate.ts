@@ -6,6 +6,7 @@ import {
   isWidgetSize,
   isValidPageRef,
   isLabCardRef,
+  isAgentSlugShape,
   type WidgetKind,
   type WidgetPayload,
   type WhiteboardElement,
@@ -50,10 +51,11 @@ export function isValidRef(ref: unknown): ref is string {
 /**
  * A widget ref for this kind: a `knowledge` widget is a page, so its ref may be a knowledge
  * slug OR a project-relative .md/.pdf/.html path; a `lab-card` names `<board>/<card-id>`;
- * insight and task refs stay slugs.
+ * an `agent` names an automation slug; insight and task refs stay slugs.
  */
 export function isValidWidgetRef(kind: WidgetKind, ref: unknown): ref is string {
   if (kind === 'lab-card') return isLabCardRef(ref);
+  if (kind === 'agent') return isAgentSlugShape(ref);
   return kind === 'knowledge' ? isValidPageRef(ref) : isValidRef(ref);
 }
 

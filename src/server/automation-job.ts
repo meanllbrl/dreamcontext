@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { runAutomation, type RunOutcome } from '../lib/automations/runner.js';
+import { runAutomation, type RunOptions, type RunOutcome } from '../lib/automations/runner.js';
 import { enqueueFire } from '../lib/automations/queue.js';
 import {
   announceTurn, appendThreadEntry, newThreadEntryId, readThread,
@@ -8,7 +8,10 @@ import {
 import {
   getAutomation, listAutomations, lockPathFor, readRunSidecar,
 } from '../lib/automations/store.js';
-import { resumeWithAnswer, resumeWithMessage, type TalkOutcome } from '../lib/automations/verdict.js';
+import {
+  resumeWithAnswer, resumeWithMessage, type TalkOutcome, type VerdictOptions,
+} from '../lib/automations/verdict.js';
+import type { BoardTurnInput } from '../lib/automations/types.js';
 import { pendingQuestion } from '../lib/automations/hitl.js';
 import { trackChild } from './lifecycle.js';
 
@@ -34,8 +37,9 @@ export interface AutomationJobState {
 }
 
 /** What turns a "run now" into an ASK: the human's words, and the fire time the
- *  caller has already used as a thread root. Both or neither. */
-export interface AutomationAsk {
+ *  caller has already used as a thread root. Both or neither. `board` is the
+ *  whiteboard the ask came from (an agent card), when it came from one. */
+export interface AutomationAsk extends BoardTurnInput {
   text: string;
   fireAt: Date;
 }
@@ -197,9 +201,12 @@ function skipText(status: string, error: string | null): string {
 
 async function runJob(contextRoot: string, job: AutomationJobState, ask?: AutomationAsk): Promise<void> {
   try {
-    const outcome = await runAutomation(contextRoot, job.slug, {
+    // A declared variable, not an inline literal, so `board` type-checks against
+    // `BoardTurnInput` whether or not `RunOptions` itself carries it yet.
+    const runOpts: RunOptions & BoardTurnInput = {
       host: 'server',
       ...(ask ? { ask: ask.text, fireAt: ask.fireAt } : {}),
+      ...(ask?.board ? { board: ask.board } : {}),
       // CALLBACK form — NEVER trackChild(child). trackChild's ChildProcess
       // branch does `child.kill()`, which signals the PID only; the automation
       // child is `detached: true`, so a PID-only kill leaves its process group
@@ -210,7 +217,8 @@ async function runJob(contextRoot: string, job: AutomationJobState, ask?: Automa
       // returned untrack function in its own cleanup — nothing further to do
       // here, and this scope never even holds a reference to the ChildProcess.
       registerChild: (killGroup) => trackChild(killGroup),
-    });
+    };
+    const outcome = await runAutomation(contextRoot, job.slug, runOpts);
     job.outcome = outcome;
     job.status = outcome.status === 'ok' ? 'success' : 'error';
     if (outcome.status !== 'ok') job.error = outcome.error;
@@ -516,7 +524,7 @@ function settleReplyThread(
 export function startAutomationReplyJob(
   contextRoot: string,
   slug: string,
-  opts: { runId: string; text: string; entryId: string; home?: string; lockPollMs?: number },
+  opts: { runId: string; text: string; entryId: string; home?: string; lockPollMs?: number } & BoardTurnInput,
 ): ReplyJobState {
   pruneSettledReplyJobs();
   const job: ReplyJobState = {
@@ -553,7 +561,7 @@ async function replyOrAnswer(
   contextRoot: string,
   slug: string,
   text: string,
-  verdictOpts: Parameters<typeof resumeWithMessage>[3] & object,
+  verdictOpts: VerdictOptions & BoardTurnInput,
 ): Promise<TalkOutcome> {
   // Synchronous up to the first resume call, on purpose: the job starts its turn in the
   // same tick it was created, exactly as it did before this routing existed.
@@ -578,12 +586,12 @@ async function replyOrAnswer(
 async function runReplyJob(
   contextRoot: string,
   job: ReplyJobState,
-  opts: { text: string; home?: string; lockPollMs?: number },
+  opts: { text: string; home?: string; lockPollMs?: number } & BoardTurnInput,
 ): Promise<void> {
   let outcome: TalkOutcome | null = null;
   try {
     const manifest = getAutomation(contextRoot, job.slug);
-    const verdictOpts = {
+    const verdictOpts: VerdictOptions & BoardTurnInput = {
       surface: 'thread' as const,
       ...(opts.home ? { home: opts.home } : {}),
       // The two run-binding HINTS, so the resumed child's `automations post` lands in
@@ -596,6 +604,8 @@ async function runReplyJob(
       lockWaitMs: ((manifest?.timeoutMinutes ?? 30) + 1) * 60_000,
       ...(opts.lockPollMs ? { lockPollMs: opts.lockPollMs } : {}),
       onLockAcquired: () => { job.phase = 'delivering'; },
+      // The board the reply came from, so the resumed turn carries its context.
+      ...(opts.board ? { board: opts.board } : {}),
     };
     outcome = await replyOrAnswer(contextRoot, job.slug, opts.text, verdictOpts);
     job.status = outcome.status === 'ok' ? 'ok' : outcome.status === 'refused' ? 'refused' : 'failed';

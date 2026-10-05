@@ -11,7 +11,7 @@
  * No React, no CSS: root vitest imports this file.
  */
 
-export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card'] as const;
+export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card', 'agent'] as const;
 
 export const WIDGET_LINK_PREFIX = 'dreamcontext://';
 
@@ -61,6 +61,16 @@ export function splitLabCardRef(ref: unknown): { board: string; card: string } |
   return { board: ref.slice(0, slash), card: ref.slice(slash + 1) };
 }
 
+/** The automation slugs the server reserves (automations/types.ts `RESERVED_SLUGS`). */
+const RESERVED_AGENT_SLUGS: readonly string[] = ['cache', 'output', 'review', 'hitl'];
+
+/** An `agent` card's ref: an automation slug, by the server's `isSafeAutomationSlug` rule. */
+export function isAgentSlugShape(ref: unknown): ref is string {
+  if (typeof ref !== 'string' || ref.length > 200) return false;
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(ref) || ref.includes('--') || ref.endsWith('-')) return false;
+  return !RESERVED_AGENT_SLUGS.includes(ref);
+}
+
 /** A page on a wiki card: a page ref ({@link isValidPageRef}) and an optional label. */
 export interface WikiPage {
   ref: string;
@@ -78,7 +88,7 @@ export type WidgetPayload = {
   v: 1;
   kind: (typeof WIDGET_KINDS)[number];
   /** insight/task: a slug. knowledge (a "page"): a knowledge slug or a project-relative .md/.pdf/.html path.
-   *  lab-card: `<board-slug>/<card-id>`. */
+   *  lab-card: `<board-slug>/<card-id>`. agent: an automation slug. */
   ref?: string;
   title?: string;
   markdown?: string;
@@ -111,6 +121,7 @@ export const DEFAULT_WIDGET_SIZES: Readonly<Record<(typeof WIDGET_KINDS)[number]
   web: 'l',
   wiki: 'l',
   'lab-card': 'xl',
+  agent: 'l',
 };
 
 export function isWidgetSize(v: unknown): v is WidgetSize {

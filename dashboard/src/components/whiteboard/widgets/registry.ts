@@ -9,6 +9,7 @@ import { HtmlWidget } from './HtmlWidget';
 import { WebWidget } from './WebWidget';
 import { WikiWidget } from './WikiWidget';
 import { LabCardWidget } from './LabCardWidget';
+import { AgentWidget } from './AgentWidget';
 import type { WidgetProps } from './types';
 
 /** One component per widget kind. `Record` over the kind union, so a new kind in the contract
@@ -23,4 +24,5 @@ export const WIDGET_REGISTRY: Record<WidgetKind, ComponentType<WidgetProps>> = {
   web: WebWidget,
   wiki: WikiWidget,
   'lab-card': LabCardWidget,
+  agent: AgentWidget,
 };

@@ -5,14 +5,14 @@
  * No React, no CSS, no Excalidraw import: root vitest imports this file.
  */
 import {
-  WIDGET_KINDS, WIDGET_LINK_PREFIX, isLabCardRef, isValidPageRef, pageRefKind, type PageKind, type WidgetPayload,
+  WIDGET_KINDS, WIDGET_LINK_PREFIX, isAgentSlugShape, isLabCardRef, isValidPageRef, pageRefKind, type PageKind, type WidgetPayload,
 } from '../../lib/whiteboardWidgets';
 
 export type WidgetKind = WidgetPayload['kind'];
 export type TodoItem = NonNullable<WidgetPayload['items']>[number];
 
 /** The kinds whose payload points at a dreamcontext entity by slug. */
-export const REF_KINDS: readonly WidgetKind[] = ['insight', 'knowledge', 'task', 'lab-card'];
+export const REF_KINDS: readonly WidgetKind[] = ['insight', 'knowledge', 'task', 'lab-card', 'agent'];
 
 /** The server's ref rule (security invariants), re-checked here before a ref reaches a fetch. */
 const REF_RE = /^[a-z0-9][a-z0-9\-/]{0,200}$/;
@@ -28,10 +28,12 @@ export function isValidWidgetRef(ref: unknown): ref is string {
 /**
  * The ref check for one kind, the server's rule (src/lib/whiteboards/validate.ts): a knowledge
  * widget is a PAGE, whose ref is a knowledge slug OR a project-relative .md/.pdf/.html path;
- * a lab-card's is `<board>/<card-id>`; every other kind takes a slug.
+ * a lab-card's is `<board>/<card-id>`; an agent's is an automation slug; every other kind
+ * takes a slug.
  */
 export function isValidRefFor(kind: WidgetKind, ref: unknown): ref is string {
   if (kind === 'lab-card') return isLabCardRef(ref);
+  if (kind === 'agent') return isAgentSlugShape(ref);
   return kind === 'knowledge' ? isValidPageRef(ref) : isValidWidgetRef(ref);
 }
 

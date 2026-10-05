@@ -79,6 +79,7 @@ function makeManifest(overrides: Partial<AutomationManifest> = {}): AutomationMa
     // function on it. Keep every required field present.
     review: 'off',
     flow: null,
+    whiteboard: null,
     pattern: '',
     prompt: 'Summarize what happened today.',
     outputInstructions: '',
@@ -325,6 +326,7 @@ describe('approvalFields', () => {
       learning: false,
       review: 'off',
       flow: null,
+      whiteboard: null,
     });
   });
 
@@ -341,19 +343,94 @@ describe('approvalFields', () => {
 });
 
 describe('APPROVAL_DIFF_FIELDS', () => {
-  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow, in that exact order', () => {
+  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow/whiteboard, in that exact order', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review', 'flow',
+      'whiteboard',
     ]);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(9);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(10);
   });
 
-  it('keeps `flow` LAST — the position is what preserves every legacy hash', () => {
-    // `canonicalApprovalPayload` appends `flow` to the end of its literal, and
-    // JSON.stringify emits keys in insertion order. Any other position would
-    // shift the serialization of the fields around it and re-block every
-    // already-approved automation on upgrade.
-    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('flow');
+  it('keeps `flow` then `whiteboard` LAST — the position is what preserves every legacy hash', () => {
+    // `canonicalApprovalPayload` appends `flow`, then `whiteboard`, to the end of
+    // its literal, and JSON.stringify emits keys in insertion order. Any other
+    // position would shift the serialization of the fields around it and
+    // re-block every already-approved automation on upgrade.
+    expect(APPROVAL_DIFF_FIELDS.slice(-2)).toEqual(['flow', 'whiteboard']);
+  });
+});
+
+describe('whiteboard is hashed, but only when the manifest HAS one', () => {
+  const LEGACY_PAYLOAD =
+    'automation-approval/v1\n' +
+    '{"prompt":"Summarize what happened today.","outputInstructions":"","model":null,' +
+    '"timeoutMinutes":15,"outputDir":null}';
+
+  it('a manifest without a home board hashes byte-identically to before the field existed', () => {
+    expect(canonicalApprovalPayload(makeManifest({ whiteboard: null }))).toBe(LEGACY_PAYLOAD);
+    // A hand-built object without the key at all (undefined) is the same answer, never a throw.
+    const { whiteboard: _omit, ...noKey } = makeManifest();
+    expect(canonicalApprovalPayload(noKey as AutomationManifest)).toBe(LEGACY_PAYLOAD);
+  });
+
+  it('adding, removing or re-pointing the board changes the hash, so it blocks until re-approved', () => {
+    const none = manifestHash(makeManifest({ whiteboard: null }));
+    const growth = manifestHash(makeManifest({ whiteboard: 'growth' }));
+    const ops = manifestHash(makeManifest({ whiteboard: 'ops' }));
+    expect(growth).not.toBe(none);
+    expect(ops).not.toBe(growth);
+  });
+
+  it('is serialized LAST, after flow', () => {
+    const payload = canonicalApprovalPayload(makeManifest({ whiteboard: 'growth', learning: true }));
+    expect(payload.endsWith(',"whiteboard":"growth"}')).toBe(true);
+  });
+
+  it('checkApproval blocks an approved agent whose board was added, removed or changed', () => {
+    approveAutomation(PROJECT_A, makeManifest({ whiteboard: 'growth' }), NOW, home);
+    expect(checkApproval(PROJECT_A, makeManifest({ whiteboard: 'growth' }), home).approved).toBe(true);
+    for (const whiteboard of [null, 'ops']) {
+      const verdict = checkApproval(PROJECT_A, makeManifest({ whiteboard }), home);
+      expect(verdict.approved).toBe(false);
+      if (!verdict.approved) expect(verdict.reason).toBe('manifest-changed');
+    }
+  });
+
+  it('approveAutomation records the approved board in the entry, and only when there is one', () => {
+    const scoped = approveAutomation(PROJECT_A, makeManifest({ whiteboard: 'growth' }), NOW, home);
+    expect(scoped.whiteboard).toBe('growth');
+    expect(getApproval(PROJECT_A, 'eod-digest', home)?.whiteboard).toBe('growth');
+    const plain = approveAutomation(PROJECT_A, makeManifest({ whiteboard: null }), NOW, home);
+    expect('whiteboard' in plain).toBe(false);
+    expect(getApproval(PROJECT_A, 'eod-digest', home)).not.toHaveProperty('whiteboard');
+  });
+
+  it('an entry with a malformed whiteboard is dropped on read (fails closed to never-approved)', () => {
+    const entry = { manifestSha256: 'abc', approvedAt: NOW.toISOString(), payloadVersion: 'automation-approval/v1' };
+    writeAutomationsRegistry({
+      projects: {
+        [PROJECT_A]: {
+          approvals: {
+            good: { ...entry, whiteboard: 'growth' },
+            numeric: { ...entry, whiteboard: 7 } as unknown as ApprovalEntry,
+            empty: { ...entry, whiteboard: '' },
+            legacy: entry,
+          },
+        },
+      },
+    }, home);
+    const approvals = readAutomationsRegistry(home).projects[PROJECT_A].approvals;
+    expect(Object.keys(approvals).sort()).toEqual(['good', 'legacy']);
+    expect(approvals.good.whiteboard).toBe('growth');
+  });
+
+  it('approvalFields shows the board (null when unset) so a reviewer sees the confinement', () => {
+    expect(approvalFields(makeManifest({ whiteboard: 'growth' })).whiteboard).toBe('growth');
+    expect(approvalFields(makeManifest({ whiteboard: null })).whiteboard).toBeNull();
+    expect(approvalDiff(
+      approvalFields(makeManifest({ whiteboard: 'growth' })),
+      approvalFields(makeManifest({ whiteboard: null })),
+    )).toBe('whiteboard:\n  - growth\n  + (none)');
   });
 });
 

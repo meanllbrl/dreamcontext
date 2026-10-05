@@ -1,8 +1,8 @@
-import { nanoid } from 'nanoid';
 import { parseWhiteboard, sortElements } from './format.js';
 import { WhiteboardValidationError } from './errors.js';
 import { isValidWidgetRef, validateElement } from './validate.js';
 import {
+  cliSafeId,
   elementTag,
   newElementId,
   randomInteger,
@@ -206,7 +206,7 @@ function findItem(items: TodoItem[], key: string): TodoItem {
 }
 
 export function newTodoItem(text: string): TodoItem {
-  return { id: nanoid(8), text, done: false };
+  return { id: cliSafeId(8), text, done: false };
 }
 
 /** Apply an update to one live element; returns the new, version-bumped element. */

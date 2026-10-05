@@ -11,7 +11,7 @@ import * as dash from '../../dashboard/src/lib/whiteboardWidgets.js';
 describe('whiteboard widget contract mirror', () => {
   it('WIDGET_KINDS match, in order', () => {
     expect([...dash.WIDGET_KINDS]).toEqual([...lib.WIDGET_KINDS]);
-    expect([...lib.WIDGET_KINDS]).toEqual(['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card']);
+    expect([...lib.WIDGET_KINDS]).toEqual(['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card', 'agent']);
   });
 
   it('WIDGET_LINK_PREFIX matches', () => {
@@ -62,6 +62,6 @@ describe('whiteboard widget contract mirror', () => {
 
   it('per-kind default sizes match', () => {
     expect(dash.DEFAULT_WIDGET_SIZES).toEqual(lib.DEFAULT_WIDGET_SIZES);
-    expect(lib.DEFAULT_WIDGET_SIZES).toEqual({ insight: 'm', knowledge: 's', task: 's', todo: 'm', note: 'm', html: 'l', web: 'l', wiki: 'l', 'lab-card': 'xl' });
+    expect(lib.DEFAULT_WIDGET_SIZES).toEqual({ insight: 'm', knowledge: 's', task: 's', todo: 'm', note: 'm', html: 'l', web: 'l', wiki: 'l', 'lab-card': 'xl', agent: 'l' });
   });
 });

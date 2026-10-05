@@ -8,13 +8,13 @@ import { nanoid } from 'nanoid';
  * build roots). `tests/unit/whiteboard-widget-mirror.test.ts` fails the moment the two drift.
  */
 
-export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card'] as const;
+export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card', 'agent'] as const;
 export type WidgetKind = (typeof WIDGET_KINDS)[number];
 
 export const WIDGET_LINK_PREFIX = 'dreamcontext://';
 
 /** Kinds whose payload points at a dreamcontext entity by slug. */
-export const REF_KINDS: readonly WidgetKind[] = ['insight', 'knowledge', 'task', 'lab-card'];
+export const REF_KINDS: readonly WidgetKind[] = ['insight', 'knowledge', 'task', 'lab-card', 'agent'];
 
 /** File types a page (a `knowledge` widget, a page on a wiki card) may point at by path. */
 export const PAGE_FILE_EXTENSIONS = ['.md', '.pdf', '.html', '.htm'] as const;
@@ -62,6 +62,20 @@ export function splitLabCardRef(ref: unknown): { board: string; card: string } |
   return { board: ref.slice(0, slash), card: ref.slice(slash + 1) };
 }
 
+/** The automation slugs `isSafeAutomationSlug` reserves (automations/types.ts `RESERVED_SLUGS`). */
+const RESERVED_AGENT_SLUGS: readonly string[] = ['cache', 'output', 'review', 'hitl'];
+
+/**
+ * An `agent` card's ref: an automation slug. MIRRORS `isSafeAutomationSlug`
+ * (automations/store.ts), pinned equal by `whiteboard-agent-widget.test.ts`; a mirror rather
+ * than an import because that store already imports this module's validator.
+ */
+export function isAgentSlugShape(ref: unknown): ref is string {
+  if (typeof ref !== 'string' || ref.length > 200) return false;
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(ref) || ref.includes('--') || ref.endsWith('-')) return false;
+  return !RESERVED_AGENT_SLUGS.includes(ref);
+}
+
 export interface TodoItem {
   id: string;
   text: string;
@@ -85,7 +99,7 @@ export interface WidgetPayload {
   v: 1;
   kind: WidgetKind;
   /** insight/task: a slug. knowledge (a "page"): a knowledge slug or a project-relative .md/.pdf/.html path.
-   *  lab-card: `<board-slug>/<card-id>`. */
+   *  lab-card: `<board-slug>/<card-id>`. agent: an automation slug. */
   ref?: string;
   title?: string;
   markdown?: string;
@@ -118,6 +132,7 @@ export const DEFAULT_WIDGET_SIZES: Readonly<Record<WidgetKind, WidgetSize>> = {
   web: 'l',
   wiki: 'l',
   'lab-card': 'xl',
+  agent: 'l',
 };
 
 export function isWidgetSize(v: unknown): v is WidgetSize {
@@ -181,8 +196,17 @@ export function randomInteger(): number {
   return Math.floor(Math.random() * 2 ** 31);
 }
 
+/**
+ * A nanoid that never starts with '-': ids are passed to the CLI as positional arguments,
+ * and commander reads a leading '-' as an option ("unknown option '-H2az…'").
+ */
+export function cliSafeId(size: number): string {
+  const id = nanoid(size);
+  return id[0] === '-' ? `x${id.slice(1)}` : id;
+}
+
 export function newElementId(): string {
-  return nanoid(21);
+  return cliSafeId(21);
 }
 
 /**

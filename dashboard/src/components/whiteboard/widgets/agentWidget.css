@@ -1,0 +1,147 @@
+/* An agent on the board (AgentWidget.tsx): the conversation at card size. Design tokens only. */
+
+.wb-widget--agent .wb-widget-body {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--space-2);
+}
+
+/* The header's always-on slot: the agent's status word, pushed to the end. */
+.wb-widget--agent .wb-widget-head-meta {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.wb-widget--agent .wb-widget-head-meta + .wb-widget-actions {
+  margin-left: 0;
+}
+
+.wb-agent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.wb-agent-state {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.wb-agent-state--working,
+.wb-agent-state--needs-you {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+/* ── S: avatar and the last thing said ─────────────────────────────────────────────────────── */
+
+.wb-agent-small {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.wb-agent-small-line {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* ── M, L, XL: the card's own chat ─────────────────────────────────────────────────────────── */
+
+/* The containing block for the reused ChatPane: `.chat-pane` is `position: absolute; inset: 0`
+   (ChatPane.css), the notch's own arrangement (notch.css `.dc-notch__chat`). */
+.wb-agent-chat {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-agent-chat > .agent-pane-chat {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Before the first activation: who it is and what a click does. */
+.wb-agent-idle {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.wb-agent-empty {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.wb-agent-blocked {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* ── the ⋯ menu ────────────────────────────────────────────────────────────────────────────── */
+
+.wb-agent-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.wb-agent-menu-list {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 168px;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+
+.wb-agent-menu-item {
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-agent-menu-item:hover,
+.wb-agent-menu-item:focus-visible {
+  background: var(--color-bg-tertiary);
+}

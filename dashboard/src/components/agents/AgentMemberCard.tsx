@@ -104,6 +104,11 @@ export function AgentMemberCard({
   const nextWhen = scheduled && summary.enabled ? nextFireWords(summary.nextFireAt, new Date()) : null;
   const tone = statusTone(summary);
   const description = summarize(summary.description, 150);
+  // The key lands in the strings file in a later wave; until then `t` hands the key back.
+  const boardWords = summary.whiteboard
+    ? (t('agents.card.board') === 'agents.card.board' ? 'on {board}' : t('agents.card.board'))
+      .replace('{board}', summary.whiteboard)
+    : null;
 
   const toggle = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -146,6 +151,9 @@ export function AgentMemberCard({
           <p className="agent-card-meta">
             <span className={scheduled ? '' : 'agent-card-oncall'}>{summary.cadenceLabel}</span>
             {summary.model && <> · {summary.model}</>}
+            {/* Its home board: the one place this agent can change anything, so the list
+                says which board it belongs to rather than leaving that to the manifest. */}
+            {boardWords && <> · <span className="agent-card-board">{boardWords}</span></>}
           </p>
         </div>
         {scheduled && (

@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useLabInsights } from '../../hooks/useLab';
+import { useAutomations } from '../../hooks/useAutomations';
 import { useBoards } from '../../hooks/useBoards';
 import { useKnowledgeList } from '../../hooks/useKnowledge';
 import { useTasks } from '../../hooks/useTasks';
 import { useWhiteboardPages, type WhiteboardPageHit } from '../../hooks/useWhiteboardPages';
-import { isLabCardRef, type WidgetPayload } from '../../lib/whiteboardWidgets';
+import { isAgentSlugShape, isLabCardRef, type WidgetPayload } from '../../lib/whiteboardWidgets';
 import { WEB_URL_REASON_TEXT, validateWebUrl } from './webUrl';
 import {
   humanizeFileName, isValidRefFor, isValidWidgetRef, knowledgeTitle, pageKindLabel, pageTypeLabel, taskTitle,
@@ -210,6 +211,32 @@ export function TaskPicker({ onPick }: { onPick: Pick }) {
       emptyText={tx('whiteboard.palette.noTasks', 'No tasks.')}
       onPick={(r) => onPick({ v: 1, kind: 'task', ref: r.slug, title: r.title })}
     />
+  );
+}
+
+/**
+ * The palette's agent picker: an existing agent becomes an agent card on this board, or "New
+ * agent" opens the create dialog with this board as the new agent's home (the canvas owns it).
+ */
+export function AgentPicker({ onPick, onNew }: { onPick: Pick; onNew: () => void }) {
+  const tx = useWbText();
+  const { data, isLoading, isError } = useAutomations();
+  const rows = useMemo(() => data
+    ?.filter((a) => isAgentSlugShape(a.slug))
+    .map((a) => ({ slug: a.slug, title: a.title, meta: a.cadenceLabel })), [data]);
+  return (
+    <>
+      <div className="wb-picker-actions">
+        <button type="button" className="wb-palette-btn" onClick={onNew}>{tx('whiteboard.palette.newAgent', 'New agent')}</button>
+      </div>
+      <PickList
+        rows={rows}
+        loading={isLoading}
+        failed={isError}
+        emptyText={tx('whiteboard.palette.noAgents', 'No agents yet.')}
+        onPick={(r) => onPick({ v: 1, kind: 'agent', ref: r.slug, title: r.title })}
+      />
+    </>
   );
 }
 

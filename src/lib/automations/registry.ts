@@ -44,6 +44,11 @@ export interface ApprovalEntry {
   manifestSha256: string;
   approvedAt: string;
   payloadVersion: string;
+  /** The home board the approved manifest named, when it named one. Recorded
+   *  so the spawn path can refuse a manifest whose board disagrees with what a
+   *  human here approved, even if the hash were somehow made to match. Absent
+   *  for an ordinary agent and on every entry written before this field. */
+  whiteboard?: string;
 }
 
 /** One project's approvals, keyed by automation slug. */
@@ -99,7 +104,11 @@ function isValidApprovalEntry(v: unknown): v is ApprovalEntry {
     typeof e.manifestSha256 === 'string' &&
     e.manifestSha256.length > 0 &&
     typeof e.approvedAt === 'string' &&
-    typeof e.payloadVersion === 'string'
+    typeof e.payloadVersion === 'string' &&
+    // Optional, but when present it must be a non-empty string. A malformed
+    // value drops the entry (reads as never-approved): failing closed costs a
+    // re-approval, failing open could unscope a board agent.
+    (e.whiteboard === undefined || (typeof e.whiteboard === 'string' && e.whiteboard.length > 0))
   );
 }
 
@@ -360,6 +369,13 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // runner's approval path, where a throw is an automation that stops running
     // and tells nobody. A hash function on that path has to be total.
     ...(m.flow !== null && m.flow !== undefined ? { flow: canonicalFlowJson(m.flow) } : {}),
+    // OMITTED when absent, and after `flow` for the same append-only reason:
+    // every manifest that exists today has no home board, so its payload stays
+    // byte-for-byte what it was. Present, it decides the run's whole permission
+    // envelope (scoped to one board vs unscoped), so adding, removing or
+    // re-pointing it must block until someone here re-approves. `undefined` is
+    // treated as absent for the same totality reason as `flow`.
+    ...(m.whiteboard ? { whiteboard: m.whiteboard } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -398,6 +414,9 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     // reviewer must be able to see that a graph exists and what it wires, since
     // the graph is what decides whether the run stops to ask.
     flow: m.flow,
+    // Always present (as null when absent): a reviewer must see that the agent
+    // is confined to a board, and that a confinement they relied on is gone.
+    whiteboard: m.whiteboard ?? null,
   };
 }
 
@@ -497,6 +516,7 @@ export function approveAutomation(projectRoot: string, m: AutomationManifest, no
     manifestSha256: manifestHash(m),
     approvedAt: now.toISOString(),
     payloadVersion: APPROVAL_PAYLOAD_VERSION,
+    ...(m.whiteboard ? { whiteboard: m.whiteboard } : {}),
   };
   const registry = readAutomationsRegistry(home);
   // Write under the key this project ALREADY has, so approving through an alias

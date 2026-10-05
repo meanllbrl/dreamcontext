@@ -187,7 +187,7 @@ function parseEntry(json: string): ThreadEntry | null {
       text: typeof r.text === 'string' ? r.text : '',
       ...(files && files.length > 0 ? { files } : {}),
       ...(summary && summary.length > 0 ? { summary } : {}),
-      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat')
+      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant')
         ? (r.via as ThreadVia)
         : 'runner',
     };

@@ -6,6 +6,7 @@ import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../f
 import { generateId } from '../id.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { formatSchedule, parseScheduleDetailed, parseSlot, serializeSchedule, serializeSlot } from './schedule.js';
+import { isValidWhiteboardSlug } from '../whiteboards/validate.js';
 import {
   AutomationError,
   AUTOMATIONS_GITIGNORE_ENTRIES,
@@ -604,6 +605,11 @@ export function readAutomationFile(filePath: string): AutomationManifest {
     // change the hash of every manifest written before this section existed and
     // block all of them at once. See AutomationManifest.flow's doc comment.
     flow: parseFlowSection(content),
+    // Lenient, and `null` never `undefined` for the same byte-identity reason
+    // as `flow`. Any non-empty string is KEPT even if it is not a valid board
+    // slug: dropping a bad value would silently unscope the agent, keeping it
+    // means the spawn path refuses it (no such board) and fails closed.
+    whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
     path: filePath,
     body: content.trim(),
   };
@@ -997,6 +1003,12 @@ export interface CreateAutomationInput {
    *  whole gate exists to prevent. Written explicitly all the same, so the
    *  field is visible in the manifest that the capture protocol reads back. */
   review?: ReviewMode;
+  /** The agent's home board slug. Omitted/null ⇒ an ordinary agent. Validated
+   *  for shape here; that the board EXISTS is the caller's check (the HTTP
+   *  route and the CLI), since this store takes no dependency on whiteboards'
+   *  on-disk state. Cannot be combined with `outputDir`: a home-board agent's
+   *  writable output folder is always `automations/output/<slug>/`. */
+  whiteboard?: string | null;
 }
 
 /**
@@ -1059,6 +1071,16 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   // disk; this stops one from being created that way.
   if (i.review !== undefined && !(REVIEW_MODES as readonly string[]).includes(i.review)) {
     throw new AutomationError(`Invalid review mode "${i.review}" — must be one of: ${REVIEW_MODES.join(', ')}.`);
+  }
+  if (i.whiteboard !== undefined && i.whiteboard !== null) {
+    if (!isValidWhiteboardSlug(i.whiteboard)) {
+      throw new AutomationError(`Invalid whiteboard "${i.whiteboard}": it must be a whiteboard slug, for example control-panel.`);
+    }
+    // A board agent's only writable output folder is its default one, so the
+    // spawn envelope can name it exactly; a custom dir would sit outside it.
+    if (i.outputDir !== undefined && i.outputDir !== null) {
+      throw new AutomationError('A whiteboard agent cannot also set an output dir. It always writes to automations/output/<slug>/.');
+    }
   }
 }
 
@@ -1190,6 +1212,9 @@ export function createAutomation(contextRoot: string, i: CreateAutomationInput):
     notify: i.notify ?? true,
     learning: i.learning ?? true,
     review: i.review ?? 'off',
+    // Written ONLY when set, so an ordinary agent's manifest carries no
+    // `whiteboard` key at all, exactly as before this field existed.
+    ...(i.whiteboard ? { whiteboard: i.whiteboard } : {}),
   };
 
   const body = [

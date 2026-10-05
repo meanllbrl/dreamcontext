@@ -12,6 +12,7 @@ _dream_context/automations/<slug>.md        the manifest: schedule + prompt, wri
 ~/Library/LaunchAgents/…automations.plist   one dispatcher, ticks every 5 minutes
               user runs: dreamcontext automations approve <slug>
 a due automation spawns a headless `claude -p` session, bypassPermissions
+              (a board agent instead: dontAsk + an allowlist scoped to its board)
 automations/output/<slug>/<date>.md         the run's final message, verbatim
 automations/cache/<slug>.json               run history, status, telemetry
 ```
@@ -46,6 +47,8 @@ Three things about this are worth understanding properly rather than assuming:
 - **The pattern is NOT approval-hashed, and that is deliberate.** It changes on its own every run, so hashing it would block the automation daily and train you to approve without reading, which is worse than not gating it at all. What IS hashed is `learning`, the switch that admits the pattern into the run. Turning it on requires an approval; what the pattern later says does not.
 - **Which means the pattern is an unreviewed input, and is framed as one.** It reaches the model as notes, after the approved prompt, explicitly labelled observations that lose to the instructions. This is the same hazard as "never write a prompt that delegates its instructions to a file someone else can edit" (below) — the difference is that here the file is bounded, written only through one command, and told to the model as untrusted. Do not undo that framing. A run that reads something from the outside world and dutifully "learns" it is exactly the case this defends against.
 - **It follows the automation's privacy.** The pattern lives in the manifest, so a private automation's lessons stay on this machine and a shared automation's travel with it. There is no separate switch to get wrong.
+
+**A conversation teaches it too.** The pattern is not only for scheduled runs: every reply turn of an agent with `learning` on (a thread reply, an @mention, an answered question, a message on its whiteboard card) carries the same pattern notes and a learning directive, after the board and reference blocks and before the owner's message, which always comes last. A correction the owner makes in chat ("not the weekly number, the monthly one") is a lesson the agent records with `automations learn` before it answers, so the next run starts from it.
 
 Keep lessons durable and small: a command that failed and what worked instead, a flag that turned out to be needed, an assumption that was wrong. This run's findings belong in the output document. An automation whose pattern has become a second copy of its output archive has stopped learning and started hoarding.
 
@@ -132,6 +135,23 @@ A `## Prompt` that works (write it in the user's words; the steps are the contra
 ```
 
 Always tag everything the run writes with the same tag, and only ever remove by that tag: the user's own drawings on the board carry no tag and survive every run. A run that edits the board while the user has it open is safe; the page folds the CLI edit in within seconds without dropping the user's strokes.
+
+### Board agents: an agent that lives on one whiteboard
+
+When the user wants an agent **on** a board ("put an agent on the control panel that keeps it current", "panoya bir ajan koy"), give it a home board instead of the daily-board recipe's full permissions:
+
+```bash
+dreamcontext automations create panel-keeper --title "Panel keeper" --whiteboard control-panel --prompt-file prompt.md
+dreamcontext whiteboard add control-panel agent --ref panel-keeper
+```
+
+- **`whiteboard: <board>` is approval-hashed** and recorded in the approval entry, so a synced edit that adds, removes or changes it blocks the agent until a human approves the board. The board must exist; `--whiteboard` together with an output directory is refused. `automations show` prints `whiteboard: <board>` and whether that board still exists.
+- **Every spawn is scoped, never `bypassPermissions`:** `--permission-mode dontAsk --setting-sources project` with an exact allowlist (the read verbs, `whiteboard` writes on its own board, `automations post|learn|propose` on itself, files only under `automations/output/<slug>/` and `$DREAMCONTEXT_AGENT_SCRATCH`), `Agent`, `Task` and `Workflow` disallowed, and reads of `~/.ssh`, `~/.aws`, `~/.claude`, `~/.claude.json`, `~/.dreamcontext` and `.env*` denied. That covers the run, the account-switch continue, a reply, an answered question and a card conversation. Before each one the agent is checked again (approval, the approved board, no symlink in its folders, a path a rule can hold); a failed check means no spawn and a named reason: "Could not limit <title> to its board: <reason>".
+- **The CLI is a second layer.** The run carries `DREAMCONTEXT_AGENT_BOARD`, `DREAMCONTEXT_AGENT_SELF` and `DREAMCONTEXT_AGENT_SCRATCH`; while they are set the `whiteboard` write verbs refuse other boards, `whiteboard add|update|draw --file` reads only from the agent's scratch folder (`$DREAMCONTEXT_AGENT_SCRATCH`) or `_dream_context/automations/output/<self>/`, compared by real path, and refuses any symlink, and `automations post|learn|propose` refuse other slugs.
+- **Every turn sees its board**, fresh, fenced as data that loses to the owner's message. The owner talks to it on the card (drag-to-ask references included), in its channel, or through the Assistant (`assistant agent <vault> "…" --board <board>`). **A card is its own conversation, not the thread:** nothing said on a card reaches the channel or a run; it keeps the agent's prompt, pattern, learning directive and board scope.
+- Write the prompt for those limits: results go on the board or into `automations post`, `dreamcontext` is called directly (never through `npx`), and scratch files go to `$DREAMCONTEXT_AGENT_SCRATCH`.
+
+Card, sizes, drag-to-ask and the full allowlist → [whiteboards.md](whiteboards.md) § Agent cards.
 
 ---
 
@@ -274,11 +294,11 @@ Unread is **per machine** — a watermark in `~/.dreamcontext/`, never synced, b
 
 ## What approval covers, and what it does not
 
-Every automation carries a machine-local approval: a hash of exactly what it will do, computed the moment it's created, checked again every time it's about to run. If the prompt, output instructions, model, effort level, timeout, output directory, the `learning` switch, the `review` mode, or the `## Flow` graph change, the hash no longer matches, and the automation is **blocked**. It will not spawn, on this machine, until a human reviews it again with `dreamcontext automations approve <slug>`. `approve` shows exactly what changed across all nine of those fields before asking for confirmation, never just the prompt, because reviewing only the prompt would let a timeout or an output-directory change sail through unnoticed.
+Every automation carries a machine-local approval: a hash of exactly what it will do, computed the moment it's created, checked again every time it's about to run. If the prompt, output instructions, model, effort level, timeout, output directory, the `learning` switch, the `review` mode, the `## Flow` graph, or the home `whiteboard` change, the hash no longer matches, and the automation is **blocked**. It will not spawn, on this machine, until a human reviews it again with `dreamcontext automations approve <slug>`. `approve` shows exactly what changed across all ten of those fields before asking for confirmation, never just the prompt, because reviewing only the prompt would let a timeout or an output-directory change sail through unnoticed.
 
-One asymmetry in that list is deliberate. `learning` is hashed only in the ON direction: an automation with learning off hashes exactly as it did before the field existed, so upgrading dreamcontext never re-blocks a working automation (and a blocked run notifies nobody, by design, so that would be a silent outage). Turning it on changes the hash and demands a review, because it widens what the run reads. `flow` is hashed the same shape, for the same reason, one level further: appended **LAST** to the hashed payload and **omitted entirely** (not written as `null`) whenever the manifest has no `## Flow` block, so a manifest written before this field existed keeps its exact byte-identical hash and gains a graph without costing a re-approval. Once a manifest has one, editing it is hashed like any other field — the graph decides what the run's prompt says and whether it stops to ask, so a teammate's synced edit that quietly deletes a `hitl` node has removed a human gate exactly as editing `review` back to `off` would, and both re-trigger review the same way.
+One asymmetry in that list is deliberate. `learning` is hashed only in the ON direction: an automation with learning off hashes exactly as it did before the field existed, so upgrading dreamcontext never re-blocks a working automation (and a blocked run notifies nobody, by design, so that would be a silent outage). Turning it on changes the hash and demands a review, because it widens what the run reads. `flow` is hashed the same shape, for the same reason, one level further: appended **LAST** to the hashed payload and **omitted entirely** (not written as `null`) whenever the manifest has no `## Flow` block, so a manifest written before this field existed keeps its exact byte-identical hash and gains a graph without costing a re-approval. Once a manifest has one, editing it is hashed like any other field — the graph decides what the run's prompt says and whether it stops to ask, so a teammate's synced edit that quietly deletes a `hitl` node has removed a human gate exactly as editing `review` back to `off` would, and both re-trigger review the same way. `whiteboard` follows `flow` with the same shape: appended after it, omitted when unset, so an agent without a home board hashes exactly as before; adding, removing or changing it re-triggers review, because it decides which board the scoped run may write to. The approval entry also records the approved board, and a spawn whose manifest names a different board is refused.
 
-This is why the approval exists, and it exists regardless of whether the automation is shared. For a **shared** automation, the obvious case is a teammate's synced edit arriving through brain sync, and it's treated the same as new, unreviewed code. But approval isn't only about teammates: a fully **private** automation still has to re-approve after any of those nine fields change, because anyone with local write access to this machine, not just a teammate, could alter the manifest before its next scheduled fire, and approval catches that too. Know precisely what that protection covers and what it doesn't.
+This is why the approval exists, and it exists regardless of whether the automation is shared. For a **shared** automation, the obvious case is a teammate's synced edit arriving through brain sync, and it's treated the same as new, unreviewed code. But approval isn't only about teammates: a fully **private** automation still has to re-approve after any of those ten fields change, because anyone with local write access to this machine, not just a teammate, could alter the manifest before its next scheduled fire, and approval catches that too. Know precisely what that protection covers and what it doesn't.
 
 ### Approval has three paths, and only one of them still shows a screen
 
@@ -353,6 +373,8 @@ Answering a `flow-hitl` question, or reopening a finished run as a chat tab, bot
 
 This is enforced in exactly one place that matters: the chat WebSocket's resume gate (`src/server/routes/agent-chat.ts`) rejects every `bypass=1&resume=<uuid>` connect whose uuid is claimed by some automation's synced cache but was never recorded by this machine's own session-binding store. A planted session id in a synced cache record can therefore never bootstrap an unattended, fully-armed resume of a conversation this machine never actually ran.
 
+**A resume also re-checks approval.** A thread reply, a Telegram answer and a CLI `automations answer` all check the manifest's approval under the run lock just before they spawn, for every agent: a manifest edited since its last approval is refused, not resumed. A board agent's resume runs scoped to its board like its runs do (`dontAsk` and its allowlist, never `bypassPermissions`); reopening its session as a Chat tab is the owner at the keyboard, under the owner's own permission mode.
+
 ## If it's shared, know what protects the output and what doesn't
 
 If an automation is **private** (the default), its output never leaves this machine over git, so none of this applies. If it's **shared**, the output lands under `_dream_context/` and rides the same sync and push path as everything else in the brain, including the automatic push that happens on `sleep done` when cloud sync is on. Before sharing an automation whose output might be sensitive, understand exactly what stands between that output and your team's shared remote.
@@ -421,6 +443,7 @@ A known, accepted gap: if the fallback resolution itself ever hangs, an extremel
 | `notify` | Whether a desktop notification fires when a run finishes, success or failure. `automations install` sets up a small notifier app so these arrive branded as "dreamcontext", with a sound: a soft one on success, macOS's error sound on failure, so an unattended failure is audibly different from a success. macOS asks for permission once, and **until it is allowed, notifications are filed silently and never appear on screen**. Sound is a **separate** switch from permission (System Settings > Notifications > dreamcontext > "Play sound for notifications"); allowing alerts does not turn it on. `install --check` reports whether the notifier is present. Defaults to `true`; only the literal value `false` silences it. Note the asymmetry with `shared`, which defaults the other way: an over-share is a leak, but a run nobody is told about is a silent loss, so the two flags fail toward opposite states on purpose. Not an approval-hashed field, for the same reason `shared` isn't — it changes whether you are told, never what the run does. |
 | `learning` | Whether this automation keeps a `## Pattern` — read before every run, appended to after one. Defaults to `true` for anything created from now on (`create` writes it explicitly); a manifest written before this field existed reads `false`, which is what keeps its approved hash byte-identical across the upgrade. IS approval-hashed: turning it on widens what the run reads to a file the run itself rewrites. See "The pattern" above. |
 | `review` | Whether this automation stops and asks before its work takes effect, and who decides: `off` (default — publishes and notifies with no verdict in between), `agent` (the run decides at runtime, via `automations propose`), or `output` (blanket — every finished document waits for a verdict before it publishes; an @mention ask skips it, see Questions). Reads leniently toward `off` on anything unrecognised, the opposite of how `shared` fails, because a malformed `review` failing CLOSED would mean an automation silently stopping to ask a human who doesn't know a question exists. IS approval-hashed in the non-`off` direction: turning it on is a gate a teammate's synced edit must not be able to remove for free. |
+| `whiteboard` | The agent's **home board** (a whiteboard slug), or absent. Set only at creation (`create --whiteboard <board>` or the board's **New agent**); edits keep it, nothing re-homes it. The board must exist, and it cannot be combined with `output.dir` (a board agent writes to `automations/output/<slug>/`). Every spawn of such an agent is scoped to that board (see "Board agents" above). IS approval-hashed, omitted when unset, and the approval entry records the board approved. |
 
 **Schedule slots.** Each slot is exactly one cadence. All times are 24-hour, machine-local wall clock.
 
@@ -464,7 +487,7 @@ Full flags for every verb live in [cli-reference.md](cli-reference.md#automation
 
 | Command | What it's for |
 |---|---|
-| `automations create <slug>` | Scaffold a manifest and auto-approve it locally. |
+| `automations create <slug>` | Scaffold a manifest and auto-approve it locally. `--whiteboard <board>` makes it a board agent, scoped to that board. |
 | `automations list` / `show <slug>` | See every automation, or one in full: every slot, the next fire, approval state, run history, and whether a previous run is still orphaned. |
 | `automations schedule <slug>` | Show the slots, or edit them: `--add <spec>`, `--remove <n>`, `--slot <spec>` (replace all), `--days/--at` (one slot). No re-approval. |
 | `automations run <slug> --force` | Run it right now, ignoring the schedule. The live-test step of the capture protocol. |
@@ -493,7 +516,7 @@ Full flags for every verb live in [cli-reference.md](cli-reference.md#automation
 - [cli-reference.md](cli-reference.md#automations): every flag, live from `--help`.
 - [sleep.md](sleep.md): sleep never runs automations and never owns their files, but it does read new output and fold it into knowledge, including a private automation's output. A private automation's output can still end up published this way, through the knowledge file it becomes, and `sleep done` refuses to finish until you've reviewed that.
 - [tasks-and-features.md](tasks-and-features.md): the offer-and-confirm capture pattern automations shares with insights and theses.
-- [whiteboards.md](whiteboards.md): a board as a run's output surface (the daily-board recipe above).
+- [whiteboards.md](whiteboards.md): a board as a run's output surface (the daily-board recipe above), and the agent card a board agent lives on (§ Agent cards).
 
 ## Detail behind the SKILL.md summaries
 

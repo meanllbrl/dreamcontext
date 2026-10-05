@@ -1,4 +1,5 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
@@ -56,6 +57,9 @@ import {
 import { latestBoundSession, readAutomationSession } from '../../lib/automations/session-registry.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
+import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
+import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
+import { expandBoardRefs } from '../../lib/whiteboards/board-refs.js';
 import {
   startAutomationJob, currentAutomationJob, runningAutomationJobs,
   startAutomationReplyJob, currentReplyJob, reconcileReplyThreads,
@@ -87,6 +91,38 @@ import {
   type Weekday,
   THREAD_TEXT_MAX_CHARS,
 } from '../../lib/automations/types.js';
+
+/** Does `slug` name a board that exists in this brain? Only through
+ *  `resolveWhiteboardPath`, which refuses an invalid slug, a symlink and an
+ *  escaping path; any refusal is "no". */
+function boardExists(contextRoot: string, slug: string): boolean {
+  if (!isValidWhiteboardSlug(slug)) return false;
+  try {
+    resolveWhiteboardPath(contextRoot, slug);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The `board` a say or reply names. Absent, null or empty ⇒ no board. Present ⇒ it must
+ * be a board that exists here; `undefined` means it does not, and the caller answers
+ * `400 bad_board`. It is passed on, never trusted: the runner decides what a turn may see
+ * of it (a home agent always gets its own board, whatever this says).
+ */
+function readBoard(contextRoot: string, v: unknown): string | null | undefined {
+  if (v === undefined || v === null || v === '') return null;
+  if (typeof v !== 'string') return undefined;
+  const board = v.trim();
+  return boardExists(contextRoot, board) ? board : undefined;
+}
+
+/** What a human reads back for a message carrying `dcref:wb/…` tokens: each one as
+ *  `[title]`. The thread stores this; the run re-expands the raw text fresh. */
+function displayText(contextRoot: string, text: string): string {
+  return expandBoardRefs(contextRoot, text, randomBytes(3).toString('hex')).display;
+}
 
 /**
  * `/api/automations*` — the dashboard's read + "run now" + approve surface
@@ -145,6 +181,10 @@ interface AutomationSummary {
   approvalReason: string | null;
   cache: AutomationCacheSummary | null;
   review: AutomationManifest['review'];
+  /** The agent's home board, or null. Approval-hashed; on the summary so the
+   *  Agents page and a board's cards can tell a board agent apart without a
+   *  second fetch. */
+  whiteboard: string | null;
   /** The question holding this automation, if any (either an unanswered
    *  approval-diff ask or an in-flow HITL stop) — the board badges off this.
    *  Repointed from the retired review-card store to `hitl.ts`'s question
@@ -238,6 +278,7 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     approvalReason: approval.approved ? null : approval.reason,
     cache: cacheSummary(readAutomationCache(contextRoot, m.slug)),
     review: m.review,
+    whiteboard: m.whiteboard ?? null,
     // Live-computed from the question store, NOT from `cache.status`, for the
     // same reason `approved` is live-computed rather than read off the last
     // attempt: `cache.status` reflects the last RUN, so it still reads
@@ -386,6 +427,9 @@ export async function handleAutomationsShow(
         // none) — the canvas derives a display graph for that case itself, but
         // the REVIEW must show what was actually hashed, which is nothing.
         flow: manifest.flow,
+        // Hashed, and LAST in APPROVAL_DIFF_FIELDS: whether this agent is confined to
+        // one board. A reviewer must see a confinement appear, move or disappear.
+        whiteboard: manifest.whiteboard ?? null,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -1015,6 +1059,18 @@ export async function handleAutomationsCreate(
     if (getAutomation(contextRoot, slug)) {
       throw new AutomationError(`An agent called "${slug}" already exists.`);
     }
+    // A board agent's home board must exist BEFORE anything is written: an agent
+    // homed on a missing board could never act anywhere (it fails closed).
+    const whiteboard = (str(body.whiteboard) ?? '').trim() || null;
+    if (body.whiteboard !== undefined && body.whiteboard !== null && typeof body.whiteboard !== 'string') {
+      throw new AutomationError('Invalid whiteboard: expected a board slug.');
+    }
+    if (whiteboard && !isValidWhiteboardSlug(whiteboard)) {
+      throw new AutomationError(`Invalid whiteboard "${whiteboard}": it must be a whiteboard slug.`);
+    }
+    if (whiteboard && !boardExists(contextRoot, whiteboard)) {
+      throw new AutomationError(`There is no whiteboard "${whiteboard}" in this project.`);
+    }
 
     let manifest = createAutomation(contextRoot, {
       slug,
@@ -1032,6 +1088,7 @@ export async function handleAutomationsCreate(
       effort: readEffort(body.effort) ?? null,
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       prompt,
+      whiteboard,
     });
     // Same ordering as the CLI's create: the flow is derived and written
     // BEFORE approval, so the hash granted covers the exact manifest on disk.
@@ -1715,56 +1772,44 @@ export async function handleAutomationsThreadRead(
   }
 }
 
+/** Who is calling an agent by name. Both are a person typing right now. */
+export type SayVia = 'dashboard' | 'assistant';
+
+export type SayResult =
+  | { ok: true; status: 200; body: Record<string, unknown> }
+  | { ok: false; status: 400 | 404 | 409; code: string; message: string };
+
+const sayRefusal = (status: 400 | 404 | 409, code: string, message: string): SayResult =>
+  ({ ok: false, status, code, message });
+
 /**
- * POST /api/automations/threads/say — the `#agents` composer. Call ONE agent
- * by name with a message, and post that message into the channel as the thing
- * its run answers.
+ * Call ONE agent by name: the body of `POST /threads/say`, shared with the Assistant's
+ * `agent` verb so both keep the same refusals in the same order (disabled, then
+ * unapproved, then busy). `via` is the thread entry's provenance; `board` is the
+ * whiteboard the message came from, checked to exist and passed on to the run.
  *
- * Body is `{ slug, text }`. MUST be registered before `/api/automations/:slug`
- * for the same reason `threads` is.
- *
- * THIS IS THE ONE PLACE A REQUEST BODY REACHES A RUN'S PROMPT, and the
- * sibling `POST /:slug/run` documents that it deliberately does not. The
- * difference is what the two carry: `run` replays stored, approved
- * configuration, so a body there would be an edit nobody reviewed, while this
- * route carries a sentence a person is typing right now — authorisation in the
- * present tense. `runAutomation` still re-checks approval, the sleep lock and
- * the orphan guard, and the ask lands in the prompt fenced and labelled as
- * speech (`buildAskBlock`), never as the job description.
- *
- * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The busy check, the thread
- * write and the job start run as one synchronous block, so nothing can slip a
- * second job in between and leave a question in the channel that nothing is
- * answering. The ask is written FIRST so it is the run's opening entry — the
- * feed keys the exchange on that, and it is also what makes the message appear
- * the instant the composer's request returns instead of on the next poll.
+ * SYNCHRONOUS ON PURPOSE: the busy check, the thread write and the job start must not
+ * be split by an `await` (see `handleAutomationsSay`). An `AutomationError` becomes a
+ * `400 say_refused`; anything else throws to the caller.
  */
-export async function handleAutomationsSay(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
+export function sayToAgent(
   contextRoot: string,
-): Promise<void> {
+  input: { slug: string; text: string; via: SayVia; board?: string | null },
+): SayResult {
+  const slug = input.slug.trim();
+  const text = input.text.trim();
+  const via = input.via;
+  if (!slug || !text) return sayRefusal(400, 'bad_say', 'Body must be { slug, text }.');
+  if (text.length > SAY_MAX_CHARS) {
+    return sayRefusal(400, 'say_too_long', `Keep it under ${SAY_MAX_CHARS} characters.`);
+  }
+  const board = readBoard(contextRoot, input.board);
+  if (board === undefined) return sayRefusal(400, 'bad_board', 'That whiteboard does not exist in this project.');
   try {
-    const body = await parseJsonBody(req);
-    const slug = typeof body?.slug === 'string' ? body.slug.trim() : '';
-    const text = typeof body?.text === 'string' ? body.text.trim() : '';
-    if (!slug || !text) {
-      sendError(res, 400, 'bad_say', 'Body must be { slug, text }.');
-      return;
-    }
-    if (text.length > SAY_MAX_CHARS) {
-      sendError(res, 400, 'say_too_long', `Keep it under ${SAY_MAX_CHARS} characters.`);
-      return;
-    }
     const manifest = getAutomation(contextRoot, slug);
-    if (!manifest) {
-      sendError(res, 404, 'not_found', `Automation not found: ${slug}`);
-      return;
-    }
+    if (!manifest) return sayRefusal(404, 'not_found', `Automation not found: ${slug}`);
     if (!manifest.enabled) {
-      sendError(res, 409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
-      return;
+      return sayRefusal(409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
     }
     // Checked HERE as well as inside the runner, and not as a duplicate: the
     // runner's check stops the run, this one stops the MESSAGE. Without it an
@@ -1772,12 +1817,15 @@ export async function handleAutomationsSay(
     // an answer that is only ever going to be "it is not approved".
     const projectRoot = dirname(contextRoot);
     if (!checkApproval(projectRoot, manifest).approved) {
-      sendError(
-        res, 409, 'say_unapproved',
+      return sayRefusal(
+        409, 'say_unapproved',
         `${manifest.title} is not approved on this machine yet. Approve it, then ask again.`,
       );
-      return;
     }
+    // The thread keeps what a human reads (`[title]` for each dragged element); the run
+    // gets the RAW text and expands it fresh, so it reads each element as it is now.
+    const shown = displayText(contextRoot, text);
+    const boardOpt = board ? { board } : {};
     // ── synchronous from here to the job start ──
     // Per AGENT: only a second run of THIS agent is refused — it would write into the same
     // thread and resume the same session. Another agent's run is no reason to wait.
@@ -1795,19 +1843,17 @@ export async function handleAutomationsSay(
         ?? listThreadRuns(contextRoot, slug, 1)[0]?.runId
         ?? null;
       if (!liveRun || pendingQuestion(contextRoot, slug)?.kind === 'approval') {
-        sendError(
-          res, 409, 'say_busy',
-          `${manifest.title} is still running. Try again when it finishes.`,
-        );
-        return;
+        return sayRefusal(409, 'say_busy', `${manifest.title} is still running. Try again when it finishes.`);
       }
-      const entry = appendThreadEntry(contextRoot, slug, { runId: liveRun, kind: 'user', text, via: 'dashboard' });
-      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id });
-      sendJson(res, 200, {
-        job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
-        started: true, runId: liveRun, slug, mode: manifest.mode, queued: true,
-      });
-      return;
+      const entry = appendThreadEntry(contextRoot, slug, { runId: liveRun, kind: 'user', text: shown, via });
+      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id, ...boardOpt });
+      return {
+        ok: true, status: 200,
+        body: {
+          job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
+          started: true, runId: liveRun, slug, mode: manifest.mode, queued: true,
+        },
+      };
     }
     const fireAt = new Date();
     const runId = fireAt.toISOString();
@@ -1829,20 +1875,19 @@ export async function handleAutomationsSay(
     // the one that actually decides.
     if (manifest.mode === 'sched' && latestBoundSession(slug)) {
       const entry = appendThreadEntry(contextRoot, slug, {
-        runId, kind: 'user', text, via: 'dashboard', now: fireAt,
+        runId, kind: 'user', text: shown, via, now: fireAt,
       });
       const replyJob = startAutomationReplyJob(contextRoot, slug, {
-        runId, text, entryId: entry.id,
+        runId, text, entryId: entry.id, ...boardOpt,
       });
-      sendJson(res, 200, {
-        job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
-        started: true, runId, slug, mode: 'sched',
-      });
-      return;
+      return {
+        ok: true, status: 200,
+        body: { job: { id: replyJob.id, status: replyJob.status, kind: 'reply' }, started: true, runId, slug, mode: 'sched' },
+      };
     }
 
-    appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text, via: 'dashboard', now: fireAt });
-    const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt });
+    appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: shown, via, now: fireAt });
+    const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, ...boardOpt });
     // Unreachable given the busy check above (nothing can interleave between
     // them), and handled anyway: the ask is already on disk at this point, so
     // a job that was NOT started would leave it in the channel with nothing
@@ -1850,16 +1895,59 @@ export async function handleAutomationsSay(
     // that reads "running" for ever.
     if (!started) {
       appendThreadEntry(contextRoot, slug, {
-        runId, kind: 'system', event: 'skipped', via: 'dashboard',
+        runId, kind: 'system', event: 'skipped', via,
         text: 'It did not run. This agent was already running.',
       });
     }
-    sendJson(res, 200, { job: { ...job, kind: 'run' }, started, runId, slug, mode: manifest.mode });
+    return { ok: true, status: 200, body: { job: { ...job, kind: 'run' }, started, runId, slug, mode: manifest.mode } };
   } catch (err) {
-    if (err instanceof AutomationError) {
-      sendError(res, 400, 'say_refused', err.message);
-      return;
-    }
+    if (err instanceof AutomationError) return sayRefusal(400, 'say_refused', err.message);
+    throw err;
+  }
+}
+
+/**
+ * POST /api/automations/threads/say — the `#agents` composer, and an agent card on a
+ * whiteboard. Call ONE agent by name with a message, and post that message into the
+ * channel as the thing its run answers.
+ *
+ * Body is `{ slug, text, board? }`. MUST be registered before `/api/automations/:slug`
+ * for the same reason `threads` is.
+ *
+ * THIS IS THE ONE PLACE A REQUEST BODY REACHES A RUN'S PROMPT, and the
+ * sibling `POST /:slug/run` documents that it deliberately does not. The
+ * difference is what the two carry: `run` replays stored, approved
+ * configuration, so a body there would be an edit nobody reviewed, while this
+ * route carries a sentence a person is typing right now — authorisation in the
+ * present tense. `runAutomation` still re-checks approval, the sleep lock and
+ * the orphan guard, and the ask lands in the prompt fenced and labelled as
+ * speech (`buildAskBlock`), never as the job description.
+ *
+ * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The busy check, the thread
+ * write and the job start run as one synchronous block (`sayToAgent`), so nothing
+ * can slip a second job in between and leave a question in the channel that
+ * nothing is answering. The ask is written FIRST so it is the run's opening
+ * entry — the feed keys the exchange on that, and it is also what makes the
+ * message appear the instant the composer's request returns instead of on the
+ * next poll.
+ */
+export async function handleAutomationsSay(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const result = sayToAgent(contextRoot, {
+      slug: typeof body?.slug === 'string' ? body.slug : '',
+      text: typeof body?.text === 'string' ? body.text : '',
+      via: 'dashboard',
+      board: body?.board as string | null | undefined,
+    });
+    if (result.ok) sendJson(res, result.status, result.body);
+    else sendError(res, result.status, result.code, result.message);
+  } catch {
     sendError(res, 500, 'say_failed', 'Failed to send that to the channel.');
   }
 }
@@ -1867,7 +1955,7 @@ export async function handleAutomationsSay(
 /**
  * POST /api/automations/:slug/thread/reply — a human's reply into one run's own session.
  *
- * Body is `{ text, runId }`. Answers `202 { entry, job }` and lets the client poll
+ * Body is `{ text, runId, board? }`. Answers `202 { entry, job }` and lets the client poll
  * `reply-job/:id`: the resume spawns a detached child that may run for the automation's
  * whole timeout, and holding an HTTP socket open for that is not a thing to do.
  *
@@ -1917,6 +2005,11 @@ export async function handleAutomationsThreadReply(
       sendError(res, 400, 'bad_text', `Keep it under ${THREAD_TEXT_MAX_CHARS} characters.`);
       return;
     }
+    const board = readBoard(contextRoot, body?.board);
+    if (board === undefined) {
+      sendError(res, 400, 'bad_board', 'That whiteboard does not exist in this project.');
+      return;
+    }
 
     // `runId` becomes BOTH a thread grouping key and a `DREAMCONTEXT_AUTOMATION_RUN` env
     // value on a bypassPermissions child, so it is validated for shape AND for identity.
@@ -1964,8 +2057,13 @@ export async function handleAutomationsThreadReply(
     // delivers the reply the moment the turn ahead of it ends. Refusing here only moved
     // the failure from the channel to a toast; the message never needed to fail.
 
-    const entry = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text, via: 'dashboard' });
-    const job = startAutomationReplyJob(contextRoot, slug, { runId, text, entryId: entry.id });
+    // The thread stores what a human reads; the resume re-expands the raw text fresh.
+    const entry = appendThreadEntry(contextRoot, slug, {
+      runId, kind: 'user', text: displayText(contextRoot, text), via: 'dashboard',
+    });
+    const job = startAutomationReplyJob(contextRoot, slug, {
+      runId, text, entryId: entry.id, ...(board ? { board } : {}),
+    });
     sendJson(res, 202, { entry, job: { id: job.id, status: job.status } });
   } catch (err) {
     if (err instanceof AutomationError) {

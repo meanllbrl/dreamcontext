@@ -34,6 +34,7 @@ import {
 } from '../../src/lib/automations/verdict.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
+import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { createQuestion } from '../../src/lib/automations/hitl.js';
 import { appendThreadEntry, readThread, threadSlugDir } from '../../src/lib/automations/threads.js';
 import { accountEnvFor, resolveConfigDir } from '../../src/lib/claude-accounts.js';
@@ -82,7 +83,7 @@ function promptOf(call: { args: string[] }): string {
 // ─── fixtures ────────────────────────────────────────────────────────────────
 
 function makeAutomation(overrides: Partial<Parameters<typeof createAutomation>[1]> = {}): AutomationManifest {
-  return createAutomation(contextRoot, {
+  const m = createAutomation(contextRoot, {
     slug: 'digest',
     title: 'Daily digest',
     days: 'daily',
@@ -91,6 +92,9 @@ function makeAutomation(overrides: Partial<Parameters<typeof createAutomation>[1
     review: 'agent',
     ...overrides,
   });
+  // Approved, as every real resumable agent is: a resume re-checks approval under the lock.
+  approveAutomation(projectRoot, m, NOW, home);
+  return m;
 }
 
 /** A bound session, which is what a resume actually trusts. */

@@ -49,6 +49,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { defaultAncestryProbe, proposeFromRun, resumeWithAnswer, resumeWithMessage } from '../../src/lib/automations/verdict.js';
 import { createAutomation, lockPathFor, readRunSidecar, writeRunSidecar } from '../../src/lib/automations/store.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
+import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { latestBoundSession, readAutomationSession, recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { createQuestion, listQuestions, pendingQuestion } from '../../src/lib/automations/hitl.js';
 import type { SpawnImpl } from '../../src/lib/automations/runner.js';
@@ -100,7 +101,7 @@ function claudeJson(result: string, extra: Record<string, unknown> = {}): string
 // ─── fixtures ────────────────────────────────────────────────────────────────
 
 function makeAutomation(overrides: Partial<Parameters<typeof createAutomation>[1]> = {}): AutomationManifest {
-  return createAutomation(contextRoot, {
+  const m = createAutomation(contextRoot, {
     slug: 'digest',
     title: 'Daily digest',
     days: 'daily',
@@ -109,6 +110,9 @@ function makeAutomation(overrides: Partial<Parameters<typeof createAutomation>[1
     review: 'agent',
     ...overrides,
   });
+  // Approved, as every real resumable agent is: a resume re-checks approval under the lock.
+  approveAutomation(projectRoot, m, NOW, home);
+  return m;
 }
 
 function putSidecar(slug = 'digest', childPgid = RUN_PGID): void {

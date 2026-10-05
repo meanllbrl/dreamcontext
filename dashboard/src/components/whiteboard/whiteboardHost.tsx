@@ -14,6 +14,9 @@ export interface WhiteboardHost {
   commitWidget: (elementId: string, update: (current: WidgetPayload) => WidgetPayload) => void;
   /** A short message in Excalidraw's own toast. */
   toast: (message: string) => void;
+  /** The board this canvas shows. An agent card sends it with every message (so the agent is
+   *  shown this board) and keys its composer bucket by it. Absent outside a board page. */
+  boardSlug?: string;
 }
 
 const noop: WhiteboardHost = { commitWidget: () => {}, toast: () => {} };

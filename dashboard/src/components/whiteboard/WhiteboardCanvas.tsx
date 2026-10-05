@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CaptureUpdateAction, Excalidraw, getCommonBounds, getSceneVersion, newElementWith,
   reconcileElements, restoreElements, sceneCoordsToViewportCoords, viewportCoordsToSceneCoords,
@@ -10,15 +11,22 @@ import type {
   ExcalidrawElement, ExcalidrawEmbeddableElement, NonDeleted, OrderedExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
 import { emitInstance, useVault } from '../../context/VaultContext';
+import { AgentDialog } from '../agents/AgentDialog';
+import { addAttachments, type Attachment } from '../sleepy/chat/composerScratch';
 import { openExternalUrl } from '../../lib/desktop';
 import { registerPinchTarget } from '../../lib/excalidrawPinch';
 import { DEFAULT_WIDGET_SIZES, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
+import {
+  agentCardUnder, dropUnits, movedIds, refToken, restorePatches, snapshotElement, type DropUnit, type PreGesture,
+} from './agentDrop';
+import { boardAgentScratchId } from './boardAgentScratch';
 import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
 import { usePagePopup } from './PagePopup';
 import { IMAGES_LATER_MESSAGE, reconcileRemoteScene, stripImageElements } from './sceneSync';
 import { WidgetPalette } from './WidgetPalette';
 import {
-  WIDGET_STROKE, hasWidgetStroke, isWidgetLink, newElementId, readWidgetPayload, selectionIsOnlyWidgets, widgetLink,
+  WIDGET_STROKE, hasWidgetStroke, humaniseSlug, isWidgetLink, newElementId, readWidgetPayload, selectionIsOnlyWidgets,
+  widgetLink,
 } from './widgetModel';
 import {
   isPresetBox, placeNewWidget, placeSizePicker, resizeInPlace, snapAfterGesture, widgetSizeOf, type WidgetGeometry,
@@ -51,6 +59,8 @@ export interface WhiteboardCanvasApi {
 }
 
 export interface WhiteboardCanvasProps {
+  /** The board this canvas shows: agent cards send it, and a drop's references name it. */
+  boardSlug: string;
   initialScene: WhiteboardScene;
   onApi?: (api: WhiteboardCanvasApi | null) => void;
   /** Called when the scene's content changed (not on a mere selection or scroll), with every
@@ -82,6 +92,17 @@ interface SizePickerState {
 /** An element's box and version at pointer-down: what a gesture is measured against. */
 type GestureSnapshot = Map<string, WidgetGeometry & { version: number }>;
 
+/** A finished drag, measured at pointer-up: what an agent-card drop is decided on. */
+interface DragEnd {
+  /** Every element as it was at pointer-down (copies: Excalidraw mutates during a drag). */
+  pre: ReadonlyMap<string, PreGesture>;
+  /** Where the pointer was released, in scene coordinates. */
+  point: { x: number; y: number };
+}
+
+/** Takes the drag as a drop onto an agent card, or answers false to leave it to snapping. */
+type AgentDropHandler = (api: ExcalidrawImperativeAPI, drag: DragEnd) => boolean;
+
 const UI_OPTIONS = {
   tools: { image: false },
   canvasActions: {
@@ -110,7 +131,7 @@ const HIT_SLOP_PX = 4;
  * Lazy-loaded through `LazyWhiteboardCanvas`, which points Excalidraw at the self-hosted fonts
  * before this module (and the Excalidraw bundle) is imported.
  */
-export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, onInternalLink }: WhiteboardCanvasProps) {
+export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSceneChange, onInternalLink }: WhiteboardCanvasProps) {
   const tx = useWbText();
   const theme = useDataTheme();
   const { bus } = useVault();
@@ -123,6 +144,8 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
   /** The selection is only widgets: Excalidraw's properties panel and link popup are hidden. */
   const [widgetsOnly, setWidgetsOnly] = useState(false);
   const strokeFixPending = useRef(false);
+  /** "New agent" from the palette: where its card goes once the create lands. */
+  const [newAgentAt, setNewAgentAt] = useState<{ x: number; y: number } | null>(null);
 
   const onSceneChangeRef = useRef(onSceneChange);
   onSceneChangeRef.current = onSceneChange;
@@ -202,7 +225,51 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
     },
-  }), [toast]);
+    boardSlug,
+  }), [toast, boardSlug]);
+
+  // ── drag-to-ask: an element dropped on an agent card goes back and becomes a chip there ──
+  const boardSlugRef = useRef(boardSlug);
+  boardSlugRef.current = boardSlug;
+  const agentDrop = useCallback<AgentDropHandler>((api, drag) => {
+    const all = api.getSceneElementsIncludingDeleted();
+    const moved = movedIds(drag.pre, all);
+    if (!moved || moved.size === 0) return false;
+    const card = agentCardUnder(all, moved, drag.point);
+    if (!card) return false;
+    // What the owner dragged, not the bound text and arrows that followed it.
+    const selected = api.getAppState().selectedElementIds;
+    const dragged = new Set([...moved].filter((id) => selected[id]));
+    const chips = dropUnits(all, dragged.size > 0 ? dragged : moved).flatMap((unit): Attachment[] => {
+      const path = refToken(boardSlugRef.current, unit.id);
+      return path ? [{ id: newElementId(), kind: 'ref', name: chipName(unit, txRef.current), path }] : [];
+    });
+    if (chips.length === 0) return false;
+    const patches = restorePatches(drag.pre, all, moved);
+    // Runs inside Excalidraw's pointer-up, BEFORE it commits the drag (agentDrop.ts, "Undo"). The
+    // restore is NEVER, so the store snapshot keeps the pre-drag elements; the activation is a
+    // plain state change. Excalidraw's own commit then records the drag as a selection change to
+    // the card and nothing else: no entry anywhere holds the move.
+    api.updateScene({
+      elements: all.map((el) => {
+        const patch = patches.get(el.id);
+        return patch ? newElementWith(el, patch as never) : el;
+      }),
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+    addAttachments(boardAgentScratchId(boardSlugRef.current, card.id), chips);
+    if (card.type === 'embeddable') {
+      api.updateScene({
+        appState: {
+          activeEmbeddable: { element: card as NonDeleted<ExcalidrawEmbeddableElement>, state: 'active' },
+          selectedElementIds: { [card.id]: true },
+        },
+      });
+    }
+    return true;
+  }, []);
+  const agentDropRef = useRef(agentDrop);
+  agentDropRef.current = agentDrop;
 
   // ── the page's handle ─────────────────────────────────────────────────────────────────────
   const onApiRef = useRef(onApi);
@@ -211,7 +278,10 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
   const handleApi = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
     unsubscribers.current.forEach((off) => off());
-    unsubscribers.current = [...subscribeWidgetSnapping(api), ...subscribeWidgetActivation(api)];
+    unsubscribers.current = [
+      ...subscribeWidgetSnapping(api, (a, drag) => agentDropRef.current(a, drag)),
+      ...subscribeWidgetActivation(api),
+    ];
     onApiRef.current?.({
       excalidraw: api,
       applyRemoteElements: (remote) => {
@@ -556,7 +626,18 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
             onClose={() => setPalette(null)}
             onPick={(payload) => addWidget(payload, palette.scene)}
             onCanvasMenu={palette.origin ? openCanvasMenu : undefined}
+            onNewAgent={() => { setNewAgentAt(palette.scene); setPalette(null); }}
           />
+        )}
+        {newAgentAt && createPortal(
+          <AgentDialog
+            agent={null}
+            initial={{ title: '', description: '', mode: 'call', whiteboard: boardSlug }}
+            onClose={() => setNewAgentAt(null)}
+            onToast={toast}
+            onCreated={(slug) => addWidget({ v: 1, kind: 'agent', ref: slug, title: humaniseSlug(slug) }, newAgentAt)}
+          />,
+          document.body,
         )}
       </div>
     </WhiteboardHostContext.Provider>
@@ -570,19 +651,35 @@ export default function WhiteboardCanvas({ initialScene, onApi, onSceneChange, o
  * also carried free drawing does not snap (it would tear the widget from what moved with it).
  * `snapAfterGesture` answers null for a widget already in place, so the snap never re-triggers.
  */
-function subscribeWidgetSnapping(api: ExcalidrawImperativeAPI): (() => void)[] {
+function subscribeWidgetSnapping(api: ExcalidrawImperativeAPI, agentDrop: AgentDropHandler): (() => void)[] {
   let before: GestureSnapshot | null = null;
+  let pre: Map<string, PreGesture> | null = null;
   let frame = 0;
   const offDown = api.onPointerDown(() => {
     before = new Map();
-    for (const el of api.getSceneElements()) {
-      before.set(el.id, { x: el.x, y: el.y, width: el.width, height: el.height, version: el.version });
+    pre = new Map();
+    // Deleted ones too: an element the gesture did not create is never "new" to the drop check.
+    for (const el of api.getSceneElementsIncludingDeleted()) {
+      if (!el.isDeleted) before.set(el.id, { x: el.x, y: el.y, width: el.width, height: el.height, version: el.version });
+      pre.set(el.id, snapshotElement(el));
     }
   });
-  const offUp = api.onPointerUp(() => {
+  const offUp = api.onPointerUp((activeTool, pointerDownState, event) => {
     const snapshot = before;
+    const preGesture = pre;
     before = null;
-    if (!snapshot) return;
+    pre = null;
+    if (!snapshot || !preGesture) return;
+    // A plain move with the selection tool is the only gesture that can be a drop.
+    const isMove = activeTool.type === 'selection' && pointerDownState.drag.hasOccurred
+      && !pointerDownState.resize.handleType && !pointerDownState.boxSelection.hasOccurred;
+    // Synchronous, never a frame later: Excalidraw commits the drag right after this callback,
+    // and a drop must be in place before it does (agentDrop.ts, "Undo"). A dropped widget goes
+    // back where it was and is not snapped.
+    if (isMove) {
+      const point = viewportCoordsToSceneCoords({ clientX: event.clientX, clientY: event.clientY }, api.getAppState());
+      if (agentDrop(api, { pre: preGesture, point })) return;
+    }
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => snapWidgets(api, snapshot));
   });
@@ -665,6 +762,21 @@ function forwardClick(clientX: number, clientY: number): void {
     return;
   }
   target.click();
+}
+
+/** English names for a chip's kind; the app's strings file may translate them. */
+const DROP_KIND_FALLBACK: Readonly<Record<string, string>> = {
+  insight: 'Insight', knowledge: 'Knowledge', task: 'Task', todo: 'Todo', note: 'Note', html: 'HTML block', web: 'Web',
+  wiki: 'Wiki', 'lab-card': 'Lab card', agent: 'Agent', text: 'Text', arrow: 'Arrow', line: 'Line',
+  freedraw: 'Drawing', frame: 'Frame', shape: 'Shape',
+};
+
+/** A drop chip's label, `<Kind> · <title>`, or just the kind for an untitled element. Any other
+ *  element type (rectangle, ellipse, …) reads as a shape. */
+function chipName(unit: DropUnit, tx: (key: string, fallback: string) => string): string {
+  const kind = unit.kind in DROP_KIND_FALLBACK ? unit.kind : 'shape';
+  const label = tx(`whiteboard.drop.kind.${kind}`, DROP_KIND_FALLBACK[kind]!);
+  return unit.title ? `${label} · ${unit.title}` : label;
 }
 
 /** The element whose hyperlink popup was clicked: the one selected element carrying that link

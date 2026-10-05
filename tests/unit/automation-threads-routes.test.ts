@@ -37,6 +37,10 @@ const { buildAskBlock } = await import('../../src/lib/automations/runner.js');
 const { appendThreadEntry, readThread } = await import('../../src/lib/automations/threads.js');
 const { approveAutomation, revokeApproval } = await import('../../src/lib/automations/registry.js');
 const { createQuestion } = await import('../../src/lib/automations/hitl.js');
+const { sayToAgent } = await import('../../src/server/routes/automations.js');
+const { createWhiteboard } = await import('../../src/lib/whiteboards/store.js');
+const { emptyWhiteboard, serializeWhiteboard } = await import('../../src/lib/whiteboards/format.js');
+const { makeWidgetElement } = await import('../../src/lib/whiteboards/widgets.js');
 
 /**
  * The three routes the `#agents` feed reads. What is under test is the CONTRACT
@@ -621,5 +625,105 @@ describe('GET /api/automations/:slug/thread — the question join', () => {
     const q = (asked.body() as unknown as { question: { text: string; choices: string[] } }).question;
     expect(q.text).toBe('Ship it?');
     expect(q.choices).toEqual(['yes', 'no']);
+  });
+});
+
+describe('board on say and reply — display text in the thread, raw text and board to the run', () => {
+  /** A board holding one note, and the token a drag onto an agent card puts in the composer. */
+  function seedNoteBoard(): { board: string; token: string } {
+    const { slug, path } = createWhiteboard(contextRoot, 'Growth');
+    const el = makeWidgetElement('note', { title: 'Launch plan', markdown: 'Ship Monday.' }, { x: 0, y: 0 }, 'a0');
+    writeFileSync(path, serializeWhiteboard({ ...emptyWhiteboard('Growth'), elements: [el] }), 'utf-8');
+    return { board: slug, token: `dcref:wb/${slug}/${el.id}` };
+  }
+
+  async function say(body: unknown) {
+    const r = makeRes();
+    await handleAutomationsSay(makePostReq(body), r.res, {}, contextRoot);
+    return r;
+  }
+
+  it('say (run path): the thread stores [title], the run gets the raw text and the board', async () => {
+    approveAutomation(projectRoot, getAutomation(contextRoot, 'digest')!, new Date(), home);
+    const { board, token } = seedNoteBoard();
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
+
+    const { status, body } = await say({ slug: 'digest', text: `look at ${token}`, board });
+    expect(status()).toBe(200);
+    const runId = (body() as unknown as { runId: string }).runId;
+    expect(readThread(contextRoot, 'digest', { runId })[0].text).toBe('look at [Launch plan]');
+    const opts = spy.mock.calls[0][2] as Record<string, unknown>;
+    expect(opts.ask).toBe(`look at ${token}`);
+    expect(opts.board).toBe(board);
+    spy.mockRestore();
+  });
+
+  it('say (talk path): the resume gets the raw text and the board', async () => {
+    makeRepliable();
+    const { board, token } = seedNoteBoard();
+    const { status, body } = await say({ slug: 'digest', text: `and ${token}`, board });
+    expect(status()).toBe(200);
+    const runId = (body() as unknown as { runId: string }).runId;
+    expect(readThread(contextRoot, 'digest', { runId })[0].text).toBe('and [Launch plan]');
+    await vi.waitFor(() => expect(resumeWithMessage).toHaveBeenCalled());
+    const [, , text, opts] = resumeWithMessage.mock.calls[0] as unknown as [string, string, string, Record<string, unknown>];
+    expect(text).toBe(`and ${token}`);
+    expect(opts.board).toBe(board);
+  });
+
+  it('say with no board passes none on (an attached agent\'s scheduled shape)', async () => {
+    makeRepliable();
+    await say({ slug: 'digest', text: 'plain' });
+    await vi.waitFor(() => expect(resumeWithMessage).toHaveBeenCalled());
+    const opts = (resumeWithMessage.mock.calls[0] as unknown as unknown[])[3] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty('board');
+  });
+
+  it('reply: 202 with the display text stored, raw text and board to the resume', async () => {
+    makeRepliable();
+    const { board, token } = seedNoteBoard();
+    const { status, body } = await reply({ text: `see ${token}`, runId: NEWEST, board });
+    expect(status()).toBe(202);
+    expect((body() as unknown as { entry: { text: string } }).entry.text).toBe('see [Launch plan]');
+    await vi.waitFor(() => expect(resumeWithMessage).toHaveBeenCalled());
+    const [, , text, opts] = resumeWithMessage.mock.calls[0] as unknown as [string, string, string, Record<string, unknown>];
+    expect(text).toBe(`see ${token}`);
+    expect(opts.board).toBe(board);
+  });
+
+  it('400 bad_board for an unknown, invalid, symlinked or non-string board, writing nothing', async () => {
+    makeRepliable();
+    const { board } = seedNoteBoard();
+    symlinkSync(join(contextRoot, 'whiteboards', board), join(contextRoot, 'whiteboards', 'linked'));
+    const before = readThread(contextRoot, 'digest').length;
+    for (const bad of ['no-such-board', 'Not A Slug', 'linked', 7]) {
+      const s1 = await say({ slug: 'digest', text: 'hi', board: bad });
+      expect(s1.status(), String(bad)).toBe(400);
+      expect(s1.body().error).toBe('bad_board');
+      const r1 = await reply({ text: 'hi', runId: NEWEST, board: bad });
+      expect(r1.status(), String(bad)).toBe(400);
+      expect(r1.body().error).toBe('bad_board');
+    }
+    expect(readThread(contextRoot, 'digest').length).toBe(before);
+    expect(resumeWithMessage).not.toHaveBeenCalled();
+  });
+
+  it('sayToAgent via assistant writes a via:assistant entry the reader keeps', () => {
+    makeRepliable();
+    const result = sayToAgent(contextRoot, { slug: 'digest', text: 'from the assistant', via: 'assistant' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const runId = result.body.runId as string;
+    const [first] = readThread(contextRoot, 'digest', { runId });
+    expect(first).toMatchObject({ kind: 'user', text: 'from the assistant', via: 'assistant' });
+  });
+
+  it('sayToAgent keeps the refusal ladder: 404, then disabled, then unapproved', () => {
+    expect(sayToAgent(contextRoot, { slug: 'nope', text: 'x', via: 'assistant' })).toMatchObject({ ok: false, status: 404, code: 'not_found' });
+    expect(sayToAgent(contextRoot, { slug: 'digest', text: 'x', via: 'assistant' })).toMatchObject({ ok: false, status: 409, code: 'say_unapproved' });
+    setAutomationEnabled(contextRoot, 'digest', false);
+    expect(sayToAgent(contextRoot, { slug: 'digest', text: 'x', via: 'assistant' })).toMatchObject({ ok: false, status: 409, code: 'say_disabled' });
+    expect(sayToAgent(contextRoot, { slug: 'digest', text: '  ', via: 'dashboard' })).toMatchObject({ ok: false, status: 400, code: 'bad_say' });
   });
 });

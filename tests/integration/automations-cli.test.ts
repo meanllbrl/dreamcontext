@@ -1,10 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, realpathSync, existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import {
+  mkdirSync, rmSync, realpathSync, existsSync, readFileSync, writeFileSync, appendFileSync, symlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { APPROVAL_DIFF_FIELDS } from '../../src/lib/automations/types.js';
+import {
+  APPROVAL_DIFF_FIELDS,
+  AGENT_BOARD_ENV,
+  AGENT_SCRATCH_ENV,
+  AGENT_SELF_ENV,
+} from '../../src/lib/automations/types.js';
 import { parseFlowSection } from '../../src/lib/automations/store.js';
+import { createWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { unshareWarningLines } from '../../src/cli/commands/automations.js';
 
 /**
@@ -60,13 +68,21 @@ interface RunResult { stdout: string; exitCode: number }
  * strips (that's what keeps `claude` unreachable), and an argv array also
  * sidesteps shell-quoting entirely for arguments like `--title "EOD Digest"`.
  */
-function run(args: string[], cwd: string, home: string): RunResult {
+function run(args: string[], cwd: string, home: string, extraEnv: Record<string, string> = {}): RunResult {
+  // The scope env vars are stripped from what is inherited: this suite run
+  // from inside a board agent's own turn would otherwise have every
+  // `post`/`learn`/`propose` below refused for a reason no test asked for.
+  // A test that wants them passes them in `extraEnv`.
+  const inherited = { ...process.env };
+  delete inherited[AGENT_SELF_ENV];
+  delete inherited[AGENT_BOARD_ENV];
+  delete inherited[AGENT_SCRATCH_ENV];
   try {
     const stdout = execFileSync(process.execPath, [CLI, ...args], {
       cwd,
       encoding: 'utf-8',
       timeout: 20_000,
-      env: { ...process.env, HOME: home, USERPROFILE: home, PATH: SAFE_PATH },
+      env: { ...inherited, HOME: home, USERPROFILE: home, PATH: SAFE_PATH, ...extraEnv },
     });
     return { stdout, exitCode: 0 };
   } catch (e: any) {
@@ -358,7 +374,9 @@ describe('automations CLI (integration)', () => {
     // teammate can edit, so a reviewer who never sees it is approving a shape
     // of run they were not shown. It is appended LAST and omitted when absent,
     // so a manifest written before the block existed still hashes identically.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(9);
+    // 9 → 10 with `whiteboard`: a board agent's home board decides its whole
+    // permission envelope, so confining, moving or unconfining it must re-approve.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(10);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }
@@ -846,6 +864,11 @@ describe('automations CLI (integration)', () => {
         projectDir, home,
       );
 
+      // A resume re-checks approval just before it spawns, so the fixture must
+      // be approved first (create auto-approves; pinned here so a fixture
+      // change cannot turn this into an "unapproved" refusal by accident).
+      expect(run(['automations', 'show', 'hitl-answer-test'], projectDir, home).stdout).toMatch(/approval:\s*approved/i);
+
       const sessionId = 'fake-session-abc123';
       writeSessionBindingFixture(home, 'hitl-answer-test', sessionId);
       const qPath = writeQuestionFixture(projectDir, {
@@ -1061,6 +1084,165 @@ describe('automations CLI (integration)', () => {
       const flow = parseFlowSection(readFileSync(manifestPath, 'utf-8'));
       expect(flow).not.toBeNull();
       expect(flow!.nodes.some((n) => n.kind === 'hitl')).toBe(true);
+    });
+  });
+
+  // ── create --whiteboard: a home-board agent ──────────────────────────────
+  describe('create --whiteboard', () => {
+    const manifestPathFor = (slug: string) => join(projectDir, '_dream_context', 'automations', `${slug}.md`);
+
+    it('homes the agent on an existing board: written to the manifest, approved, and shown', () => {
+      const { slug: board } = createWhiteboard(join(projectDir, '_dream_context'), 'Launch Board');
+      expect(board).toBe('launch-board');
+
+      const out = run(
+        ['automations', 'create', 'board-helper', '--title', 'Board Helper', '--mode', 'call', '--whiteboard', board],
+        projectDir, home,
+      );
+      expect(out.exitCode).toBe(0);
+      expect(out.stdout).toContain('Home board: launch-board');
+      expect(readFileSync(manifestPathFor('board-helper'), 'utf-8')).toMatch(/^whiteboard: launch-board$/m);
+
+      const show = run(['automations', 'show', 'board-helper'], projectDir, home);
+      expect(show.stdout).toMatch(/whiteboard: launch-board · runs scoped to this board/);
+      // Auto-approved WITH the field in the hash: the approval covers the board.
+      expect(show.stdout).toMatch(/approval:\s*approved/i);
+
+      const json = JSON.parse(run(['automations', 'show', 'board-helper', '--json'], projectDir, home).stdout);
+      expect(json.manifest.whiteboard).toBe('launch-board');
+      expect(json.approved).toBe(true);
+    });
+
+    it('an ordinary agent carries no whiteboard key and shows no whiteboard line', () => {
+      run(['automations', 'create', 'plain-agent', '--title', 'Plain Agent', '--mode', 'call'], projectDir, home);
+      expect(readFileSync(manifestPathFor('plain-agent'), 'utf-8')).not.toMatch(/^whiteboard:/m);
+      expect(run(['automations', 'show', 'plain-agent'], projectDir, home).stdout).not.toMatch(/whiteboard:/);
+      const json = JSON.parse(run(['automations', 'show', 'plain-agent', '--json'], projectDir, home).stdout);
+      expect(json.manifest.whiteboard).toBeNull();
+    });
+
+    it('show calls out a home board that no longer exists', () => {
+      const { slug: board } = createWhiteboard(join(projectDir, '_dream_context'), 'Gone Board');
+      run(['automations', 'create', 'orphan-agent', '--title', 'Orphan Agent', '--mode', 'call', '--whiteboard', board], projectDir, home);
+      rmSync(join(projectDir, '_dream_context', 'whiteboards', board), { recursive: true, force: true });
+      expect(run(['automations', 'show', 'orphan-agent'], projectDir, home).stdout)
+        .toMatch(/whiteboard: gone-board · board not found, runs are refused/);
+    });
+
+    it('refuses a board that does not exist, an invalid slug and an empty value, and scaffolds nothing', () => {
+      const cases: Array<{ slug: string; value: string; message: RegExp }> = [
+        { slug: 'missing-board', value: 'no-such-board', message: /no whiteboard "no-such-board"/i },
+        { slug: 'bad-board', value: '../escape', message: /invalid whiteboard/i },
+        { slug: 'empty-board', value: '  ', message: /--whiteboard needs a board slug/i },
+      ];
+      for (const c of cases) {
+        const out = run(
+          ['automations', 'create', c.slug, '--title', 'Nope', '--mode', 'call', '--whiteboard', c.value],
+          projectDir, home,
+        );
+        expect(out.exitCode).toBe(1);
+        expect(out.stdout).toMatch(c.message);
+        expect(existsSync(manifestPathFor(c.slug))).toBe(false);
+      }
+    });
+
+    it('refuses a board reached through a symlink', () => {
+      const ctx = join(projectDir, '_dream_context');
+      const { slug: real } = createWhiteboard(ctx, 'Real Board');
+      symlinkSync(join(ctx, 'whiteboards', real), join(ctx, 'whiteboards', 'linked-board'));
+      const out = run(
+        ['automations', 'create', 'linked-agent', '--title', 'Linked', '--mode', 'call', '--whiteboard', 'linked-board'],
+        projectDir, home,
+      );
+      expect(out.exitCode).toBe(1);
+      expect(out.stdout).toMatch(/no whiteboard "linked-board"/i);
+      expect(existsSync(manifestPathFor('linked-agent'))).toBe(false);
+    });
+  });
+
+  // ── second layer: a scoped run only writes as itself ─────────────────────
+  describe(`post / learn / propose while ${AGENT_SELF_ENV} is set`, () => {
+    const RUN_ID = '2026-10-01T09:00:00.000Z';
+    const threadDir = (slug: string) => join(projectDir, '_dream_context', 'automations', 'threads', slug);
+
+    beforeEach(() => {
+      for (const slug of ['self-agent', 'other-agent']) {
+        run(['automations', 'create', slug, '--title', slug, '--mode', 'call'], projectDir, home);
+      }
+    });
+
+    it('refuses every one of the three verbs for another agent\'s slug, writing nothing', () => {
+      const env = { [AGENT_SELF_ENV]: 'self-agent' };
+      const otherManifest = readFileSync(join(projectDir, '_dream_context', 'automations', 'other-agent.md'), 'utf-8');
+      const calls: Array<{ verb: string; args: string[] }> = [
+        { verb: 'post', args: ['automations', 'post', 'other-agent', 'hello', '--run', RUN_ID] },
+        { verb: 'learn', args: ['automations', 'learn', 'other-agent', '--lesson', 'be wrong'] },
+        { verb: 'propose', args: ['automations', 'propose', 'other-agent', '--title', 'Stop', '--body', 'Stop now'] },
+      ];
+      for (const c of calls) {
+        const out = run(c.args, projectDir, home, env);
+        expect(out.exitCode).toBe(1);
+        expect(out.stdout).toContain(`This run is the agent "self-agent". It can only ${c.verb} for itself, not for "other-agent".`);
+      }
+      expect(existsSync(threadDir('other-agent'))).toBe(false);
+      expect(readFileSync(join(projectDir, '_dream_context', 'automations', 'other-agent.md'), 'utf-8')).toBe(otherManifest);
+      expect(existsSync(join(projectDir, '_dream_context', 'automations', 'hitl', 'other-agent'))).toBe(false);
+    });
+
+    it('an empty value is not a pass: it refuses too', () => {
+      const out = run(['automations', 'post', 'other-agent', 'hello', '--run', RUN_ID], projectDir, home, { [AGENT_SELF_ENV]: '' });
+      expect(out.exitCode).toBe(1);
+      expect(out.stdout).toMatch(/can only post for itself/);
+      expect(existsSync(threadDir('other-agent'))).toBe(false);
+    });
+
+    it('lets the agent write for its own slug', () => {
+      const env = { [AGENT_SELF_ENV]: 'self-agent' };
+      const post = run(['automations', 'post', 'self-agent', 'hello', '--run', RUN_ID], projectDir, home, env);
+      expect(post.exitCode).toBe(0);
+      expect(existsSync(threadDir('self-agent'))).toBe(true);
+
+      const learn = run(['automations', 'learn', 'self-agent', '--lesson', 'Lead with the number.'], projectDir, home, env);
+      expect(learn.exitCode).toBe(0);
+      expect(learn.stdout).toMatch(/Pattern updated/);
+
+      // Passes the self check, then stops on its own manifest's review mode.
+      const propose = run(['automations', 'propose', 'self-agent', '--title', 'T', '--body', 'B'], projectDir, home, env);
+      expect(propose.stdout).not.toMatch(/can only propose for itself/);
+      expect(propose.stdout).toMatch(/review off/i);
+    });
+
+    it('while board-scoped, learn --playbook-file and propose --body-file refuse a file outside the agent\'s folders', () => {
+      writeFileSync(join(projectDir, '.env'), 'TOKEN=fake\n');
+      const scoped = { [AGENT_SELF_ENV]: 'self-agent', [AGENT_BOARD_ENV]: 'launch-board' };
+      const manifestPath = join(projectDir, '_dream_context', 'automations', 'self-agent.md');
+      const before = readFileSync(manifestPath, 'utf-8');
+
+      const learn = run(['automations', 'learn', 'self-agent', '--playbook-file', join(projectDir, '.env')], projectDir, home, scoped);
+      expect(learn.exitCode).toBe(1);
+      expect(learn.stdout).toMatch(/--playbook-file .* is outside the folders this agent may read from/);
+      expect(readFileSync(manifestPath, 'utf-8')).toBe(before);
+      expect(readFileSync(manifestPath, 'utf-8')).not.toContain('TOKEN=fake');
+
+      const propose = run(
+        ['automations', 'propose', 'self-agent', '--title', 'T', '--body-file', join(projectDir, '.env')],
+        projectDir, home, scoped,
+      );
+      expect(propose.stdout).not.toContain('TOKEN=fake');
+      expect(existsSync(join(projectDir, '_dream_context', 'automations', 'hitl', 'self-agent'))).toBe(false);
+
+      // Its own output folder is allowed.
+      const outDir = join(projectDir, '_dream_context', 'automations', 'output', 'self-agent');
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(join(outDir, 'playbook.md'), 'Lead with the number.\n');
+      const ok = run(['automations', 'learn', 'self-agent', '--playbook-file', join(outDir, 'playbook.md')], projectDir, home, scoped);
+      expect(ok.exitCode).toBe(0);
+    });
+
+    it('with the variable unset, a human at a terminal may post to any agent', () => {
+      const out = run(['automations', 'post', 'other-agent', 'by hand', '--run', RUN_ID], projectDir, home);
+      expect(out.exitCode).toBe(0);
+      expect(existsSync(threadDir('other-agent'))).toBe(true);
     });
   });
 });

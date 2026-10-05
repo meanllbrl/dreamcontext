@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, info } from '../../lib/format.js';
@@ -15,6 +15,9 @@ import {
 } from '../../lib/whiteboards/store.js';
 import { WhiteboardError, WhiteboardValidationError } from '../../lib/whiteboards/errors.js';
 import { getBoard } from '../../lib/lab/boards.js';
+import { getAutomation } from '../../lib/automations/store.js';
+import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV } from '../../lib/automations/types.js';
+import { agentsOnElements } from '../../lib/whiteboards/agents.js';
 import { checkWebUrl, isValidRef, isValidTag, isValidWidgetRef } from '../../lib/whiteboards/validate.js';
 import {
   WIDGET_KINDS,
@@ -98,8 +101,75 @@ function parseSize(raw: string | undefined): WidgetSize | { w: number; h: number
 
 function readTextOpt(opts: { text?: string; file?: string }): string | undefined {
   if (opts.text !== undefined && opts.file !== undefined) throw new WhiteboardValidationError('use --text or --file, not both');
-  if (opts.file !== undefined) return readFileSync(opts.file, 'utf-8');
+  if (opts.file !== undefined) return readFileSync(assertFileInScope(opts.file), 'utf-8');
   return opts.text;
+}
+
+// ── The board agent's second layer ───────────────────────────────────────────────────────────
+// A home-board agent runs with `DREAMCONTEXT_AGENT_BOARD` set and a permission allowlist that
+// already limits its writes to its own board. These checks are the CLI's own copy of that
+// rule, so a rule that is mis-spelled or widened upstream still cannot reach another board.
+
+/** The board this process is limited to, or null when no board agent is running it. */
+function scopedBoard(): string | null {
+  const v = process.env[AGENT_BOARD_ENV]?.trim();
+  return v ? v : null;
+}
+
+/** Refuse a write to any board other than the running agent's own. */
+function assertBoardInScope(slug: string): void {
+  const home = scopedBoard();
+  if (home !== null && slug !== home) {
+    throw new WhiteboardValidationError(`this agent acts only on its own board '${home}', not '${slug}'`);
+  }
+}
+
+/** The real path of `dir`, or null when it is unset or does not resolve. */
+function realDir(dir: string | null | undefined): string | null {
+  if (!dir) return null;
+  try {
+    return realpathSync(dir);
+  } catch {
+    return null;
+  }
+}
+
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/**
+ * While a board agent runs, `--file` may come ONLY from its two writable folders: its scratch
+ * folder (`$DREAMCONTEXT_AGENT_SCRATCH`) and `<brain>/automations/output/<self>/`. The content
+ * lands on a synced board, and the agent's Read deny rules bind Claude's tools, not this child
+ * process, so anywhere else in the project (`.env`, `.claude/settings.local.json`) is refused
+ * too. A symlink is refused outright, and both sides are compared by real path. Returns the
+ * path to read.
+ */
+function assertFileInScope(file: string): string {
+  if (scopedBoard() === null) return file;
+  const self = process.env[AGENT_SELF_ENV]?.trim();
+  const allowed = [
+    realDir(process.env[AGENT_SCRATCH_ENV]?.trim()),
+    self ? realDir(join(ensureContextRoot(), 'automations', 'output', self)) : null,
+  ].filter((d): d is string => d !== null);
+  const refuse = (why: string): never => {
+    throw new WhiteboardValidationError(
+      `--file '${file}' ${why}; a board agent may only read files from its scratch folder ($${AGENT_SCRATCH_ENV}) `
+      + `or _dream_context/automations/output/${self || '<self>'}/`,
+    );
+  };
+  let real: string;
+  try {
+    if (lstatSync(file).isSymbolicLink()) refuse('is a symlink');
+    real = realpathSync(file);
+  } catch (err) {
+    if (err instanceof WhiteboardValidationError) throw err;
+    throw new WhiteboardValidationError(`cannot read --file '${file}': ${(err as Error).message}`);
+  }
+  if (!allowed.some((dir) => isInside(dir, real))) refuse('is outside the folders this agent may read from');
+  return real;
 }
 
 /** Where a page ref points: a knowledge slug in the brain, or a file relative to the project. */
@@ -175,6 +245,7 @@ async function editWikiCard(
   cardId: string | undefined,
   fn: (nav: WikiNav) => WikiNav,
 ): Promise<WikiCardView> {
+  assertBoardInScope(slug);
   let out: WikiCardView | null = null;
   await mutateWhiteboard(root, slug, (board) => {
     const card = resolveWikiCard(board.elements, slug, cardId);
@@ -350,6 +421,9 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('-d, --description <text>', 'One-line description', '')
     .option('--json', 'Machine-readable output')
     .action(run((name: string, opts: { description: string; json?: boolean }) => {
+      // A new board is "another board" by definition.
+      const home = scopedBoard();
+      if (home !== null) throw new WhiteboardValidationError(`this agent acts only on its own board '${home}' and cannot create boards`);
       const created = createWhiteboard(ensureContextRoot(), name, opts.description);
       if (opts.json) {
         console.log(JSON.stringify(created, null, 2));
@@ -365,7 +439,8 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--json', 'Machine-readable output')
     .option('--full', 'Do not truncate note markdown / html payloads')
     .action(run((slug: string, id: string | undefined, opts: { json?: boolean; full?: boolean }) => {
-      const { board } = readWhiteboard(ensureContextRoot(), slug);
+      const root = ensureContextRoot();
+      const { board } = readWhiteboard(root, slug);
       const live = liveElements(board.elements);
       if (id) {
         const el = live.find((e) => e.id === id);
@@ -387,6 +462,8 @@ export function registerWhiteboardCommand(program: Command): void {
           description: typeof board.frontmatter.description === 'string' ? board.frontmatter.description : '',
           elements: views,
           wikis,
+          // Who is on this board: `home` agents act only here, the rest are attached.
+          agents: agentsOnElements(root, slug, live),
         }, null, 2));
         return;
       }
@@ -417,6 +494,7 @@ export function registerWhiteboardCommand(program: Command): void {
       at?: string; size?: string; tag?: string; json?: boolean;
     }) => {
       if (!isWidgetKind(kind)) throw new WhiteboardValidationError(`unknown widget kind '${kind}' (one of ${WIDGET_KINDS.join(', ')})`);
+      assertBoardInScope(slug);
       const root = ensureContextRoot();
       const at = parseAt(opts.at);
       const size = parseSize(opts.size);
@@ -450,6 +528,16 @@ export function registerWhiteboardCommand(program: Command): void {
       } else if (kind === 'wiki') {
         if (!opts.title?.trim()) throw new WhiteboardValidationError('wiki widget needs --title "<title>"');
         payload.sections = [];
+      }
+      if (kind === 'agent') {
+        // Unlike an insight or a task, an agent cannot "come later" on its own: a card for an
+        // unknown slug is a typo, so it is refused rather than warned about.
+        if (!opts.ref) throw new WhiteboardValidationError('agent widget needs --ref <agent-slug> (`dreamcontext automations list` lists them)');
+        if (!isValidWidgetRef(kind, opts.ref)) throw new WhiteboardValidationError(`invalid agent slug '${opts.ref}'`);
+        if (!getAutomation(root, opts.ref)) {
+          throw new WhiteboardValidationError(`no agent '${opts.ref}' in this project (\`dreamcontext automations list\` lists them)`);
+        }
+        payload.ref = opts.ref;
       }
 
       let id = '';
@@ -496,6 +584,7 @@ export function registerWhiteboardCommand(program: Command): void {
       title?: string; text?: string; file?: string; url?: string; ref?: string; item: string[];
       check: string[]; uncheck: string[]; at?: string; size?: string; json?: boolean;
     }) => {
+      assertBoardInScope(slug);
       const update = {
         title: opts.title,
         text: readTextOpt(opts),
@@ -532,6 +621,7 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--tag <tag>', 'Remove every element carrying this tag')
     .option('--json', 'Machine-readable output')
     .action(run(async (slug: string, ids: string[], opts: { tag?: string; json?: boolean }) => {
+      assertBoardInScope(slug);
       if (ids.length === 0 && opts.tag === undefined) throw new WhiteboardValidationError('name element ids or --tag <tag>');
       let result: ReturnType<typeof removeElements> | null = null;
       await mutateWhiteboard(ensureContextRoot(), slug, (board) => {
@@ -561,8 +651,9 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--tag <tag>', 'Tag every imported element, for `remove --tag`')
     .option('--json', 'Machine-readable output')
     .action(run(async (slug: string, opts: { file: string; at?: string; tag?: string; json?: boolean }) => {
+      assertBoardInScope(slug);
       if (opts.tag !== undefined && !isValidTag(opts.tag)) throw new WhiteboardValidationError(`invalid tag '${opts.tag}'`);
-      const source = readImportSource(readFileSync(opts.file, 'utf-8'), basename(opts.file));
+      const source = readImportSource(readFileSync(assertFileInScope(opts.file), 'utf-8'), basename(opts.file));
       const at = parseAt(opts.at);
       let imported: ReturnType<typeof prepareImport> | null = null;
       await mutateWhiteboard(ensureContextRoot(), slug, (board) => {

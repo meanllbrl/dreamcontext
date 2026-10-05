@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { cloudAllows } from '../lib/cloudSurface';
 import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
 
 /**
@@ -105,6 +106,10 @@ export interface AutomationSummary {
    *  from the retired review-card store; the field is named for what it now
    *  holds. */
   pendingQuestion: PendingQuestionSummary | null;
+  /** The whiteboard this agent lives on and acts only on (its home board), or
+   *  null for an agent with no home. Optional because a backend from before the
+   *  field reads as "no home", which is what it was. */
+  whiteboard?: string | null;
 }
 
 /**
@@ -208,7 +213,7 @@ export interface AutomationPattern {
   lessons: { date: string; text: string }[];
 }
 
-/** All SEVEN fields the approval hash covers (`APPROVAL_DIFF_FIELDS`) — what
+/** Every approval-hashed field (`APPROVAL_DIFF_FIELDS`) — what
  *  `automation` on the detail response exposes for a full-field review (see
  *  `approve`'s CLI comment: the registry stores only a sha256, never prior
  *  values, so this is a full-field review every time, not an old-vs-new diff).
@@ -227,7 +232,7 @@ export interface AutomationManifestDetail {
   timeoutMinutes: number;
   catchupHours: number;
   outputDir: string | null;
-  /** Hashed, and the heaviest of the eight to approve knowingly: it admits the
+  /** Hashed, and among the heaviest to approve knowingly: it admits the
    *  automation's own self-written pattern into the run's input. */
   learning: boolean;
   /** Hashed. Does this automation stop and ask a human before its work takes
@@ -243,6 +248,11 @@ export interface AutomationManifestDetail {
    *  Read carefully in the same direction as `review`: a `hitl` node that has
    *  DISAPPEARED is a human gate someone deleted. */
   flow: AutomationFlowGraph | null;
+  /** Hashed. The home board: the one whiteboard this agent may change, and
+   *  the board every one of its turns is shown. Adding, removing or moving it
+   *  is a change of where the agent can write, so it is reviewed like the
+   *  rest. `null`, or absent on an older backend, means no home board. */
+  whiteboard?: string | null;
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;
@@ -521,6 +531,9 @@ export interface AgentDraft {
   at?: string;
   model: string | null;
   effort: 'low' | 'medium' | 'high' | null;
+  /** The home board, set at CREATE only (the server never changes it on an
+   *  update, and the edit dialog never sends it). */
+  whiteboard?: string;
 }
 
 /**
@@ -927,7 +940,7 @@ export interface ThreadEntry {
   files?: string[];
   /** Figures posted with `--kv`. Absent, never empty. */
   summary?: ThreadSummaryRow[];
-  via: 'runner' | 'cli' | 'dashboard' | 'chat';
+  via: 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant';
 }
 
 /**
@@ -949,6 +962,8 @@ export function useAgentFeed(
   return useQuery({
     queryKey: ['automations-feed'],
     queryFn: () => api.get<AgentFeed>('/automations/threads'),
+    // Not served on the hands-free cloud (cloudSurface.ts): no poll there at all.
+    enabled: cloudAllows('GET', '/api/automations/threads'),
     // Fast while a run is in flight — one this window started, or one the feed
     // itself reports holding a slot — so its answer lands as it is written.
     refetchInterval: (query) => (
@@ -1032,7 +1047,9 @@ export function useSayInChannel() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (v: { slug: string; text: string }) =>
+    // `board`: the whiteboard the message was sent from (an agent card), so the
+    // turn is shown that board. Omitted everywhere else.
+    mutationFn: (v: { slug: string; text: string; board?: string }) =>
       api.post<{
         /** `kind` says which of the two things the mention STARTED: a `run` is a
          *  fresh fire of a call-mode agent, a `reply` is a resume of a scheduled
@@ -1148,12 +1165,13 @@ export function useReplyToAgentThread() {
   return useMutation<
     { entry: ThreadEntry; job: { id: string; status: string } },
     Error,
-    { slug: string; runId: string; text: string }
+    { slug: string; runId: string; text: string; board?: string }
   >({
-    mutationFn: ({ slug, runId, text }) =>
+    mutationFn: ({ slug, runId, text, board }) =>
       api.post<{ entry: ThreadEntry; job: { id: string; status: string } }>(
         `/automations/${slug}/thread/reply`,
-        { text, runId },
+        // `board` only when sent from a board's agent card; absent, the body is unchanged.
+        board ? { text, runId, board } : { text, runId },
       ),
     onSuccess: (data, { slug, runId }) => {
       // The `user` entry is already on disk, so the thread can show it now.
