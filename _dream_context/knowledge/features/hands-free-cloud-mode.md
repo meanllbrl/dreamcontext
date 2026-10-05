@@ -1,16 +1,16 @@
 ---
-id: "feat_2VVWqCVG"
-type: "feature"
-name: "hands-free-cloud-mode"
+id: feat_2VVWqCVG
+type: feature
+name: hands-free-cloud-mode
 description: >-
   Hands-free mode moves the active project to a GitHub Codespace, the phone
   drives it over a link and a passphrase while the laptop's roots are locked,
   and Return brings every commit, diff, stash and session home with a receipt.
 pinned: false
-date: "2026-10-03"
-status: "in_progress"
-created: "2026-10-03"
-updated: "2026-10-04"
+date: '2026-10-03'
+status: in_progress
+created: '2026-10-03'
+updated: '2026-10-04'
 released_version: null
 tags:
   - 'topic:mobile'
@@ -62,8 +62,12 @@ The canonical list is **AC1-AC24 in the task** `hands-free-mode-moves-the-active
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
-The full D1-D20 decision record, the residual-risk statement and the out-of-scope
+The full D1-D23 decision record, the residual-risk statement and the out-of-scope
 list live in the task. The load-bearing ones:
+
+- **[2026-10-04] D23 — one guarded phase transition, and an offline-first Return.** The Return-state class failed W2 reviews 1, 2 and 3. One transition function owns every laptop phase change and refuses `returning → away` (or anything that would offer Abandon) once a return write has started; after any write the only exits are home or Roll back. Once the payload is downloaded, finishing the local journal (Resume included) never needs the cloud or GitHub; wipe-secrets, seal and stop are attempted after and queued with the tripId when unreachable. A fault-injection test injects a crash, a network failure, a quota refusal and a stopped codespace at every journal op and every cloud/provider call of go and of single- and multi-pass Return (75 generated points, 208 cases) and asserts Resume reaches home or Roll back, never `away` after a write, and a byte-for-byte rollback.
+- **[2026-10-04] D22 — running work is found by the process tree, not by registries.** Go and Return wait for and cut every process whose cwd is inside a scope root (claude, every descendant, hooks), whether or not the server spawned it, except the server itself; registries only label what the scan finds. A cut signals each process group with SIGTERM, then SIGKILL after the grace even when the leader exited, and waits until all are gone; the cloud does the same over `dcuser` processes via `/proc` cwd.
+- **[2026-10-04] D21 — finalization is closed structurally.** A sealed cloud never holds the secret class (every seal, the self-seal included, wipes first); wipe-secrets, seal and stop are idempotent ensure-operations keyed by `sealedEpoch`; on any non-success the laptop reads `/api/health` and decides from the observed state instead of wedging; queued steps carry their tripId; and the test fake implements the real phase/epoch rules, held to it by a shared contract test.
 
 - **[2026-10-04] D20 — Return NEVER deletes a laptop non-git file.** The same loss class failed W1 reviews 3, 4 and 5: a laptop file disappearing at Return because the cloud happened not to have the path. A non-git path (Transport 2, transcripts included) present at trip start and absent in the cloud is listed in the receipt as "deleted on the phone, kept here" and the owner deletes it by hand; git-tracked deletions still land through Transport 1's non-tolerant snapshots. A cloud path the worker cannot read is refused and listed, never silently dropped; a tolerant (recovery) snapshot is never applied to a laptop working tree. Go (laptop → cloud) still mirrors deletions into the cloud.
 - **[2026-10-03/04] D18/D19 — a link that cannot travel never leaves, and is never deleted.** An incoming symlink target is accepted only in canonical relative form (`.` segments anywhere are ignored, since they never climb). A link whose target fails that rule is left out of Transport 2's walk and listed "stays on the laptop", and the go git preflight refuses a repo whose indexTree/worktreeTree holds such a `120000` entry, naming the file — exactly like a submodule. **D19 amended (2026-10-04, after review round 4 found the exclusion also running in the cloud and deleting the laptop's own link):** the exclusion and the physical check run ONLY on the laptop (go, and the laptop's own Return manifest); the cloud sends every link and its git checks are lexical only; the laptop's apply refuses a bad incoming link and keeps its own copy; and a path the cloud could not send is never planned as a deletion. **D19 wins over D16:** a path that stayed home is never overwritten by the cloud's version — it goes to conflicts.
@@ -81,16 +85,21 @@ list live in the task. The load-bearing ones:
 
 ## Technical Details
 
-**Status: in build, waves 1-2 of 4, nothing committed and nothing shipped.** W0 (the
-provider gate) is closed and produced D15/D17; W1 (the transports and the shared path
-guard) is built and has been through five review rounds — rounds 3, 4 and 5 all found
-the same loss class and produced D18, D19, the D19 amendment and D20; W2 (cloud server,
-laptop orchestration, lock consumers) is built and its first review round failed with
-four major findings (a forged permission entry in the cloud, a stuck `returning` phase,
-Roll back only undoing the last round, and auto-sleep/automations in OTHER processes not
-being waited on at a dashboard-driven go). No acceptance criterion is ticked. The task
-file carries the authoritative code-fact map, the wave map and the per-transport
-algorithms. The shape:
+**Status: built through wave 3, W4 (docs, real-Codespaces smoke, owner's phone checklist) in progress; nothing shipped and no criterion ticked.**
+W0 (the provider gate) closed and produced D15/D17. W1 (transports + shared path guard)
+closed after seven review rounds that produced D18-D20. W2 (cloud server, laptop
+orchestration, lock consumers) closed after five rounds that produced D21-D23. The
+W0-W2 code and the first W3 build are in `55c6ff92`; the W3 review fixes are still
+uncommitted in the working tree. W3 review round 1 passed the laptop UI lane. It failed the
+phone lane (a revoked device's open chat socket survived; now every cloud chat socket is
+tagged with its device hash and closed 4401 with its child cut on revoke-all, a password
+change or logout, and re-checked per frame) and the harness lane (a lost trip marker
+sealed the cloud without a snapshot; now `trip_lost` runs the full D12 recovery, snapshot
+before seal, and a mirror with its folders gone answers `mirror_absent` and is never
+sealed). The fixes are re-review pending. The user-facing reference is
+`skill/references/hands-free.md`; the security model and the recovery procedure are in
+[[dashboard-server-security]] § 6 "Cloud mode (hands-free)". The task file carries the code-fact map and the wave
+map. The shape, as built:
 
 - **One codespace per owner** from the private repo `<owner>/dreamcontext-handsfree` (devcontainer with Node, git, the `claude` CLI and the users `dcserver` / `dcuser` in group `dcwork`).
 - **The mirror root is the laptop's own absolute path** (`/Users/<name>` = cloud HOME, a bind mount of `/workspaces/dc-home`, never a symlink), so transcript directory encodings, `--resume`, the session roster and worktree paths stay valid with zero rewriting.
@@ -100,17 +109,39 @@ algorithms. The shape:
 - **One shared path guard** (`src/lib/handsfree/paths.ts`) for both transports: no `..`, no absolute paths, no `.git` segment at any depth after NFC + case-fold, `.` segments ignored anywhere, collision checks against differently-spelled existing paths, and a symlink target accepted only in canonical relative form resolving inside the root (written last). A link that fails the rule **stays on the laptop** — excluded from the walk and listed, with the go git preflight refusing a repo that carries such a `120000` entry (D18/D19). That exclusion and the physical check are **laptop-side only**: the cloud sends every link and checks lexically (D19 amended).
 - **Return is conservative, and it never deletes:** any divergence in refs, HEAD, the stash list or the index parks the repo into `refs/handsfree/<trip>/*` and `trips/<trip>/conflicts/` instead of guessing; every overwritten laptop file is copied to `trips/<trip>/backup/` first so Roll back is real. **No laptop non-git file is ever deleted by a Return** (D20) — an absent cloud path is reported, not applied — a path the cloud could not send is never planned as a deletion, a stayed-home path is never overwritten (D19 over D16, it goes to conflicts), and a tolerant recovery snapshot is never applied to a working tree.
 - **Session state** merges per entry by id with the cloud winning — **except** `chatPermissionMode` and every other permission field, which always keep the laptop's value, and cloud-only roster entries, which land with `bypass: false`.
-- **A `CloudProvider` interface with exactly one implementation** (Codespaces) plus the fake the verify script needs.
+- **A `CloudProvider` interface with exactly one implementation** (Codespaces, `src/lib/handsfree/codespaces.ts`) plus the fake the verify script needs (`provider.ts`). Codespaces are created with `idle_timeout_minutes=240` and `retention_period_minutes=43200`. GitHub's REST does not expose the remaining quota (`remainingQuotaCoreMinutes()` returns null), so the laptop counts its own uptime against a 120 core-hour budget (`local-store.ts`).
+- **The journal (AC11, D23).** `src/lib/handsfree/journal.ts` plus `orchestrator.ts`. A per-trip run lock (`acquireTripRunLock`) makes go/return single-flight across the app and the CLI. Each direction snapshots once and persists `trips/<trip>/<direction>-journal.json` before any write. Return downloads its whole payload into `trips/<trip>/return-<pass>/` before the first write, so Resume is offline-first. ONE guarded `transition()` owns every laptop phase change and refuses `returning → away` (and Abandon) once any pass wrote. Cloud finalization (`ensureCloudSealed`: wipe-secrets → seal, then stop) is idempotent per epoch; when the cloud cannot be reached it is queued in `config.json` with the trip id (`runQueued`). A cloud the phone moved past the snapshot gets a delta pass (at most 3, `MAX_RETURN_PASSES`), and past that the next go recovers it. Roll back (`rollbackTrip`) undoes every pass's own ops, newest first, and returns to `away`.
+- **Cloud server mode** (`DREAMCONTEXT_CLOUD=1`, `isCloud()`; `dreamcontext cloud serve`, hidden, started by `cloud/supervisor.mjs`). One listener on 8080 behind GitHub's public forwarded port. `cloudGate()` (`middleware.ts`) replaces the laptop gate chain: loopback is never trusted, a static allow-list (`cloud-mode.ts` `CLOUD_PUBLIC_ROUTES` / `CLOUD_DEVICE_API_ROUTES`) is the only reachable API, and everything else gets 403 `cloud_unavailable`. Cloud phases are `sealed | active | quiescing` with an epoch per quiesce and `sealedEpoch` (`cloud-state.ts`). The transfer routes live under `/api/handsfree/cloud/*` (`routes/handsfree-cloud.ts`). Every git, pack and agent process runs as `dcuser` through `spawnAsWorker` / `cloud worker <op>` (`cloud-worker.ts`).
+- **Phone auth** (`src/server/handsfree-auth.ts`, `handsfree-login.ts`). A generated 6-word EFF passphrase; only its scrypt hash (N=2^15) leaves the laptop, pushed over the HMAC transfer channel with a generation that only goes up. The device cookie `__Host-dc_hf_session` (HttpOnly, Secure, SameSite=Lax, 30 days) stores the sha256 of a 256-bit id. A persisted login limiter is checked before scrypt: per client 5 free failures, then 60 s doubling to 1 h; a global progressive delay past 30 failures per hour, never a lockout; at most 2 concurrent scrypt. Revoke-all, a password change and a logout close the device's open chat sockets (4401) and cut their children.
+- **Service worker and Wake** (`src/server/handsfree-sw.ts`). It intercepts only same-origin navigations, re-issues them with `X-Tunnel-Skip-AntiPhishing-Page: true`, and shows the cached offline page with a Wake link (the codespace's github.com page) only for a 404/502/503/504 or a network error without `X-Dreamcontext-Cloud`. It unregisters on the sealed page and on a revoked login.
+- **Sleep (D14/D15)** (`src/server/cloud-idle.ts` `computeStopAt`). The stop time is 15 min after the later of boot, the last real action and the last turn's end. A running turn defers it (≤ 2 h from its start), and so do a transfer (2 min grace), an install (≤ 2 h) and going/quiescing (≤ 2 h). The stop request goes to `/workspaces/dc-server-pub/stop-request` with the boot id; `cloud/stop-helper.sh` (the `codespace` user) runs `gh codespace stop`. A served quiesce with no laptop progress self-seals after 2 h (wiping first); an unserved one reverts to active after 30 min (`quiescingVerdict`).
+- **CLI** (`src/cli/commands/handsfree.ts`): `setup [--machine]`, `account-login [id] [--all] [--print]`, `password`, `go [--cut-running] [--take-over]`, `status [--json]`, `return [--cut-running]`, `resume`, `rollback`, `abandon`, `devices list`, `devices revoke --all`, `teardown [--discard-abandoned-work]`. The laptop routes (`src/server/routes/handsfree.ts`) call the same functions behind `laptopRouteRefusal()`. The desktop UI is in `dashboard/src/components/handsfree/`, and the phone's chip and quiesce overlay in `.../handsfree/phone/`.
+
+### Known residuals (stated, not fixed)
+
+- **Same-uid exposure across sibling agent children (AC19).** Every agent child runs as the one `dcuser` uid, so a lingering agent process can read a sibling child's environment through `/proc/<pid>/environ`. Every account's cloud credentials file lives in a dcuser-owned sandbox the CLI must read and refresh, so any agent can read any cloud account's login. The `dcserver` dir, `/proc/<server>/environ`, `/workspaces/.codespaces` and `/home/codespace` stay unreadable to dcuser.
+- **The cloud is one trust domain:** whoever has the passphrase effectively has a shell there. A transcript that once printed a secret keeps it on the cloud disk after Return. The build fingerprint is computed inside the container, so a fully compromised container could misreport it. No disk snapshots: a codespace GitHub deletes takes unreturned work with it.
+- **Carried minors** (W3 Handoff "Decisions" line, not fixed): the Return roster merge writes the tracked `.gitignore` outside the journal (`agent-sessions.ts:328`); `DREAMCONTEXT_PARENT_PID` is inherited by child servers and kills verify servers launched from an app session (`lifecycle.ts:208`); AC18 parity and AC24 second-laptop ownership are not covered by the round-trip harness (left to the W4 real-Codespaces smoke); the first ~50 ms of the notch opening drop frames. Lane E's open risks from the same round: the cloud's idle self-seal does not go through the `snapshot_first` guard of a lost-marker trip, and a missing transcripts-only root is not counted.
+- **Plan vs code, recorded for reconciliation:** the task's "an untracked file over 100 MB needs an explicit `handsfree.include` or is skipped" has no code behind it (no size cap in `src/lib/handsfree/`). The login limiter keys on the whole `X-Forwarded-For` value (`loginClientKey`), not its rightmost entry, because W0 found GitHub's forwarder replaces the header with one IP. A process inside the codespace can still set any XFF, so only the global delay bounds it.
 
 ## Notes
 
-- This PRD is deliberately a map, not a mirror: the task holds AC1-AC24, D1-D20, the residual-risk statement, the out-of-scope list and the wave map. Reconcile this file when a wave lands; do not re-type the criteria here.
+- This PRD is deliberately a map, not a mirror: the task holds AC1-AC24, D1-D23, the residual-risk statement, the out-of-scope list and the wave map. Reconcile this file when a wave lands; do not re-type the criteria here.
 - The one pattern this build keeps re-teaching: **a sync that can delete is a sync that will delete the wrong thing.** Three consecutive W1 review rounds found the same class (a laptop file or link lost because the cloud lacked its path), and the answer each time was to narrow deletion out of the design (D19, D19 amended, D20) rather than to fix the condition that triggered it.
 - W0 item 1 (a pty keepalive) **failed** and produced D15 — the clearest evidence in the project that a provider's idle clock is a provider fact to be measured, not assumed.
 - Out of scope v1 (abridged): any other provider, pushing to GitHub from the cloud, web push, cloud automations, more than one trip at a time, desktop-only surfaces (PTY, voice, Assistant, OS reveal), Git LFS, submodules, custom filter drivers, shallow/partial clones.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+
+### 2026-10-04 - Update
+- W4 docs lockstep (AC21): the PRD now describes the built code, not the plan. The status was replaced (built through W3, review fixes uncommitted and re-review pending, W4 in progress) and Technical Details gained the journal, cloud server mode, phone auth, the service worker and Wake, sleep, the CLI surface and a Known residuals block: AC19 same-uid /proc exposure, one trust domain, the carried minors from the W3 Handoff, and two plan-vs-code mismatches (no 100 MB untracked cap in code; the limiter keys on the whole X-Forwarded-For value). New companions: skill/references/hands-free.md (agent-facing), the README 'Hands-free Mode' section, dashboard-server-security § 6 (cloud mode + recovery procedure) and the 6.system_flow hands-free flow. Nothing ticked; status stays in_progress.
+### 2026-10-04 (later) - W2 closed on D21-D23, the code is committed, W3 is in review
+
+- Three more owner decisions recorded from the task: **D21** (structural finalization: wipe before every seal, idempotent epoch-keyed ensure-ops, decide from observed health), **D22** (find and cut running work by the process tree), **D23** (one guarded phase transition, offline-first Return, exhaustive fault injection).
+- Build status replaced, not appended: W1 and W2 closed, W0-W2 and the first W3 build committed in `55c6ff92`, W3 review round 1 found an open device socket surviving revoke (fixed) and a lost-marker seal without a snapshot (in fix).
+- The recurring lesson grows a second shape: three classes (finalization, invisible running turns, Return state) each failed review twice or three times before the owner closed them **structurally** rather than case by case. Nothing ticked: every criterion waits on W3 UI or the W4 real-Codespaces proof. `status` stays `in_progress`.
 
 ### 2026-10-04 - Reconciled with the locked decisions D16-D20 (still mid-build, nothing ticked)
 

@@ -17,6 +17,7 @@ tags:
   - 'topic:dashboard'
   - 'topic:cli'
   - 'topic:excalidraw'
+  - 'topic:whiteboard'
   - frontend
   - backend
 related_tasks:
@@ -25,6 +26,10 @@ related_tasks:
   - >-
     whiteboard-wiki-olur-sayfalar-board-dan-cikmadan-popup-ta-wiki-menusunde-ve-tuval-wiki-modunda-okunur
   - whiteboard-sekmeleri-chrome-gibi-yan-yana-durur-renkli-gruplara-ayrilir
+  - >-
+    whiteboard-a-ajan-karti-eklenir-board-u-bilen-yalniz-kendi-board-una-yazan-ustune-birakilan-widget-i-soran-otomasyon-ajani
+  - >-
+    a-whiteboard-shows-a-funnel-as-its-explorer-any-lab-card-as-a-widget-and-the-date-window-on-the-card
 ---
 
 ## Why
@@ -61,6 +66,9 @@ Phase 1 (task `whiteboard-modulu-…`, criteria A1-A14 there are canonical):
 - [x] Widgets carry **S/M/L/XL sizes** on a 180/16 grid with snap-on-release, and their content adapts to the size instead of being scaled: an L/XL insight draws one full-card line chart with its date axis, M the number plus a sparkline, S the number alone.
 - [x] Knowledge and task cards show the entry's **title** (humanised slug as the fallback); a dangling ref still reads "not found".
 - [x] An HTML block draws no inner bordered box inside the card chrome.
+- [x] An L/XL insight's chart stays inside its card at any box height (the chart measures its own box instead of being handed a height).
+- [x] A widget shows no Excalidraw link icon floating past its corner; ordinary linked drawings keep theirs.
+- [x] A metric put on a board by an agent lands as a live insight widget, never as a drawn chart with today's numbers baked in (skill rule, excalidraw pack exclusion).
 - [ ] Owner sign-off in the installed .app closes the task (`verify:whiteboard` in both themes is green).
 
 Phase 1.5 — pages, wiki cards and the side panel (task `whiteboard-wiki-olur-…`, criteria F1-F3 there are canonical):
@@ -95,6 +103,9 @@ Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-10-04]** **A number on a whiteboard is a live insight widget, never a drawing.** An agent asked to put MRR and revenue on the Control Panel loaded the excalidraw pack and drew charts with that day's values frozen into them, because nothing routed it to widgets: the pack's description triggered on "KPI tiles"/"dashboard board" with no whiteboard exclusion. The exclusion now leads the pack's description (the listing truncates near 1000 chars) with a STOP block for whiteboard targets, and `skill/references/whiteboards.md` + the SKILL.md router row state the rule; drawn recipes are for data-free diagrams only.
+- **[2026-10-04]** **Widget link icons are removed by patching Excalidraw at build time, guarded.** Excalidraw paints a link icon past the top-right corner of every linked element and offers no option to turn it off; on a widget the `dreamcontext://` link is its identity, not a link to follow, and the icon sat over the neighbouring card. A Vite plugin (`dashboard/excalidraw-widget-link-icon.ts`) rewrites the one guard before that paint to skip widget links only. Because it is a source patch on a dependency, a production build **fails** if the guard is not found exactly once, and a unit test pins it in both the dev and prod builds — an Excalidraw upgrade cannot silently bring the icon back or break the patch.
 
 - **[2026-10-04]** **Close is not delete, and delete is not loss.** Closing a tab never touched the board, but nothing on screen said so, so every close now asks in a popover that states the board stays — and deliberately uses no destructive red, because the dialog's whole job is to say nothing is lost. A delete already moved the board into `whiteboards/.trash/`, which had no way back; the trash is now listed under "All boards" with Restore (re-slugged to `<slug>-2` if the name was taken since). The trash keeps its own `*` `.gitignore`: a delete history is one machine's business and must never reach the team's repo.
 - **[2026-10-04]** **An active widget must not swallow a gesture that started on the canvas.** An active HTML or web block takes pointer events, so a wheel that drifted over it landed in the iframe and the pan died mid-gesture. The pan itself (wheel on canvas, momentum included) latches widgets open to the wheel, and the latch drops after 250 ms of quiet — the gesture's owner is where it STARTED, not where the pointer happens to be.
@@ -144,6 +155,7 @@ Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard
 - **The trash is real and local.** `trash` / `list` / `restore` live in `src/lib/whiteboards/store.ts` under the board lock, exposed as `GET /api/whiteboards/trash` and `POST /api/whiteboards/trash/:id/restore`, with `trash` reserved as a slug; "All boards" grows a folding "Recently deleted" section (relative time + Restore, re-slugged to `<slug>-2` on a collision). `whiteboards/.trash/` carries its own `*` `.gitignore`.
 - **Pan beats an active widget.** While a canvas-started wheel pan runs (momentum included), widgets let the wheel through; the latch drops after 250 ms of quiet, so a pan is never swallowed by an active HTML or web block's iframe.
 - Verification: `tests/unit/whiteboard-tab-strip.test.ts`, `scripts/verify/whiteboard-tabs.mjs` (strip + close + trash), with `verify:whiteboard` unchanged at 679 checks because the `.wbs-*` selectors were kept.
+- **Card polish (2026-10-04).** `InsightWidget` passes no height to `LineChart` (which now takes layout pixels, not the old `560*h/w` viewBox contract) and lets it measure its own box, so an L/XL chart no longer runs off the card bottom. The widget link icon is suppressed by the build-time Excalidraw patch in `dashboard/excalidraw-widget-link-icon.ts` (wired in `dashboard/vite.config.ts`, pinned by `tests/unit/whiteboard-link-icon-plugin.test.ts`).
 
 **Key files**
 - `src/lib/whiteboards/`: `format.ts` (parse/serialize, deterministic), `merge.ts` (`mergeElements`), `store.ts` (paths, lock, `mutateWhiteboard`, rev, git hygiene files), `widgets.ts` (`WIDGET_KINDS` incl. `wiki`, `makeWidgetElement`), `validate.ts` (slug/ref/tag/url/element/wiki-sections/PUT body), `nav.ts` (a wiki card's section+page list ops under the board lock), `pages.ts` (knowledge + project-file page search and title resolution), `ops.ts` (show incl. `wikis`, update, remove, draw import), `errors.ts`
@@ -157,6 +169,8 @@ Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard
 
 ## Notes
 
+**In build:** an **agent card** (task `whiteboard-a-ajan-karti-eklenir-…`, `in_progress`): an automation agent placed on a board as a widget, which knows the board, writes only to its own board, reads anywhere, and is asked about a widget by dropping that widget on it. Its criteria (AC1-AC12+) live in the task; nothing has shipped, so nothing here is ticked.
+
 **Phase 2 scope (separate task):**
 - An assistant chat panel embedded in the board.
 - Recall and the knowledge index over whiteboards (today `whiteboard list` is the only way to find one).
@@ -167,6 +181,13 @@ Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-04 — Cards stay inside their frames, and a metric stays live
+
+- **L/XL insight chart fits** `e8a26dd4`: `LineChart` moved to layout-pixel heights while `InsightWidget` still sized it for the old viewBox contract, so a 250px card got a ~407px chart; the chart now measures its own box.
+- **No floating link icon** `8f314817`: a guarded build-time patch skips Excalidraw's link-icon paint for widget links only; the build fails if the guard is not found exactly once.
+- **Metrics are widgets** `45da14ba` (skill docs): the excalidraw pack excludes whiteboard targets up front and the whiteboard reference opens with "a number is an insight widget".
+- **PRD reconciliation:** three Phase 1 criteria added and ticked from the commits and their tests; two decisions recorded; `related_tasks` += the agent-card task (already in the working tree), noted under Notes as in build. `status` stays `in_review`, `released_version` stays `null`.
 
 ### 2026-10-04 — Phase 1.6: boards became tabs, a close asks, and a delete comes back
 

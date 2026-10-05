@@ -74,7 +74,9 @@
       "topic:research",
       "topic:settings",
       "topic:council",
-      "topic:cloud"
+      "topic:cloud",
+      "topic:whiteboard",
+      "topic:assistant"
     ]
   },
   "bareTags": [
@@ -156,6 +158,9 @@
     "enhancement": "kind:enhancement",
     "type:feature": "kind:feature",
     "feature": "kind:feature",
-    "type:ux": "kind:design"
+    "type:ux": "kind:design",
+    "whiteboard": "topic:whiteboard",
+    "assistant": "topic:assistant",
+    "notch": "topic:assistant"
   }
 }

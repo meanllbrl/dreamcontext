@@ -10,7 +10,7 @@ description: >-
   window sharing, bar % ticks, and the lookup-mode segments 'Not measured' fix.
 priority: high
 urgency: medium
-status: in_progress
+status: in_review
 created_at: '2026-10-04'
 updated_at: '2026-10-04'
 tags:
@@ -50,6 +50,12 @@ Tilki (2026-10-04): the founder's Acquisition whiteboard draws the edinim funnel
 
 
 
+
+
+### 2026-10-04 - Status → in_review
+- Shipped and pushed; owner's check of the funnel widget, Lab card and window chip in the installed app is the open gate
+### 2026-10-04 - Session Update
+- Committed and pushed as 6de92e15 (builder guard), 82da8340 (lab: tweaks_from, explorer endpoint, resolvedRange, % ticks, segments fix), ab6752c2 (whiteboard: funnel widget, lab-card, window chip, docs). Committed through a temporary index built from HEAD + only this work's hunks, because the agent-card and hands-free sessions edit 9 of the same files (their hunks stay uncommitted in the working tree). Commit 82da8340 type-checks standalone (git archive + both tsc); ab6752c2's tree passed both tsc and 2130 related tests. Rebuilt dist, ran dreamcontext update --yes in all 6 vaults (global CLI linked to this checkout, 0.30.0). Peer note to Tilki 1791128091537-47aca6c0.
 ### 2026-10-04 - Session Update
 - Built all five requests + the bug. (1) Funnel insight widget: S/M = FunnelMini (top-step users, final conversion, lane with % prev/% top), L/XL = the Lab funnel explorer via new GET /api/lab/explorer/:slug (buildExplorerResponse in lab-boards.ts, same preset blocks + frame engine), opened on Steps, full screen. (2) New widget kind lab-card (<board>/<card-id>) in both contract mirrors + validator + CLI add/update + palette picker; LabCardView renders BoardCard with its own view state and a portal full screen. (3) WidgetWindowChip: prints the DATA window (cache funnel/matrix/dataset/app range, else new resolvedRange on /api/lab/:slug) and opens RangeControl; applies via useApplyTweaks (insight-level, decided over a per-widget cache: two widgets of one insight share a window, as in Lab). (4) tweaks_from manifest field + windowGroup/writeWindowTweaks: any member's window change writes the group, PATCH returns moved[], client re-syncs them, lab tweak names them. (5) Bar % ticks when unit is %. Bug: segments explorer view no longer carries a slice header (its projected frame drops the bare-selection path). Excalidraw builder refuses whiteboards/ paths and dreamcontext-whiteboard files. DECLINED: tombstoning elements that vanish from the server (violates a-delete-is-never-inferred-from-absence; source fixed instead). Evidence: tests/unit/whiteboard-lab-card.test.ts 12/12, mirror test updated, scripts/verify/whiteboard-lab-card.mjs 28/28 in Chromium (shots tmp/whiteboard-lab-card-shots/). Not committed. Concurrent agent-card lane is adding an 'agent' kind to the same contract files.
 ### 2026-10-04 - Status → in_progress

@@ -1,6 +1,151 @@
 [
   {
     "date": "2026-10-04",
+    "type": "change",
+    "scope": "handsfree",
+    "description": "Work in progress (uncommitted) across the hands-free cloud stack (cloud-worker, cloud-mode, handsfree-auth, orchestrator, journal, routes) with matching tests, plus desktop splash and window-chrome follow-ups.",
+    "breaking": false,
+    "summary": "Uncommitted: hands-free cloud worker, auth, idle and routes hardened; splash and window chrome follow-ups",
+    "references": [
+      "file:src/server/cloud-worker.ts",
+      "file:src/lib/handsfree/orchestrator.ts",
+      "file:desktop/src-tauri/src/splash.rs",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "fix",
+    "scope": "lab",
+    "description": "Fix lab chart labels so a long slice name truncates while its share value stays visible.",
+    "breaking": false,
+    "summary": "A long slice name truncates without losing its share",
+    "references": [
+      "commit:50a13d07",
+      "feature:lab-analytics-insights"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "fix",
+    "scope": "whiteboard",
+    "description": "Fix whiteboard widget overflow for large insight charts and stray Excalidraw link icons; document in the skill that a metric on a whiteboard is a live insight widget, never a drawn chart.",
+    "breaking": false,
+    "summary": "L/XL insight charts stay inside their card and no Excalidraw link icon floats outside a widget; a metric on a board is always a live widget",
+    "references": [
+      "commit:e8a26dd4",
+      "commit:8f314817",
+      "commit:45da14ba",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix chat rendering: scrolling no longer snaps back mid-stream, rail toggle/pane focus/opening a thought stop re-laying out every transcript, the live rail draws one strip at a time, the team board columns share pane width, and an unnamed tab's turn is held open once so its agent names it.",
+    "breaking": false,
+    "summary": "Transcript scrolls without stutter, layout no longer thrashes, live rail and team board fit narrow panes, unnamed tabs get named",
+    "references": [
+      "commit:afd0ebc4",
+      "commit:9ab2b7d6",
+      "commit:f23a40fa",
+      "commit:b191b30f",
+      "commit:938f1e63"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add a transcript block marking a context compaction, displaying the summary the agent wrote.",
+    "breaking": false,
+    "summary": "A compaction shows in the transcript with the summary it wrote",
+    "references": [
+      "commit:3b86ace3"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "feat",
+    "scope": "assistant",
+    "description": "Add the ability for the notch Assistant to close chat tabs in other open projects, completing its cross-project replica control.",
+    "breaking": false,
+    "summary": "The Assistant can close chats in other projects",
+    "references": [
+      "commit:31f22c57",
+      "feature:dreamcontext-assistant"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "fix",
+    "scope": "notch",
+    "description": "Fix the notch Assistant surface: attachments work, it opens under the pointer, finished-chat peeks are no longer lost and remain clickable, Esc folds the open notch, and the notification tick and trackpad tap reach the owner.",
+    "breaking": false,
+    "summary": "Notch: files attach, it opens under the pointer, finished-chat peeks persist and stay clickable, Esc folds it, tick and tap reach the owner",
+    "references": [
+      "commit:2a6451a4",
+      "commit:ab02990a",
+      "commit:e6371858",
+      "feature:sleepy-notch-capture"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Sign the desktop app with a single fixed certificate so macOS stops revoking granted permissions on each update; activate a key window whose app never activated, and give a window coming forward keyboard focus in its page.",
+    "breaking": false,
+    "summary": "The app is signed with one fixed certificate so macOS keeps permissions across updates; focused windows activate and hand keyboard to their page",
+    "references": [
+      "commit:5c5300ad",
+      "commit:ebedd6e8",
+      "commit:161001c8"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "type": "feat",
+    "scope": "handsfree",
+    "description": "Add hands-free cloud mode (the active project moves to a cloud machine the phone drives via link and password), a notch inbox with a listening overlay, a desktop splash screen, and chat reattach to running sessions.",
+    "breaking": false,
+    "summary": "Hands-free cloud mode, notch inbox and listening overlay, desktop splash screen and chat reattach land",
+    "references": [
+      "commit:55c6ff92",
+      "feature:hands-free-cloud-mode",
+      "feature:desktop-splash-screen"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-04",
     "type": "feat",
     "scope": "whiteboard",
     "description": "Closing a whiteboard tab previously discarded it silently and deleting a board was permanent. Closing a tab now asks for confirmation first, and a deleted board is moved to a local trash it can be restored from instead of being destroyed immediately.",

@@ -210,6 +210,81 @@ Two things found on the way, both worth not re-deriving:
 
 Verified against a real server across six scenarios: LAN HTTP without a token → 401, with → 200; LAN WS chat with a token but no tailnet address → 403; loopback WS unchanged.
 
+## 6. Cloud mode (hands-free) — a public port with one trust domain (2026-10-04, in build)
+
+Hands-free mode runs the same server on the owner's GitHub Codespace (`DREAMCONTEXT_CLOUD=1`, `isCloud()` in `src/server/cloud-mode.ts`), reached by the phone and the laptop through GitHub's **public** forwarded port `https://<codespace>-8080.app.github.dev`. The port is public on purpose: a private port would make the phone sign in to GitHub again every few hours. That breaks every assumption mitigations 1-5 rest on, so cloud mode has its own gate instead of a relaxed version of the laptop's.
+
+**One trust domain.** Everything in the codespace, including every agent the phone starts, is treated as one domain: whoever has the passphrase effectively has a shell there. The design does not try to defend the cloud from its own owner's agents. It defends the cloud from the internet, the laptop from the cloud, and GitHub's token from both.
+
+### Loopback is never trusted in cloud mode
+
+GitHub's forwarder connects to the server **on loopback** with `Host: localhost:8080`, and it rewrites the phone's Origin to `http://localhost:8080` (`CLOUD_FORWARDED_ORIGIN`). So in cloud mode a loopback peer is the internet, and nothing is derived from Host. A process inside the codespace that dials 8080 directly is treated exactly like the internet. `checkNetworkAuth`'s loopback bypass, `handleCors` and `isCrossSiteWrite` never run in cloud mode: `src/server/index.ts` calls `cloudGate()` instead.
+
+### The gate chain (`cloudGate()`, `src/server/middleware.ts`)
+
+1. Every response carries `X-Dreamcontext-Cloud: 1` (the service worker uses it to tell "our server answered" from "the codespace is asleep").
+2. `OPTIONS` → 204 with no CORS headers, so every cross-site caller is refused by the browser.
+3. **Any write without an allowed Origin → 403.** The allowed origins are the forwarder's rewrite plus `DC_HF_ORIGIN`, computed by the root entrypoint from the codespace env (`cloudAllowedOrigins()`). A missing Origin is refused too.
+4. **Route class from a STATIC allow-list** (`classifyCloudRoute()`; `CLOUD_PUBLIC_ROUTES`, `CLOUD_DEVICE_API_ROUTES`, pinned by a unit test). Public: `GET /login`, `POST /api/handsfree/login`, `GET /api/health`, the service worker, its offline page, the web manifest. Device: the mobile Chat's routes (chat history, sessions, roster, shelf, usage, accounts list/switch/preferred, project-root file reads, board assets, teammates, read-only config GETs, logout, the phone's status read). Transfer: everything else under `/api/handsfree/`. Any other `/api/*` request → **403 `cloud_unavailable`**, lab sync, whiteboard writes, PTY, MCP, voice and reveal included.
+5. Public → passes; `/api/health` also hands out a fresh transfer nonce (`X-Dreamcontext-Nonce`).
+6. Transfer → refused if it carries a device cookie (`credential_mismatch`), else it needs a valid transfer proof (401).
+7. Device → refused if it carries the transfer credential. A navigation to a sealed cloud gets only the sealed page. Without a valid device session, a navigation is redirected to `/login` (`?revoked=1` plus a cleared cookie when the cookie is stale) and an API call gets 401. Phase `sealed` → 503 `cloud_sealed`; a write while `quiescing` → 423 `cloud_quiescing`.
+
+**WebSocket upgrades** (`cloudUpgradeRefusal()`, checked in `index.ts` before the upgrade is emitted): only `/api/agent/chat`, only with an allowed Origin, never with the transfer credential, only with a valid device session (else 401), only while `active`. Since the W3 fix, each cloud chat socket is tagged with its device's hash. Revoke-all, a password change or a logout closes it (4401) and cuts its child, and every frame re-checks the device (`agent-chat.ts`, `onDeviceSessionsChanged`).
+
+### Two credentials that never stand in for each other (`src/server/handsfree-auth.ts`)
+
+- **The device cookie (the phone).** `__Host-dc_hf_session`: HttpOnly, Secure, SameSite=Lax, Path=/, 30 days. The server stores only the sha256 of a 256-bit id. It is issued after the passphrase: 6 words from the EFF large list, generated on the laptop and shown once. Only its scrypt hash (N=2^15, r=8, p=1) reaches the cloud, with a verifier generation that only goes up (a lower or equal one is `stale_generation`). Lax lets a remembered phone open the link from another app; writes are Origin-pinned and GETs have no side effects.
+- **The transfer credential (the laptop).** A 32-byte secret in the laptop's `~/.dreamcontext/handsfree/credentials.json`; the cloud stores its sha256. It is **never sent raw**. Each request carries `Authorization: DC-HF-HMAC <nonce> <hmac>`, an HMAC-SHA256 over `dc-hf-transfer\n<nonce>\n<METHOD>\n<target>` with a server-issued nonce that is single-use and valid for 120 s (`verifyTransferProof()`).
+- `/api/health` shows anonymous callers only the version and the build fingerprint. The phase, trip, laptop id, epochs, verifier generation and superseded laptop ids need the transfer proof (`routes/health.ts`).
+
+### The login limiter, and the X-Forwarded-For finding
+
+`LoginLimiter` (`handsfree-auth.ts`) is persisted in the dcserver dir and checked **before** scrypt, and at most 2 scrypt computations run at once (queue of 16, then 429). Per client: 5 free failures, then a lock of 60 s doubling to 1 h. Globally: past 30 failures per hour each attempt gets a progressive delay (500 ms per extra failure, at most 10 s). **It is never a closure**, so a stranger cannot lock the owner out.
+
+The per-client key (`loginClientKey()`) is the **whole `X-Forwarded-For` value**, not its rightmost entry as the plan said. W0 item 7 found that GitHub's forwarder **replaces** the header with the single client IP, so from outside it cannot be forged. A process inside the codespace that dials 8080 directly can set any XFF and rotate keys freely; it is bounded only by the global delay. That is accepted under the one-trust-domain rule.
+
+### The sealed page and the service worker
+
+A sealed cloud answers every navigation with the sealed page ("this project is back on your laptop"), which also unregisters the offline worker (`handsfree-login.ts` `sendSealedPage`). The service worker (`handsfree-sw.ts`) never intercepts `/api`, `/login` or WebSockets. It caches only its own offline page and shows it (with the Wake link to the codespace's github.com page) only for 404/502/503/504 or a network error **without** our header, so it can never mask a real server answer.
+
+### The uid split (`cloud/Dockerfile`, `cloud/entrypoint.sh`, `cloud/supervisor.mjs`)
+
+| Identity | Holds | Cannot |
+|---|---|---|
+| `root` | the supervisor: binds 8080 **once** and hands the listening fd (fd 3) to every server instance; installs builds into `/opt/dreamcontext`; `/workspaces/dc-runtime` (0700) | (runs only fixed code from the image) |
+| `codespace` (uid 1000) | GitHub's in-codespace `GITHUB_TOKEN`; runs `gh codespace ports visibility 8080:public` and `stop-helper.sh` (`gh codespace stop` on a stop request) | sudo anything but `/opt/dc-hf/entrypoint.sh` (`/etc/sudoers.d/codespace`) |
+| `dcserver` (uid 2001) | the server, started by `setpriv` with a stripped env (no `GITHUB_TOKEN`, no `CODESPACE*`; `cloud.ts` `STRIP_ENV_RE`) and only CAP_SETUID, CAP_SETGID and CAP_KILL; `/workspaces/dc-server` (0700: verifiers, sessions, limiter, phase, uploads) | read GitHub's token; bind a port |
+| `dcuser` (uid 2002, group `dcwork`) | every agent, install, shell, git and pack operation (`spawnAsWorker` / `cloud worker <op>`, `setpriv --no-new-privs`, an env allow-list; agents get only their account's `CLAUDE_CONFIG_DIR`); the mirror HOME | sudo; read the dcserver dir, `/proc/<server>/environ`, `/workspaces/.codespaces` or `/home/codespace` (both 0700 at every start) |
+
+**The fd handoff closes the port-grab race.** If dcserver bound 8080 itself, a dcuser process could grab the port while the server restarts and impersonate it. Root holds the listening socket for the life of the machine, runs `pkill -KILL -u dcuser` before **every** server start, and restarts the server on any exit with backoff. Exit code 75 means "a new build was uploaded" (`POST /api/handsfree/cloud/runtime`): root installs the spooled tarball into `/opt/dreamcontext.next` (`npm i --ignore-scripts --omit=optional`), swaps it in, keeps the last good build and falls back to it when health fails. Cloud git runs with `GIT_CONFIG_NOSYSTEM=1`, a read-only `GIT_CONFIG_GLOBAL` and `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, so a dcuser-planted hook or filter never runs as dcserver.
+
+**Residual (stated, AC19):** every agent child runs as the same `dcuser` uid, so one agent can read a sibling child's environment through `/proc`, and every account's cloud Claude login sits in a dcuser-readable sandbox. Under the one-trust-domain rule this is accepted, not fixed.
+
+### The laptop side: `/api/handsfree/*` is desktop + loopback + same-site
+
+On the laptop the hands-free routes (`src/server/routes/handsfree.ts`: status, jobs/current and its cut, preflight, receipt, go, return, resume, rollback, abandon, devices/revoke-all) all pass `laptopRouteRefusal()` first. It answers 404 in cloud mode, and otherwise refuses:
+- a non-desktop server;
+- a non-loopback peer;
+- a request carrying the network token (cookie or `?token`);
+- any `X-Forwarded-For`, `Forwarded` or `X-Real-IP` header (a tailnet or proxy hop);
+- any `Authorization` header;
+- a Host that is not a loopback name;
+- for writes, a foreign Origin or a `Sec-Fetch-Site` other than `same-origin`/`none`.
+
+So the tailnet phone path of § 5 can never drive a trip. The lock middleware `handsfreeLockRefusal()` (D3/AC6) refuses every mutating `/api/*` request scoped to a locked vault while away; `/api/handsfree/*` is exempt.
+
+### Recovery procedure
+
+| Situation | Do this |
+|---|---|
+| **The laptop that started the trip is lost or wiped** | On the new laptop: `dreamcontext handsfree setup`, then `dreamcontext handsfree go --take-over` from the project (two confirmations on a live trip). It runs the D12 recovery (quiesce → cut → tolerant snapshot → seal, one epoch) into `refs/handsfree/<old-trip>/*` and `trips/<old-trip>/orphaned/`, and marks the old laptop id superseded. If the old laptop ever comes back, its next Return sees `superseded`: it unlocks, returns nothing and leaves its own files untouched. |
+| **The laptop is stuck in `returning`** | `dreamcontext handsfree status` → `offers`. Before any write: `resume` or `abandon`. After a write: `resume` (offline-first; the cloud steps queue if unreachable) or `rollback` (back to `away`, every overwritten file restored from `trips/<trip>/backup/`, refs from `refs/handsfree/backup/<trip>/*`). |
+| **GitHub refuses to start the codespace (quota)** | `dreamcontext handsfree abandon` unlocks the laptop now and never deletes cloud work. After the quota resets, the next `go` recovers the abandoned trip first. |
+| **The passphrase leaked** | `dreamcontext handsfree password` (a new passphrase, every device signed out) or `dreamcontext handsfree devices revoke --all`. Both start the codespace over REST, push the new generation and stay pending until the cloud confirms; `status` shows it. Open device sockets close on confirmation. If an agent may have run under the leaked passphrase, treat the cloud as compromised (next row). |
+| **The cloud itself is suspect** | `dreamcontext handsfree teardown` (recovers unrecovered work first, then deletes the codespace), sign the cloud's Claude sessions out at claude.ai, and rotate the project secrets that travelled (the secret class). |
+| **The private repo was edited** (`tampered`) | Nothing starts until `dreamcontext handsfree setup` rewrites it; check who changed `<owner>/dreamcontext-handsfree` first. |
+
 ## Sources
 
 - Session `f007d91a-b861-47c2-8154-033cf8899871` — security review + DECISION to pull hardening into v0.5.0
@@ -217,6 +292,7 @@ Verified against a real server across six scenarios: LAN HTTP without a token �
 - `tests/unit/server-security.test.ts`
 - `tests/unit/remote-access.test.ts`; `src/server/remote-access.ts`, `src/server/routes/agent-chat.ts`, `src/server/network-auth.ts`, `src/server/middleware.ts`
 - Session `0fc877ce-9607-41fa-b5bc-ef9f5ddd4027` — the phone/tailnet design conversation and the six-scenario verification
+- § 6 Cloud mode (hands-free): `src/server/cloud-mode.ts` (`isCloud`, `classifyCloudRoute`, the static allow-lists, `spawnAsWorker`), `src/server/middleware.ts` (`cloudGate`, `cloudUpgradeRefusal`, `cloudAllowedOrigins`), `src/server/handsfree-auth.ts` (passphrase, scrypt verifiers, device sessions, `LoginLimiter`, `loginClientKey`, `verifyTransferProof`), `src/server/handsfree-login.ts`, `src/server/handsfree-sw.ts`, `src/server/routes/health.ts`, `src/server/routes/handsfree.ts` (`laptopRouteRefusal`, `handsfreeLockRefusal`), `src/cli/commands/cloud.ts`, `cloud/{Dockerfile,entrypoint.sh,poststart.sh,stop-helper.sh,supervisor.mjs}`, `src/lib/handsfree/orchestrator.ts` (`go --take-over`, `rollbackTrip`, `abandonTrip`, `teardown`); the task `hands-free-mode-moves-the-active-project-to-a-cloud-machine-…` (D1-D23, W0 findings) and [[hands-free-cloud-mode]]
 
 ## Last Verified
 

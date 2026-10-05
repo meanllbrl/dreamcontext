@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-10-02'
+date: '2026-10-04'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-10-02 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-10-04 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/13 done (54%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -89,9 +89,10 @@ date: '2026-10-02'
   - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
   - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
 
-### 🔵 **simplified-ux** — Simplified UX · 80/117 done (68%) · target 2026-07-31 · forecast 2026-09-29 🔴 SLIPPING
+### 🔵 **simplified-ux** — Simplified UX · 80/126 done (63%) · target 2026-07-31 · forecast 2026-09-29 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
   - a-browser-run-shows-its-screenshots-in-chat-a-live-frame-while-it-runs-a-strip-when-it-lands (todo) · 0.28.0
+  - a-compaction-in-chat-shows-its-summary-instead-of-silently-swallowing-the-conversation (in_review) · 0.30.0
   - a-declared-status-whose-key-collides-with-a-custom-field-is-accepted-by-the-settings-editor-then-silently-never-appears (todo) · 0.27.0
   - a-develop-run-reads-in-order-each-build-card-names-its-real-wave-sits-where-it-happened-and-the-live-step-is-the-one-on-top (completed) · 0.28.0 · 2026-09-27 → 2026-09-29
   - a-discuss-do-not-act-mode-whose-plan-lands-in-a-task-never-a-scratch-file (todo) · 0.26.0
@@ -116,6 +117,7 @@ date: '2026-10-02'
   - agents-step-3-a-pushed-message-can-carry-a-question-with-options-a-structured-summary-several-files-and-a-board (in_review) · 0.28.0
   - agents-step-4-replying-in-a-thread-or-mentioning-an-agent-resumes-its-session-or-calls-it-and-the-answer-comes-back-as-a-post (in_review) · 0.28.0
   - an-automation-run-opens-as-a-chat-session-not-an-inline-drill-in (completed) · 0.24.0
+  - an-unnamed-chat-tab-gets-a-real-name-from-its-agent-instead-of-staying-chat-n (in_review) · 0.30.0
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
   - app-bundled-cli-reports-0-0-0-so-version-gated-migrations-never-fire-on-its-fallback-path (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
@@ -137,6 +139,7 @@ date: '2026-10-02'
   - chat-queued-messages-steer-into-the-running-turn-instead-of-waiting-for-it-to-end (completed) · 0.23.0 · 2026-07-29 → …
   - chat-s-command-parser-reads-the-right-characters-after-a-heredoc-and-the-file-panel-drops-its-emoji-em-dashes-and-dead-css (todo) · 0.28.0
   - chat-scroll-settles-before-the-window-mutates-momentum-safe-reveal-chunked-trim (completed) · 0.23.1
+  - chat-stays-smooth-when-the-rail-folds-a-pane-is-focused-or-the-owner-scrolls-up-mid-stream (in_review) · 0.30.0
   - chat-tool-rows-name-their-object-not-their-type-plus-run-grouping-and-density (completed) · 0.23.0
   - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript (completed) · 0.21.0
   - chat-view-polish-board-zoom-fullscreen-collapsed-background-agents-autogrow-composer (completed) · 0.21.0 · 2026-07-25 → …
@@ -176,6 +179,7 @@ date: '2026-10-02'
   - launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready (completed) · 0.17.2 · 2026-07-10 → …
   - launcher-federation-board-modeless-direct-manipulation-ux (completed) · 0.18.0
   - launcher-shows-one-task-board-across-every-registered-vault-for-portfolio-planning (todo) · BACKLOG
+  - macos-keeps-the-desktop-app-s-permissions-across-updates-because-every-build-is-signed-with-one-fixed-certificate (in_review) · 0.30.0
   - meeting-room-hidden-launcher-chat-where-all-agents-convene (completed) · 0.26.1 · 2026-08-26 → 2026-08-27
   - multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands (completed) · 0.27.0 · 2026-09-04 → 2026-09-06
   - one-mediaembed-atom-draws-every-inline-clip-and-audio-in-chat-and-the-agents-channel-so-a-fix-in-one-place-lands-in-all-three (completed) · 0.28.0 · 2026-09-29 → 2026-09-29
@@ -203,16 +207,22 @@ date: '2026-10-02'
   - telefon-cebe-girince-oturum-olmesin-kopan-soket-yeniden-baglansin-ve-canli-tur-devam-etsin (todo) · 0.28.0
   - the-danger-colour-is-an-undefined-token-so-ten-stylesheets-each-pick-their-own-red (todo) · 0.28.0
   - the-dashboard-sub-package-build-leaves-the-served-directory-stale-so-a-verified-fix-is-not-in-the-app-you-run (todo) · 0.27.0
+  - the-desktop-app-opens-with-its-own-logo-animation-and-sound-instead-of-a-blank-wait (in_review) · 0.30.0
+  - the-desktop-app-reaps-the-dev-servers-and-emulators-its-chat-tabs-agents-leave-running (in_review) · 0.30.0
   - the-shelf-follows-a-session-into-a-linked-code-repo-not-just-the-vault-s-own (completed) · 0.27.0 · 2026-09-04 → 2026-09-04
   - train-me-mode-the-agent-learns-your-taste-through-swipe-and-a-b-cards-and-writes-what-it-learned-into-patterns (in_review) · 0.28.0 · 2026-09-27 → …
   - two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file (completed) · 0.25.0 · 2026-08-23 → 2026-08-24
   - update-exits-0-when-no-platform-is-installed-so-scripts-read-the-no-op-as-success (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
+  - whiteboard-a-ajan-karti-eklenir-board-u-bilen-yalniz-kendi-board-una-yazan-ustune-birakilan-widget-i-soran-otomasyon-ajani (in_progress) · 0.30.0 · 2026-10-04 → …
   - whiteboard-faz-2-her-board-un-yaninda-o-board-u-goren-ve-duzenleyen-bir-asistan-paneli-acilir (todo)
   - whiteboard-modulu-her-board-ajanin-ve-kullanicinin-birlikte-cizdigi-canli-widget-tasiyan-bir-excalidraw-kontrol-paneli-olur (in_review) · 0.30.0 · 2026-09-29 → …
+  - whiteboard-sekmeleri-chrome-gibi-yan-yana-durur-renkli-gruplara-ayrilir (in_review) · 0.30.0
+  - whiteboard-wiki-olur-sayfalar-board-dan-cikmadan-popup-ta-wiki-menusunde-ve-tuval-wiki-modunda-okunur (in_review) · 0.30.0 · 2026-10-02 → …
   - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim (in_progress) · 0.28.0
 
 ### 🔵 **make-it-a-business** — Make it a Business · $ 865/2000 MRR (43%) · target 2026-09-05 · forecast 2026-10-27 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
   Unblocks: hello-world-pr
+  - a-light-mode-dreamcontext-promo-video-is-cut-from-real-app-footage-in-the-reel-grammar-the-owner-keeps-sending (in_review) · 0.30.0
   - hosted-dreamcontext-com-a-github-oauth-collaboration-layer-over-the-brain (todo) · BACKLOG
   - share-one-knowledge-file-or-board-over-a-tunnel-via-a-read-only-mutation-free-surface (todo) · BACKLOG
 

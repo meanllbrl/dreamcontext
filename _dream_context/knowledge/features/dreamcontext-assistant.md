@@ -18,6 +18,7 @@ released_version: null
 tags:
   - 'topic:desktop'
   - 'topic:agents'
+  - 'topic:assistant'
   - 'topic:cli'
   - 'domain:security'
   - 'layer:backend'
@@ -120,7 +121,7 @@ hands: a real key press, the real app, a reboot.
 ### The notch as a notification center; the Assistant decides how it is shown (2026-10-04)
 
 Task `the-notch-becomes-a-notification-center-and-the-assistant-decides-how-each-reply-is-shown`.
-Built and unit-tested; open on the owner running it in the installed .app.
+Built and unit-tested, committed in `55c6ff92`; open on the owner running it in the installed .app.
 
 - [ ] No automatic pop-out (the side seat is gone); Pop out / Dock stay the owner's.
 - [ ] Inbox: finished chats off screen (presence-gated), unread automation posts until seen / opened / ignored, running automations with photos, account limit + switch as one row; clicks route through `dreamcontext://`.
@@ -129,8 +130,19 @@ Built and unit-tested; open on the owner running it in the installed .app.
 - [ ] Listening state + earcons; STT retried twice; a silent whisper is `stt_failed` (503), not `stt_unconfigured`.
 - [ ] The Assistant's own default model sonnet + medium, persisted from the notch composer.
 
+### The notch after its first day as a notification center (2026-10-04)
+
+- [x] **The Assistant closes chats in other projects** (`31f22c57`): `dreamcontext assistant close <sessionId>` or `--vault <v> [--status idle]`; an idle chat closes directly, a working/asking one needs `--force`, and a forced close of a busy chat is a notch proposal below `bypass`. Status is re-read after approval (a chat that became busy meanwhile is skipped); the Assistant's own chat and ended chats are never targets; the notch relays `close` to an open project window and never builds one. `tests/unit/assistant-close.test.ts`, `assistant-doorbell-close.test.ts`, `assistant-command-executor.test.ts`.
+- [x] **No finished-chat peek is lost** (`ab02990a`): arrivals queue until the peek is free (one at a time, cap 3) instead of being listed silently under a prompt or the open notch; an event peek holds 20 s (was 6.5 s) and the pill names a finish for 10 min. `tests/unit/assistant-notch-inbox.test.ts`.
+- [ ] **A peek never folds under the pointer, and Esc folds the open notch over any app** (`ab02990a`): the notch asks the OS where the cursor is, and holds Esc (Carbon hotkey) only while open, replaying it into the webview so open menus take it first. Native; awaiting the owner's in-app check.
+- [ ] **The tick is heard and the tap is felt from the first notification** (`e6371858`): a native system sound via `assistant_haptic(sound)` instead of autoplay-suspended WebAudio, and the trackpad actuator driven directly (MultitouchSupport, dlopen'd; AppKit fallback). Native; awaiting the owner's in-app check.
+- [ ] **Files reach the notch** (`2a6451a4`): the Attach picker works (`pick_paths` granted; the notch does not fold on the focus loss the sheet causes), a file dragged over the folded notch opens it on the chat and drops into the composer as a path, and the hover peek fires reliably from native mouse-move monitors (`assistant://hover`). Native; awaiting the owner's in-app check.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-10-04] A non-activating panel gets nothing the OS reserves for the active app — ask the OS, or go native.** The notch is a non-activating panel of an app usually not in front, so WKWebView hover tracking (key window only), `NSHapticFeedbackManager` (active app only), WebAudio (suspended until a click) and Tauri's default drag-drop handler all silently failed in it. Each was replaced by a native path (cursor-position query, mouse-move monitors, direct actuator, system sound, drag-drop handler off). Platform facts behind it: `knowledge/desktop-beta-tauri-multivault.md` § "macOS activation and focus".
+- **[2026-10-04] Closing another project's chat is graded by what it would interrupt.** Idle closes freely; working or asking needs `--force`, and a forced close of a busy chat is a proposal below `bypass`. The status is re-read AFTER approval, because the owner's decision takes time and the chat may have started working in it.
 
 - **[2026-10-04] The Assistant, not the notch, decides how a reply is shown, by a cue it writes.** Owner: "the agent decides … so that the experience is seamless." Each text block opens with an invisible `<!-- notch:progress|present[ stay] -->` line; the client strips it at its single text-update point and from the replay, and a progress block never reaches the speech queue. An HTML comment so an unparsed cue renders as nothing anywhere. No auto pop-out any more: the notch opens and folds in place, and the owner touching it makes it theirs.
 - **[2026-10-04] The live context carries no project text, by construction.** Session titles, replies and questions are other agents' words; putting them in the owner's own turn would either launder them as the owner's voice or taint every turn (turning every `auto` verb into a proposal). Ids, enums, durations and sanitised names only; the Assistant reads words through `assistant sessions`, which taints as designed.
@@ -196,6 +208,12 @@ drives all of it against the real built server on an isolated HOME.**
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-04 (later) - The Assistant can close chats, and the notch stops losing things
+
+- **Close** `31f22c57`: `dreamcontext assistant close`, graded idle / `--force` / proposal, re-checked after approval; CLI manifest regenerated, briefing carries the verb.
+- **Notch fixes** `ab02990a`, `e6371858`, `2a6451a4`: queued peeks with longer holds, a pointer-aware fold, Esc over any app, native sound + haptics, attach and drag-drop, native hover.
+- **PRD reconciliation:** a new criteria block — two ticked from unit tests, three native ones left for the owner's in-app check; two decisions recorded; the 10-04 notification-center block noted as committed in `55c6ff92` but left unticked (owner check). `status` stays `in_review`.
 
 ### 2026-10-04 - The notch becomes a notification center, and the Assistant decides how each reply is shown
 

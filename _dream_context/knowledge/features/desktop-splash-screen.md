@@ -46,15 +46,18 @@ becomes the product's own logo reveal instead of dead time.
 - [x] The window is its own transparent, undecorated, always-on-top, centred 720×405 Tauri window (`splash` label) whose rounded card IS its shape, filled with the clip's first frame so there is no flash before the video paints.
 - [x] The clip follows **macOS appearance**, not the app's theme: the dashboard's own choice lives on an origin this page cannot read, and the app theme defaults to System, so light Mac → light clip, dark Mac → dark clip.
 - [x] Audio plays at half volume; if the webview refuses sound, the clip plays muted rather than not at all.
-- [x] Handoff is a two-key gate: the Launcher is built **hidden** once the server answers, and shown only when (1) the splash is done — clip ended, user skipped by click/key, or the page's own 4.5 s fallback fired — and (2) the Launcher's page load finished. Then the Launcher is shown *first*, under the always-on-top splash, which fades (340 ms) and closes, so the app is never windowless between the two.
-- [x] **Fail open on both keys:** a page that never reports and a Launcher whose load event never arrives each have a Rust-side deadline (6 s / 8 s) that turns the key anyway — a visible app with a problem beats a hidden one. A startup failure calls `abort` and drops the splash at once, after the error window exists.
+- [x] Handoff is a two-key gate: the Launcher is built **hidden** once the server answers, and shown only when (1) the splash is done — clip ended, user skipped by click/key, the clip never started within 3 s and the page showed the still instead, or the page's safety timer (the clip's length plus a second, from when it started) fired — and (2) the Launcher's page load finished. Then the Launcher is shown *first*, under the always-on-top splash, which fades (340 ms) and closes, so the app is never windowless between the two.
+- [x] **Fail open on both keys:** a page that never reports and a Launcher whose load event never arrives each have a Rust-side deadline (8 s / 10 s — the splash deadline must never cut a clip that started at its 3 s limit) that turns the key anyway — a visible app with a problem beats a hidden one. A startup failure calls `abort` and drops the splash at once, after the error window exists.
 - [x] A slow boot says so: once the clip has ended and the app is still coming, a quiet "Starting…" hint fades in.
 - [x] `prefers-reduced-motion` shows the finished lockup still instead of the animation; a clip error or a failed fetch does the same.
 - [x] A Login Item launch with the notch enabled opens no Launcher, so it gets **no splash** either.
+- [ ] **The clip plays, with sound, in macOS Low Power Mode** (working tree): the page loads the clip and invokes `splash_play`; the shell answers with `window.eval("window.__dcSplashPlay()")`, whose `play()` counts as a user gesture. Measured in a real WKWebView under Low Power Mode, unmuted, start to `ended`; awaiting commit and the owner's launch.
 - [ ] Owner sign-off in the installed .app: the clip plays on *every* launch and the sound is audible.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-10-04] The shell starts the clip, not the page.** Low Power Mode blocks gesture-less video entirely, so a page that autoplays shows a silent still on a battery-saving Mac. A play started from the shell's `evaluateJavaScript` counts as a user gesture; the page's 3 s no-start fallback (still image) stays as the fail-open path if the shell never answers.
 
 - **[2026-10-04] The opening screen may never become a reason to wait.** It exists to cover a gap the app already had, so every path out of it is fail-open: two Rust deadlines, a page-side fallback timer, click/key skip, a still-frame fallback, and an `abort` for a failed startup. Nothing on the splash path can hold a window back for more than its deadline.
 - **[2026-10-04] It follows the Mac, not the app.** The splash paints before the dashboard exists, on an origin that cannot read the app's theme preference, so `prefers-color-scheme` is the only honest signal. The app's theme defaults to System, so the two agree in the normal case; a hand-pinned opposite theme will see the other clip, and that is accepted.
@@ -69,7 +72,8 @@ becomes the product's own logo reveal instead of dead time.
 - **Permissions:** `desktop/src-tauri/capabilities/splash.json` + `desktop/src-tauri/permissions/splash-done.toml` scope the one IPC command to the splash window.
 - **Boot order:** `lib.rs` opens the splash first and polls `/api/health` on a thread (previously the poll blocked `setup`); the Login-Item-with-notch path skips both Launcher and splash.
 - **Asset origin:** the clip is `Splash-konsolidasyon` in `marketing/remotion` (chosen by the owner from three variants: pieces converging, folding, line-drawn), with a DSP-synthesised logo sting from the `marketing/gen-sfx.py` lineage; renders land in `marketing/remotion/out/splash/`.
-- **Status:** built in the working tree, **not committed**; the app has been rebuilt but the owner has not yet confirmed playback and sound in the installed .app.
+- **Low Power Mode:** WebKit refuses every `<video>.play()` no user gesture started, muted or not (`UserGestureRequired`), and wry's `autoplay: true` does not lift it — the owner saw only the final still, silent. A script run through `-[WKWebView evaluateJavaScript:]` (what `WebviewWindow::eval` uses) DOES count as a gesture, so the page never starts its own clip: it asks with `splash_play` (granted by `allow-splash-play`, splash window only) and the shell evaluates `window.__dcSplashPlay()`.
+- **Status:** committed in `55c6ff92`; the Low Power Mode fix and the longer deadlines are in the working tree, not committed. The owner has not yet confirmed playback and sound in the installed .app.
 
 ## Notes
 
@@ -79,6 +83,11 @@ becomes the product's own logo reveal instead of dead time.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-04 (later) - Committed, and taught to play in Low Power Mode
+
+- The splash landed in `55c6ff92`. The owner then saw only the final still, silent: WebKit's Low Power Mode refuses gesture-less `play()`. The working tree moves the start to the shell (`splash_play` → `window.eval`, which counts as a gesture), adds a 3 s no-start fallback, and lengthens the Rust deadlines to 8 s / 10 s so they never cut a late-starting clip.
+- **PRD reconciliation:** two criteria corrected to the new timings, one added (open: uncommitted, owner launch), one decision recorded, Status line replaced. `status` stays `in_progress`.
 
 ### 2026-10-04 - Created from the built working tree
 

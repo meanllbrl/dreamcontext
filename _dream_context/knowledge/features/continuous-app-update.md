@@ -2,7 +2,7 @@
 id: feat_T2UDusWh
 status: active
 created: '2026-06-13'
-updated: '2026-09-02'
+updated: '2026-10-04'
 released_version: v0.8.1
 tags:
   - devops
@@ -49,6 +49,8 @@ The "CLI-carries-app" model sidesteps notarization entirely: the Tauri shell is 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-04]** **An update must not cost the user their macOS permissions.** An ad-hoc signature's designated requirement is the bundle's `cdhash`, so every update was a new app to TCC and macOS re-asked for files, microphone and automation. CI now signs every release with ONE fixed self-signed certificate ("dreamcontext Release Signing", tag-only `release` environment), asserts the requirement names the pinned SHA-1, and fails rather than falling back to ad-hoc; `dreamcontext app sign-setup` creates a local identity that install/update re-sign with, and `app status` shows the signing mode (`5c5300ad`). Never rotate the certificate: the procedure is in `patterns/release-publish-checklist.md`.
+
 - **[2026-08-27]** **Nothing this repo publishes may name a real project or person** — a durable privacy posture enforced by tests, not convention. The announcement leak (a screenshot showed private project names) revealed the same defect everywhere the codebase reached for a worked example: ~300 references to private projects and ~130 to the owner's identity (full name, slug, emails, GitHub login, absolute `/Users/<name>/` import paths) in code comments, CLI `--help` strings, test fixtures, skill docs and agent prompts. `src/` and `dashboard/src/` build into `dist/`, so a comment naming a client shipped to every npm install; the rest is public on GitHub. Everything now names the demo vault cast — the same fictional projects the announcement screenshots show — so an author reaching for "a project name" finds one already there and a reviewer meeting an unfamiliar name knows it is a leak. Provenance stays provenance, measurements stay measurements, and `meanllbrl/dreamcontext` as the APP_RELEASE_REPO is kept (this project's own public repo, a functional constant). Two test assertions broke by renaming fixtures (roster sort order, a shared-surname count); the replacement is deliberately not `ada` (`ada` was already the second example person, and reusing it would have collapsed two people into one while leaving every multi-person test green). Evidence: full unit suite 7617 passed / 0 failed, root and dashboard tsc clean, rebuilt `dist/` greps zero for every private token. (a6e35bf)
 - **[2026-08-27]** **The announcement feed carries nothing personal and skips no release** — a tighter gate and a looser one. (1) The feed's announcement screenshots must show only the demo vault cast (the privacy rule above, applied to the feed specifically); leak = retract. (2) Announcements are hand-authored product news, not a CHANGELOG mirror — so a shipped release with zero announcements is valid and gets no placeholder. The dashboard "What's New" page renders an empty state when there are none, instead of synthesizing one from the changelog. (c020c2a)
 - **[2026-06-13]** Only already-installed apps are auto-updated (hook tick). Never auto-installs from scratch — that requires explicit user intent via `dreamcontext app install`. This avoids surprising the user with a hidden app in `~/Applications`.
@@ -86,6 +88,10 @@ The "CLI-carries-app" model sidesteps notarization entirely: the Tauri shell is 
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-04 - Updates keep macOS permissions
+
+- `5c5300ad`: releases signed with one fixed certificate (CI asserts it, no ad-hoc fallback, actions pinned to SHAs), `scripts/release-signing-cert.sh` for one-time setup, `dreamcontext app sign-setup` for local builds, signing mode in `app status`. Decision recorded; no criteria changed.
 
 ### 2026-08-27 - Privacy posture and announcement gate
 - **Nothing this repo publishes may name a real project or person** (a6e35bf): ~300 project references and ~130 identity references scrubbed from code comments, CLI help, test fixtures, skill docs, agent prompts. Everything now names the demo vault cast. Two test assertions fixed (roster sort order, shared-surname count). Test suite 7617 passed, rebuilt `dist/` greps zero for private tokens.

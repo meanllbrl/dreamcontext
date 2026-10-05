@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-10-03'
+updated: '2026-10-04'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -744,6 +744,10 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-04 — A long slice name gives up its letters, not its share
+
+- `50a13d07`: the pie legend joined name and share into one string, so the ellipsis ate the share first; the share is now its own non-shrinking span, and beside a pie the legend may take half the frame before names truncate (`chart/Legend.tsx`, `chart.css`, `tests/unit/lab-pie-chart.test.ts`). No criteria changed; `status` stays `in_review`.
 
 ### 2026-10-03 — Owner feedback on 0.30.0: a card opens where you click it, and automatic sync can be switched off
 
