@@ -143,9 +143,10 @@
     "id": "v0-30-0",
     "date": "2026-10-02",
     "version": "0.30.0",
-    "title": "Insights you build, not insights you get",
-    "summary": "Insights is now boards you build: cards of blocks on a grid, an inspector that changes any chart, a funnel explorer, custom HTML blocks, and a CLI the agent uses to read and edit the same board you see. The same version also brings the agents channel, where scheduled agents post their runs and you reply in a thread, plus the notch Assistant, in-chat secret and run cards, and editable whiteboards with live widgets.",
+    "title": "Your own assistant, in the notch",
+    "summary": "Give the new Assistant a name, a face and a character: it sits above all your projects, starts chats for you, lets you answer them from the notch and can use your computer. The same release turns Insights into boards you build, puts scheduled agents in a channel where they post reports you reply to, adds question, secret and run cards to chat, and brings whiteboards with live numbers.",
     "tags": [
+      "assistant",
       "insights",
       "agents",
       "dashboard"

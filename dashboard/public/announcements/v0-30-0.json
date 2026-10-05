@@ -1,20 +1,45 @@
 {
   "hero": {
     "eyebrow": "v0.30.0  ·  2 October 2026",
-    "headline": "Insights you build, not insights you get",
-    "sub": "An insight used to come with one drawing and you lived with it. Insights is now a set of boards: cards on a grid you drag and resize, each one built from blocks you pick and tune. Your team and your agents see the same board.",
+    "headline": "Your own assistant, in the notch",
+    "sub": "Give it a name, a face and a character, and it sits above all your projects. It sees every chat that is running, starts new ones for you, and tells you the moment something needs you. Insights, agents, chat and whiteboards all grew up in the same release.",
     "shot": {
-      "src": "shots/v0-30-0/board.png",
-      "alt": "The Insights page on a board named Growth, with tabs for Product, Revenue, Growth and Funnels. Stat cards for MRR (4,920 USD), Monthly churn (4.4 %) and Trial-to-paid conversion (13.2 %), each with a sparkline, sit beside a wide area chart of Paying customers climbing from 12 to 41 between Jul 27 and Sep 21, and a bar for Weekly active teams at 171.",
-      "caption": "One board per tab. The ones you had before arrive as boards, one per category, in the order you kept them."
+      "src": "shots/v0-30-0/assistant-inbox.png",
+      "alt": "The Assistant, named Nova, open under the Mac's notch on its Now view. One chat is still working (orbit-site, rewriting the pricing page hero). Under Notifications: the Orbit Labs account hit its 5-hour limit and is back at 03:00; ledger finished reconciling the September invoices (410 of 412 match); the Weekly funnel report agent posted that trial to paid held at 14.2 % while checkout starts fell 9 %. Under Handed off: orbit, done, setting up the weekly funnel report.",
+      "caption": "The notch is a notification bar too: a chat that finished, an agent's new post, an account at its limit.",
+      "frame": "plain"
     }
   },
   "blocks": [
     {
       "kind": "split",
       "side": "right",
-      "title": "Change the chart, not the request",
-      "body": "In Edit mode every card opens an inspector: the block's type, its data and every option it has (fill area, colour, series, row limit, and more). Each option visibly changes the drawing, and ⌘Z takes it back. You don't need to write any code.",
+      "title": "Ask from any app",
+      "body": "Press its hotkey wherever you are and say what you want. It opens the right project, starts a chat there and sends the prompt. When that chat asks for permission, you answer it in the notch, without hunting for the window. Need something every week? It asks that project's own agent to set up the automation.",
+      "shot": {
+        "src": "shots/v0-30-0/assistant-delegate.png",
+        "alt": "The notch's Chat view. The request 'Every Monday at 9, send me orbit's funnel report.' is followed by an 'Assistant chat orbit' tool row and Nova's reply: 'Asked orbit to set it up. Its own agent will create the weekly automation; I will tell you when it is done.' The header reads 'orbit is on it'.",
+        "caption": "It hands the work to the project; the project's own agent does it.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "It can use your computer",
+      "body": "Ask what is on your screen and it takes a look. Ask it to put a meeting in your calendar and it opens the app, clicks and types, then tells you it's done. Every step it took is folded under its reply, so you can open any one and see exactly what it did.",
+      "shot": {
+        "src": "shots/v0-30-0/assistant-computer.png",
+        "alt": "Nova's reply to a calendar request, with its steps expanded under 'Worked through it: 6 steps': open application, screenshot, double click, type, key, screenshot, each with its duration. Below: 'Done: \"Team sync\" is on your calendar, Thursday 10:00 to 10:30.'",
+        "caption": "Six real steps, each one you can open.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Insights are boards you build",
+      "body": "Insights is now a set of boards: cards on a grid you drag and resize, built from blocks you pick. In Edit mode every card opens an inspector with the block's type, its data and every option it has, and each option visibly changes the drawing. Your agent reads and edits the same board through the CLI.",
       "shot": {
         "src": "shots/v0-30-0/inspector.png",
         "alt": "The Growth board in Edit mode with an inspector open on the right for the Paying customers card. It lists the card's title and main insight, its single Line block, and the Line options: Type, Data, Dataset, a checked Fill area box, Color, Series and Row limit.",
@@ -25,7 +50,7 @@
       "kind": "split",
       "side": "left",
       "title": "A funnel you can take apart",
-      "body": "The funnel explorer is a card of its own. Pick a platform, language or country and every page follows: the daily trend, the benchmark, the flow, the steps and a segments table per dimension. A step that wasn't measured is marked that way, not shown as zero.",
+      "body": "The funnel explorer is a card of its own. Pick a platform, language or country and every tab follows: the daily trend, the benchmark, the flow, the steps and a segments table per dimension. A step that wasn't measured is marked that way, not shown as zero.",
       "shot": {
         "src": "shots/v0-30-0/explorer.png",
         "alt": "A Signup funnel card with chips for Platform (Meta Ads, TikTok Ads, Unattributed), Language and Country, a 'Pin All traffic as a lane' control, and tabs Daily, Benchmark, Flow, Steps, Platform, Language and Country. The Daily tab shows Visit to lead over 28 days, with 'Checkout to purchase' struck through as not measured.",
@@ -33,21 +58,44 @@
       }
     },
     {
-      "kind": "terminal",
-      "title": "The agent reads the same board you do",
-      "lines": [
-        "$ dreamcontext lab board show growth",
-        "  c-pay · paying-customers @ 3,0 6x4",
-        "    [0] line paying-customers: Paying customers: 41 customers · 9 points 2026-07-27 → 2026-09-21",
-        "$ dreamcontext lab board add-card growth --insight mrr --block '{\"stat\":{\"delta\":true}}'",
-        "✗ card \"c-mrr\" at cards[2].blocks[0].stat.delta: must be one of none, prev (got true). Fix: set delta to one of none, prev."
-      ]
+      "kind": "shot",
+      "title": "Agents that report on your schedule",
+      "body": "Give each agent a name, a face and a job, then a schedule: weekly, monthly, or the first Monday of the month. Its report waits in the agents channel with its numbers, a chart and a PDF you open right there. Reply in its thread and it picks the work back up and updates the report.",
+      "shot": {
+        "src": "shots/v0-30-0/agents-thread.png",
+        "alt": "The agents channel with the Weekly funnel digest post: 'Week 40: trial to paid held at 14.2%, but checkout starts fell 9% after Tuesday's release', four rows (Visitors 18,420, Trials 1,236, Trial to paid 14.2%, Checkout starts 412, -8.8%), a Checkout starts per day bar chart comparing week 39 and week 40 with the release marked on Tuesday, and its PDF. On the right its thread: the reply 'Split checkout by platform' and the agent's update showing the drop is all on Web (198, -17%) while iOS and Android are flat, with a by-platform chart and a revised PDF.",
+        "caption": "One reply in the thread, and the agent came back with a new split, a new chart and a revised PDF."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "A chat that does more than talk",
+      "body": "Your agent asks with real options you can compare side by side, or swipe through one at a time. Each option is drawn for real, so you pick by looking, not by reading a description.",
+      "shot": {
+        "src": "shots/v0-30-0/chat-question.png",
+        "alt": "A question card in a chat: 'Which view should the Orbit home screen open on?' with three rendered previews side by side: A KPI overview (Active teams 1,284, feature adoption bars), B Usage trend (Weekly active users 18.2k with a this-year vs last-year chart, picked) and C Activation funnel (Signup to invite 33 %, with 4,120 signups narrowing to 1,360 invites). Below: Other, a note field and Submit.",
+        "caption": "Three options drawn for real, one picked.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "Secrets it never sees, commands you run",
+      "body": "When it needs a key, it asks through a masked card: the value goes straight into .env and the agent only learns its name. Then it hands you the command to run right in the chat, and reads the output when it finishes.",
+      "shot": {
+        "src": "shots/v0-30-0/chat-run.png",
+        "alt": "A 'Ran in chat' card for node scripts/migrate.mjs with an exit 0 chip, Copy and Run again buttons, and a ticked 'Send the output back to the agent when it finishes'. The output reads: orbit migrate, POSTHOG_API_KEY found in .env (43 chars), three migrations applied in 2.7s, command exited with code 0. Below: 'Reported back to the agent with the output.'",
+        "caption": "The key it was given through the secret card, read from .env by name. The agent never saw the value.",
+        "frame": "plain"
+      }
     },
     {
       "kind": "split",
       "side": "right",
       "title": "A whiteboard that carries live numbers",
-      "body": "Whiteboards are Excalidraw boards that you and your agent draw on together. A board can hold live insight cards, a task, a to-do list and notes next to the arrows, and a switcher at the top moves you between boards.",
+      "body": "Whiteboards are Excalidraw boards that you and your agent draw on together. Drop a live Insights card, a task or a to-do list next to the arrows, and the numbers stay live while you sketch around them.",
       "shot": {
         "src": "shots/v0-30-0/whiteboard.png",
         "alt": "A whiteboard named 'Trial-to-paid war room' holding a Trial-to-paid conversion insight at 13.2 % with its chart, a Paying customers insight at 41, an in-progress task 'Investigate trial-to-paid drop', a 'This week' to-do list with three items, and a Hypothesis note.",
@@ -56,11 +104,11 @@
     },
     {
       "kind": "note",
-      "text": "Insights is Beta. My Reports are gone: boards replace them, and an old report's insights still have a place on a board. Nothing is written to your vault until your first edit."
+      "text": "The Assistant and Whiteboards are Alpha, Insights is Beta. My Reports are gone: boards replace them, and an old report's insights still have a place on a board. Nothing is written to your vault until your first edit."
     }
   ],
   "closer": {
-    "title": "Open Insights and press Edit",
-    "body": "Your boards are already there. To get a funnel explorer, run Add card → Funnel explorer on an insight that has funnel data."
+    "title": "Create your Assistant",
+    "body": "Open the launcher and press Create dreamcontext Assistant. Then open Insights and press Edit: your boards are already there."
   }
 }
