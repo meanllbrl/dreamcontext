@@ -3,7 +3,6 @@ import { useI18n } from '../../context/I18nContext';
 import { isDesktop } from '../../lib/desktop';
 import { focusHandsfreeBanner, onHandsfreeEvent, OPEN_SHEET, useHandsfree } from './handsfreeStore';
 import { HandsfreeSheet } from './HandsfreeSheet';
-import { handsfreeVisible } from './handsfreeReveal';
 import './handsfree.css';
 
 /**
@@ -20,7 +19,7 @@ export function HandsfreeButton({ vault }: { vault: string }) {
 
   useEffect(() => onHandsfreeEvent(OPEN_SHEET, () => setOpen(true)), []);
 
-  if (!isDesktop() || unavailable || !vault || !handsfreeVisible(status)) return null;
+  if (!isDesktop() || unavailable || !vault) return null;
   const phase = status?.phase ?? 'home';
   const goRunning = job?.kind === 'go' && job.status === 'running';
   const label = phase === 'home' && !goRunning ? t('handsfree.button') : t(`handsfree.phase.${phase}`);
