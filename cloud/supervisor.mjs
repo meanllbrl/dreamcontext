@@ -16,18 +16,21 @@
 //  - first boot (no build, no last good): the version pin the laptop wrote into the repo
 //    (`.devcontainer/bootstrap/version.json`, read only from the locked-down checkout); that
 //    install becomes the last good build at once, so the checkout is read only on a first boot;
-//  - `prepare` / `lockdown` (entrypoint, root): the checkout's .devcontainer tree is locked down
-//    before anything reads it, and every read of it is no-follow and owner/mode-checked;
+//  - `prepare` / `lockdown` (entrypoint, root): /workspaces loses other-write, and ONLY the
+//    private repo's checkout (/workspaces/dreamcontext-handsfree) has its .devcontainer tree
+//    locked down before anything reads it; every read of it is no-follow and owner/mode-checked;
+//  - root's npm runs from /root with no user/global npmrc and its own cache (no dcuser config);
 //  - bind-mounts the mirror (/workspaces/dc-home) on the laptop's HOME once a trip names it
 //    (dcserver asks through $PUB/mirror-request), and again at every start.
 // Node builtins only.
 import net from 'node:net';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import { execFileSync, spawn } from 'node:child_process';
 import {
   appendFileSync, chmodSync, closeSync, constants as FS, copyFileSync, existsSync, fchmodSync, fchownSync, fstatSync, lstatSync,
-  mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync,
+  mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -81,9 +84,25 @@ export function validMirrorPath(p) {
   return typeof p === 'string' && MIRROR_RE.test(p) && !p.split('/').includes('..');
 }
 
+let runCmd = (cmd, args, opts) => execFileSync(cmd, args, opts);
+/** Tests only: record (and fake) every command the supervisor runs. */
+export function setShForTests(fn) { runCmd = fn ?? ((cmd, args, opts) => execFileSync(cmd, args, opts)); }
+
 function sh(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15 * 60_000, ...opts });
+  return runCmd(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15 * 60_000, ...opts });
 }
+
+/**
+ * Root's npm never reads a config, a cache or a project from anywhere dcuser can write: cwd
+ * and cache under root's own HOME, no user/global npmrc, and an env built from scratch (no
+ * NPM_CONFIG_* / npm_config_* can leak in). The prefix and the pack destination are root-made.
+ */
+export const NPM_CWD = '/root';
+// Two DIFFERENT paths: npm refuses `--userconfig /dev/null --globalconfig /dev/null` ("double-
+// loading config"). The global one is a path inside root's 0700 HOME that is never created (npm
+// reads an absent config as empty; only root could ever create it).
+export const NPM_CONFIG_ARGS = ['--userconfig', '/dev/null', '--globalconfig', '/root/.dc-hf-npm/globalconfig', '--cache', '/root/.npm'];
+const npmEnv = () => ({ PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: '/root' });
 
 function writeFingerprint() {
   const fp = existsSync(PKG(OPT)) ? computeFingerprint(PKG(OPT)) : null;
@@ -94,15 +113,85 @@ function writeFingerprint() {
   return fp;
 }
 
-/** `npm i` a local tarball into a fresh prefix, root-owned and read-only. */
-function installInto(prefix, spec) {
+const TAR_MAX_BYTES = 1024 * 2 ** 20; // decompressed cap for one npm pack
+
+/** A tar header field as a string (NUL-terminated). */
+function tarStr(buf, off, len) {
+  const end = buf.indexOf(0, off);
+  return buf.toString('utf-8', off, end === -1 || end > off + len ? off + len : end);
+}
+
+/**
+ * The entries of an npm pack (gzip + ustar/pax), validated before anything is written: only
+ * regular files and directories, every path under `package/`, never absolute, never escaping
+ * via `..`, never a link, a device or a FIFO. Throws on anything else (the whole tarball is
+ * refused). Returns `[{ path (relative to package/), dir, mode, data }]`.
+ */
+export function readPackEntries(tgz) {
+  const tar = gunzipSync(readFileSync(tgz), { maxOutputLength: TAR_MAX_BYTES });
+  const out = [];
+  let off = 0;
+  let paxPath = null;
+  let longName = null;
+  while (off + 512 <= tar.length) {
+    const h = tar.subarray(off, off + 512);
+    if (h.every((b) => b === 0)) break;
+    const size = parseInt(tarStr(h, 124, 12).trim() || '0', 8);
+    const type = String.fromCharCode(h[156] || 48);
+    const body = tar.subarray(off + 512, off + 512 + size);
+    off += 512 + Math.ceil(size / 512) * 512;
+    if (!Number.isSafeInteger(size) || size < 0 || body.length !== size) throw new Error('the tarball is truncated');
+    if (type === 'x') { // pax extended header: applies to the next entry
+      for (const rec of body.toString('utf-8').split('\n')) {
+        const m = /^\d+ path=(.*)$/.exec(rec);
+        if (m) paxPath = m[1];
+      }
+      continue;
+    }
+    if (type === 'g') continue; // pax global header: no path
+    if (type === 'L') { longName = tarStr(body, 0, body.length); continue; }
+    const prefix = tarStr(h, 345, 155);
+    const name = paxPath ?? longName ?? (prefix ? `${prefix}/${tarStr(h, 0, 100)}` : tarStr(h, 0, 100));
+    paxPath = null;
+    longName = null;
+    if (type !== '0' && type !== '5') throw new Error(`the tarball holds ${name}, which is not a regular file or directory (type ${type}); refused`);
+    if (name.startsWith('/') || name.includes('\\') || name.includes('\0')) throw new Error(`the tarball path ${name} is absolute or malformed; refused`);
+    const parts = name.split('/').filter((x, i, a) => x !== '' || i === a.length - 1);
+    if (parts[0] !== 'package' || parts.some((x) => x === '..' || x === '.')) throw new Error(`the tarball path ${name} escapes package/; refused`);
+    const rel = parts.slice(1).filter((x) => x !== '').join('/');
+    if (!rel) continue;
+    out.push({ path: rel, dir: type === '5', mode: parseInt(tarStr(h, 100, 8).trim() || '644', 8), data: body });
+  }
+  return out;
+}
+
+/**
+ * Install a verified npm pack into a fresh root-owned prefix (D26): the tarball is extracted by
+ * root into `<prefix>/node_modules/dreamcontext` (entries checked by {@link readPackEntries}),
+ * then `npm ci --omit=dev --omit=optional --ignore-scripts` runs IN that package dir, so npm
+ * installs exactly the shipped npm-shrinkwrap.json (npm ignores a shrinkwrap inside a tarball
+ * installed by file spec). A package without npm-shrinkwrap.json is refused: no install by range.
+ */
+export function installInto(prefix, tgz) {
+  const entries = readPackEntries(tgz);
+  if (!entries.some((e) => !e.dir && e.path === 'npm-shrinkwrap.json')) {
+    throw new Error('the package ships no npm-shrinkwrap.json; refused (its dependencies would install by range)');
+  }
   rmSync(prefix, { recursive: true, force: true });
   mkdirSync(prefix, { recursive: true, mode: 0o755 });
-  writeFileSync(join(prefix, 'package.json'), '{"name":"dc-hf-runtime","private":true}\n');
-  sh('npm', ['i', '--prefix', prefix, '--ignore-scripts', '--omit=optional', '--no-audit', '--no-fund', spec], { env: { PATH: process.env.PATH, HOME: '/root' } });
+  const pkgDir = PKG(prefix);
+  mkdirSync(pkgDir, { recursive: true, mode: 0o755 });
+  for (const e of entries) {
+    const dest = join(pkgDir, ...e.path.split('/'));
+    if (e.dir) { mkdirSync(dest, { recursive: true, mode: 0o755 }); continue; }
+    mkdirSync(join(dest, '..'), { recursive: true, mode: 0o755 });
+    writeFileSync(dest, e.data, { flag: 'wx', mode: e.mode & 0o111 ? 0o755 : 0o644 });
+  }
+  rmSync(join(pkgDir, '.npmrc'), { force: true }); // npm never packs one; never honour one either
+  sh('npm', ['ci', '--omit=dev', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund', ...NPM_CONFIG_ARGS], { cwd: pkgDir, env: npmEnv() });
   sh('chown', ['-R', 'root:root', prefix]);
   sh('chmod', ['-R', 'go-w', prefix]);
-  if (!existsSync(join(PKG(prefix), 'dist', 'index.js'))) throw new Error('installed package has no dist/index.js');
+  if (!existsSync(join(pkgDir, 'dist', 'index.js'))) throw new Error('installed package has no dist/index.js');
 }
 
 /** The tarball must be an npm pack of dreamcontext at exactly `version`. */
@@ -128,8 +217,8 @@ export function isPin(v) {
 /** `npm pack dreamcontext@<exact version>` into `dir`; returns the tarball path. */
 function npmPackExact(version, dir) {
   if (!SEMVER_RE.test(version)) throw new Error(`"${version}" is not an exact version`);
-  const out = sh('npm', ['pack', `dreamcontext@${version}`, '--pack-destination', dir, '--json', '--ignore-scripts', '--no-audit', '--no-fund'], {
-    cwd: dir, env: { PATH: process.env.PATH, HOME: '/root' },
+  const out = sh('npm', ['pack', `dreamcontext@${version}`, '--pack-destination', dir, '--json', '--ignore-scripts', '--no-audit', '--no-fund', ...NPM_CONFIG_ARGS], {
+    cwd: NPM_CWD, env: npmEnv(),
   }).toString('utf-8');
   const name = JSON.parse(out)?.[0]?.filename;
   if (typeof name !== 'string' || !/^dreamcontext-[0-9A-Za-z.-]+\.tgz$/.test(name)) throw new Error('npm pack named no tarball');
@@ -194,11 +283,16 @@ const DCSERVER_GID = 2001;
 /** Who may own what in the checkout: the checkout dir (root or codespace), everything in .devcontainer (root only). */
 const TRUST = { rootUid: 0, repoOwners: [0, CODESPACE_UID] };
 
-/** The repo checkouts on /workspaces (GitHub's clone of the private repo); never a dc-* dir. */
+/**
+ * The ONE checkout root ever touches or reads: Codespaces clones the private repo into
+ * /workspaces/<repo name>, and the laptop always creates it as `dreamcontext-handsfree`
+ * (HANDSFREE_REPO_NAME in src/lib/handsfree/codespaces.ts, drift-tested). Any other entry of
+ * /workspaces is never chowned, chmodded, unlinked or read.
+ */
+export const CLONE_NAME = 'dreamcontext-handsfree';
+
 function cloneDirs(workspaces) {
-  let names = [];
-  try { names = readdirSync(workspaces).sort(); } catch { /* none */ }
-  return names.filter((n) => !n.startsWith('dc-') && !n.startsWith('.')).map((n) => join(workspaces, n));
+  return [join(workspaces, CLONE_NAME)];
 }
 
 /** A plain directory (lstat: never a link), owned by one of `owners`, writable by nobody else. */
@@ -255,45 +349,83 @@ for p in sys.argv[1:]:
   } catch (e) { log(`acl strip failed: ${e.message}`); }
 }
 
-/** fd-based: a link is unlinked (never followed), a dir is locked BEFORE its entries are read. */
-function lockTree(p, owner, locked, logLine) {
+/**
+ * fd-based, inside the checkout's .devcontainer: an entry owned by root or codespace becomes
+ * root:root with mode & 0o755 (no setuid/setgid/sticky, no group/other write); a dir is locked
+ * BEFORE its entries are read. A link, a special file, or an entry owned by anyone else (dcuser)
+ * is skipped and logged: never chowned, chmodded, unlinked or followed (the readers refuse it).
+ */
+function lockTree(p, ctx) {
+  let st;
+  try { st = lstatSync(p); } catch (e) { if (e.code !== 'ENOENT') ctx.logLine(`lockdown: ${p}: ${e.message}`); return; }
+  if (st.isSymbolicLink()) { ctx.logLine(`lockdown: ${p} is a link; left alone, never followed`); return; }
+  if (!ctx.owners.includes(st.uid)) { ctx.logLine(`lockdown: ${p} is owned by uid ${st.uid}; skipped`); return; }
+  if (!st.isDirectory() && !st.isFile()) { ctx.logLine(`lockdown: ${p} is not a file or a directory; skipped`); return; }
   let fd;
-  try {
-    fd = openSync(p, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_NONBLOCK);
-  } catch (e) {
-    if (e.code === 'ELOOP' || e.code === 'EMLINK') { // a symlink: its parent is already locked, so this IS the link
-      try { unlinkSync(p); logLine(`lockdown: removed the link ${p}`); } catch (u) { logLine(`lockdown: ${p}: ${u.message}`); }
-    } else if (e.code !== 'ENOENT') logLine(`lockdown: ${p}: ${e.message}`);
-    return;
-  }
+  try { fd = openSync(p, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_NONBLOCK); } catch (e) { ctx.logLine(`lockdown: ${p}: ${e.message}`); return; }
   let dir = false;
   try {
-    const st = fstatSync(fd);
-    if (owner) fchownSync(fd, owner.uid, owner.gid);
-    fchmodSync(fd, (st.mode & 0o7777) & ~0o022);
-    locked.push(p);
-    dir = st.isDirectory();
+    const f = fstatSync(fd);
+    if (f.ino !== st.ino || f.dev !== st.dev) { ctx.logLine(`lockdown: ${p} changed while it was locked; skipped`); return; }
+    ctx.chown(fd);
+    fchmodSync(fd, f.mode & 0o755);
+    ctx.locked.push(p);
+    dir = f.isDirectory();
   } finally {
     closeSync(fd);
   }
-  if (dir) for (const name of readdirSync(p)) lockTree(join(p, name), owner, locked, logLine);
+  if (dir) for (const name of readdirSync(p)) lockTree(join(p, name), ctx);
+}
+
+/**
+ * /workspaces itself (W0 b: `drwxr-xrwx codespace root`) loses other-write, so dcuser can no
+ * longer create, rename or remove entries there. Its writers are root (the dc-* dirs, made by
+ * this entrypoint) and GitHub's agent as root/codespace (the owner): neither needs other-write.
+ */
+function tightenWorkspaces(workspaces, logLine) {
+  let fd;
+  try { fd = openSync(workspaces, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_DIRECTORY | FS.O_NONBLOCK); } catch (e) { logLine(`lockdown: ${workspaces}: ${e.message}`); return; }
+  try {
+    const mode = fstatSync(fd).mode & 0o7777;
+    if (mode & 0o002) {
+      fchmodSync(fd, mode & ~0o002);
+      logLine(`lockdown: ${workspaces} is no longer writable by others`);
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
  * Root, before anything reads the checkout (entrypoint `prepare`, and again after GitHub's
- * one-time re-own at creation): every checkout dir loses group/other write and its ACLs; its
- * whole `.devcontainer` tree becomes root:root, no group/other write, no ACLs (default ones
- * too), and any link in it is removed. A `.devcontainer` that is itself a link is removed.
+ * one-time re-own at creation): /workspaces loses other-write; then ONLY the private repo's
+ * checkout, and only when it is a plain directory owned by root or codespace, loses
+ * group/other write and setuid/setgid/sticky, and its `.devcontainer` tree is locked
+ * ({@link lockTree}) and stripped of ACLs (default ones too).
  */
-export function lockdownClones({ workspaces = '/workspaces', owner = { uid: 0, gid: 0 }, stripAcl = stripAclXattrs, logLine = log } = {}) {
-  for (const repo of cloneDirs(workspaces)) {
-    let fd;
-    try { fd = openSync(repo, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_DIRECTORY | FS.O_NONBLOCK); } catch { continue; } // a link or not a dir: never followed, never trusted
-    try { fchmodSync(fd, (fstatSync(fd).mode & 0o7777) & ~0o022); } finally { closeSync(fd); }
-    const locked = [repo];
-    lockTree(join(repo, '.devcontainer'), owner, locked, logLine);
-    stripAcl(locked);
+export function lockdownClones({
+  workspaces = '/workspaces', chown = (fd) => fchownSync(fd, 0, 0), owners = TRUST.repoOwners, stripAcl = stripAclXattrs, logLine = log,
+} = {}) {
+  tightenWorkspaces(workspaces, logLine);
+  const repo = join(workspaces, CLONE_NAME);
+  let st;
+  try { st = lstatSync(repo); } catch { return; } // no checkout yet
+  if (st.isSymbolicLink() || !st.isDirectory() || !owners.includes(st.uid)) {
+    logLine(`lockdown: ${repo} is not a plain directory owned by root or codespace (uid ${st.uid}); skipped`);
+    return;
   }
+  let fd;
+  try { fd = openSync(repo, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_DIRECTORY | FS.O_NONBLOCK); } catch (e) { logLine(`lockdown: ${repo}: ${e.message}`); return; }
+  try {
+    const f = fstatSync(fd);
+    if (f.ino !== st.ino || f.dev !== st.dev) { logLine(`lockdown: ${repo} changed while it was locked; skipped`); return; }
+    fchmodSync(fd, f.mode & 0o755);
+  } finally {
+    closeSync(fd);
+  }
+  const locked = [repo];
+  lockTree(join(repo, '.devcontainer'), { chown, owners, locked, logLine });
+  stripAcl(locked);
 }
 
 /**
@@ -419,12 +551,44 @@ export function ensureInstalled({
   }
 }
 
+export const CLI_WRAPPER = '/usr/local/bin/dreamcontext';
+
+/**
+ * The `dreamcontext` command (npm ci in the package dir links no `.bin` for the package itself):
+ * a root-owned wrapper with fixed content, written as a temp file and renamed over whatever is
+ * there (an old supervisor's symlink into node_modules/.bin included), so it is never dangling.
+ */
+export function writeCliWrapper(path = CLI_WRAPPER, entry = ENTRY) {
+  const tmp = `${path}.tmp`;
+  rmSync(tmp, { force: true });
+  writeFileSync(tmp, `#!/bin/sh\nexec /usr/bin/node ${entry} "$@"\n`, { mode: 0o755, flag: 'wx' });
+  chmodSync(tmp, 0o755);
+  renameSync(tmp, path);
+}
+
+/** Every successful install: `next` becomes `opt` (the old build kept at `prev` when given), then the wrapper. */
+export function swapInBuild({ next = OPT_NEXT, opt = OPT, prev = null, wrapper = CLI_WRAPPER, entry = ENTRY } = {}) {
+  if (prev) {
+    rmSync(prev, { recursive: true, force: true });
+    if (existsSync(opt)) renameSync(opt, prev);
+  } else {
+    rmSync(opt, { recursive: true, force: true });
+  }
+  renameSync(next, opt);
+  writeCliWrapper(wrapper, entry);
+}
+
+/** The runtime update failed its health check: the last good build back in place, then the wrapper. */
+export function restoreLastGood({ opt = OPT, prev = OPT_PREV, wrapper = CLI_WRAPPER, entry = ENTRY, logLine = log } = {}) {
+  rmSync(opt, { recursive: true, force: true });
+  renameSync(prev, opt);
+  try { writeCliWrapper(wrapper, entry); } catch (e) { logLine(`dreamcontext command not rewritten: ${e.message}`); }
+}
+
 function installBuild(tgz, version) {
   if (version) verifyTarball(tgz, version); // the last good build was verified when it was installed
   installInto(OPT_NEXT, tgz);
-  rmSync(OPT, { recursive: true, force: true });
-  renameSync(OPT_NEXT, OPT);
-  sh('ln', ['-sf', join(OPT, 'node_modules', '.bin', 'dreamcontext'), '/usr/local/bin/dreamcontext']);
+  swapInBuild();
 }
 
 // ─── the mirror (the laptop HOME, bind-mounted from the persistent disk) ──────
@@ -560,9 +724,7 @@ async function installRuntime() {
     const pin = readRuntimeRequest(join(SRV, 'runtime-request.json'));
     fetched = fetchIntoRuntime(pin);
     installInto(OPT_NEXT, fetched.tgz);
-    rmSync(OPT_PREV, { recursive: true, force: true });
-    if (existsSync(OPT)) renameSync(OPT, OPT_PREV);
-    renameSync(OPT_NEXT, OPT);
+    swapInBuild({ prev: OPT_PREV });
     swapped = true;
     const fp = writeFingerprint();
     installing = false;
@@ -579,8 +741,7 @@ async function installRuntime() {
     log(`runtime install failed: ${e.message}`);
     if (swapped && existsSync(OPT_PREV)) {
       if (child) { const c = child; child = null; c.removeAllListeners('exit'); c.kill('SIGKILL'); }
-      rmSync(OPT, { recursive: true, force: true });
-      renameSync(OPT_PREV, OPT);
+      restoreLastGood();
       log('fell back to the last good build');
     }
     writeFingerprint();

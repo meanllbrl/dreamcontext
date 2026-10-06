@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -9,9 +9,11 @@ import { CloudStateStore, parseTripRecord } from '../../src/server/cloud-state.j
 import { seamRefusal } from '../../src/cli/commands/cloud.js';
 // @ts-expect-error: a plain .mjs script (copied verbatim into the private repo), no types.
 import {
-  computeFingerprint, copyVerifiers, ensureInstalled, fetchVerified, INTEGRITY_RE, isPin, lockdownClones, readRuntimeRequest, repoPin, SEMVER_RE, validMirrorPath,
+  CLONE_NAME, CLI_WRAPPER, computeFingerprint, restoreLastGood, swapInBuild, writeCliWrapper, copyVerifiers, ensureInstalled, fetchVerified, installInto, INTEGRITY_RE, isPin, lockdownClones, NPM_CONFIG_ARGS, NPM_CWD, readRuntimeRequest,
+  repoPin, SEMVER_RE, setShForTests, validMirrorPath,
 } from '../../cloud/supervisor.mjs';
 import { INTEGRITY_RE as TS_INTEGRITY_RE, SEMVER_RE as TS_SEMVER_RE } from '../../src/lib/handsfree/npm-pin.js';
+import { HANDSFREE_REPO_NAME } from '../../src/lib/handsfree/codespaces.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'cloud-sup-')); });
@@ -82,13 +84,15 @@ describe('cloud trip state', () => {
 const TRUST = { rootUid: process.getuid!(), repoOwners: [process.getuid!()] };
 
 /** A real `npm pack`-shaped tarball (package/package.json) and npm's sha512 integrity of it. */
-function makeTgz(where: string, version: string, name = 'dreamcontext', extra = ''): { path: string; integrity: string } {
+function makeTgz(where: string, version: string, name = 'dreamcontext', extra = '', shrinkwrap = true): { path: string; integrity: string } {
   const src = mkdtempSync(join(where, 'pkgsrc-'));
   mkdirSync(join(src, 'package', 'dist'), { recursive: true });
   writeFileSync(join(src, 'package', 'package.json'), JSON.stringify({ name, version }));
   writeFileSync(join(src, 'package', 'dist', 'index.js'), `// ${name} ${version}${extra}\n`);
+  if (shrinkwrap) writeFileSync(join(src, 'package', 'npm-shrinkwrap.json'), JSON.stringify({ name, version, lockfileVersion: 3, packages: {} }));
   const path = join(where, `${name}-${version}${extra ? '-x' : ''}.tgz`);
-  execFileSync('tar', ['-czf', path, '-C', src, 'package']);
+  // COPYFILE_DISABLE: macOS tar would add AppleDouble `._package` entries (npm pack never does).
+  execFileSync('tar', ['-czf', path, '-C', src, 'package'], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
   return { path, integrity: `sha512-${createHash('sha512').update(readFileSync(path)).digest('base64')}` };
 }
 
@@ -267,7 +271,7 @@ describe('the repo checkout is untrusted until root locks it down (AC19)', () =>
     for (const d of [repo, join(repo, '.devcontainer'), b]) chmodSync(d, 0o777);
   };
   const pinFiles = () => ({ 'version.json': JSON.stringify(PIN) });
-  const lockdown = () => lockdownClones({ workspaces: ws, owner: null, stripAcl: () => {}, logLine: log });
+  const lockdown = () => lockdownClones({ workspaces: ws, chown: () => {}, owners: [process.getuid!()], stripAcl: () => {}, logLine: log });
   const pin = () => repoPin({ workspaces: ws, logLine: log, trust: TRUST });
 
   it('a pin planted in a dcuser-writable checkout is refused; after the lockdown the same checkout is read', () => {
@@ -301,7 +305,7 @@ describe('the repo checkout is untrusted until root locks it down (AC19)', () =>
     expect(lines.join('\n')).toMatch(/dreamcontext-handsfree is writable by group or others/);
   });
 
-  it('a symlinked .devcontainer or bootstrap dir is refused, and the lockdown removes the link without touching its target', () => {
+  it('a symlinked .devcontainer or bootstrap dir is refused; the lockdown leaves the link alone and never follows it', () => {
     const elsewhere = join(dir, 'elsewhere');
     mkdirSync(join(elsewhere, 'bootstrap'), { recursive: true });
     writeFileSync(join(elsewhere, 'bootstrap', 'version.json'), JSON.stringify(PIN));
@@ -314,8 +318,11 @@ describe('the repo checkout is untrusted until root locks it down (AC19)', () =>
     const dst = join(dir, 'srv-verifiers.json');
     expect(copyVerifiers({ workspaces: ws, dst, owner: null, logLine: log, trust: TRUST })).toBe(false);
     lockdown();
-    expect(existsSync(join(repo, '.devcontainer'))).toBe(false);
+    expect(lstatSync(join(repo, '.devcontainer')).isSymbolicLink()).toBe(true); // never unlinked
     expect(statSync(elsewhere).mode & 0o777).toBe(0o777); // never followed
+    expect(lines.join('\n')).toMatch(/lockdown: .*\.devcontainer is a link; left alone, never followed/);
+    expect(pin()).toBeNull();
+    rmSync(join(repo, '.devcontainer')); // the owner removes it
 
     // The bootstrap dir as a link inside a real .devcontainer.
     lines = [];
@@ -360,3 +367,285 @@ describe('the repo checkout is untrusted until root locks it down (AC19)', () =>
     expect(JSON.parse(readFileSync(dst, 'utf8')).generation).toBe(4);
   });
 });
+
+describe('root touches ONLY the private repo\'s checkout, strips setuid, and tightens /workspaces (review r5)', () => {
+  const uid = process.getuid!();
+  let ws: string; let lines: string[]; let chowned: number[];
+  beforeEach(() => { ws = join(dir, 'workspaces'); mkdirSync(ws); lines = []; chowned = []; });
+  const lockdown = (owners = [uid]) => lockdownClones({
+    workspaces: ws, chown: (fd: number) => { chowned.push(fstatSync(fd).ino); }, owners, stripAcl: () => {}, logLine: (m: string) => lines.push(m),
+  });
+  const mode = (p: string) => lstatSync(p).mode & 0o7777;
+
+  it('the checkout name is the laptop\'s repo name (drift)', () => {
+    expect(CLONE_NAME).toBe(HANDSFREE_REPO_NAME);
+  });
+
+  it('a dcuser-made /workspaces/evil/.devcontainer with a 4755 file is never chowned or chmodded: it keeps its owner and mode', () => {
+    const b = join(ws, 'evil', '.devcontainer', 'bootstrap');
+    mkdirSync(b, { recursive: true });
+    writeFileSync(join(b, 'tool'), '#!/bin/sh\n');
+    chmodSync(join(b, 'tool'), 0o4755);
+    for (const d of [join(ws, 'evil'), join(ws, 'evil', '.devcontainer'), b]) chmodSync(d, 0o777);
+    const before = lstatSync(join(b, 'tool'));
+    lockdown();
+    const after = lstatSync(join(b, 'tool'));
+    expect(after.uid).toBe(before.uid);
+    expect(mode(join(b, 'tool'))).toBe(0o4755);
+    for (const d of [join(ws, 'evil'), join(ws, 'evil', '.devcontainer'), b]) expect(mode(d)).toBe(0o777);
+    expect(chowned).not.toContain(before.ino);
+    expect(chowned).toEqual([]); // no checkout of the private repo here: nothing at all is chowned
+  });
+
+  it('the real checkout loses setuid/setgid/sticky and group/other write; its entries are chowned to root', () => {
+    const repo = join(ws, CLONE_NAME);
+    const b = join(repo, '.devcontainer', 'bootstrap');
+    mkdirSync(b, { recursive: true });
+    writeFileSync(join(b, 'tool'), '#!/bin/sh\n');
+    chmodSync(join(b, 'tool'), 0o4777);
+    writeFileSync(join(b, 'version.json'), '{}');
+    chmodSync(join(b, 'version.json'), 0o2666);
+    chmodSync(b, 0o3777);
+    chmodSync(join(repo, '.devcontainer'), 0o1777);
+    chmodSync(repo, 0o2777);
+    lockdown();
+    expect(mode(join(b, 'tool'))).toBe(0o755);
+    expect(mode(join(b, 'version.json'))).toBe(0o644);
+    expect(mode(b)).toBe(0o755);
+    expect(mode(join(repo, '.devcontainer'))).toBe(0o755);
+    expect(mode(repo)).toBe(0o755);
+    expect(chowned.sort()).toEqual([join(repo, '.devcontainer'), b, join(b, 'tool'), join(b, 'version.json')].map((p) => lstatSync(p).ino).sort());
+  });
+
+  it('a checkout owned by anyone but root/codespace (here: an untrusted uid) is skipped and logged, never chowned or chmodded', () => {
+    const repo = join(ws, CLONE_NAME);
+    const b = join(repo, '.devcontainer', 'bootstrap');
+    mkdirSync(b, { recursive: true });
+    writeFileSync(join(b, 'tool'), 'x');
+    chmodSync(join(b, 'tool'), 0o4777);
+    chmodSync(repo, 0o777);
+    lockdown([uid + 4242]);
+    expect(mode(repo)).toBe(0o777);
+    expect(mode(join(b, 'tool'))).toBe(0o4777);
+    expect(chowned).toEqual([]);
+    expect(lines.join('\n')).toMatch(/is not a plain directory owned by root or codespace .*; skipped/);
+    // A checkout that is a link is skipped the same way, its target untouched.
+    rmSync(repo, { recursive: true });
+    const target = join(dir, 'target');
+    mkdirSync(join(target, '.devcontainer'), { recursive: true });
+    chmodSync(join(target, '.devcontainer'), 0o777);
+    symlinkSync(target, repo);
+    lockdown();
+    expect(mode(join(target, '.devcontainer'))).toBe(0o777);
+    expect(chowned).toEqual([]);
+  });
+
+  it('the readers read ONLY the private repo\'s checkout: a well-formed pin and verifiers elsewhere in /workspaces are ignored', () => {
+    const PIN = { version: '0.30.0', integrity: `sha512-${createHash('sha512').update('x').digest('base64')}` };
+    const other = join(ws, 'aaa-other', '.devcontainer', 'bootstrap');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'version.json'), JSON.stringify(PIN));
+    writeFileSync(join(other, 'verifiers.json'), JSON.stringify({ generation: 9, passphrase: { a: 1 }, transferSha256: 'a'.repeat(64) }));
+    const trust = { rootUid: uid, repoOwners: [uid] };
+    expect(repoPin({ workspaces: ws, logLine: (m: string) => lines.push(m), trust })).toBeNull();
+    expect(copyVerifiers({ workspaces: ws, dst: join(dir, 'v.json'), owner: null, logLine: (m: string) => lines.push(m), trust })).toBe(false);
+    // The same files in the checkout itself are read.
+    const mine = join(ws, CLONE_NAME, '.devcontainer', 'bootstrap');
+    mkdirSync(mine, { recursive: true });
+    writeFileSync(join(mine, 'version.json'), JSON.stringify(PIN));
+    expect(repoPin({ workspaces: ws, logLine: (m: string) => lines.push(m), trust })).toEqual(PIN);
+  });
+
+  it('/workspaces loses other-write (dcuser can no longer create entries); the dc-* dirs keep their own modes', () => {
+    chmodSync(ws, 0o757);
+    mkdirSync(join(ws, 'dc-home'));
+    chmodSync(join(ws, 'dc-home'), 0o2775);
+    lockdown();
+    expect(mode(ws)).toBe(0o755);
+    expect(mode(join(ws, 'dc-home'))).toBe(0o2775);
+    expect(lines.join('\n')).toMatch(/is no longer writable by others/);
+  });
+});
+
+describe('root\'s npm reads no config from anywhere dcuser can write (review r5)', () => {
+  interface Seen { cmd: string; args: string[]; opts: { cwd?: string; env?: Record<string, string> } }
+  let seen: Seen[];
+  let served: string;
+  const saved: Record<string, string | undefined> = {};
+  const LEAKS = ['NPM_CONFIG_REGISTRY', 'npm_config_userconfig', 'NPM_CONFIG_GLOBALCONFIG'];
+  beforeEach(() => {
+    seen = [];
+    for (const k of LEAKS) { saved[k] = process.env[k]; process.env[k] = '/workspaces/dc-home/.npmrc'; }
+    setShForTests((cmd: string, args: string[], opts: Seen['opts']) => {
+      seen.push({ cmd, args, opts });
+      if (cmd === 'npm' && args[0] === 'pack') {
+        const dest = args[args.indexOf('--pack-destination') + 1];
+        copyFileSync(served, join(dest, 'dreamcontext-0.30.0.tgz'));
+        return Buffer.from(JSON.stringify([{ filename: 'dreamcontext-0.30.0.tgz' }]));
+      }
+      if (cmd === 'npm') return Buffer.alloc(0); // npm ci: the extracted package already holds dist/
+      if (cmd === 'tar') return execFileSync(cmd, args);
+      return Buffer.alloc(0); // chown/chmod: not as root here
+    });
+  });
+  afterEach(() => {
+    setShForTests(null);
+    for (const k of LEAKS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  });
+  const isolated = (s: Seen) => {
+    expect(s.opts.cwd).toBe(NPM_CWD);
+    expect(NPM_CWD).toBe('/root');
+    for (let i = 0; i < NPM_CONFIG_ARGS.length; i += 2) expect(s.args.slice(s.args.indexOf(NPM_CONFIG_ARGS[i]), s.args.indexOf(NPM_CONFIG_ARGS[i]) + 2)).toEqual([NPM_CONFIG_ARGS[i], NPM_CONFIG_ARGS[i + 1]]);
+    expect(NPM_CONFIG_ARGS).toEqual(['--userconfig', '/dev/null', '--globalconfig', '/root/.dc-hf-npm/globalconfig', '--cache', '/root/.npm']);
+    // npm refuses the same file for both ("double-loading config"): r7 found it on a real npm ci.
+    const cfg = (k: string) => NPM_CONFIG_ARGS[NPM_CONFIG_ARGS.indexOf(k) + 1];
+    expect(cfg('--userconfig')).not.toBe(cfg('--globalconfig'));
+    for (const k of ['--globalconfig', '--cache']) expect(cfg(k).startsWith('/root/')).toBe(true);
+    expect(Object.keys(s.opts.env ?? {}).sort()).toEqual(['HOME', 'PATH']);
+    expect(s.opts.env!.HOME).toBe('/root');
+  };
+
+  it('npm pack of the pinned version runs from /root with no user/global npmrc, root\'s cache and a scratch env', () => {
+    const t = makeTgz(dir, '0.30.0');
+    served = t.path;
+    const fetchDir = mkdtempSync(join(dir, 'fetch-'));
+    expect(fetchVerified({ version: '0.30.0', integrity: t.integrity }, fetchDir)).toBe(join(fetchDir, 'dreamcontext-0.30.0.tgz'));
+    const pack = seen.find((x) => x.cmd === 'npm')!;
+    expect(pack.args.slice(0, 4)).toEqual(['pack', 'dreamcontext@0.30.0', '--pack-destination', fetchDir]);
+    isolated(pack);
+  });
+
+  it('D26: the package is extracted by root into the prefix and installed with `npm ci` FROM its own shrinkwrap (never `npm i <tgz>`)', () => {
+    const t = makeTgz(dir, '0.30.0');
+    const prefix = join(dir, 'opt-next');
+    installInto(prefix, t.path);
+    const npm = seen.filter((x) => x.cmd === 'npm');
+    expect(npm).toHaveLength(1);
+    const pkgDir = join(prefix, 'node_modules', 'dreamcontext');
+    expect(npm[0].args.slice(0, 4)).toEqual(['ci', '--omit=dev', '--omit=optional', '--ignore-scripts']);
+    expect(npm[0].args.some((a) => a.endsWith('.tgz') || a === '--prefix')).toBe(false);
+    expect(npm[0].opts.cwd).toBe(pkgDir); // npm ci reads the shipped npm-shrinkwrap.json there
+    for (let i = 0; i < NPM_CONFIG_ARGS.length; i += 2) expect(npm[0].args).toContain(NPM_CONFIG_ARGS[i]);
+    expect(npm[0].args.slice(npm[0].args.indexOf('--userconfig'), npm[0].args.indexOf('--userconfig') + 2)).toEqual(['--userconfig', '/dev/null']);
+    expect(npm[0].args.slice(npm[0].args.indexOf('--globalconfig'), npm[0].args.indexOf('--globalconfig') + 2)).toEqual(['--globalconfig', '/root/.dc-hf-npm/globalconfig']);
+    expect(Object.keys(npm[0].opts.env ?? {}).sort()).toEqual(['HOME', 'PATH']);
+    expect(readFileSync(join(pkgDir, 'dist', 'index.js'), 'utf8')).toBe('// dreamcontext 0.30.0\n');
+    expect(existsSync(join(pkgDir, 'npm-shrinkwrap.json'))).toBe(true);
+  });
+
+  it('D26: a package without npm-shrinkwrap.json is refused before anything is written or npm runs', () => {
+    const t = makeTgz(dir, '0.30.0', 'dreamcontext', '', false);
+    const prefix = join(dir, 'opt-next');
+    expect(() => installInto(prefix, t.path)).toThrow(/ships no npm-shrinkwrap\.json; refused/);
+    expect(seen.filter((x) => x.cmd === 'npm')).toEqual([]);
+    expect(existsSync(prefix)).toBe(false);
+  });
+
+  it('D26: a tarball entry that escapes package/, is absolute, or is a link is refused; nothing lands outside the prefix', () => {
+    /** A crafted tar.gz (python's tarfile writes exactly the headers it is told). */
+    const craft = (entries: Array<[string, 'file' | 'symlink' | 'hardlink', string]>) => {
+      const out = join(dir, `crafted-${Math.random().toString(36).slice(2)}.tgz`);
+      execFileSync('python3', ['-c', `import io, sys, tarfile, json
+out, entries = sys.argv[1], json.loads(sys.argv[2])
+with tarfile.open(out, 'w:gz', format=tarfile.PAX_FORMAT) as t:
+    for name, kind, data in entries:
+        ti = tarfile.TarInfo(name)
+        if kind == 'file':
+            b = data.encode(); ti.size = len(b); t.addfile(ti, io.BytesIO(b))
+        else:
+            ti.type = tarfile.SYMTYPE if kind == 'symlink' else tarfile.LNKTYPE; ti.linkname = data; t.addfile(ti)
+`, out, JSON.stringify(entries)]);
+      return out;
+    };
+    const base: Array<[string, 'file', string]> = [['package/package.json', 'file', '{"name":"dreamcontext","version":"0.30.0"}'], ['package/npm-shrinkwrap.json', 'file', '{}'], ['package/dist/index.js', 'file', '//']];
+    const prefix = join(dir, 'opt-next');
+    const cases: Array<[Array<[string, 'file' | 'symlink' | 'hardlink', string]>, RegExp]> = [
+      [[...base, ['package/../../escaped', 'file', 'x']], /escapes package\//],
+      [[...base, ['package/dist/../../../escaped', 'file', 'x']], /escapes package\//],
+      [[...base, ['/tmp/abs-escaped', 'file', 'x']], /absolute or malformed/],
+      [[...base, ['elsewhere/x', 'file', 'x']], /escapes package\//],
+      [[...base, ['package/dist/link', 'symlink', '/etc/passwd']], /not a regular file or directory \(type 2\)/],
+      [[...base, ['package/dist/hard', 'hardlink', 'package/package.json']], /not a regular file or directory \(type 1\)/],
+      [[...base, [`package/${'d/'.repeat(60)}../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../escaped`, 'file', 'x']], /escapes package\//],
+    ];
+    for (const [entries, why] of cases) {
+      expect(() => installInto(prefix, craft(entries))).toThrow(why);
+      expect(existsSync(prefix)).toBe(false);
+    }
+    expect(existsSync(join(dir, 'escaped'))).toBe(false);
+    expect(existsSync('/tmp/abs-escaped')).toBe(false);
+    expect(seen.filter((x) => x.cmd === 'npm')).toEqual([]);
+    // The same base alone installs (the checks refuse only the bad entry).
+    installInto(prefix, craft(base));
+    expect(existsSync(join(prefix, 'node_modules', 'dreamcontext', 'dist', 'index.js'))).toBe(true);
+  });
+
+});
+
+describe('the `dreamcontext` command after EVERY install path (review: runtime update left a dangling command)', () => {
+  const ENTRY_T = '/opt/dreamcontext/node_modules/dreamcontext/dist/index.js';
+  const WANT = `#!/bin/sh\nexec /usr/bin/node ${ENTRY_T} "$@"\n`;
+  let bin: string; let wrapper: string; let opt: string; let next: string; let prev: string;
+  beforeEach(() => {
+    bin = join(dir, 'usr-local-bin'); mkdirSync(bin);
+    wrapper = join(bin, 'dreamcontext');
+    // An old supervisor's command: a symlink into node_modules/.bin that npm ci no longer creates.
+    symlinkSync(join(dir, 'opt', 'node_modules', '.bin', 'dreamcontext'), wrapper);
+    opt = join(dir, 'opt'); next = join(dir, 'opt.next'); prev = join(dir, 'opt.prev');
+    mkdirSync(join(opt, 'old'), { recursive: true });
+    mkdirSync(join(next, 'new'), { recursive: true });
+  });
+  const isWrapper = () => {
+    const st = lstatSync(wrapper);
+    return st.isFile() && !st.isSymbolicLink() && (st.mode & 0o777) === 0o755 && readFileSync(wrapper, 'utf8') === WANT && !existsSync(`${wrapper}.tmp`);
+  };
+
+  it('the wrapper is fixed content written over whatever is there (a dangling symlink included)', () => {
+    expect(CLI_WRAPPER).toBe('/usr/local/bin/dreamcontext');
+    expect(existsSync(wrapper)).toBe(false); // dangling
+    writeCliWrapper(wrapper, ENTRY_T);
+    expect(isWrapper()).toBe(true);
+    writeFileSync(`${wrapper}.tmp`, 'a leftover temp file');
+    writeCliWrapper(wrapper, ENTRY_T);
+    expect(isWrapper()).toBe(true);
+  });
+
+  it('a first-boot / last-good install swaps the build in and rewrites the command', () => {
+    swapInBuild({ next, opt, wrapper, entry: ENTRY_T });
+    expect(existsSync(join(opt, 'new'))).toBe(true);
+    expect(existsSync(next)).toBe(false);
+    expect(isWrapper()).toBe(true);
+  });
+
+  it('a runtime update (exit 75) keeps the old build at prev and rewrites the command', () => {
+    swapInBuild({ next, opt, prev, wrapper, entry: ENTRY_T });
+    expect(existsSync(join(opt, 'new'))).toBe(true);
+    expect(existsSync(join(prev, 'old'))).toBe(true);
+    expect(isWrapper()).toBe(true);
+  });
+
+  it('the fallback to the last good build rewrites the command too (a failed write is logged, never thrown)', () => {
+    swapInBuild({ next, opt, prev, wrapper, entry: ENTRY_T });
+    rmSync(wrapper);
+    symlinkSync('/nowhere/dreamcontext', wrapper);
+    restoreLastGood({ opt, prev, wrapper, entry: ENTRY_T });
+    expect(existsSync(join(opt, 'old'))).toBe(true);
+    expect(isWrapper()).toBe(true);
+    const lines: string[] = [];
+    mkdirSync(join(dir, 'p2', 'old'), { recursive: true });
+    expect(() => restoreLastGood({ opt, prev: join(dir, 'p2'), wrapper: join(dir, 'no-such-dir', 'dreamcontext'), entry: ENTRY_T, logLine: (m: string) => lines.push(m) })).not.toThrow();
+    expect(lines.join('\n')).toMatch(/dreamcontext command not rewritten/);
+  });
+
+  it('the runtime install loop goes through these helpers (no install path swaps without the wrapper)', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'cloud', 'supervisor.mjs'), 'utf8');
+    const body = src.slice(src.indexOf('async function installRuntime()'), src.indexOf('function watchMirrorRequests()'));
+    expect(body).toContain('swapInBuild({ prev: OPT_PREV });');
+    expect(body).toContain('restoreLastGood();');
+    expect(body).not.toMatch(/renameSync\(/); // every rename of a build goes through the helpers
+    const build = src.slice(src.indexOf('function installBuild('), src.indexOf('// ─── the mirror'));
+    expect(build).toContain('swapInBuild();');
+    expect(build).not.toMatch(/renameSync\(/);
+  });
+});
+

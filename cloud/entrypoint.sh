@@ -2,7 +2,7 @@
 # dreamcontext hands-free root entrypoint. The `codespace` user may run ONLY this script via
 # sudo (`/etc/sudoers.d/codespace`). Fixed subcommands; nothing here runs caller-supplied code:
 #   start <codespace-name> <port-forwarding-domain>   (poststart.sh, every container start)
-#   claude-login <accountId>                           (interactive, over `gh codespace ssh -t`; D13)
+#   claude-login <accountId>                           (interactive, over `gh codespace ssh -c <name> -- -t`; D13)
 set -u
 umask 0022
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
