@@ -10,6 +10,9 @@ import {
   WIDGET_GRID,
   WIDGET_SIZES,
   nearestWidgetSize,
+  isCardColor,
+  CARD_COLORS,
+  type CardColor,
   type WidgetSize,
   type TodoItem,
   type WhiteboardElement,
@@ -139,6 +142,8 @@ export interface ElementView {
   items?: TodoItem[];
   /** A wiki card's list of sections and pages. */
   sections?: WikiSection[];
+  /** The card's tint, when it has one. */
+  color?: CardColor;
   url?: string;
   markdown?: string;
   html?: string;
@@ -160,6 +165,7 @@ export function describeElement(el: WhiteboardElement, full = false): ElementVie
     view.size = dc.size ?? nearestWidgetSize(view.bbox.w, view.bbox.h);
     if (dc.ref) view.ref = dc.ref;
     if (dc.title) view.title = dc.title;
+    if (dc.color) view.color = dc.color;
     if (dc.items) view.items = dc.items;
     if (dc.kind === 'wiki') view.sections = readWikiSections(dc.sections);
     if (dc.url) view.url = dc.url;
@@ -195,6 +201,8 @@ export interface WidgetUpdate {
    * sets width/height and drops a widget's `dc.size`, so the dashboard derives the nearest.
    */
   size?: WidgetSize | { w: number; h: number };
+  /** A card tint, or `'none'` to clear it (widgets only). */
+  color?: CardColor | 'none';
 }
 
 function findItem(items: TodoItem[], key: string): TodoItem {
@@ -230,6 +238,11 @@ export function applyUpdate(el: WhiteboardElement, u: WidgetUpdate, now = Date.n
     if (typeof u.size === 'string') dc.size = u.size;
     else if (u.size) delete dc.size;
     if (u.title !== undefined) dc.title = u.title;
+    if (u.color === 'none') delete dc.color;
+    else if (u.color !== undefined) {
+      if (!isCardColor(u.color)) throw new WhiteboardValidationError(`invalid card color '${String(u.color)}' (one of ${CARD_COLORS.join(', ')}, or none)`);
+      dc.color = u.color;
+    }
     if (u.text !== undefined) {
       if (dc.kind === 'note') dc.markdown = u.text;
       else if (dc.kind === 'html') dc.html = u.text;
@@ -262,7 +275,7 @@ export function applyUpdate(el: WhiteboardElement, u: WidgetUpdate, now = Date.n
       next.originalText = u.text;
       if ('rawText' in next) next.rawText = u.text;
     }
-    if (u.title !== undefined || u.url !== undefined || u.ref !== undefined || u.addItems?.length || u.check?.length || u.uncheck?.length) {
+    if (u.title !== undefined || u.color !== undefined || u.url !== undefined || u.ref !== undefined || u.addItems?.length || u.check?.length || u.uncheck?.length) {
       throw new WhiteboardValidationError(`element ${el.id} is not a widget`);
     }
   }

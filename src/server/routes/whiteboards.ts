@@ -11,6 +11,7 @@ import {
   listWhiteboards,
   mutateWhiteboard,
   readWhiteboard,
+  renameWhiteboard,
   restoreWhiteboard,
   TRASH_DIR,
   trashWhiteboard,
@@ -255,6 +256,28 @@ export async function handleWhiteboardPut(
       board.elements = merged.elements;
     }, { selfOrigin });
     sendJson(res, 200, diskContributed ? { rev: result.rev, elements: result.board.elements } : { rev: result.rev });
+  } catch (err) {
+    sendWhiteboardError(res, err);
+  }
+}
+
+/** PATCH /api/whiteboards/:slug `{name}` → `{slug, name, rev}`: a new display name, same slug. */
+export async function handleWhiteboardRename(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  const name = body?.name;
+  // Trimmed, length and characters are the store's to judge (renameWhiteboard), so the CLI and
+  // this route refuse the same names.
+  if (typeof name !== 'string') {
+    sendError(res, 400, 'invalid', 'A whiteboard needs a name (1-200 characters).');
+    return;
+  }
+  try {
+    sendJson(res, 200, await renameWhiteboard(contextRoot, params.slug, name));
   } catch (err) {
     sendWhiteboardError(res, err);
   }

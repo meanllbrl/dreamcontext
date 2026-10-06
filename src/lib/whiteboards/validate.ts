@@ -4,6 +4,8 @@ import {
   REF_KINDS,
   isWidgetKind,
   isWidgetSize,
+  isCardColor,
+  CARD_COLORS,
   isValidPageRef,
   isLabCardRef,
   isAgentSlugShape,
@@ -105,6 +107,9 @@ export function validateWidgetPayload(raw: unknown, opts: { selfOrigin?: string 
   if (dc.tag !== undefined && !isValidTag(dc.tag)) throw new WhiteboardValidationError(`invalid tag: ${String(dc.tag)}`);
   if (dc.size !== undefined && !isWidgetSize(dc.size)) {
     throw new WhiteboardValidationError(`invalid widget size '${String(dc.size)}' (expected one of ${Object.keys(WIDGET_SIZES).join(', ')})`);
+  }
+  if (dc.color !== undefined && !isCardColor(dc.color)) {
+    throw new WhiteboardValidationError(`invalid card color '${String(dc.color)}' (expected one of ${CARD_COLORS.join(', ')})`);
   }
   optString(dc, 'title', 500);
   optString(dc, 'markdown');

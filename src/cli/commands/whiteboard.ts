@@ -6,6 +6,7 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, info } from '../../lib/format.js';
 import {
   createWhiteboard,
+  renameWhiteboard,
   listWhiteboards,
   mutateWhiteboard,
   nextIndices,
@@ -24,6 +25,9 @@ import {
   WIDGET_SIZES,
   DEFAULT_WIDGET_SIZES,
   isWidgetKind,
+  isCardColor,
+  CARD_COLORS,
+  type CardColor,
   isWidgetSize,
   isValidPageRef,
   makeWidgetElement,
@@ -215,7 +219,8 @@ function printView(v: ElementView): void {
   const what = v.kind ? `${v.kind}${v.ref ? `:${v.ref}` : ''}` : v.type;
   const label = v.title ?? v.text ?? v.url ?? '';
   const tag = v.tag ? chalk.cyan(` #${v.tag}`) : '';
-  console.log(`  ${chalk.dim(v.id)}  ${chalk.bold(what)}  ${label.split('\n')[0]}${tag}  ${chalk.dim(`@${formatBBox(v.bbox)}`)}`);
+  const color = v.color ? chalk.dim(` color:${v.color}`) : '';
+  console.log(`  ${chalk.dim(v.id)}  ${chalk.bold(what)}  ${label.split('\n')[0]}${tag}${color}  ${chalk.dim(`@${formatBBox(v.bbox)}`)}`);
   if (v.items) {
     v.items.forEach((it, i) => console.log(`      ${i + 1}. [${it.done ? 'x' : ' '}] ${it.text}  ${chalk.dim(it.id)}`));
   }
@@ -433,6 +438,20 @@ export function registerWhiteboardCommand(program: Command): void {
       console.log(chalk.dim(`  ${created.path}`));
     }));
 
+  // --- rename ---
+  wb.command('rename <slug> <name>')
+    .description('Rename a whiteboard: the display name changes, the slug (and every link to it) stays')
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, name: string, opts: { json?: boolean }) => {
+      assertBoardInScope(slug);
+      const renamed = await renameWhiteboard(ensureContextRoot(), slug, name);
+      if (opts.json) {
+        console.log(JSON.stringify(renamed, null, 2));
+        return;
+      }
+      success(`Renamed ${chalk.dim(slug)} → ${chalk.bold(renamed.name)}`);
+    }));
+
   // --- show ---
   wb.command('show <slug> [id]')
     .description('Show a board\'s live elements (or one element with --full)')
@@ -488,10 +507,11 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--at <x,y>', 'Top-left position (default: next free grid slot right of / below existing content)')
     .option('--size <s|m|l|xl|w,h>', `Grid size S 180x180, M 376x180, L 376x376, XL 768x376, or free-form w,h (default per kind: ${Object.entries(DEFAULT_WIDGET_SIZES).map(([k, v]) => `${k} ${v}`).join(', ')})`)
     .option('--tag <tag>', 'Group tag, for `remove --tag`')
+    .option('--color <color>', `Card tint: ${CARD_COLORS.join(' | ')}`)
     .option('--json', 'Machine-readable output')
     .action(run(async (slug: string, kind: string, opts: {
       ref?: string; title?: string; text?: string; file?: string; url?: string; item: string[];
-      at?: string; size?: string; tag?: string; json?: boolean;
+      at?: string; size?: string; tag?: string; color?: string; json?: boolean;
     }) => {
       if (!isWidgetKind(kind)) throw new WhiteboardValidationError(`unknown widget kind '${kind}' (one of ${WIDGET_KINDS.join(', ')})`);
       assertBoardInScope(slug);
@@ -500,11 +520,15 @@ export function registerWhiteboardCommand(program: Command): void {
       const size = parseSize(opts.size);
       const body = readTextOpt(opts);
       if (opts.tag !== undefined && !isValidTag(opts.tag)) throw new WhiteboardValidationError(`invalid tag '${opts.tag}'`);
+      if (opts.color !== undefined && !isCardColor(opts.color)) {
+        throw new WhiteboardValidationError(`invalid card color '${opts.color}' (one of ${CARD_COLORS.join(', ')})`);
+      }
 
       const payload: Omit<WidgetPayload, 'v' | 'kind'> = {
         title: opts.title,
         tag: opts.tag,
         size: typeof size === 'string' ? size : undefined,
+        color: opts.color as CardColor | undefined,
       };
       if (kind === 'insight' || kind === 'knowledge' || kind === 'task' || kind === 'lab-card') {
         if (!opts.ref) throw new WhiteboardValidationError(`${kind} widget needs --ref ${kind === 'lab-card' ? '<board>/<card-id>' : '<slug>'}`);
@@ -579,10 +603,11 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--uncheck <n>', 'Untick todo item n (1-based) or item id (repeatable)', collect, [])
     .option('--at <x,y>', 'Move to x,y')
     .option('--size <s|m|l|xl|w,h>', 'Resize a widget to a grid size, or any element to w,h')
+    .option('--color <color>', `Tint a card: ${CARD_COLORS.join(' | ')}, or none to clear it`)
     .option('--json', 'Machine-readable output')
     .action(run(async (slug: string, id: string, opts: {
       title?: string; text?: string; file?: string; url?: string; ref?: string; item: string[];
-      check: string[]; uncheck: string[]; at?: string; size?: string; json?: boolean;
+      check: string[]; uncheck: string[]; at?: string; size?: string; color?: string; json?: boolean;
     }) => {
       assertBoardInScope(slug);
       const update = {
@@ -595,6 +620,7 @@ export function registerWhiteboardCommand(program: Command): void {
         uncheck: opts.uncheck,
         at: parseAt(opts.at),
         size: parseSize(opts.size),
+        color: opts.color as CardColor | 'none' | undefined,
       };
       // The kind-specific check (a knowledge page also takes a path) runs in applyUpdate.
       if (update.ref !== undefined && !isValidRef(update.ref) && !isValidPageRef(update.ref)) {

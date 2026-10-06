@@ -40,6 +40,13 @@ describe('whiteboard widget contract mirror', () => {
     expectTypeOf<dash.WidgetSize>().toEqualTypeOf<lib.WidgetSize>();
   });
 
+  it('CARD_COLORS match and are the tab-group names', () => {
+    expect([...dash.CARD_COLORS]).toEqual([...lib.CARD_COLORS]);
+    expect([...lib.CARD_COLORS]).toEqual(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan']);
+    for (const c of [...lib.CARD_COLORS, 'orange', '', 3, null]) expect(dash.isCardColor(c)).toBe(lib.isCardColor(c));
+    expectTypeOf<dash.CardColor>().toEqualTypeOf<lib.CardColor>();
+  });
+
   it('page refs (slug | project-relative .md/.pdf/.html path) are judged the same both ways', () => {
     expect([...dash.PAGE_FILE_EXTENSIONS]).toEqual([...lib.PAGE_FILE_EXTENSIONS]);
     const cases: unknown[] = [

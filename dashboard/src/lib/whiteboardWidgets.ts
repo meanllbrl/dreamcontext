@@ -15,6 +15,15 @@ export const WIDGET_KINDS = ['insight', 'knowledge', 'task', 'todo', 'note', 'ht
 
 export const WIDGET_LINK_PREFIX = 'dreamcontext://';
 
+/** The tints a card can wear, the same names the board tabs' groups use. The dashboard maps
+ *  each to a chart hue, mixed into the card's own surface (never a solid fill). */
+export const CARD_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan'] as const;
+export type CardColor = (typeof CARD_COLORS)[number];
+
+export function isCardColor(v: unknown): v is CardColor {
+  return typeof v === 'string' && (CARD_COLORS as readonly string[]).includes(v);
+}
+
 /** File types a page (a `knowledge` widget, a page on a wiki card) may point at by path. */
 export const PAGE_FILE_EXTENSIONS = ['.md', '.pdf', '.html', '.htm'] as const;
 export type PageKind = 'md' | 'pdf' | 'html';
@@ -100,6 +109,8 @@ export type WidgetPayload = {
   size?: WidgetSize;
   /** wiki: the card's own list of sections and pages (src/lib/whiteboards/nav.ts edits it). */
   sections?: WikiSection[];
+  /** The card's tint (one of {@link CARD_COLORS}). Absent: the plain card. */
+  color?: CardColor;
 };
 
 /**

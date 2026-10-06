@@ -3321,7 +3321,8 @@
         "--item",
         "--at",
         "--size",
-        "--tag"
+        "--tag",
+        "--color"
       ]
     },
     {
@@ -3420,6 +3421,14 @@
       ]
     },
     {
+      "path": "whiteboard rename",
+      "desc": "Rename a whiteboard: the display name changes, the slug (and every link to it) stays",
+      "args": [
+        "<slug>",
+        "<name>"
+      ]
+    },
+    {
       "path": "whiteboard show",
       "desc": "Show a board's live elements (or one element with --full)",
       "args": [
@@ -3444,7 +3453,8 @@
         "--check",
         "--uncheck",
         "--at",
-        "--size"
+        "--size",
+        "--color"
       ]
     }
   ]

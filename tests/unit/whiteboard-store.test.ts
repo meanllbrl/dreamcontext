@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   createWhiteboard, ensureDefaultWhiteboard, listTrashedWhiteboards, listWhiteboards, mutateWhiteboard, nextIndices,
-  readWhiteboard, restoreWhiteboard, trashWhiteboard, whiteboardRev, whiteboardsDir, DEFAULT_WHITEBOARD,
+  readWhiteboard, renameWhiteboard, restoreWhiteboard, trashWhiteboard, whiteboardRev, whiteboardsDir, DEFAULT_WHITEBOARD,
 } from '../../src/lib/whiteboards/store.js';
 import { parseWhiteboard, serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import { mergeElements } from '../../src/lib/whiteboards/merge.js';
@@ -14,6 +14,7 @@ import {
   makeWidgetElement, nearestWidgetSize, widgetPayloadOf, WIDGET_SIZES, type WhiteboardElement,
 } from '../../src/lib/whiteboards/widgets.js';
 import { validateElement } from '../../src/lib/whiteboards/validate.js';
+import { applyUpdate, describeElement } from '../../src/lib/whiteboards/ops.js';
 import {
   WhiteboardCorruptError, WhiteboardLockError, WhiteboardNotFoundError, WhiteboardValidationError,
 } from '../../src/lib/whiteboards/errors.js';
@@ -360,5 +361,47 @@ describe('trash and restore', () => {
     for (const bad of ['../x-1700000000000', 'nope', '.gitignore', 'x-1700000000000']) {
       await expect(restoreWhiteboard(root, bad)).rejects.toBeInstanceOf(WhiteboardNotFoundError);
     }
+  });
+});
+
+/** Owner feedback 2026-10-05: a board tab renames; a card takes a colour. */
+describe('rename and card colour', () => {
+  it('rename changes the display name only: same slug, same elements, a new rev', async () => {
+    const { slug } = createWhiteboard(root, 'Growth');
+    await mutateWhiteboard(root, slug, (b) => { b.elements.push(note('a0')); });
+    const before = readWhiteboard(root, slug);
+    const out = await renameWhiteboard(root, slug, '  Gelir panosu  ');
+    expect(out).toMatchObject({ slug, name: 'Gelir panosu' });
+    const after = readWhiteboard(root, slug);
+    expect(after.board.frontmatter.name).toBe('Gelir panosu');
+    expect(after.board.elements).toEqual(before.board.elements);
+    expect(after.rev).not.toBe(before.rev);
+    expect(listWhiteboards(root).find((b) => b.slug === slug)?.name).toBe('Gelir panosu');
+  });
+
+  it('rename refuses an empty or over-long name, and a missing board', async () => {
+    const { slug } = createWhiteboard(root, 'Growth');
+    await expect(renameWhiteboard(root, slug, '   ')).rejects.toBeInstanceOf(WhiteboardValidationError);
+    await expect(renameWhiteboard(root, slug, 'x'.repeat(201))).rejects.toBeInstanceOf(WhiteboardValidationError);
+    await expect(renameWhiteboard(root, 'nope', 'X')).rejects.toBeInstanceOf(WhiteboardNotFoundError);
+    // Padding is not the name: 200 characters inside spaces fit.
+    await expect(renameWhiteboard(root, slug, `  ${'x'.repeat(200)}  `)).resolves.toMatchObject({ name: 'x'.repeat(200) });
+    for (const bad of ['Two\nlines', 'Tab\there', 'Sep\u2028arated', 'Next\u0085line']) {
+      await expect(renameWhiteboard(root, slug, bad)).rejects.toBeInstanceOf(WhiteboardValidationError);
+    }
+  });
+
+  it('a card colour validates, sets, shows and clears', () => {
+    const el = makeWidgetElement('insight', { ref: 'mrr', color: 'blue' }, { x: 0, y: 0 }, 'a0');
+    expect(() => validateElement(el)).not.toThrow();
+    expect(describeElement(el).color).toBe('blue');
+    const red = applyUpdate(el, { color: 'red' });
+    expect(widgetPayloadOf(red)?.color).toBe('red');
+    const none = applyUpdate(red, { color: 'none' });
+    expect(widgetPayloadOf(none)).not.toHaveProperty('color');
+    expect(() => applyUpdate(el, { color: 'orange' as never })).toThrow(WhiteboardValidationError);
+    const bad = makeWidgetElement('insight', { ref: 'mrr' }, { x: 0, y: 0 }, 'a1');
+    (bad.customData as { dc: Record<string, unknown> }).dc.color = 'orange';
+    expect(() => validateElement(bad)).toThrow(/invalid card color/);
   });
 });

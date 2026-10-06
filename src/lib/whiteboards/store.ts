@@ -422,6 +422,24 @@ export async function mutateWhiteboard(
   }
 }
 
+/**
+ * Rename a board: its display name (frontmatter `name`, verbatim) changes, its slug does not,
+ * so tabs, agent homes (`whiteboard:` in a manifest) and links keep pointing at it.
+ */
+export async function renameWhiteboard(root: string, slug: string, name: string): Promise<{ slug: string; name: string; rev: string }> {
+  const display = name.trim();
+  if (!display) throw new WhiteboardValidationError('a whiteboard needs a name');
+  if (display.length > 200) throw new WhiteboardValidationError('a whiteboard name is at most 200 characters');
+  // One line of text: a control or line-separator character would not survive the YAML round trip.
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(display)) {
+    throw new WhiteboardValidationError('a whiteboard name is one line of text, without control characters');
+  }
+  const { board, rev } = await mutateWhiteboard(root, slug, (b) => {
+    b.frontmatter = { ...b.frontmatter, name: display };
+  });
+  return { slug, name: boardName(board, slug), rev };
+}
+
 // ─── trash ────────────────────────────────────────────────────────────────
 
 /**
