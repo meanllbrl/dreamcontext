@@ -12,7 +12,7 @@ import {
 import { sendJson, sendError, isForeignOriginUpgrade } from '../middleware.js';
 import { serveMedia } from '../media.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
-import { cloudPhase, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
+import { cloudPhase, cloudWorkDir, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
 import { isCloudOriginAllowed } from '../middleware.js';
 import { recordCloudAction } from '../cloud-idle.js';
 import { deviceIdHash, handsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
@@ -301,6 +301,31 @@ export function assistantAllowedTools(autonomy: Autonomy): string[] {
  * `--mcp-config` is variadic (`<configs...>`): every file rides in ONE flag, and the flag must
  * stay the LAST argv element or it swallows whatever follows. Null entries drop out.
  */
+/** A POSIX single-quoted shell word: the shell takes any content verbatim (' becomes '\''). */
+export function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The cloud's mode-note hook command: the hook output itself, base64 (only [A-Za-z0-9+/=], no
+ * quote or shell metacharacter), decoded at run time. No file: the hook runs as dcuser, which
+ * cannot open a file the server (dcserver) wrote 0600.
+ */
+export function inlineModeNoteCommand(hookOutput: string): string {
+  return `echo ${Buffer.from(hookOutput, 'utf-8').toString('base64')} | base64 -d`;
+}
+
+/** bash/zsh's own noise when `-i` runs without a terminal: never the error the user needs to see. */
+const SHELL_JOB_CONTROL_NOISE = [
+  /^(?:\/bin\/)?(?:ba)?sh: cannot set terminal process group \(-?\d+\): Inappropriate ioctl for device\s*$/,
+  /^(?:\/bin\/)?(?:ba)?sh: no job control in this shell\s*$/,
+];
+
+/** The child's stderr as the error card shows it: without the login shell's job-control lines. */
+export function withoutShellJobControlNoise(stderr: string): string {
+  return stderr.split('\n').filter((line) => !SHELL_JOB_CONTROL_NOISE.some((re) => re.test(line))).join('\n');
+}
+
 export function mcpConfigArgs(paths: Array<string | null>): string[] {
   const files = paths.filter((p): p is string => !!p);
   return files.length ? ['--mcp-config', ...files] : [];
@@ -1045,9 +1070,12 @@ export function startChatSession(
   if (initialPrompt && deferPrompt) {
     submitPrompt = '';
     if (!resumeTarget) {
-      const parked = join(tmpdir(), `dreamcontext-deferred-${randomUUID()}.txt`);
+      // The cloud's child runs as dcuser, and its UserPromptSubmit hook must read AND delete this
+      // file: it goes into dcuser's own 2770 work dir (group dcwork, a fresh random name, O_EXCL),
+      // never dcserver's 0600 /tmp file the hook cannot open.
+      const parked = join(isCloud() ? cloudWorkDir() : tmpdir(), `dreamcontext-deferred-${randomUUID()}.txt`);
       try {
-        writeFileSync(parked, initialPrompt, { encoding: 'utf-8', mode: 0o600 });
+        writeFileSync(parked, initialPrompt, isCloud() ? { encoding: 'utf-8', mode: 0o640, flag: 'wx' } : { encoding: 'utf-8', mode: 0o600 });
         deferredEnv = { DREAMCONTEXT_DEFERRED_PROMPT: parked };
         cleanupDeferred = () => { try { rmSync(parked, { force: true }); } catch { /* tmp cleanup */ } };
       } catch { /* degrade to promptless boot */ }
@@ -1061,6 +1089,8 @@ export function startChatSession(
   // degrades to the un-briefed agent we had before, never to a failed spawn.
   let briefingArg: string[] = [];
   let cleanupBriefing = () => { /* nothing written */ };
+  /** Cloud-only argv values carried INLINE (prose / JSON): single-quoted into the script. */
+  const inlineArgs = new Set<string>();
   try {
     const brief = join(tmpdir(), `dreamcontext-chat-surface-${randomUUID()}.md`);
     // Our own filename, but `tmpdir()` comes from TMPDIR — the one argv element below that
@@ -1084,9 +1114,16 @@ export function startChatSession(
     // A card speaks as its agent: the card briefing takes the mode brief's place.
     const modeBrief = card ? card.briefing : modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
     const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
-    writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
-    briefingArg = ['--append-system-prompt-file', brief];
-    cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
+    if (isCloud()) {
+      // The cloud's child (dcuser) cannot open dcserver's 0600 file: the text rides inline,
+      // single-quoted into the script (see `inlineArgs`), with no file anyone could swap.
+      briefingArg = ['--append-system-prompt', briefing];
+      inlineArgs.add(briefing);
+    } else {
+      writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
+      briefingArg = ['--append-system-prompt-file', brief];
+      cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
+    }
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
 
   // ── A RESUMED conversation is told its mode — its system prompt cannot be ───────────
@@ -1110,21 +1147,38 @@ export function startChatSession(
       const sources = modeNoteSources(state, mode);
       if (state && sources.length) {
         const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
-        const id = randomUUID();
-        const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
-        if (!isShellSafePath(out)) throw new Error('unsafe tmpdir');
-        writeFileSync(out, modeNoteHookOutput(modeSwitchNote(state.held, mode, brief)), { encoding: 'utf-8', mode: 0o600 });
-        tmpFiles.push(out);
-        Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${out}"`, sources)));
+        const note = modeNoteHookOutput(modeSwitchNote(state.held, mode, brief));
+        if (isCloud()) {
+          // The hook runs as dcuser: no dcserver file to `cat`; the note itself rides in the
+          // (inline) settings, base64 so the command holds no quote or shell metacharacter.
+          Object.assign(spawnSettings, JSON.parse(modeNoteSettings(inlineModeNoteCommand(note), sources)));
+        } else {
+          const id = randomUUID();
+          const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
+          if (!isShellSafePath(out)) throw new Error('unsafe tmpdir');
+          writeFileSync(out, note, { encoding: 'utf-8', mode: 0o600 });
+          tmpFiles.push(out);
+          Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${out}"`, sources)));
+        }
       }
     } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
   }
   try {
-    const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
-    if (!isShellSafePath(settings)) throw new Error('unsafe tmpdir');
-    writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
-    tmpFiles.push(settings);
-    modeNoteArg = ['--settings', settings];
+    if (isCloud()) {
+      // `--settings` takes a JSON string too (claude --help: <file-or-json>). Inline in the
+      // cloud: the dcuser child could not read dcserver's 0600 file (smoke #4: every phone chat
+      // died with EACCES), and a file in a dir dcuser can write could be swapped by another
+      // agent to drop these carve-outs. Nothing on disk at all.
+      const json = JSON.stringify(spawnSettings);
+      modeNoteArg = ['--settings', json];
+      inlineArgs.add(json);
+    } else {
+      const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
+      if (!isShellSafePath(settings)) throw new Error('unsafe tmpdir');
+      writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
+      tmpFiles.push(settings);
+      modeNoteArg = ['--settings', settings];
+    }
   } catch { /* no carve-outs and no mode note this spawn — auto mode keeps its defaults */ }
   if (tmpFiles.length) {
     cleanupModeNote = () => {
@@ -1189,7 +1243,9 @@ export function startChatSession(
   // value (UUID / model alias / effort level), so plain double-quoting is sufficient —
   // none of them can contain a shell metacharacter. (`Bash(dreamcontext assistant:*)` is a
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
-  const script = `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
+  // The cloud's inline prose/JSON (`inlineArgs`) can hold anything: single-quoted, which the
+  // shell takes verbatim. Every other element keeps the double quotes above.
+  const script = `exec claude ${argv.map((a) => (inlineArgs.has(a) ? shellSingleQuote(a) : `"${a}"`)).join(' ')}`;
 
   // An agent-chat process exports its tab's STABLE roster id so the SessionStart/Stop
   // hooks (which inherit this env through `claude`) record roster id → live conversation
@@ -1961,8 +2017,9 @@ export function startChatSession(
     teardown();
     if (handedOff) { spawnSuccessor(); return; }
     sendMeta({ subtype: 'exit', code });
-    if (code !== 0 && stderrTail.trim()) {
-      sendMeta({ subtype: 'error', message: stderrTail.trim() });
+    const stderrMessage = withoutShellJobControlNoise(stderrTail).trim();
+    if (code !== 0 && stderrMessage) {
+      sendMeta({ subtype: 'error', message: stderrMessage });
     }
     try { ws.close(); } catch { /* already closed */ }
   });

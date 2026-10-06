@@ -30,7 +30,9 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-const { startChatSession, handleAgentFile } = await import('../../src/server/routes/agent-chat.js');
+const { startChatSession, handleAgentFile, inlineModeNoteCommand, withoutShellJobControlNoise } = await import('../../src/server/routes/agent-chat.js');
+const { autoModeSettings } = await import('../../src/lib/auto-mode-rules.js');
+const { CHAT_SURFACE_BRIEFING } = await import('../../src/server/chat-surface.js');
 const { setWorkerInProcessForTests } = await import('../../src/server/cloud-worker.js');
 const { cutLiveChats, liveChatsSnapshot, CUT_KILL_GRACE_MS } = await import('../../src/server/routes/agent-chat-live.js');
 const { writeClaudeAccounts, sandboxDirFor } = await import('../../src/lib/claude-accounts.js');
@@ -44,7 +46,7 @@ class FakeWs extends EventEmitter {
   close = vi.fn();
 }
 
-const ENV_KEYS = ['HOME', 'DREAMCONTEXT_CLOUD', 'DREAMCONTEXT_DESKTOP', 'GITHUB_TOKEN', 'DC_HF_TRANSFER_SECRET', 'DC_HF_ORIGIN'];
+const ENV_KEYS = ['HOME', 'DREAMCONTEXT_CLOUD', 'DREAMCONTEXT_DESKTOP', 'GITHUB_TOKEN', 'DC_HF_TRANSFER_SECRET', 'DC_HF_ORIGIN', 'DC_HF_SERVER_DIR'];
 const saved: Record<string, string | undefined> = {};
 let home: string;
 
@@ -354,6 +356,99 @@ describe('GET /api/agent/file in the cloud (AC19: project root only, grants refu
     const n = await getFile(ctx, ungranted);
     expect(n.status).toBe(403);
     expect(JSON.parse(n.body).error).toBe('needs_grant');
+  });
+});
+
+/** The claude argv a spawn's login-shell script really yields: bash itself parses it. */
+async function argvOfScript(script: string): Promise<string[]> {
+  const { spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  expect(script.startsWith('exec claude ')).toBe(true);
+  const printer = `printargs() { for a in "$@"; do printf '%s\\0' "$a"; done; }; printargs ${script.slice('exec claude '.length)}`;
+  // A timeout and empty stdin: a mis-quoted script (backticks in the briefing prose run as
+  // commands under double quotes) must fail here, never hang.
+  const r = spawnSync('/bin/bash', ['-c', printer], { encoding: 'utf8', input: '', timeout: 15_000 });
+  expect(r.status).toBe(0);
+  return r.stdout.split('\0').slice(0, -1);
+}
+
+describe('smoke #4: what the cloud child (dcuser) must read is never a dcserver 0600 file', () => {
+  it('--settings carries the carve-outs INLINE and the briefing rides --append-system-prompt; no server tmp file at all', async () => {
+    process.env.DREAMCONTEXT_CLOUD = '1';
+    writeClaudeAccounts([account('first', true)], home);
+    const project = join(home, 'proj');
+    mkdirSync(project, { recursive: true });
+    open(project);
+    const script = spawned[0].args[spawned[0].args.length - 1];
+    expect(script).not.toMatch(/dreamcontext-chat-(settings|mode|surface)-/); // no file handed to the child
+    const argv = await argvOfScript(script);
+    const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
+    expect(settings).toMatchObject(autoModeSettings()); // the carve-outs arrive intact
+    expect(argv).not.toContain('--append-system-prompt-file');
+    expect(argv[argv.indexOf('--append-system-prompt') + 1].startsWith(CHAT_SURFACE_BRIEFING)).toBe(true); // + the mode's brief
+  });
+
+  it('the laptop keeps its files (unchanged behaviour)', async () => {
+    writeClaudeAccounts([account('first', true)], home);
+    const project = join(home, 'proj');
+    mkdirSync(project, { recursive: true });
+    open(project);
+    const script = spawned[0].args[spawned[0].args.length - 1];
+    expect(script).toMatch(/"--settings" "[^"]*dreamcontext-chat-settings-[0-9a-f-]+\.json"/);
+    expect(script).toMatch(/"--append-system-prompt-file" "[^"]*dreamcontext-chat-surface-[0-9a-f-]+\.md"/);
+  });
+
+  it('the mode note runs as a self-contained command (no file): any content comes back byte for byte', async () => {
+    const { spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    const note = JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: "it's \"plan\" now; $HOME `x` ğüş\nline 2" } });
+    const cmd = inlineModeNoteCommand(note);
+    expect(cmd).toMatch(/^echo [A-Za-z0-9+/=]+ \| base64 -d$/);
+    const r = spawnSync('/bin/sh', ['-c', cmd], { encoding: 'utf8' });
+    expect(r.stdout).toBe(note);
+  });
+
+  it('a deferred prompt is parked in dcuser\'s work dir (group-readable, fresh), where its hook can read AND delete it', async () => {
+    process.env.DREAMCONTEXT_CLOUD = '1';
+    process.env.DC_HF_SERVER_DIR = join(home, 'dc-server');
+    mkdirSync(join(home, 'dc-work'), { recursive: true });
+    writeClaudeAccounts([account('first', true)], home);
+    const project = join(home, 'proj');
+    mkdirSync(project, { recursive: true });
+    open(project, { initialPrompt: 'take the next task', deferPrompt: true });
+    const parked = spawned[0].opts.env?.DREAMCONTEXT_DEFERRED_PROMPT ?? '';
+    expect(parked.startsWith(join(home, 'dc-work', 'dreamcontext-deferred-'))).toBe(true);
+    const { readFileSync, statSync } = await vi.importActual<typeof import('node:fs')>('node:fs');
+    expect(readFileSync(parked, 'utf8')).toBe('take the next task');
+    expect(statSync(parked).mode & 0o777).toBe(0o640);
+  });
+});
+
+describe('the error card shows the real error, not the login shell\'s job-control noise', () => {
+  it('drops bash\'s two lines, keeps everything else', () => {
+    const stderr = [
+      'bash: cannot set terminal process group (-1): Inappropriate ioctl for device',
+      'bash: no job control in this shell',
+      "Error processing settings: EACCES: permission denied, open '/tmp/x.json'",
+    ].join('\n');
+    expect(withoutShellJobControlNoise(stderr).trim()).toBe("Error processing settings: EACCES: permission denied, open '/tmp/x.json'");
+    expect(withoutShellJobControlNoise('bash: no job control in this shell\n').trim()).toBe('');
+    expect(withoutShellJobControlNoise('a real bash: error line')).toBe('a real bash: error line');
+  });
+
+  it('the session\'s error frame carries only the real error (cloud and laptop)', () => {
+    for (const cloud of [true, false]) {
+      spawned.length = 0;
+      if (cloud) process.env.DREAMCONTEXT_CLOUD = '1'; else delete process.env.DREAMCONTEXT_CLOUD;
+      writeClaudeAccounts([account('first', true)], home);
+      const project = join(home, 'proj');
+      mkdirSync(project, { recursive: true });
+      const ws = open(project);
+      const child = spawned[0].child;
+      child.stderr.emit('data', Buffer.from('bash: cannot set terminal process group (-1): Inappropriate ioctl for device\nbash: no job control in this shell\nError processing settings: EACCES\n'));
+      child.emit('close', 1);
+      const frames = ws.send.mock.calls.map((c) => JSON.parse(String(c[0])) as { type: string; subtype?: string; message?: string });
+      const err = frames.find((f) => f.type === '_meta' && f.subtype === 'error');
+      expect(err?.message).toBe('Error processing settings: EACCES');
+    }
   });
 });
 
