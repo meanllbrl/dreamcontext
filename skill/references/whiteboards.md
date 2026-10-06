@@ -29,7 +29,7 @@ _dream_context/whiteboards/
 - It is git-tracked, so team brain sync carries it. In `full-repo` sync two machines' edits merge **per element** (a dedicated merge handler), never by lines.
 - **Never hand-edit the file.** Every write goes through the CLI or the dashboard, which lock, merge and write atomically. The serializer is byte-deterministic, so a no-op edit leaves the file untouched.
 - **Refused, never overwritten:** a board whose drawing block is missing or does not parse, and a board **Obsidian saved compressed** (`compressed-json`). Run *"Decompress current Excalidraw file"* in Obsidian first. `list` shows such a board as `does not parse: <reason>`; every mutation exits non-zero.
-- **No images in Phase 1.** An `image` element is refused by the CLI, the server and `draw`; the canvas refuses pasted or dropped images with a visible message.
+- **Pictures are free Excalidraw images.** Paste or drop one onto the board (or `whiteboard add <slug> image --file shot.png`); its bytes live beside the board at `whiteboards/<slug>/files/<fileId>.<ext>`, so they travel with it through trash, restore and sync, and the board file holds only the `image` element naming its `fileId`. PNG, JPEG, GIF and WebP only, read from the bytes, never from a name; SVG is refused (served from the dashboard's origin it could run script); 10MB at most. A picture refused for good leaves the board with a toast that says why. An agent reads a picture by its path: its home board lists `pictures` with their files, and a picture dropped on it carries `Read _dream_context/whiteboards/<slug>/files/<id>.<ext>`.
 
 ## The ten widget kinds
 
@@ -43,7 +43,7 @@ A widget is an Excalidraw `embeddable` element with `link: "dreamcontext://<kind
 | `todo` | `items: [{id, text, done}]` | `add <slug> todo --title "Today" --item "…" --item "…"` |
 | `note` | `markdown` (rendered sanitized) | `add <slug> note --text "…"` or `--file note.md` |
 | `html` | `html` (sandboxed block, see below) | `add <slug> html --file block.html` |
-| `web` | `url` (https only) | `add <slug> web --url https://…` |
+| `web` | `url`: an `https:` page, a page on this machine (`http://localhost:5173`, `127.0.0.1`; `localhost:5173` alone works), or a `.html`/`.htm`/`.pdf`/picture file, project-relative (`docs/report.html`) or absolute (`/Users/…/x.pdf`, `file:///…`). A file is read by the board's reader in the desktop app; one outside the project shows only after the owner clicks Allow access on the card. Never userinfo, `..` or the dashboard itself | `add <slug> web --url https://…`, `--url docs/report.html` |
 | `wiki` | `title` + `sections: [{id, title, pages: [{ref, label?}]}]`, the card's own list of pages (see § The wiki card) | `add <slug> wiki --title "Handbook"` |
 | `lab-card` | `ref` = `<board>/<card-id>`, one card of a Lab board (`lab/boards/<board>.md`), drawn exactly as Lab draws it (see § Lab cards and funnels) | `add <slug> lab-card --ref growth/c-signups` |
 | `agent` | `ref` = automation agent slug (`automations/<ref>.md`), `link` = `dreamcontext://agent/<ref>`: the agent's card, with its conversation and a composer (see § Agent cards) | `add <slug> agent --ref daily-brief` |
@@ -58,10 +58,10 @@ Widgets are sized like Apple's widgets, on a grid of **180px cells with 16px gap
 |---|---|---|---|
 | `s` | 1×1 | 180×180 | `knowledge`, `task` |
 | `m` | 2×1 | 376×180 | `insight`, `todo`, `note` |
-| `l` | 2×2 | 376×376 | `html`, `web`, `wiki`, `agent` |
+| `l` | 2×2 | 376×376 | `html`, `web`, `wiki` (and the layout of `agent`) |
 | `xl` | 4×2 | 768×376 | `lab-card` |
 
-- `--size s|m|l|xl` sets `dc.size` and the box. Without `--size` a widget gets its kind's default and records it. The widget adapts to its size in the dashboard: an `s` insight shows just the number, `l` and up draw the chart; a bigger todo shows more items. The user can also pick a size on the widget, or drag a handle (it snaps to the nearest size).
+- `--size s|m|l|xl` sets `dc.size` and the box. Without `--size` a widget gets its kind's default and records it. The one exception is `agent`: it comes in tall, **376×572** (2×3 cells), recording `l`; `--size` still picks a preset. The widget adapts to its size in the dashboard: an `s` insight shows just the number, `l` and up draw the chart; a bigger todo shows more items. The user can also pick a size on the widget, or drag a handle (it snaps to the nearest size).
 - `--size w,h` (back-compat) keeps an exact free-form box and leaves `dc.size` unset; the dashboard then shows the **nearest** preset, and `show` reports that nearest size. Prefer the presets.
 - **Placement without `--at`:** the widget lands on the grid pitch (196px = cell + gap), in the first grid row, from the top of the board's content down, where it fits to the right of what is already in that row within eight cells (1552px); otherwise it goes below all content at the left. It never overlaps a live element and keeps at least a 16px gap. With `--at`, use multiples of 196 to stay on the grid.
 
@@ -203,7 +203,7 @@ Only for a drawing with no live data in it (a flow, a sketch, a wireframe); a me
 dreamcontext whiteboard draw gunluk --file /tmp/funnel.excalidraw.md --at 0,400 --tag funnel
 ```
 
-`draw` re-ids every element and keeps bindings, containers, groups, frames and element links consistent, offsets the group so its top-left lands at `--at` (default: right of existing content), and prints the imported ids and bbox. An image element in the source refuses the whole import. Remove the drawing later with `remove --tag funnel`.
+`draw` re-ids every element and keeps bindings, containers, groups, frames and element links consistent, offsets the group so its top-left lands at `--at` (default: right of existing content), and prints the imported ids and bbox. A picture in the source comes along only when this board already holds its file (one `show` handed out); any other picture refuses the whole import: add it with `whiteboard add <slug> image --file`. Remove the drawing later with `remove --tag funnel`.
 
 ## HTML blocks and web embeds: what runs
 

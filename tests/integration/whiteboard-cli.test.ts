@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -7,6 +7,13 @@ import { extractExcalidrawScene } from '../../dashboard/src/lib/excalidraw.js';
 import { mutateWhiteboard, readWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { mergeElements } from '../../src/lib/whiteboards/merge.js';
 import { widgetPayloadOf } from '../../src/lib/whiteboards/widgets.js';
+
+/** A PNG header naming a 3x2 picture: the CLI reads type and size from the bytes alone. */
+const PNG_3x2 = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]),
+  Buffer.from('IHDR'),
+  Buffer.from([0, 0, 0, 3, 0, 0, 0, 2, 8, 6, 0, 0, 0, 0, 0, 0, 0]),
+]);
 
 /**
  * `dreamcontext whiteboard` end-to-end through the built CLI, against a scratch project:
@@ -192,15 +199,58 @@ describe('whiteboard CLI (integration)', { timeout: 60_000 }, () => {
     expect(json(['whiteboard', 'remove', slug, '--tag', 'diagram']).removed).toHaveLength(3);
   });
 
-  it('draw refuses a file carrying an image element (D10) and leaves the board untouched', () => {
+  it('draw refuses a picture the board does not hold and leaves the board untouched', () => {
     const path = join(root, 'whiteboards', slug, `${slug}.excalidraw.md`);
     const before = readFileSync(path, 'utf-8');
     const f = join(project, 'img.json');
-    writeFileSync(f, JSON.stringify([{ id: 'i', type: 'image', version: 1, x: 0, y: 0, width: 10, height: 10, fileId: 'x' }]));
+    writeFileSync(f, JSON.stringify([{ id: 'i', type: 'image', version: 1, x: 0, y: 0, width: 10, height: 10, fileId: 'x'.repeat(40) }]));
     const r = run(['whiteboard', 'draw', slug, '--file', f]);
     expect(r.code).not.toBe(0);
-    expect(r.err).toMatch(/Images are not supported/);
+    expect(r.err).toMatch(/picture this board does not have/);
     expect(readFileSync(path, 'utf-8')).toBe(before);
+  });
+
+  it('add image stores the picture beside the board, once, and places it at its own shape', () => {
+    const png = join(project, 'shot.png');
+    writeFileSync(png, PNG_3x2);
+    const a = json(['whiteboard', 'add', slug, 'image', '--file', png, '--at', '5000,5000']);
+    expect(a.kind).toBe('image');
+    expect(a.fileId).toMatch(/^[0-9a-f]{40}$/);
+    expect(a.file).toBe(`whiteboards/${slug}/files/${a.fileId}.png`);
+    expect(readFileSync(join(root, a.file)).equals(PNG_3x2)).toBe(true);
+    const el = readWhiteboard(root, slug).board.elements.find((e) => e.id === a.id)!;
+    expect([el.type, el.fileId, el.x, el.y, el.width, el.height]).toEqual(['image', a.fileId, 5000, 5000, 3, 2]);
+    // The same picture again is the same file; a second element names it.
+    const b = json(['whiteboard', 'add', slug, 'image', '--file', png]);
+    expect(b.fileId).toBe(a.fileId);
+    expect(readdirSync(join(root, 'whiteboards', slug, 'files'))).toEqual([`${a.fileId}.png`]);
+    // show names the picture's file id; draw keeps a picture the board holds.
+    const shown = json(['whiteboard', 'show', slug, a.id]);
+    expect(JSON.stringify(shown)).toContain(a.fileId);
+    const f = join(project, 'img-known.json');
+    writeFileSync(f, JSON.stringify([{ id: 'i', type: 'image', version: 1, x: 0, y: 0, width: 3, height: 2, fileId: a.fileId }]));
+    const drawn = json(['whiteboard', 'draw', slug, '--file', f]).ids;
+    expect(drawn).toHaveLength(1);
+    json(['whiteboard', 'remove', slug, a.id, b.id, ...drawn]);
+  });
+
+  it('add image refuses a missing --file, a non-picture, an SVG and a grid size', () => {
+    const svg = join(project, 'x.svg');
+    writeFileSync(svg, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    const txt = join(project, 'x.txt');
+    writeFileSync(txt, 'hello');
+    const png = join(project, 'shot2.png');
+    writeFileSync(png, PNG_3x2);
+    for (const [args, re] of [
+      [[], /needs --file/],
+      [['--file', svg], /not a PNG, JPEG, GIF or WebP/],
+      [['--file', txt], /not a PNG, JPEG, GIF or WebP/],
+      [['--file', png, '--size', 'm'], /takes --size w,h/],
+    ] as const) {
+      const r = run(['whiteboard', 'add', slug, 'image', ...args]);
+      expect(r.code, args.join(' ')).not.toBe(0);
+      expect(r.err).toMatch(re);
+    }
   });
 
   it('refuses to write over a corrupt board, exits non-zero, leaves the file untouched', () => {

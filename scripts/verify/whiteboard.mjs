@@ -29,7 +29,8 @@
  *        never call window.open; a dreamcontext:// link navigates in-app.
  *   A11  a PUT that fails (503) shows "Not saved", retries, and saves once unblocked; a corrupt
  *        board shows the read-only card and its bytes never change.
- *   A12  a pasted or dropped PNG is refused visibly; nothing image-typed ever lands on disk.
+ *   A12  a pasted and a dropped PNG land as pictures; their bytes are stored in the board's
+ *       files/ folder and the board file names them.
  *   A16  the board switcher: All boards (search, Default badge, "Cannot be read", no delete on
  *        the default, inline delete confirm, Esc, arrows + Enter); "+" creates "Günlük" (slug
  *        gunluk, name verbatim) and opens it; an edit made just before switching away is saved.
@@ -313,7 +314,7 @@ function readScene(page) {
           offsetLeft: st.offsetLeft, offsetTop: st.offsetTop, width: st.width, height: st.height,
           active: st.activeEmbeddable ? { id: st.activeEmbeddable.element.id, state: st.activeEmbeddable.state } : null,
           elements: s.scene.getElementsIncludingDeleted().map((e) => ({
-            id: e.id, type: e.type, x: e.x, y: e.y, width: e.width, height: e.height,
+            id: e.id, type: e.type, x: e.x, y: e.y, width: e.width, height: e.height, fileId: e.fileId ?? null,
             isDeleted: !!e.isDeleted, version: e.version, link: e.link ?? null, strokeColor: e.strokeColor,
             kind: e.customData?.dc?.kind ?? null, size: e.customData?.dc?.size ?? null, ref: e.customData?.dc?.ref ?? null,
           })),
@@ -1106,38 +1107,24 @@ async function main() {
     }
     await clearSelection();
 
-    // ── A12: images refused visibly, never on disk ─────────────────────────────────────────
+    // ── A12: a pasted or dropped picture stays on the board ───────────────────────────────
+    const livePictures = async () => (await scene()).elements.filter((e) => e.type === 'image' && !e.isDeleted && e.fileId);
+    const before12 = (await livePictures()).length;
     let p12 = await spot();
     await page.mouse.click(p12.x, p12.y);
     await page.mouse.move(p12.x, p12.y);
     await focusCanvas();
-    const pasted = await page.evaluate((b64) => {
+    await page.evaluate((b64) => {
       const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
       const dt = new DataTransfer();
       dt.items.add(new File([bytes], 'shot.png', { type: 'image/png' }));
-      const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
-      document.dispatchEvent(ev);
-      return true;
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
     }, PNG_B64);
-    const IMAGE_REFUSAL = /Images are disabled\.?|Images come in a later version/;
-    const refusalShown = async () => (IMAGE_REFUSAL.exec(await page.locator('body').innerText().catch(() => '')) ?? [])[0];
-    const pasteMsg = await until(refusalShown, 4000);
-    ok('A12 a pasted PNG is refused visibly', pasted && !!pasteMsg, String(pasteMsg));
-    await shoot('image-paste-refused');
+    const pasted = await until(async () => (await livePictures()).length === before12 + 1, 6000);
+    ok('A12 a pasted PNG lands on the board as a picture', !!pasted, String((await livePictures()).length));
+    await shoot('image-pasted');
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
-    // Close Excalidraw's error dialog: its close button, else a click on its backdrop.
-    const closeRefusal = async () => {
-      for (const sel of ['.Dialog__close', '.Modal__background']) {
-        const l = page.locator(sel);
-        // A corner: the backdrop's centre is under the dialog itself.
-        if (await l.count()) { await l.first().click({ force: true, position: { x: 8, y: 8 } }).catch(() => {}); return; }
-      }
-    };
-    await closeRefusal();
-    await page.waitForTimeout(300);
-    const cleared = await until(async () => !(await refusalShown()), 4000);
-    ok('A12 fixture: the paste refusal is dismissed before the drop', !!cleared);
 
     p12 = await spot();
     await page.evaluate(({ b64, x, y }) => {
@@ -1149,14 +1136,17 @@ async function main() {
         target.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true, clientX: x, clientY: y }));
       }
     }, { b64: PNG_B64, x: p12.x, y: p12.y });
-    const dropMsg = await until(refusalShown, 4000);
-    ok('A12 a dropped PNG is refused visibly', !!dropMsg, String(dropMsg));
-    await closeRefusal();
+    const dropped = await until(async () => (await livePictures()).length === before12 + 2, 6000);
+    ok('A12 a dropped PNG lands on the board as a picture', !!dropped, String((await livePictures()).length));
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(2500);
-    s = await scene();
-    ok('A12 no image element in the live scene', !(s.elements.some((e) => e.type === 'image')));
-    ok('A12 nothing image-typed on disk (tombstones included)', !rawTypesOnDisk(SLUG).includes('image'), rawTypesOnDisk(SLUG).join(','));
+    // Both are one picture (same bytes), so one file; the board file names it.
+    const fileIds = [...new Set((await livePictures()).map((e) => e.fileId))];
+    const filesDir = join(BOARDS, SLUG, 'files');
+    const storedFiles = () => { try { return readdirSync(filesDir); } catch { return []; } };
+    const picturesStored = await until(() => fileIds.length > 0 && fileIds.every((id) => storedFiles().includes(`${id}.png`)), 10000);
+    ok('A12 the picture\'s bytes are stored in the board\'s files/ folder', !!picturesStored, `${JSON.stringify(fileIds)} vs ${JSON.stringify(storedFiles())}`);
+    const named = await until(() => rawTypesOnDisk(SLUG).filter((t) => t === 'image').length >= before12 + 2, 10000);
+    ok('A12 …and the board file holds both picture elements', !!named, rawTypesOnDisk(SLUG).join(','));
 
     // ── A11: a failing save shows "Not saved", retries, then saves ─────────────────────────
     const puts = [];

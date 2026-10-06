@@ -3,18 +3,20 @@ import { createChatSession, type ChatSession } from '../sleepy/chatSession';
 import { DEFAULT_CHAT_MODE } from '../../lib/chatModes';
 
 /**
- * Each agent card's two pieces of client state, both per CARD (two cards for one agent on one
- * board are two conversations) and both outliving the card remounting (Excalidraw remounts an
- * embeddable on every scroll out of view and back). Their death hangs off the board PAGE:
- * `WhiteboardsPage` calls {@link dropBoardAgentScratch} on unmount (home conversations excepted,
- * which die with their project or the sweep, {@link sweepHomeSessions}).
+ * The board agents' client state, outliving the cards and the panel remounting (Excalidraw
+ * remounts an embeddable on every scroll out of view and back):
  *
- *  - the composer bucket: staged chips (a dragged board element lands here as a `ref` chip)
- *    and the unsent draft;
- *  - the card's own chat session (owner, 2026-10-05: "the card is a session of that whiteboard,
- *    like the notch Assistant"): a Chat-bridge conversation opened with the card's agent and
- *    board, never the automation's thread. Its conversation id is kept per machine in
- *    localStorage, not in the synced board file: the transcript lives on this machine.
+ *  - each agent's ONE conversation on a board (owner, 2026-10-06: "card = identity, the
+ *    conversation always in the panel"): a Chat-bridge session opened with the agent and the
+ *    board, never the automation's thread, keyed `home.<agent>` whether the agent lives on the
+ *    board (its manifest names it) or only has a card there. Its conversation id is kept per
+ *    machine in localStorage, not in the synced board file: the transcript lives on this machine.
+ *  - the composer buckets: staged chips (a board element dropped on an agent's card or on the
+ *    panel lands as a `ref` chip) and the unsent draft.
+ *
+ * The conversations survive the owner leaving the Whiteboard page (`WhiteboardsPage` drops
+ * the rest with {@link dropBoardAgentScratch} `keepHome`); they end with their project or with
+ * the sweep ({@link sweepHomeSessions}) once their board is no longer open.
  */
 
 const PREFIX = 'wb-agent:';
@@ -23,13 +25,12 @@ const PREFIX = 'wb-agent:';
 const minted = new Set<string>();
 
 const HOME_PREFIX = 'home.';
-const CARD_PREFIX = 'card.';
 
 /**
- * The element id a home agent's conversation goes by (`home.<agent>`): the agent panel beside
- * the board and that agent's card on the canvas are one conversation (owner, 2026-10-05), and
- * it is the one that stays alive when the owner leaves the Whiteboard page. Per agent, since a
- * board can be home to several. Excalidraw element ids never contain a dot-led `home.`.
+ * The key an agent's conversation on a board goes by (`home.<agent>`): the panel and every card
+ * of that agent on the board are one conversation. Kept under the name it had when only home
+ * agents had one, so a conversation remembered then still opens. Excalidraw element ids never
+ * contain a dot-led `home.`.
  */
 export function homeCardId(agent: string): string {
   return `${HOME_PREFIX}${agent}`;
@@ -62,79 +63,10 @@ function dropBucket(id: string): void {
   minted.delete(id);
 }
 
-// ── home agents' cards on the canvas ──────────────────────────────────────────────────────
-
-/** `<vault>|<board>|<agent>` → that home agent's mounted cards (element id → shows no chat). */
-const homeCards = new Map<string, Map<string, boolean>>();
-/** Same key → every card of it seen since the page opened, first seen first: the primary pick
- *  holds across Excalidraw's scroll remounts. Cleared with the page's drop. */
-const homeSeen = new Map<string, string[]>();
-const homeListeners = new Set<() => void>();
-/** `<vault>|<board>|`, the vault encoded so a `|` in it never shifts the board or agent. */
-const boardKey = (vault: string, board: string) => `${encodeURIComponent(vault)}|${board}|`;
-const homeKey = (vault: string, board: string, agent: string) => `${boardKey(vault, board)}${agent}`;
-const ofVault = (key: string, vault: string) => key.startsWith(`${encodeURIComponent(vault)}|`);
-
-function notifyHomeCards(): void {
-  for (const fn of homeListeners) fn();
-}
-
-/** A home agent's card mounted (or changed size): its composer is the home conversation's, so a
- *  board element dropped on it lands there (`cardScratchId`). Returns the forget, for the
- *  card's unmount. */
-export function markHomeCard(vault: string, board: string, elementId: string, agent: string, small = false): () => void {
-  const k = homeKey(vault, board, agent);
-  const mounted = homeCards.get(k) ?? new Map<string, boolean>();
-  mounted.set(elementId, small);
-  homeCards.set(k, mounted);
-  const seen = homeSeen.get(k) ?? [];
-  if (!seen.includes(elementId)) homeSeen.set(k, [...seen, elementId]);
-  notifyHomeCards();
-  return () => {
-    const left = homeCards.get(k);
-    if (!left || !left.delete(elementId)) return;
-    if (!left.size) homeCards.delete(k);
-    notifyHomeCards();
-  };
-}
-
-export function subscribeHomeCards(fn: () => void): () => void {
-  homeListeners.add(fn);
-  return () => { homeListeners.delete(fn); };
-}
-
-/**
- * Whether this card shows its home agent's chat. One conversation draws in one place: of that
- * agent's mounted cards, the first seen that is M or larger (an S card shows no chat) does; any
- * other says where it is. A card not yet marked is not primary, so it never mounts the chat
- * before the pick is made.
- */
-export function isPrimaryHomeCard(vault: string, board: string, agent: string, elementId: string): boolean {
-  const k = homeKey(vault, board, agent);
-  const mounted = homeCards.get(k);
-  if (!mounted?.has(elementId)) return false;
-  const order = homeSeen.get(k) ?? [];
-  const rank = (id: string) => (mounted.get(id) ? order.length : 0) + order.indexOf(id);
-  let best = elementId;
-  for (const id of mounted.keys()) if (rank(id) < rank(best)) best = id;
-  return best === elementId;
-}
-
-/** The element id a card's conversation goes by: a home agent's card shares `home.<agent>`;
- *  any other keeps its own, kept clear of the `home.` names so it never joins one. `card.`
- *  ids are escaped too, so no two element ids ever share a key. */
-export function cardElementKey(elementId: string, homeAgent: string | null = null): string {
-  if (homeAgent) return homeCardId(homeAgent);
-  return isHomeCard(elementId) || elementId.startsWith(CARD_PREFIX) ? `${CARD_PREFIX}${elementId}` : elementId;
-}
-
-/** The composer bucket a board element dropped on this card goes to. */
-export function cardScratchId(vault: string, board: string, elementId: string): string {
-  const prefix = boardKey(vault, board);
-  for (const [k, mounted] of homeCards) {
-    if (mounted.has(elementId) && k.startsWith(prefix)) return boardAgentScratchId(vault, board, homeCardId(k.slice(prefix.length)));
-  }
-  return boardAgentScratchId(vault, board, cardElementKey(elementId));
+/** The composer bucket a board element dropped for `agent` goes to: that agent's conversation
+ *  on the board, the one the panel shows. */
+export function cardScratchId(vault: string, board: string, agent: string): string {
+  return boardAgentScratchId(vault, board, homeCardId(agent));
 }
 
 // ── a board's older per-card conversations ───────────────────────────────────────────────
@@ -142,6 +74,15 @@ export function cardScratchId(vault: string, board: string, elementId: string): 
 /** Boards (`<vault>|<board>|`) whose file this page has read, their agent cards' older
  *  conversations handed to the home keys. Cleared with the page's drop. */
 const adoptedBoards = new Set<string>();
+const adoptListeners = new Set<() => void>();
+/** `<vault>|<board>|`, the vault encoded so a `|` in it never shifts the board. */
+const boardKey = (vault: string, board: string) => `${encodeURIComponent(vault)}|${board}|`;
+const ofVault = (key: string, vault: string) => key.startsWith(`${encodeURIComponent(vault)}|`);
+
+export function subscribeAdoption(fn: () => void): () => void {
+  adoptListeners.add(fn);
+  return () => { adoptListeners.delete(fn); };
+}
 
 /**
  * The board's file is in: each agent card's own conversation from before the panel goes to its
@@ -152,10 +93,10 @@ const adoptedBoards = new Set<string>();
 export function adoptBoardCards(vault: string, board: string, cards: readonly { elementId: string; agent: string }[]): void {
   for (const c of cards) adoptHomeConversation({ vault, board, elementId: c.elementId }, c.agent);
   adoptedBoards.add(boardKey(vault, board));
-  notifyHomeCards();
+  for (const fn of adoptListeners) fn();
 }
 
-/** Whether the panel may open this board's home conversation (heard via subscribeHomeCards). */
+/** Whether the panel may open this board's home conversation (heard via subscribeAdoption). */
 export function boardCardsAdopted(vault: string, board: string): boolean {
   return adoptedBoards.has(boardKey(vault, board));
 }
@@ -223,6 +164,11 @@ export function subscribeCardSession(c: CardSpec, fn: () => void): () => void {
   const e = entryFor(c);
   e.listeners.add(fn);
   return () => { e.listeners.delete(fn); forgetIfUnused(e); };
+}
+
+/** The conversation this card continues on this machine, or null before its first one. */
+export function cardConversationId(c: CardSpec): string | null {
+  return readConversation(c);
 }
 
 /** True when this card has talked before on this machine (a conversation to continue). */
@@ -313,7 +259,6 @@ export function dropBoardAgentScratch(opts: { vault?: string; keepHome?: boolean
   }
   if (!opts.vault) latestKeep.clear(); else latestKeep.delete(opts.vault);
   const gone = (k: string) => !opts.vault || ofVault(k, opts.vault);
-  for (const k of [...homeSeen.keys()]) if (gone(k)) homeSeen.delete(k);
   for (const k of [...adoptedBoards]) if (gone(k)) adoptedBoards.delete(k);
 }
 

@@ -18,6 +18,8 @@ import {
   whiteboardRev,
 } from '../../lib/whiteboards/store.js';
 import { mergeElements } from '../../lib/whiteboards/merge.js';
+import { boardFileRelPath, readBoardFile, WHITEBOARD_MAX_FILE_BYTES, writeBoardFile } from '../../lib/whiteboards/files.js';
+import { assertPicturesHeld } from '../../lib/whiteboards/ops.js';
 import { searchPages } from '../../lib/whiteboards/pages.js';
 import {
   WHITEBOARD_MAX_BODY_BYTES,
@@ -64,7 +66,7 @@ export function requestSelfOrigin(req: IncomingMessage): string | undefined {
 }
 
 /** How much of an oversized upload is read and discarded after the 413 before the socket is cut. */
-const MAX_DRAIN_BYTES = 4 * WHITEBOARD_MAX_BODY_BYTES;
+const DRAIN_FACTOR = 4;
 
 /**
  * Stream the body with a per-chunk cap (the `agent-drop.ts` shape): an oversized body is
@@ -75,18 +77,18 @@ const MAX_DRAIN_BYTES = 4 * WHITEBOARD_MAX_BODY_BYTES;
  * writing would otherwise get EPIPE / a network error instead of the 413, and the page treats
  * 413 as a terminal "Not saved: too large" rather than a retryable failure (D11).
  */
-function readCappedBody(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
+function readCappedBody(req: IncomingMessage, res: ServerResponse, cap = WHITEBOARD_MAX_BODY_BYTES): Promise<Buffer | null> {
   const refuse = (bytes: number) => {
-    sendWhiteboardError(res, new WhiteboardTooLargeError(`request body is over ${bytes} bytes (max ${WHITEBOARD_MAX_BODY_BYTES})`));
+    sendWhiteboardError(res, new WhiteboardTooLargeError(`request body is over ${bytes} bytes (max ${cap})`));
     let drained = 0;
     req.on('data', (chunk: Buffer) => {
       drained += chunk.length;
-      if (drained > MAX_DRAIN_BYTES) req.destroy();
+      if (drained > DRAIN_FACTOR * cap) req.destroy();
     });
     req.resume();
   };
   const declared = Number(req.headers['content-length']);
-  if (Number.isFinite(declared) && declared > WHITEBOARD_MAX_BODY_BYTES) {
+  if (Number.isFinite(declared) && declared > cap) {
     refuse(declared);
     return Promise.resolve(null);
   }
@@ -98,7 +100,7 @@ function readCappedBody(req: IncomingMessage, res: ServerResponse): Promise<Buff
     req.on('data', (chunk: Buffer) => {
       if (done) return;
       size += chunk.length;
-      if (size > WHITEBOARD_MAX_BODY_BYTES) {
+      if (size > cap) {
         chunks.length = 0;
         refuse(size);
         finish(null);
@@ -223,8 +225,9 @@ export async function handleWhiteboardRev(
 /**
  * PUT /api/whiteboards/:slug `{elements}` → `{rev, elements?}` (D11).
  *
- * The body is strict-picked by `validatePutBody` (a `files` key or an image element is a 400,
- * over 5MB a 413) and merged with disk per element under the board's lock. `elements` comes
+ * The body is strict-picked by `validatePutBody` (a `files` key or an image without a valid
+ * file id is a 400, over 5MB a 413) and merged with disk per element under the board's lock;
+ * a live picture whose file is neither stored nor already on the board is a 400. `elements` comes
  * back only when disk contributed something the browser did not have, so a CLI write landing
  * between a poll and this PUT is never hidden behind the new rev. A missing board is a 404
  * and is never re-created; a corrupt one is a 422 and is never written over.
@@ -250,7 +253,10 @@ export async function handleWhiteboardPut(
     const selfOrigin = requestSelfOrigin(req);
     const { elements } = validatePutBody(parsed, { byteLength: raw.length, selfOrigin });
     let diskContributed = false;
-    const result = await mutateWhiteboard(contextRoot, params.slug, (board) => {
+    const slug = params.slug;
+    const result = await mutateWhiteboard(contextRoot, slug, (board) => {
+      // Under the lock: the board this save merges into is the one its pictures are checked against.
+      assertPicturesHeld(elements, board.elements, (fileId) => boardFileRelPath(contextRoot, slug, fileId) !== null);
       const merged = mergeElements(board.elements, elements);
       diskContributed = merged.diskContributed;
       board.elements = merged.elements;
@@ -326,6 +332,58 @@ export async function handleWhiteboardRestore(
 ): Promise<void> {
   try {
     sendJson(res, 200, await restoreWhiteboard(contextRoot, params.id));
+  } catch (err) {
+    sendWhiteboardError(res, err);
+  }
+}
+
+/**
+ * POST /api/whiteboards/:slug/files/:id, the picture's raw bytes → `{id, mimeType}`. A picture
+ * on the board is stored beside it (`files.ts`): the type is read from the bytes (PNG, JPEG,
+ * GIF, WebP; never SVG), over 10MB is a 413, a missing board a 404. Writing an id that is
+ * already stored is a no-op, so the page can retry an upload freely.
+ */
+export async function handleWhiteboardFilePost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const raw = await readCappedBody(req, res, WHITEBOARD_MAX_FILE_BYTES);
+  if (!raw) {
+    if (!res.headersSent) sendError(res, 400, 'invalid', 'Could not read the request body.');
+    return;
+  }
+  try {
+    // The board must exist: a picture is never stored for a board that is not there.
+    whiteboardRev(contextRoot, params.slug);
+    const { id, mimeType } = writeBoardFile(contextRoot, params.slug, params.id, raw);
+    sendJson(res, 200, { id, mimeType });
+  } catch (err) {
+    sendWhiteboardError(res, err);
+  }
+}
+
+/**
+ * GET /api/whiteboards/:slug/files/:id → the picture's bytes, typed by what they are. Served
+ * `nosniff` under a CSP that runs nothing, and cached for good: an id never changes its picture.
+ */
+export async function handleWhiteboardFileGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    const { bytes, mimeType } = readBoardFile(contextRoot, params.slug, params.id);
+    res.writeHead(200, {
+      'Content-Type': mimeType,
+      'Content-Length': String(bytes.length),
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Cache-Control': 'private, max-age=31536000, immutable',
+    });
+    res.end(bytes);
   } catch (err) {
     sendWhiteboardError(res, err);
   }

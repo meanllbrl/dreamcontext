@@ -135,6 +135,15 @@ export const DEFAULT_WIDGET_SIZES: Readonly<Record<(typeof WIDGET_KINDS)[number]
   agent: 'l',
 };
 
+/**
+ * A kind whose new card is not a preset box (owner, 2026-10-06: the agent card comes in tall,
+ * three grid rows, so it can show who, its state and the last lines of its conversation). It is
+ * still resizable like any card; `dc.size` records the nearest preset, which picks the layout.
+ */
+export const DEFAULT_WIDGET_BOXES: Readonly<Partial<Record<(typeof WIDGET_KINDS)[number], readonly [number, number]>>> = {
+  agent: [376, 572],
+};
+
 export function isWidgetSize(v: unknown): v is WidgetSize {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(WIDGET_SIZES, v);
 }

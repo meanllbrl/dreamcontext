@@ -23,7 +23,7 @@ import './InsightView.css';
 
 /** The board's own summary shape, rebuilt from the detail response — the registry bodies
  *  read title/unit/slug/latest and little else. */
-function toSummary(detail: NonNullable<ReturnType<typeof useLabInsight>['data']>): InsightSummary {
+export function toSummary(detail: NonNullable<ReturnType<typeof useLabInsight>['data']>): InsightSummary {
   const m = detail.insight;
   return {
     slug: m.slug,

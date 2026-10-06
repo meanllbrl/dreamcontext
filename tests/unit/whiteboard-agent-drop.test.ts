@@ -70,11 +70,10 @@ describe('agentCardUnder', () => {
     expect(agentCardUnder([card], new Set(['card']), point)).toBeNull();
   });
 
-  it('never takes an S card as a target', () => {
-    expect(agentCardUnder([agentCard('small', 's')], new Set(['a']), point)).toBeNull();
-    // An M card underneath an S one still takes it.
-    const under = agentCard('m', 'm');
-    expect(agentCardUnder([under, agentCard('small', 's')], new Set(['a']), point)?.id).toBe('m');
+  it('takes an S card too: the chip lands in the panel, not on the card', () => {
+    expect(agentCardUnder([agentCard('small', 's')], new Set(['a']), point)?.id).toBe('small');
+    // The topmost wins whatever its size.
+    expect(agentCardUnder([agentCard('m', 'm'), agentCard('small', 's')], new Set(['a']), point)?.id).toBe('small');
   });
 
   it('takes the topmost card, and ignores deleted, rotated, non-agent widgets and a miss', () => {

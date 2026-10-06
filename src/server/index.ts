@@ -158,6 +158,7 @@ import {
   handleWhiteboardsList, handleWhiteboardsCreate, handleWhiteboardGet, handleWhiteboardRev,
   handleWhiteboardPut, handleWhiteboardDelete, handleWhiteboardDefault, handleWhiteboardRename,
   handleWhiteboardPages, handleWhiteboardTrashList, handleWhiteboardRestore,
+  handleWhiteboardFilePost, handleWhiteboardFileGet,
 } from './routes/whiteboards.js';
 import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
 import {
@@ -809,6 +810,8 @@ export function buildRouter(): Router {
   router.get('/api/whiteboards/trash', handleWhiteboardTrashList);
   router.post('/api/whiteboards/trash/:id/restore', handleWhiteboardRestore);
   router.get('/api/whiteboards/:slug/rev', handleWhiteboardRev);
+  router.post('/api/whiteboards/:slug/files/:id', handleWhiteboardFilePost);
+  router.get('/api/whiteboards/:slug/files/:id', handleWhiteboardFileGet);
   router.get('/api/whiteboards/:slug', handleWhiteboardGet);
   router.put('/api/whiteboards/:slug', handleWhiteboardPut);
   router.patch('/api/whiteboards/:slug', handleWhiteboardRename);

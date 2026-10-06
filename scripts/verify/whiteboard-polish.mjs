@@ -18,6 +18,13 @@
  *       and a made-up colour is refused.
  *   P5  an HTML block fits its card: a long one is drawn smaller and shows whole (its last line
  *       inside the card), a short one's lone root element stretches to the card's height.
+ *   P8  short content fills its card: an HTML block's heading stays on top, its grid takes the
+ *       spare height (a stat's value at its tile's bottom) and its last line ends on the card's
+ *       bottom edge; a pie insight's chart takes the card's height.
+ *   P7  the wheel over an ACTIVE HTML block (owner, 2026-10-06: it went nowhere): a block that
+ *       fits its card hands the wheel to the board (it pans); a block too long to fit scrolls
+ *       its own content and the board stays; scrolled back to its top, the next wheel up pans
+ *       the board; a pinch on it zooms the board. An inactive block pans the board as before.
  *   P6  no console or page errors. Screenshots in light and dark to <scratch>/shots.
  */
 import { spawn, execFileSync } from 'node:child_process';
@@ -80,6 +87,13 @@ function setup() {
 `, 'utf-8');
     dc(['lab', 'sync', slug]);
   }
+  dc(['lab', 'create', 'sources', '--title', 'Traffic sources', '--render', 'pie', '--adapter', 'script']);
+  writeFileSync(join(DC, 'lab', 'scripts', 'sources.mjs'), `export default async function () {
+  const t = new Date().toISOString();
+  return [['Organic', 420], ['Paid', 260], ['Referral', 140]].map(([name, v]) => ({ name, points: [{ t, v }] }));
+}
+`, 'utf-8');
+  dc(['lab', 'sync', 'sources']);
   dc(['whiteboard', 'create', 'Growth']);
   const add = (args) => JSON.parse(dc(['whiteboard', 'add', BOARD, ...args, '--json'])).id;
   ids.spend = add(['insight', '--ref', 'ad-spend', '--title', 'Ad spend (7d)', '--at', '0,0', '--size', '376,112']);
@@ -87,6 +101,14 @@ function setup() {
   ids.untitled = add(['note', '--at', '1176,0']);
   const long = '<div class="dc-stack"><h3 class="dc-h3">Long block</h3>' + Array.from({ length: 14 }, (_, i) => `<p class="dc-p">Row ${i + 1}: lorem ipsum dolor sit amet</p>`).join('') + '<p class="dc-p" id="last">LAST LINE</p></div>';
   ids.longHtml = add(['html', '--title', 'Long block', '--text', long, '--at', '0,784', '--size', '376,376']);
+  const huge = '<div class="dc-stack">' + Array.from({ length: 70 }, (_, i) => `<p class="dc-p">Row ${i + 1}</p>`).join('') + '<p class="dc-p" id="huge-last">END</p></div>';
+  ids.hugeHtml = add(['html', '--title', 'Huge block', '--text', huge, '--at', '784,784', '--size', '376,376']);
+  const flow = '<div class="dc-doc"><div class="dc-h3" id="flow-head">Flow</div><div class="dc-grid dc-grid--2">'
+    + '<div class="dc-stat" id="flow-stat"><div class="dc-stat-label">Todo</div><div class="dc-value" id="flow-value">54</div></div>'
+    + '<div class="dc-stat"><div class="dc-stat-label">Review</div><div class="dc-value">32</div></div></div>'
+    + '<div class="dc-label">Rule</div><p class="dc-p" id="flow-foot">Close three before opening one.</p></div>';
+  ids.flowHtml = add(['html', '--title', 'Flow block', '--text', flow, '--at', '1176,784', '--size', '376,572']);
+  ids.pie = add(['insight', '--ref', 'sources', '--title', 'Traffic sources', '--at', '1568,0', '--size', '376,376']);
   ids.shortHtml = add(['html', '--title', 'Short block', '--text', '<div class="dc-card" id="lone"><p class="dc-p">Short</p></div>', '--at', '392,784', '--size', '376,376']);
 }
 
@@ -268,6 +290,72 @@ async function main() {
     ok('P5 a short block keeps full size', shortFit.scale === 1, JSON.stringify(shortFit));
     ok('P5 …and its lone root element fills the card\'s height', !!lone && lone.h >= lone.vh - 2, JSON.stringify(lone));
     await page.screenshot({ path: join(SHOTS, 'html-fit-light.png'), clip: { x: 220, y: 110, width: 1220, height: 780 } });
+
+    // ── P8 short content fills its card (owner, 2026-10-06: an empty band under it) ──
+    const flowFrame = await frameFor('#flow-foot');
+    const flow = flowFrame ? await flowFrame.evaluate(() => {
+      const r = (id) => document.getElementById(id).getBoundingClientRect();
+      return { head: r('flow-head').top, foot: r('flow-foot').bottom, statBottom: r('flow-stat').bottom, value: r('flow-value').bottom, vh: window.innerHeight };
+    }) : null;
+    ok('P8 a short HTML block\'s heading stays at the top', !!flow && flow.head < 40, JSON.stringify(flow));
+    ok('P8 …its last line ends on the card\'s bottom edge (no empty band)', !!flow && flow.foot >= flow.vh - 24 && flow.foot <= flow.vh + 1, JSON.stringify(flow));
+    ok('P8 …the grid between takes the room and a stat\'s value sits at its tile\'s bottom', !!flow && flow.statBottom - flow.value < 24 && flow.statBottom > flow.vh * 0.4, JSON.stringify(flow));
+    const pieFill = await page.locator('.wb-widget--insight').filter({ hasText: 'Traffic sources' }).evaluate((card) => {
+      const body = card.querySelector('.wb-widget-body').getBoundingClientRect();
+      const svg = card.querySelector('.wb-widget-body svg')?.getBoundingClientRect();
+      let bottom = body.top;
+      for (const n of card.querySelectorAll('.wb-widget-body *')) { const r = n.getBoundingClientRect(); if (r.width > 0 && r.height > 0) bottom = Math.max(bottom, r.bottom); }
+      return { body: { top: body.top, bottom: body.bottom, h: body.height }, svgH: svg?.height ?? 0, bottom };
+    });
+    ok('P8 a pie insight fills its card: the chart takes the height, nothing hangs below the card', pieFill.svgH >= pieFill.body.h * 0.55 && pieFill.bottom <= pieFill.body.bottom + 1 && pieFill.bottom >= pieFill.body.bottom - 48, JSON.stringify(pieFill));
+
+    // ── P7 the wheel over an active HTML block ──
+    const centreOfEl = async (id) => {
+      const s = await readScene(page);
+      const el = s.elements.find((e) => e.id === id);
+      return toClient(s, el.x + el.width / 2, el.y + el.height / 2);
+    };
+    const wheelAt = async (id, dy, ctrl = false) => {
+      const c = await centreOfEl(id);
+      await page.mouse.move(c.x - 30, c.y - 30);
+      await page.mouse.move(c.x, c.y, { steps: 3 });
+      await sleep(200);
+      const before = await readScene(page);
+      if (ctrl) await page.keyboard.down('Control');
+      await page.mouse.wheel(0, dy);
+      if (ctrl) await page.keyboard.up('Control');
+      await sleep(450);
+      const after = await readScene(page);
+      return { panned: after.scrollY - before.scrollY, zoomed: after.zoom - before.zoom };
+    };
+    const activate = async (id) => { const c = await centreOfEl(id); await page.mouse.click(c.x, c.y); await sleep(600); };
+    const hugeFrame = async () => frameFor('#huge-last');
+    const innerTop = async () => (await hugeFrame())?.evaluate(() => document.scrollingElement.scrollTop) ?? -1;
+    await page.keyboard.press('Escape');
+    // Every block on screen: Excalidraw's zoom to fit (Shift+1).
+    await page.locator('.excalidraw__canvas.interactive').click({ position: { x: 5, y: 5 } }).catch(() => {});
+    await page.keyboard.press('Shift+Digit1');
+    await sleep(600);
+    const hugeAt = await centreOfEl(ids.hugeHtml);
+    ok('P7 (setup) the long blocks are on screen', hugeAt.x > 0 && hugeAt.x < 1440 && hugeAt.y > 0 && hugeAt.y < 900, JSON.stringify(hugeAt));
+    const inactive = await wheelAt(ids.longHtml, 120);
+    ok('P7 over an inactive HTML block the wheel pans the board', inactive.panned < 0, JSON.stringify(inactive));
+    await activate(ids.longHtml);
+    const fits = await wheelAt(ids.longHtml, 120);
+    ok('P7 over an ACTIVE block that fits its card, the wheel pans the board', fits.panned < 0, JSON.stringify(fits));
+    await activate(ids.hugeHtml);
+    await sleep(1500);
+    const scrolls = await wheelAt(ids.hugeHtml, 160);
+    const top1 = await innerTop();
+    ok('P7 an active block too long to fit scrolls its own content…', top1 > 0, String(top1));
+    ok('P7 …and the board stays', scrolls.panned === 0, JSON.stringify(scrolls));
+    await wheelAt(ids.hugeHtml, -400);
+    const atTop = await innerTop();
+    const up = await wheelAt(ids.hugeHtml, -120);
+    ok('P7 scrolled back to its top, the next wheel up pans the board', atTop === 0 && up.panned > 0, JSON.stringify({ atTop, up }));
+    const pinch = await wheelAt(ids.hugeHtml, -60, true);
+    ok('P7 a pinch on an active block zooms the board', pinch.zoomed > 0, JSON.stringify(pinch));
+    await page.keyboard.press('Escape');
 
     // ── dark ──
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));

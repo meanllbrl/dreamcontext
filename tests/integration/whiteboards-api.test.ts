@@ -36,7 +36,7 @@ let root: string;
 let server: Server;
 let port: number;
 
-interface Reply { status: number; body: any }
+interface Reply { status: number; body: any; raw: Buffer; headers: Record<string, string | string[] | undefined> }
 
 function call(
   method: string,
@@ -58,10 +58,11 @@ function call(
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf-8');
+        const raw = Buffer.concat(chunks);
+        const text = raw.toString('utf-8');
         let body: unknown = text;
         try { body = JSON.parse(text); } catch { /* not json */ }
-        resolve({ status: res.statusCode ?? 0, body });
+        resolve({ status: res.statusCode ?? 0, body, raw, headers: res.headers });
       });
     });
     req.on('error', reject);
@@ -382,14 +383,14 @@ describe('whiteboards API: PUT body (A10, A12)', () => {
     untouched();
   });
 
-  it('a `files` key is a 400 naming images', async () => {
+  it('a `files` key is a 400: a picture goes up on its own route', async () => {
     const r = await call('PUT', `/api/whiteboards/${slug}`, { body: { elements: [rect('r1', 'a0', 2)], files: {} } });
     expect(r.status).toBe(400);
-    expect(r.body.message).toMatch(/image/i);
+    expect(r.body.message).toMatch(/never carries files/);
     untouched();
   });
 
-  it('an image element is a 400 naming images', async () => {
+  it('an image element without a valid file id is a 400', async () => {
     const img = { ...rect('img1', 'a1'), type: 'image', fileId: 'abc', status: 'saved' };
     const r = await call('PUT', `/api/whiteboards/${slug}`, { body: { elements: [rect('r1', 'a0'), img] } });
     expect(r.status).toBe(400);
@@ -491,8 +492,8 @@ describe('whiteboards API: the default "Control Panel" board (A15)', () => {
     const file = boardFile('control-panel');
     expect(existsSync(file)).toBe(false);
     const [a, b] = await Promise.all([call('GET', '/api/whiteboards/default'), call('GET', '/api/whiteboards/default')]);
-    expect(a).toEqual({ status: 200, body: { slug: 'control-panel' } });
-    expect(b).toEqual({ status: 200, body: { slug: 'control-panel' } });
+    expect({ status: a.status, body: a.body }).toEqual({ status: 200, body: { slug: 'control-panel' } });
+    expect({ status: b.status, body: b.body }).toEqual({ status: 200, body: { slug: 'control-panel' } });
     const got = await call('GET', '/api/whiteboards/control-panel');
     expect(got.body).toMatchObject({ slug: 'control-panel', name: 'Control Panel', elements: [] });
 
@@ -538,5 +539,80 @@ describe('whiteboards API: widget sizes (A17)', () => {
     const ok = { ...note, customData: { dc: { ...(note.customData as any).dc, size: 'xl' } } };
     expect((await call('PUT', `/api/whiteboards/${slug}`, { body: { elements: [ok] } })).status).toBe(200);
     expect((readWhiteboard(root, slug).board.elements[0].customData as any).dc.size).toBe('xl');
+  });
+});
+
+describe('whiteboards API: pictures (W7)', () => {
+  /** A PNG header naming a 3x2 picture: the server reads the type from the bytes alone. */
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]),
+    Buffer.from('IHDR'),
+    Buffer.from([0, 0, 0, 3, 0, 0, 0, 2, 8, 6, 0, 0, 0, 0, 0, 0, 0]),
+  ]);
+  const id = 'pic'.padEnd(40, '0');
+  const upload = (slug: string, fileId: string, bytes: Buffer, type = 'image/png') =>
+    call('POST', `/api/whiteboards/${slug}/files/${fileId}`, { raw: bytes, headers: { 'Content-Type': type, 'Content-Length': String(bytes.length) } });
+
+  it('POST stores the bytes beside the board; GET reads them back, typed, nosniff, no script', async () => {
+    const slug = freshBoard();
+    const up = await upload(slug, id, png);
+    expect(up.status).toBe(200);
+    expect(up.body).toEqual({ id, mimeType: 'image/png' });
+    expect(readFileSync(join(root, 'whiteboards', slug, 'files', `${id}.png`)).equals(png)).toBe(true);
+    const r = await call('GET', `/api/whiteboards/${slug}/files/${id}`);
+    expect(r.status).toBe(200);
+    expect(r.raw.equals(png)).toBe(true);
+    expect(r.headers['content-type']).toBe('image/png');
+    expect(r.headers['x-content-type-options']).toBe('nosniff');
+    expect(String(r.headers['content-security-policy'])).toMatch(/default-src 'none'; sandbox/);
+    // The same id again is a no-op, and the element naming it saves.
+    expect((await upload(slug, id, png)).status).toBe(200);
+    const img = { id: 'img1', type: 'image', version: 1, versionNonce: 1, index: 'a0', x: 0, y: 0, width: 3, height: 2, fileId: id, status: 'saved' };
+    expect((await call('PUT', `/api/whiteboards/${slug}`, { body: { elements: [img] } })).status).toBe(200);
+    expect(readWhiteboard(root, slug).board.elements.map((e) => e.fileId)).toEqual([id]);
+  });
+
+  it('refuses what is not a raster picture, whatever it says it is; a bad id; a missing board', async () => {
+    const slug = freshBoard();
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    const r1 = await upload(slug, id, svg, 'image/png');
+    expect(r1.status).toBe(400);
+    expect(r1.body.message).toMatch(/PNG, JPEG, GIF or WebP/);
+    expect((await upload(slug, 'short', png)).status).toBe(400);
+    expect((await upload(slug, `${id}.png`, png)).status).toBe(400);
+    expect((await upload('no-such-board', id, png)).status).toBe(404);
+    expect(existsSync(join(root, 'whiteboards', slug, 'files'))).toBe(false);
+    expect((await call('GET', `/api/whiteboards/${slug}/files/${id}`)).status).toBe(404);
+    expect((await call('GET', `/api/whiteboards/${slug}/files/..%2F..%2Fx`)).status).toBe(404);
+  });
+
+  it('a PUT naming a picture never uploaded is a 400 and the board is untouched', async () => {
+    const slug = freshBoard();
+    const before = readWhiteboard(root, slug).rev;
+    const img = { id: 'img1', type: 'image', version: 1, versionNonce: 1, index: 'a0', x: 0, y: 0, width: 3, height: 2, fileId: id, status: 'saved' };
+    const r = await call('PUT', `/api/whiteboards/${slug}`, { body: { elements: [img] } });
+    expect(r.status).toBe(400);
+    expect(r.body.message).toMatch(/does not hold/);
+    expect(readWhiteboard(root, slug).rev).toBe(before);
+    // Uploaded first, the same save goes through.
+    expect((await upload(slug, id, png)).status).toBe(200);
+    expect((await call('PUT', `/api/whiteboards/${slug}`, { body: { elements: [img] } })).status).toBe(200);
+  });
+
+  it('a picture over 10MB is a 413 and nothing is stored', async () => {
+    const slug = freshBoard();
+    const big = Buffer.concat([png, Buffer.alloc(10 * 1024 * 1024)]);
+    const r = await upload(slug, id, big);
+    expect(r.status).toBe(413);
+    expect(existsSync(join(root, 'whiteboards', slug, 'files'))).toBe(false);
+  });
+
+  it('a cross-site POST is refused like any other write', async () => {
+    const slug = freshBoard();
+    const r = await call('POST', `/api/whiteboards/${slug}/files/${id}`, {
+      raw: png, headers: { 'Content-Type': 'image/png', 'Content-Length': String(png.length), Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' },
+    });
+    expect(r.status).toBe(403);
+    expect(existsSync(join(root, 'whiteboards', slug, 'files'))).toBe(false);
   });
 });

@@ -1,5 +1,166 @@
 [
   {
+    "date": "2026-10-06",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Working-tree (not yet committed) whiteboard changes: HTML widget content scrolls correctly inside its frame, the board-agent panel is aware of all agents on a board rather than just one, a new fixed-size agent card model landed, dropping a widget onto an agent wires it to that agent, and the widget/agent-panel relationship was clarified; verify suites report 88/88 green.",
+    "breaking": false,
+    "summary": "Uncommitted: HTML widgets scroll, the agent panel knows every board agent, a new agent card ships, and drag-onto-agent works",
+    "references": [
+      "file:dashboard/src/components/whiteboard/htmlWidgetFrame.ts",
+      "file:dashboard/src/components/whiteboard/BoardAgentPanel.tsx",
+      "file:dashboard/src/components/whiteboard/agentCardModel.ts",
+      "file:dashboard/src/components/whiteboard/agentDrop.ts",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "chore",
+    "scope": "brain",
+    "description": "Documented the standing rule that dreamcontext delivers memory by injecting it via hooks (SessionStart snapshot, UserPromptSubmit recall) rather than the agent searching for it, plus a product-positioning rule and lessons learned from producing the promo reels.",
+    "breaking": false,
+    "summary": "Memory reaches the agent through hooks, not search; a positioning rule and reel lessons recorded",
+    "references": [
+      "commit:a46051c1"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "fix",
+    "scope": "handsfree",
+    "description": "Four fixes from real phone/Codespaces smoke-testing: the root process now waits for GitHub to actually finish starting the codespace before proceeding instead of racing it; the root supervisor holds the cloud listener without itself accepting connections on it; the cloud chat child no longer reads state that only the server owns; and the away banner now shows only in the project that is actually away instead of leaking across projects.",
+    "breaking": false,
+    "summary": "Cloud-side robustness: codespace start is awaited, the cloud listener is owned correctly, and the away banner is scoped per project",
+    "references": [
+      "commit:7e4508b0",
+      "commit:c98f028e",
+      "commit:424e2f27",
+      "commit:1fd43c6d",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "feat",
+    "scope": "handsfree",
+    "description": "With 0.30.1 safely on the registry, the hands-free command was un-hidden on main again (same unhide-after-publish pattern used for 0.30.0).",
+    "breaking": false,
+    "summary": "Hands-free is back on main after the 0.30.1 publish",
+    "references": [
+      "commit:9a06c4ac",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "chore",
+    "scope": "release",
+    "description": "Version bumped across all five surfaces and both lockfiles, recorded in planning with hands-free kept unannounced (mirroring the 0.30.0 release shape), then published to the npm registry; the announcement for 0.30.1 was folded into the existing 0.30.0 story rather than given its own post.",
+    "breaking": false,
+    "summary": "0.30.1 shipped: a patch on 0.30.0 with whiteboard side-panel/rename work and hands-free cloud-install fixes",
+    "references": [
+      "commit:99a2661a",
+      "commit:c9e2bf90",
+      "commit:d16fe7e1",
+      "commit:754de063",
+      "commit:6fac6dcc"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "test",
+    "scope": "marketing",
+    "description": "An e2e script captures the chat flow used in the v5 revision of the promo reel (locked VO, sleep model as centrepiece), following on from the v4 capture script logged on 2026-10-05.",
+    "breaking": false,
+    "summary": "A chat-capture script renders the v5 promo reel's sleep-model centrepiece",
+    "references": [
+      "commit:5f2064e9"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "fix",
+    "scope": "handsfree",
+    "description": "CLI go now registers the project under an ASCII header-safe name so the phone opens its own trip chat instead of a mismatched one; a login/activation/cancelled Return counts as the owner's action on the idle clock so the machine isn't put to sleep mid-handoff; the login page registers the Wake service worker and the login request now times out instead of hanging; the own Codespaces uptime count was fixed and account-login puts ssh -t after -- so it's not swallowed as an ssh flag.",
+    "breaking": false,
+    "summary": "The phone lands in its own chat, keeps the machine awake, and finds the Wake page",
+    "references": [
+      "commit:b23184e9",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "feat",
+    "scope": "handsfree",
+    "description": "The published npm package now carries npm-shrinkwrap.json (derived at prepack), and the hands-free cloud bootstrap runs npm ci against it so the Codespace installs byte-identical dependencies to what was tested; the root supervisor locks down /workspaces so nothing else can be installed over it. An older last-good tarball with no shrinkwrap is refused.",
+    "breaking": false,
+    "summary": "Cloud installs the exact shrinkwrapped build the registry published, and locks /workspaces down",
+    "references": [
+      "commit:61ba8b8a",
+      "commit:ba5b914a",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "Boards can now be renamed and given a tint colour for their card through both the dreamcontext CLI and the whiteboard server API, not just by hand-editing the scene file.",
+    "breaking": false,
+    "summary": "Rename a board and tint its card, from the CLI and the server",
+    "references": [
+      "commit:805e02cc",
+      "file:src/cli/commands/whiteboard.ts",
+      "file:src/server/routes/whiteboards.ts",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "type": "feat",
+    "scope": "whiteboard",
+    "description": "The board agent panel moved off the canvas into a persistent side panel so it survives page navigation and keeps its scroll/state; the whiteboard page now remembers and restores the last-viewed board on reopen instead of resetting to a default.",
+    "breaking": false,
+    "summary": "The board agent lives in a side panel that stays live across pages, and the page reopens where you left it",
+    "references": [
+      "commit:153468f7",
+      "file:dashboard/src/components/whiteboard/BoardAgentPanel.tsx",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-10-05",
     "type": "note",
     "scope": "quick",

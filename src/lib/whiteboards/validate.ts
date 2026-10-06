@@ -66,22 +66,88 @@ export function isValidTag(tag: unknown): tag is string {
 }
 
 /**
- * D7: a web widget URL must be `https:`, carry no userinfo, and (when the caller knows its own
- * origin — the server does, the CLI does not) must not point back at the dashboard itself.
- * Returns the normalized href.
+ * D7: what a web widget may show (owner, 2026-10-06: local files and dev servers too). MIRRORED
+ * from `dashboard/src/components/whiteboard/webUrl.ts` (`validateWebUrl`), which re-checks it
+ * at render time; a drift test runs the same cases through both. A target is an `https:` page,
+ * an `http:` page on this machine (`localhost`, `127.0.0.1`, `[::1]`; `localhost:5173` without
+ * a scheme means `http://localhost:5173`), or a file the board's reader draws (.html, .pdf, a
+ * picture), project-relative or absolute (`/…`, `file:///…`). Never userinfo, never a `..`
+ * step, and (when the caller knows its own origin: the server does, the CLI does not) never
+ * the dashboard itself, which on loopback means any spelling of its host on its port.
  */
-export function checkWebUrl(raw: unknown, selfOrigin?: string): string {
-  if (typeof raw !== 'string' || !raw.trim()) throw new WhiteboardValidationError('web widget needs a url');
-  let u: URL;
-  try {
-    u = new URL(raw.trim());
-  } catch {
-    throw new WhiteboardValidationError(`not a valid URL: ${raw}`);
+export type WebTarget =
+  | { ok: true; kind: 'url'; href: string }
+  | { ok: true; kind: 'file'; path: string; absolute: boolean }
+  | { ok: false; reason: 'empty' | 'invalid' | 'not-https' | 'userinfo' | 'own-origin' | 'file-type' | 'file-path' };
+
+export const WEB_FILE_EXTENSIONS: readonly string[] = ['.html', '.htm', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'];
+
+const MAX_WEB_PATH = 1024;
+const LOOPBACK_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '[::1]'];
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const BARE_LOOPBACK_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i;
+
+const isLoopback = (hostname: string) => LOOPBACK_HOSTS.includes(hostname.toLowerCase());
+
+function isOwnOrigin(u: URL, selfOrigin: string | undefined): boolean {
+  if (!selfOrigin) return false;
+  if (u.origin === selfOrigin) return true;
+  let own: URL;
+  try { own = new URL(selfOrigin); } catch { return false; }
+  const port = (x: URL) => x.port || (x.protocol === 'https:' ? '443' : '80');
+  return isLoopback(own.hostname) && isLoopback(u.hostname) && port(own) === port(u);
+}
+
+function fileTarget(path: string, absolute: boolean): WebTarget {
+  // eslint-disable-next-line no-control-regex
+  if (path.length > MAX_WEB_PATH || /[\u0000-\u001f\\]/.test(path)) return { ok: false, reason: 'file-path' };
+  const segments = (absolute ? path.slice(1) : path).split('/');
+  if (segments.some((seg) => seg === '..' || seg === '')) return { ok: false, reason: 'file-path' };
+  const name = segments[segments.length - 1];
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return { ok: false, reason: 'invalid' };
+  if (!WEB_FILE_EXTENSIONS.includes(name.slice(dot).toLowerCase())) return { ok: false, reason: 'file-type' };
+  return { ok: true, kind: 'file', path, absolute };
+}
+
+export function classifyWebTarget(raw: unknown, selfOrigin?: string): WebTarget {
+  if (typeof raw !== 'string' || !raw.trim()) return { ok: false, reason: 'empty' };
+  let text = raw.trim();
+  if (BARE_LOOPBACK_RE.test(text)) text = `http://${text}`;
+  if (!SCHEME_RE.test(text)) {
+    const rel = text.replace(/^(\.\/)+/, '');
+    return fileTarget(rel, rel.startsWith('/'));
   }
-  if (u.protocol !== 'https:') throw new WhiteboardValidationError(`web widget URL must be https: (got ${u.protocol})`);
-  if (u.username || u.password) throw new WhiteboardValidationError('web widget URL must not carry a username or password');
-  if (selfOrigin && u.origin === selfOrigin) throw new WhiteboardValidationError('web widget URL must not point at this dashboard');
-  return u.href;
+  let u: URL;
+  try { u = new URL(text); } catch { return { ok: false, reason: 'invalid' }; }
+  if (u.protocol === 'file:') {
+    if (u.host && !isLoopback(u.hostname)) return { ok: false, reason: 'file-path' };
+    let path: string;
+    try { path = decodeURIComponent(u.pathname); } catch { return { ok: false, reason: 'invalid' }; }
+    return fileTarget(path, true);
+  }
+  const local = u.protocol === 'http:' && isLoopback(u.hostname);
+  if (u.protocol !== 'https:' && !local) return { ok: false, reason: 'not-https' };
+  if (u.username || u.password) return { ok: false, reason: 'userinfo' };
+  if (isOwnOrigin(u, selfOrigin)) return { ok: false, reason: 'own-origin' };
+  return { ok: true, kind: 'url', href: u.href };
+}
+
+const WEB_TARGET_REASON: Record<Exclude<WebTarget, { ok: true }>['reason'], string> = {
+  empty: 'web widget needs a url or a file path',
+  invalid: 'not a web address or a file path',
+  'not-https': 'web widget shows https: pages, http: pages on this machine (localhost, 127.0.0.1) and files',
+  userinfo: 'web widget URL must not carry a username or password',
+  'own-origin': 'web widget URL must not point at this dashboard',
+  'file-type': `web widget files must be one of ${WEB_FILE_EXTENSIONS.join(' ')}`,
+  'file-path': 'web widget file path must not contain a ".." step, an empty step or a backslash',
+};
+
+/** The web widget's target, normalized (a page's href, a file's path), or a validation error. */
+export function checkWebUrl(raw: unknown, selfOrigin?: string): string {
+  const t = classifyWebTarget(raw, selfOrigin);
+  if (!t.ok) throw new WhiteboardValidationError(`${WEB_TARGET_REASON[t.reason]}${t.reason === 'empty' ? '' : `: ${String(raw)}`}`);
+  return t.kind === 'url' ? t.href : t.path;
 }
 
 function optString(dc: Record<string, unknown>, key: string, max = MAX_TEXT_CHARS): void {
@@ -150,9 +216,17 @@ export function validateWidgetPayload(raw: unknown, opts: { selfOrigin?: string 
   return dc as unknown as WidgetPayload;
 }
 
+/** An Excalidraw file id (nanoid, or the sha1 the CLI uses): never a path. */
+export const FILE_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
+
+export function isValidFileId(id: unknown): id is string {
+  return typeof id === 'string' && FILE_ID_RE.test(id);
+}
+
 /**
- * Validate ONE element: an object with a string `id` and `type` and a numeric `version`;
- * never an `image` (D10); a `customData.dc` must be a valid widget payload.
+ * Validate ONE element: an object with a string `id` and `type` and a numeric `version`; an
+ * `image` names its picture by a valid `fileId` (the bytes live beside the board, `files.ts`);
+ * a `customData.dc` must be a valid widget payload.
  */
 export function validateElement(raw: unknown, opts: { selfOrigin?: string } = {}): WhiteboardElement {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new WhiteboardValidationError('every element must be an object');
@@ -162,8 +236,8 @@ export function validateElement(raw: unknown, opts: { selfOrigin?: string } = {}
   if (typeof el.version !== 'number' || !Number.isFinite(el.version)) {
     throw new WhiteboardValidationError(`element ${el.id} needs a numeric version`);
   }
-  if (el.type === 'image') {
-    throw new WhiteboardValidationError('Images are not supported on whiteboards yet (they come in a later version)');
+  if (el.type === 'image' && el.isDeleted !== true && !isValidFileId(el.fileId)) {
+    throw new WhiteboardValidationError(`image ${el.id} needs a valid fileId`);
   }
   if (el.customData !== undefined && el.customData !== null) {
     if (typeof el.customData !== 'object' || Array.isArray(el.customData)) {
@@ -193,8 +267,9 @@ export function validateIncomingElements(raw: unknown, opts: { selfOrigin?: stri
 }
 
 /**
- * Strict-pick a PUT body to `{elements}`. Any other key (notably `files`, D10) is a 400; the
- * body is never spread. `byteLength`, when the caller measured the raw body, enforces the cap.
+ * Strict-pick a PUT body to `{elements}`. Any other key (notably `files`: a picture's bytes go
+ * up on their own route, never inside a board body) is a 400; the body is never spread.
+ * `byteLength`, when the caller measured the raw body, enforces the cap.
  */
 export function validatePutBody(
   body: unknown,
@@ -206,7 +281,7 @@ export function validatePutBody(
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new WhiteboardValidationError('body must be an object {elements}');
   const keys = Object.keys(body);
   if (keys.includes('files')) {
-    throw new WhiteboardValidationError('Images are not supported on whiteboards yet: a body carrying files is refused');
+    throw new WhiteboardValidationError('a board body never carries files: pictures are uploaded on their own (POST /api/whiteboards/<slug>/files/<id>)');
   }
   const extra = keys.filter((k) => k !== 'elements');
   if (extra.length > 0) throw new WhiteboardValidationError(`unexpected body keys: ${extra.join(', ')}`);

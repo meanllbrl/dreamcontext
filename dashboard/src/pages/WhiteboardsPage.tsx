@@ -9,7 +9,7 @@ import type { ExportNote } from '../lib/exportDownload';
 import { LazyWhiteboardCanvas } from '../components/whiteboard/LazyWhiteboardCanvas';
 import { PagePopupProvider } from '../components/whiteboard/PagePopup';
 import { BoardAgentPanel } from '../components/whiteboard/BoardAgentPanel';
-import { setAgentPanelOpen, useAgentPanelOpen } from '../components/whiteboard/agentPanelState';
+import { setAgentPanelOpen, useAgentPanelOpen, useBoardCards } from '../components/whiteboard/agentPanelState';
 import { dropBoardAgentScratch, sweepHomeSessions } from '../components/whiteboard/boardAgentScratch';
 import { readLastBoard, writeLastBoard } from '../components/whiteboard/boardPlace';
 import { BoardTabs } from './whiteboards/BoardTabs';
@@ -70,14 +70,16 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
     if (openSlug && vault) writeLastBoard(vault, openSlug);
   }, [openSlug, vault]);
 
-  // Only the open board's home conversations stay alive (one `claude` each); the rest end once
-  // idle, so boards visited with the panel open, deleted boards and re-homed agents never pile up.
+  // Only the open board's agents' conversations stay alive (one `claude` each): its home agents
+  // and the agents with a card on it. The rest end once idle, so boards visited with the panel
+  // open, deleted boards, removed cards and re-homed agents never pile up.
   const { data: automations } = useAutomations();
+  const openCards = useBoardCards(vault, openSlug ?? undefined);
   useEffect(() => {
     if (!vault || !openSlug || !automations) return;
-    sweepHomeSessions(vault, (board, agent) =>
-      board === openSlug && automations.some((a) => a.slug === agent && a.whiteboard === board));
-  }, [vault, openSlug, automations]);
+    sweepHomeSessions(vault, (board, agent) => board === openSlug && automations.some((a) => a.slug === agent
+      && (a.whiteboard === board || openCards.some((c) => c.agent === agent))));
+  }, [vault, openSlug, automations, openCards]);
 
   if (openSlug) {
     // Keyed on the slug: switching boards unmounts this editor first, so its save loop's
@@ -109,7 +111,7 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
   onRenameNote: (board: string, note: string | null) => void;
 }) {
   const { t } = useI18n();
-  const { load, saveState, onApi, onSceneChange, exportFile } = useWhiteboardEditor(slug);
+  const { load, saveState, onApi, onSceneChange, exportFile, pictures } = useWhiteboardEditor(slug);
   const { vault } = useVault();
   const panelOpen = useAgentPanelOpen(vault);
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
@@ -190,7 +192,7 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
         <PagePopupProvider>
           <div className="wbp-canvas">
             <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
-              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onApi} onSceneChange={onSceneChange} />
+              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onApi} pictures={pictures} onSceneChange={onSceneChange} />
             </Suspense>
           </div>
         </PagePopupProvider>

@@ -27,8 +27,7 @@
   border-bottom: 1px solid var(--color-border);
 }
 
-.wb-agent-panel-title,
-.wb-agent-panel-pick {
+.wb-agent-panel-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -39,13 +38,161 @@
   color: var(--color-text);
 }
 
-.wb-agent-panel-pick {
-  height: var(--space-8);
+/* Every agent on the board, one face each (owner, 2026-10-06): a click shows its conversation. */
+.wb-agent-strip {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.wb-agent-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.wb-agent-tab {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--space-8) + var(--space-2));
+  height: calc(var(--space-8) + var(--space-2));
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.wb-agent-tab:hover {
+  background: var(--color-bg-tertiary);
+  opacity: 1;
+}
+
+.wb-agent-tab.is-selected {
+  opacity: 1;
+}
+
+/* The shown agent: a ring around its face. */
+.wb-agent-tab.is-selected::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border: 2px solid var(--color-accent);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.wb-agent-tab:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* The state dot: idle is a hollow ring, working pulses, needs-you is the warning colour. */
+.wb-agent-tab-dot {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--color-bg);
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+
+.wb-agent-tab-dot--idle {
+  background: var(--color-bg-tertiary);
+  box-shadow: inset 0 0 0 1.5px var(--color-text-tertiary);
+}
+
+.wb-agent-tab-dot--working {
+  background: var(--color-success);
+  animation: wb-agent-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.wb-agent-tab-dot--needs-you {
+  background: var(--color-warning);
+}
+
+.wb-agent-tab-dot--unapproved {
+  background: var(--color-text-tertiary);
+}
+
+@keyframes wb-agent-dot-pulse {
+  50% { transform: scale(0.7); }
+}
+
+/* Who the panel shows: name, state, Find its card, the menu. */
+.wb-agent-panel-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-10, 40px);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wb-agent-panel-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-agent-panel-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.wb-agent-locate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--space-7, 28px);
   padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
-  font-family: inherit;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wb-agent-locate:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.wb-agent-locate:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* Something dragged over the panel: the veil (agentWidget.css) says where it goes, and what. */
+.wb-agent-panel > .wb-agent-drop-veil {
+  inset: var(--space-2);
+  padding-top: var(--space-16, 64px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-agent-tab-dot--working {
+    animation: none;
+  }
 }
 
 .wb-agent-panel-close {

@@ -62,3 +62,29 @@ export function oneLine(text: string, max = 140): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
+
+// ── the card's last lines ─────────────────────────────────────────────────────────────────────
+
+/** One line the card shows: who said it and what. */
+export interface SaidLine {
+  who: 'you' | 'agent';
+  text: string;
+}
+
+/** The last `max` things said in the conversation, oldest first: the owner's messages and the
+ *  agent's text, never tools or thinking, a dragged element's token taken out. */
+export function lastLines(items: readonly CardItem[], max: number): SaidLine[] {
+  const out: SaidLine[] = [];
+  for (let i = items.length - 1; i >= 0 && out.length < max; i--) {
+    const it = items[i]!;
+    const text = (it.text ?? '').replace(/dcref:wb\/\S+/g, '').trim();
+    if ((it.kind === 'user' || it.kind === 'text') && text) out.push({ who: it.kind === 'user' ? 'you' : 'agent', text });
+  }
+  return out.reverse();
+}
+
+/** Older lines fade: the newest is full strength, the oldest of a full card a third. */
+export function lineOpacity(index: number, count: number): number {
+  const fromNewest = count - 1 - index;
+  return Math.max(0.35, 1 - fromNewest * 0.13);
+}

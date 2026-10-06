@@ -1,22 +1,21 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAutomations, type AutomationSummary } from '../../../hooks/useAutomations';
 import { useAgentModelConfig } from '../../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../../lib/agentComposer';
-import { readAgentSettings } from '../../../lib/agentSettings';
 import { buildAppLink, routeAppLink } from '../../../lib/appLink';
-import { useVault } from '../../../context/VaultContext';
+import { useApi, useVault } from '../../../context/VaultContext';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { AgentDialog } from '../../agents/AgentDialog';
 import { ChatPaneHost, type ChatSurfaceActions } from '../../sleepy/ChatPaneHost';
 import type { ChatSession } from '../../sleepy/chatSession';
 import { isValidRefFor } from '../widgetModel';
 import { useWbText, useWhiteboardHost } from '../whiteboardHost';
-import { agentCardState, lastSaid, oneLine, type AgentCardState } from '../agentCardModel';
-import {
-  adoptHomeConversation, cardElementKey, isPrimaryHomeCard, markHomeCard, subscribeHomeCards, cardHasConversation, openCardSession, peekCardSession, subscribeCardSession, type CardSpec,
-} from '../boardAgentScratch';
-import { homeAgentsOf, panelAgentOf, setAgentPanelOpen, useAgentPanelOpen, usePanelPick } from '../agentPanelState';
+import { agentCardState, lastLines, lineOpacity, oneLine, type AgentCardState, type CardItem, type SaidLine } from '../agentCardModel';
+import { cardConversationId, type CardSpec } from '../boardAgentScratch';
+import { showAgentInPanel, useAgentPanelOpen, useCardFlash, useDropTarget } from '../agentPanelState';
+import { useAgentSession, useBoardAgents } from '../useBoardAgents';
 import { WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
 import './agentWidget.css';
@@ -24,21 +23,18 @@ import './agentWidget.css';
 type Tx = (key: string, fallback: string) => string;
 
 /**
- * An agent on the board (`agent` widget, ref = the automation slug): a conversation of the
- * board's own with that agent, like the notch Assistant (owner, 2026-10-05).
+ * An agent on the board (`agent` widget, ref = the automation slug): the agent's face (owner,
+ * 2026-10-06: "card = identity, the conversation always in the panel"). It shows who the agent
+ * is, its live state and the last lines of its conversation on this board, read-only; a click
+ * opens the board's agent panel on it, where the conversation is (BoardAgentPanel.tsx). The card
+ * the panel shows is marked, and the panel's Find its card flashes it.
  *
- * The card is a Chat-bridge session opened with the card's agent and board
- * (boardAgentScratch.ts `openCardSession`), never the automation's thread: nothing said here
- * reaches the Agents channel. The server gives it the agent's approved identity and, for a
- * home-board agent, its board scope; every message reaches the agent with the board's current
- * content beside it (lib/whiteboards/card-chat.ts). New conversation starts a fresh session.
+ * The conversation is the agent's ONE on this board (boardAgentScratch `homeCardId`), a
+ * Chat-bridge session the panel opens, never the automation's thread. The card never opens it:
+ * while none is live, its lines come from the remembered transcript on disk.
  *
- * The session opens on the card's first activation, never on board open: one `claude` process
- * per card on every board visit would be the cost. S shows who it is, its state and the last
- * thing said; M and up the chat itself, from the chat's own atoms (ChatPaneHost).
- *
- * Typing in the composer never reaches Excalidraw's tool shortcuts: its field is a textarea, and
- * Excalidraw's own key handler returns early for one.
+ * A board element dragged over the card says where it will go; dropped, it lands as a chip in
+ * the panel's composer for this agent (canvasGestures `dropOnAgentCard`).
  */
 export function AgentWidget({ elementId, payload, active, size }: WidgetProps) {
   const tx = useWbText();
@@ -82,52 +78,17 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
   const host = useWhiteboardHost();
   const { vault } = useVault();
   const slug = agent.slug;
-  // The board's home agent talks in ONE conversation, shared with the agent panel beside the
-  // board (owner, 2026-10-05); any other agent card keeps its own.
-  const home = !!board && agent.whiteboard === board;
-  const small = size === 's';
-  const spec = useMemo<CardSpec | null>(() => {
-    if (!vault || !board) return null;
-    return { vault, board, elementId: cardElementKey(elementId, home ? slug : null) };
-  }, [vault, board, elementId, home, slug]);
-  // Declared before the lazy open below, so a card's older conversation is handed over first.
-  // A layout effect: the card is marked, and the primary pick re-rendered, before paint.
-  useLayoutEffect(() => {
-    if (!vault || !board || !home) return undefined;
-    adoptHomeConversation({ vault, board, elementId }, slug);
-    return markHomeCard(vault, board, elementId, slug, small);
-  }, [vault, board, elementId, home, slug, small]);
-  // Two cards of one home agent: one conversation, drawn on one; the other says so. A card is
-  // primary only once marked, so two never mount the one chat container at once.
-  const primary = useSyncExternalStore(
-    subscribeHomeCards,
-    () => !home || !vault || !board || isPrimaryHomeCard(vault, board, slug, elementId),
-  );
-  // Stepped aside only while the panel shows THIS agent (a board can be home to several).
-  const { data: automations } = useAutomations();
-  const panelOpen = useAgentPanelOpen(vault);
-  const pick = usePanelPick(vault, board);
-  const inPanel = home && panelOpen && !!board && panelAgentOf(homeAgentsOf(automations, board), pick)?.slug === slug;
-
-  // The card's session, from the module store: it outlives this component (Excalidraw remounts
-  // an embeddable on every scroll), so the component only listens to it.
-  const [, force] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => (spec ? subscribeCardSession(spec, force) : undefined), [spec]);
-  const session = spec ? peekCardSession(spec) : null;
-  useEffect(() => (session ? session.subscribe(force) : undefined), [session]);
-
-  const open = useCallback((how: 'continue' | 'new' | 'resume' = 'continue'): ChatSession | null => {
-    if (!spec || !agent.approved) return null;
-    const { chatDefaultModel: model, chatDefaultEffort: effort } = readAgentSettings();
-    return openCardSession({ ...spec, agent: slug, model, effort }, how);
-  }, [spec, agent.approved, slug]);
-
-  // Lazy: the first activation of an M+ card opens (or resumes) its conversation.
-  useEffect(() => {
-    if (active && !small && !session && !inPanel && primary) open();
-  }, [active, small, session, open, inPanel, primary]);
-
+  // The agent's one conversation on this board, the panel's: the card only reads it.
+  const { spec, session, open } = useAgentSession(vault, board, agent);
+  const lines = useCardLines(spec, session);
   const state = agentCardState({ approved: agent.approved, busy: !!session?.busy, asking: !!session?.asking });
+  const panelOpen = useAgentPanelOpen(vault);
+  const { agent: shown } = useBoardAgents(board);
+  const inPanel = panelOpen && shown?.slug === slug;
+  const target = useDropTarget(vault, board);
+  const dropping = target?.kind === 'card' && target.elementId === elementId;
+  const flashing = useCardFlash(vault, board, elementId);
+  const talk = () => showAgentInPanel(vault, board, slug);
 
   // ── menu and dialog ─────────────────────────────────────────────────────────────────────────
   const [editing, setEditing] = useState(false);
@@ -137,8 +98,9 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
     void routeAppLink(buildAppLink({ kind: 'automation', vault, slug, file: null })).catch(failed);
   }, [vault, slug, host, tx]);
   const newConversation = useCallback(() => {
+    showAgentInPanel(vault, board, slug);
     if (open('new')) host.toast(tx('whiteboard.agent.newConversationStarted', 'New conversation started.'));
-  }, [open, host, tx]);
+  }, [vault, board, slug, open, host, tx]);
 
   const menu = (
     <AgentCardMenu
@@ -153,54 +115,43 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
     />
   );
 
+  const small = size === 's';
   let body: ReactNode;
-  if (small) {
-    body = <SmallBody agent={agent} session={session} tx={tx} />;
-  } else if (!agent.approved) {
+  if (!agent.approved && !small) {
     body = <Blocked agent={agent} onReview={openInAgents} tx={tx} />;
-  } else if (inPanel) {
-    // The conversation is on screen in the panel; one place at a time.
-    body = (
-      <div className="wb-agent-idle">
-        <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
-        <p className="wb-agent-empty">
-          {tx('whiteboard.agent.inPanel', 'Talking with {name} in the panel on the right.').replace('{name}', agent.title)}
-        </p>
-        <button type="button" className="wb-widget-btn" onClick={() => setAgentPanelOpen(vault, false)}>
-          {tx('whiteboard.agent.showHere', 'Show it here')}
-        </button>
-      </div>
-    );
-  } else if (!primary) {
-    body = (
-      <div className="wb-agent-idle">
-        <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
-        <p className="wb-agent-empty">
-          {tx('whiteboard.agent.otherCard', 'Talking with {name} in its other card on this board.').replace('{name}', agent.title)}
-        </p>
-      </div>
-    );
-  } else if (!session || !spec) {
-    body = (
-      <div className="wb-agent-idle">
-        <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
-        <p className="wb-agent-empty">
-          {(spec && cardHasConversation(spec)
-            ? tx('whiteboard.agent.continueHint', 'Click to continue your conversation with {name}.')
-            : tx('whiteboard.agent.startHint', 'Click to talk to {name} about this board.')).replace('{name}', agent.title)}
-        </p>
-      </div>
-    );
   } else {
     body = (
-      <CardChat
-        session={session}
-        reopen={() => open('resume')}
-        placeholder={tx('whiteboard.agent.placeholder', 'Message {name}…').replace('{name}', agent.title)}
-      />
+      <div
+        className="wb-agent-face"
+        role="button"
+        tabIndex={0}
+        aria-label={tx('whiteboard.agent.talk', 'Talk to {name} in the panel').replace('{name}', agent.title)}
+        onClick={talk}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); talk(); } }}
+      >
+        <div className="wb-agent-who">
+          <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={small ? 28 : 44} />
+          <span className="wb-agent-who-text">
+            {inPanel
+              ? <span className="wb-agent-in-panel">{tx('whiteboard.agent.inPanelMark', 'Open in the panel')}</span>
+              : agent.cadenceLabel && <span className="wb-agent-cadence">{agent.cadenceLabel}</span>}
+            {!small && agent.description && <span className="wb-agent-about">{oneLine(agent.description, 200)}</span>}
+          </span>
+        </div>
+        <CardLines lines={small ? lines.slice(-1) : lines} name={agent.title} tx={tx} />
+        {!small && (
+          <div className="wb-agent-dropzone">
+            {tx('whiteboard.agent.openHint', 'Drop here · Click to talk')}
+          </div>
+        )}
+      </div>
     );
   }
 
+  const classes = ['wb-agent', `wb-agent--${size}`];
+  if (inPanel) classes.push('is-in-panel');
+  if (dropping) classes.push('is-drop-target');
+  if (flashing) classes.push('is-flashing');
   return (
     <WidgetFrame
       kind="agent"
@@ -211,12 +162,76 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
       meta={<StateWord state={state} tx={tx} />}
       actions={menu}
     >
-      <div className={`wb-agent wb-agent--${size}`}>{body}</div>
+      <div className={classes.join(' ')} data-agent={slug}>
+        {body}
+        {dropping && (
+          <div className="wb-agent-drop-veil" aria-hidden="true">
+            <span className="wb-agent-drop-label">
+              {tx('whiteboard.agent.dropHere', 'Add to the chat with {name}').replace('{name}', agent.title)}
+            </span>
+            {target?.what && <span className="wb-agent-drop-what">{target.what}</span>}
+          </div>
+        )}
+      </div>
       {editing && createPortal(
         <AgentDialog agent={agent} onClose={() => setEditing(false)} onToast={host.toast} />,
         document.body,
       )}
     </WidgetFrame>
+  );
+}
+
+/** How many lines of the conversation the card shows. */
+const CARD_LINES = 6;
+
+/**
+ * The conversation's last lines, read-only: the live session's while one is open, else the
+ * remembered conversation's transcript (read from disk, no `claude` started for it), else none.
+ */
+function useCardLines(spec: CardSpec | null, session: ChatSession | null): SaidLine[] {
+  const api = useApi();
+  const remembered = spec && !session ? cardConversationId(spec) : null;
+  const history = useQuery({
+    queryKey: ['wb-agent-lines', spec?.vault, remembered],
+    queryFn: async () => {
+      const r = await api.get<{ items: CardItem[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(remembered!)}`);
+      return Array.isArray(r?.items) ? r.items : [];
+    },
+    enabled: !!remembered,
+    staleTime: 15_000,
+  });
+  const items = session ? session.getModel().items : history.data ?? [];
+  return lastLines(items, CARD_LINES);
+}
+
+function CardLines({ lines, name, tx }: { lines: readonly SaidLine[]; name: string; tx: Tx }) {
+  // Read top-down from under the agent's name; when the lines outgrow the card, the newest stay
+  // in view and the oldest go under a fade.
+  const listRef = useRef<HTMLOListElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setClipped(el.scrollHeight > el.clientHeight + 1);
+  });
+  if (!lines.length) {
+    return <p className="wb-agent-empty wb-agent-lines-empty">{tx('whiteboard.agent.noLines', 'No conversation yet. Click to start one in the panel.')}</p>;
+  }
+  const you = tx('whiteboard.agent.you', 'You');
+  return (
+    <ol ref={listRef} className={`wb-agent-lines${clipped ? ' is-clipped' : ''}`} aria-label={tx('whiteboard.agent.lastLines', 'Last lines')}>
+      {lines.map((line, i) => (
+        <li
+          key={i}
+          className={`wb-agent-line wb-agent-line--${line.who}`}
+          style={{ opacity: lineOpacity(i, lines.length) }}
+        >
+          <span className="wb-agent-line-who">{line.who === 'you' ? you : name}</span>
+          <span className="wb-agent-line-text">{oneLine(line.text, 280)}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -272,29 +287,18 @@ export function CardChat({ session, reopen, placeholder }: { session: ChatSessio
   );
 }
 
-export function StateWord({ state, tx }: { state: AgentCardState; tx: Tx }) {
-  let text: string;
+/** The state's one word, for the header and the panel's strip. */
+export function stateText(state: AgentCardState, tx: Tx): string {
   switch (state.kind) {
-    case 'working': text = tx('whiteboard.agent.workingNow', 'Working'); break;
-    case 'needs-you': text = tx('whiteboard.agent.needsYou', 'Needs you'); break;
-    case 'unapproved': text = tx('whiteboard.agent.unapproved', 'Not approved'); break;
-    default: text = tx('whiteboard.agent.idle', 'Idle');
+    case 'working': return tx('whiteboard.agent.workingNow', 'Working');
+    case 'needs-you': return tx('whiteboard.agent.needsYou', 'Needs you');
+    case 'unapproved': return tx('whiteboard.agent.unapproved', 'Not approved');
+    default: return tx('whiteboard.agent.idle', 'Idle');
   }
-  return <span className={`wb-agent-state wb-agent-state--${state.kind}`}>{text}</span>;
 }
 
-function SmallBody({ agent, session, tx }: { agent: AutomationSummary; session: ChatSession | null; tx: Tx }) {
-  const line = session ? lastSaid(session.getModel().items) : null;
-  return (
-    <div className="wb-agent-small">
-      <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
-      <p className="wb-agent-small-line">
-        {line
-          ? `${line.who === 'you' ? `${tx('whiteboard.agent.you', 'You')}: ` : ''}${oneLine(line.text)}`
-          : tx('whiteboard.agent.emptySmall', 'No messages yet.')}
-      </p>
-    </div>
-  );
+export function StateWord({ state, tx }: { state: AgentCardState; tx: Tx }) {
+  return <span className={`wb-agent-state wb-agent-state--${state.kind}`}>{stateText(state, tx)}</span>;
 }
 
 /** An unapproved agent: the server would refuse its card, so the reason and the one control

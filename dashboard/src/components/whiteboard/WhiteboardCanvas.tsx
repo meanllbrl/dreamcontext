@@ -5,18 +5,20 @@ import {
   reconcileElements, restoreElements,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import type { AppState, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import type { AppState, BinaryFileData, DataURL, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
 import type {
-  ExcalidrawElement, ExcalidrawEmbeddableElement, NonDeleted, OrderedExcalidrawElement,
+  ExcalidrawElement, ExcalidrawEmbeddableElement, FileId, NonDeleted, OrderedExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
 import { emitInstance, useVault } from '../../context/VaultContext';
+import { useAutomations } from '../../hooks/useAutomations';
 import { AgentDialog } from '../agents/AgentDialog';
 import { openExternalUrl } from '../../lib/desktop';
-import { DEFAULT_WIDGET_SIZES, isCardColor, type CardColor, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
+import { DEFAULT_WIDGET_BOXES, DEFAULT_WIDGET_SIZES, isCardColor, nearestWidgetSize, type CardColor, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
 import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
 import { usePagePopup } from './PagePopup';
-import { IMAGES_LATER_MESSAGE, reconcileRemoteScene, stripImageElements } from './sceneSync';
+import { reconcileRemoteScene } from './sceneSync';
+import { isPictureOf, type BoardPictures } from './boardPictures';
 import { WidgetPalette } from './WidgetPalette';
 import {
   WIDGET_STROKE, hasWidgetStroke, humaniseSlug, isWidgetLink, newElementId, readWidgetPayload, selectionIsOnlyWidgets,
@@ -25,9 +27,11 @@ import {
 import { placeNewWidget, widgetSizeOf } from './widgetSize';
 import { WidgetSizePicker } from './WidgetSizePicker';
 import {
-  dropOnAgentCard, linkOpenerId, samePicker, setWidgetColor, setWidgetSize, sizePickerFor, subscribeWidgetActivation,
-  subscribeWidgetSnapping, type AgentDropHandler, type SizePickerState,
+  dropOnAgentCard, hoverTargetOf, linkOpenerId, samePicker, setWidgetColor, setWidgetSize, sizePickerFor, subscribeWidgetActivation,
+  subscribeWidgetSnapping, type AgentDropHandler, type AgentHoverHandler, type DropContext, type SizePickerState,
 } from './canvasGestures';
+import { agentCardsOf, panelAgentSlug, registerCardLocator, setBoardCards, setDropTarget } from './agentPanelState';
+import { boardAfterWheel } from './htmlWidgetFrame';
 import { useCanvasPalette } from './useCanvasPalette';
 import { useCanvasWrapEffects } from './useCanvasWrapEffects';
 import { WhiteboardHostContext, useDataTheme, useWbText, type WhiteboardHost } from './whiteboardHost';
@@ -47,10 +51,12 @@ export interface WhiteboardScene {
  */
 export interface WhiteboardCanvasApi {
   excalidraw: ExcalidrawImperativeAPI;
-  /** Fold a polled (or PUT-merged) remote element list into the live scene: images out, then
+  /** Fold a polled (or PUT-merged) remote element list into the live scene:
    *  `restoreElements(remote, null)` + `reconcileElements`, applied with `CaptureUpdateAction.NEVER`.
    *  Does NOT fire `onSceneChange`: nothing the user did changed. */
   applyRemoteElements: (remote: readonly unknown[]) => void;
+  /** Take pictures the board refused for good off the scene, and say why. */
+  dropPictures: (fileIds: readonly string[], reason: string) => void;
   /** Every element, tombstones included: the list a save sends. */
   getElements: () => readonly OrderedExcalidrawElement[];
   getSceneVersion: () => number;
@@ -61,8 +67,10 @@ export interface WhiteboardCanvasProps {
   boardSlug: string;
   initialScene: WhiteboardScene;
   onApi?: (api: WhiteboardCanvasApi | null) => void;
+  /** The board's pictures: the canvas fetches the ones it lacks (boardPictures.ts). */
+  pictures?: BoardPictures;
   /** Called when the scene's content changed (not on a mere selection or scroll), with every
-   *  element including tombstones, images already removed. The page debounces its save. */
+   *  element including tombstones. The page debounces its save. */
   onSceneChange?: (elements: readonly OrderedExcalidrawElement[]) => void;
   /** A clicked `dreamcontext://<kind>/<id>` element link. Default: a task or knowledge page opens
    *  in the board page's page popup when there is one, else on its own page in the app. */
@@ -71,7 +79,7 @@ export interface WhiteboardCanvasProps {
 
 
 const UI_OPTIONS = {
-  tools: { image: false },
+  tools: { image: true },
   canvasActions: {
     changeViewBackgroundColor: false,
     clearCanvas: false,
@@ -93,7 +101,7 @@ const UI_OPTIONS = {
  * Lazy-loaded through `LazyWhiteboardCanvas`, which points Excalidraw at the self-hosted fonts
  * before this module (and the Excalidraw bundle) is imported.
  */
-export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSceneChange, onInternalLink }: WhiteboardCanvasProps) {
+export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictures, onSceneChange, onInternalLink }: WhiteboardCanvasProps) {
   const tx = useWbText();
   const theme = useDataTheme();
   const { bus, vault } = useVault();
@@ -117,6 +125,24 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
   pagePopupRef.current = pagePopup;
   const txRef = useRef(tx);
   txRef.current = tx;
+  const picturesRef = useRef(pictures);
+  picturesRef.current = pictures;
+  /** Fetch the pictures in `elements` this canvas does not hold yet, and show them as they land. */
+  const loadPictures = useCallback((elements: readonly unknown[]) => {
+    const api = apiRef.current;
+    const store = picturesRef.current;
+    if (!api || !store) return;
+    const held = api.getFiles();
+    store.load(elements, (id) => !!held[id], (file) => {
+      const data: BinaryFileData = {
+        id: file.id as FileId,
+        mimeType: file.mimeType as BinaryFileData['mimeType'],
+        dataURL: file.dataURL as DataURL,
+        created: Date.now(),
+      };
+      apiRef.current?.addFiles([data]);
+    });
+  }, []);
 
   // The panel keeps the card that opened it in view (PagePopup.tsx): it reads and pans this
   // board's viewport, never its zoom.
@@ -145,14 +171,11 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
     apiRef.current?.setToast({ message, closable: true, duration: 4000 });
   }, []);
 
-  // Read once: the page remounts for another board. Images are refused here too (D10), since a
-  // hand-made board can carry one and every save of it would then be rejected.
+  // Read once: the page remounts for another board. Its pictures' bytes come separately.
   const [initial] = useState(() => {
-    const stripped = stripImageElements(initialScene.elements as readonly ExcalidrawElement[]);
     return {
-      imagesRemoved: stripped.visible,
       data: {
-        elements: stripped.elements,
+        elements: initialScene.elements as readonly ExcalidrawElement[],
         appState: {
           viewBackgroundColor: typeof initialScene.appState?.viewBackgroundColor === 'string'
             ? initialScene.appState.viewBackgroundColor
@@ -166,6 +189,17 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
   // ── the widget host: how a widget writes its own payload ──────────────────────────────────
   const host = useMemo<WhiteboardHost>(() => ({
     toast,
+    wheelBoard: (wheel, anchor) => {
+      const api = apiRef.current;
+      if (!api) return;
+      const st = api.getAppState();
+      const next = boardAfterWheel(
+        { scrollX: st.scrollX, scrollY: st.scrollY, zoom: st.zoom.value, offsetLeft: st.offsetLeft, offsetTop: st.offsetTop },
+        wheel,
+        anchor,
+      );
+      api.updateScene({ appState: { scrollX: next.scrollX, scrollY: next.scrollY, zoom: { value: next.zoom as never } } });
+    },
     commitWidget: (elementId, update) => {
       const api = apiRef.current;
       if (!api) return;
@@ -188,17 +222,54 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
     boardSlug,
   }), [toast, boardSlug]);
 
-  // ── drag-to-ask: an element dropped on an agent card goes back and becomes a chip there ──
+  // ── drag-to-ask: an element dropped on an agent card (or the agent panel) goes back and
+  // becomes a chip in that agent's composer, the panel's ─────────────────────────────────────
   const boardSlugRef = useRef(boardSlug);
   const vaultRef = useRef(vault);
   vaultRef.current = vault;
   boardSlugRef.current = boardSlug;
-  const agentDrop = useCallback<AgentDropHandler>((api, drag) => {
+  const { data: automations } = useAutomations();
+  const automationsRef = useRef(automations);
+  automationsRef.current = automations;
+  const dropContext = useCallback((): DropContext | null => {
     const vaultNow = vaultRef.current;
-    return !!vaultNow && dropOnAgentCard(api, drag, { vault: vaultNow, board: boardSlugRef.current, tx: txRef.current });
-  }, []);
+    const board = boardSlugRef.current;
+    if (!vaultNow || !board) return null;
+    return {
+      vault: vaultNow,
+      board,
+      tx: txRef.current,
+      agentOf: (slug) => {
+        const a = automationsRef.current?.find((x) => x.slug === slug);
+        return a ? { title: a.title, approved: a.approved } : null;
+      },
+      panelAgent: () => panelAgentSlug(vaultNow, board, automationsRef.current),
+      toast,
+    };
+  }, [toast]);
+  const agentDrop = useCallback<AgentDropHandler>((api, drag) => {
+    const ctx = dropContext();
+    return !!ctx && dropOnAgentCard(api, drag, ctx);
+  }, [dropContext]);
+  const agentHover = useCallback<AgentHoverHandler>((api, drag) => {
+    const ctx = dropContext();
+    if (!ctx) return;
+    setDropTarget(ctx.vault, ctx.board, drag ? hoverTargetOf(api, drag, ctx) : null);
+  }, [dropContext]);
   const agentDropRef = useRef(agentDrop);
   agentDropRef.current = agentDrop;
+  const agentHoverRef = useRef(agentHover);
+  agentHoverRef.current = agentHover;
+
+  // The panel's Find its card: bring the card into view (zoom kept unless it would not fit).
+  useEffect(() => registerCardLocator(vault, boardSlug, (elementId) => {
+    const api = apiRef.current;
+    const el = api?.getSceneElements().find((e) => e.id === elementId);
+    if (!api || !el) return;
+    const st = api.getAppState();
+    const fits = el.width * st.zoom.value <= st.width * 0.9 && el.height * st.zoom.value <= st.height * 0.9;
+    api.scrollToContent(el, { fitToViewport: !fits, viewportZoomFactor: 0.8, animate: true, duration: 350 });
+  }), [vault, boardSlug]);
 
   // ── the page's handle ─────────────────────────────────────────────────────────────────────
   const onApiRef = useRef(onApi);
@@ -208,13 +279,12 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
     apiRef.current = api;
     unsubscribers.current.forEach((off) => off());
     unsubscribers.current = [
-      ...subscribeWidgetSnapping(api, (a, drag) => agentDropRef.current(a, drag)),
+      ...subscribeWidgetSnapping(api, (a, drag) => agentDropRef.current(a, drag), (a, drag) => agentHoverRef.current(a, drag)),
       ...subscribeWidgetActivation(api),
     ];
     onApiRef.current?.({
       excalidraw: api,
       applyRemoteElements: (remote) => {
-        const stripped = stripImageElements(remote as readonly ExcalidrawElement[]);
         const reconciled = reconcileRemoteScene(
           {
             restoreElements: (els, local) => restoreElements(els as readonly ExcalidrawElement[], local),
@@ -222,35 +292,44 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
               reconcileElements(local, rem as readonly RemoteExcalidrawElement[], appState),
           },
           api.getSceneElementsIncludingDeleted(),
-          stripped.elements,
+          remote,
           api.getAppState(),
         );
         lastVersion.current = getSceneVersion(reconciled);
         api.updateScene({ elements: reconciled, captureUpdate: CaptureUpdateAction.NEVER });
+        loadPictures(reconciled);
+      },
+      dropPictures: (fileIds, reason) => {
+        const ids = new Set(fileIds);
+        // Never saved (its bytes never landed), so it leaves outright, not as a tombstone.
+        api.updateScene({
+          elements: api.getSceneElementsIncludingDeleted().filter((el) => !isPictureOf(el, ids)),
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+        const said = txRef.current('whiteboard.pictures.refused', 'This picture could not be kept on the board');
+        toast(reason ? `${said}: ${reason}` : said);
       },
       getElements: () => api.getSceneElementsIncludingDeleted(),
       getSceneVersion: () => getSceneVersion(api.getSceneElementsIncludingDeleted()),
     });
-  }, []);
+    loadPictures(initial.data.elements);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => {
     unsubscribers.current.forEach((off) => off());
     unsubscribers.current = [];
     onApiRef.current?.(null);
   }, []);
 
-  useEffect(() => {
-    if (!initial.imagesRemoved) return;
-    const timer = window.setTimeout(() => toast(txRef.current('whiteboard.images.later', IMAGES_LATER_MESSAGE)), 300);
-    return () => window.clearTimeout(timer);
-  }, [initial.imagesRemoved, toast]);
-
-  // ── saves: content changes only, images refused first (D10) ───────────────────────────────
+  // ── saves: content changes only ───────────────────────────────────────────────────────────
   const handleChange = useCallback((elements: readonly OrderedExcalidrawElement[], appState: AppState) => {
     // Before the version check: selection, scroll and zoom move the control without a content change.
     const nextPicker = sizePickerFor(elements, appState);
     setSizePicker((prev) => (samePicker(prev, nextPicker) ? prev : nextPicker));
     // With the select tool only: another tool's properties are for what it is about to draw.
     setWidgetsOnly(appState.activeTool.type === 'selection' && selectionIsOnlyWidgets(elements, appState.selectedElementIds));
+    // The panel knows every agent with a card here (heard only when the list really changes).
+    // Before the version check: a poll's remote copy has already recorded its version.
+    if (boardSlug) setBoardCards(vault, boardSlug, agentCardsOf(elements));
 
     // A widget with a visible stroke (Phase-1, CLI-made, or given a colour) draws a second frame
     // around its card; normalise it once. Also before the version check: a poll's remote copy
@@ -277,28 +356,23 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
 
     const version = getSceneVersion(elements);
     if (version === lastVersion.current) return;
-    const stripped = stripImageElements(elements);
-    if (stripped.removed) {
-      // Never inside Excalidraw's own onChange: the follow-up update reports the clean scene.
-      queueMicrotask(() => {
-        apiRef.current?.updateScene({ elements: stripped.elements, captureUpdate: CaptureUpdateAction.NEVER });
-      });
-      if (stripped.visible) toast(txRef.current('whiteboard.images.later', IMAGES_LATER_MESSAGE));
-      return;
-    }
     lastVersion.current = version;
+    // An undo can bring back a picture whose bytes this canvas never held.
+    loadPictures(elements);
     // Also fires once as the mounted scene first settles. A save of an unchanged scene is a
     // byte-level no-op on the server, and one that `restoreElements` repaired is worth saving.
     onSceneChangeRef.current?.(elements);
-  }, [toast]);
+  }, [vault, boardSlug, loadPictures]);
 
   // ── adding a widget ───────────────────────────────────────────────────────────────────────
   const addWidget = useCallback((payload: WidgetPayload, at: { x: number; y: number }) => {
     const api = apiRef.current;
     if (!api) return;
     const id = newElementId();
-    const size = payload.size ?? DEFAULT_WIDGET_SIZES[payload.kind];
-    const box = placeNewWidget(at, size);
+    // A kind with its own default box (the tall agent card) comes in at that box, free-form.
+    const own = payload.size ? undefined : DEFAULT_WIDGET_BOXES[payload.kind];
+    const size = payload.size ?? (own ? nearestWidgetSize(own[0], own[1]) : DEFAULT_WIDGET_SIZES[payload.kind]);
+    const box = placeNewWidget(at, own ? { width: own[0], height: own[1] } : size);
     // `convertToExcalidrawElements` passes an embeddable skeleton through untouched (it needs a
     // complete element), so `restoreElements` is what fills the schema defaults here.
     const [el] = restoreElements([{

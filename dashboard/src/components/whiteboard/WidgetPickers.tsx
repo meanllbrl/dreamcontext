@@ -6,6 +6,7 @@ import { useKnowledgeList } from '../../hooks/useKnowledge';
 import { useTasks } from '../../hooks/useTasks';
 import { useWhiteboardPages, type WhiteboardPageHit } from '../../hooks/useWhiteboardPages';
 import { isAgentSlugShape, isLabCardRef, type WidgetPayload } from '../../lib/whiteboardWidgets';
+import { isDesktop, pickFiles } from '../../lib/desktop';
 import { WEB_URL_REASON_TEXT, validateWebUrl } from './webUrl';
 import {
   humanizeFileName, isValidRefFor, isValidWidgetRef, knowledgeTitle, pageKindLabel, pageTypeLabel, taskTitle,
@@ -250,7 +251,9 @@ export function WebPicker({ onPick }: { onPick: Pick }) {
       setError(tx(`whiteboard.web.reason.${check.reason}`, WEB_URL_REASON_TEXT[check.reason]));
       return;
     }
-    onPick({ v: 1, kind: 'web', url: check.href, title: check.unicodeHost });
+    onPick(check.kind === 'file'
+      ? { v: 1, kind: 'web', url: check.path, title: check.name }
+      : { v: 1, kind: 'web', url: check.href, title: check.unicodeHost });
   };
   return (
     <div className="wb-picker">
@@ -258,12 +261,21 @@ export function WebPicker({ onPick }: { onPick: Pick }) {
         className="wb-picker-search"
         autoFocus
         value={url}
-        placeholder="https://"
+        placeholder={tx('whiteboard.web.placeholder', 'https://…, localhost:3000 or docs/report.html')}
         onChange={(e) => { setUrl(e.target.value); setError(null); }}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
       />
       {error && <p className="wb-picker-error" role="alert">{error}</p>}
       <div className="wb-picker-actions">
+        {isDesktop() && (
+          <button
+            type="button"
+            className="wb-palette-btn"
+            onClick={() => { void pickFiles().then(([picked]) => { if (picked) { setUrl(picked); setError(null); } }); }}
+          >
+            {tx('whiteboard.web.chooseFile', 'Choose a file…')}
+          </button>
+        )}
         <button type="button" className="wb-palette-btn" onClick={submit}>{tx('whiteboard.palette.addWeb', 'Add embed')}</button>
       </div>
     </div>

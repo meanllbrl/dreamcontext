@@ -10,7 +10,7 @@ pinned: false
 date: '2026-10-03'
 status: in_progress
 created: '2026-10-03'
-updated: '2026-10-04'
+updated: '2026-10-06'
 released_version: null
 tags:
   - 'topic:mobile'
@@ -85,7 +85,7 @@ list live in the task. The load-bearing ones:
 
 ## Technical Details
 
-**Status: built through wave 3, W4 (docs, real-Codespaces smoke, owner's phone checklist) in progress; nothing shipped and no criterion ticked.**
+**Status (2026-10-06): the code is on `main` and inside the published 0.30.0 / 0.30.1 packages, deliberately UNANNOUNCED — the UI is gated on local setup and the CLI command is hidden from `--help`. Every known bug from the first real-phone and real-Codespaces runs is fixed, but the phone path has still never worked end to end, so no acceptance criterion is ticked.** The last ship-gate is a 0.30.2 publish: the phone-chat fix lives in cloud code that the codespace only ever installs from npm, so it cannot reach a phone before it is on the registry. After that publish the never-yet-run steps are, in order: give a job from the phone and have it commit; lock the screen for 10 minutes and come back to a finished turn; let the machine sleep and wake it from the phone's Wake page (never passed since W0); and a Return that brings the phone's commit and session home.
 W0 (the provider gate) closed and produced D15/D17. W1 (transports + shared path guard)
 closed after seven review rounds that produced D18-D20. W2 (cloud server, laptop
 orchestration, lock consumers) closed after five rounds that produced D21-D23. The
@@ -99,7 +99,10 @@ before seal, and a mirror with its folders gone answers `mirror_absent` and is n
 sealed). The fixes are re-review pending. The user-facing reference is
 `skill/references/hands-free.md`; the security model and the recovery procedure are in
 [[dashboard-server-security]] § 6 "Cloud mode (hands-free)". The task file carries the code-fact map and the wave
-map. The shape, as built:
+map. W3 and W4 then closed too: the feature shipped hidden in 0.30.0 (`993a1866`), came
+back on `main` after each publish (`ba6334e1`, `9a06c4ac`), and the real-Codespaces smoke
+runs plus the owner's first phone session produced the fixes listed under "What the real
+machine taught" below. The shape, as built:
 
 - **One codespace per owner** from the private repo `<owner>/dreamcontext-handsfree` (devcontainer with Node, git, the `claude` CLI and the users `dcserver` / `dcuser` in group `dcwork`).
 - **The mirror root is the laptop's own absolute path** (`/Users/<name>` = cloud HOME, a bind mount of `/workspaces/dc-home`, never a symlink), so transcript directory encodings, `--resume`, the session roster and worktree paths stay valid with zero rewriting.
@@ -116,6 +119,17 @@ map. The shape, as built:
 - **Service worker and Wake** (`src/server/handsfree-sw.ts`). It intercepts only same-origin navigations, re-issues them with `X-Tunnel-Skip-AntiPhishing-Page: true`, and shows the cached offline page with a Wake link (the codespace's github.com page) only for a 404/502/503/504 or a network error without `X-Dreamcontext-Cloud`. It unregisters on the sealed page and on a revoked login.
 - **Sleep (D14/D15)** (`src/server/cloud-idle.ts` `computeStopAt`). The stop time is 15 min after the later of boot, the last real action and the last turn's end. A running turn defers it (≤ 2 h from its start), and so do a transfer (2 min grace), an install (≤ 2 h) and going/quiescing (≤ 2 h). The stop request goes to `/workspaces/dc-server-pub/stop-request` with the boot id; `cloud/stop-helper.sh` (the `codespace` user) runs `gh codespace stop`. A served quiesce with no laptop progress self-seals after 2 h (wiping first); an unserved one reverts to active after 30 min (`quiescingVerdict`).
 - **CLI** (`src/cli/commands/handsfree.ts`): `setup [--machine]`, `account-login [id] [--all] [--print]`, `password`, `go [--cut-running] [--take-over]`, `status [--json]`, `return [--cut-running]`, `resume`, `rollback`, `abandon`, `devices list`, `devices revoke --all`, `teardown [--discard-abandoned-work]`. The laptop routes (`src/server/routes/handsfree.ts`) call the same functions behind `laptopRouteRefusal()`. The desktop UI is in `dashboard/src/components/handsfree/`, and the phone's chip and quiesce overlay in `.../handsfree/phone/`.
+
+### What the real machine taught (2026-10-05/06)
+
+Every item here was found by a real Codespace or a real phone, not by a reviewer or a test.
+
+- **The cloud installs the exact bytes the laptop published** (`ba5b914a`, with `61ba8b8a`). `prepack` derives `npm-shrinkwrap.json` from `package-lock.json` (a lock out of sync with `package.json` fails the pack), `postpack` removes it, and the root entry is gitignored so a failed publish can never leave it to be committed. The cloud's root supervisor **refuses a tarball without `npm-shrinkwrap.json`**, validates it in memory (regular files and dirs under `package/` only), extracts as root and installs with `npm ci`, so there is no "it works on my laptop" dependency drift. The same commit hardened the root path: only its own checkout (plain dir, owner 0/1000, inode re-checked), never follows a link, masks setuid/setgid off, removes other-write from `/workspaces`, and runs npm with an isolated config and cache.
+- **Two listeners on 8080 answered nothing** (`c98f028e`). The supervisor kept a listening `net.Server` while also handing its fd to the server, so both accepted and every connection the supervisor won was dropped — which is what the forwarder's 504s in smoke #4 actually were. The entrypoint now binds 8080 in a short python step and `exec`s the supervisor with the socket as fd 3; the supervisor never creates a server. Boot and runtime logs persist under `/workspaces` so a cold start can still be diagnosed after `/tmp` is wiped.
+- **A stopped codespace is not ready when `POST /start` returns** (`7e4508b0`). The container can take minutes to exist while the 5-minute health clock was already running. `ensureRunning` now polls GitHub's own state to `Available` (up to 15 min, one progress line a minute), judges only readings taken *after* the start, and fails immediately only on `Failed`, `Deleted` or a vanished machine; the health clock starts after that.
+- **The privilege split broke the chat child** (`424e2f27`). In the cloud the chat child runs as `dcuser` and could not open the 0600 files the server wrote, so every phone chat died with `EACCES` on the settings file. Settings, the mode note and the surface briefing now go **inline** (single-quoted) and the deferred prompt is created exclusively in the `dcuser` work dir; bash's job-control noise no longer reaches the error card. This is the fix that needs 0.30.2 to reach a phone.
+- **The phone landed in the launcher, not in its chat** (`b23184e9`, found on a real phone). A CLI `go` now registers the project under an ASCII, header-safe name and the cloud fills a missing registry entry, so login opens the trip's chat. A successful login, the trip's activation and a *cancelled* Return all count as the owner's action on the idle clock. The login page registers the offline service worker, so a stopped machine shows Wake instead of a browser error, and the login request times out after 30 s. The uptime count closes on GitHub's own state change and counts runs the laptop did not start.
+- **The away banner is per project, not per window** (`1fd43c6d`). The status answer now says whether the project the window asks about is in the trip (the same lock check the server uses) and names the away project; only that project renders the banner, while other projects and the launcher get the window-bar chip (Return + Show link). A project switch during a status read always re-reads for the project on screen.
 
 ### Known residuals (stated, not fixed)
 
@@ -134,6 +148,12 @@ map. The shape, as built:
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-10-06 - Shipped hidden in 0.30.0/0.30.1; the real machine found six bugs, the phone path still unproven
+
+- **Status replaced, not appended.** The old "nothing shipped, W4 in progress" line was wrong: the code is on `main` and inside the published 0.30.0 and 0.30.1 packages, unannounced — the UI gated on local setup, the CLI command hidden from `--help`, the docs kept out of the package. Still **no criterion ticked**, because the phone path has never worked end to end.
+- **A new Technical Details section, "What the real machine taught"**, records the six fixes real Codespaces and a real phone produced: the shrinkwrapped install the cloud refuses to do without (`61ba8b8a` + `ba5b914a`, with the `/workspaces` lockdown), two listeners on 8080 that answered nothing and were the smoke-#4 504s (`c98f028e`), a start that was judged before the container existed (`7e4508b0`), the `dcuser` chat child hitting `EACCES` on the server's 0600 files (`424e2f27`), the phone landing in the launcher instead of its chat plus the Wake service worker and the idle-clock actions (`b23184e9`), and an away banner that showed in every project instead of the one that is away (`1fd43c6d`).
+- **The remaining gate is named:** 0.30.2 must be published before the phone-chat fix can reach a phone at all (the cloud installs only from the registry), and four steps have still never run — a job given and committed from the phone, a 10-minute locked screen, a sleep + Wake (never passed since W0), and a Return that brings the phone's commit and session home.
+- `status` stays `in_progress`, `released_version` stays `null`: the package carrying hidden code is not a release of this feature.
 
 ### 2026-10-04 - Update
 - W4 docs lockstep (AC21): the PRD now describes the built code, not the plan. The status was replaced (built through W3, review fixes uncommitted and re-review pending, W4 in progress) and Technical Details gained the journal, cloud server mode, phone auth, the service worker and Wake, sleep, the CLI surface and a Known residuals block: AC19 same-uid /proc exposure, one trust domain, the carried minors from the W3 Handoff, and two plan-vs-code mismatches (no 100 MB untracked cap in code; the limiter keys on the whole X-Forwarded-For value). New companions: skill/references/hands-free.md (agent-facing), the README 'Hands-free Mode' section, dashboard-server-security § 6 (cloud mode + recovery procedure) and the 6.system_flow hands-free flow. Nothing ticked; status stays in_progress.

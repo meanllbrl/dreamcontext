@@ -146,6 +146,15 @@ export const DEFAULT_WIDGET_SIZES: Readonly<Record<WidgetKind, WidgetSize>> = {
   agent: 'l',
 };
 
+/**
+ * A kind whose new card is not a preset box (owner, 2026-10-06: the agent card comes in tall,
+ * three grid rows, so it can show who, its state and the last lines of its conversation). It is
+ * still resizable like any card; `dc.size` records the nearest preset, which picks the layout.
+ */
+export const DEFAULT_WIDGET_BOXES: Readonly<Partial<Record<WidgetKind, readonly [number, number]>>> = {
+  agent: [376, 572],
+};
+
 export function isWidgetSize(v: unknown): v is WidgetSize {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(WIDGET_SIZES, v);
 }
@@ -226,7 +235,8 @@ export function newElementId(): string {
  *
  * Size: `payload.size` wins and sets width/height to its preset. Otherwise an explicit
  * positive `box.w`/`box.h` is kept free-form (no `dc.size`); with neither, the kind's default
- * preset is used and recorded. Width and height are never 0: `restoreElements` silently drops
+ * box (`DEFAULT_WIDGET_BOXES`, recording its nearest preset) or else its default preset is used
+ * and recorded. Width and height are never 0: `restoreElements` silently drops
  * an invisibly small element. `index` must be supplied by the caller (the store knows the
  * board's current max index).
  */
@@ -239,8 +249,11 @@ export function makeWidgetElement(
 ): WhiteboardElement {
   const id = newElementId();
   const freeForm = !payload.size && !!box.w && box.w > 0 && !!box.h && box.h > 0;
-  const size = freeForm ? undefined : (payload.size ?? DEFAULT_WIDGET_SIZES[kind]);
-  const [w, h] = size ? WIDGET_SIZES[size] : [box.w!, box.h!];
+  const defaultBox = freeForm || payload.size ? undefined : DEFAULT_WIDGET_BOXES[kind];
+  const size = freeForm ? undefined
+    : defaultBox ? nearestWidgetSize(defaultBox[0], defaultBox[1])
+    : (payload.size ?? DEFAULT_WIDGET_SIZES[kind]);
+  const [w, h] = defaultBox ?? (size ? WIDGET_SIZES[size] : [box.w!, box.h!]);
   const dc: WidgetPayload = { v: 1, kind, ...stripUndefined({ ...payload, size }) };
   return {
     id,

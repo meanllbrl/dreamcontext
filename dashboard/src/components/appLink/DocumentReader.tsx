@@ -74,6 +74,12 @@ export interface DocumentReaderProps {
    *  leaves its own (under a web page) off. */
   hostFileActions?: boolean;
   /**
+   * Also read an ABSOLUTE path (`/…`, never with a `..` step): the board's web block names a
+   * file anywhere on this computer. `/agent/file` still decides: outside the project it serves
+   * nothing until the owner has allowed that exact file (the host asks first).
+   */
+  allowAbsolute?: boolean;
+  /**
    * `page`: read as a PAGE, not an editor card — no frame or card background around the text,
    * body text at reading size, the line capped near 70 characters and centred, generous
    * margins (DocumentReader.css, `.doc-reader--page`). The board's side panel and the wiki
@@ -119,7 +125,7 @@ function useText(): (key: string, fallback: string) => string {
 
 export function DocumentReader({
   path, onOpen, onClose, embedded = false, onWikilink, vaultReads = false, hostFileActions = false,
-  variant = 'default',
+  variant = 'default', allowAbsolute = false,
 }: DocumentReaderProps) {
   const api = useApi();
   const { vault } = useVault();
@@ -147,7 +153,8 @@ export function DocumentReader({
       });
   }, [api, queryClient, onOpen, tx]);
 
-  if (!isValidAppLinkPath(path)) {
+  const absoluteOk = allowAbsolute && path.startsWith('/') && !path.split('/').includes('..');
+  if (!absoluteOk && !isValidAppLinkPath(path)) {
     return <p className="viewer-status viewer-status--error">{tx('viewer.invalid', 'This file can’t be opened here.')}</p>;
   }
 

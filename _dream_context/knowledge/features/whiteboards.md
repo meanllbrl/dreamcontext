@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-29'
 status: in_review
 created: '2026-09-29'
-updated: '2026-10-05'
+updated: '2026-10-06'
 released_version: null
 tags:
   - 'topic:dashboard'
@@ -34,6 +34,8 @@ related_tasks:
     whiteboard-kartlari-cilalanir-sekme-yeniden-adlandirilir-insight-basligi-tekrarsiz-kartlar-dip-dibe-durur-karta-renk-verilir-html-kutusuna-sigar
   - >-
     whiteboard-sayfasi-kaldigin-yerden-acilir-board-ajani-sayfalar-arasi-canli-kalan-yan-panelde-yasar-sag-alttaki-ajan-dock-u-whiteboard-da-gorunmez
+  - >-
+    whiteboard-ikinci-tur-html-ustunde-kaydirma-calisir-web-blogu-yerel-dosya-acar-panel-tahtadaki-ajanlari-tanir-ajan-karti-sabit-boyda-gelir-tahtaya-gorsel-eklenir-ajana-birakma-ve-panel-ile-kart-iliskisi-netlesir
 ---
 
 ## Why
@@ -54,6 +56,14 @@ The owner wanted one place that gathers the brain: a control panel, wiki and bra
 - [x] As the owner, I want closing a tab to ask first and say plainly that the board stays, so I never lose a board to a reflex click on an ×.
 - [x] As the owner, I want a deleted board to come back, so a delete is a mistake I can undo rather than a loss.
 - [x] As the owner, I want the wheel to keep panning the board even when the pointer drifts over a live HTML or web block, so a pan is not swallowed mid-gesture.
+- [x] As the owner, I want to come back to the Whiteboard page and find the same board, the same viewport and the same panel state I left, so moving through the app never costs me my place.
+- [x] As the owner, I want the board's agent to live in a side panel that stays alive while I move between pages, not only as a card on the canvas, so a running turn is not killed by leaving the board.
+- [x] As the owner, I want to rename a tab in place and tint a card by colour, so a board I live in reads like mine instead of like a slug list.
+- [x] As the owner, I want a card's content to fill its card — an HTML block scrolls its own content and an insight chart uses the whole body height — so no card ends in an empty band.
+- [x] As the owner, I want a web block to open a project file, a local path and a localhost URL, so the block shows the things I actually have instead of only public https.
+- [ ] As the owner, I want the panel to know **every** agent on the board (home agents and any agent with a card), with one conversation per agent per board, so adding an agent card is never answered by "no agent".
+- [ ] As the owner, I want to drop a card onto an agent and see plainly what went where, so handing an agent a widget is an obvious act rather than a guess.
+- [ ] As the owner, I want to paste or drop an image onto a board and have it stay, so a board can carry a screenshot like any other brainstorming wall.
 
 ## Acceptance Criteria
 
@@ -105,9 +115,44 @@ Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard
 - [x] Old `.wbs-*` selectors are kept so `scripts/verify/whiteboard.mjs` still drives the header. Evidence: `tests/unit/whiteboard-tab-strip.test.ts` 16/16, the whiteboard unit set 339/339, `scripts/verify/whiteboard-tabs.mjs` (21/21 ×3 for the strip, extended for close + trash), `verify:whiteboard` 679/679, root + dashboard `tsc` 0.
 - [ ] Owner sign-off on the tab strip, the close popover and Restore in the installed .app.
 
+Phase 1.7 — card polish (task `whiteboard-kartlari-cilalanir-…`, criteria P1-P5 there are canonical; task `completed`, owner signed off 2026-10-06, commits `75ee1239` CLI/server + `d5d141a2` dashboard):
+
+- [x] A board tab renames in place (double-click, right-click → Rename, F2); the display name changes while slug, URL and agent homes do not; Escape cancels; `PATCH /api/whiteboards/:slug` and `dreamcontext whiteboard rename <slug> <name>` do the same, and a scoped agent renames only its own board.
+- [x] A card with a title shows that title as its heading (semibold, body colour) and no kind label; a card without a title, or with an explicit PDF/HTML label, still shows the label.
+- [x] A dragged card snaps to the nearer of the 196px grid and a neighbouring card's lines (aligned, or one 16px gap beside/under), so cards shorter than a cell sit flush.
+- [x] A card takes one of eight colours from a button beside S/M/L/XL, stored as `dc.color` in both widget mirrors, validated, drawn as a tinted surface + border in both themes; "No colour" and `update --color none` clear it; `add`/`update --color` on the CLI.
+- [x] An HTML block fits its card: the frame spans the card body, a taller block is drawn smaller (down to 0.5, then scrolls when active), and a lone root element stretches to the card height.
+
+Phase 1.7 — the agent panel and the remembered place (task `whiteboard-sayfasi-kaldigin-yerden-acilir-…`, criteria Q1-Q4 there are canonical; task `completed`, owner signed off 2026-10-06):
+
+- [x] The corner agent dock and the Chat button are hidden on the Whiteboard page only (Shell sets `data-page` on `.project-instance`); the floating dock over an open overlay stays.
+- [x] Leaving the Whiteboard page and coming back reopens the same board (only if it still exists), each board at its saved viewport (saved on every poll tick and on close, restored instead of the fit), and the agent panel open or closed as left.
+- [x] An Agent toggle in the board bar opens a right panel that pushes the canvas, holding the open board's HOME agent (manifest `whiteboard = board`; a picker when several, a how-to when none, Blocked when unapproved); switching boards switches agent.
+- [x] The panel and the home agent's canvas card are ONE conversation (an older per-card conversation is adopted once); while the panel is open the card says so and offers "Show it here"; the home session survives leaving the page and is the same live session on return.
+
+Round 2 — scroll, local files, the panel that knows every agent, and images (task `whiteboard-ikinci-tur-…`, criteria W1-W8 there are canonical; `in_progress`, **uncommitted**):
+
+- [x] W1 Over an ACTIVE HTML block the wheel scrolls its content while it can, then pans the board; a pinch zooms the board; an inactive block pans as before. The host takes a wheel message only from that frame's window while the pointer is over it.
+- [x] W2 The web block accepts a project-relative file path, an absolute local path (desktop app only) and an `http://localhost` / `127.0.0.1` URL, in the dashboard and in `whiteboard add`/`update --url`; anything else is refused with a reason.
+- [x] W3 A new agent card comes in at 376×572 and can be resized.
+- [x] W8 HTML blocks and insight cards fill their card's height: content shorter than the card leaves no empty band, and insight charts use the full body height.
+- [ ] W4 The panel lists every agent on the board (home agents and agents with a card), each with ONE conversation on this board, and never says "no agent" while an agent card is on the board. *(built and verified 88/88; not ticked until `scripts/verify/whiteboard-agent.mjs` is moved off the card-hosted chat model.)*
+- [ ] W5 The agent card shows who, live state and the conversation's last lines read-only; clicking it opens the panel on that agent; the card the panel shows is marked, and the panel can point at its card. *(built and verified; same gate as W4.)*
+- [ ] W6 Dragging a board element over an agent card or the panel shows it is a drop target; the drop lands the element as a chip in that agent's panel composer, the panel opens on it, and the owner sees what happened. *(built and verified; same gate as W4.)*
+- [ ] W7 An image pasted or dropped onto the board stays (file in the board folder), survives reload and sync, and `whiteboard add <slug> image --file` adds one. *(`src/lib/whiteboards/files.ts` written, unwired, no tests.)*
+- [ ] Validation: unit tests + browser verify scripts in both themes, multi-review until a clean round, owner sign-off in the .app.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-06]** **The card is a face; the conversation is always in the panel.** The owner's answer to "where do the agents live" settled the card/panel split: an agent card never opens or hosts a session (no `claude` per card) — it shows identity, live state and the last ~6 lines read-only (from the live session, else `/agent/chat-history` of the remembered conversation) plus a dashed drop zone, and clicking it opens the panel on that agent. The panel knows **every** agent on the board — home agents ∪ agents with a card — as an avatar strip with a state dot, and **one conversation per agent per board** keyed `home.<agent>` for all of them, with each card's older per-card conversation adopted once. This retires `markHomeCard` / `isPrimaryHomeCard` / `cardElementKey` and the whole "which of two cards is primary" problem that cost a review round the day before: there is no primary card when no card holds a chat.
+- **[2026-10-06]** **A gesture inside an untrusted frame is forwarded as data, never replayed as an event.** An active HTML block swallowed the wheel: Chromium did not natively scroll the scaled iframe even un-prevented. The frame now finds a scroller with room and scrolls itself; when there is none it `preventDefault`s and posts `{__dcBoardWheel:{dx,dy,pinch,…}}`. The host accepts that message only from that frame's own window, only while the pointer is over the iframe, with deltas capped, and moves the board through Excalidraw's API (`boardAfterWheel`, a pure function) — so the standing guard "nothing the frame sends is replayed as a DOM event" still holds.
+- **[2026-10-06]** **Spare height goes to elastic blocks, never to scaled-up text.** For W8 the two rejected options were measured on a copy of the owner's own board: scaling content up reflows and truncates chart legends, and spreading every gap looks loose. Instead a `dc-doc`/`dc-stack`/`dc-card` root becomes a column and the elastic kinds grow; chart insights render through the Lab board cell's fill body with the card's measured height.
+- **[2026-10-06]** **A local file in a web block goes through the existing reader and its per-file grant, not a new route.** W2 reuses `DocumentReader` + `/agent/file` + "Allow access", so a board never gains a second file-serving surface. The URL rule is written once and **mirrored** (`dashboard/.../webUrl.ts` ↔ `src/lib/whiteboards/validate.ts`) with a drift test running 26 cases through both; loopback http is allowed and its trust recorded as `host:port`, while the dashboard's own origin is refused in every spelling.
+- **[2026-10-06]** **Images are plain Excalidraw images stored in the board's folder** (raster only — SVG is refused because it would run script on our origin), type sniffed from the bytes, bytes moved by their own route rather than a `files` key on the PUT. This reverses the Phase 1 "no images" decision.
+- **[2026-10-05]** **A home agent's session belongs to the board, not to the page — and dies with the project, not with the tab.** The panel's agent session survives leaving the Whiteboard page (so a running turn is not killed by opening Tasks) but a project unmount drops it, and the page sweeps home sessions on every board open, keeping only the open board's agents (and, from round 2, agents with a card) and ending the idle rest — a busy or asking one is watched until idle instead of being killed. Without the sweep every board ever visited left a `claude` running.
+- **[2026-10-05]** **Your place on a board is machine state, not brain content.** The last board, each board's viewport and the panel's open/closed state live in `localStorage` keyed by vault (and board), never in the synced board file; the restore falls back to the fit when the saved viewport would show nothing. A bucket id carries the vault, so two projects with the same board slug no longer share drafts.
+- **[2026-10-05]** **The exit criterion for a UI wave is one full review round with ZERO verified findings.** The panel wave took six rounds; rounds 1-5 each produced real fixes and round 6 produced none, which is what closed it. Reviewer sub-agents stop at 12-20 turns before reporting, so each one gets a precise file list and "report by turn 9".
 - **[2026-10-04]** **A number on a whiteboard is a live insight widget, never a drawing.** An agent asked to put MRR and revenue on the Control Panel loaded the excalidraw pack and drew charts with that day's values frozen into them, because nothing routed it to widgets: the pack's description triggered on "KPI tiles"/"dashboard board" with no whiteboard exclusion. The exclusion now leads the pack's description (the listing truncates near 1000 chars) with a STOP block for whiteboard targets, and `skill/references/whiteboards.md` + the SKILL.md router row state the rule; drawn recipes are for data-free diagrams only.
 - **[2026-10-04]** **Widget link icons are removed by patching Excalidraw at build time, guarded.** Excalidraw paints a link icon past the top-right corner of every linked element and offers no option to turn it off; on a widget the `dreamcontext://` link is its identity, not a link to follow, and the icon sat over the neighbouring card. A Vite plugin (`dashboard/excalidraw-widget-link-icon.ts`) rewrites the one guard before that paint to skip widget links only. Because it is a source patch on a dependency, a production build **fails** if the guard is not found exactly once, and a unit test pins it in both the dev and prod builds — an Excalidraw upgrade cannot silently bring the icon back or break the patch.
 
@@ -161,21 +206,41 @@ Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard
 - Verification: `tests/unit/whiteboard-tab-strip.test.ts`, `scripts/verify/whiteboard-tabs.mjs` (strip + close + trash), with `verify:whiteboard` unchanged at 679 checks because the `.wbs-*` selectors were kept.
 - **Card polish (2026-10-04).** `InsightWidget` passes no height to `LineChart` (which now takes layout pixels, not the old `560*h/w` viewBox contract) and lets it measure its own box, so an L/XL chart no longer runs off the card bottom. The widget link icon is suppressed by the build-time Excalidraw patch in `dashboard/excalidraw-widget-link-icon.ts` (wired in `dashboard/vite.config.ts`, pinned by `tests/unit/whiteboard-link-icon-plugin.test.ts`).
 
+**What shipped in Phase 1.7 — polish, the agent panel and the remembered place (2026-10-05/06, commits `75ee1239` CLI/server + `d5d141a2` dashboard)**
+- **A board has a display name.** `renameWhiteboard` in the store (under the board lock, refusing control / U+2028 / U+2029 / C1 characters) behind `PATCH /api/whiteboards/:slug` and `dreamcontext whiteboard rename`; the tab renames in place (double-click via a module-level `lastClick` that survives the strip's remount, right-click → Rename, F2, Escape cancels) and a failure surfaces as a note naming the board. The slug never moves, so agent homes and URLs are stable.
+- **A card has a colour and a tighter snap.** `dc.color` (eight tab-group names over the chart hues) in both widget mirrors, validated, drawn as a tinted surface + border; the tint wrapper always renders (`display: contents`) because toggling it would remount the widget and kill an agent card's session. `snapMoveTo` snaps a dragged card to the nearer of the grid and a neighbour's lines. A titled card draws its title as the heading instead of a kind label.
+- **The board agent lives in a side panel.** `BoardAgentPanel.{tsx,css}` + `agentPanelState.ts` (a module store, because one window holds several projects) open on the board's agent and push the canvas; `AgentTerminal.css` hides the corner dock off `Shell`'s `data-page`. The panel and the card are one conversation keyed per agent, the home session survives the page unmount (`dropBoardAgentScratch({keepHome})`) and `sweepHomeSessions` ends the home sessions of boards that are no longer open.
+- **The page reopens where you left it.** `boardPlace.ts` (pure: `parseViewport`, `readLastBoard`, `viewportShowsAny`) plus the save/restore in `useWhiteboards`: last board per vault, viewport per vault+board written on every poll tick and on hide/pagehide, and `fitWhenReady`'s `settled()` gate so a pre-fit value never overwrites a real one.
+- **Splits forced by the review loop:** `BoardTabs` → `useTabLayout.ts` + `BoardTabMenu.tsx`; `WhiteboardCanvas` → `canvasGestures.ts` (drop/size/colour/snapping), `useCanvasPalette.ts`, `useCanvasWrapEffects.ts`.
+- Verification: `scripts/verify/whiteboard-agent-panel.mjs` (new, 64/64 both themes at the time of the commit), `whiteboard-polish.mjs` (28/28, later 39/39), `whiteboard-tabs.mjs` 30/30, `tests/unit/{board-agent-card,whiteboard-board-place,whiteboard-store}.test.ts`.
+
+**In the working tree, round 2 — NOT COMMITTED (2026-10-06)**
+- **W1 the wheel over an active HTML block.** `BOARD_WHEEL_BRIDGE` in `htmlWidgetFrame.ts` scrolls the frame's own scroller when it has room, else posts the delta; `readBoardWheelMessage` gates on source window + pointer-over + a 600 cap, and the pure `boardAfterWheel` applies Excalidraw's own wheel math (pan, shift-sideways, pinch around the anchor, zoom clamped 0.1-30) through `updateScene`.
+- **W8 cards fill their height.** `BOARD_HTML_FILL` turns a `dc-doc`/`dc-stack`/`dc-card` root into a column and grows the elastic kinds; chart insights draw through `FilledInsight` in `InsightWidget.tsx` with the card's measured height (`toSummary` exported from `InsightView`).
+- **W3 the agent card comes in tall.** `DEFAULT_WIDGET_BOXES {agent: [376, 572]}` in both mirrors, used by `makeWidgetElement`, the CLI's placement and the canvas `addWidget` (`placeNewWidget` now takes a preset *or* a box), recording `dc.size: 'l'`; an explicit `--size` or `w,h` still wins.
+- **W2 the web block opens local things.** `validateWebUrl` (dashboard) mirrored by `classifyWebTarget` / `checkWebUrl` (`src/lib/whiteboards/validate.ts`); `WebWidget` split into `WebPage` (load/trust gate, trust recorded as `host:port` for loopback) and `WebFile` (probes `/agent/file` with one ranged byte → "Allow access" card → `POST /agent/grant`, then `DocumentReader` with a new `allowAbsolute`).
+- **W4/W5/W6 the panel, the card and the drop (built, verified 88/88 both themes, awaiting the old verify script).** `agentPanelState.ts` rewritten (`setBoardCards`/`useBoardCards`/`agentCardsOf`/`boardAgentsOf`/`showAgentInPanel`, a `DropTarget` store that knows *what* would land, `registerPanelElement`/`pointOverPanel`, `flashCard`/`registerCardLocator`/`locateCard`); new `useBoardAgents.ts`; the panel is an avatar strip + a bar with "Find its card"; `AgentCard` is a face with `CardLines` (last 6 lines, older ones faded, scrolled to newest) and a drop veil; `canvasGestures.ts` gained `hoverTargetOf` / `dropTargetOf` (the panel wins over cards hidden beneath it, since the scene continues under it) and `dropOnAgentCard` (restores the element so the drag makes no history entry, stages chips on that agent's composer, opens the panel, flies a chip via `dropFlight.ts`, toasts; an unapproved agent only toasts). `boardAgentScratch.ts` lost `markHomeCard`/`isPrimaryHomeCard`/`cardElementKey` and gained `cardScratchId(vault, board, agent)` + `cardConversationId`.
+- **W7 images: `src/lib/whiteboards/files.ts` exists and is wired to nothing** — `sniffImageType`, `imageSize` (png/gif/webp/jpeg), `fileIdFor` (sha1), `writeBoardFile`/`readBoardFile` into `whiteboards/<slug>/files/<id>.<ext>`, `imageBox`, `makeImageElement`. Not typechecked, no tests; the client still strips image elements (`stripImageElements` / `IMAGES_LATER`).
+- **Known red:** `scripts/verify/whiteboard-agent.mjs` still drives the retired card-hosted chat (16 failing steps in the W3 chain); it must be rewritten to send through the panel before W4-W6 can be ticked. Its other 4 reds (`W10`, `404 /api/handsfree/phone`) come from the hands-free session's uncommitted work, not from this one. `verify:whiteboard` carries 4 known HEAD-baseline reds (A16 trash rows, `W (f, pans)` ×2, a console 404).
+
 **Key files**
 - `src/lib/whiteboards/`: `format.ts` (parse/serialize, deterministic), `merge.ts` (`mergeElements`), `store.ts` (paths, lock, `mutateWhiteboard`, rev, git hygiene files), `widgets.ts` (`WIDGET_KINDS` incl. `wiki`, `makeWidgetElement`), `validate.ts` (slug/ref/tag/url/element/wiki-sections/PUT body), `nav.ts` (a wiki card's section+page list ops under the board lock), `pages.ts` (knowledge + project-file page search and title resolution), `ops.ts` (show incl. `wikis`, update, remove, draw import), `errors.ts`
 - `src/cli/commands/whiteboard.ts`, `src/server/routes/whiteboards.ts` (incl. `GET /api/whiteboards/pages`), `src/lib/git-sync/semantic-merge.ts`
 - `dashboard/src/components/appLink/DocumentReader.{tsx,css}` (shared reader, mounted by `ViewerWindow` too), `dashboard/src/lib/wikilinks.ts`, `dashboard/src/lib/agentFileKind.ts`, `dashboard/src/components/core/MarkdownPreview.tsx`, `dashboard/src/components/sleepy/chat/PdfViewer.tsx` (embedded mode)
 - `dashboard/src/pages/WhiteboardsPage.tsx`, `dashboard/src/pages/whiteboards/boardHash.ts`, `dashboard/src/pages/whiteboards/BoardTabs.{tsx,css}` + `tabStripLogic.ts` (tab strip, groups, close popover), `dashboard/src/pages/whiteboards/BoardSwitcher.{tsx,css}` ("All boards" + Recently deleted), `dashboard/src/hooks/useWhiteboards.ts`, `dashboard/src/hooks/useWhiteboardPages.ts`
 - `dashboard/src/components/whiteboard/**`: `PagePopup.{tsx,css}` + `pagePopupModel.ts` (panel + pan rules), `wikiCardModel.ts`, `widgets/WikiWidget.tsx` + `wikiWidget.css`, `PanelIcons.tsx`, `widgetSize.ts` (free-form resize), `widgets/{KnowledgeWidget,TaskWidget,WidgetFrame}.tsx`, `pageCard.css`
-- `dashboard/src/lib/whiteboardWidgets.ts` (mirror of `WIDGET_KINDS`, drift-tested)
-- Verification: `scripts/verify/whiteboard.mjs` (679 checks, both themes), `tests/unit/whiteboard-{nav,nav-cli,wiki-model,page-popup,page-title,board-hash,widget-size,widget-mirror}.test.ts`, `tests/unit/wikilinks.test.ts`, `tests/unit/agent-file-kind-html.test.ts`
+- `dashboard/src/lib/whiteboardWidgets.ts` (mirror of `WIDGET_KINDS`, `DEFAULT_WIDGET_BOXES`, `CARD_COLORS`, drift-tested)
+- Phase 1.7 / round 2: `dashboard/src/components/whiteboard/{BoardAgentPanel.tsx,BoardAgentPanel.css,agentPanelState.ts,boardPlace.ts,boardAgentScratch.ts,useBoardAgents.ts,canvasGestures.ts,useCanvasPalette.ts,useCanvasWrapEffects.ts,agentCardModel.ts,agentDrop.ts,dropFlight.ts,htmlWidgetFrame.ts,webUrl.ts,sceneSync.ts}`, `widgets/{AgentWidget.tsx,HtmlWidget.tsx,WebWidget.tsx,InsightWidget.tsx,agentWidget.css}`, `dashboard/src/pages/whiteboards/{useTabLayout.ts,BoardTabMenu.tsx}`, `dashboard/src/components/layout/Shell.tsx` (`data-page`), `src/lib/whiteboards/files.ts` (images, unwired)
+- Verification: `scripts/verify/whiteboard.mjs` (679 checks, both themes), `whiteboard-tabs.mjs`, `whiteboard-polish.mjs`, `whiteboard-agent.mjs`, `whiteboard-agent-panel.mjs`, `whiteboard-round2.mjs` (records one mp4 per fixed item to `tmp/videos/round2/`, because the owner asks for a video of every item), `tests/unit/whiteboard-{nav,nav-cli,wiki-model,page-popup,page-title,board-hash,widget-size,widget-mirror,board-place,board-agents,web-url,widget-iframes,agent-drop}.test.ts`, `tests/unit/{board-agent-card,wikilinks,agent-file-kind-html}.test.ts`
 - Docs: `skill/references/whiteboards.md`, `skill/references/cli-reference.md`
 
 ## Notes
 
-**In build:** an **agent card** (task `whiteboard-a-ajan-karti-eklenir-…`, `in_progress`): an automation agent placed on a board as a widget, which knows the board, writes only to its own board, reads anywhere, and is asked about a widget by dropping that widget on it. Its criteria (AC1-AC12+) live in the task; nothing has shipped, so nothing here is ticked.
+**The agent card** (task `whiteboard-a-ajan-karti-eklenir-…`, `in_review` since 2026-10-05): an automation agent placed on a board as a widget, which knows the board, writes only to its own board, reads anywhere, and is asked about a widget by dropping that widget on it. Its criteria AC1-AC12+ live in the task and still wait on the owner's M1 + sign-off. Round 2 superseded its card-hosted chat: the card is a face and the conversation lives in the panel, so `scripts/verify/whiteboard-agent.mjs` — written against the old model — is the one suite still red.
 
-**Phase 2 scope (separate task):**
+**In build:** round 2 (task `whiteboard-ikinci-tur-…`, `in_progress`, uncommitted): W1/W2/W3/W8 ticked, W4-W6 built and verified but gated on the old verify script, W7 (images) barely started.
+
+**Phase 2 scope (separate task `whiteboard-faz-2-…`):**
 - An assistant chat panel embedded in the board.
 - Recall and the knowledge index over whiteboards (today `whiteboard list` is the only way to find one).
 - Widgets rendered in chat's read-only `BoardEmbed` viewer.
@@ -185,6 +250,20 @@ Phase 1.6 — board tabs, a close that asks, and a local trash (task `whiteboard
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-06 — Round 2 in the tree: the card became a face and the panel became the conversation
+
+- **W1 the wheel, W8 the fill, W3 the tall agent card, W2 local files in a web block** are done and ticked in the task, each with its own recorded video (`scripts/verify/whiteboard-round2.mjs`, 26/26). Nothing is committed.
+- **W4/W5/W6 built and verified 88/88 in both themes** after the owner picked all three recommended previews (avatar strip, identity card with last lines, veil + flying chip + toast). The model change is the real content: an agent card never holds a session, the panel knows home agents ∪ carded agents, and every agent's board conversation is keyed `home.<agent>` — which retires `markHomeCard`/`isPrimaryHomeCard`/`cardElementKey` and the "two cards of one agent" class that cost a review round on 2026-10-05.
+- **Not ticked, deliberately:** `scripts/verify/whiteboard-agent.mjs` still drives the retired card-hosted chat (16 reds in its W3 chain), so W4-W6 stay open until it is rewritten to send through the panel. W7 images: `src/lib/whiteboards/files.ts` exists, wired to nothing, untyped, untested.
+- Four new decisions recorded (card-is-a-face / panel-is-the-conversation, a frame's gesture travels as data, spare height goes to elastic blocks not scaled text, a local file reuses the reader + grant) and the Phase 1 "no images" decision reversed. `status` stays `in_review`, `released_version` stays `null`.
+
+### 2026-10-06 — Phase 1.7 shipped: a board remembers your place and its agent lives in a panel
+
+- **Two tasks closed with the owner's sign-off** and landed as `75ee1239` (CLI/server) + `d5d141a2` (dashboard): tab rename (inline / menu / F2, `PATCH /api/whiteboards/:slug`, `whiteboard rename`), title-as-heading, neighbour-aware move snap, card colour (`dc.color`, picker beside S/M/L/XL, `--color` on the CLI), HTML fit-to-card; and the agent panel, the hidden corner dock, the remembered board + per-board viewport + panel state.
+- P1-P5 and Q1-Q4 added and ticked from the tasks' browser evidence; nine new user stories, six of them ticked.
+- **The review loop is the lesson again:** the panel wave needed six rounds and only closed on a round with zero verified findings — recorded as a decision, since rounds 1-5 each found something real (a home session outliving its project, several boards piling up `claude` processes, two cards of one agent both claiming the chat).
+- Three decisions recorded: a home session belongs to the board and dies with the project; your place on a board is machine state in `localStorage`, never the synced file; the wave's exit criterion is a clean round. `related_tasks` += the round-2 task.
 
 ### 2026-10-04 — Cards stay inside their frames, and a metric stays live
 

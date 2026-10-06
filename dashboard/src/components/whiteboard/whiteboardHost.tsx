@@ -17,6 +17,9 @@ export interface WhiteboardHost {
   /** The board this canvas shows. An agent card sends it with every message (so the agent is
    *  shown this board) and keys its composer bucket by it. Absent outside a board page. */
   boardSlug?: string;
+  /** Move the board's view for a wheel a widget could not use (an HTML block's scroll chain),
+   *  pinch zooming around `anchor`, a viewport point. Absent outside a board page. */
+  wheelBoard?: (wheel: { dx: number; dy: number; pinch: boolean; shift: boolean }, anchor: { clientX: number; clientY: number }) => void;
 }
 
 const noop: WhiteboardHost = { commitWidget: () => {}, toast: () => {} };

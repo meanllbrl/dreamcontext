@@ -3,6 +3,7 @@
  * Plus the Unicode/punycode pair the Load prompt shows, and the per-machine trusted-host list.
  */
 import { describe, it, expect } from 'vitest';
+import { classifyWebTarget, checkWebUrl } from '../../src/lib/whiteboards/validate.js';
 import {
   validateWebUrl, hostnameToUnicode, decodePunycode, isTrustedHost, trustHost, readTrustedHosts, TRUSTED_HOSTS_KEY,
 } from '../../dashboard/src/components/whiteboard/webUrl.js';
@@ -12,11 +13,11 @@ const OWN = 'https://box.tailnet-1234.ts.net';
 describe('validateWebUrl', () => {
   it('accepts a plain https URL and reports its host', () => {
     const r = validateWebUrl('https://example.com/dash?x=1', OWN);
-    expect(r).toEqual({ ok: true, href: 'https://example.com/dash?x=1', host: 'example.com', unicodeHost: 'example.com' });
+    expect(r).toEqual({ ok: true, kind: 'url', href: 'https://example.com/dash?x=1', host: 'example.com', unicodeHost: 'example.com', local: false });
   });
 
-  it('refuses anything but https', () => {
-    for (const url of ['http://example.com', 'javascript:alert(1)', 'data:text/html,hi', 'file:///etc/passwd', 'ftp://example.com']) {
+  it('refuses anything but https, a page on this machine or a file', () => {
+    for (const url of ['http://example.com', 'javascript:alert(1)', 'data:text/html,hi', 'file:///etc/passwd', 'ftp://example.com', 'http://localhost.evil.test/', 'http://127.0.0.2/']) {
       const r = validateWebUrl(url, OWN);
       expect(r.ok, url).toBe(false);
     }
@@ -43,11 +44,46 @@ describe('validateWebUrl', () => {
     expect(validateWebUrl('/relative', OWN)).toEqual({ ok: false, reason: 'invalid' });
   });
 
+  it('takes a page on this machine, with or without the scheme (W2)', () => {
+    expect(validateWebUrl('http://localhost:5173/app', OWN)).toEqual({
+      ok: true, kind: 'url', href: 'http://localhost:5173/app', host: 'localhost:5173', unicodeHost: 'localhost:5173', local: true,
+    });
+    const bare = validateWebUrl('localhost:3000', OWN);
+    expect(bare.ok && bare.kind === 'url' && bare.href).toBe('http://localhost:3000/');
+    for (const url of ['http://127.0.0.1:8080/', 'http://[::1]:9000/', 'https://localhost:8443/']) {
+      expect(validateWebUrl(url, OWN).ok, url).toBe(true);
+    }
+    expect(validateWebUrl('http://user@localhost:3000/', OWN)).toEqual({ ok: false, reason: 'userinfo' });
+  });
+
+  it('a loopback page on the dashboard\'s own port is the dashboard, in any spelling', () => {
+    const own = 'http://127.0.0.1:4317';
+    for (const url of ['http://127.0.0.1:4317/api/x', 'http://localhost:4317/', 'http://[::1]:4317/', 'localhost:4317']) {
+      expect(validateWebUrl(url, own), url).toEqual({ ok: false, reason: 'own-origin' });
+    }
+    expect(validateWebUrl('http://localhost:4318/', own).ok).toBe(true);
+  });
+
+  it('takes a file the reader draws, project-relative or absolute (W2)', () => {
+    expect(validateWebUrl('docs/report.html', OWN)).toEqual({ ok: true, kind: 'file', path: 'docs/report.html', absolute: false, name: 'report.html' });
+    expect(validateWebUrl('./out/chart.PNG', OWN)).toEqual({ ok: true, kind: 'file', path: 'out/chart.PNG', absolute: false, name: 'chart.PNG' });
+    expect(validateWebUrl('/Users/sam/Desktop/plan.pdf', OWN)).toEqual({ ok: true, kind: 'file', path: '/Users/sam/Desktop/plan.pdf', absolute: true, name: 'plan.pdf' });
+    expect(validateWebUrl('file:///Users/sam/My%20Docs/a.html', OWN)).toEqual({ ok: true, kind: 'file', path: '/Users/sam/My Docs/a.html', absolute: true, name: 'a.html' });
+  });
+
+  it('refuses a file it cannot draw or a path that climbs', () => {
+    expect(validateWebUrl('notes/todo.txt', OWN)).toEqual({ ok: false, reason: 'file-type' });
+    expect(validateWebUrl('/Users/sam/.ssh/id_rsa', OWN)).toEqual({ ok: false, reason: 'invalid' });
+    for (const p of ['../secret.html', 'docs/../../x.html', '/Users/../etc/x.html', 'docs//x.html', 'docs\\x.html', 'file://evil.test/x.html']) {
+      expect(validateWebUrl(p, OWN), p).toEqual({ ok: false, reason: 'file-path' });
+    }
+  });
+
   it('shows a look-alike domain in both spellings', () => {
     // Cyrillic "а" in place of Latin "a".
     const r = validateWebUrl('https://аpple.com/', OWN);
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (!r.ok || r.kind !== 'url') return;
     expect(r.host).toBe('xn--pple-43d.com');
     expect(r.unicodeHost).toBe('аpple.com');
     expect(r.unicodeHost).not.toBe(r.host);
@@ -88,5 +124,37 @@ describe('trusted hosts', () => {
     expect(readTrustedHosts(s)).toEqual([]);
     s.setItem(TRUSTED_HOSTS_KEY, JSON.stringify(['a.com', 42]));
     expect(readTrustedHosts(s)).toEqual(['a.com']);
+  });
+});
+
+describe('the server mirror (classifyWebTarget) agrees with the dashboard (validateWebUrl)', () => {
+  const CASES = [
+    'https://example.com/x', 'http://example.com', 'http://localhost:5173/a', 'localhost:3000', '127.0.0.1:8080/x',
+    'http://[::1]:9000/', 'https://user@x.test/', 'javascript:alert(1)', 'data:text/html,hi', 'ftp://x.test',
+    'docs/report.html', './a/b.pdf', '/Users/sam/x.png', 'file:///Users/sam/a%20b.svg', 'file://evil.test/x.html',
+    'notes/todo.txt', '/Users/sam/.ssh/id_rsa', '../x.html', 'a//b.html', 'a\\b.html', '', '   ', 'not a url',
+    'http://127.0.0.1:4317/', 'http://localhost:4317/', 'https://box.tailnet-1234.ts.net/api',
+  ];
+  for (const own of ['http://127.0.0.1:4317', OWN]) {
+    it(`same verdict and reason for every case (own origin ${own})`, () => {
+      for (const c of CASES) {
+        const dash = validateWebUrl(c, own);
+        const lib = classifyWebTarget(c, own);
+        expect(lib.ok, c).toBe(dash.ok);
+        if (!dash.ok && !lib.ok) expect(lib.reason, c).toBe(dash.reason);
+        if (dash.ok && lib.ok) {
+          expect(lib.kind, c).toBe(dash.kind);
+          expect(lib.kind === 'url' ? lib.href : lib.path, c).toBe(dash.kind === 'url' ? dash.href : dash.path);
+        }
+      }
+    });
+  }
+
+  it('checkWebUrl returns the normalized target and refuses with a reason', () => {
+    expect(checkWebUrl('localhost:3000')).toBe('http://localhost:3000/');
+    expect(checkWebUrl('./docs/r.html')).toBe('docs/r.html');
+    expect(() => checkWebUrl('http://example.com')).toThrow(/localhost/);
+    expect(() => checkWebUrl('../x.html')).toThrow(/\.\./);
+    expect(() => checkWebUrl('x.txt')).toThrow(/\.html/);
   });
 });

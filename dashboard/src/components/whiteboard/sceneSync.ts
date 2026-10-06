@@ -1,6 +1,6 @@
 /**
- * The two scene operations the canvas owns on behalf of the page: folding a remote copy into
- * the live scene (D5) and refusing images before a save (D10).
+ * The scene operation the canvas owns on behalf of the page: folding a remote copy into the
+ * live scene (D5).
  *
  * Excalidraw's functions are INJECTED rather than imported, so this file stays free of the
  * heavy bundle (the canvas is lazy-loaded) and root vitest can run it against the real ones.
@@ -37,26 +37,3 @@ export function reconcileRemoteScene<E, A>(
   const restored = fns.restoreElements(remote, null);
   return fns.reconcileElements(local, restored, appState);
 }
-
-/**
- * Remove every `image` element. Phase 1 has no asset pipeline, so an image that arrives as
- * pasted Excalidraw JSON (which bypasses `UIOptions.tools.image=false`) must be removed visibly
- * rather than saved half-formed. Deleted ones go too: the server refuses ANY element of type
- * `image`, tombstone or not, and one left in the scene would fail every later save.
- * `visible` counts the live ones, the ones the user saw and must be told about.
- */
-export function stripImageElements<E extends SceneElementLike>(
-  elements: readonly E[],
-): { elements: readonly E[]; removed: number; visible: number } {
-  let removed = 0;
-  let visible = 0;
-  const kept = elements.filter((el) => {
-    if (el.type !== 'image') return true;
-    removed += 1;
-    if (!el.isDeleted) visible += 1;
-    return false;
-  });
-  return removed ? { elements: kept, removed, visible } : { elements, removed: 0, visible: 0 };
-}
-
-export const IMAGES_LATER_MESSAGE = 'Images come in a later version';

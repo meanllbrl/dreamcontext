@@ -1,11 +1,19 @@
 /**
- * The web widget's URL rule (D7), checked at render time as well as at write time: a board can
- * arrive from a shared repo, so the server's check is not the only one that counts.
+ * The web widget's target rule (D7), checked at render time as well as at write time: a board
+ * can arrive from a shared repo, so the server's check is not the only one that counts. The
+ * rule is MIRRORED in `src/lib/whiteboards/validate.ts` (`classifyWebTarget`); a drift test
+ * runs the same cases through both.
  *
- *   - `https:` only;
- *   - no userinfo (`https://user:pass@host` is a classic look-alike trick);
- *   - an origin different from the dashboard's own, so a tailnet https host can never iframe
- *     the dashboard itself.
+ * A target is one of (owner, 2026-10-06: "yerel dosya açamıyor"):
+ *   - an `https:` page;
+ *   - an `http:` page on this machine (`localhost`, `127.0.0.1`, `[::1]`, any port), a dev
+ *     server; `localhost:5173` without a scheme means `http://localhost:5173`;
+ *   - a FILE the board's reader can draw (.html, .pdf, a picture): project-relative, or an
+ *     absolute path (`/…` or `file:///…`). Files are read through the project file route,
+ *     which is desktop-only and asks the owner before it serves anything outside the project.
+ * Never userinfo (`https://user:pass@host` is a classic look-alike trick), never the
+ * dashboard's own origin (a loopback URL on the dashboard's own port is the dashboard too),
+ * never a `..` step in a path.
  *
  * Also the per-machine trusted-host list (`dc.whiteboard.trustedHosts`) and a punycode decoder,
  * so the Load prompt can show a look-alike domain in both spellings.
@@ -13,26 +21,80 @@
  * No React, no CSS: root vitest imports this file.
  */
 
+export type WebUrlReason = 'empty' | 'invalid' | 'not-https' | 'userinfo' | 'own-origin' | 'file-type' | 'file-path';
+
 export type WebUrlCheck =
-  | { ok: true; href: string; host: string; unicodeHost: string }
-  | { ok: false; reason: 'empty' | 'invalid' | 'not-https' | 'userinfo' | 'own-origin' };
+  /** A page. `host` is what trust is recorded under: the hostname, or host:port on this machine. */
+  | { ok: true; kind: 'url'; href: string; host: string; unicodeHost: string; local: boolean }
+  /** A file: `path` project-relative, or absolute when `absolute`. */
+  | { ok: true; kind: 'file'; path: string; absolute: boolean; name: string }
+  | { ok: false; reason: WebUrlReason };
+
+/** The files a web block can show: what the board's reader draws in a card. */
+export const WEB_FILE_EXTENSIONS: readonly string[] = ['.html', '.htm', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'];
+
+const MAX_WEB_PATH = 1024;
+const LOOPBACK_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '[::1]'];
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const BARE_LOOPBACK_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i;
+
+function isLoopback(hostname: string): boolean {
+  return LOOPBACK_HOSTS.includes(hostname.toLowerCase());
+}
+
+/** A loopback page on the dashboard's own port is the dashboard, whatever the spelling. */
+function isOwnOrigin(u: URL, ownOrigin: string | null): boolean {
+  if (!ownOrigin) return false;
+  if (u.origin === ownOrigin) return true;
+  let own: URL;
+  try { own = new URL(ownOrigin); } catch { return false; }
+  const port = (x: URL) => x.port || (x.protocol === 'https:' ? '443' : '80');
+  return isLoopback(own.hostname) && isLoopback(u.hostname) && port(own) === port(u);
+}
+
+function fileTarget(path: string, absolute: boolean): WebUrlCheck {
+  if (path.length > MAX_WEB_PATH || /[\u0000-\u001f\\]/.test(path)) return { ok: false, reason: 'file-path' };
+  const segments = (absolute ? path.slice(1) : path).split('/');
+  if (segments.some((seg) => seg === '..' || seg === '')) return { ok: false, reason: 'file-path' };
+  const name = segments[segments.length - 1];
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return { ok: false, reason: 'invalid' };
+  if (!WEB_FILE_EXTENSIONS.includes(name.slice(dot).toLowerCase())) return { ok: false, reason: 'file-type' };
+  return { ok: true, kind: 'file', path, absolute, name };
+}
 
 export function validateWebUrl(raw: unknown, ownOrigin: string | null): WebUrlCheck {
   if (typeof raw !== 'string' || !raw.trim()) return { ok: false, reason: 'empty' };
+  let text = raw.trim();
+  if (BARE_LOOPBACK_RE.test(text)) text = `http://${text}`;
+  if (!SCHEME_RE.test(text)) {
+    const rel = text.replace(/^(\.\/)+/, '');
+    return fileTarget(rel, rel.startsWith('/'));
+  }
   let u: URL;
-  try { u = new URL(raw.trim()); } catch { return { ok: false, reason: 'invalid' }; }
-  if (u.protocol !== 'https:') return { ok: false, reason: 'not-https' };
+  try { u = new URL(text); } catch { return { ok: false, reason: 'invalid' }; }
+  if (u.protocol === 'file:') {
+    if (u.host && !isLoopback(u.hostname)) return { ok: false, reason: 'file-path' };
+    let path: string;
+    try { path = decodeURIComponent(u.pathname); } catch { return { ok: false, reason: 'invalid' }; }
+    return fileTarget(path, true);
+  }
+  const local = u.protocol === 'http:' && isLoopback(u.hostname);
+  if (u.protocol !== 'https:' && !local) return { ok: false, reason: 'not-https' };
   if (u.username || u.password) return { ok: false, reason: 'userinfo' };
-  if (ownOrigin && u.origin === ownOrigin) return { ok: false, reason: 'own-origin' };
-  return { ok: true, href: u.href, host: u.hostname, unicodeHost: hostnameToUnicode(u.hostname) };
+  if (isOwnOrigin(u, ownOrigin)) return { ok: false, reason: 'own-origin' };
+  const host = local ? u.host.toLowerCase() : u.hostname;
+  return { ok: true, kind: 'url', href: u.href, host, unicodeHost: local ? host : hostnameToUnicode(u.hostname), local };
 }
 
-export const WEB_URL_REASON_TEXT: Record<Exclude<WebUrlCheck, { ok: true }>['reason'], string> = {
-  empty: 'Enter a web address.',
-  invalid: 'That is not a web address.',
-  'not-https': 'Only https:// addresses can be embedded.',
+export const WEB_URL_REASON_TEXT: Record<WebUrlReason, string> = {
+  empty: 'Enter a web address or a file path.',
+  invalid: 'That is not a web address or a file path.',
+  'not-https': 'Only https:// pages, pages on this computer (localhost) and files can be shown.',
   userinfo: 'An address with a username or password cannot be embedded.',
   'own-origin': 'A board cannot embed this dashboard itself.',
+  'file-type': 'Only .html, .pdf and picture files can be shown.',
+  'file-path': 'That file path cannot be used (no ".." steps, no backslashes).',
 };
 
 // ── punycode (RFC 3492 decode only) ───────────────────────────────────────────────────────────

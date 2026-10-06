@@ -548,6 +548,19 @@
   gap: var(--space-1);
 }
 
+/* A file in the web block: the board's reader fills the card and scrolls inside it. */
+.wb-web-file {
+  height: 100%;
+  overflow: auto;
+}
+
+/* The exact file an "Allow access" grants, so the owner reads what they are allowing. */
+.wb-web-path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  word-break: break-all;
+}
+
 /* Insight: the chat card sits flush inside the widget body. */
 .wb-widget--insight .chat-insightcard {
   margin: 0;
@@ -568,4 +581,9 @@
 
 .wb-widget--note.is-active .md-preview {
   overflow: auto;
+}
+
+/* A chart insight drawn to the card's height (FilledInsight): the body is not a flex column. */
+.wb-insight-fill {
+  height: 100%;
 }

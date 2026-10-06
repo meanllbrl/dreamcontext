@@ -529,6 +529,6 @@ describe('WhiteboardSaveLoop — a board switch never loses the last edit (A16, 
   it('the hook runs the final save in a layout cleanup and hands the loop the changed scene', () => {
     const src = readFileSync(join(import.meta.dirname, '..', '..', 'dashboard/src/hooks/useWhiteboards.ts'), 'utf-8');
     expect(src).toMatch(/useLayoutEffect\(\(\) => \(\) => \{ loopRef\.current\?\.dispose\(\); \}, \[\]\);/);
-    expect(src).toMatch(/loopRef\.current\?\.notifyChange\(\{ elements: kept, version \}\)/);
+    expect(src).toMatch(/loopRef\.current\?\.notifyChange\(\{ elements, version \}\)/);
   });
 });

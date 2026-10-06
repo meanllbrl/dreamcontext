@@ -44,7 +44,7 @@ vi.stubGlobal('localStorage', {
 const {
   boardAgentScratchId, dropBoardAgentScratch, openCardSession, peekCardSession, subscribeCardSession,
   cardHasConversation, cardConversationKey, homeCardId, adoptHomeConversation,
-  sweepHomeSessions, markHomeCard, cardScratchId, isPrimaryHomeCard, cardElementKey, adoptBoardCards, boardCardsAdopted,
+  sweepHomeSessions, cardScratchId, adoptBoardCards, boardCardsAdopted, cardConversationId,
 } = await import('../../dashboard/src/components/whiteboard/boardAgentScratch.js');
 
 describe('agentCardState', () => {
@@ -276,68 +276,21 @@ describe("a board's home conversations (the agent panel and the home agent's car
     expect(readScratch(keptId).attachments).toHaveLength(1);
   });
 
-  it("an element dropped on a home agent's card goes to the home conversation's composer", () => {
-    expect(cardScratchId('acme', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('acme', 'q3-plan', 'card-1'));
-    const forget = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
-    expect(cardScratchId('acme', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper')));
-    // Another project's board of the same name is not this card.
-    expect(cardScratchId('globex', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('globex', 'q3-plan', 'card-1'));
-    forget();
-    expect(cardScratchId('acme', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('acme', 'q3-plan', 'card-1'));
+  it("an element dropped for an agent goes to that agent's board conversation, the panel's composer", () => {
+    expect(cardScratchId('acme', 'q3-plan', 'growth-helper')).toBe(boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper')));
+    // Another agent, another project's board of the same name: other buckets.
+    expect(cardScratchId('acme', 'q3-plan', 'ops-desk')).not.toBe(cardScratchId('acme', 'q3-plan', 'growth-helper'));
+    expect(cardScratchId('globex', 'q3-plan', 'growth-helper')).not.toBe(cardScratchId('acme', 'q3-plan', 'growth-helper'));
+    // The bucket is the one the panel's session composes in.
+    const s = openHome('growth-helper');
+    expect(s.scratchId).toBe(cardScratchId('acme', 'q3-plan', 'growth-helper'));
   });
 
-  it("two cards of one home agent: the first draws the chat, the other takes over when it goes", () => {
-    const one = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
-    const two = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper');
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(true);
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(false);
-    one();
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(true);
-    two();
-  });
-
-  it('a card not yet marked is never primary, so it cannot mount the chat before the pick', () => {
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(false);
-    const one = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(false);
-    one();
-  });
-
-  it('an M+ card draws the chat over an S card seen first; all S, the first seen', () => {
-    const s1 = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper', true);
-    const s2 = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper', true);
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(true);
-    const m = markHomeCard('acme', 'q3-plan', 'card-3', 'growth-helper');
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-3')).toBe(true);
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(false);
-    for (const f of [s1, s2, m]) f();
-  });
-
-  it('the primary card stays primary across a scroll remount (the page keeps who came first)', () => {
-    const one = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
-    const two = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper');
-    one(); // card-1 scrolled out of view: card-2 draws the chat meanwhile
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(true);
-    const back = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(true);
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(false);
-    back(); two();
-    // The page's drop forgets the order.
-    dropBoardAgentScratch({ vault: 'acme', keepHome: true });
-    const late = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper');
-    const early = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
-    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(true);
-    late(); early();
-  });
-
-  it("a non-home card whose element id starts with home. never joins a home conversation", () => {
-    expect(cardElementKey('home.growth-helper')).toBe('card.home.growth-helper');
-    // card. ids are escaped too: a literal card.home.x never meets the escaped home.x.
-    expect(cardElementKey('card.home.growth-helper')).toBe('card.card.home.growth-helper');
-    expect(cardElementKey('card-1')).toBe('card-1');
-    expect(cardElementKey('card-1', 'growth-helper')).toBe(homeCardId('growth-helper'));
-    expect(cardScratchId('acme', 'q3-plan', 'home.growth-helper'))
-      .not.toBe(boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper')));
+  it('the card reads the conversation it would continue, without opening one', () => {
+    expect(cardConversationId(home('growth-helper'))).toBeNull();
+    const s = openHome('growth-helper');
+    expect(cardConversationId(home('growth-helper'))).toBe(s.claudeId);
+    expect(spawned).toHaveLength(1);
   });
 
   it('a busy one that went idle is not ended if a sweep wanted it back before the tick', async () => {
@@ -352,11 +305,8 @@ describe("a board's home conversations (the agent panel and the home agent's car
     expect(s.dispose).not.toHaveBeenCalled();
   });
 
-  it("a vault name holding | keeps its home cards apart from another project's", () => {
-    const forget = markHomeCard('a|b', 'c', 'card-1', 'growth-helper');
-    expect(cardScratchId('a|b', 'c', 'card-1')).toBe(boardAgentScratchId('a|b', 'c', homeCardId('growth-helper')));
-    expect(cardScratchId('a', 'b', 'card-1')).toBe(boardAgentScratchId('a', 'b', 'card-1'));
-    forget();
+  it("a vault name holding | keeps its buckets apart from another project's", () => {
+    expect(cardScratchId('a|b', 'c', 'growth-helper')).not.toBe(cardScratchId('a', 'b|c', 'growth-helper'));
   });
 
   it("the board's file hands its cards' older conversations to the home keys before the panel opens", () => {

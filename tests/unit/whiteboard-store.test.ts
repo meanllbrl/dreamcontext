@@ -219,16 +219,25 @@ describe('whiteboard store: mutate', () => {
     expect(existsSync(join(whiteboardsDir(root), slug))).toBe(false);
   });
 
-  it('refuses an image element or an invalid widget payload (D10, security invariants)', async () => {
+  it('refuses a picture with no valid file id, or an invalid widget payload (security invariants)', async () => {
     const { slug, path } = createWhiteboard(root, 'b');
     const before = readFileSync(path, 'utf-8');
-    const img = { id: 'img', type: 'image', version: 1, versionNonce: 1, index: 'a0', fileId: 'f' };
-    await expect(mutateWhiteboard(root, slug, (b) => { b.elements.push(img); })).rejects.toThrow(/Images/);
+    for (const fileId of [undefined, 'f', '../../etc/passwd', 'a/b/c/d/e/f']) {
+      const img = { id: 'img', type: 'image', version: 1, versionNonce: 1, index: 'a0', fileId };
+      await expect(mutateWhiteboard(root, slug, (b) => { b.elements.push(img); })).rejects.toThrow(/fileId/);
+    }
     const bad = makeWidgetElement('web', { url: 'http://example.com' }, { x: 0, y: 0 }, 'a0');
     await expect(mutateWhiteboard(root, slug, (b) => { b.elements.push(bad); })).rejects.toThrow(WhiteboardValidationError);
     const badRef = makeWidgetElement('task', { ref: '../../etc/passwd' }, { x: 0, y: 0 }, 'a0');
     await expect(mutateWhiteboard(root, slug, (b) => { b.elements.push(badRef); })).rejects.toThrow(WhiteboardValidationError);
     expect(readFileSync(path, 'utf-8')).toBe(before);
+  });
+
+  it('takes a picture naming a valid file id', async () => {
+    const { slug } = createWhiteboard(root, 'b');
+    const img = { id: 'img', type: 'image', version: 1, versionNonce: 1, index: 'a0', fileId: 'f'.repeat(40) };
+    await mutateWhiteboard(root, slug, (b) => { b.elements.push(img); });
+    expect(readWhiteboard(root, slug).board.elements.map((e) => [e.type, e.fileId])).toEqual([['image', 'f'.repeat(40)]]);
   });
 
   it('a hand-made board already holding an image stays editable around it', async () => {

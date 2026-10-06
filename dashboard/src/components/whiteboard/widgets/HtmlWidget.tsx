@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SANDBOX_ALLOW } from '../../../lib/sandboxHtml';
 import { HEIGHT_REQUEST_KEY, resolveChatKitTokens } from '../../sleepy/chat/chatHtmlKit';
-import { BOARD_HTML_SANDBOX, buildBoardHtmlSrcdoc, fitScale, readBoardFrameMessage } from '../htmlWidgetFrame';
+import {
+  BOARD_HTML_SANDBOX, buildBoardHtmlSrcdoc, fitScale, readBoardFrameMessage, readBoardWheelMessage, type BoardWheel,
+} from '../htmlWidgetFrame';
 import { useDataTheme, useWbText, useWhiteboardHost } from '../whiteboardHost';
 import { WidgetButton, WidgetFrame, WidgetNotice, useOpenEditorWhenEmpty } from './WidgetFrame';
 import type { WidgetProps } from './types';
@@ -85,6 +87,12 @@ function BoardHtmlFrame({ html, title }: { html: string; title: string }) {
   const [scale, setScale] = useState(1);
   const scaleRef = useRef(1);
   const boxSizeRef = useRef<{ width: number; height: number } | null>(null);
+  // The pointer is on the frame (the host sees the iframe element's enter and leave): the only
+  // time a wheel the block hands back is taken.
+  const overRef = useRef(false);
+  const { wheelBoard } = useWhiteboardHost();
+  const wheelBoardRef = useRef(wheelBoard);
+  wheelBoardRef.current = wheelBoard;
 
   // The card body's layout size (Excalidraw's zoom is a transform above it, so this is the
   // card's own px). A new box starts the fit again from full size.
@@ -125,6 +133,8 @@ function BoardHtmlFrame({ html, title }: { html: string; title: string }) {
   // Layout effect so the listener is in place before the frame's parser can post its height.
   useLayoutEffect(() => {
     function onMessage(event: MessageEvent) {
+      const wheel = readBoardWheelMessage(event, frameRef.current?.contentWindow ?? null, overRef.current);
+      if (wheel && frameRef.current) { wheelBoardRef.current?.(wheel, anchorOf(frameRef.current, wheel)); return; }
       const next = readBoardFrameMessage(event, frameRef.current?.contentWindow ?? null);
       const size = boxSizeRef.current;
       if (next === null || !size) return;
@@ -167,6 +177,8 @@ function BoardHtmlFrame({ html, title }: { html: string; title: string }) {
         allow={SANDBOX_ALLOW}
         srcDoc={srcDoc}
         onLoad={onLoad}
+        onPointerEnter={() => { overRef.current = true; }}
+        onPointerLeave={() => { overRef.current = false; }}
         data-scale={scale < 1 ? scale.toFixed(3) : undefined}
         style={{
           width: box ? box.width / scale : '100%',
@@ -177,4 +189,19 @@ function BoardHtmlFrame({ html, title }: { html: string; title: string }) {
       />
     </div>
   );
+}
+
+/**
+ * Where on screen a pinch inside the block happened: the frame reports its own layout px, and
+ * the frame is drawn scaled (the card's fit scale, the board's zoom), so it is mapped through
+ * the iframe's painted box. The frame's centre when it did not say.
+ */
+function anchorOf(frame: HTMLIFrameElement, wheel: BoardWheel): { clientX: number; clientY: number } {
+  const r = frame.getBoundingClientRect();
+  if (!wheel.at || !(frame.clientWidth > 0) || !(frame.clientHeight > 0)) {
+    return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+  }
+  const x = Math.min(frame.clientWidth, Math.max(0, wheel.at.x));
+  const y = Math.min(frame.clientHeight, Math.max(0, wheel.at.y));
+  return { clientX: r.left + (x * r.width) / frame.clientWidth, clientY: r.top + (y * r.height) / frame.clientHeight };
 }

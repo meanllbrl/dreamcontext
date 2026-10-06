@@ -138,9 +138,9 @@ function isSameSnap(geom: WidgetGeometry, recorded: unknown, next: WidgetGeometr
     && recorded === next.size;
 }
 
-/** The top-left of a new widget of `size` centred on a scene point, on the grid. */
-export function placeNewWidget(at: { x: number; y: number }, size: WidgetSize): WidgetGeometry {
-  const { width, height } = sizeBox(size);
+/** The top-left of a new widget of `size` (a preset, or a kind's own default box) centred on a scene point, on the grid. */
+export function placeNewWidget(at: { x: number; y: number }, size: WidgetSize | { width: number; height: number }): WidgetGeometry {
+  const { width, height } = typeof size === 'string' ? sizeBox(size) : size;
   return { x: snapToGrid(at.x - width / 2), y: snapToGrid(at.y - height / 2), width, height };
 }
 

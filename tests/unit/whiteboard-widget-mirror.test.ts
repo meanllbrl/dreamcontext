@@ -71,4 +71,11 @@ describe('whiteboard widget contract mirror', () => {
     expect(dash.DEFAULT_WIDGET_SIZES).toEqual(lib.DEFAULT_WIDGET_SIZES);
     expect(lib.DEFAULT_WIDGET_SIZES).toEqual({ insight: 'm', knowledge: 's', task: 's', todo: 'm', note: 'm', html: 'l', web: 'l', wiki: 'l', 'lab-card': 'xl', agent: 'l' });
   });
+
+  it('per-kind default boxes match: the agent card comes in three rows tall', () => {
+    expect(dash.DEFAULT_WIDGET_BOXES).toEqual(lib.DEFAULT_WIDGET_BOXES);
+    expect(lib.DEFAULT_WIDGET_BOXES).toEqual({ agent: [376, 572] });
+    // Three cells and two gaps: it sits on the grid like a preset does.
+    expect(572).toBe(3 * lib.WIDGET_GRID.cell + 2 * lib.WIDGET_GRID.gap);
+  });
 });

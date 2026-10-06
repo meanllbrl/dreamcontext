@@ -9,6 +9,7 @@ import {
   renameWhiteboard,
   listWhiteboards,
   mutateWhiteboard,
+  whiteboardRev,
   nextIndices,
   readWhiteboard,
   boardName,
@@ -19,11 +20,12 @@ import { getBoard } from '../../lib/lab/boards.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV } from '../../lib/automations/types.js';
 import { agentsOnElements } from '../../lib/whiteboards/agents.js';
+import { boardFileRelPath, fileIdFor, imageBox, imageSize, makeImageElement, sniffImageType, writeBoardFile } from '../../lib/whiteboards/files.js';
 import { checkWebUrl, isValidRef, isValidTag, isValidWidgetRef } from '../../lib/whiteboards/validate.js';
 import {
   WIDGET_KINDS,
   WIDGET_SIZES,
-  DEFAULT_WIDGET_SIZES,
+  DEFAULT_WIDGET_BOXES, DEFAULT_WIDGET_SIZES,
   isWidgetKind,
   isCardColor,
   CARD_COLORS,
@@ -497,15 +499,15 @@ export function registerWhiteboardCommand(program: Command): void {
 
   // --- add ---
   wb.command('add <slug> <kind>')
-    .description(`Add a widget: ${WIDGET_KINDS.join(' | ')}`)
+    .description(`Add a widget: ${WIDGET_KINDS.join(' | ')}; or a picture: image --file <png|jpg|gif|webp>`)
     .option('--ref <ref>', 'insight / task slug; for knowledge (a page): a knowledge slug or a project-relative .md/.pdf/.html path; for lab-card: <board>/<card-id>')
     .option('--title <text>', 'Widget title (a wiki card needs one)')
     .option('--text <text>', 'Note markdown or HTML block content')
-    .option('--file <path>', 'Read note markdown / HTML block content from a file')
-    .option('--url <https-url>', 'Web embed URL (https only)')
+    .option('--file <path>', 'Read note markdown / HTML block content from a file; for image, the picture (PNG, JPEG, GIF or WebP)')
+    .option('--url <url-or-path>', 'Web embed: an https URL, http://localhost[:port], or a .html/.pdf/picture file (project-relative or absolute)')
     .option('--item <text>', 'Todo item (repeatable)', collect, [])
     .option('--at <x,y>', 'Top-left position (default: next free grid slot right of / below existing content)')
-    .option('--size <s|m|l|xl|w,h>', `Grid size S 180x180, M 376x180, L 376x376, XL 768x376, or free-form w,h (default per kind: ${Object.entries(DEFAULT_WIDGET_SIZES).map(([k, v]) => `${k} ${v}`).join(', ')})`)
+    .option('--size <s|m|l|xl|w,h>', `Grid size S 180x180, M 376x180, L 376x376, XL 768x376, or free-form w,h (default per kind: ${Object.entries(DEFAULT_WIDGET_SIZES).map(([k, v]) => `${k} ${v}`).join(', ')}; an image comes in at its own shape, longest side 640)`)
     .option('--tag <tag>', 'Group tag, for `remove --tag`')
     .option('--color <color>', `Card tint: ${CARD_COLORS.join(' | ')}`)
     .option('--json', 'Machine-readable output')
@@ -513,7 +515,11 @@ export function registerWhiteboardCommand(program: Command): void {
       ref?: string; title?: string; text?: string; file?: string; url?: string; item: string[];
       at?: string; size?: string; tag?: string; color?: string; json?: boolean;
     }) => {
-      if (!isWidgetKind(kind)) throw new WhiteboardValidationError(`unknown widget kind '${kind}' (one of ${WIDGET_KINDS.join(', ')})`);
+      if (kind === 'image') {
+        await addImage(slug, opts);
+        return;
+      }
+      if (!isWidgetKind(kind)) throw new WhiteboardValidationError(`unknown widget kind '${kind}' (one of ${WIDGET_KINDS.join(', ')}, image)`);
       assertBoardInScope(slug);
       const root = ensureContextRoot();
       const at = parseAt(opts.at);
@@ -567,7 +573,8 @@ export function registerWhiteboardCommand(program: Command): void {
       let id = '';
       await mutateWhiteboard(root, slug, (board) => {
         const free = typeof size === 'object' ? size : undefined;
-        const [w, h] = free ? [free.w, free.h] : WIDGET_SIZES[payload.size ?? DEFAULT_WIDGET_SIZES[kind]];
+        const own = free || payload.size ? undefined : DEFAULT_WIDGET_BOXES[kind];
+        const [w, h] = free ? [free.w, free.h] : own ?? WIDGET_SIZES[payload.size ?? DEFAULT_WIDGET_SIZES[kind]];
         const pos = at ?? gridPlace(board.elements, { w, h });
         const [index] = nextIndices(board.elements, 1);
         const el = makeWidgetElement(kind, payload, { x: pos.x, y: pos.y, w: free?.w, h: free?.h }, index);
@@ -590,13 +597,51 @@ export function registerWhiteboardCommand(program: Command): void {
       }
     }));
 
+  /**
+   * `add <slug> image --file <path>`: the picture is stored beside the board under its content
+   * hash (the same picture twice is one file), then placed as an Excalidraw image element at its
+   * own shape. The board is checked first, so a picture is never stored for a missing board.
+   */
+  async function addImage(slug: string, opts: { file?: string; at?: string; size?: string; tag?: string; json?: boolean }): Promise<void> {
+    assertBoardInScope(slug);
+    const root = ensureContextRoot();
+    if (!opts.file) throw new WhiteboardValidationError('image needs --file <path> (a PNG, JPEG, GIF or WebP picture)');
+    if (opts.tag !== undefined && !isValidTag(opts.tag)) throw new WhiteboardValidationError(`invalid tag '${opts.tag}'`);
+    const at = parseAt(opts.at);
+    const size = parseSize(opts.size);
+    if (typeof size === 'string') throw new WhiteboardValidationError('an image takes --size w,h (it has no grid size)');
+    const bytes = readFileSync(assertFileInScope(opts.file));
+    const mime = sniffImageType(bytes);
+    if (!mime) throw new WhiteboardValidationError(`'${opts.file}' is not a PNG, JPEG, GIF or WebP picture`);
+    whiteboardRev(root, slug);
+    const fileId = fileIdFor(bytes);
+    writeBoardFile(root, slug, fileId, bytes);
+    const box = size ? { width: size.w, height: size.h } : imageBox(imageSize(bytes, mime));
+    let id = '';
+    await mutateWhiteboard(root, slug, (board) => {
+      const pos = at ?? gridPlace(board.elements, { w: box.width, h: box.height });
+      const [index] = nextIndices(board.elements, 1);
+      const el = makeImageElement(fileId, { x: pos.x, y: pos.y, ...box }, index);
+      if (opts.tag !== undefined) el.customData = { dcTag: opts.tag };
+      id = el.id;
+      board.elements.push(el);
+    });
+    const file = boardFileRelPath(root, slug, fileId);
+    if (opts.json) {
+      console.log(JSON.stringify({ id, slug, kind: 'image', fileId, file }, null, 2));
+      return;
+    }
+    success(`Added image ${chalk.bold(id)} to ${slug}`);
+    if (file) console.log(chalk.dim(`  ${file}`));
+  }
+
   // --- update ---
   wb.command('update <slug> <id>')
     .description('Update a widget (or a text element\'s text)')
     .option('--title <text>', 'New title')
     .option('--text <text>', 'New note markdown / HTML / text')
     .option('--file <path>', 'Read the new content from a file')
-    .option('--url <https-url>', 'New web URL')
+    .option('--url <url-or-path>', 'New web target (https URL, localhost URL or file path)')
     .option('--ref <ref>', 'New insight / task slug, knowledge page ref (slug or project-relative .md/.pdf/.html path), or lab-card <board>/<card-id>')
     .option('--item <text>', 'Append a todo item (repeatable)', collect, [])
     .option('--check <n>', 'Tick todo item n (1-based) or item id (repeatable)', collect, [])
@@ -682,8 +727,11 @@ export function registerWhiteboardCommand(program: Command): void {
       const source = readImportSource(readFileSync(assertFileInScope(opts.file), 'utf-8'), basename(opts.file));
       const at = parseAt(opts.at);
       let imported: ReturnType<typeof prepareImport> | null = null;
-      await mutateWhiteboard(ensureContextRoot(), slug, (board) => {
-        imported = prepareImport(source, board.elements, { at, tag: opts.tag });
+      const root = ensureContextRoot();
+      // A picture already beside this board (one `show` handed out) comes back as it was.
+      const hasFile = (fileId: string) => boardFileRelPath(root, slug, fileId) !== null;
+      await mutateWhiteboard(root, slug, (board) => {
+        imported = prepareImport(source, board.elements, { at, tag: opts.tag, hasFile });
         board.elements.push(...imported.elements);
       });
       const r = imported as unknown as ReturnType<typeof prepareImport>;

@@ -1,6 +1,6 @@
 /**
- * Drag-to-ask: an element dragged onto an agent card goes back where it was and lands in the
- * card's composer as a reference chip (`dcref:wb/<board>/<id>`, expanded by the server's
+ * Drag-to-ask: an element dragged onto an agent card (or the agent panel) goes back where it was
+ * and lands in that agent's composer on the board, the panel's, as a reference chip (`dcref:wb/<board>/<id>`, expanded by the server's
  * `board-refs.ts`). Pure decisions over plain element shapes; `WhiteboardCanvas` applies them.
  *
  * Undo (amendment 2), against @excalidraw/excalidraw 0.18.1. The drop runs synchronously inside
@@ -20,7 +20,6 @@
  */
 import type { WidgetKind } from './widgetModel';
 import { readWidgetPayload } from './widgetModel';
-import { widgetSizeOf } from './widgetSize';
 
 /** At most this many elements become chips per drop (the server expands no more per message). */
 export const DROP_UNITS_MAX = 4;
@@ -88,7 +87,7 @@ export function movedIds(before: ReadonlyMap<string, PreGesture>, elements: read
 }
 
 /** The live agent card under `point` that can take a drop: topmost first, never one the gesture
- *  moved, never rotated, and never an S card (too small to show the chip it would receive). */
+ *  moved, never rotated. Any size: the chip lands in the panel, not on the card. */
 export function agentCardUnder(
   elements: readonly DropElement[],
   moved: ReadonlySet<string>,
@@ -100,9 +99,7 @@ export function agentCardUnder(
     const payload = readWidgetPayload(el);
     if (payload?.kind !== 'agent') continue;
     const inside = point.x >= el.x && point.x <= el.x + el.width && point.y >= el.y && point.y <= el.y + el.height;
-    if (!inside) continue;
-    if (widgetSizeOf(payload.size, el.width, el.height) === 's') continue;
-    return el;
+    if (inside) return el;
   }
   return null;
 }

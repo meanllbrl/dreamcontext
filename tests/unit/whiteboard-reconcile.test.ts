@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import {
-  reconcileRemoteScene, stripImageElements,
+  reconcileRemoteScene,
 } from '../../dashboard/src/components/whiteboard/sceneSync.js';
 import { createWhiteboard, mutateWhiteboard, nextIndices, readWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { sortElements } from '../../src/lib/whiteboards/format.js';
@@ -216,24 +216,5 @@ describe('an element the CLI adds loads on real Excalidraw 0.18 with its version
 describe('the Excalidraw bundle', () => {
   it('loaded (a load failure fails here, it is never a skip)', () => {
     expect(typeof excalidraw().restoreElements).toBe('function');
-  });
-});
-
-describe('stripImageElements (D10)', () => {
-  it('removes live and deleted images, counts the visible ones, and leaves others untouched', () => {
-    const els = [
-      { id: 'r', type: 'rectangle', version: 1 },
-      { id: 'i1', type: 'image', version: 1 },
-      { id: 'i2', type: 'image', version: 2, isDeleted: true },
-    ];
-    const r = stripImageElements(els);
-    expect(r.elements.map((e) => e.id)).toEqual(['r']);
-    expect(r.removed).toBe(2);
-    expect(r.visible).toBe(1);
-  });
-
-  it('returns the same array when there is nothing to remove', () => {
-    const els = [{ id: 'r', type: 'rectangle', version: 1 }];
-    expect(stripImageElements(els).elements).toBe(els);
   });
 });

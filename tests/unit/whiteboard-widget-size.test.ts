@@ -27,6 +27,8 @@ describe('widget grid', () => {
   it('places a new widget centred on the point, on the grid, at its preset', () => {
     expect(placeNewWidget({ x: 500, y: 300 }, 'm')).toEqual({ x: 392, y: 196, width: 376, height: 180 });
     expect(placeNewWidget({ x: 0, y: 0 }, 's')).toEqual({ x: 0, y: 0, width: 180, height: 180 });
+    // A kind's own default box (the tall agent card) is centred the same way.
+    expect(placeNewWidget({ x: 500, y: 300 }, { width: 376, height: 572 })).toEqual({ x: 392, y: 0, width: 376, height: 572 });
   });
 });
 

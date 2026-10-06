@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi, useVault } from '../context/VaultContext';
 import { RequestError } from '../api/client';
 import { deliverDownload, deliveredNote, type ExportNote } from '../lib/exportDownload';
 import type { WhiteboardCanvasApi, WhiteboardScene } from '../components/whiteboard/LazyWhiteboardCanvas';
-import { IMAGES_LATER_MESSAGE, stripImageElements } from '../components/whiteboard/sceneSync';
+import { BoardPictures, isPictureOf, liveFileIds, type PictureFile } from '../components/whiteboard/boardPictures';
 import { readViewport, viewportShowsAny, writeViewport } from '../components/whiteboard/boardPlace';
 import { adoptBoardCards } from '../components/whiteboard/boardAgentScratch';
-import { isValidRefFor, readWidgetPayload } from '../components/whiteboard/widgetModel';
+import { agentCardsOf, setBoardCards } from '../components/whiteboard/agentPanelState';
 import {
   POLL_INTERVAL_MS, WhiteboardSaveLoop, fitWhenReady, reasonOf, type SaveState, type SceneResponse,
 } from './whiteboardSaveLoop';
@@ -41,6 +41,47 @@ export function whiteboardFilePath(slug: string): string {
  *  would request `/api/api/whiteboards`. Every whiteboard request goes through these. */
 const LIST_PATH = '/whiteboards';
 const boardUrl = (slug: string) => `${LIST_PATH}/${encodeURIComponent(slug)}`;
+const pictureUrl = (slug: string, id: string) => `/api${boardUrl(slug)}/files/${encodeURIComponent(id)}`;
+
+/** The refusal a picture route answered with, as the API client would have thrown it. */
+async function pictureError(res: Response): Promise<RequestError> {
+  let message = `Request failed: ${res.status}`;
+  let code = '';
+  try {
+    const body = await res.json() as { message?: string; error?: string };
+    if (body.message) message = body.message;
+    if (body.error) code = body.error;
+  } catch { /* non-JSON */ }
+  return new RequestError(message, res.status, code);
+}
+
+/** A board's picture route pair. Raw bytes, so plain `fetch` with the vault header, as the API
+ *  client sends it (`lib/agentDrop.ts` does the same for a dropped file). */
+export function boardPictures(slug: string, vault: string | null): BoardPictures {
+  const headers = (extra: Record<string, string> = {}) => ({ ...extra, ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}) });
+  return new BoardPictures({
+    upload: async (id, bytes, mimeType) => {
+      const res = await fetch(pictureUrl(slug, id), {
+        method: 'POST',
+        headers: headers({ 'Content-Type': mimeType }),
+        body: bytes as BodyInit,
+      });
+      if (!res.ok) throw await pictureError(res);
+    },
+    download: async (id): Promise<PictureFile> => {
+      const res = await fetch(pictureUrl(slug, id), { headers: headers() });
+      if (!res.ok) throw await pictureError(res);
+      const blob = await res.blob();
+      const dataURL = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      return { id, mimeType: blob.type, dataURL };
+    },
+  });
+}
 const TRASH_PATH = `${LIST_PATH}/trash`;
 const restoreUrl = (id: string) => `${TRASH_PATH}/${encodeURIComponent(id)}/restore`;
 
@@ -159,18 +200,6 @@ export type WhiteboardLoad =
   | { kind: 'missing' }
   | { kind: 'error'; message: string };
 
-/** The board's agent cards (element id + agent), from its file as loaded. */
-function agentCardsOf(elements: readonly unknown[] | undefined): { elementId: string; agent: string }[] {
-  const out: { elementId: string; agent: string }[] = [];
-  for (const el of Array.isArray(elements) ? elements : []) {
-    const e = el as { id?: unknown; isDeleted?: boolean; customData?: unknown } | null;
-    const payload = readWidgetPayload(e);
-    if (!e || e.isDeleted || typeof e.id !== 'string' || payload?.kind !== 'agent' || !isValidRefFor('agent', payload.ref)) continue;
-    out.push({ elementId: e.id, agent: payload.ref });
-  }
-  return out;
-}
-
 /**
  * One open board: its first load, then the save + poll loop (D5, D11) for as long as it is
  * mounted. The loop itself lives in `whiteboardSaveLoop.ts`; this wires it to the API, the
@@ -183,6 +212,9 @@ export function useWhiteboardEditor(slug: string) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'saved' });
   const canvasRef = useRef<WhiteboardCanvasApi | null>(null);
   const loopRef = useRef<WhiteboardSaveLoop<unknown> | null>(null);
+  // The board's pictures: bytes go up before the save that first carries them, and come down
+  // for every picture the page lacks (boardPictures.ts).
+  const pictures = useMemo(() => boardPictures(slug, vault), [slug, vault]);
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   // The one-time fit on open. This hook lives exactly as long as one board is open (the page
@@ -215,7 +247,12 @@ export function useWhiteboardEditor(slug: string) {
         if (cancelled) return;
         expectContentRef.current = Array.isArray(doc.elements)
           && doc.elements.some((el) => !(el as { isDeleted?: boolean } | null)?.isDeleted);
-        if (vault) adoptBoardCards(vault, slug, agentCardsOf(doc.elements));
+        if (Array.isArray(doc.elements)) pictures.markStored(liveFileIds(doc.elements));
+        if (vault) {
+          const cards = agentCardsOf(doc.elements);
+          setBoardCards(vault, slug, cards);
+          adoptBoardCards(vault, slug, cards);
+        }
         setLoad({
           kind: 'ready',
           name: doc.name || slug,
@@ -234,7 +271,7 @@ export function useWhiteboardEditor(slug: string) {
       },
     );
     return () => { cancelled = true; };
-  }, [api, slug, vault]);
+  }, [api, slug, vault, pictures]);
 
   const ready = load.kind === 'ready' ? load : null;
 
@@ -245,15 +282,21 @@ export function useWhiteboardEditor(slug: string) {
       snapshot: () => {
         const canvas = canvasRef.current;
         if (!canvas) return null;
-        // The canvas already refuses images as they arrive; this is the last gate before a
-        // PUT, so one that slipped through is removed and said out loud, never saved (D10).
-        const stripped = stripImageElements(canvas.getElements());
-        if (stripped.visible) {
-          canvas.excalidraw.setToast({ message: IMAGES_LATER_MESSAGE, closable: true, duration: 4000 });
-        }
-        return { elements: stripped.elements, version: canvas.getSceneVersion() };
+        pictures.remember(canvas.excalidraw.getFiles());
+        return { elements: canvas.getElements(), version: canvas.getSceneVersion() };
       },
-      put: (elements) => api.put<{ rev: string; elements?: unknown[] }>(url, { elements }),
+      put: async (elements) => {
+        // A picture's bytes are on disk before the element naming them is: no window ever
+        // loads a board whose picture is not there yet. One refused for good leaves the scene.
+        const refused = await pictures.uploadPending(elements);
+        let out = elements;
+        if (refused.length) {
+          const ids = new Set(refused);
+          out = elements.filter((el) => !isPictureOf(el, ids));
+          canvasRef.current?.dropPictures(refused, pictures.refusal(refused[0]!) ?? '');
+        }
+        return api.put<{ rev: string; elements?: unknown[] }>(url, { elements: out });
+      },
       getRev: async () => (await api.get<{ rev: string }>(`${url}/rev`)).rev,
       getScene: async (): Promise<SceneResponse> => {
         const doc = await api.get<WhiteboardDoc>(url);
@@ -285,7 +328,7 @@ export function useWhiteboardEditor(slug: string) {
       loop.dispose();
       if (loopRef.current === loop) loopRef.current = null;
     };
-  }, [api, slug, ready, saveViewport]);
+  }, [api, slug, ready, saveViewport, pictures]);
 
   // The final save on close runs in a LAYOUT cleanup: on unmount React runs this component's
   // layout cleanups before it unmounts the children, so the canvas (and its scene) is still
@@ -343,27 +386,28 @@ export function useWhiteboardEditor(slug: string) {
     // Hand the loop the changed scene itself: if the board closes before the debounce fires,
     // this is what the final save sends, whatever the torn-down canvas reads by then.
     const canvas = canvasRef.current;
-    const kept = stripImageElements(elements as Parameters<typeof stripImageElements>[0]).elements;
+    if (canvas) pictures.remember(canvas.excalidraw.getFiles());
     const version = canvas ? canvas.getSceneVersion()
-      : kept.reduce((sum, el) => sum + ((el as { version?: number }).version ?? 0), 0);
-    loopRef.current?.notifyChange({ elements: kept, version });
-  }, []);
+      : elements.reduce((sum: number, el) => sum + ((el as { version?: number }).version ?? 0), 0);
+    loopRef.current?.notifyChange({ elements, version });
+  }, [pictures]);
 
   /** Download the scene held in memory as an `.excalidraw` file: the way out when a save is
    *  refused for good or the board was deleted under us. */
   const exportFile = useCallback(async (): Promise<ExportNote | null> => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    const elements = stripImageElements(canvas.getElements()).elements.filter(
-      (el) => !(el as { isDeleted?: boolean }).isDeleted,
-    );
+    const elements = canvas.getElements().filter((el) => !(el as { isDeleted?: boolean }).isDeleted);
+    // The pictures go along, as Excalidraw writes them, so the file opens whole anywhere.
+    const held = canvas.excalidraw.getFiles();
+    const files = Object.fromEntries(liveFileIds(elements).flatMap((id) => (held[id] ? [[id, held[id]]] : [])));
     const file = {
       type: 'excalidraw',
       version: 2,
       source: 'dreamcontext',
       elements,
       appState: { viewBackgroundColor: '#ffffff' },
-      files: {},
+      files,
     };
     const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
     try {
@@ -373,5 +417,5 @@ export function useWhiteboardEditor(slug: string) {
     }
   }, [slug]);
 
-  return { load, saveState, onApi, onSceneChange, exportFile };
+  return { load, saveState, onApi, onSceneChange, exportFile, pictures };
 }

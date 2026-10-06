@@ -1,4 +1,6 @@
+import { basename, join } from 'node:path';
 import { boardName, readWhiteboard } from './store.js';
+import { boardFileRelPath } from './files.js';
 import { describeElement, liveElements, type ElementView } from './ops.js';
 import { widgetPayloadOf, type WhiteboardElement } from './widgets.js';
 import { isValidWhiteboardSlug } from './validate.js';
@@ -50,6 +52,8 @@ export interface BoardSnapshot {
   texts: { id: string; text: string }[];
   /** Plain drawn elements, counted by Excalidraw type. */
   shapes: Record<string, number>;
+  /** The board's pictures and the file each one reads from (when the caller can resolve it). */
+  pictures?: { id: string; file: string }[];
   /** Widgets and texts dropped from the tail to fit the budget. */
   omitted?: number;
 }
@@ -138,8 +142,19 @@ function keepPrefix(snap: BoardSnapshot, maxChars: number): BoardSnapshot {
  * The bounded snapshot of a parsed board whose compact JSON fits `maxChars`. Over the budget it
  * drops every widget's html, then markdown, then the tail (texts first, then widgets).
  */
-export function boundBoardSnapshot(board: Whiteboard, slug: string, maxChars: number): BoardSnapshot {
+export function boundBoardSnapshot(
+  board: Whiteboard,
+  slug: string,
+  maxChars: number,
+  fileOf?: (fileId: string) => string | null,
+): BoardSnapshot {
   const live = liveElements(board.elements);
+  const pictures = fileOf
+    ? live.flatMap((el) => {
+      const file = el.type === 'image' && typeof el.fileId === 'string' ? fileOf(el.fileId) : null;
+      return file ? [{ id: el.id, file }] : [];
+    }).slice(0, LIST_MAX)
+    : [];
   const widgetEls = live.filter((el) => widgetPayloadOf(el) !== null);
   const textEls = live.filter((el) => el.type === 'text' && widgetPayloadOf(el) === null);
   const description = board.frontmatter.description;
@@ -152,6 +167,7 @@ export function boundBoardSnapshot(board: Whiteboard, slug: string, maxChars: nu
       .map((el) => ({ id: el.id, text: cut(textOf(el), TEXT_MAX) }))
       .filter((t) => t.text.trim() !== ''),
     shapes: shapeCounts(live.filter((el) => el.type !== 'text' && widgetPayloadOf(el) === null)),
+    ...(pictures.length ? { pictures } : {}),
   };
   const fits = (s: BoardSnapshot) => JSON.stringify(s).length <= maxChars;
   if (fits(snap)) return snap;
@@ -209,7 +225,12 @@ export function renderBoardContext(root: string, slug: string, nonce: string): s
     const { board } = readWhiteboard(root, slug);
     const { head, tail } = contextFrame(slug, nonce);
     const frame = [...head, ...tail].join('\n').length + 2;
-    const json = JSON.stringify(boundBoardSnapshot(board, slug, BOARD_CONTEXT_MAX_CHARS - frame));
+    // A picture is shown as the file the agent can Read (project-relative), never its bytes.
+    const fileOf = (fileId: string) => {
+      const rel = boardFileRelPath(root, slug, fileId);
+      return rel ? join(basename(root), rel) : null;
+    };
+    const json = JSON.stringify(boundBoardSnapshot(board, slug, BOARD_CONTEXT_MAX_CHARS - frame, fileOf));
     return [...head, json, ...tail].join('\n');
   } catch (err) {
     return unreadable(slug, err, false);

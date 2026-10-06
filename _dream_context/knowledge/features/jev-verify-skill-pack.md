@@ -9,15 +9,13 @@ pinned: false
 date: '2026-09-22'
 status: in_review
 created: '2026-09-22'
-updated: '2026-09-29'
+updated: '2026-10-06'
 released_version: null
 tags:
   - 'topic:skills'
   - testing
   - 'topic:agents'
-related_tasks:
-  - >-
-    jev-verification-skill-pack-plain-language-playwright-validation-judged-by-a-system-one-model
+related_tasks: []
 ---
 
 ## Why

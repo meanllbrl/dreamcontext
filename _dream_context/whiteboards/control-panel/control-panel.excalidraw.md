@@ -82,7 +82,7 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 		{
 			"angle": 0,
 			"backgroundColor": "transparent",
-			"boundElements": null,
+			"boundElements": [],
 			"customData": {
 				"dc": {
 					"html": "<div class=\"dc-doc\">\n  <div class=\"dc-row dc-row--between\">\n    <div class=\"dc-h2\">Hedefler · roadmap</div>\n    <span class=\"dc-chip dc-chip--accent\">v0.30.0 · 2 Eki</span>\n  </div>\n  <p class=\"dc-muted\">5 hedeften 4'ü kayıyor. Darboğaz: Simplified UX'te 37 açık iş.</p>\n  <div class=\"dc-stack\">\n    <div class=\"dc-bar\"><span class=\"dc-bar-label\">Make it a Business · MRR</span><div class=\"dc-bar-track\"><div class=\"dc-bar-fill dc-bg3\" style=\"width:43%\"></div></div><span class=\"dc-bar-value\">$865 / $2k</span></div>\n    <div class=\"dc-bar\"><span class=\"dc-bar-label\">Team Ready</span><div class=\"dc-bar-track\"><div class=\"dc-bar-fill dc-bg2\" style=\"width:95%\"></div></div><span class=\"dc-bar-value\">20/21</span></div>\n    <div class=\"dc-bar\"><span class=\"dc-bar-label\">Simplified UX</span><div class=\"dc-bar-track\"><div class=\"dc-bar-fill dc-bg1\" style=\"width:68%\"></div></div><span class=\"dc-bar-value\">80/117</span></div>\n    <div class=\"dc-bar\"><span class=\"dc-bar-label\">Sleep quality</span><div class=\"dc-bar-track\"><div class=\"dc-bar-fill dc-bg1\" style=\"width:68%\"></div></div><span class=\"dc-bar-value\">21/31</span></div>\n    <div class=\"dc-bar\"><span class=\"dc-bar-label\">Recall</span><div class=\"dc-bar-track\"><div class=\"dc-bar-fill dc-bg1\" style=\"width:54%\"></div></div><span class=\"dc-bar-value\">7/13</span></div>\n  </div>\n  <div class=\"dc-row\" style=\"margin-top:12px\">\n    <span class=\"dc-chip dc-chip--bad\">4 kayıyor</span>\n    <span class=\"dc-chip dc-chip--good\">Recall yolunda</span>\n    <span class=\"dc-chip\">Business tahmini: 27 Eki</span>\n  </div>\n</div>\n",
@@ -110,9 +110,9 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 			"strokeStyle": "solid",
 			"strokeWidth": 2,
 			"type": "embeddable",
-			"updated": 1790955403409,
-			"version": 1,
-			"versionNonce": 674482611,
+			"updated": 1791306193500,
+			"version": 63,
+			"versionNonce": 967281966,
 			"width": 768,
 			"x": 0,
 			"y": 0
@@ -148,9 +148,9 @@ Trafik kaynakları ^-JsifqOZ7KHrscniL6nJt
 			"strokeStyle": "solid",
 			"strokeWidth": 2,
 			"type": "embeddable",
-			"updated": 1791067122010,
-			"version": 103,
-			"versionNonce": 97696294,
+			"updated": 1791306190974,
+			"version": 144,
+			"versionNonce": 2039588782,
 			"width": 376,
 			"x": 784,
 			"y": 0

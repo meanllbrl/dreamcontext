@@ -135,6 +135,8 @@ export interface ElementView {
   ref?: string;
   title?: string;
   text?: string;
+  /** A picture's file id (its bytes: `whiteboards/<slug>/files/<fileId>.<ext>`). */
+  fileId?: string;
   tag?: string;
   bbox: BBox;
   /** A widget's grid size: its `dc.size`, or the preset nearest its width/height when unset. */
@@ -157,6 +159,7 @@ export function describeElement(el: WhiteboardElement, full = false): ElementVie
     const t = typeof el.originalText === 'string' ? el.originalText : typeof el.text === 'string' ? el.text : '';
     if (t) view.text = t;
   }
+  if (el.type === 'image' && typeof el.fileId === 'string') view.fileId = el.fileId;
   const tag = elementTag(el);
   if (tag) view.tag = tag;
   const dc = widgetPayloadOf(el);
@@ -337,7 +340,27 @@ function remapLink(link: unknown, idMap: Map<string, string>): unknown {
 }
 
 /**
- * Prepare imported elements for a board: refuse images (D10), drop tombstones, give every
+ * Refuse a save naming a live picture the board cannot show: its file is not stored beside the
+ * board and no element already on the board names it. The browser uploads before it saves, so
+ * a real new picture is always on disk first; one the board already names (another window's,
+ * its file lost) is the store's to keep, not this save's to refuse.
+ */
+export function assertPicturesHeld(
+  incoming: readonly WhiteboardElement[],
+  stored: readonly WhiteboardElement[],
+  hasFile: (fileId: string) => boolean,
+): void {
+  const known = new Set(stored.flatMap((e) => (typeof e.fileId === 'string' ? [e.fileId] : [])));
+  const missing = incoming.find((e) => e.type === 'image' && e.isDeleted !== true
+    && typeof e.fileId === 'string' && !known.has(e.fileId) && !hasFile(e.fileId));
+  if (missing) {
+    throw new WhiteboardValidationError(`image ${missing.id} names a picture this board does not hold; upload it first (POST /api/whiteboards/<slug>/files/<id>)`);
+  }
+}
+
+/**
+ * Prepare imported elements for a board: refuse a picture the board does not hold (`hasFile`
+ * says which it does; without it every picture is refused), drop tombstones, give every
  * element and group a fresh id while keeping `boundElements`, `containerId`, `groupIds`,
  * `frameId`, arrow bindings and element links consistent, translate the group so its top-left
  * lands at `at`, and assign fresh fractional indices above the board's current max.
@@ -345,11 +368,13 @@ function remapLink(link: unknown, idMap: Map<string, string>): unknown {
 export function prepareImport(
   source: readonly WhiteboardElement[],
   board: readonly WhiteboardElement[],
-  opts: { at?: { x: number; y: number }; tag?: string; now?: number } = {},
+  opts: { at?: { x: number; y: number }; tag?: string; now?: number; hasFile?: (fileId: string) => boolean } = {},
 ): { elements: WhiteboardElement[]; bbox: BBox | null } {
   const now = opts.now ?? Date.now();
-  if (source.some((e) => e && (e as { type?: unknown }).type === 'image' && e.isDeleted !== true)) {
-    throw new WhiteboardValidationError('Images are not supported on whiteboards yet (they come in a later version); the file holds an image element');
+  const missing = source.find((e) => e && (e as { type?: unknown }).type === 'image' && e.isDeleted !== true
+    && !(typeof e.fileId === 'string' && opts.hasFile?.(e.fileId)));
+  if (missing) {
+    throw new WhiteboardValidationError('the file holds a picture this board does not have; add pictures with `dreamcontext whiteboard add <slug> image --file <path>`');
   }
   const live = sortElements(source.filter((e) => e && typeof e.id === 'string' && e.isDeleted !== true));
   if (live.length === 0) return { elements: [], bbox: null };

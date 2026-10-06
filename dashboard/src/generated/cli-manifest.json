@@ -3307,7 +3307,7 @@
     },
     {
       "path": "whiteboard add",
-      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web | wiki | lab-card | agent",
+      "desc": "Add a widget: insight | knowledge | task | todo | note | html | web | wiki | lab-card | agent; or a picture: image --file <png|jpg|gif|webp>",
       "args": [
         "<slug>",
         "<kind>"

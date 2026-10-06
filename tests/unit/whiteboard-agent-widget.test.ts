@@ -38,6 +38,19 @@ describe('agent widget contract', () => {
     expect(dash.DEFAULT_WIDGET_SIZES.agent).toBe('l');
   });
 
+  it('a new agent card is 376x572 recording L; an asked-for size or box still wins (W3)', () => {
+    const tall = makeWidgetElement('agent', { ref: 'growth-helper' }, { x: 0, y: 0 }, 'a0');
+    expect([tall.width, tall.height]).toEqual([376, 572]);
+    expect(widgetPayloadOf(tall)?.size).toBe('l');
+    const m = makeWidgetElement('agent', { ref: 'growth-helper', size: 'm' }, { x: 0, y: 0 }, 'a1');
+    expect([m.width, m.height]).toEqual([376, 180]);
+    const free = makeWidgetElement('agent', { ref: 'growth-helper' }, { x: 0, y: 0, w: 300, h: 400 }, 'a2');
+    expect([free.width, free.height]).toEqual([300, 400]);
+    // Other kinds keep their preset.
+    const note = makeWidgetElement('note', { markdown: '' }, { x: 0, y: 0 }, 'a3');
+    expect([note.width, note.height]).toEqual([376, 180]);
+  });
+
   it('the slug-shape check equals isSafeAutomationSlug, on both sides', () => {
     // The mirror carries its own copy of the reserved list: pin it to the source.
     for (const reserved of RESERVED_SLUGS) expect(isAgentSlugShape(reserved), reserved).toBe(false);
@@ -58,10 +71,10 @@ describe('agent widget contract', () => {
     expect(() => validateWidgetPayload({ v: 1, kind: 'agent', ref: 'cache' })).toThrow(WhiteboardValidationError);
   });
 
-  it('an element links to dreamcontext://agent/<slug> at the L preset', () => {
+  it('an element links to dreamcontext://agent/<slug> in its tall default box (layout L)', () => {
     const el = makeWidgetElement('agent', { ref: 'growth-helper' }, { x: 0, y: 0 }, 'a0');
     expect(el.link).toBe('dreamcontext://agent/growth-helper');
-    expect([el.width, el.height]).toEqual([376, 376]);
+    expect([el.width, el.height]).toEqual([376, 572]);
     expect(widgetPayloadOf(el)).toEqual({ v: 1, kind: 'agent', ref: 'growth-helper', size: 'l' });
   });
 });

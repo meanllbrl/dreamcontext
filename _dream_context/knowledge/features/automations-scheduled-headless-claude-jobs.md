@@ -11,7 +11,7 @@ pinned: false
 date: '2026-07-26'
 status: active
 created: '2026-07-26'
-updated: '2026-09-30'
+updated: '2026-10-06'
 released_version: v0.22.0
 tags:
   - 'topic:automations'
@@ -21,8 +21,6 @@ tags:
   - 'topic:cli'
   - 'topic:desktop'
 related_tasks:
-  - >-
-    automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands
   - automations-scheduled-headless-claude-jobs
   - automations-branded-audible-completion-notifications
   - >-
@@ -65,11 +63,6 @@ related_tasks:
     an-automation-agent-can-be-called-with-from-any-chat-and-the-lead-claude-sees-every-agent-and-can-hand-it-work
   - >-
     an-agent-answering-an-question-never-asks-to-approve-a-document-and-a-run-never-opens-a-chat-tab-by-itself
-  - >-
-    bir-ajan-calisirken-thread-i-bunu-gosterir-ve-ona-yazilan-mesaj-o-thread-e-kuyruga-girer
-  - ajan-thread-i-chat-in-bloklarini-cizer-run-karti-secret-dream-html
-  - >-
-    the-agent-thread-question-card-grows-an-extra-other-option-so-verify-agent-threads-fails-three-checks-on-main
 ---
 
 ## Why

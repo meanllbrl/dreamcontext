@@ -67,6 +67,13 @@ npm pack --dry-run            # dist/, skill/, install.sh, README, LICENSE, NOTI
 dreamcontext migrations pending   # must be empty
 ```
 
+**The published tarball carries `npm-shrinkwrap.json` (since 0.30.1, `61ba8b8a`).** `prepack`
+derives it from `package-lock.json` and `postpack` removes it; the root entry is gitignored so
+a failed publish can never leave it behind to be committed. A `package-lock.json` out of sync
+with `package.json` **fails the pack** — so a lockfile refresh is part of the version bump, not
+an afterthought. Hands-free's cloud installer refuses any tarball without it, which makes this
+a hard dependency of that feature rather than a nicety.
+
 Run these against a **temp clone of the branch being cut** whenever the working checkout
 is on something else. A gate run against the wrong tree proves nothing, and this has
 already happened once (2026-08-25: the checkout was on a 0.26.0 feature branch).

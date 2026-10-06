@@ -2,11 +2,14 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useLabExplorer } from '../../../hooks/useBoards';
 import { useLabInsight, type InsightDetail } from '../../../hooks/useLab';
+import { useBlockSize } from '../../lab/blocks/blockCommon';
+import '../../lab/blocks/dataBlocks.css';
 import { EMPTY_VIEW, setTab, type CardView } from '../../lab/board/cardViewState';
+import { chartEntry, detailBodyFor } from '../../lab/chartRegistry';
 import { formatValue } from '../../lab/chartBody';
 import { LineChart } from '../../lab/LineChart';
 import { Sparkline } from '../../lab/Sparkline';
-import { InsightView } from '../../sleepy/chat/InsightView';
+import { InsightView, toSummary } from '../../sleepy/chat/InsightView';
 import { isValidWidgetRef } from '../widgetModel';
 import { useWbText } from '../whiteboardHost';
 import { FunnelMini } from './FunnelMini';
@@ -27,6 +30,11 @@ const SERIES_RENDERS = new Set(['number', 'line']);
  * the previous point and a sparkline, L and XL are the number and its change over ONE chart the
  * width of the card (A19). Every size reads the same cached detail `InsightView` reads (same
  * query key, no second request) and formats the number the way every Lab readout does.
+ *
+ * Another CHART render (bar, pie, heatmap…: registry `fit: 'fill'`) is drawn at L/XL the way a
+ * Lab board cell draws it (`FilledInsight`): the body gets the card's measured height and draws
+ * to it, so the chart fills the card instead of leaving a band under it (owner, 2026-10-06). A
+ * table-like render, an app/v1 or html/v1 body keeps `InsightView` at its natural height.
  *
  * L/XL do not reuse `InsightView` for a number or line insight: its full `number` body is the
  * figure WITH a sparkline AND a line chart (two charts). Other renders (bar, pie…) are one chart already and stay on it.
@@ -76,6 +84,8 @@ export function InsightWidget({ payload, active, size }: WidgetProps) {
         <InsightChart detail={data} />
       </div>
     );
+  } else if (fillsCard(data)) {
+    body = <FilledInsight detail={data} full={size === 'xl'} />;
   } else {
     // The insight card carries its own title.
     ownTitle = false;
@@ -95,6 +105,33 @@ export function InsightWidget({ payload, active, size }: WidgetProps) {
     >
       {body}
     </WidgetFrame>
+  );
+}
+
+/** A chart render drawn to the card's height (`FilledInsight`): not a table, an app or html. */
+function fillsCard(detail: InsightDetail): boolean {
+  return chartEntry(detail.insight.render).fit === 'fill' && !detail.cache?.app && !detail.cache?.html;
+}
+
+/**
+ * The insight's registry body in a box of definite size, as a Lab board cell mounts it
+ * (`lab/blocks/InsightBlock.tsx`): it never scrolls and draws to the measured `height`. Drawn
+ * once the box has a height, so the chart's first paint is already the right size.
+ */
+function FilledInsight({ detail, full }: { detail: InsightDetail; full: boolean }) {
+  const [ref, box] = useBlockSize();
+  const summary = toSummary(detail);
+  const entry = chartEntry(summary.render);
+  const Body = full ? detailBodyFor(summary.render) : entry.CardBody;
+  const series = detail.cache?.series ?? [];
+  return (
+    <div ref={ref} className="lab-block-insight lab-block-insight--fill wb-insight-fill">
+      {box.height > 0 && (
+        <div className="lab-block-insight-body">
+          <Body summary={summary} cache={detail.cache ?? null} series={series} full={full} emptyHint={entry.emptyHint} height={Math.floor(box.height)} />
+        </div>
+      )}
+    </div>
   );
 }
 
