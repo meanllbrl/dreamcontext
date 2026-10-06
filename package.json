@@ -22,7 +22,8 @@
     "README.md",
     "LICENSE",
     "NOTICE",
-    "install.sh"
+    "install.sh",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build:dashboard": "cd dashboard && npm run build && cd .. && node scripts/sync-dashboard-dist.mjs",
@@ -47,6 +48,8 @@
     "verify:claude-auth-switch": "node scripts/verify/claude-auth-switch.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
     "prepublishOnly": "npm run build",
+    "prepack": "node scripts/shrinkwrap.mjs write",
+    "postpack": "node scripts/shrinkwrap.mjs remove",
     "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs",
     "verify:chat-subagent-report": "node scripts/verify/chat-subagent-report.mjs",
     "verify:chat-quest": "node scripts/verify/chat-quest.mjs",

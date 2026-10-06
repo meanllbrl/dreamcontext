@@ -105,3 +105,4 @@ _dream_context/state/.context-watch/
 
 # dreamcontext: machine-local context-handoff requests
 _dream_context/state/.handoff-requests/
+/npm-shrinkwrap.json
