@@ -8,17 +8,21 @@
 # it at every start), so a stale request can never stop a fresh start. Polled every 15 s.
 REQ=/workspaces/dc-server-pub/stop-request
 LOG=/tmp/dc-stop-helper.log
+# Also into the persistent boot log poststart.sh keeps on /workspaces (never the token itself).
+BOOT=/workspaces/dc-boot.log
+hlog() { printf '%s\n' "$*" >> "$LOG" 2>/dev/null; [ -L "$BOOT" ] || printf '%s\n' "stop-helper: $*" >> "$BOOT" 2>/dev/null; }
 BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
-echo "$(date -u +%FT%TZ) helper up pid=$$ token_present=$([ -n "$GITHUB_TOKEN" ] && echo yes || echo no)" >> "$LOG"
+hlog "$(date -u +%FT%TZ) helper up pid=$$ boot=$BOOT_ID token_present=$([ -n "$GITHUB_TOKEN" ] && echo yes || echo no)"
 chmod 644 "$LOG" 2>/dev/null
 while true; do
   if [ -f "$REQ" ] && [ ! -L "$REQ" ]; then
     read -r due boot < "$REQ"
     due=$(printf '%s' "$due" | tr -cd '0-9')
     if [ -n "$due" ] && [ "$boot" = "$BOOT_ID" ] && [ "$(date +%s)" -ge "$due" ]; then
-      echo "$(date -u +%FT%TZ) stop request due ($due), stopping $CODESPACE_NAME" >> "$LOG"
-      gh codespace stop -c "$CODESPACE_NAME" >> "$LOG" 2>&1
-      echo "$(date -u +%FT%TZ) gh codespace stop exit=$?" >> "$LOG"
+      hlog "$(date -u +%FT%TZ) stop request due ($due), stopping $CODESPACE_NAME"
+      out=$(gh codespace stop -c "$CODESPACE_NAME" 2>&1); rc=$?
+      [ -n "$out" ] && hlog "$out"
+      hlog "$(date -u +%FT%TZ) gh codespace stop exit=$rc"
       sleep 60
     fi
   fi

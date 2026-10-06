@@ -1,8 +1,12 @@
 // dreamcontext hands-free ROOT supervisor. Started detached by entrypoint.sh at every container
 // start; copied verbatim into <owner>/dreamcontext-handsfree/.devcontainer/supervisor.mjs.
 //
-//  - binds 0.0.0.0:8080 ONCE and hands the listening fd to every server instance, so the port
-//    is never free for dcuser to grab across a restart (W0 item 4);
+//  - HOLDS the listening socket of 0.0.0.0:8080 for its whole life and hands that same fd to
+//    every server instance, so the port is never free for dcuser to grab across a restart
+//    (W0 item 4). The entrypoint binds it OUTSIDE libuv (a short root python step that
+//    exec's this script with the socket as fd 3): this process never polls or accepts on it.
+//    A listening net.Server here would accept too, and every connection it won was never
+//    answered (smoke #4: forwarder 504s, ~15% of fresh connections);
 //  - kills every dcuser process before each (re)start;
 //  - restarts the server on ANY exit, with backoff;
 //  - the build ALWAYS comes from npm at ONE exact version (D25): `npm pack dreamcontext@<v>` into
@@ -23,7 +27,6 @@
 //  - bind-mounts the mirror (/workspaces/dc-home) on the laptop's HOME once a trip names it
 //    (dcserver asks through $PUB/mirror-request), and again at every start.
 // Node builtins only.
-import net from 'node:net';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
@@ -646,7 +649,8 @@ function readLine(p) {
 
 // ─── the server ─────────────────────────────────────────────────────────────
 
-let listener = null;
+/** The inherited listening socket (fd 3), held, never polled (see {@link holdListener}). */
+let listenFd = null;
 let child = null;
 let backoff = 500;
 let startedAt = 0;
@@ -672,7 +676,7 @@ function start() {
   if (installing) return;
   if (!existsSync(ENTRY)) ensureInstalled();
   killDcuser();
-  const fd = listener._handle.fd;
+  const fd = listenFd;
   startedAt = Date.now();
   child = spawn('setpriv', [
     '--reuid=dcserver', '--regid=dcserver', '--init-groups',
@@ -762,7 +766,59 @@ function watchMirrorRequests() {
   }, 2000).unref();
 }
 
+// SO_ACCEPTCONN on Linux (the codespace). Where the OS lacks it (macOS answers ENOPROTOOPT; the
+// tests run there): a bound TCP socket with no peer is taken as the listener.
+const LISTEN_CHECK_PY = `import errno, socket
+s = socket.socket(fileno=3)
+try:
+    ok = s.family in (socket.AF_INET, socket.AF_INET6) and s.type == socket.SOCK_STREAM
+    if ok:
+        try:
+            ok = bool(s.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN))
+        except OSError as e:
+            if e.errno != errno.ENOPROTOOPT:
+                raise
+            ok = s.getsockname()[1] != 0
+            try:
+                s.getpeername()
+                ok = False
+            except OSError:
+                pass
+    print('listening' if ok else 'not-listening')
+finally:
+    s.detach()`;
+
+/**
+ * The listening socket the entrypoint bound for us: `fd` must be a LISTENING TCP socket. It is
+ * only held (passed to each child as its fd 3), never wrapped in a net.Server, so this process
+ * never accepts on it. Throws when it is not one (a wrong boot fails loudly). The check runs in
+ * python (SO_ACCEPTCONN), which libuv does not expose.
+ */
+export function holdListener(fd = 3) {
+  let st;
+  try { st = fstatSync(fd); } catch (e) { throw new Error(`fd ${fd} is not open (${e.code ?? e.message})`); }
+  if (!st.isSocket()) throw new Error(`fd ${fd} is not a socket`);
+  let verdict = '';
+  try {
+    verdict = execFileSync('python3', ['-c', LISTEN_CHECK_PY], { stdio: ['ignore', 'pipe', 'pipe', fd], timeout: 10_000 }).toString('utf-8').trim();
+  } catch (e) {
+    throw new Error(`fd ${fd} could not be checked (${(e.stderr?.toString() || e.message).trim().split('\n').pop()})`);
+  }
+  if (verdict !== 'listening') throw new Error(`fd ${fd} is not a listening TCP socket`);
+  return fd;
+}
+
 function main() {
+  // First, before anything else: without the entrypoint's listening socket there is nothing
+  // to serve on, and a supervisor that binds its own would be the bug smoke #4 found.
+  try {
+    listenFd = holdListener(3);
+  } catch (e) {
+    const msg = `no listening socket from the entrypoint: ${e.message}; supervisor NOT started`;
+    log(msg);
+    console.error(msg);
+    process.exit(2);
+  }
   mkdirSync(RUNTIME, { recursive: true, mode: 0o700 });
   lockdownClones(); // idempotent: entrypoint `prepare` already ran it
   ensureInstalled();
@@ -770,13 +826,9 @@ function main() {
   try { writeFileSync(join(PUB, 'supervised'), `${process.pid}\n`, { mode: 0o644 }); } catch (e) { log(`supervised marker: ${e.message}`); }
   const known = readLine(join(PUB, 'mirror-mounted'));
   if (known && validMirrorPath(known)) mountMirror(known);
-  listener = net.createServer();
-  listener.on('error', (e) => { log(`listen error ${e.code}`); process.exit(1); });
-  listener.listen({ host: '0.0.0.0', port: 8080, backlog: 511 }, () => {
-    log('bound 0.0.0.0:8080 (root holds the fd)');
-    start();
-    watchMirrorRequests();
-  });
+  log('bound 0.0.0.0:8080 (the entrypoint bound it; root holds fd 3 and never polls it)');
+  start();
+  watchMirrorRequests();
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

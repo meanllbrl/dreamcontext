@@ -24,6 +24,80 @@ for p in sys.argv[1:]:
     except OSError: pass' "$@"
 }
 
+# The root listener (AC19, smoke #4). Port 8080 is bound HERE, outside libuv: this python step
+# binds 0.0.0.0:8080 (SO_REUSEADDR, backlog 511), leaves the listening socket on fd 3 and
+# exec's the supervisor (same pid; `pkill -f /opt/dc-hf/supervisor.mjs` still matches it). The
+# supervisor only HOLDS fd 3 and hands it to every server instance; it never accepts on it (a
+# listening net.Server there answered nothing for the connections it won: forwarder 504s).
+# A failed bind exits before the exec: logged, and no half-started supervisor.
+# argv: <host> <port> <public log or ''> <program> [args...]
+HOLD_PY=$(cat <<'PY'
+import os, socket, sys, time
+host, port, pub, argv = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4:]
+def publog(line):
+    if not pub:
+        return
+    try:
+        fd = os.open(pub, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+        try:
+            os.write(fd, (time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()) + ' ' + line + '\n').encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((host, port))
+    s.listen(511)
+except OSError as e:
+    msg = 'listener: bind %s:%d failed: %s (errno %s); supervisor NOT started' % (host, port, e.strerror or e, e.errno)
+    print(msg, file=sys.stderr, flush=True)
+    publog(msg)
+    sys.exit(3)
+fd = s.detach()
+if fd != 3:
+    os.dup2(fd, 3)
+    os.close(fd)
+os.set_inheritable(3, True)
+publog('listener: bound %s:%d on fd 3, exec supervisor (pid %d)' % (host, port, os.getpid()))
+os.execv(argv[0], argv)
+PY
+)
+
+# A persistent, world-readable boot record (no secrets, no env, nothing under the mirror):
+# root appends with O_NOFOLLOW (the codespace user owns /workspaces), trimmed to 500 lines.
+PUBLOG=/workspaces/dc-runtime-pub.log
+PUBLOG_PY=$(cat <<'PY'
+import os, sys, time
+path, line, trim = sys.argv[1], sys.argv[2], sys.argv[3] == 'trim'
+try:
+    if trim:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, 'rb') as f:
+                keep = f.read().splitlines(keepends=True)[-499:]
+            tmp = path + '.tmp'
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
+            t = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            with os.fdopen(t, 'wb') as f:
+                f.writelines(keep)
+            os.rename(tmp, path)
+        except FileNotFoundError:
+            pass
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+    try:
+        os.fchmod(fd, 0o644)
+        os.write(fd, (time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()) + ' ' + line + '\n').encode())
+    finally:
+        os.close(fd)
+except OSError:
+    pass
+PY
+)
+publog() { python3 -c "$PUBLOG_PY" "$PUBLOG" "$1" "${2:-}" 2>/dev/null; }
+
 # The mirror root the supervisor mounted (/Users/<name>, the laptop HOME), empty before a trip.
 mirror_root() {
   local m
@@ -48,6 +122,7 @@ start)
   [[ "$NAME" =~ $NAME_RE ]] || { echo "bad codespace name"; exit 2; }
   [[ "$DOMAIN" =~ $DOMAIN_RE ]] || { echo "bad forwarding domain"; exit 2; }
   ORIGIN="https://${NAME}-8080.${DOMAIN}"
+  publog "=== boot $(cat /proc/sys/kernel/random/boot_id 2>/dev/null) codespace=$NAME url=$ORIGIN" trim
   mkdir -p "$SRV" "$PUB" "$WORK" "$HM" "$RUNTIME"
   strip_default_acl "$SRV" "$PUB" "$WORK" "$HM" "$RUNTIME"
   repair_owners
@@ -59,10 +134,10 @@ start)
   # Everything below outlives this lifecycle step.
   pkill -f '/opt/dc-hf/supervisor.mjs' 2>/dev/null
   sleep 1
-  setsid -f /usr/bin/node /opt/dc-hf/supervisor.mjs < /dev/null >> "$RUNTIME/supervisor.out" 2>&1
+  setsid -f python3 -c "$HOLD_PY" 0.0.0.0 8080 "$PUBLOG" /usr/bin/node /opt/dc-hf/supervisor.mjs < /dev/null >> "$RUNTIME/supervisor.out" 2>&1
   # GitHub re-owns all of /workspaces to `codespace` ONCE at creation, ~10 s AFTER this step
   # (W0): wait for it, then repair the owners and modes and restart the server.
-  setsid -f bash -c '
+  PUBLOG="$PUBLOG" PUBLOG_PY="$PUBLOG_PY" setsid -f bash -c '
     SRV=/workspaces/dc-server
     for i in $(seq 1 120); do
       if [ "$(stat -c %U "$SRV")" != dcserver ]; then
@@ -78,10 +153,12 @@ for p in (\"/workspaces/dc-server\",\"/workspaces/dc-server-pub\",\"/workspaces/
         /usr/bin/node /opt/dc-hf/supervisor.mjs lockdown < /dev/null >> /workspaces/dc-runtime/supervisor.out 2>&1
         pkill -TERM -u dcserver 2>/dev/null
         echo "$(date -u +%FT%TZ) settle: re-own repaired after ${i}x5s" >> /workspaces/dc-runtime/settle.log
+        python3 -c "$PUBLOG_PY" "$PUBLOG" "settle: re-own repaired after ${i}x5s" "" 2>/dev/null
         exit 0
       fi
       sleep 5
-    done' < /dev/null > /dev/null 2>&1
+    done
+    python3 -c "$PUBLOG_PY" "$PUBLOG" "settle: no re-own within 10 min (not a first boot)" "" 2>/dev/null' < /dev/null > /dev/null 2>&1
   echo "started supervisor origin=$ORIGIN"
   ;;
 claude-login)
