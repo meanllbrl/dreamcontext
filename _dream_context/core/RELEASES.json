@@ -5,7 +5,7 @@
     "date": "2026-10-06",
     "summary": "Patch on 0.30.0, 10 commits (ba6334e1..22cabcc8). WHITEBOARDS: the board agent lives in a side panel that stays live across pages and the page reopens where you left it (d5d141a2); rename a board and tint a card from the CLI and the server (75ee1239). HANDS-FREE (still unannounced, hidden by 22cabcc8 exactly like 0.30.0): fixes from the first real phone smoke on Codespaces. The cloud installs the exact shrinkwrapped build with npm ci and the root supervisor locks /workspaces down (3cb672b0); the published package now carries npm-shrinkwrap.json, derived at prepack (80ef6364, owner D26); the phone lands in its trip chat (CLI go registers the project under an ASCII header-safe name), a login/activation/cancelled Return counts as the owner's action on the idle clock, the login page registers the Wake service worker, the login request times out, the own Codespaces uptime count is fixed and account-login puts ssh -t after -- (92e1d545). Cloud install works from 0.30.1 on: an older last-good tarball has no shrinkwrap and is refused.",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [
       "whiteboards",
       "hands-free-cloud-mode"
