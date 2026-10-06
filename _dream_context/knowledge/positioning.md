@@ -7,7 +7,7 @@ tags:
   - topic:branding
 pinned: false
 date: '2026-05-31'
-updated: '2026-07-06'
+updated: '2026-10-05'
 ---
 
 # dreamcontext — Canonical Positioning
@@ -42,6 +42,18 @@ The app rebrand shipped in the same cycle as the Sleepy Search/Ask view. Key ide
 The full visual specification lives in `core/3.style_guide_and_branding.md` (owned by sleep-state). This section records only the rationale and naming rules, not pixel-level details.
 
 **Rationale:** The violet palette was chosen to differentiate the app from generic dev-tool grays while staying in the cool-tone space that reads as "intelligent system" rather than "enterprise tool." Violet carries the dream/memory semantic without being purple-for-purple's-sake. The folded-diamond mark is geometric (trustworthy, systematic) but has an organic fold (not purely mechanical). The two-tone wordmark keeps "dreamcontext" readable at small sizes where a logotype with equal-weight letters would blur.
+
+## Rule: Memory comes to the agent, the agent does not go looking (owner 2026-10-05)
+
+The recall story is **injection by hooks**, not retrieval by the agent:
+
+- **Session start:** the SessionStart hook injects the brain snapshot (identity, memory, active work, what changed) before the first message. Zero tool calls.
+- **Every message:** the UserPromptSubmit hook matches the prompt against the whole brain and injects the memories that relate to it into that turn: knowledge, tasks, hypotheses, live metrics, changelog, connected projects' pages, triggered patterns. Irrelevant memory stays out.
+- So the agent **already knows** what is going on when it starts answering. It is proactive context, delivered when it is needed and only when it is related.
+- The payoff to say out loud: **it sees the big picture and truly understands** your product (the metric, the hypothesis behind it, what customers said, the task in flight), instead of answering from the one file it happened to open.
+
+Say: "it already knows", "it sees the big picture", "it truly understands", "the right memory is injected the moment it's relevant", "hooks bring the memory to the agent".
+Never say: "it reads an index", "it searches its memory", "it looks it up", or anything that frames the agent as fetching files (intro-v5's "It reads an index, not the library." was rejected for exactly this). The index is an internal detail of how the hook picks; it is not the story.
 
 ## Rule: Roadmap Framing
 

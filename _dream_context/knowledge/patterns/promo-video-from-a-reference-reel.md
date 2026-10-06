@@ -70,6 +70,11 @@ rejections. The step-by-step production line (VO, Remotion, SFX, QA, archive) li
    - Read the WHOLE live answer before choosing what goes on screen. The agent correctly pointed
      at the demo vault's staging ("the Lab script returns a hardcoded array"), so that part stays
      off screen.
+   - A live turn must run the way the product really runs: check the session jsonl for
+     `hook_success` on SessionStart and UserPromptSubmit. In a fake HOME `npx dreamcontext` raced an
+     install, both hooks failed silently, and the recorded agent went searching (v5), which is the
+     opposite of the story. Recall is told as hook INJECTION, never as the agent reading an index
+     (`knowledge/positioning.md`).
    - VO = screen text, word for word. Every claim must trace to verified behaviour, and nothing
      may claim autonomy.
 6. **The lockup is crisp, proportional and measured.**

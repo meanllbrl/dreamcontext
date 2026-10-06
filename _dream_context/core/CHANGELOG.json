@@ -1,6 +1,17 @@
 [
   {
     "date": "2026-10-05",
+    "type": "note",
+    "scope": "quick",
+    "summary": "Messaging rule (owner 2026-10-05): dreamcontext's recall is injection by hooks, not the agent searching. SessionStart injects the snapshot; the UserPromptSubmit hook injects the memories related to...",
+    "description": "Messaging rule (owner 2026-10-05): dreamcontext's recall is injection by hooks, not the agent searching. SessionStart injects the snapshot; the UserPromptSubmit hook injects the memories related to each prompt, so the agent already knows. Never say 'it reads an index'. Canonical: knowledge/positioning.md.",
+    "breaking": false,
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-05",
     "type": "docs",
     "scope": "marketing",
     "description": "Deliver the light-mode IntroV4 promo (49.4s, SFX and music cuts, QA by measurement) and capture the reusable workflow as knowledge/patterns/promo-video-from-a-reference-reel.md. Save the owner's v5 brief verbatim at _dream_context/marketing/videos/dreamcontext-intro-v5-brief.md: locked VO, sleep model centrepiece, at most 60s.",
