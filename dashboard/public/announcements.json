@@ -151,6 +151,9 @@
       "agents",
       "dashboard"
     ],
-    "story": "v0-30-0.json"
+    "story": "v0-30-0.json",
+    "covers": [
+      "0.30.1"
+    ]
   }
 ]
