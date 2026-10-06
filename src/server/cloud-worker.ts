@@ -4,7 +4,7 @@ import {
   readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { spawnAsWorker } from './cloud-mode.js';
@@ -21,6 +21,7 @@ import {
   type GoManifest, type Manifest, type ManifestEntry, type RootKind, type WalkResult,
 } from '../lib/handsfree/manifest.js';
 import { readPack, writePack } from '../lib/handsfree/pack.js';
+import { withTripVault } from '../lib/handsfree/global-set.js';
 import { BackupStore, applyPack, planMirror } from '../lib/handsfree/apply.js';
 import { backupDir, conflictsDir, type JournalOp } from '../lib/handsfree/journal.js';
 import { createHash } from 'node:crypto';
@@ -702,11 +703,25 @@ async function opGlobal(base: WorkerBase, p: Record<string, unknown>, payload: N
       policy: 'overwrite',
       maxBytes,
     });
+    // AC3: the login opens the trip's chat by its REGISTERED name; a registry carried without
+    // the trip's project (an older laptop, a CLI go) still names it here, as dcuser.
+    if (typeof p.tripVault === 'string' && isAbsolute(p.tripVault)) registerTripVault(home, p.tripVault);
     if (base.mirrorPrefix) remapVaultsForMirror(home, base.mirrorPrefix);
     return { written: res.written.length, refused: res.refused };
   } finally {
     rmSync(spooled.path, { force: true });
   }
+}
+
+/** The trip's project in the mirror's vault registry (laptop path, like every carried entry). */
+function registerTripVault(home: string, tripVault: string): void {
+  const file = join(home, '.dreamcontext', 'vaults.json');
+  let doc: unknown;
+  try { doc = JSON.parse(readFileSync(file, 'utf-8')); } catch { doc = undefined; }
+  const next = withTripVault(doc, tripVault, (a, b) => resolve(a) === resolve(b));
+  if (!next) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(next, null, 2) + '\n');
 }
 
 /** Test seam only: the carried vaults.json names laptop paths; the mirror keeps them under a prefix. */

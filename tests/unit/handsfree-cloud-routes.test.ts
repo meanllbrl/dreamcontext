@@ -19,12 +19,15 @@ import { handleHealthGet } from '../../src/server/routes/health.js';
 import { CloudStateStore } from '../../src/server/cloud-state.js';
 import { TransferStore } from '../../src/server/cloud-transfers.js';
 import { manifestDigest, setWorkerInProcessForTests } from '../../src/server/cloud-worker.js';
-import { buildManifest, encodeProjectDir, manifestToJSON, rootIdFor, selectNonGitEntries, type GoManifest } from '../../src/lib/handsfree/manifest.js';
+import { buildManifest, encodeProjectDir, manifestToJSON, rootIdFor, selectNonGitEntries, walk, type GoManifest } from '../../src/lib/handsfree/manifest.js';
+import { redirectToTripChat } from '../../src/server/handsfree-login.js';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createBundle, createSpawnRunner, snapshotBundleRefs, snapshotId, snapshotRepo } from '../../src/lib/handsfree/git-snapshot.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { writePack } from '../../src/lib/handsfree/pack.js';
 import { registerLiveChat, unregisterLiveChat, type LiveChatEntry } from '../../src/server/routes/agent-chat-live.js';
+import { IDLE_AFTER_MS, setCloudIdle } from '../../src/server/cloud-idle.js';
 
 const OWN = 'https://dc-hf-test-8080.app.github.dev';
 const SECRET = 'transfer-secret-for-tests';
@@ -920,3 +923,112 @@ describe('POST runtime (D25): an exact npm version + its sha512 integrity, never
     expect(exits).toEqual([]);
   });
 });
+
+describe('AC16: the trip arriving and a cancelled Return are the owner\'s real actions (smoke #3)', () => {
+  const T = 'trip-idle';
+  const MIN = 60_000;
+  afterEach(() => setCloudIdle(null));
+
+  it('POST activate gives the phone the full 15 min from arrival; a health read never moves the clock; unquiesce restarts it', async () => {
+    let t = Date.now();
+    const boot = t;
+    const idle = createCloudIdle('boot-test', () => t);
+    setCloudIdle(idle);
+    expect(idle.tick()).toBe(boot + IDLE_AFTER_MS);
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: T, laptopId: 'laptop-a', go: goManifest(T, 'laptop-a') })).status).toBe(200);
+    t += 17 * MIN; // start + npm install of the pinned version + the transfer
+    expect((await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T })).status).toBe(200);
+    const arrived = t;
+    expect(idle.tick()).toBe(arrived + IDLE_AFTER_MS);
+    expect(existsSync(join(process.env.DC_HF_PUBLIC_DIR!, 'stop-request'))).toBe(false);
+
+    // Health reads and polls are not actions.
+    t += 5 * MIN;
+    expect((await transfer('GET', '/api/health')).status).toBe(200);
+    expect((await raw('GET', '/api/health', {})).status).toBe(200);
+    expect(idle.tick()).toBe(arrived + IDLE_AFTER_MS);
+
+    // A Return quiesces, then is cancelled: back to active is the owner's action.
+    const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+    t += 8 * MIN;
+    expect((await transfer('POST', '/api/handsfree/cloud/unquiesce', { epoch: q.epoch })).status).toBe(200);
+    expect(idle.tick()).toBe(t + IDLE_AFTER_MS);
+  });
+
+  it('a refused activate or unquiesce moves nothing', async () => {
+    let t = Date.now();
+    const idle = createCloudIdle('boot-test', () => t);
+    setCloudIdle(idle);
+    t += 10 * MIN;
+    expect((await transfer('POST', '/api/handsfree/cloud/activate', { tripId: 'trip-nobody' })).status).toBe(409);
+    expect(idle.tick()).toBe(idle.bootAt + IDLE_AFTER_MS);
+    // An unquiesce at the CURRENT epoch while already active: refused at the phase check.
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: T, laptopId: 'laptop-a', go: goManifest(T, 'laptop-a') })).status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/activate', { tripId: T })).status).toBe(200);
+    const q = (await transfer('POST', '/api/handsfree/cloud/quiesce', { tripId: T })).json();
+    expect((await transfer('POST', '/api/handsfree/cloud/unquiesce', { epoch: q.epoch })).status).toBe(200);
+    const backAt = t;
+    t += 10 * MIN;
+    const again = await transfer('POST', '/api/handsfree/cloud/unquiesce', { epoch: q.epoch + 1 });
+    expect(again.status).toBe(409);
+    expect(again.json().error).toBe('not_quiescing');
+    expect(idle.tick()).toBe(backAt + IDLE_AFTER_MS);
+  });
+});
+
+describe('AC3: a CLI go from a project the laptop never registered still opens its chat (smoke #3)', () => {
+  const TT = 'trip-cli-go';
+  // A Turkish folder name (ğ ş ı İ) with a dot and a space: the SPA sends the vault name in the
+  // X-Dreamcontext-Vault header, and a browser refuses any header char above U+00FF, so the auto
+  // name is folded to ASCII exactly as `vaults scan` names a project (slugify).
+  const PROJ_TR = `${HOME}/Öğretmen.notları İş Şube`;
+  const headerSafe = (n: string) => /^[\x21-\x7e]+$/.test(n) && [...n].every((c) => c.charCodeAt(0) <= 0xff);
+
+  async function globalPack(vaults: Array<{ name: string; path: string }>): Promise<Buffer> {
+    const staging = join(scratch, 'global-staging');
+    mkdirSync(join(staging, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(staging, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults }));
+    const m = await buildManifest(staging, walk(staging, [''], { side: 'laptop' }).entries);
+    const chunks: Buffer[] = [];
+    const sink = new PassThrough();
+    sink.on('data', (c: Buffer) => chunks.push(c));
+    await writePack(sink, { root: staging, entries: m.values() });
+    return Buffer.concat(chunks);
+  }
+  const navTo = () => {
+    let status: number | null = null;
+    const headers: Record<string, string> = {};
+    const res = { writeHead(c: number, h: Record<string, string>) { status = c; Object.assign(headers, h); return res; }, end() {} } as unknown as ServerResponse;
+    const handled = redirectToTripChat({ method: 'GET', url: '/', headers: { accept: 'text/html' } } as unknown as IncomingMessage, res);
+    return { handled, status, location: headers.Location };
+  };
+
+  it('the global op registers the trip\'s first root on the cloud; the HTML navigation to / is redirected to its chat', async () => {
+    const go: GoManifest = { ...goManifest(TT, 'laptop-a'), roots: [{ rootId: rootIdFor(PROJ_TR), kind: 'vault', absPath: PROJ_TR }] };
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: TT, laptopId: 'laptop-a', go })).status).toBe(200);
+    // The carried registry knows another project only (the trip's was never added in the app).
+    await upload('global-cli0001', await globalPack([{ name: 'other', path: `${HOME}/other` }]));
+    const g = await transfer('POST', '/api/handsfree/cloud/global', { tripId: TT, uploadId: 'global-cli0001' });
+    expect(g.status).toBe(200);
+    expect((await transfer('POST', '/api/handsfree/cloud/activate', { tripId: TT })).status).toBe(200);
+    const reg = JSON.parse(readFileSync(join(scratch, 'mirror', HOME, '.dreamcontext', 'vaults.json'), 'utf8'));
+    expect(reg.vaults.map((v: { name: string }) => v.name)).toEqual(['other', 'ogretmen-notlari-is-sube']);
+    expect(headerSafe(reg.vaults[1].name)).toBe(true);
+    const r = navTo();
+    expect(r.handled).toBe(true);
+    expect(r.status).toBe(302);
+    expect(r.location).toBe('/?vault=ogretmen-notlari-is-sube');
+    expect(() => new Headers({ 'X-Dreamcontext-Vault': new URL(r.location!, 'http://x').searchParams.get('vault')! })).not.toThrow();
+  });
+
+  it('a project the laptop already registered keeps its own name, even a non-ASCII one (never renamed)', async () => {
+    const go: GoManifest = { ...goManifest(TT, 'laptop-a'), roots: [{ rootId: rootIdFor(PROJ_TR), kind: 'vault', absPath: PROJ_TR }] };
+    expect((await transfer('POST', '/api/handsfree/cloud/trip', { tripId: TT, laptopId: 'laptop-a', go })).status).toBe(200);
+    await upload('global-cli0002', await globalPack([{ name: 'Öğretmen Notları', path: PROJ_TR }]));
+    expect((await transfer('POST', '/api/handsfree/cloud/global', { tripId: TT, uploadId: 'global-cli0002' })).status).toBe(200);
+    const reg = JSON.parse(readFileSync(join(scratch, 'mirror', HOME, '.dreamcontext', 'vaults.json'), 'utf8'));
+    expect(reg.vaults.map((v: { name: string }) => v.name)).toEqual(['Öğretmen Notları']);
+    expect(new URL(navTo().location!, 'http://x').searchParams.get('vault')).toBe('Öğretmen Notları');
+  });
+});
+

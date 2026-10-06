@@ -32,7 +32,8 @@ import {
   isWellFormedRef, lsTree, parseRepoSnapshot, snapRefPrefix, snapshotBundleRefs, snapshotId, snapshotRepo, snapStashRef, type PreflightProblem,
   type ProcessRunner, type RepoSnapshot,
 } from './git-snapshot.js';
-import { stageGlobalSet } from './global-set.js';
+import { stageGlobalSet, vaultNameForPath } from './global-set.js';
+import { addVault, listVaults, VaultError } from '../vaults.js';
 import {
   acquireTripRunLock, createJournal, journalPath, journalStatus, loadJournal, rollbackJournal, runJournal, tripDir as tripDirOf, type Journal,
   type JournalOp, type OpHandlers, backupDir, conflictsDir,
@@ -260,6 +261,7 @@ async function ensureRunning(env: HandsfreeEnv, o: { needCoreMinutes?: number; a
     const fresh = info;
     cfg = (await updateConfig(env.home, (c) => ({ ...c, codespace: { name: fresh.name, machine: fresh.machine, url: fresh.url, webUrl: fresh.webUrl, retentionExpiresAt: fresh.retentionExpiresAt }, lastTrip: null }))) as typeof cfg;
   }
+  cfg = ((await reconcileUptime(env, info)) ?? cfg) as typeof cfg;
   const cores = coresFor(info.machine);
   if (info.state !== 'available' && o.needCoreMinutes !== undefined) {
     const remote = await env.provider.remainingQuotaCoreMinutes();
@@ -295,6 +297,34 @@ async function ensureRunning(env: HandsfreeEnv, o: { needCoreMinutes?: number; a
     await updateConfig(env.home, (c) => (c.codespace ? { ...c, codespace: { ...c.codespace, retentionExpiresAt: r } } : c));
   }
   return { client, info, recreated, startedByUs };
+}
+
+/**
+ * AC23: fold what GitHub says into the laptop's own uptime count, for runs the laptop did not
+ * start or did not watch stop. A stopped machine with an open count stopped itself (D15) or was
+ * stopped elsewhere: close the count at GitHub's latest change after its start (`updated_at` is
+ * the state change; `last_used_at` alone stays near the start for a REST-driven codespace), or
+ * now when GitHub has nothing later. A running machine with no open count was started elsewhere
+ * (the phone's Wake, a manual start): open it at GitHub's `updated_at`, else now.
+ */
+async function reconcileUptime(env: HandsfreeEnv, info: MachineInfo): Promise<HandsfreeConfig | null> {
+  const now = nowOf(env);
+  const ts = [info.updatedAt, info.lastUsedAt].map((x) => (x ? Date.parse(x) : NaN)).filter((t) => Number.isFinite(t) && t <= now);
+  const cores = coresFor(info.machine);
+  const cfg = readConfig(env.home, now);
+  if (!cfg) return null;
+  if ((info.state === 'stopped' || info.state === 'stopping') && cfg.uptime.runningSince !== null) {
+    const since = cfg.uptime.runningSince;
+    const later = ts.filter((t) => t >= since);
+    const at = later.length ? Math.max(...later) : now;
+    return updateConfig(env.home, (c) => countUptime(c, false, cores, at));
+  }
+  if (info.state === 'available' && cfg.uptime.runningSince === null) {
+    const up = info.updatedAt ? Date.parse(info.updatedAt) : NaN;
+    const at = Number.isFinite(up) && up <= now ? up : now;
+    return updateConfig(env.home, (c) => countUptime(c, true, cores, at));
+  }
+  return cfg;
 }
 
 async function stopMachine(env: HandsfreeEnv, name: string): Promise<void> {
@@ -980,6 +1010,29 @@ async function abortGoOnVerification(env: HandsfreeEnv, tripId: string, dir: str
   return true;
 }
 
+/**
+ * AC3: register the trip's project (the go manifest's first root, which the cloud's login
+ * redirect looks up) in this laptop's vault registry exactly as Add Project does (`addVault`),
+ * unless a vault already points at it. Idempotent; the folder name is kept (a taken name gets
+ * `-2`, `-3`, ...). Never fails the go: an unregistrable project only loses the redirect.
+ */
+function ensureProjectRegistered(env: HandsfreeEnv, scope: TripScope, onProgress?: Progress): void {
+  const root = scope.roots.find((r) => r.kind !== 'worktree' && r.kind !== 'transcripts');
+  if (!root) return;
+  const want = resolve(root.absPath);
+  if (listVaults(env.home).some((v) => resolve(v.path) === want)) return;
+  const base = vaultNameForPath(want);
+  for (const name of [base, ...Array.from({ length: 20 }, (_, i) => `${base}-${i + 2}`)]) {
+    try {
+      addVault(name, want, env.home);
+      onProgress?.({ step: 'register', detail: `registered ${name} so the phone opens its chat` });
+      return;
+    } catch (err) {
+      if (!(err instanceof VaultError && /already registered/i.test(err.message) && /named/i.test(err.message))) return;
+    }
+  }
+}
+
 async function goAfterLock(env: HandsfreeEnv, o: GoOpts, scope: TripScope, tripId: string, dir: string, pin: VersionPin, onUp: (r: Running) => void): Promise<GoResult> {
   const warnings: string[] = [];
   // Step 3: wait for or cut in-scope turns; re-run the git preflight after a cut.
@@ -1080,7 +1133,9 @@ async function goAfterLock(env: HandsfreeEnv, o: GoOpts, scope: TripScope, tripI
     await packFile(packPath, root.absPath, entries, deletions);
     ops.push({ id: `files:${root.rootId}`, kind: 'go.files', writes: false, params: { rootId: root.rootId, root: root.absPath, packPath, manifestPath } });
   }
-  // Step 6: the one-way global set.
+  // Step 6: the one-way global set. AC3 first: the cloud opens the trip's chat by the project's
+  // REGISTERED name, and a project taken with the CLI may never have been added in the app.
+  ensureProjectRegistered(env, scope, o.onProgress);
   const staging = join(dir, 'go', 'global');
   await stageGlobalSet({ home: env.home, staging, run: env.run });
   const gm = await buildManifest(staging, walk(staging, [''], { side: 'laptop' }).entries);
@@ -2351,11 +2406,7 @@ export async function status(env: HandsfreeEnv, o: { probe?: boolean } = {}): Pr
   let info: MachineInfo | null = null;
   if (o.probe !== false && cfg?.codespace) {
     try { info = await env.provider.get(cfg.codespace.name); } catch (err) { warnings.push(`GitHub: ${(err as Error).message}`); }
-    if (info && info.state !== 'available' && cfg.uptime.runningSince !== null) {
-      // The machine stopped itself (D15): close the uptime count at its last use.
-      const at = info.lastUsedAt ? Math.min(Date.parse(info.lastUsedAt), nowOf(env)) : nowOf(env);
-      await updateConfig(env.home, (c) => countUptime(c, false, coresFor(info!.machine), Number.isFinite(at) ? at : nowOf(env)));
-    }
+    if (info) await reconcileUptime(env, info);
   }
   const rw = retentionWarning(info ?? cfg?.codespace ?? null, cfg?.lastTrip, nowOf(env));
   if (rw) warnings.push(rw);

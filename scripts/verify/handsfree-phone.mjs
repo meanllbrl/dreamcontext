@@ -288,6 +288,26 @@ async function main() {
     check('revoke-all -> /login?revoked=1, signed-out copy, SW unregistered and cache gone', !!afterRevoke && /signed out/.test(revokedText ?? ''),
       `url=${page.url()} text="${revokedText}" sw=${JSON.stringify(afterRevoke ?? await swState(page))}`);
 
+    // 3b. Smoke #3 (AC16): a phone that signs in but never reaches the chat (the launcher: no
+    // cloud chip ever mounts) must still get the offline worker, or a later self-stop shows the
+    // browser's own error page instead of Wake. The SPA's scripts are blocked for this phone,
+    // so only the login page itself can have registered the worker.
+    const bare = await browser.newContext({ ...iphone, locale: 'en-US', serviceWorkers: 'allow' });
+    const bp = await bare.newPage();
+    let blocked = 0;
+    await bp.route('**/assets/**', (r) => { blocked++; return r.abort(); });
+    await bp.goto(`${ORIGIN}/login`);
+    await signIn(bp, PASSPHRASE);
+    await bp.waitForURL((u) => u.pathname === '/', { timeout: 30_000 });
+    const bareSw = await waitFor(async () => {
+      const st = await swState(bp);
+      return st.registrations.some((u) => u.endsWith('/handsfree-sw.js')) && st.caches.some((k) => k.startsWith('dc-hf-offline-')) ? st : null;
+    }, 45_000, 500);
+    await shot(bp, '03b-no-chat-still-sw');
+    check('a sign-in that never reaches the chat (SPA blocked) still installs the SW and caches the offline page', !!bareSw && blocked > 0,
+      `blockedAssets=${blocked} sw=${JSON.stringify(bareSw ?? await swState(bp))}`);
+    await bare.close();
+
     // 8. Sign in again (the SW comes back), then the laptop seals the cloud.
     await signIn(page, PASSPHRASE);
     await page.waitForURL((u) => u.searchParams.get('vault') === 'phone-verify', { timeout: 30_000 });

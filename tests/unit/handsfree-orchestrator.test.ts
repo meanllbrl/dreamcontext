@@ -7,7 +7,8 @@
 // -> second delta return, quota refusal never wedges, the run lock.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { vaultNameForPath, withTripVault } from '../../src/lib/handsfree/global-set.js';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -740,6 +741,102 @@ describe('D25: the cloud runs this laptop\'s exact npm version (AC18), and a set
     expect(r.created).toBe(false);
     expect(provider.calls.some((c) => c.startsWith('delete:'))).toBe(false);
     expect(provider.machines.has(name)).toBe(true);
+  });
+});
+
+describe('smoke #3: AC3 a CLI go registers its project; AC23 the own uptime count', () => {
+  const vaultsOf = (home: string) => {
+    try { return JSON.parse(readFileSync(join(home, '.dreamcontext', 'vaults.json'), 'utf8')).vaults as Array<{ name: string; path: string }>; } catch { return []; }
+  };
+
+  it('a go from a project the laptop never registered registers it (as Add Project does) BEFORE the global set is staged', async () => {
+    expect(vaultsOf(laptopHome)).toEqual([]);
+    const g = await go(makeEnv(), { contextRoot: ctx });
+    expect(vaultsOf(laptopHome)).toEqual([{ name: 'app', path: vault }]);
+    // The staged (one-way) global set carries it, so the cloud's registry names it.
+    const staged = JSON.parse(readFileSync(join(tripDirOf(g.tripId), 'go', 'global', '.dreamcontext', 'vaults.json'), 'utf8')).vaults;
+    expect(staged).toEqual([{ name: 'app', path: vault }]);
+  });
+
+  it('a CLI go from a Turkish folder (ğ ş ı İ) registers an ASCII, header-safe name, the one `vaults scan` gives; the cloud rule agrees', async () => {
+    const tr = join(laptopHome, 'projects', 'Tilki Öğretmen İşleri');
+    renameSync(vault, tr);
+    const g = await go(makeEnv(), { contextRoot: join(tr, '_dream_context') });
+    expect(vaultsOf(laptopHome)).toEqual([{ name: 'tilki-ogretmen-isleri', path: tr }]);
+    const name = vaultsOf(laptopHome)[0].name;
+    // The SPA sends it in X-Dreamcontext-Vault: a browser refuses any header char above U+00FF.
+    expect([...name].every((c) => c.charCodeAt(0) <= 0x7e)).toBe(true);
+    expect(() => new Headers({ 'X-Dreamcontext-Vault': name })).not.toThrow();
+    const staged = JSON.parse(readFileSync(join(tripDirOf(g.tripId), 'go', 'global', '.dreamcontext', 'vaults.json'), 'utf8')).vaults;
+    expect(staged).toEqual([{ name: 'tilki-ogretmen-isleri', path: tr }]);
+    // The cloud worker (registerTripVault) names the same path the same way.
+    expect(withTripVault(undefined, tr, (a, b) => a === b)!.vaults).toEqual([{ name: 'tilki-ogretmen-isleri', path: tr }]);
+    expect(vaultNameForPath(tr)).toBe(name);
+  });
+
+  it('an already-registered non-ASCII name is kept (never renamed); an all-symbol name falls back to "vault"', async () => {
+    const tr = join(laptopHome, 'projects', 'Tilki Öğretmen');
+    renameSync(vault, tr);
+    mkdirSync(join(laptopHome, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(laptopHome, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'Tilki Öğretmen', path: tr }] }));
+    await go(makeEnv(), { contextRoot: join(tr, '_dream_context') });
+    expect(vaultsOf(laptopHome)).toEqual([{ name: 'Tilki Öğretmen', path: tr }]);
+    expect(vaultNameForPath('/Users/x/日本語')).toBe('vault');
+    expect(vaultNameForPath('/Users/x/İzmir.Şube:ığ')).toBe('izmir-sube-ig');
+  });
+
+  it('a project already registered keeps its name (idempotent by path); a taken name gets -2', async () => {
+    mkdirSync(join(laptopHome, '.dreamcontext'), { recursive: true });
+    const other = join(laptopHome, 'projects', 'other-app');
+    mkdirSync(join(other, '_dream_context'), { recursive: true });
+    writeFileSync(join(laptopHome, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'app', path: other }] }));
+    await go(makeEnv(), { contextRoot: ctx });
+    expect(vaultsOf(laptopHome)).toEqual([{ name: 'app', path: other }, { name: 'app-2', path: vault }]);
+    await returnTrip(makeEnv());
+    await go(makeEnv(), { contextRoot: ctx });
+    expect(vaultsOf(laptopHome)).toEqual([{ name: 'app', path: other }, { name: 'app-2', path: vault }]);
+  });
+
+  // Fixed mid-month times: the count is per calendar month.
+  const d = new Date();
+  const T0 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 15, 6);
+  const H = 60 * 60_000;
+  const iso = (t: number) => new Date(t).toISOString();
+  const used = () => readConfig(laptopHome)!.uptime;
+
+  it('a machine that stopped itself: the count closes at GitHub\'s state change (updated_at), not at last_used_at', async () => {
+    const name = readConfig(laptopHome)!.codespace!.name;
+    await updateConfig(laptopHome, (c) => ({ ...c, uptime: { period: used().period, coreMinutes: 0, runningSince: T0 } }));
+    const m = provider.machines.get(name)!;
+    Object.assign(m, { state: 'stopped', rawState: 'Shutdown', lastUsedAt: iso(T0 + 60_000), updatedAt: iso(T0 + 3 * H) });
+    await status(makeEnv({ now: () => T0 + 5 * H }));
+    // basicLinux32gb = 2 cores, up 3 h: 360 core-minutes (last_used_at alone gave 2).
+    expect(used()).toMatchObject({ runningSince: null });
+    expect(Math.round(used().coreMinutes)).toBe(360);
+  });
+
+  it('a machine running that the laptop did not start (the phone\'s Wake, a manual start) is counted from its start', async () => {
+    const name = readConfig(laptopHome)!.codespace!.name;
+    await updateConfig(laptopHome, (c) => ({ ...c, uptime: { period: used().period, coreMinutes: 0, runningSince: null } }));
+    const m = provider.machines.get(name)!;
+    Object.assign(m, { state: 'available', rawState: 'Available', lastUsedAt: iso(T0), updatedAt: iso(T0) });
+    await status(makeEnv({ now: () => T0 + H }));
+    expect(used().runningSince).toBe(T0);
+    Object.assign(m, { state: 'stopped', rawState: 'Shutdown', updatedAt: iso(T0 + 2 * H) });
+    await status(makeEnv({ now: () => T0 + 4 * H }));
+    expect(Math.round(used().coreMinutes)).toBe(240);
+  });
+
+  it('a go that finds the machine stopped itself closes the old count first: the stopped hours are not counted', async () => {
+    const name = readConfig(laptopHome)!.codespace!.name;
+    await updateConfig(laptopHome, (c) => ({ ...c, uptime: { period: used().period, coreMinutes: 0, runningSince: T0 } }));
+    const m = provider.machines.get(name)!;
+    Object.assign(m, { state: 'stopped', rawState: 'Shutdown', lastUsedAt: iso(T0), updatedAt: iso(T0 + H) });
+    let t = T0 + 10 * H;
+    provider.quotaRefusal = new ProviderQuotaError('quota used up', '2026-11-01T00:00:00.000Z'); // stop the go at the start
+    await expect(go(makeEnv({ now: () => t }), { contextRoot: ctx })).rejects.toMatchObject({ code: 'quota' });
+    expect(Math.round(used().coreMinutes)).toBe(120); // 1 h x 2 cores, not 10 h
+    expect(used().runningSince).toBeNull();
   });
 });
 

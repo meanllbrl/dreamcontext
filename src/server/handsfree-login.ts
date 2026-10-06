@@ -59,6 +59,9 @@ function csp(script: string, style: string): string {
     `script-src 'sha256-${sha256B64(script)}'`,
     `style-src 'sha256-${sha256B64(style)}'`,
     "connect-src 'self'",
+    // The offline worker (AC16) is registered from the login page: worker-src would otherwise
+    // fall back to the hash-only script-src and refuse /handsfree-sw.js.
+    "worker-src 'self'",
     "img-src 'self' data:",
     "manifest-src 'self'",
     "base-uri 'none'",
@@ -173,7 +176,21 @@ function dcForgetOffline(){
   try{if(window.caches&&caches.keys){caches.keys().then(function(ks){ks.forEach(function(k){if(k.indexOf('dc-hf-')===0)caches.delete(k);});});}}catch(e){}
 }`;
 
-const LOGIN_JS = `${UNREGISTER_JS}
+/**
+ * After a successful login: register the offline worker HERE (AC16), before leaving the page.
+ * The SPA registers it too, but only from the chat surface's cloud chip; a phone that lands
+ * anywhere else (the launcher) and then sees the machine stop would get the browser's own
+ * error page instead of the Wake page. Waits for the registration at most 4 s, then enters.
+ */
+const ENTER_JS = `
+function dcEnterApp(){
+  var done=false;function go(){if(done)return;done=true;location.replace('/');}
+  setTimeout(go,4000);
+  try{if(navigator.serviceWorker&&navigator.serviceWorker.register){navigator.serviceWorker.register('/handsfree-sw.js',{scope:'/'}).then(go,go);return;}}catch(e){}
+  go();
+}`;
+
+const LOGIN_JS = `${UNREGISTER_JS}${ENTER_JS}
 (function(){
   var d=JSON.parse(document.getElementById('dc-data').textContent);
   var s=d.s;
@@ -193,10 +210,13 @@ const LOGIN_JS = `${UNREGISTER_JS}
     if(btn.disabled)return;
     var pass=input.value;if(!pass.trim()){input.focus();return;}
     btn.disabled=true;say(s.checking,false);
-    fetch('/api/handsfree/login',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Tunnel-Skip-AntiPhishing-Page':'true'},body:JSON.stringify({passphrase:pass})})
+    // A hung request (the forwarder, or a machine stopping) must not leave "checking" forever.
+    var ctl=window.AbortController?new AbortController():null,hang=ctl?setTimeout(function(){ctl.abort();},30000):null;
+    fetch('/api/handsfree/login',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Tunnel-Skip-AntiPhishing-Page':'true'},body:JSON.stringify({passphrase:pass}),signal:ctl?ctl.signal:undefined})
       .then(function(r){return r.json().catch(function(){return {};}).then(function(b){return {status:r.status,body:b,cloud:!!r.headers.get('X-Dreamcontext-Cloud')};});})
       .then(function(o){
-        if(o.status===200&&o.body&&o.body.ok){input.value='';location.replace('/');return;}
+        if(hang)clearTimeout(hang);
+        if(o.status===200&&o.body&&o.body.ok){input.value='';say(s.checking,false);dcEnterApp();return;}
         var e=o.body&&o.body.error;
         if(o.status===429){countdown(e==='busy'?'busy':'wait',o.body.retryAfterMs);return;}
         btn.disabled=false;
@@ -205,7 +225,7 @@ const LOGIN_JS = `${UNREGISTER_JS}
         if(!o.cloud){say(s.network,true);return;}
         say(s.refused,true);
       })
-      .catch(function(){btn.disabled=false;say(s.network,true);});
+      .catch(function(){if(hang)clearTimeout(hang);btn.disabled=false;say(s.network,true);});
   });
 })();`;
 

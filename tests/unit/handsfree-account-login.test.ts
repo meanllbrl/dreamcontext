@@ -18,8 +18,12 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 describe('account-login', () => {
   it('builds exactly the entrypoint claude-login line', () => {
-    expect(accountLoginArgv('owner-cs-abc', 'work-two')).toEqual(['gh', 'codespace', 'ssh', '-c', 'owner-cs-abc', '-t', '--', 'sudo', '/opt/dc-hf/entrypoint.sh', 'claude-login', 'work-two']);
-    expect(accountLoginLine('owner-cs-abc', 'main')).toBe('gh codespace ssh -c owner-cs-abc -t -- sudo /opt/dc-hf/entrypoint.sh claude-login main');
+    expect(accountLoginArgv('owner-cs-abc', 'work-two')).toEqual(['gh', 'codespace', 'ssh', '-c', 'owner-cs-abc', '--', '-t', 'sudo', '/opt/dc-hf/entrypoint.sh', 'claude-login', 'work-two']);
+    expect(accountLoginLine('owner-cs-abc', 'main')).toBe('gh codespace ssh -c owner-cs-abc -- -t sudo /opt/dc-hf/entrypoint.sh claude-login main');
+    // smoke #3: `-t` is ssh's pty flag; before `--` gh itself rejects it ("unknown shorthand flag: t").
+    const argv = accountLoginArgv('owner-cs-abc', 'main');
+    expect(argv.indexOf('-t')).toBeGreaterThan(argv.indexOf('--'));
+    expect(argv.slice(0, argv.indexOf('--'))).toEqual(['gh', 'codespace', 'ssh', '-c', 'owner-cs-abc']);
   });
 
   it('refuses shell-active names', () => {

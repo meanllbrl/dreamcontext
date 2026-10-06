@@ -178,6 +178,38 @@ describe('CloudIdle (injected clock)', () => {
     expect(sealed).toBe(1);
   });
 
+  it('AC16 (smoke #3): a 17-min go leaves only the transfer grace; the trip arriving (recordAction at activation) gives the phone the full 15 min', () => {
+    const idle = make();
+    trip = { ...trip, phase: 'going', goingSince: T0 };
+    now = T0 + 16 * MIN;
+    const done = idle.transferBegin();
+    now = T0 + 17 * MIN;
+    done();
+    trip = { ...trip, phase: 'active', goingSince: null };
+    // Without an action the stop is 2 min after the last byte: the defect smoke #3 hit.
+    expect(idle.tick()).toBe(T0 + 17 * MIN + TRANSFER_GRACE_MS);
+    idle.recordAction(); // what POST activate now does
+    expect(idle.tick()).toBe(T0 + 17 * MIN + IDLE_AFTER_MS);
+    now = T0 + 31 * MIN;
+    idle.tick();
+    expect(existsSync(request())).toBe(false);
+    now = T0 + 32 * MIN;
+    idle.tick();
+    expect(existsSync(request())).toBe(true);
+  });
+
+  it('the idle clock\'s OWN revert of an unserved quiesce is not an owner action', () => {
+    const idle = make();
+    idle.recordAction();
+    trip = { ...trip, phase: 'quiescing', quiescingSince: T0 };
+    now = T0 + QUIESCE_REVERT_MS + MIN;
+    idle.tick();
+    expect(reverted).toBe(1);
+    expect(trip.phase).toBe('active');
+    // The stop time still counts from the last real action (T0), not from the revert.
+    expect(idle.tick()).toBe(T0 + IDLE_AFTER_MS);
+  });
+
   it('pings, polls and reconnects are not actions: only recordAction moves the clock', () => {
     const idle = make();
     // A live idle child with no turn edges (a phone that keeps reconnecting) changes nothing.

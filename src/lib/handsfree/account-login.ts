@@ -5,7 +5,10 @@
  * codespace as dcuser into that account's sandbox config dir, exactly like the app's
  * `signInto`. This module ONLY builds (and, from the CLI, launches in the owner's terminal)
  *
- *   gh codespace ssh -c <name> -t -- sudo /opt/dc-hf/entrypoint.sh claude-login <id>
+ *   gh codespace ssh -c <name> -- -t sudo /opt/dc-hf/entrypoint.sh claude-login <id>
+ *
+ * `-t` (a pty for the interactive login) is an ssh flag, so it goes AFTER `--`: gh itself
+ * rejects it before ("unknown shorthand flag: t", smoke #3).
  *
  * The owner opens the printed URL and pastes the code back into that terminal. Nothing is
  * captured, relayed or stored by dreamcontext; success is judged only by the cloud's
@@ -27,7 +30,7 @@ export class AccountLoginError extends Error {
 export function accountLoginArgv(codespace: string, accountId: string): string[] {
   if (!CODESPACE_NAME_RE.test(codespace)) throw new AccountLoginError(`bad codespace name ${JSON.stringify(codespace)}`);
   if (!isSafeAccountId(accountId)) throw new AccountLoginError(`bad account id ${JSON.stringify(accountId)}`);
-  return ['gh', 'codespace', 'ssh', '-c', codespace, '-t', '--', 'sudo', '/opt/dc-hf/entrypoint.sh', 'claude-login', accountId];
+  return ['gh', 'codespace', 'ssh', '-c', codespace, '--', '-t', 'sudo', '/opt/dc-hf/entrypoint.sh', 'claude-login', accountId];
 }
 
 /** The same command as one copy-pasteable line (every token is already shell-inert). */

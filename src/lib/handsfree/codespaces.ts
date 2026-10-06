@@ -31,6 +31,7 @@ interface ApiCodespace {
   web_url?: string;
   retention_expires_at?: string | null;
   last_used_at?: string | null;
+  updated_at?: string | null;
 }
 
 function mapState(raw: string): MachineState {
@@ -119,6 +120,7 @@ export class CodespacesProvider implements CloudProvider, TemplateRepo {
       webUrl: typeof c.web_url === 'string' ? c.web_url : `https://github.com/codespaces/${name}`,
       retentionExpiresAt: typeof c.retention_expires_at === 'string' ? c.retention_expires_at : null,
       lastUsedAt: typeof c.last_used_at === 'string' ? c.last_used_at : null,
+      updatedAt: typeof c.updated_at === 'string' ? c.updated_at : null,
     };
   }
 

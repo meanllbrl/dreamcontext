@@ -8,8 +8,9 @@ import type { LiveChatSnapshotEntry } from './routes/agent-chat-live.js';
  *
  * Codespaces' own idle clock only resets on a start or an ssh/editor connection (W0), so the
  * cloud decides for itself when to stop: 15 minutes after the LATER of the last turn's end
- * and the owner's last real action (send, steer, open a session — never a ping, a poll, a
- * reconnect or an open tab). A live turn defers it, at most 2 h from that turn's start. A
+ * and the owner's last real action (send, steer, open a session, the trip arriving at the end
+ * of a go, a cancelled Return putting the trip back to active — never a ping, a poll, a health
+ * read, a reconnect or an open tab). A live turn defers it, at most 2 h from that turn's start. A
  * transfer in flight, a dependency install, phase going and phase quiescing defer it too
  * (quiescing at most 2 h, after which the cloud seals itself when its snapshot was served and
  * the laptop made no progress).
@@ -130,7 +131,8 @@ export class CloudIdle {
     this.bootAt = this.now();
   }
 
-  /** A real owner action: send, steer, open a session. Never a ping, poll or reconnect. */
+  /** A real owner action: send, steer, open a session, a go's activation, a cancelled Return's
+   *  unquiesce. Never a ping, poll, health read or reconnect. */
   recordAction(): void {
     this.lastActionAt = this.now();
     this.stopWritten = false;

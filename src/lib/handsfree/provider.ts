@@ -28,6 +28,8 @@ export interface MachineInfo {
   /** When the provider deletes an unused machine (ISO), null when unknown (AC22). */
   retentionExpiresAt: string | null;
   lastUsedAt: string | null;
+  /** The provider's last change of this machine (ISO; GitHub `updated_at`: a start or a stop). */
+  updatedAt?: string | null;
 }
 
 export interface MachineType {
@@ -120,7 +122,7 @@ export class FakeCloudProvider implements CloudProvider, TemplateRepo {
     const name = `fake-hf-${++this.seq}`;
     const info: MachineInfo = {
       name, state: 'stopped', rawState: 'Shutdown', machine: o.machine, url: this.o.url.replace(/\/+$/, ''),
-      webUrl: `https://example.invalid/codespaces/${name}`, retentionExpiresAt: null, lastUsedAt: null,
+      webUrl: `https://example.invalid/codespaces/${name}`, retentionExpiresAt: null, lastUsedAt: null, updatedAt: new Date().toISOString(),
     };
     this.machines.set(name, info);
     await this.start(name);
@@ -136,6 +138,7 @@ export class FakeCloudProvider implements CloudProvider, TemplateRepo {
     m.state = 'available';
     m.rawState = 'Available';
     m.lastUsedAt = new Date().toISOString();
+    m.updatedAt = m.lastUsedAt;
   }
 
   async stop(name: string): Promise<void> {
@@ -145,6 +148,7 @@ export class FakeCloudProvider implements CloudProvider, TemplateRepo {
     if (m.state === 'available') await this.o.onStop?.(name);
     m.state = 'stopped';
     m.rawState = 'Shutdown';
+    m.updatedAt = new Date().toISOString();
   }
 
   async delete(name: string): Promise<void> {

@@ -3,6 +3,7 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { cloudServerDir } from './cloud-mode.js';
+import { recordCloudAction } from './cloud-idle.js';
 import { parseJsonBody, sendJson } from './middleware.js';
 
 /**
@@ -593,6 +594,9 @@ export async function handleHandsfreeLogin(req: IncomingMessage, res: ServerResp
   const passphrase = body && typeof body.passphrase === 'string' ? body.passphrase : '';
   const outcome = await handsfreeAuth().attemptLogin(passphrase, loginClientKey(req));
   if (outcome.ok) {
+    // AC16: a successful phone login is the owner's real action (a failed one, GET /login, a
+    // poll or a health read never is), so the phone gets the full idle window from here.
+    recordCloudAction();
     res.setHeader('Set-Cookie', deviceCookieHeader(outcome.deviceId));
     sendJson(res, 200, { ok: true });
     return;

@@ -477,7 +477,8 @@ const postGlobal: Handler = async (req, res) => {
   try {
     const r = await runWorkerOp<{ written: number; refused: unknown[] }>({
       op: 'global',
-      params: { ...workerBase(), home: homeLocal(go), maxBytes: PACK_MAX_BYTES },
+      // AC3: the trip's project (the go manifest's first root) is registered on the cloud too.
+      params: { ...workerBase(), home: homeLocal(go), maxBytes: PACK_MAX_BYTES, tripVault: go.roots.find((r) => r.kind !== 'worktree' && r.kind !== 'transcripts')?.absPath },
       inputFile: up.path,
       timeoutMs: SNAPSHOT_TIMEOUT_MS,
     });
@@ -532,6 +533,9 @@ const postActivate: Handler = async (req, res) => {
   const { go } = currentTrip(tripId);
   const r = cloudServices().state.activate(tripId);
   if (!r.ok) throw new RouteError(409, r.error, 'That is not the trip this cloud holds.');
+  // AC16: the trip arriving is the owner's real action (a go can take ~17 min of start, npm
+  // install and transfer): the phone gets the full idle window from HERE, not from the last byte.
+  cloudIdle()?.recordAction();
   sendJson(res, 200, { ok: true });
   void runInstalls(go).catch((err) => console.warn(`[handsfree-cloud] installs failed: ${(err as Error).message}`));
 };
@@ -669,6 +673,9 @@ const postUnquiesce: Handler = async (req, res) => {
   // A wipe must never run inside a trip that went active again.
   if (finalizing > 0) throw new RouteError(409, 'finalizing', 'The cloud is wiping and sealing this return; it cannot go back to active now.');
   if (!cloudServices().state.unquiesce()) throw new RouteError(409, 'not_quiescing', 'The cloud is not quiescing.');
+  // AC16: a cancelled Return puts the owner back mid-trip: a real action (the idle clock's own
+  // revert of an unserved quiesce goes through state.unquiesce directly and does not count).
+  cloudIdle()?.recordAction();
   sendJson(res, 200, { ok: true, phase: 'active' });
 };
 

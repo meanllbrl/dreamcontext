@@ -8,6 +8,7 @@
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { buildSeedConfig } from '../claude-account-sandbox.js';
+import { slugify } from '../id.js';
 import { git, type ProcessRunner } from './git-snapshot.js';
 
 const OAUTH_IDENTITY_KEYS = ['accountUuid', 'emailAddress', 'organizationUuid', 'organizationName', 'displayName', 'organizationRole', 'workspaceRole'];
@@ -86,3 +87,35 @@ function mkdirP(staging: string, rel: string): string {
   if (!existsSync(p)) mkdirSync(p, { recursive: true });
   return p;
 }
+
+/**
+ * AC3: the registry name a trip's project gets when it was never registered (a CLI go), exactly
+ * as `dreamcontext vaults scan` names one: `slugify(basename) || 'vault'`. The SPA sends the
+ * name in the `X-Dreamcontext-Vault` header on every call, and a browser refuses a header value
+ * above U+00FF, so the name is folded to ASCII (`Tilki Öğretmen` -> `tilki-ogretmen`), which
+ * also keeps it clear of every character the strict `?vault=` resolver refuses. Laptop and
+ * cloud call this same function, so the same path gets the same name on both. An entry already
+ * registered keeps its own name (callers check the path first).
+ */
+export function vaultNameForPath(absPath: string): string {
+  return slugify(absPath.split(/[\\/]/).filter(Boolean).pop() ?? '') || 'vault';
+}
+
+/**
+ * The trip's project in a vault registry document (`{ vaults: [...] }`): added under a free
+ * name (`name`, `name-2`, ...) when no entry already points at `absPath`. Returns the changed
+ * document, or null when it is already registered. Pure: the caller reads and writes the file.
+ */
+export function withTripVault(doc: unknown, absPath: string, same: (a: string, b: string) => boolean): { vaults: Array<Record<string, unknown>> } | null {
+  const reg = doc && typeof doc === 'object' && Array.isArray((doc as { vaults?: unknown }).vaults)
+    ? doc as { vaults: Array<Record<string, unknown>> }
+    : { vaults: [] as Array<Record<string, unknown>> };
+  const entries = reg.vaults.filter((v) => v && typeof v === 'object');
+  if (entries.some((v) => typeof v.path === 'string' && same(v.path, absPath))) return null;
+  const taken = new Set(entries.map((v) => v.name).filter((n): n is string => typeof n === 'string'));
+  const base = vaultNameForPath(absPath);
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base}-${n}`;
+  return { ...reg, vaults: [...reg.vaults, { name, path: absPath }] };
+}
+

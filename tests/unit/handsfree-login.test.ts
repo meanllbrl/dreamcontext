@@ -7,8 +7,9 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { setCloudPhaseSource, type CloudPhase } from '../../src/server/cloud-mode.js';
-import { DEVICE_COOKIE, HandsfreeAuth, hashPassphrase, setHandsfreeAuthForTests, sha256Hex } from '../../src/server/handsfree-auth.js';
-import { CloudIdle, setCloudIdle } from '../../src/server/cloud-idle.js';
+import { DEVICE_COOKIE, HandsfreeAuth, handleHandsfreeLogin, hashPassphrase, setHandsfreeAuthForTests, sha256Hex } from '../../src/server/handsfree-auth.js';
+import { Readable } from 'node:stream';
+import { CloudIdle, IDLE_AFTER_MS, setCloudIdle } from '../../src/server/cloud-idle.js';
 import { CloudStateStore } from '../../src/server/cloud-state.js';
 import { TransferStore } from '../../src/server/cloud-transfers.js';
 import { setCloudServicesForTests } from '../../src/server/routes/handsfree-cloud.js';
@@ -377,3 +378,65 @@ describe('`/` opens the trip\'s project chat (AC3)', () => {
     expect(nav('/', signedIn()).passed).toBe(true);
   });
 });
+
+describe('AC16: a successful phone login is the owner\'s real action (smoke #3)', () => {
+  const MIN = 60_000;
+  let now: number;
+  let idle: CloudIdle;
+  beforeEach(() => {
+    now = 5_000_000_000;
+    idle = new CloudIdle({
+      now: () => now,
+      liveChats: () => [],
+      trip: () => ({ phase: 'active', goingSince: null, quiescingSince: null, servedEpoch: null, epoch: 0, lastLaptopProgressAt: null }),
+      onRevert: () => undefined, onSeal: () => undefined, publicDir: join(dir, 'pub'), bootId: 'b',
+    });
+    setCloudIdle(idle);
+  });
+  /** POST /api/handsfree/login through the real handler (a real body stream, a real client key). */
+  const login = async (passphrase: string) => {
+    const r = Object.assign(Readable.from([Buffer.from(JSON.stringify({ passphrase }))]), {
+      method: 'POST', url: '/api/handsfree/login',
+      headers: { host: 'localhost:8080', 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.7' },
+      socket: { remoteAddress: '127.0.0.1' },
+    }) as unknown as IncomingMessage;
+    const m = mockRes();
+    await handleHandsfreeLogin(r, m.res);
+    return m;
+  };
+
+  it('the owner opens the app 14 min after boot: GET /login and a wrong passphrase move nothing; the right one gives the full 15 min', async () => {
+    const boot = idle.bootAt;
+    expect(idle.tick()).toBe(boot + IDLE_AFTER_MS);
+    now = boot + 14 * MIN;
+    expect(page('/login', { accept: 'text/html' }).status()).toBe(200);
+    expect((await login('wrong words entirely here now')).status()).toBe(401);
+    expect(idle.tick()).toBe(boot + IDLE_AFTER_MS);
+    const ok = await login(PASS);
+    expect(ok.status()).toBe(200);
+    expect(ok.headers['set-cookie']).toContain(DEVICE_COOKIE);
+    expect(idle.tick()).toBe(now + IDLE_AFTER_MS);
+  });
+});
+
+describe('AC16: the login page installs the offline worker itself (smoke #3)', () => {
+  it('after a successful login it registers /handsfree-sw.js (scope /) BEFORE entering, and its CSP allows that worker', () => {
+    const p = page('/login', { accept: 'text/html' });
+    const html = p.body();
+    const csp = p.headers['content-security-policy'];
+    // Registration is on the success path, then the page enters the app (at most 4 s later).
+    expect(html).toMatch(/o\.status===200&&o\.body&&o\.body\.ok\)\{[^}]*dcEnterApp\(\)/);
+    expect(html).toContain("navigator.serviceWorker.register('/handsfree-sw.js',{scope:'/'}).then(go,go)");
+    expect(html).toContain('setTimeout(go,4000)');
+    expect(csp).toContain("worker-src 'self'");
+    expectCspMatches(html, csp);
+  });
+
+  it('a hung login request is aborted after 30 s and says so (never "checking" forever)', () => {
+    const html = page('/login', { accept: 'text/html' }).body();
+    expect(html).toContain('setTimeout(function(){ctl.abort();},30000)');
+    expect(html).toContain('signal:ctl?ctl.signal:undefined');
+    expect(html).toMatch(/\.catch\(function\(\)\{if\(hang\)clearTimeout\(hang\);btn\.disabled=false;say\(s\.network,true\);\}\)/);
+  });
+});
+
