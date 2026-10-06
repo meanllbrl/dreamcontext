@@ -360,6 +360,24 @@ Here the agent also knows it isn't in a terminal, so it can hand you the thing i
 
 > A working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. Windows/Linux are nice-to-have for later.
 
+## Hands-free Mode
+
+> **In development** — built and under review, not in a release yet.
+
+Leave the laptop and keep working from your phone. **Go** moves the active project (the vault, its linked repos, their worktrees and their Claude sessions) to your own GitHub Codespace and locks it on the laptop. The phone opens a link, signs in with a passphrase and drives the same Chat, and a turn keeps running while the phone is in your pocket. **Return** brings everything back to the laptop: commits, branches, the stash, staged and unstaged changes, files and every session started on the phone. Then it seals and stops the cloud machine and shows a receipt.
+
+```bash
+dreamcontext handsfree setup      # GitHub sign-in in the browser, creates your private codespace, prints the passphrase once
+dreamcontext handsfree account-login --all   # sign each Claude account in on the cloud machine
+dreamcontext handsfree go         # take the project to the cloud; prints the phone link
+dreamcontext handsfree return     # bring everything home
+```
+
+- **Setup needs only a GitHub login.** No card and no other service: it runs on your own Codespaces quota, and the machine stops itself 15 minutes after both you and your agent go quiet (a running turn keeps it up for at most 2 hours). A stopped machine shows a **Wake** button on the phone.
+- **The phone gets a link and a 6-word passphrase.** A device stays signed in for 30 days. `dreamcontext handsfree password` issues a new passphrase and `handsfree devices revoke --all` signs every phone out.
+- **Nothing is deleted when both sides changed.** If you also worked on the laptop while away, that repo is parked under `refs/handsfree/<trip>/*` and conflicting files go to a conflicts folder; your laptop copy wins. Every file Return overwrites is backed up first, so **Roll back** undoes it. A file deleted on the phone is listed, never deleted on the laptop. **Abandon** unlocks the laptop at once, and the next go recovers the cloud work first.
+- Also in the desktop app: a hands-free button in the window bar, a QR code for the phone, a banner while away, and the receipt with Resume / Roll back.
+
 ## Built for Teams
 
 The loop's last stage: the picture reaches everyone. Four pieces, each doing one job — one brain shared by a team, tasks living where your team already works, one brain reading its siblings, and one brain governing bare code repos.
