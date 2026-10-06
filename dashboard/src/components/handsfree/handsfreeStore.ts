@@ -1,5 +1,5 @@
-import { useSyncExternalStore } from 'react';
-import { api, RequestError } from '../../api/client';
+import { useEffect, useSyncExternalStore } from 'react';
+import { api, ApiClient, RequestError } from '../../api/client';
 import { isDesktop } from '../../lib/desktop';
 import type { HandsfreeJob, HandsfreeStatus } from './handsfreeTypes';
 
@@ -18,6 +18,11 @@ import type { HandsfreeJob, HandsfreeStatus } from './handsfreeTypes';
  *
  * Every subscription has a death: the last unsubscribe clears both timers and the focus
  * listener, and a status that answers 403/404 stops polling.
+ *
+ * Per project (r14, AC6): the lock banner belongs to the LOCKED project only. The status is read
+ * with the window's project as its vault, and the server answers `here` for exactly that vault
+ * (echoing its name); {@link handsfreeView} uses an answer only when it names the project now on
+ * screen, so a window that switched tabs never shows the previous project's lock.
  *
  * NEVER on the cloud: these are laptop routes (desktop app + loopback). On the phone's cloud
  * page `/api/handsfree/status` is a transfer route, and a device cookie sent there is a
@@ -42,12 +47,15 @@ const listeners = new Set<() => void>();
 let statusTimer: number | null = null;
 let jobTimer: number | null = null;
 let inflight: Promise<void> | null = null;
+/** The project on screen in this window (its vault name), or null (the launcher). */
+let windowVault: string | null = null;
 
 /** Are the laptop's hands-free routes served to this page? Injectable for tests. */
 let servedHere: () => boolean = isDesktop;
 export function setHandsfreeHostProbeForTests(probe: (() => boolean) | null): void {
   servedHere = probe ?? isDesktop;
   snapshot = { status: null, unavailable: false, job: null, error: null };
+  windowVault = null;
 }
 
 function emit(next: Partial<HandsfreeSnapshot>): void {
@@ -60,9 +68,11 @@ function clearTimer(t: number | null): null {
   return null;
 }
 
-async function readStatus(): Promise<void> {
+/** One status read for the project on screen when it starts; resolves with the vault it asked for. */
+async function readStatus(): Promise<string | null> {
+  const asked = windowVault;
   try {
-    const status = await api.get<HandsfreeStatus>('/handsfree/status');
+    const status = await (asked ? new ApiClient(asked) : api).get<HandsfreeStatus>('/handsfree/status');
     emit({ status, unavailable: false, error: null, job: status.job ?? null });
   } catch (err) {
     if (err instanceof RequestError && (err.status === 403 || err.status === 404)) emit({ unavailable: true, error: null });
@@ -70,6 +80,34 @@ async function readStatus(): Promise<void> {
   }
   scheduleStatus();
   scheduleJob();
+  return asked;
+}
+
+/**
+ * The project on screen in this window. A change re-reads the status at once; until the answer
+ * for it arrives, {@link handsfreeView} treats it as not in the trip (never the old project's lock).
+ */
+export function setHandsfreeVault(vault: string | null | undefined): void {
+  const next = vault || null;
+  if (next === windowVault) return;
+  windowVault = next;
+  emit({});
+  if (listeners.size) void refreshHandsfreeStatus();
+}
+
+/**
+ * How the window's project relates to the trip: `home` (no trip), `trip` (this project is the
+ * one on the cloud machine, or the state is unreadable and everything is locked), or `other`
+ * (another project is away; also while this project's answer is still on its way). A server a
+ * build behind sends no `here`: then every project gets the trip view, as before.
+ */
+export type HandsfreeView = 'home' | 'trip' | 'other';
+export function handsfreeView(status: HandsfreeStatus | null, vault: string | null | undefined): HandsfreeView {
+  if (!status) return 'home';
+  if (status.unreadable) return 'trip';
+  if (status.phase === 'home') return 'home';
+  if (!status.here) return 'trip';
+  return status.here.vault === (vault || null) && status.here.inTrip ? 'trip' : 'other';
 }
 
 /** Re-read the status now (deduped while one read is in flight). */
@@ -78,7 +116,11 @@ export function refreshHandsfreeStatus(): Promise<void> {
     if (!snapshot.unavailable) emit({ unavailable: true });
     return Promise.resolve();
   }
-  inflight ??= readStatus().finally(() => { inflight = null; });
+  // Callers for the same project share the one read. A read that asked for a project the window
+  // has since left is followed, once it settled (inflight cleared), by a read for the one on screen.
+  inflight ??= readStatus()
+    .finally(() => { inflight = null; })
+    .then((asked) => (asked !== windowVault ? refreshHandsfreeStatus() : undefined));
   return inflight;
 }
 
@@ -138,6 +180,13 @@ export function handsfreeSnapshot(): HandsfreeSnapshot {
 
 export function useHandsfree(): HandsfreeSnapshot {
   return useSyncExternalStore(subscribeHandsfree, () => snapshot);
+}
+
+/** {@link useHandsfree} for the project on screen (`vault`): tells the store which one it is. */
+export function useHandsfreeFor(vault: string | null | undefined): HandsfreeSnapshot & { view: HandsfreeView } {
+  useEffect(() => { setHandsfreeVault(vault); }, [vault]);
+  const snap = useHandsfree();
+  return { ...snap, view: handsfreeView(snap.status, vault) };
 }
 
 // ---------------------------------------------------------------- window-wide UI events

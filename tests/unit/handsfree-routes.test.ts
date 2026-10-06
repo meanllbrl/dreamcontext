@@ -30,12 +30,12 @@ import {
   handleHandsfreeCut, handleHandsfreeGo, handleHandsfreePreflight,
 } from '../../src/server/routes/handsfree.js';
 import { updateConfig } from '../../src/lib/handsfree/local-store.js';
-import { readTripState } from '../../src/lib/handsfree/trip-state.js';
+import { beginGoing, readTripState, setPhase } from '../../src/lib/handsfree/trip-state.js';
 import type { TurnControl } from '../../src/lib/handsfree/turns.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { FakeCloudProvider } from '../../src/lib/handsfree/provider.js';
 import { NO_TURNS, processTurnControl, under } from '../../src/lib/handsfree/turns.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HandsfreeEnv } from '../../src/lib/handsfree/orchestrator.js';
@@ -372,3 +372,54 @@ describe('wave 3: preflight and the live Cut', () => {
     expect(after.status).toBe(409);
   });
 });
+
+describe('r14: status says whether the WINDOW\'s project is in the trip (AC6: the lock banner is per project)', () => {
+  let home: string;
+  let trip: string;
+  let other: string;
+  const TRIP = 't-20261006-aaaaaaaa';
+  beforeEach(async () => {
+    home = realpathSync.native(mkdtempSync(join(tmpdir(), 'hf-routes-here-')));
+    trip = join(home, 'projects', 'hf-smoke');
+    other = join(home, 'projects', 'dreamcontext');
+    for (const v of [trip, other]) mkdirSync(join(v, '_dream_context'), { recursive: true });
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'HF Smoke', path: trip }, { name: 'dreamcontext', path: other }] }));
+    const provider = new FakeCloudProvider({ url: 'http://x' });
+    setHandsfreeEnvForTests(() => ({
+      home, run: async () => ({ code: 0, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }), provider, repo: provider,
+      connect: () => { throw new Error('no cloud'); }, turns: NO_TURNS, roster: { read: () => ({ sessions: [], chatPermissionMode: 'auto', generation: 0 }), write: () => 1 },
+      templateFiles: () => ({}), localVersion: () => '0.30.0', registryFetch: (async () => { throw new Error('no npm'); }) as unknown as typeof fetch,
+    }) as HandsfreeEnv);
+    await beginGoing(TRIP, [{ rootId: 'r-08890df73f7e84e6', path: trip }], home);
+    await setPhase('away', TRIP, home);
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  const statusFor = async (vault: string | null, vaultRoot: string | null) => {
+    const r = res();
+    await handleHandsfreeStatus(req({ headers: vault ? { 'x-dreamcontext-vault': vault } : {} }), r, {}, vaultRoot);
+    expect(r.status).toBe(200);
+    return r.body as { phase: string; here: { vault: string | null; inTrip: boolean; rootId?: string }; away: { name: string; path: string } | null };
+  };
+
+  it('the trip\'s project: inTrip with its root id; the away project is named by its registry name', async () => {
+    const b = await statusFor('HF Smoke', join(trip, '_dream_context'));
+    expect(b.phase).toBe('away');
+    expect(b.here).toEqual({ vault: 'HF Smoke', inTrip: true, rootId: 'r-08890df73f7e84e6' });
+    expect(b.away).toEqual({ name: 'HF Smoke', path: trip });
+  });
+
+  it('another project: not in the trip (the smoke #4 defect: dreamcontext showed the lock banner)', async () => {
+    const b = await statusFor('dreamcontext', join(other, '_dream_context'));
+    expect(b.here).toEqual({ vault: 'dreamcontext', inTrip: false });
+    expect(b.away?.name).toBe('HF Smoke');
+  });
+
+  it('no vault named (the launcher, or the server\'s pinned root only): not in the trip; folder name when unregistered', async () => {
+    const b = await statusFor(null, join(trip, '_dream_context'));
+    expect(b.here).toEqual({ vault: null, inTrip: false });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [] }));
+    expect((await statusFor(null, null)).away).toEqual({ name: 'hf-smoke', path: trip });
+  });
+});
+

@@ -46,6 +46,10 @@ export interface HandsfreeStatus {
   offers: HandsfreeOffer[];
   warnings: string[];
   job: HandsfreeJob | null;
+  /** r14: the vault the status request named (null: none) and whether it is inside the trip. */
+  here?: { vault: string | null; inTrip: boolean; rootId?: string };
+  /** r14: the trip's project by its registered name (else its folder name); null at home. */
+  away?: { name: string; path: string } | null;
 }
 
 export interface PreflightReport {

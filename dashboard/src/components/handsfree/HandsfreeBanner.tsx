@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, RequestError } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
 import { cutCurrentJob, startHandsfreeJob } from './handsfreeActions';
-import { FOCUS_BANNER, onHandsfreeEvent, OPEN_RECEIPT, openHandsfreeSheet, useHandsfree } from './handsfreeStore';
+import { FOCUS_BANNER, onHandsfreeEvent, OPEN_RECEIPT, openHandsfreeSheet, useHandsfreeFor } from './handsfreeStore';
+import { useChrome } from '../layout/WindowChrome';
 import { AbandonConfirm, fill, InlineConfirm, JobErrorBlock, stageOf } from './HandsfreeParts';
 import { HandsfreeReceipt } from './HandsfreeReceipt';
 import type { HandsfreeJob, Receipt, ReturnResult } from './handsfreeTypes';
@@ -11,16 +12,19 @@ import './handsfree.css';
 const RETURN_KINDS = new Set<HandsfreeJob['kind']>(['return', 'resume', 'rollback', 'abandon']);
 
 /**
- * The hands-free banner, on EVERY page while the laptop is not home (AC6): away → "on the
- * cloud machine" + Return; going / returning → the job's progress, its wait and Cut; an
+ * The hands-free banner, on EVERY page of the project on the cloud machine while the laptop is
+ * not home (AC6): away → "on the cloud machine" + Return; going / returning → the job's progress, its wait and Cut; an
  * interrupted trip → exactly the buttons the status offers (Resume / Roll back / Abandon).
  * Queued cloud finalization and the warnings (AC22 retention, AC23 quota) ride as a quiet line,
- * at home too. Also the receipt's host: it opens when a Return finishes and on
+ * at home too. Every OTHER project (another tab, the launcher) gets no banner at all: the chip
+ * in the window bar names the away project and carries Return / Show link (r14/r16: the lock is
+ * per project). Also the receipt's host: it opens when a Return finishes and on
  * `openHandsfreeReceipt(trip)` (the Settings card's last trip).
  */
 export function HandsfreeBanner() {
   const { t } = useI18n();
-  const { status, unavailable, job } = useHandsfree();
+  const { activeVault } = useChrome();
+  const { status, unavailable, job, view } = useHandsfreeFor(activeVault);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -87,6 +91,9 @@ export function HandsfreeBanner() {
   }
 
   const tripJob = job && job.status === 'running' ? job : null;
+  // Another project (or the launcher) while a trip is out: NO banner row at all (owner, r16).
+  // The window bar's chip names the away project and opens Return / Show link from there.
+  if (view === 'other') return modal || null;
   const failed = job && job.status === 'error' && (RETURN_KINDS.has(job.kind) || job.kind === 'go') ? job : null;
   const waiting = tripJob?.step === 'waiting';
   const offers = status.offers;

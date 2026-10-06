@@ -12,6 +12,7 @@
  * Also here: {@link handsfreeLockRefusal}, the ONE lock middleware `index.ts` runs (D3/AC6).
  */
 import { IncomingMessage, type ServerResponse } from 'node:http';
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { listVaults } from '../../lib/vaults.js';
@@ -341,10 +342,41 @@ const flag = (b: Record<string, unknown> | null, k: string) => b?.[k] === true;
 
 // ---------------------------------------------------------------- handlers
 
-/** GET /api/handsfree/status → StatusReport (+ the current job). Never starts the machine. */
-export async function handleHandsfreeStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+/** The trip state stores realpaths (trip-state.ts); a registry entry may name the same folder by a symlinked path. */
+function realOrResolved(p: string): string {
+  try { return realpathSync.native(p); } catch { return resolvePath(p); }
+}
+
+/** The vault a status request explicitly names (header, or `?vault=` on GET), never the server's pinned root. */
+function askedVault(req: IncomingMessage): string | null {
+  const h = req.headers['x-dreamcontext-vault'];
+  if (typeof h === 'string' && h) return h;
+  try { return new URL(req.url || '/', 'http://localhost').searchParams.get('vault') || null; } catch { return null; }
+}
+
+/**
+ * GET /api/handsfree/status → StatusReport (+ the current job). Never starts the machine.
+ *
+ * Plus, for the window's project (AC6: the lock banner belongs to the LOCKED project only):
+ * `here` = is the vault this request names inside the trip, by the same `handsfreeLockFor` the
+ * lock middleware refuses with (no vault named, or a vault outside the trip: false; the name is
+ * echoed so a window that switched project never shows another project's answer), and `away` =
+ * the trip's project by its registered name (else its folder name), for the other projects'
+ * quiet line.
+ */
+export async function handleHandsfreeStatus(req: IncomingMessage, res: ServerResponse, _p?: Record<string, string>, vaultRoot?: string | null): Promise<void> {
   if (!gate(req, res)) return;
-  sendJson(res, 200, { ...(await status(envFactory())), job: current });
+  const env = envFactory();
+  const report = await status(env);
+  const vault = askedVault(req);
+  const lock = vault && vaultRoot ? handsfreeLockFor(vaultRoot, env.home) : null;
+  const here = { vault, inTrip: !!lock, ...(lock ? { rootId: lock.rootId } : {}) };
+  const st = readTripState(env.home);
+  const tripRoot = st.phase !== 'home' ? st.roots[0]?.path : undefined;
+  const away = tripRoot
+    ? { name: listVaults(env.home).find((v) => realOrResolved(v.path) === realOrResolved(tripRoot))?.name ?? (tripRoot.split(/[\\/]/).filter(Boolean).pop() ?? tripRoot), path: tripRoot }
+    : null;
+  sendJson(res, 200, { ...report, job: current, here, away });
 }
 
 /** GET /api/handsfree/jobs/current → {job | null}. */

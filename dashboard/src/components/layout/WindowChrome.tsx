@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useServerHealth } from '../../hooks/useServerHealth';
+import { useI18n } from '../../context/I18nContext';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
@@ -144,9 +145,31 @@ function applyZoom(zoom: number) {
  * memory — after an upgrade it serves THIS (new) bundle with an OLD API and newer routes
  * 404. An exact version match is the only check that can't drift.
  */
+/** -1 / 0 / 1 for `a` vs `b` as dotted numeric versions (a pre-release tag is ignored), null when either is unparsable. */
+export function compareVersions(a: string | null | undefined, b: string | null | undefined): -1 | 0 | 1 | null {
+  const parse = (v: string | null | undefined) => (typeof v === 'string' && /^\d+(\.\d+)*/.test(v) ? v.match(/^\d+(\.\d+)*/)![0].split('.').map(Number) : null);
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
 function StaleServerBanner() {
+  const { t } = useI18n();
   const { health, serverCurrent } = useServerHealth();
   if (!health || serverCurrent) return null;
+  // A server NEWER than this window's bundle: the page predates a rebuild, not the server.
+  if (compareVersions(health.version, __DC_VERSION__) === 1) {
+    return (
+      <div className="stale-server-banner" data-testid="stale-page-banner">
+        {t('staleServer.olderPage').replace('{page}', __DC_VERSION__).replace('{server}', String(health.version))}
+      </div>
+    );
+  }
   return (
     <div className="stale-server-banner">
       ⚠ The dashboard server is running an older build (
