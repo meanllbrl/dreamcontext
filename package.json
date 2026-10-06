@@ -70,6 +70,8 @@
     "verify:lab-boards": "node scripts/verify/lab-boards.mjs",
     "verify:whiteboard": "node scripts/verify/whiteboard.mjs",
     "verify:whiteboard-agent": "node scripts/verify/whiteboard-agent.mjs",
+    "verify:whiteboard-agent-panel": "node scripts/verify/whiteboard-agent-panel.mjs",
+    "verify:whiteboard-polish": "node scripts/verify/whiteboard-polish.mjs",
     "verify:project-tabs": "node scripts/verify/project-tabs.mjs",
     "verify:project-chip-status": "node scripts/verify/project-chip-status.mjs",
     "verify:automations": "node scripts/verify/automations.mjs",

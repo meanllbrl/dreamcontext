@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-29'
 status: in_review
 created: '2026-09-29'
-updated: '2026-10-04'
+updated: '2026-10-05'
 released_version: null
 tags:
   - 'topic:dashboard'
@@ -30,6 +30,10 @@ related_tasks:
     whiteboard-a-ajan-karti-eklenir-board-u-bilen-yalniz-kendi-board-una-yazan-ustune-birakilan-widget-i-soran-otomasyon-ajani
   - >-
     a-whiteboard-shows-a-funnel-as-its-explorer-any-lab-card-as-a-widget-and-the-date-window-on-the-card
+  - >-
+    whiteboard-kartlari-cilalanir-sekme-yeniden-adlandirilir-insight-basligi-tekrarsiz-kartlar-dip-dibe-durur-karta-renk-verilir-html-kutusuna-sigar
+  - >-
+    whiteboard-sayfasi-kaldigin-yerden-acilir-board-ajani-sayfalar-arasi-canli-kalan-yan-panelde-yasar-sag-alttaki-ajan-dock-u-whiteboard-da-gorunmez
 ---
 
 ## Why

@@ -72,7 +72,9 @@ export function resizeInPlace(geom: WidgetGeometry, size: WidgetSize): WidgetGeo
  *   widget, a tall checklist), rounded to the fine `RESIZE_STEP` (every preset and the grid pitch are multiples of it) and held to `MIN_WIDGET_BOX`.
  *   The edge the user did not drag stays put. `dc.size` records the NEAREST preset, which only
  *   picks the content layout; the S / M / L / XL control snaps the box back to a preset.
- * - A move keeps the widget's size and puts its top-left on the grid.
+ * - A move keeps the widget's size and puts its top-left on the nearest line: a grid line, or
+ *   one taken from a nearby widget (`snapMoveTo`), so a card resized shorter than a cell can
+ *   still sit one gap under or beside another instead of a whole pitch away.
  * - `snapMove: false` skips the move snap (the gesture also moved free drawing, whose relative
  *   placement to the widget must not change); a resize still snaps.
  */
@@ -80,7 +82,7 @@ export function snapAfterGesture(
   before: WidgetGeometry,
   after: WidgetGeometry,
   recorded: unknown,
-  opts: { snapMove?: boolean } = {},
+  opts: { snapMove?: boolean; neighbours?: readonly WidgetGeometry[] } = {},
 ): (WidgetGeometry & { size: WidgetSize }) | null {
   const resized = before.width !== after.width || before.height !== after.height;
   const moved = before.x !== after.x || before.y !== after.y;
@@ -98,9 +100,37 @@ export function snapAfterGesture(
     next = { x, y, width, height, size: nearestWidgetSize(width, height) };
   } else {
     const size = widgetSizeOf(recorded, after.width, after.height);
-    next = { x: snapToGrid(after.x), y: snapToGrid(after.y), width: after.width, height: after.height, size };
+    next = { ...snapMoveTo(after, opts.neighbours ?? []), width: after.width, height: after.height, size };
   }
   return isSameSnap(after, recorded, next) ? null : next;
+}
+
+/**
+ * Where a moved widget's top-left lands: on each axis, the nearest of the grid lines and the
+ * lines a nearby widget offers (its own edge, to align with it, or its far edge plus one grid
+ * gap, to sit beside it; both sides). A widget counts as nearby on an axis when it is within
+ * one pitch of the moved box across the other axis, so a card at the far end of the board does
+ * not pull. A tie goes to the neighbour.
+ */
+export function snapMoveTo(box: WidgetGeometry, neighbours: readonly WidgetGeometry[]): { x: number; y: number } {
+  const gap = WIDGET_GRID.gap;
+  const near = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 + GRID_PITCH && b0 < a1 + GRID_PITCH;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const n of neighbours) {
+    if (near(box.y, box.y + box.height, n.y, n.y + n.height)) {
+      xs.push(n.x, n.x + n.width + gap, n.x - box.width - gap, n.x + n.width - box.width);
+    }
+    if (near(box.x, box.x + box.width, n.x, n.x + n.width)) {
+      ys.push(n.y, n.y + n.height + gap, n.y - box.height - gap, n.y + n.height - box.height);
+    }
+  }
+  const pick = (v: number, lines: number[]) => {
+    let best = snapToGrid(v);
+    for (const l of lines) if (Math.abs(l - v) <= Math.abs(best - v)) best = l;
+    return best || 0;
+  };
+  return { x: pick(box.x, xs), y: pick(box.y, ys) };
 }
 
 function isSameSnap(geom: WidgetGeometry, recorded: unknown, next: WidgetGeometry & { size: WidgetSize }): boolean {
@@ -135,8 +165,9 @@ export function clipTodoItems<T>(items: readonly T[], capacity: number): { shown
   return { shown: items.slice(0, keep), hidden: items.length - keep };
 }
 
-/** The size control's own box, in screen px (four segments: see `.wb-size-picker`). */
-export const SIZE_PICKER_BOX = { width: 148, height: 32 } as const;
+/** The size control's own box, in screen px (four segments and the colour button: see
+ *  `.wb-size-picker`). */
+export const SIZE_PICKER_BOX = { width: 184, height: 32 } as const;
 
 /** The bands Excalidraw's own chrome takes inside the canvas wrapper, in screen px: the tool bar
  *  on top, the zoom / undo bar at the bottom. The size control never lands in either. */

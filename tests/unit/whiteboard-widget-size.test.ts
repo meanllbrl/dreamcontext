@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WIDGET_SIZES } from '../../dashboard/src/lib/whiteboardWidgets.js';
 import {
-  GRID_PITCH, clipTodoItems, placeNewWidget, resizeInPlace, snapAfterGesture, snapToGrid,
+  GRID_PITCH, clipTodoItems, placeNewWidget, resizeInPlace, snapAfterGesture, snapMoveTo, snapToGrid,
   CANVAS_CHROME, SIZE_PICKER_BOX, placeSizePicker, todoCapacity, widgetSizeOf,
 } from '../../dashboard/src/components/whiteboard/widgetSize.js';
 import { WIDGET_STROKE, hasWidgetStroke, selectionIsOnlyWidgets } from '../../dashboard/src/components/whiteboard/widgetModel.js';
@@ -96,6 +96,37 @@ describe('snapAfterGesture', () => {
     expect(snapAfterGesture(at, { ...at, x: 430 }, 'm', { snapMove: false })).toBeNull();
     expect(snapAfterGesture(at, { ...at, width: 390, height: 360 }, 'm', { snapMove: false }))
       .toEqual({ x: 196, y: 196, width: 392, height: 360, size: 'l' });
+  });
+});
+
+/**
+ * Owner 2026-10-05: two insight cards resized shorter than a cell could never sit close, the
+ * move snap put them a whole 196px pitch apart. A move now also snaps to a nearby widget.
+ */
+describe('snapMoveTo (cards sit close)', () => {
+  const short = { x: 0, y: 0, width: 376, height: 112 };
+
+  it('a short card dragged under another lands one gap below it, not a pitch away', () => {
+    expect(snapMoveTo({ ...short, x: 6, y: 140 }, [short])).toEqual({ x: 0, y: 128 });
+  });
+
+  it('beside a card: one gap to its right, top aligned', () => {
+    expect(snapMoveTo({ ...short, x: 400, y: 9 }, [short])).toEqual({ x: 392, y: 0 });
+  });
+
+  it('far from every widget it is the plain grid snap', () => {
+    expect(snapMoveTo({ ...short, x: 1610, y: 1010 }, [short])).toEqual({ x: snapToGrid(1610), y: snapToGrid(1010) });
+  });
+
+  it('a grid line nearer than any neighbour line still wins', () => {
+    // Neighbour offers y 128 (one gap under); 190 is nearer the 196 grid line.
+    expect(snapMoveTo({ ...short, y: 190 }, [short]).y).toBe(196);
+  });
+
+  it('snapAfterGesture passes the neighbours through on a move', () => {
+    const before = { x: 784, y: 784, width: 376, height: 112 };
+    expect(snapAfterGesture(before, { ...before, x: 4, y: 136 }, 'm', { neighbours: [short] }))
+      .toEqual({ x: 0, y: 128, width: 376, height: 112, size: 'm' });
   });
 });
 

@@ -1,13 +1,17 @@
-import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../context/I18nContext';
 import { useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
-import { useDefaultWhiteboard, useWhiteboardEditor } from '../hooks/useWhiteboards';
+import { useDefaultWhiteboard, useWhiteboardEditor, useWhiteboardList } from '../hooks/useWhiteboards';
+import { useAutomations } from '../hooks/useAutomations';
 import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
 import { LazyWhiteboardCanvas } from '../components/whiteboard/LazyWhiteboardCanvas';
 import { PagePopupProvider } from '../components/whiteboard/PagePopup';
-import { dropBoardAgentScratch } from '../components/whiteboard/boardAgentScratch';
+import { BoardAgentPanel } from '../components/whiteboard/BoardAgentPanel';
+import { setAgentPanelOpen, useAgentPanelOpen } from '../components/whiteboard/agentPanelState';
+import { dropBoardAgentScratch, sweepHomeSessions } from '../components/whiteboard/boardAgentScratch';
+import { readLastBoard, writeLastBoard } from '../components/whiteboard/boardPlace';
 import { BoardTabs } from './whiteboards/BoardTabs';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import './WhiteboardsPage.css';
@@ -27,7 +31,7 @@ interface WhiteboardsPageProps {
  */
 export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
   const { t } = useI18n();
-  const { instanceId } = useVault();
+  const { instanceId, vault } = useVault();
   // The board open before a reload: the URL hash (see boardHash). There is one URL per window,
   // so only the window's first project reads it back, like Shell's `/lab/` deep link.
   const [openSlug, setOpenSlug] = useState<string | null>(
@@ -35,18 +39,50 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
   );
   useFocusTarget(focus, setOpenSlug);
   // Agent cards keep their composer buckets across remounts and board switches; they die with
-  // the page (boardAgentScratch.ts).
-  useEffect(() => dropBoardAgentScratch, []);
+  // the page, all but the boards' home conversations, which the agent panel keeps alive while
+  // the owner is on another page (boardAgentScratch.ts).
+  useEffect(() => (vault ? () => dropBoardAgentScratch({ vault, keepHome: true }) : undefined), [vault]);
+  // With no deep link, the board the owner was on when they last left the page (boardPlace.ts),
+  // once the list says it still exists; else the default board.
+  const [remembered] = useState(() => (vault ? readLastBoard(vault) : null));
+  const boards = useWhiteboardList();
+  // A refused rename's reason, here so it outlives the open board: a rename still in flight
+  // when the owner switches boards reports to the next one.
+  const [renameNote, setRenameNote] = useState<{ board: string; text: string } | null>(null);
+  useEffect(() => { setRenameNote(null); }, [openSlug]);
+  // A rename's answer clears only its own board's note: a late success on one board never
+  // wipes another board's refusal.
+  const onRenameNote = useCallback((board: string, text: string | null) => {
+    setRenameNote((prev) => (text ? { board, text } : prev?.board === board ? null : prev));
+  }, []);
   const fallback = useDefaultWhiteboard(openSlug === null);
 
   useEffect(() => {
-    if (openSlug === null && fallback.data) setOpenSlug(fallback.data);
-  }, [openSlug, fallback.data]);
+    if (openSlug !== null) return;
+    if (remembered) {
+      if (!boards.data && !boards.isError) return;
+      if (boards.data?.some((b) => b.slug === remembered)) { setOpenSlug(remembered); return; }
+    }
+    if (fallback.data) setOpenSlug(fallback.data);
+  }, [openSlug, remembered, boards.data, boards.isError, fallback.data]);
+
+  useEffect(() => {
+    if (openSlug && vault) writeLastBoard(vault, openSlug);
+  }, [openSlug, vault]);
+
+  // Only the open board's home conversations stay alive (one `claude` each); the rest end once
+  // idle, so boards visited with the panel open, deleted boards and re-homed agents never pile up.
+  const { data: automations } = useAutomations();
+  useEffect(() => {
+    if (!vault || !openSlug || !automations) return;
+    sweepHomeSessions(vault, (board, agent) =>
+      board === openSlug && automations.some((a) => a.slug === agent && a.whiteboard === board));
+  }, [vault, openSlug, automations]);
 
   if (openSlug) {
     // Keyed on the slug: switching boards unmounts this editor first, so its save loop's
     // dispose flushes the unsaved scene while the canvas handle is still there.
-    return <WhiteboardEditor key={openSlug} slug={openSlug} onOpen={setOpenSlug} />;
+    return <WhiteboardEditor key={openSlug} slug={openSlug} onOpen={setOpenSlug} renameNote={renameNote?.text ?? null} onRenameNote={onRenameNote} />;
   }
   if (fallback.isError) {
     return (
@@ -66,25 +102,39 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
 
 // ── one board, full-bleed ────────────────────────────────────────────────────────────────────
 
-function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: string) => void }) {
+function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
+  slug: string;
+  onOpen: (slug: string) => void;
+  renameNote: string | null;
+  onRenameNote: (board: string, note: string | null) => void;
+}) {
   const { t } = useI18n();
   const { load, saveState, onApi, onSceneChange, exportFile } = useWhiteboardEditor(slug);
+  const { vault } = useVault();
+  const panelOpen = useAgentPanelOpen(vault);
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
+  const boards = useWhiteboardList();
   useBoardHash(slug);
 
   const doExport = async () => setExportNote(await exportFile());
 
   const switcher = (
-    <BoardTabs slug={slug} name={load.kind === 'ready' ? load.name : undefined} onOpen={onOpen} />
+    <BoardTabs slug={slug} name={load.kind === 'ready' ? load.name : undefined} onOpen={onOpen} onRenameNote={onRenameNote} />
   );
+  // The same first child in every state, so the strip keeps its place (and its state) when
+  // the board finishes loading.
+  // The list first, as the tabs do: a rename patches it, never the loaded board.
+  const listed = boards.data?.find((b) => b.slug === slug)?.name;
+  const heading = <h1 className="wbp-sr-only">{listed || (load.kind === 'ready' ? load.name : slug)}</h1>;
 
   if (load.kind === 'loading') {
-    return <div className="wbp-editor"><div className="wbp-bar">{switcher}</div><div className="wbp-loading">{t('common.loading')}</div></div>;
+    return <div className="wbp-editor">{heading}<div className="wbp-bar">{switcher}</div><div className="wbp-loading">{t('common.loading')}</div></div>;
   }
 
   if (load.kind === 'corrupt' || load.kind === 'missing' || load.kind === 'error') {
     return (
       <div className="wbp-editor">
+        {heading}
         <div className="wbp-bar">{switcher}</div>
         <div className="wbp-card-state" role="alert">
           {load.kind === 'corrupt' && (
@@ -111,10 +161,19 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
 
   return (
     <div className="wbp-editor">
-      <h1 className="wbp-sr-only">{load.name}</h1>
+      {heading}
       <div className="wbp-bar">
         {switcher}
         <SaveStatus state={saveState} />
+        <button
+          type="button"
+          className="wbp-agent-toggle"
+          aria-pressed={panelOpen}
+          title={t('whiteboard.agentPanel.toggle')}
+          onClick={() => setAgentPanelOpen(vault, !panelOpen)}
+        >
+          {t('whiteboard.agentPanel.title')}
+        </button>
         {canExport && (
           <button type="button" className="wbp-btn" onClick={() => void doExport()}>
             {saveState.kind === 'deleted' ? t('whiteboard.page.exportFile') : t('whiteboard.page.export')}
@@ -125,6 +184,7 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
         <div className="wbp-banner" role="alert">{t('whiteboard.page.deleted')}</div>
       )}
       {exportNote && <div className="wbp-banner wbp-banner--quiet" role="status">{exportNote.text}</div>}
+      {renameNote && <div className="wbp-banner" role="alert">{renameNote}</div>}
       <div className="wbp-body">
         {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
         <PagePopupProvider>
@@ -134,6 +194,7 @@ function WhiteboardEditor({ slug, onOpen }: { slug: string; onOpen: (slug: strin
             </Suspense>
           </div>
         </PagePopupProvider>
+        {panelOpen && <BoardAgentPanel board={slug} />}
       </div>
     </div>
   );

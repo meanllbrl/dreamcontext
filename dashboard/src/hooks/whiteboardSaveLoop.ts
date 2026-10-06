@@ -385,6 +385,8 @@ export interface FitTarget {
   liveCount: () => number;
   /** Fit + centre the content in the viewport. */
   fit: () => void;
+  /** The wait is over, fitted or not (nothing to fit, or out of patience). Never on a cancel. */
+  settled?: () => void;
 }
 
 /**
@@ -413,11 +415,13 @@ export function fitWhenReady(
     const loaded = !expectContent || target.liveCount() > 0;
     if (sized && loaded) {
       if (expectContent) target.fit();
+      target.settled?.();
       return;
     }
     // Out of patience: fit what is there if we can, never loop forever.
     if (frames >= maxFrames) {
       if (sized && target.liveCount() > 0) target.fit();
+      target.settled?.();
       return;
     }
     handle = schedule(step);

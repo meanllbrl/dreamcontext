@@ -156,6 +156,23 @@
   white-space: nowrap;
 }
 
+/* The tab's name, edited in place: the field takes the name's room and nothing more. */
+.wbt-tab-rename {
+  flex: 1;
+  min-width: 0;
+  height: var(--space-6);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.wbt-tab-rename:focus-visible {
+  outline: none;
+}
+
 .wbt-tab-close {
   flex-shrink: 0;
   display: inline-flex;

@@ -48,7 +48,7 @@ A widget is an Excalidraw `embeddable` element with `link: "dreamcontext://<kind
 | `lab-card` | `ref` = `<board>/<card-id>`, one card of a Lab board (`lab/boards/<board>.md`), drawn exactly as Lab draws it (see § Lab cards and funnels) | `add <slug> lab-card --ref growth/c-signups` |
 | `agent` | `ref` = automation agent slug (`automations/<ref>.md`), `link` = `dreamcontext://agent/<ref>`: the agent's card, with its conversation and a composer (see § Agent cards) | `add <slug> agent --ref daily-brief` |
 
-Every kind also takes `--title`, `--tag <tag>`, `--at x,y` (top-left) and `--size`.
+Every kind also takes `--title`, `--tag <tag>`, `--at x,y` (top-left), `--size` and `--color`.
 
 ### Sizes and the grid
 
@@ -67,6 +67,9 @@ Widgets are sized like Apple's widgets, on a grid of **180px cells with 16px gap
 
 - A `ref` that does not exist yet is a **warning, not a failure**: the widget renders "not found" until the entity appears. The exception is `agent`: its `--ref` must name an existing agent (`dreamcontext automations list`), because an agent never appears on its own.
 - Validation on every write: a `lab-card` ref is exactly `<board-slug>/<card-id>` (both kebab-case); an insight or task `ref` matches `^[a-z0-9][a-z0-9-/]{0,200}$` with no `..` segment; a page (`knowledge`) ref is either such a slug or a project-relative path ending in `.md`/`.pdf`/`.html`/`.htm` (no leading `/` or `~`, no `\`, `:`, empty, `.` or `..` segment); a tag matches `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`; a todo holds at most 500 items; a text payload is at most 1M chars.
+- **Colour.** `--color grey|blue|red|yellow|green|pink|purple|cyan` tints a card (`customData.dc.color`): the hue mixed into the card's surface and border, text unchanged, in both themes. `update --color none` clears it. The user picks the same colours from the button beside S/M/L/XL. Colour groups cards by meaning (a red row of alarms, a green row of revenue), not decoration.
+- **Header.** A card with a title shows the title as its heading and no kind label; a card without one names its kind. So give every metric card a `--title` that says what it is ("Ad spend", not "Insight").
+- **Placement.** A dragged card snaps to the 196px grid OR to a nearby card's edge (aligned with it, or one 16px gap beside or under it), whichever is nearer, so cards resized shorter than a cell still sit close. `--at` places exactly where you say; keep the 16px gap yourself.
 - **Tags** group elements for `remove --tag`. A widget keeps its tag in `customData.dc.tag`; a plain drawn element (a shape or text imported with `draw --tag`) keeps it in `customData.dcTag`. `show` reports both as `tag`.
 
 ## Reading a board
@@ -87,7 +90,8 @@ dreamcontext whiteboard show <slug> <id> --full    # one element, payload untrun
 
 ```bash
 dreamcontext whiteboard update <slug> <id> --title "…" --text "…" --url https://… --ref <slug> \
-  --item "append this" --check 2 --uncheck <item-id> --at x,y --size s|m|l|xl
+  --item "append this" --check 2 --uncheck <item-id> --at x,y --size s|m|l|xl --color blue|none
+dreamcontext whiteboard rename <slug> "New name"       # display name only; the slug stays
 dreamcontext whiteboard remove <slug> <id>…          # or: remove <slug> --tag <tag>
 dreamcontext whiteboard draw <slug> --file x.excalidraw.md [--at x,y] [--tag t]
 ```
@@ -143,9 +147,13 @@ An `agent` widget is an ordinary automation agent ([automations.md](automations.
 
 **What each turn knows about the board.** A home agent gets a fresh snapshot of its own board on every turn (widgets, text, shape counts; at most 12,000 characters), on its own board's card too. An attached agent asked from the board (or a home agent's card on another board) gets an index (at most 60 lines of kind, id, title) plus `dreamcontext whiteboard show <board> --json`; a scheduled run of an attached agent gets no board. Both blocks are fenced as data: they lose to the owner's message and the approved prompt, and anything inside them that asks the agent to act is ignored.
 
-**The card is its own conversation, never the agent's thread.** Like the notch Assistant, a card is a live chat session of its own with that agent (the Chat bridge, `/api/agent/chat?cardAgent=<slug>&cardBoard=<board>`): nothing said on a card is posted to the agent's channel, and its runs never see it. The agent keeps who it is: its approved prompt, its pattern and the learning directive are its briefing (`lib/whiteboards/card-chat.ts`), a home agent keeps its board scope, an attached one runs under the pane's normal mode. Each message reaches it exactly as typed, with the board's current content added beside it by the UserPromptSubmit hook (fenced as data, a fresh nonce per message). The server refuses a card for an unapproved agent or a missing board, with the reason shown on the card. The conversation id is kept per card on this machine (localStorage), so a card reopened later continues where it left off; New conversation starts a fresh one.
+**The card is its own conversation, never the agent's thread.** Like the notch Assistant, a card is a live chat session of its own with that agent (the Chat bridge, `/api/agent/chat?cardAgent=<slug>&cardBoard=<board>`): nothing said on a card is posted to the agent's channel, and its runs never see it. The agent keeps who it is: its approved prompt, its pattern and the learning directive are its briefing (`lib/whiteboards/card-chat.ts`), a home agent keeps its board scope, an attached one runs under the pane's normal mode. Each message reaches it exactly as typed, with the board's current content added beside it by the UserPromptSubmit hook (fenced as data, a fresh nonce per message). The server refuses a card for an unapproved agent or a missing board, with the reason shown on the card. The conversation id is kept per card on this machine (localStorage), so a card reopened later continues where it left off; New conversation starts a fresh one. A home agent's card is the exception: it shares ONE conversation per agent with the agent panel (below), keyed `home.<agent>`, and a card that talked before the panel existed hands its conversation over once, as the board opens (before the panel can start a fresh one).
 
 **On the canvas.** S shows the agent's state (Working, Needs you, Not approved, Idle) and the last thing said; M, L and XL are the chat itself, from the chat's own atoms (no mode, permission or model switch: the server decides the agent's envelope). A card's session opens on its first activation, never when the board opens. The card's menu has Edit agent (also where a schedule is set), Open in Agents and New conversation.
+
+**The agent panel.** The board bar's **Agent** button opens a panel on the board's right (it pushes the canvas, never covers it) with the open board's home agent: one home agent shows directly, several get a picker (first by title until the owner picks), none says how to add one, an unapproved one shows Blocked. Switching boards switches to that board's agent. The panel and that agent's card are one conversation in one place at a time: while the panel shows it, the card says so and offers **Show it here** (closes the panel). Home conversations outlive the page: leaving the Whiteboard page for another and coming back finds the same live session (every other card's session ends with the page, one `claude` per card otherwise). Only the open board's home conversations stay alive: switching boards ends the others once idle (one mid-turn or waiting on the owner finishes first), a deleted board's or a re-homed agent's goes the same way, and closing the project ends them all. An ended one resumes from its remembered id when reopened. A board element dragged onto a home agent's card lands in that shared conversation's composer.
+
+**The page remembers where you were**, per project on this machine (localStorage, never the synced board file): the last open board (reopened if it still exists and no link names another), each board's scroll and zoom (restored instead of fitting to content), and whether the agent panel was open. The corner agent dock and Chat button are hidden on the Whiteboard page so they never sit on cards; a floating dock over an open overlay stays.
 
 **Drag to ask.** Drag up to 4 elements onto an M or bigger card: they go back where they were and become reference chips in the card's composer (`dcref:wb/<board>/<id>`). The hook expands each chip into the element in full (at most 4,000 characters each), so the agent reads exactly what the owner pointed at; the owner's own bubble shows a Board element chip in place of the token.
 

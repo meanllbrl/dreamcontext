@@ -5,6 +5,9 @@ import { RequestError } from '../api/client';
 import { deliverDownload, deliveredNote, type ExportNote } from '../lib/exportDownload';
 import type { WhiteboardCanvasApi, WhiteboardScene } from '../components/whiteboard/LazyWhiteboardCanvas';
 import { IMAGES_LATER_MESSAGE, stripImageElements } from '../components/whiteboard/sceneSync';
+import { readViewport, viewportShowsAny, writeViewport } from '../components/whiteboard/boardPlace';
+import { adoptBoardCards } from '../components/whiteboard/boardAgentScratch';
+import { isValidRefFor, readWidgetPayload } from '../components/whiteboard/widgetModel';
 import {
   POLL_INTERVAL_MS, WhiteboardSaveLoop, fitWhenReady, reasonOf, type SaveState, type SceneResponse,
 } from './whiteboardSaveLoop';
@@ -90,6 +93,21 @@ export function useCreateWhiteboard() {
   });
 }
 
+/** A new display name for a board; the slug stays. The tab shows it at once (the list is
+ *  patched in place) and the server's answer settles it. */
+export function useRenameWhiteboard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { slug: string; name: string }) =>
+      api.patch<{ slug: string; name: string }>(boardUrl(input.slug), { name: input.name }),
+    onMutate: ({ slug, name }) => {
+      qc.setQueryData<WhiteboardSummary[]>(LIST_KEY, (list) => list?.map((b) => (b.slug === slug ? { ...b, name: name.trim() } : b)));
+    },
+    onSettled: () => { void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true }); },
+  });
+}
+
 export function useDeleteWhiteboard() {
   const api = useApi();
   const qc = useQueryClient();
@@ -141,6 +159,18 @@ export type WhiteboardLoad =
   | { kind: 'missing' }
   | { kind: 'error'; message: string };
 
+/** The board's agent cards (element id + agent), from its file as loaded. */
+function agentCardsOf(elements: readonly unknown[] | undefined): { elementId: string; agent: string }[] {
+  const out: { elementId: string; agent: string }[] = [];
+  for (const el of Array.isArray(elements) ? elements : []) {
+    const e = el as { id?: unknown; isDeleted?: boolean; customData?: unknown } | null;
+    const payload = readWidgetPayload(e);
+    if (!e || e.isDeleted || typeof e.id !== 'string' || payload?.kind !== 'agent' || !isValidRefFor('agent', payload.ref)) continue;
+    out.push({ elementId: e.id, agent: payload.ref });
+  }
+  return out;
+}
+
 /**
  * One open board: its first load, then the save + poll loop (D5, D11) for as long as it is
  * mounted. The loop itself lives in `whiteboardSaveLoop.ts`; this wires it to the API, the
@@ -148,7 +178,7 @@ export type WhiteboardLoad =
  */
 export function useWhiteboardEditor(slug: string) {
   const api = useApi();
-  const { isActive } = useVault();
+  const { isActive, vault } = useVault();
   const [load, setLoad] = useState<WhiteboardLoad>({ kind: 'loading' });
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'saved' });
   const canvasRef = useRef<WhiteboardCanvasApi | null>(null);
@@ -158,8 +188,23 @@ export function useWhiteboardEditor(slug: string) {
   // The one-time fit on open. This hook lives exactly as long as one board is open (the page
   // keys the editor on the slug), so "once per hook" is "once per board open".
   const fittedRef = useRef(false);
+  /** Set once the open has placed the board (restored, fitted, or nothing to fit): only then is
+   *  the view the owner's, worth keeping. A save before it would keep the pre-fit view. */
+  const placedRef = useRef(false);
   const cancelFitRef = useRef<(() => void) | null>(null);
   const expectContentRef = useRef(false);
+  // Where the owner left this board (boardPlace.ts): kept on every poll tick and on close, put
+  // back on open instead of the fit.
+  const vaultRef = useRef(vault);
+  vaultRef.current = vault;
+  const saveViewport = useCallback(() => {
+    const v = vaultRef.current;
+    const canvas = canvasRef.current;
+    if (!v || !canvas || !placedRef.current) return;
+    const st = canvas.excalidraw.getAppState();
+    if (!(st.width > 0 && st.height > 0)) return;
+    writeViewport(v, slug, { scrollX: st.scrollX, scrollY: st.scrollY, zoom: st.zoom.value });
+  }, [slug]);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,6 +215,7 @@ export function useWhiteboardEditor(slug: string) {
         if (cancelled) return;
         expectContentRef.current = Array.isArray(doc.elements)
           && doc.elements.some((el) => !(el as { isDeleted?: boolean } | null)?.isDeleted);
+        if (vault) adoptBoardCards(vault, slug, agentCardsOf(doc.elements));
         setLoad({
           kind: 'ready',
           name: doc.name || slug,
@@ -180,6 +226,7 @@ export function useWhiteboardEditor(slug: string) {
       },
       (err: unknown) => {
         if (cancelled) return;
+        if (vault) adoptBoardCards(vault, slug, []);
         const status = err instanceof RequestError ? err.status : undefined;
         if (status === 422) setLoad({ kind: 'corrupt', reason: reasonOf(err), file: whiteboardFilePath(slug) });
         else if (status === 404) setLoad({ kind: 'missing' });
@@ -187,7 +234,7 @@ export function useWhiteboardEditor(slug: string) {
       },
     );
     return () => { cancelled = true; };
-  }, [api, slug]);
+  }, [api, slug, vault]);
 
   const ready = load.kind === 'ready' ? load : null;
 
@@ -218,12 +265,17 @@ export function useWhiteboardEditor(slug: string) {
     loopRef.current = loop;
 
     const visible = () => document.visibilityState === 'visible' && isActiveRef.current;
-    const interval = window.setInterval(() => { if (visible()) void loop.poll(); }, POLL_INTERVAL_MS);
+    const interval = window.setInterval(() => {
+      if (!visible()) return;
+      void loop.poll();
+      saveViewport();
+    }, POLL_INTERVAL_MS);
+    // Hidden or closing: the last view is kept too, not only the one at the last poll tick.
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') loop.flush();
+      if (document.visibilityState === 'hidden') { saveViewport(); loop.flush(); }
       else if (visible()) void loop.poll();
     };
-    const onPageHide = () => loop.flush();
+    const onPageHide = () => { saveViewport(); loop.flush(); };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', onPageHide);
     return () => {
@@ -233,7 +285,7 @@ export function useWhiteboardEditor(slug: string) {
       loop.dispose();
       if (loopRef.current === loop) loopRef.current = null;
     };
-  }, [api, slug, ready]);
+  }, [api, slug, ready, saveViewport]);
 
   // The final save on close runs in a LAYOUT cleanup: on unmount React runs this component's
   // layout cleanups before it unmounts the children, so the canvas (and its scene) is still
@@ -249,9 +301,12 @@ export function useWhiteboardEditor(slug: string) {
   const onApi = useCallback((canvas: WhiteboardCanvasApi | null) => {
     // The canvas is going away: last chance to send what it holds, before the handle is gone.
     if (!canvas) {
+      saveViewport();
       loopRef.current?.flush();
       cancelFitRef.current?.();
       cancelFitRef.current = null;
+      // A fit cancelled before it placed the board runs again on the next canvas (a remount).
+      if (!placedRef.current) fittedRef.current = false;
     }
     canvasRef.current = canvas;
     // Fit the content once, when the canvas is sized and the scene is in: opening Control
@@ -260,19 +315,29 @@ export function useWhiteboardEditor(slug: string) {
       fittedRef.current = true;
       const x = canvas.excalidraw;
       cancelFitRef.current = fitWhenReady({
+        settled: () => { placedRef.current = true; },
         viewportReady: () => {
           const { width, height } = x.getAppState();
           return width > 0 && height > 0;
         },
         liveCount: () => x.getSceneElements().length,
-        // Fit a big board; centre a small one at 100% rather than blowing one card up to 30x.
-        fit: () => x.scrollToContent(undefined, {
-          fitToViewport: true, viewportZoomFactor: 0.9, maxZoom: 1, minZoom: 0.1, animate: false,
-          canvasOffsets: FIT_INSETS,
-        }),
+        // Back where the owner left this board; else fit a big board, and centre a small one
+        // at 100% rather than blowing one card up to 30x.
+        fit: () => {
+          const saved = vaultRef.current ? readViewport(vaultRef.current, slug) : null;
+          const st = x.getAppState();
+          if (saved && viewportShowsAny(saved, st.width, st.height, x.getSceneElements())) {
+            x.updateScene({ appState: { scrollX: saved.scrollX, scrollY: saved.scrollY, zoom: { value: saved.zoom as never } } });
+            return;
+          }
+          x.scrollToContent(undefined, {
+            fitToViewport: true, viewportZoomFactor: 0.9, maxZoom: 1, minZoom: 0.1, animate: false,
+            canvasOffsets: FIT_INSETS,
+          });
+        },
       }, expectContentRef.current);
     }
-  }, []);
+  }, [slug, saveViewport]);
 
   const onSceneChange = useCallback((elements: readonly unknown[]) => {
     // Hand the loop the changed scene itself: if the board closes before the debounce fires,

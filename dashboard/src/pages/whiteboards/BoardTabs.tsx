@@ -1,51 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { useI18n } from '../../context/I18nContext';
-import { useVault } from '../../context/VaultContext';
 import { useDismissOnOutside } from '../../lib/useDismissOnOutside';
-import { useWhiteboardList } from '../../hooks/useWhiteboards';
+import { useRenameWhiteboard, useWhiteboardList } from '../../hooks/useWhiteboards';
 import { BoardGlyph, BoardsPanel, ChevronGlyph, CreatePanel, PlusGlyph } from './BoardSwitcher';
 import { DEFAULT_BOARD_SLUG } from './boardSwitcherLogic';
 import {
-  GROUP_COLORS, addToGroup, addToNewGroup, closeGroup, closeOtherTabs, closeTab, moveTab, neighbourAfterClose,
-  openTab, pruneTabs, removeFromGroup, sanitizeLayout, stripItems, ungroup, updateGroup,
+  addToGroup, addToNewGroup, closeGroup, closeOtherTabs, closeTab, moveTab, neighbourAfterClose,
+  openTab, pruneTabs, removeFromGroup, stripItems, ungroup, updateGroup,
   type StripItem, type TabGroup, type TabLayout,
 } from './tabStripLogic';
+import { CloseGlyph, GroupEditor, MenuItem } from './BoardTabMenu';
+import { useTabLayout } from './useTabLayout';
 import './BoardSwitcher.css';
 import './BoardTabs.css';
-
-/**
- * Which boards sit open as tabs, and how they are grouped, remembered per machine and per
- * project — like Chrome's tabs, a working arrangement rather than something the team shares.
- * Absent or unreadable → no tabs; the open board then takes the first one.
- */
-const KEY_PREFIX = 'dreamcontext:whiteboard-tabs:';
-const storageKey = (vault: string | null) => `${KEY_PREFIX}${vault ?? ''}`;
-
-function readLayout(vault: string | null): TabLayout {
-  try {
-    const raw = localStorage.getItem(storageKey(vault));
-    return sanitizeLayout(raw ? JSON.parse(raw) : null);
-  } catch {
-    return sanitizeLayout(null);
-  }
-}
-
-function useTabLayout(): [TabLayout, (update: (l: TabLayout) => TabLayout) => void] {
-  const { vault } = useVault();
-  const [layout, setLayout] = useState(() => readLayout(vault));
-  const latest = useRef(layout);
-  // Written NOW, not inside a state updater: closing the open tab also switches boards, which
-  // remounts this strip before an updater would run, and the new strip reads storage.
-  const change = useCallback((update: (l: TabLayout) => TabLayout) => {
-    const cur = latest.current;
-    const next = update(cur);
-    if (next === cur) return;
-    latest.current = next;
-    try { localStorage.setItem(storageKey(vault), JSON.stringify(next)); } catch { /* best-effort */ }
-    setLayout(next);
-  }, [vault]);
-  return [layout, change];
-}
 
 type Panel = 'boards' | 'create' | null;
 type Menu = { kind: 'tab'; slug: string; x: number; y: number } | { kind: 'group'; id: string; x: number; y: number } | null;
@@ -69,7 +36,15 @@ interface BoardTabsProps {
   /** Open another board. The page re-keys the editor on the slug, so the old board's save
    *  loop flushes before its canvas goes away. */
   onOpen: (slug: string) => void;
+  /** A rename the server refused (the reason), or null once one succeeds. */
+  onRenameNote?: (board: string, note: string | null) => void;
 }
+
+/** The last tab click, kept across the strip's remount: a first click on another board's tab
+ *  opens it and re-keys the editor (this strip with it), so a double-click is two clicks on
+ *  one tab within {@link DOUBLE_CLICK_MS}, whichever strip took them. */
+const lastClick = { slug: null as string | null, at: 0 };
+const DOUBLE_CLICK_MS = 450;
 
 /**
  * The boards as Chrome-style tabs at the top of the board: open boards side by side, dragged
@@ -77,7 +52,7 @@ interface BoardTabsProps {
  * away. Closing a tab only takes it off the strip; deleting a board is in "All boards" (⌄),
  * which also opens any board not on the strip. "+" names and creates a new one.
  */
-export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
+export function BoardTabs({ slug, name, onOpen, onRenameNote }: BoardTabsProps) {
   const { t } = useI18n();
   const { data: boards } = useWhiteboardList();
   const [layout, change] = useTabLayout();
@@ -86,6 +61,12 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [drag, setDrag] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropAt | null>(null);
+  /** The tab whose name is being edited in place (double-click, or Rename in its menu). */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const rename = useRenameWhiteboard();
+  /** Set once an edit ended (Enter, Escape or blur): unmounting the input blurs it too, which
+   *  must not rename after Escape or send the Enter twice. Reset when the input takes focus. */
+  const renameSettled = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLDivElement>(null);
@@ -112,7 +93,24 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
     stripRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [slug, layout.groups]);
 
-  const nameOf = (s: string) => (s === slug && name) || boards?.find((b) => b.slug === s)?.name || s;
+  // The list first: it is what a rename patches, so a renamed open board does not keep the
+  // name its editor loaded.
+  const nameOf = (s: string) => boards?.find((b) => b.slug === s)?.name || (s === slug && name) || s;
+
+  const commitRename = (target: string, next: string) => {
+    setRenaming(null);
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === nameOf(target)) return;
+    // The promise, not mutate's callbacks: those are dropped if the strip unmounts first (a
+    // board switch mid-request), and the note belongs to the page, which is still there.
+    const was = nameOf(target);
+    rename.mutateAsync({ slug: target, name: trimmed.slice(0, 200) }).then(
+      () => onRenameNote?.(target, null),
+      // One pass, and a function: a `$` or a `{reason}` in the name is text, never a pattern.
+      (e: Error) => onRenameNote?.(target, t('whiteboard.tabs.renameFailed')
+        .replace(/\{(board|reason)\}/g, (_m, k: string) => (k === 'board' ? was : e.message))),
+    );
+  };
   const items = stripItems(layout, slug);
   const single = layout.tabs.length <= 1;
 
@@ -244,9 +242,23 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
         data-dragging={drag === item.slug ? '' : undefined}
         data-drop={drop?.mark === item.slug ? drop.side : undefined}
         title={label}
-        draggable
-        onClick={() => open(item.slug)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(item.slug); } }}
+        draggable={renaming !== item.slug}
+        onClick={() => {
+          const now = Date.now();
+          if (lastClick.slug === item.slug && now - lastClick.at < DOUBLE_CLICK_MS) {
+            lastClick.slug = null;
+            setMenu(null);
+            setRenaming(item.slug);
+            return;
+          }
+          lastClick.slug = item.slug;
+          lastClick.at = now;
+          open(item.slug);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(item.slug); }
+          else if (e.key === 'F2') { e.preventDefault(); setMenu(null); setRenaming(item.slug); }
+        }}
         onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); askClose(item.slug, below(e.currentTarget)); } }}
         onContextMenu={(e) => menuAt(e, 'tab', item.slug)}
         onDragStart={(e) => {
@@ -260,7 +272,33 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
         onDrop={onDrop}
       >
         <BoardGlyph />
-        <span className={current ? 'wbt-tab-name wbs-current-name' : 'wbt-tab-name'}>{label}</span>
+        {renaming === item.slug ? (
+          <input
+            className="wbt-tab-rename"
+            defaultValue={label}
+            autoFocus
+            maxLength={200}
+            aria-label={t('whiteboard.tabs.renameLabel')}
+            onFocus={(e) => { renameSettled.current = false; e.currentTarget.select(); }}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key !== 'Enter' && e.key !== 'Escape') return;
+              if (renameSettled.current) return;
+              renameSettled.current = true;
+              if (e.key === 'Enter') commitRename(item.slug, e.currentTarget.value);
+              else setRenaming(null);
+            }}
+            onBlur={(e) => {
+              if (renameSettled.current) return;
+              renameSettled.current = true;
+              commitRename(item.slug, e.currentTarget.value);
+            }}
+          />
+        ) : (
+          <span className={current ? 'wbt-tab-name wbs-current-name' : 'wbt-tab-name'}>{label}</span>
+        )}
         {!single && (
           <button
             type="button"
@@ -345,6 +383,8 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
         <div className="wbt-menu" role="menu" ref={menuRef} style={{ left: menu.x, top: menu.y }}>
           {menuTab && (
             <>
+              <MenuItem label={t('whiteboard.tabs.rename')} onClick={() => { setRenaming(menuTab.slug); setMenu(null); }} />
+              <div className="wbt-menu-sep" role="separator" />
               <MenuItem label={t('whiteboard.tabs.addToNewGroup')} onClick={() => {
                 const id = newGroupId();
                 change((l) => addToNewGroup(l, menuTab.slug, id));
@@ -414,71 +454,5 @@ export function BoardTabs({ slug, name, onOpen }: BoardTabsProps) {
         </div>
       )}
     </div>
-  );
-}
-
-function MenuItem({ label, onClick, disabled, swatch }: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  swatch?: string;
-}) {
-  return (
-    <button type="button" role="menuitem" className="wbt-menu-item" disabled={disabled} onClick={onClick}>
-      {swatch && <span className="wbt-swatch wbt-swatch--sm" data-color={swatch} aria-hidden="true" />}
-      {label}
-    </button>
-  );
-}
-
-/** Chrome's group editor: a name, a colour, Ungroup, Close group. A new group opens it. */
-function GroupEditor({ group, onChange, onUngroup, onClose, canClose, onDone }: {
-  group: TabGroup;
-  onChange: (patch: Partial<Pick<TabGroup, 'name' | 'color'>>) => void;
-  onUngroup: () => void;
-  onClose: () => void;
-  canClose: boolean;
-  onDone: () => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <div className="wbt-editor">
-      <input
-        className="wbt-editor-name"
-        autoFocus
-        value={group.name}
-        maxLength={80}
-        placeholder={t('whiteboard.tabs.groupName')}
-        aria-label={t('whiteboard.tabs.groupName')}
-        onChange={(e) => onChange({ name: e.target.value })}
-        onKeyDown={(e) => { if (e.key === 'Enter') onDone(); }}
-      />
-      <div className="wbt-colors" role="radiogroup" aria-label={t('whiteboard.tabs.color')}>
-        {GROUP_COLORS.map((c) => (
-          <button
-            key={c}
-            type="button"
-            role="radio"
-            aria-checked={group.color === c}
-            className="wbt-swatch"
-            data-color={c}
-            aria-label={t(`whiteboard.tabs.color.${c}`)}
-            title={t(`whiteboard.tabs.color.${c}`)}
-            onClick={() => onChange({ color: c })}
-          />
-        ))}
-      </div>
-      <div className="wbt-menu-sep" role="separator" />
-      <MenuItem label={t('whiteboard.tabs.ungroup')} onClick={onUngroup} />
-      <MenuItem label={t('whiteboard.tabs.closeGroup')} disabled={!canClose} onClick={onClose} />
-    </div>
-  );
-}
-
-function CloseGlyph() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" aria-hidden="true">
-      <path d="M3 3l6 6M9 3 3 9" />
-    </svg>
   );
 }

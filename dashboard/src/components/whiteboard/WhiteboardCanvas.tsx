@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   CaptureUpdateAction, Excalidraw, getCommonBounds, getSceneVersion, newElementWith,
-  reconcileElements, restoreElements, sceneCoordsToViewportCoords, viewportCoordsToSceneCoords,
+  reconcileElements, restoreElements,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import type { AppState, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
@@ -12,14 +12,8 @@ import type {
 } from '@excalidraw/excalidraw/element/types';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { AgentDialog } from '../agents/AgentDialog';
-import { addAttachments, type Attachment } from '../sleepy/chat/composerScratch';
 import { openExternalUrl } from '../../lib/desktop';
-import { registerPinchTarget } from '../../lib/excalidrawPinch';
-import { DEFAULT_WIDGET_SIZES, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
-import {
-  agentCardUnder, dropUnits, movedIds, refToken, restorePatches, snapshotElement, type DropUnit, type PreGesture,
-} from './agentDrop';
-import { boardAgentScratchId } from './boardAgentScratch';
+import { DEFAULT_WIDGET_SIZES, isCardColor, type CardColor, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
 import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
 import { usePagePopup } from './PagePopup';
 import { IMAGES_LATER_MESSAGE, reconcileRemoteScene, stripImageElements } from './sceneSync';
@@ -28,10 +22,14 @@ import {
   WIDGET_STROKE, hasWidgetStroke, humaniseSlug, isWidgetLink, newElementId, readWidgetPayload, selectionIsOnlyWidgets,
   widgetLink,
 } from './widgetModel';
-import {
-  isPresetBox, placeNewWidget, placeSizePicker, resizeInPlace, snapAfterGesture, widgetSizeOf, type WidgetGeometry,
-} from './widgetSize';
+import { placeNewWidget, widgetSizeOf } from './widgetSize';
 import { WidgetSizePicker } from './WidgetSizePicker';
+import {
+  dropOnAgentCard, linkOpenerId, samePicker, setWidgetColor, setWidgetSize, sizePickerFor, subscribeWidgetActivation,
+  subscribeWidgetSnapping, type AgentDropHandler, type SizePickerState,
+} from './canvasGestures';
+import { useCanvasPalette } from './useCanvasPalette';
+import { useCanvasWrapEffects } from './useCanvasWrapEffects';
 import { WhiteboardHostContext, useDataTheme, useWbText, type WhiteboardHost } from './whiteboardHost';
 import { WIDGET_REGISTRY } from './widgets/registry';
 import { WidgetFrame, WidgetNotice } from './widgets/WidgetFrame';
@@ -71,37 +69,6 @@ export interface WhiteboardCanvasProps {
   onInternalLink?: (kind: string, id: string) => void;
 }
 
-interface PaletteState {
-  left: number;
-  top: number;
-  scene: { x: number; y: number };
-  /** The right-click that opened it, so "Canvas menu" can hand it back to Excalidraw. */
-  origin?: { target: EventTarget; clientX: number; clientY: number };
-}
-
-/** The selected widget's size control, in the canvas wrapper's pixel space. */
-interface SizePickerState {
-  id: string;
-  left: number;
-  top: number;
-  size: WidgetSize;
-  /** The box was dragged to a free-form size: no preset is current, and every one applies. */
-  custom: boolean;
-}
-
-/** An element's box and version at pointer-down: what a gesture is measured against. */
-type GestureSnapshot = Map<string, WidgetGeometry & { version: number }>;
-
-/** A finished drag, measured at pointer-up: what an agent-card drop is decided on. */
-interface DragEnd {
-  /** Every element as it was at pointer-down (copies: Excalidraw mutates during a drag). */
-  pre: ReadonlyMap<string, PreGesture>;
-  /** Where the pointer was released, in scene coordinates. */
-  point: { x: number; y: number };
-}
-
-/** Takes the drag as a drop onto an agent card, or answers false to leave it to snapping. */
-type AgentDropHandler = (api: ExcalidrawImperativeAPI, drag: DragEnd) => boolean;
 
 const UI_OPTIONS = {
   tools: { image: false },
@@ -114,11 +81,6 @@ const UI_OPTIONS = {
   },
 } as const;
 
-const PALETTE_W = 280;
-/** Gap between a selected widget's bottom edge and its size control, in screen px. */
-const SIZE_PICKER_GAP = 10;
-const PALETTE_H = 380;
-const HIT_SLOP_PX = 4;
 
 /**
  * The editable whiteboard (D9). A separate component from the read-only viewer
@@ -134,12 +96,10 @@ const HIT_SLOP_PX = 4;
 export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSceneChange, onInternalLink }: WhiteboardCanvasProps) {
   const tx = useWbText();
   const theme = useDataTheme();
-  const { bus } = useVault();
+  const { bus, vault } = useVault();
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const lastVersion = useRef<number>(-1);
-  const passThrough = useRef(false);
-  const [palette, setPalette] = useState<PaletteState | null>(null);
   const [sizePicker, setSizePicker] = useState<SizePickerState | null>(null);
   /** The selection is only widgets: Excalidraw's properties panel and link popup are hidden. */
   const [widgetsOnly, setWidgetsOnly] = useState(false);
@@ -230,43 +190,12 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
 
   // ── drag-to-ask: an element dropped on an agent card goes back and becomes a chip there ──
   const boardSlugRef = useRef(boardSlug);
+  const vaultRef = useRef(vault);
+  vaultRef.current = vault;
   boardSlugRef.current = boardSlug;
   const agentDrop = useCallback<AgentDropHandler>((api, drag) => {
-    const all = api.getSceneElementsIncludingDeleted();
-    const moved = movedIds(drag.pre, all);
-    if (!moved || moved.size === 0) return false;
-    const card = agentCardUnder(all, moved, drag.point);
-    if (!card) return false;
-    // What the owner dragged, not the bound text and arrows that followed it.
-    const selected = api.getAppState().selectedElementIds;
-    const dragged = new Set([...moved].filter((id) => selected[id]));
-    const chips = dropUnits(all, dragged.size > 0 ? dragged : moved).flatMap((unit): Attachment[] => {
-      const path = refToken(boardSlugRef.current, unit.id);
-      return path ? [{ id: newElementId(), kind: 'ref', name: chipName(unit, txRef.current), path }] : [];
-    });
-    if (chips.length === 0) return false;
-    const patches = restorePatches(drag.pre, all, moved);
-    // Runs inside Excalidraw's pointer-up, BEFORE it commits the drag (agentDrop.ts, "Undo"). The
-    // restore is NEVER, so the store snapshot keeps the pre-drag elements; the activation is a
-    // plain state change. Excalidraw's own commit then records the drag as a selection change to
-    // the card and nothing else: no entry anywhere holds the move.
-    api.updateScene({
-      elements: all.map((el) => {
-        const patch = patches.get(el.id);
-        return patch ? newElementWith(el, patch as never) : el;
-      }),
-      captureUpdate: CaptureUpdateAction.NEVER,
-    });
-    addAttachments(boardAgentScratchId(boardSlugRef.current, card.id), chips);
-    if (card.type === 'embeddable') {
-      api.updateScene({
-        appState: {
-          activeEmbeddable: { element: card as NonDeleted<ExcalidrawEmbeddableElement>, state: 'active' },
-          selectedElementIds: { [card.id]: true },
-        },
-      });
-    }
-    return true;
+    const vaultNow = vaultRef.current;
+    return !!vaultNow && dropOnAgentCard(api, drag, { vault: vaultNow, board: boardSlugRef.current, tx: txRef.current });
   }, []);
   const agentDropRef = useRef(agentDrop);
   agentDropRef.current = agentDrop;
@@ -395,155 +324,18 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
     setPalette(null);
   }, []);
 
-  // ── the size control (A17): S / M / L / XL on the selected widget ─────────────────────────
-  const setWidgetSize = useCallback((elementId: string, size: WidgetSize) => {
-    const api = apiRef.current;
-    if (!api) return;
-    const all = api.getSceneElementsIncludingDeleted();
-    const cur = all.find((el) => el.id === elementId);
-    const payload = readWidgetPayload(cur);
-    if (!cur || cur.isDeleted || !payload) return;
-    const { size: _size, ...box } = resizeInPlace(cur, size);
-    const next = newElementWith(cur, { ...box, customData: { ...(cur.customData ?? {}), dc: { ...payload, size } } });
-    const active = api.getAppState().activeEmbeddable;
-    api.updateScene({
-      elements: all.map((el) => (el.id === elementId ? next : el)),
-      // An active widget stays active (Excalidraw compares the element by reference).
-      ...(active?.element.id === elementId
-        ? { appState: { activeEmbeddable: { element: next, state: active.state } } }
-        : {}),
-      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-    });
+  // ── the size control (A17) and a card's colour: canvasGestures.ts ──────────────────────────
+  const setSize = useCallback((elementId: string, size: WidgetSize) => {
+    if (apiRef.current) setWidgetSize(apiRef.current, elementId, size);
+  }, []);
+  const setColor = useCallback((elementId: string, color: CardColor | null) => {
+    if (apiRef.current) setWidgetColor(apiRef.current, elementId, color);
   }, []);
 
   // ── right-click: empty canvas → our palette, an element → Excalidraw's menu (D8) ──────────
-  const sceneAt = useCallback((clientX: number, clientY: number) => {
-    const api = apiRef.current;
-    if (!api) return null;
-    return viewportCoordsToSceneCoords({ clientX, clientY }, api.getAppState());
-  }, []);
+  const { palette, setPalette, openCanvasMenu, openPaletteFromButton } = useCanvasPalette(wrapRef, apiRef);
 
-  const hitsElement = useCallback((clientX: number, clientY: number) => {
-    const api = apiRef.current;
-    const p = sceneAt(clientX, clientY);
-    if (!api || !p) return true; // unsure: leave it to Excalidraw
-    const slop = HIT_SLOP_PX / api.getAppState().zoom.value;
-    return api.getSceneElements().some((el) => {
-      const [x1, y1, x2, y2] = getCommonBounds([el]);
-      return p.x >= x1 - slop && p.x <= x2 + slop && p.y >= y1 - slop && p.y <= y2 + slop;
-    });
-  }, [sceneAt]);
-
-  const placePalette = useCallback((clientX: number, clientY: number) => {
-    const rect = wrapRef.current?.getBoundingClientRect();
-    if (!rect) return { left: 0, top: 0 };
-    return {
-      left: Math.max(0, Math.min(clientX - rect.left, rect.width - PALETTE_W)),
-      top: Math.max(0, Math.min(clientY - rect.top, rect.height - PALETTE_H)),
-    };
-  }, []);
-
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const onContextMenu = (e: MouseEvent) => {
-      if (passThrough.current) { passThrough.current = false; return; }
-      const target = e.target as HTMLElement | null;
-      if (!target || target.tagName !== 'CANVAS') return; // toolbars, menus, widgets: untouched
-      if (hitsElement(e.clientX, e.clientY)) return; // Excalidraw's element menu
-      const scene = sceneAt(e.clientX, e.clientY);
-      if (!scene) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setPalette({
-        ...placePalette(e.clientX, e.clientY),
-        scene,
-        origin: { target, clientX: e.clientX, clientY: e.clientY },
-      });
-    };
-    wrap.addEventListener('contextmenu', onContextMenu, true);
-    return () => wrap.removeEventListener('contextmenu', onContextMenu, true);
-  }, [hitsElement, sceneAt, placePalette]);
-
-  const openCanvasMenu = useCallback(() => {
-    const origin = palette?.origin;
-    setPalette(null);
-    if (!origin) return;
-    passThrough.current = true;
-    origin.target.dispatchEvent(new MouseEvent('contextmenu', {
-      bubbles: true, cancelable: true, button: 2, clientX: origin.clientX, clientY: origin.clientY, view: window,
-    }));
-    passThrough.current = false;
-  }, [palette]);
-
-  const openPaletteFromButton = useCallback(() => {
-    const rect = wrapRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const scene = sceneAt(cx, cy);
-    if (!scene) return;
-    setPalette({ left: Math.max(0, rect.width - PALETTE_W - 16), top: 56, scene });
-  }, [sceneAt]);
-
-  // ── "Click to interact" (A18): Excalidraw sets the hover state from the canvas's own
-  // pointermove and clears it only on the next one, so a pointer that leaves a widget straight
-  // off the canvas (onto the sidebar, a toolbar, the size control) left the hint up. Any move
-  // over something that is not the canvas, or out of the wrapper, clears it here.
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const clearHover = () => {
-      const api = apiRef.current;
-      if (api?.getAppState().activeEmbeddable?.state !== 'hover') return;
-      api.updateScene({ appState: { activeEmbeddable: null } });
-    };
-    const onMove = (e: PointerEvent) => {
-      if ((e.target as HTMLElement | null)?.tagName !== 'CANVAS') clearHover();
-    };
-    wrap.addEventListener('pointerleave', clearHover);
-    wrap.addEventListener('pointermove', onMove, true);
-    return () => {
-      wrap.removeEventListener('pointerleave', clearHover);
-      wrap.removeEventListener('pointermove', onMove, true);
-    };
-  }, []);
-
-  // ── A scroll that pans the board stays with the board. An active widget takes pointer
-  // events, and over an HTML or web block the wheel lands in the iframe's own document, which
-  // never hands it back: a pan that drifted onto one stopped dead. While a pan is running
-  // (a wheel that hit the canvas, momentum included) widgets let the wheel through; the latch
-  // drops once the wheel has been quiet for WHEEL_LATCH_MS.
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    let timer = 0;
-    const onWheel = (e: WheelEvent) => {
-      if (!wrap.classList.contains(WHEEL_LATCH_CLASS) && (e.target as HTMLElement | null)?.tagName !== 'CANVAS') return;
-      wrap.classList.add(WHEEL_LATCH_CLASS);
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => wrap.classList.remove(WHEEL_LATCH_CLASS), WHEEL_LATCH_MS);
-    };
-    wrap.addEventListener('wheel', onWheel, { capture: true, passive: true });
-    return () => {
-      wrap.removeEventListener('wheel', onWheel, { capture: true });
-      window.clearTimeout(timer);
-      wrap.classList.remove(WHEEL_LATCH_CLASS);
-    };
-  }, []);
-
-  // ── pinch scoped to this board (see lib/excalidrawPinch.ts) ───────────────────────────────
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    return registerPinchTarget({
-      el,
-      getViewport: () => apiRef.current?.getAppState() ?? null,
-      setViewport: (patch) => apiRef.current?.updateScene({
-        appState: patch as unknown as Pick<AppState, 'scrollX' | 'scrollY' | 'zoom'>,
-      }),
-    });
-  }, []);
+  useCanvasWrapEffects(wrapRef, apiRef);
 
   // ── element links (D3): preventDefault first, then route ──────────────────────────────────
   const onLinkOpen = useCallback((element: { id?: string; link?: string | null }, event: { preventDefault(): void }) => {
@@ -587,7 +379,11 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
     const size = widgetSizeOf(payload.size, element.width, element.height);
     // Keyed by what makes a widget a different thing, so e.g. a web widget whose URL changed
     // under it does not keep the previous URL's "loaded" state.
-    return <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} height={element.height} />;
+    const widget = <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} height={element.height} />;
+    // The wrapper takes no box (`display: contents`); it carries the card's colour, which the
+    // card's own CSS mixes into its surface (widgets.css). Always there, so a colour change
+    // never remounts the widget (an agent card would lose its session).
+    return <div className="wb-widget-tint" data-card-color={isCardColor(payload.color) ? payload.color : undefined}>{widget}</div>;
   }, []);
 
   const renderTopRightUI = useCallback(() => (
@@ -612,11 +408,14 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
         />
         {sizePicker && (
           <WidgetSizePicker
+            key={sizePicker.id}
             left={sizePicker.left}
             top={sizePicker.top}
             size={sizePicker.size}
             custom={sizePicker.custom}
-            onPick={(size) => setWidgetSize(sizePicker.id, size)}
+            color={sizePicker.color}
+            onPick={(size) => setSize(sizePicker.id, size)}
+            onColor={(color) => setColor(sizePicker.id, color)}
           />
         )}
         {palette && (
@@ -642,180 +441,4 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, onSce
       </div>
     </WhiteboardHostContext.Provider>
   );
-}
-
-/**
- * Grid snapping (A17), once per gesture: a snapshot of every element's box at pointer-down,
- * compared at pointer-up (a frame later, once Excalidraw has committed the gesture). Only
- * widgets the gesture moved or resized snap; free drawing is never touched, and a move that
- * also carried free drawing does not snap (it would tear the widget from what moved with it).
- * `snapAfterGesture` answers null for a widget already in place, so the snap never re-triggers.
- */
-function subscribeWidgetSnapping(api: ExcalidrawImperativeAPI, agentDrop: AgentDropHandler): (() => void)[] {
-  let before: GestureSnapshot | null = null;
-  let pre: Map<string, PreGesture> | null = null;
-  let frame = 0;
-  const offDown = api.onPointerDown(() => {
-    before = new Map();
-    pre = new Map();
-    // Deleted ones too: an element the gesture did not create is never "new" to the drop check.
-    for (const el of api.getSceneElementsIncludingDeleted()) {
-      if (!el.isDeleted) before.set(el.id, { x: el.x, y: el.y, width: el.width, height: el.height, version: el.version });
-      pre.set(el.id, snapshotElement(el));
-    }
-  });
-  const offUp = api.onPointerUp((activeTool, pointerDownState, event) => {
-    const snapshot = before;
-    const preGesture = pre;
-    before = null;
-    pre = null;
-    if (!snapshot || !preGesture) return;
-    // A plain move with the selection tool is the only gesture that can be a drop.
-    const isMove = activeTool.type === 'selection' && pointerDownState.drag.hasOccurred
-      && !pointerDownState.resize.handleType && !pointerDownState.boxSelection.hasOccurred;
-    // Synchronous, never a frame later: Excalidraw commits the drag right after this callback,
-    // and a drop must be in place before it does (agentDrop.ts, "Undo"). A dropped widget goes
-    // back where it was and is not snapped.
-    if (isMove) {
-      const point = viewportCoordsToSceneCoords({ clientX: event.clientX, clientY: event.clientY }, api.getAppState());
-      if (agentDrop(api, { pre: preGesture, point })) return;
-    }
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => snapWidgets(api, snapshot));
-  });
-  return [offDown, offUp, () => cancelAnimationFrame(frame)];
-}
-
-function snapWidgets(api: ExcalidrawImperativeAPI, before: GestureSnapshot): void {
-  const all = api.getSceneElementsIncludingDeleted();
-  const changed = all.filter((el) => !el.isDeleted && before.get(el.id) && before.get(el.id)!.version !== el.version);
-  if (changed.length === 0) return;
-  const snapMove = changed.every((el) => readWidgetPayload(el) !== null);
-  const patches = new Map<string, ExcalidrawElement>();
-  for (const el of changed) {
-    const payload = readWidgetPayload(el);
-    if (!payload || el.type !== 'embeddable' || el.angle) continue;
-    const snap = snapAfterGesture(before.get(el.id)!, el, payload.size, { snapMove });
-    if (!snap) continue;
-    const { size, ...box } = snap;
-    patches.set(el.id, newElementWith(el, { ...box, customData: { ...(el.customData ?? {}), dc: { ...payload, size } } }));
-  }
-  if (patches.size === 0) return;
-  const active = api.getAppState().activeEmbeddable;
-  const activeNext = active ? patches.get(active.element.id) : undefined;
-  api.updateScene({
-    elements: all.map((el) => patches.get(el.id) ?? el),
-    ...(active && activeNext
-      ? { appState: { activeEmbeddable: { element: activeNext as NonDeleted<ExcalidrawEmbeddableElement>, state: active.state } } }
-      : {}),
-    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-  });
-}
-
-/**
- * One click to interact (A18): Excalidraw activates an embeddable only on a click in its centre
- * third, and that click never reaches the card, so ticking a todo took two clicks. Here a plain
- * click anywhere on an inactive widget (no drag, no resize handle, no modifier) activates it,
- * then the same click is handed to whatever sits under the pointer: a checkbox ticks, a button
- * fires, a field takes focus. The hand-off waits out Excalidraw's own centre-click activation
- * (a 100ms timer holding the element it hit), so a tick that replaces the element is not undone.
- */
-const CLICK_FORWARD_DELAY_MS = 120;
-
-/** The board's wheel latch: on the canvas wrapper while a pan runs (WhiteboardCanvas.css). A
- *  trackpad's momentum fires every ~16ms, so a gap this long means the gesture is over. */
-const WHEEL_LATCH_CLASS = 'wb-canvas-wrap--wheeling';
-const WHEEL_LATCH_MS = 250;
-
-function subscribeWidgetActivation(api: ExcalidrawImperativeAPI): (() => void)[] {
-  let timer = 0;
-  const off = api.onPointerUp((activeTool, pointerDownState, event) => {
-    if (activeTool.type !== 'selection' || event.button !== 0) return;
-    if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (pointerDownState.drag.hasOccurred || pointerDownState.resize.handleType || pointerDownState.boxSelection.hasOccurred) return;
-    const hitId = pointerDownState.hit.element?.id;
-    if (!hitId) return;
-    const el = api.getSceneElements().find((e) => e.id === hitId);
-    if (!el || el.type !== 'embeddable' || el.angle || !readWidgetPayload(el)) return;
-    const current = api.getAppState().activeEmbeddable;
-    if (current?.element.id === el.id && current.state === 'active') return;
-    api.updateScene({
-      appState: {
-        activeEmbeddable: { element: el as NonDeleted<ExcalidrawEmbeddableElement>, state: 'active' },
-        selectedElementIds: { [el.id]: true },
-      },
-    });
-    const { clientX, clientY } = event;
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => forwardClick(clientX, clientY), CLICK_FORWARD_DELAY_MS);
-  });
-  return [off, () => window.clearTimeout(timer)];
-}
-
-/** Hands an activating click to the widget control under the pointer. A field takes focus;
- *  anything else inside a widget card gets a click (a label ticks its checkbox). */
-function forwardClick(clientX: number, clientY: number): void {
-  const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
-  if (!target || !target.closest('.wb-widget') || target.tagName === 'IFRAME') return;
-  if (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== 'checkbox' && target.type !== 'radio')) {
-    target.focus();
-    return;
-  }
-  target.click();
-}
-
-/** English names for a chip's kind; the app's strings file may translate them. */
-const DROP_KIND_FALLBACK: Readonly<Record<string, string>> = {
-  insight: 'Insight', knowledge: 'Knowledge', task: 'Task', todo: 'Todo', note: 'Note', html: 'HTML block', web: 'Web',
-  wiki: 'Wiki', 'lab-card': 'Lab card', agent: 'Agent', text: 'Text', arrow: 'Arrow', line: 'Line',
-  freedraw: 'Drawing', frame: 'Frame', shape: 'Shape',
-};
-
-/** A drop chip's label, `<Kind> · <title>`, or just the kind for an untitled element. Any other
- *  element type (rectangle, ellipse, …) reads as a shape. */
-function chipName(unit: DropUnit, tx: (key: string, fallback: string) => string): string {
-  const kind = unit.kind in DROP_KIND_FALLBACK ? unit.kind : 'shape';
-  const label = tx(`whiteboard.drop.kind.${kind}`, DROP_KIND_FALLBACK[kind]!);
-  return unit.title ? `${label} · ${unit.title}` : label;
-}
-
-/** The element whose hyperlink popup was clicked: the one selected element carrying that link
- *  (the popup anchor hands over only the href). */
-function linkOpenerId(api: ExcalidrawImperativeAPI | null, link: string | null | undefined): string | undefined {
-  if (!api || !link) return undefined;
-  const selected = api.getAppState().selectedElementIds;
-  const hits = api.getSceneElements().filter((el) => selected[el.id] && el.link === link);
-  return hits.length === 1 ? hits[0]!.id : undefined;
-}
-
-/** Where the size control goes: under the one selected, unrotated widget, and nowhere while a
- *  drag, resize or rotation is in progress. */
-function sizePickerFor(elements: readonly OrderedExcalidrawElement[], appState: AppState): SizePickerState | null {
-  if (appState.selectedElementsAreBeingDragged || appState.isResizing || appState.isRotating) return null;
-  const ids = Object.keys(appState.selectedElementIds).filter((id) => appState.selectedElementIds[id]);
-  if (ids.length !== 1) return null;
-  const el = elements.find((e) => e.id === ids[0]);
-  if (!el || el.isDeleted || el.type !== 'embeddable' || el.angle) return null;
-  const payload = readWidgetPayload(el);
-  if (!payload) return null;
-  const tl = sceneCoordsToViewportCoords({ sceneX: el.x, sceneY: el.y }, appState);
-  const br = sceneCoordsToViewportCoords({ sceneX: el.x + el.width, sceneY: el.y + el.height }, appState);
-  const at = placeSizePicker(
-    {
-      left: tl.x - appState.offsetLeft,
-      top: tl.y - appState.offsetTop,
-      right: br.x - appState.offsetLeft,
-      bottom: br.y - appState.offsetTop,
-    },
-    { width: appState.width, height: appState.height },
-    SIZE_PICKER_GAP,
-  );
-  const size = widgetSizeOf(payload.size, el.width, el.height);
-  return { id: el.id, ...at, size, custom: !isPresetBox(el.width, el.height, size) };
-}
-
-function samePicker(a: SizePickerState | null, b: SizePickerState | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return a.id === b.id && a.left === b.left && a.top === b.top && a.size === b.size && a.custom === b.custom;
 }

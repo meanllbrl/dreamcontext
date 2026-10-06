@@ -20,12 +20,36 @@
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
+/* A card's colour (owner, 2026-10-05): the hue mixed a little into the card's surface and
+   further into its border, text unchanged (pattern: tinted surface, not filled swatch). The
+   wrapper is `display: contents`, so the card still fills the element's box. The swatches in
+   the size control (WhiteboardCanvas.css) read the same hues. */
+.wb-widget-tint {
+  display: contents;
+}
+
+[data-card-color='grey'] { --wb-card-hue: var(--chart-6); }
+[data-card-color='blue'] { --wb-card-hue: var(--chart-2); }
+[data-card-color='red'] { --wb-card-hue: var(--chart-3); }
+[data-card-color='yellow'] { --wb-card-hue: var(--chart-5); }
+[data-card-color='green'] { --wb-card-hue: var(--chart-4); }
+[data-card-color='pink'] { --wb-card-hue: var(--chart-7); }
+[data-card-color='purple'] { --wb-card-hue: var(--chart-1); }
+[data-card-color='cyan'] { --wb-card-hue: var(--chart-8); }
+
+.wb-widget-tint[data-card-color] > .wb-widget {
+  background: color-mix(in srgb, var(--wb-card-hue) 12%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--wb-card-hue) 45%, var(--color-border));
+}
+
 .wb-widget.is-active {
   border-color: var(--color-border-focus);
   box-shadow: var(--shadow-lg), var(--shadow-glow);
 }
 
-/* A quiet header: kind and title in one line of small secondary text, no band, no rule. */
+/* The header: the card's title as a heading in one line, no band, no rule. The kind label
+   (small caps) shows only when there is no title, or beside it when it says something the
+   title does not ("PDF"). */
 .wb-widget-head {
   display: flex;
   align-items: center;
@@ -52,8 +76,9 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
 }
 
 .wb-widget-actions {
@@ -461,10 +486,20 @@
 }
 
 /* HTML block */
+/* The block's box: the card body, whole. The frame inside is laid out at box / scale and
+   drawn at scale (HtmlWidget.tsx), so a long block shows whole instead of cut off. */
+.wb-html-fit {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 .wb-html-frame {
   display: block;
   width: 100%;
   border: none;
+  transform-origin: 0 0;
 }
 
 .wb-html-body {

@@ -16,10 +16,19 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
 }));
 
 /** Every createChatSession call, with the fake session it returned. */
-const spawned: Array<{ args: unknown[]; session: { claudeId: string; scratchId?: string; dispose: ReturnType<typeof vi.fn> } }> = [];
+const spawned: Array<{ args: unknown[]; session: { claudeId: string; scratchId?: string; dispose: ReturnType<typeof vi.fn>; busy: boolean; asking: boolean; emit: () => void } }> = [];
 vi.mock('../../dashboard/src/components/sleepy/chatSession.js', () => ({
   createChatSession: (...args: unknown[]) => {
-    const session = { claudeId: args[3] as string, dispose: vi.fn() };
+    const listeners = new Set<() => void>();
+    const session = {
+      claudeId: args[3] as string,
+      dispose: vi.fn(),
+      busy: false,
+      asking: false,
+      subscribe: (cb: () => void) => { listeners.add(cb); return () => { listeners.delete(cb); }; },
+      /** Test hook: the session says it changed (busy, asking). */
+      emit: () => { for (const cb of [...listeners]) cb(); },
+    };
     spawned.push({ args, session });
     return session;
   },
@@ -34,7 +43,8 @@ vi.stubGlobal('localStorage', {
 
 const {
   boardAgentScratchId, dropBoardAgentScratch, openCardSession, peekCardSession, subscribeCardSession,
-  cardHasConversation, cardConversationKey,
+  cardHasConversation, cardConversationKey, homeCardId, adoptHomeConversation,
+  sweepHomeSessions, markHomeCard, cardScratchId, isPrimaryHomeCard, cardElementKey, adoptBoardCards, boardCardsAdopted,
 } = await import('../../dashboard/src/components/whiteboard/boardAgentScratch.js');
 
 describe('agentCardState', () => {
@@ -96,7 +106,7 @@ describe("the card's own session", () => {
     expect(args[10]).toBe('basic');
     expect(args[13]).toEqual({ agent: 'growth-helper', board: 'q3-plan' });
     expect(store.get(cardConversationKey(card))).toBe(s.claudeId);
-    expect(s.scratchId).toBe(boardAgentScratchId('q3-plan', 'card-1'));
+    expect(s.scratchId).toBe(boardAgentScratchId('acme', 'q3-plan', 'card-1'));
     expect(peekCardSession(card)).toBe(s);
     expect(cardHasConversation(card)).toBe(true);
   });
@@ -144,6 +154,243 @@ describe("the card's own session", () => {
   });
 });
 
+describe("a board's home conversations (the agent panel and the home agent's card)", () => {
+  const board = { vault: 'acme', board: 'q3-plan' };
+  const home = (agent: string) => ({ ...board, elementId: homeCardId(agent) });
+  const openHome = (agent: string) => openCardSession({ ...home(agent), agent, model: '', effort: '' });
+
+  beforeEach(() => {
+    dropBoardAgentScratch();
+    spawned.length = 0;
+    store.clear();
+  });
+
+  it('are one per agent: two home agents on one board never share a session', () => {
+    const a = openHome('growth-helper');
+    const b = openHome('ops-desk');
+    expect(a.claudeId).not.toBe(b.claudeId);
+    expect(spawned[1].args[13]).toEqual({ agent: 'ops-desk', board: 'q3-plan' });
+    expect(peekCardSession(home('growth-helper'))).toBe(a);
+  });
+
+  it('survive the page leaving with keepHome; every other card still ends', () => {
+    const h = openHome('growth-helper');
+    const card = openCardSession({ ...board, elementId: 'card-1', agent: 'other', model: '', effort: '' });
+    const hb = boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper'));
+    const cb = boardAgentScratchId('acme', 'q3-plan', 'card-1');
+    __resetScratchForTests();
+    addAttachments(hb, [{ id: nextAttachmentId(), kind: 'ref', name: 'n', path: 'dcref:wb/q3-plan/n1' }]);
+    addAttachments(cb, [{ id: nextAttachmentId(), kind: 'ref', name: 'n', path: 'dcref:wb/q3-plan/n2' }]);
+
+    dropBoardAgentScratch({ keepHome: true });
+    expect(h.dispose).not.toHaveBeenCalled();
+    expect(peekCardSession(home('growth-helper'))).toBe(h);
+    expect(readScratch(hb).attachments).toHaveLength(1);
+    expect(card.dispose).toHaveBeenCalledTimes(1);
+    expect(peekCardSession({ ...board, elementId: 'card-1' })).toBeNull();
+    expect(readScratch(cb).attachments).toHaveLength(0);
+
+    // Back on the page: the same live session, no new spawn.
+    expect(openHome('growth-helper')).toBe(h);
+    expect(spawned).toHaveLength(2);
+
+    dropBoardAgentScratch();
+    expect(h.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a project closing ends its own home sessions only', () => {
+    const mine = openHome('growth-helper');
+    const theirs = openCardSession({ vault: 'globex', board: 'q3-plan', elementId: homeCardId('growth-helper'), agent: 'growth-helper', model: '', effort: '' });
+    dropBoardAgentScratch({ vault: 'acme' });
+    expect(mine.dispose).toHaveBeenCalledTimes(1);
+    expect(peekCardSession(home('growth-helper'))).toBeNull();
+    expect(theirs.dispose).not.toHaveBeenCalled();
+    // Leaving one project's page keeps the other project's cards too.
+    const card = openCardSession({ vault: 'globex', board: 'q3-plan', elementId: 'card-1', agent: 'x', model: '', effort: '' });
+    dropBoardAgentScratch({ vault: 'acme', keepHome: true });
+    expect(card.dispose).not.toHaveBeenCalled();
+  });
+
+  it('the sweep keeps the wanted ones, ends idle others, and ends a busy one once it goes idle', async () => {
+    const wanted = (b: string, agent: string) => b === 'q3-plan' && agent === 'growth-helper';
+    const keep = openHome('growth-helper');
+    const idle = openCardSession({ ...board, board: 'growth', elementId: homeCardId('scout'), agent: 'scout', model: '', effort: '' });
+    const busy = openCardSession({ ...board, board: 'old', elementId: homeCardId('busy'), agent: 'busy', model: '', effort: '' }) as unknown as typeof spawned[number]['session'];
+    busy.busy = true;
+    const notHome = openCardSession({ ...board, elementId: 'card-1', agent: 'x', model: '', effort: '' });
+    const heard: string[] = [];
+    subscribeCardSession({ ...board, board: 'growth', elementId: homeCardId('scout') }, () => heard.push('scout'));
+
+    sweepHomeSessions('acme', wanted);
+    expect(keep.dispose).not.toHaveBeenCalled();
+    expect(idle.dispose).toHaveBeenCalledTimes(1);
+    expect(heard).toEqual(['scout']);
+    expect(busy.dispose).not.toHaveBeenCalled();
+    expect(notHome.dispose).not.toHaveBeenCalled();
+
+    // No second sweep: the busy one ends by itself once its turn is over.
+    busy.emit();
+    await Promise.resolve();
+    expect(busy.dispose).not.toHaveBeenCalled();
+    busy.busy = false;
+    busy.emit();
+    await Promise.resolve();
+    expect(busy.dispose).toHaveBeenCalledTimes(1);
+    // Another project's sweep touches nothing here.
+    sweepHomeSessions('globex', () => false);
+    expect(keep.dispose).not.toHaveBeenCalled();
+  });
+
+  it('a busy one a newer sweep wants again is no longer ended', async () => {
+    const s = openCardSession({ ...board, board: 'growth', elementId: homeCardId('scout'), agent: 'scout', model: '', effort: '' }) as unknown as typeof spawned[number]['session'];
+    s.asking = true;
+    sweepHomeSessions('acme', () => false);
+    sweepHomeSessions('acme', (b) => b === 'growth');
+    s.asking = false;
+    s.emit();
+    await Promise.resolve();
+    expect(s.dispose).not.toHaveBeenCalled();
+  });
+
+  it('an ended conversation that a card still listens to is heard reopening (never a stuck Loading)', () => {
+    const spec = { ...board, board: 'growth', elementId: homeCardId('scout') };
+    let heard = 0;
+    subscribeCardSession(spec, () => { heard += 1; });
+    openCardSession({ ...spec, agent: 'scout', model: '', effort: '' });
+    sweepHomeSessions('acme', () => false);
+    expect(peekCardSession(spec)).toBeNull();
+    const before = heard;
+    const again = openCardSession({ ...spec, agent: 'scout', model: '', effort: '' });
+    expect(heard).toBeGreaterThan(before);
+    expect(peekCardSession(spec)).toBe(again);
+  });
+
+  it('the sweep also releases an unwanted home draft that never had a session', () => {
+    __resetScratchForTests();
+    const id = boardAgentScratchId('acme', 'old', homeCardId('ghost'));
+    addAttachments(id, [{ id: nextAttachmentId(), kind: 'ref', name: 'n', path: 'dcref:wb/old/n1' }]);
+    const keptId = boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper'));
+    addAttachments(keptId, [{ id: nextAttachmentId(), kind: 'ref', name: 'n', path: 'dcref:wb/q3-plan/n1' }]);
+    sweepHomeSessions('acme', (b, agent) => b === 'q3-plan' && agent === 'growth-helper');
+    expect(readScratch(id).attachments).toHaveLength(0);
+    expect(readScratch(keptId).attachments).toHaveLength(1);
+  });
+
+  it("an element dropped on a home agent's card goes to the home conversation's composer", () => {
+    expect(cardScratchId('acme', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('acme', 'q3-plan', 'card-1'));
+    const forget = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
+    expect(cardScratchId('acme', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper')));
+    // Another project's board of the same name is not this card.
+    expect(cardScratchId('globex', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('globex', 'q3-plan', 'card-1'));
+    forget();
+    expect(cardScratchId('acme', 'q3-plan', 'card-1')).toBe(boardAgentScratchId('acme', 'q3-plan', 'card-1'));
+  });
+
+  it("two cards of one home agent: the first draws the chat, the other takes over when it goes", () => {
+    const one = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
+    const two = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper');
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(true);
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(false);
+    one();
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(true);
+    two();
+  });
+
+  it('a card not yet marked is never primary, so it cannot mount the chat before the pick', () => {
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(false);
+    const one = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(false);
+    one();
+  });
+
+  it('an M+ card draws the chat over an S card seen first; all S, the first seen', () => {
+    const s1 = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper', true);
+    const s2 = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper', true);
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(true);
+    const m = markHomeCard('acme', 'q3-plan', 'card-3', 'growth-helper');
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-3')).toBe(true);
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(false);
+    for (const f of [s1, s2, m]) f();
+  });
+
+  it('the primary card stays primary across a scroll remount (the page keeps who came first)', () => {
+    const one = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
+    const two = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper');
+    one(); // card-1 scrolled out of view: card-2 draws the chat meanwhile
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(true);
+    const back = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-1')).toBe(true);
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(false);
+    back(); two();
+    // The page's drop forgets the order.
+    dropBoardAgentScratch({ vault: 'acme', keepHome: true });
+    const late = markHomeCard('acme', 'q3-plan', 'card-2', 'growth-helper');
+    const early = markHomeCard('acme', 'q3-plan', 'card-1', 'growth-helper');
+    expect(isPrimaryHomeCard('acme', 'q3-plan', 'growth-helper', 'card-2')).toBe(true);
+    late(); early();
+  });
+
+  it("a non-home card whose element id starts with home. never joins a home conversation", () => {
+    expect(cardElementKey('home.growth-helper')).toBe('card.home.growth-helper');
+    // card. ids are escaped too: a literal card.home.x never meets the escaped home.x.
+    expect(cardElementKey('card.home.growth-helper')).toBe('card.card.home.growth-helper');
+    expect(cardElementKey('card-1')).toBe('card-1');
+    expect(cardElementKey('card-1', 'growth-helper')).toBe(homeCardId('growth-helper'));
+    expect(cardScratchId('acme', 'q3-plan', 'home.growth-helper'))
+      .not.toBe(boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper')));
+  });
+
+  it('a busy one that went idle is not ended if a sweep wanted it back before the tick', async () => {
+    const s = openCardSession({ ...board, board: 'growth', elementId: homeCardId('scout'), agent: 'scout', model: '', effort: '' }) as unknown as typeof spawned[number]['session'];
+    s.busy = true;
+    let want = false;
+    sweepHomeSessions('acme', () => want);
+    s.busy = false;
+    s.emit();
+    want = true; // the owner opened that board again within the same tick
+    await Promise.resolve();
+    expect(s.dispose).not.toHaveBeenCalled();
+  });
+
+  it("a vault name holding | keeps its home cards apart from another project's", () => {
+    const forget = markHomeCard('a|b', 'c', 'card-1', 'growth-helper');
+    expect(cardScratchId('a|b', 'c', 'card-1')).toBe(boardAgentScratchId('a|b', 'c', homeCardId('growth-helper')));
+    expect(cardScratchId('a', 'b', 'card-1')).toBe(boardAgentScratchId('a', 'b', 'card-1'));
+    forget();
+  });
+
+  it("the board's file hands its cards' older conversations to the home keys before the panel opens", () => {
+    store.set(cardConversationKey({ ...board, elementId: 'card-1' }), 'old-conv');
+    expect(boardCardsAdopted('acme', 'q3-plan')).toBe(false);
+    adoptBoardCards('acme', 'q3-plan', [{ elementId: 'card-1', agent: 'growth-helper' }]);
+    expect(boardCardsAdopted('acme', 'q3-plan')).toBe(true);
+    expect(store.get(cardConversationKey(home('growth-helper')))).toBe('old-conv');
+    // The panel then resumes it rather than starting afresh.
+    const s = openHome('growth-helper');
+    expect(s.claudeId).toBe('old-conv');
+    expect(spawned[0].args[4]).toBe(true);
+    // Another project's same-named board is not read yet; the page's drop forgets this one.
+    expect(boardCardsAdopted('globex', 'q3-plan')).toBe(false);
+    dropBoardAgentScratch({ vault: 'acme', keepHome: true });
+    expect(boardCardsAdopted('acme', 'q3-plan')).toBe(false);
+  });
+
+  it("a card's older own conversation is adopted once, never over an existing home one", () => {
+    const card = { ...board, elementId: 'card-1' };
+    store.set(cardConversationKey(card), 'old-conv');
+    adoptHomeConversation(card, 'growth-helper');
+    expect(store.get(cardConversationKey(home('growth-helper')))).toBe('old-conv');
+
+    store.set(cardConversationKey({ ...board, elementId: 'card-2' }), 'other-conv');
+    adoptHomeConversation({ ...board, elementId: 'card-2' }, 'growth-helper');
+    expect(store.get(cardConversationKey(home('growth-helper')))).toBe('old-conv');
+
+    // The home card itself adopts nothing; another agent's home is its own.
+    adoptHomeConversation(home('growth-helper'), 'ops-desk');
+    expect(store.get(cardConversationKey(home('ops-desk')))).toBeUndefined();
+  });
+});
+
 describe('per-card composer buckets', () => {
   beforeEach(() => {
     __resetScratchForTests();
@@ -152,14 +399,41 @@ describe('per-card composer buckets', () => {
 
   const chip = (path: string) => ({ id: nextAttachmentId(), kind: 'ref' as const, name: 'Note · Plan', path });
 
-  it('are named wb-agent:<board>:<element id>, one per card', () => {
-    expect(boardAgentScratchId('q3-plan', 'card-1')).toBe('wb-agent:q3-plan:card-1');
-    expect(boardAgentScratchId('q3-plan', 'card-2')).not.toBe(boardAgentScratchId('q3-plan', 'card-1'));
+  it('are named wb-agent:<vault>:<board>:<element id>, one per card and per project', () => {
+    expect(boardAgentScratchId('acme', 'q3-plan', 'card-1')).toBe('wb-agent:acme:q3-plan:card-1');
+    expect(boardAgentScratchId('acme', 'q3-plan', 'card-2')).not.toBe(boardAgentScratchId('acme', 'q3-plan', 'card-1'));
+    expect(boardAgentScratchId('globex', 'q3-plan', 'card-1')).not.toBe(boardAgentScratchId('acme', 'q3-plan', 'card-1'));
+    expect(boardAgentScratchId('my:proj', 'q3-plan', 'card-1')).toBe('wb-agent:my%3Aproj:q3-plan:card-1');
+  });
+
+  it("a project's drop releases its buckets that never had a session, and only its own", () => {
+    const mine = boardAgentScratchId('acme', 'q3-plan', 'card-1');
+    const home = boardAgentScratchId('acme', 'q3-plan', homeCardId('growth-helper'));
+    const theirs = boardAgentScratchId('globex', 'q3-plan', 'card-1');
+    for (const id of [mine, home, theirs]) addAttachments(id, [chip('dcref:wb/q3-plan/n1')]);
+
+    dropBoardAgentScratch({ vault: 'acme', keepHome: true });
+    expect(readScratch(mine).attachments).toHaveLength(0);
+    expect(readScratch(home).attachments).toHaveLength(1);
+    expect(readScratch(theirs).attachments).toHaveLength(1);
+
+    dropBoardAgentScratch({ vault: 'acme' });
+    expect(readScratch(home).attachments).toHaveLength(0);
+    expect(readScratch(theirs).attachments).toHaveLength(1);
+  });
+
+  it("a card whose element id holds a colon is still its project's: that project's drop takes it", () => {
+    const odd = boardAgentScratchId('acme', 'q3-plan', 'x:y');
+    addAttachments(odd, [chip('dcref:wb/q3-plan/n1')]);
+    dropBoardAgentScratch({ vault: 'globex' });
+    expect(readScratch(odd).attachments).toHaveLength(1);
+    dropBoardAgentScratch({ vault: 'acme' });
+    expect(readScratch(odd).attachments).toHaveLength(0);
   });
 
   it('dropBoardAgentScratch releases every card bucket and nothing else', () => {
-    const a = boardAgentScratchId('q3-plan', 'card-1');
-    const b = boardAgentScratchId('growth', 'card-9');
+    const a = boardAgentScratchId('acme', 'q3-plan', 'card-1');
+    const b = boardAgentScratchId('globex', 'growth', 'card-9');
     addAttachments(a, [chip('dcref:wb/q3-plan/n1')]);
     addAttachments(b, [chip('dcref:wb/growth/n2')]);
     addAttachments('agents-channel', [chip('dcref:wb/q3-plan/n3')]);

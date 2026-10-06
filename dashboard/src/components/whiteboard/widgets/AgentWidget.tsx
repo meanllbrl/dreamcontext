@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useAutomations, type AutomationSummary } from '../../../hooks/useAutomations';
 import { useAgentModelConfig } from '../../../hooks/useAgentCapabilities';
@@ -14,8 +14,9 @@ import { isValidRefFor } from '../widgetModel';
 import { useWbText, useWhiteboardHost } from '../whiteboardHost';
 import { agentCardState, lastSaid, oneLine, type AgentCardState } from '../agentCardModel';
 import {
-  cardHasConversation, openCardSession, peekCardSession, subscribeCardSession, type CardSpec,
+  adoptHomeConversation, cardElementKey, isPrimaryHomeCard, markHomeCard, subscribeHomeCards, cardHasConversation, openCardSession, peekCardSession, subscribeCardSession, type CardSpec,
 } from '../boardAgentScratch';
+import { homeAgentsOf, panelAgentOf, setAgentPanelOpen, useAgentPanelOpen, usePanelPick } from '../agentPanelState';
 import { WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
 import './agentWidget.css';
@@ -81,10 +82,32 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
   const host = useWhiteboardHost();
   const { vault } = useVault();
   const slug = agent.slug;
-  const spec = useMemo<CardSpec | null>(
-    () => (vault && board ? { vault, board, elementId } : null),
-    [vault, board, elementId],
+  // The board's home agent talks in ONE conversation, shared with the agent panel beside the
+  // board (owner, 2026-10-05); any other agent card keeps its own.
+  const home = !!board && agent.whiteboard === board;
+  const small = size === 's';
+  const spec = useMemo<CardSpec | null>(() => {
+    if (!vault || !board) return null;
+    return { vault, board, elementId: cardElementKey(elementId, home ? slug : null) };
+  }, [vault, board, elementId, home, slug]);
+  // Declared before the lazy open below, so a card's older conversation is handed over first.
+  // A layout effect: the card is marked, and the primary pick re-rendered, before paint.
+  useLayoutEffect(() => {
+    if (!vault || !board || !home) return undefined;
+    adoptHomeConversation({ vault, board, elementId }, slug);
+    return markHomeCard(vault, board, elementId, slug, small);
+  }, [vault, board, elementId, home, slug, small]);
+  // Two cards of one home agent: one conversation, drawn on one; the other says so. A card is
+  // primary only once marked, so two never mount the one chat container at once.
+  const primary = useSyncExternalStore(
+    subscribeHomeCards,
+    () => !home || !vault || !board || isPrimaryHomeCard(vault, board, slug, elementId),
   );
+  // Stepped aside only while the panel shows THIS agent (a board can be home to several).
+  const { data: automations } = useAutomations();
+  const panelOpen = useAgentPanelOpen(vault);
+  const pick = usePanelPick(vault, board);
+  const inPanel = home && panelOpen && !!board && panelAgentOf(homeAgentsOf(automations, board), pick)?.slug === slug;
 
   // The card's session, from the module store: it outlives this component (Excalidraw remounts
   // an embeddable on every scroll), so the component only listens to it.
@@ -100,10 +123,9 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
   }, [spec, agent.approved, slug]);
 
   // Lazy: the first activation of an M+ card opens (or resumes) its conversation.
-  const small = size === 's';
   useEffect(() => {
-    if (active && !small && !session) open();
-  }, [active, small, session, open]);
+    if (active && !small && !session && !inPanel && primary) open();
+  }, [active, small, session, open, inPanel, primary]);
 
   const state = agentCardState({ approved: agent.approved, busy: !!session?.busy, asking: !!session?.asking });
 
@@ -136,6 +158,28 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
     body = <SmallBody agent={agent} session={session} tx={tx} />;
   } else if (!agent.approved) {
     body = <Blocked agent={agent} onReview={openInAgents} tx={tx} />;
+  } else if (inPanel) {
+    // The conversation is on screen in the panel; one place at a time.
+    body = (
+      <div className="wb-agent-idle">
+        <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
+        <p className="wb-agent-empty">
+          {tx('whiteboard.agent.inPanel', 'Talking with {name} in the panel on the right.').replace('{name}', agent.title)}
+        </p>
+        <button type="button" className="wb-widget-btn" onClick={() => setAgentPanelOpen(vault, false)}>
+          {tx('whiteboard.agent.showHere', 'Show it here')}
+        </button>
+      </div>
+    );
+  } else if (!primary) {
+    body = (
+      <div className="wb-agent-idle">
+        <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
+        <p className="wb-agent-empty">
+          {tx('whiteboard.agent.otherCard', 'Talking with {name} in its other card on this board.').replace('{name}', agent.title)}
+        </p>
+      </div>
+    );
   } else if (!session || !spec) {
     body = (
       <div className="wb-agent-idle">
@@ -181,12 +225,14 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
  * portaled into it (the notch's own mount). `bare`: the agent's envelope is the server's to
  * decide, so the composer offers no mode, permission or model switch.
  */
-function CardChat({ session, reopen, placeholder }: { session: ChatSession; reopen: () => void; placeholder: string }) {
+export function CardChat({ session, reopen, placeholder }: { session: ChatSession; reopen: () => void; placeholder: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   useLayoutEffect(() => {
     const el = hostRef.current;
     if (el && session.container.parentElement !== el) el.appendChild(session.container);
+    // Hand the container back on the way out, so the next host never finds it held here.
+    return () => { if (el && session.container.parentElement === el) el.removeChild(session.container); };
   }, [session]);
 
   const reopenRef = useRef(reopen);
@@ -226,7 +272,7 @@ function CardChat({ session, reopen, placeholder }: { session: ChatSession; reop
   );
 }
 
-function StateWord({ state, tx }: { state: AgentCardState; tx: Tx }) {
+export function StateWord({ state, tx }: { state: AgentCardState; tx: Tx }) {
   let text: string;
   switch (state.kind) {
     case 'working': text = tx('whiteboard.agent.workingNow', 'Working'); break;
@@ -253,7 +299,7 @@ function SmallBody({ agent, session, tx }: { agent: AutomationSummary; session: 
 
 /** An unapproved agent: the server would refuse its card, so the reason and the one control
  *  that fixes it, in place of a chat. */
-function Blocked({ agent, onReview, tx }: { agent: AutomationSummary; onReview: () => void; tx: Tx }) {
+export function Blocked({ agent, onReview, tx }: { agent: AutomationSummary; onReview: () => void; tx: Tx }) {
   return (
     <p className="wb-agent-blocked">
       <span>
@@ -266,16 +312,23 @@ function Blocked({ agent, onReview, tx }: { agent: AutomationSummary; onReview: 
   );
 }
 
-function AgentCardMenu({ items, tx }: { items: { label: string; run: () => void }[]; tx: Tx }) {
+export function AgentCardMenu({ items, tx }: { items: { label: string; run: () => void }[]; tx: Tx }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLSpanElement>(null);
+  const close = useCallback((refocus: boolean) => {
+    setOpen(false);
+    if (refocus) button.current?.focus();
+  }, []);
   useEffect(() => {
     if (!open) return;
+    list.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
     const onDown = (e: PointerEvent) => {
-      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+      if (!wrap.current?.contains(e.target as Node)) close(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
+      if (e.key === 'Escape') { e.stopPropagation(); close(true); }
     };
     document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('keydown', onKey, true);
@@ -283,11 +336,28 @@ function AgentCardMenu({ items, tx }: { items: { label: string; run: () => void 
       document.removeEventListener('pointerdown', onDown, true);
       document.removeEventListener('keydown', onKey, true);
     };
-  }, [open]);
+  }, [open, close]);
+  // ↑/↓ (and Home/End) walk the items, as a menu does.
+  const onListKey = (e: ReactKeyboardEvent<HTMLSpanElement>) => {
+    const entries = [...(list.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+    if (!entries.length) return;
+    const at = entries.indexOf(document.activeElement as HTMLButtonElement);
+    let next = -1;
+    if (e.key === 'ArrowDown') next = (at + 1) % entries.length;
+    else if (e.key === 'ArrowUp') next = (at - 1 + entries.length) % entries.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = entries.length - 1;
+    else if (e.key === 'Tab') { close(false); return; }
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    entries[next]?.focus();
+  };
   const label = tx('whiteboard.agent.menu', 'Agent actions');
   return (
     <span className="wb-agent-menu" ref={wrap}>
       <button
+        ref={button}
         type="button"
         className="wb-widget-btn wb-agent-menu-btn"
         aria-label={label}
@@ -299,14 +369,15 @@ function AgentCardMenu({ items, tx }: { items: { label: string; run: () => void 
         ⋯
       </button>
       {open && (
-        <span className="wb-agent-menu-list" role="menu">
+        <span className="wb-agent-menu-list" role="menu" aria-label={label} ref={list} onKeyDown={onListKey}>
           {items.map((it) => (
             <button
               key={it.label}
               type="button"
               role="menuitem"
+              tabIndex={-1}
               className="wb-agent-menu-item"
-              onClick={() => { setOpen(false); it.run(); }}
+              onClick={() => { close(true); it.run(); }}
             >
               {it.label}
             </button>

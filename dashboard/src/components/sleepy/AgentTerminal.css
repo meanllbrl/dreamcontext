@@ -1269,6 +1269,13 @@
   bottom: calc(var(--space-5) + var(--dc-bottom-strip, 0px));
   z-index: 18;
 }
+/* On a whiteboard the corner belongs to the board (its cards, its zoom bar): the collapsed
+   dock and the Chat button step aside (owner, 2026-10-05). Chat stays one click away in the
+   rail, and the floating dock over an open overlay is untouched. Shell.tsx sets data-page. */
+.project-instance[data-page="whiteboards"] .agent-dock:not(.agent-dock--floating),
+.project-instance[data-page="whiteboards"] .agent-fab {
+  display: none;
+}
 /* The minimized-sessions dock floats ABOVE the expanded overlay (z-index 20) — and with the
    overlay open, the viewport's bottom-right corner is NOT empty page: it is the rightmost
    pane's composer, whose corner-most control is Send/Stop. Fixed to the corner, the dock

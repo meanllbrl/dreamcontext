@@ -5,8 +5,11 @@ import type { WidgetSize } from '../../../lib/whiteboardWidgets';
 import './widgets.css';
 
 /**
- * The chrome every widget wears: a rounded card with a quiet header (kind + title) and a body
- * that renders to the widget's grid size (A17, A18).
+ * The chrome every widget wears: a rounded card with a header and a body that renders to the
+ * widget's grid size (A17, A18). The header is the card's title, set as a heading. The kind
+ * ("Insight", "Note") is shown only when there is no title to show, or when the caller names
+ * a label the kind alone would get wrong ("PDF"): a title under "INSIGHT" just said the same
+ * thing twice (owner, 2026-10-05).
  *
  * Excalidraw passes pointer events into an embeddable only while it is the `activeEmbeddable`
  * (a click in its centre third, a double-click, or a tap). The "Click to interact" hint is
@@ -32,6 +35,7 @@ export function WidgetFrame({ kind, label: explicitLabel, title, active, size, a
   const label = explicitLabel || tx(`whiteboard.kind.${kind}`, KIND_LABEL[kind] ?? KIND_LABEL.unknown);
   // A title that only repeats the kind ("Note" on a note) is left out of the header.
   const showTitle = !!title && title.toLowerCase() !== label.toLowerCase();
+  const showLabel = !showTitle || !!explicitLabel;
   return (
     <div
       className={`wb-widget wb-widget--${kind} wb-widget--size-${size ?? 'm'}${active ? ' is-active' : ''}`}
@@ -39,7 +43,7 @@ export function WidgetFrame({ kind, label: explicitLabel, title, active, size, a
       data-widget-size={size ?? 'm'}
     >
       <div className="wb-widget-head">
-        <span className="wb-widget-kind">{label}</span>
+        {showLabel && <span className="wb-widget-kind">{label}</span>}
         {showTitle && <span className="wb-widget-title" title={title}>{title}</span>}
         {meta && <span className="wb-widget-head-meta">{meta}</span>}
         {active && actions && <span className="wb-widget-actions">{actions}</span>}

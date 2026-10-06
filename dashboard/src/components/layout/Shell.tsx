@@ -107,6 +107,14 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     }
   }, [sidebarCollapsed]);
 
+  // The open page, on the same element, for surfaces outside this tree that step aside on a
+  // page: the corner agent dock and Chat button do not sit over a whiteboard's cards
+  // (owner, 2026-10-05; AgentTerminal.css).
+  useLayoutEffect(() => {
+    const instanceEl = shellRef.current?.closest('.project-instance');
+    if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = activePage;
+  }, [activePage]);
+
   // The rail's motion — see useRailGlide.ts. Declared after the attribute above, so the
   // slab measures the rail with the overlay's edge already moved.
   const glideRef = useRef<HTMLDivElement | null>(null);

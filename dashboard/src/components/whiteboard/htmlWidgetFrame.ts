@@ -39,7 +39,33 @@ body > .dc-card:only-child {
   background: transparent !important;
   box-shadow: none !important;
 }
+body { min-height: 100vh; }
+body:has(> :only-child) { display: flex; flex-direction: column; }
+body > :only-child { flex: 1 0 auto; }
 `;
+
+/**
+ * How far a block may shrink to fit its card (owner, 2026-10-05: "HTML kapsamıyor", content
+ * cut at the bottom and not filling the card). Below this the text stops being readable, so
+ * the block stays at this scale and scrolls inside the card once it is active.
+ */
+export const BOARD_HTML_MIN_SCALE = 0.5;
+
+/**
+ * The scale a block is drawn at so all of it shows in its card: the frame is laid out at
+ * `box / scale` and drawn scaled by `scale`. `contentHeight` is what the frame reported (the
+ * body's height at the current layout width, never less than the frame since the body fills
+ * it: BOARD_HTML_CSS). It only ever SHRINKS from `current`: a smaller scale lays the block out
+ * wider, which makes it shorter, and growing back on that report would narrow it and overflow
+ * again (an endless back and forth). The caller starts again from 1 when the box or the
+ * markup changes.
+ */
+export function fitScale(current: number, box: { height: number }, contentHeight: number): number {
+  if (!(box.height > 0) || !(contentHeight > 0)) return current;
+  const viewport = box.height / current;
+  if (contentHeight <= viewport + 1) return current;
+  return Math.max(BOARD_HTML_MIN_SCALE, Math.min(current, box.height / contentHeight));
+}
 
 export function buildBoardHtmlSrcdoc(input: {
   html: string;

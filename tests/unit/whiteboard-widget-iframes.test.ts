@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  BOARD_HTML_CSS, BOARD_HTML_SANDBOX, BOARD_HTML_MAX_HEIGHT, buildBoardHtmlSrcdoc, readBoardFrameMessage,
+  BOARD_HTML_CSS, BOARD_HTML_SANDBOX, BOARD_HTML_MAX_HEIGHT, BOARD_HTML_MIN_SCALE, buildBoardHtmlSrcdoc, fitScale, readBoardFrameMessage,
 } from '../../dashboard/src/components/whiteboard/htmlWidgetFrame.js';
 import {
   HEIGHT_BRIDGE, REACH_BRIDGE, KIT_BEHAVIOUR, HEIGHT_MESSAGE_KEY, PRESS_MESSAGE_KEY, CHORD_MESSAGE_KEY,
@@ -154,5 +154,43 @@ describe('WebWidget — the web embed (D7)', () => {
   it('is the only iframe site besides the HTML block in the whiteboard folder', () => {
     const canvas = read('WhiteboardCanvas.tsx');
     expect(iframeTags(canvas)).toHaveLength(0);
+  });
+});
+
+/** Owner 2026-10-05 ("HTML kapsamıyor"): a block shows whole in its card and fills it. */
+describe('HTML block fits its card', () => {
+  const box = { height: 300 };
+
+  it('content that fits keeps full size', () => {
+    expect(fitScale(1, box, 300)).toBe(1);
+    expect(fitScale(1, box, 120)).toBe(1);
+  });
+
+  it('a taller block is drawn smaller, just enough to show whole', () => {
+    expect(fitScale(1, box, 400)).toBeCloseTo(0.75);
+  });
+
+  it('only ever shrinks (a wider layout reports shorter; growing back would overflow again)', () => {
+    // At 0.75 the frame is 400 tall; the wider layout now reports 380 (fits): stay.
+    expect(fitScale(0.75, box, 400)).toBe(0.75);
+    expect(fitScale(0.75, box, 380)).toBe(0.75);
+    // Still over at the new width: shrink further.
+    expect(fitScale(0.75, box, 450)).toBeCloseTo(300 / 450);
+  });
+
+  it('never below the floor: past it the block scrolls', () => {
+    expect(fitScale(1, box, 5000)).toBe(BOARD_HTML_MIN_SCALE);
+    expect(BOARD_HTML_MIN_SCALE).toBe(0.5);
+  });
+
+  it('no box or no report yet changes nothing', () => {
+    expect(fitScale(1, { height: 0 }, 500)).toBe(1);
+    expect(fitScale(0.8, box, 0)).toBe(0.8);
+  });
+
+  it('the body spans the frame and a lone root element stretches to it (styling only)', () => {
+    expect(BOARD_HTML_CSS).toMatch(/body \{ min-height: 100vh; \}/);
+    expect(BOARD_HTML_CSS).toMatch(/body > :only-child \{ flex: 1 0 auto; \}/);
+    expect(BOARD_HTML_CSS).not.toMatch(/url\(|@import|<script/i);
   });
 });

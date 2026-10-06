@@ -429,6 +429,31 @@ describe('fit on open (A15/A16 gate): once per board open, never on polls or sav
     expect(fit).not.toHaveBeenCalled();
   });
 
+  it('says when the wait is over (fitted, nothing to fit, out of patience), never on a cancel', () => {
+    const run = (state: { sized: boolean; live: number }, expect_: boolean, max?: number, cancelFirst = false) => {
+      const f = frames();
+      const settled = vi.fn();
+      const t: FitTarget = { viewportReady: () => state.sized, liveCount: () => state.live, fit: vi.fn(), settled };
+      const cancel = fitWhenReady(t, expect_, f.schedule, f.cancel, max);
+      if (cancelFirst) cancel();
+      f.tick(max ? max + 5 : 5);
+      return settled.mock.calls.length;
+    };
+    expect(run({ sized: true, live: 4 }, true)).toBe(1);
+    expect(run({ sized: true, live: 0 }, false)).toBe(1);
+    expect(run({ sized: false, live: 3 }, true, 10)).toBe(1);
+    expect(run({ sized: true, live: 4 }, true, undefined, true)).toBe(0);
+  });
+
+  it('the editor keeps a view only once the open has placed the board', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', '..', 'dashboard/src/hooks/useWhiteboards.ts'), 'utf-8');
+    const save = src.slice(src.indexOf('const saveViewport'), src.indexOf('}, [slug]);'));
+    expect(save).toMatch(/!placedRef\.current\) return;/);
+    expect(src).toMatch(/settled: \(\) => \{ placedRef\.current = true; \}/);
+    // A fit cancelled before it settled (StrictMode's simulated unmount) runs on the remount.
+    expect(src).toMatch(/if \(!placedRef\.current\) fittedRef\.current = false;/);
+  });
+
   it('the editor hook fits once per open and only from onApi, never from the poll or save path', () => {
     const src = readFileSync(join(import.meta.dirname, '..', '..', 'dashboard/src/hooks/useWhiteboards.ts'), 'utf-8');
     expect([...src.matchAll(/fitWhenReady\(/g)]).toHaveLength(1);

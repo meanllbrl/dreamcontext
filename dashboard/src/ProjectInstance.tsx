@@ -24,6 +24,7 @@ import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
+import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
 import type { Page } from './components/layout/Sidebar';
 import { parseAppLink } from './lib/appLink';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from './lib/openSession';
@@ -277,6 +278,10 @@ export function ProjectInstance({
   }, []);
   const clearAutomationFocus = useCallback(() => setAutomationFocus(null), []);
   const consumeLink = useCallback((nonce: number) => onLinkConsumed?.(vault, nonce), [onLinkConsumed, vault]);
+
+  // A board's home agent conversations outlive the Whiteboard page, never their project:
+  // closing or evicting this instance ends them (and their `claude`).
+  useEffect(() => () => dropBoardAgentScratch({ vault }), [vault]);
 
   // Page-data polling follows visibility. Nothing else does — see this file's header.
   useEffect(() => {
