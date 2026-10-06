@@ -219,6 +219,55 @@ async function ensurePin(env: HandsfreeEnv, pin: VersionPin, onProgress?: Progre
   await updateConfig(env.home, (c) => (c.repo ? { ...c, repo: { ...c.repo, fileShas: { ...c.repo.fileShas, ...shas } } } : c));
 }
 
+/** GitHub's own start of a stopped codespace: ~20 s to ~5 min seen (smoke #4); never longer than this. */
+const START_WAIT_MS = 15 * 60_000;
+const START_POLL_MS = 5000;
+/** Right after a start is accepted GitHub may still report Shutdown for a moment. */
+const START_ACCEPT_GRACE_MS = 60_000;
+
+/** GitHub states that end a start for good. Every other unmapped state (Unknown, Updating,
+ *  Exporting, Unavailable, Archived, Moved) may still turn into a running machine. */
+const START_TERMINAL_STATES = new Set(['Failed', 'Deleted']);
+
+/**
+ * After a start (or a create): poll GitHub until the machine is `available`. Only then does the
+ * server's 5-minute health deadline begin, so a slow cold start is never reported as a dead
+ * server. Never judged on the reading taken BEFORE the start: the first check is a fresh read.
+ * A terminal state (Failed, Deleted, the machine gone) or a machine back to stopped once it was
+ * starting (or still stopped a minute after the start) fails at once; any other state counts as
+ * still starting until the 15-minute deadline. At most one progress line a minute.
+ */
+async function waitAvailable(env: HandsfreeEnv, name: string, onProgress?: Progress): Promise<MachineInfo> {
+  const t0 = nowOf(env);
+  const deadline = t0 + START_WAIT_MS;
+  let lastNote = t0;
+  let seenStarting = false;
+  const read = async (): Promise<MachineInfo> => {
+    const got = await env.provider.get(name);
+    if (!got) throw new HandsfreeError('cloud', 'the codespace disappeared on GitHub while it was starting. Run the same command again (a go re-creates it).', { phase: 'start', neverRan: true });
+    return got;
+  };
+  let info = await read();
+  for (;;) {
+    if (info.state === 'available') return info;
+    if (info.state === 'starting') seenStarting = true;
+    const stoppedAgain = (info.state === 'stopped' || info.state === 'stopping') && (seenStarting || nowOf(env) - t0 >= START_ACCEPT_GRACE_MS);
+    if ((info.state === 'other' && START_TERMINAL_STATES.has(info.rawState)) || stoppedAgain) {
+      throw new HandsfreeError('cloud', `GitHub stopped starting the machine (it is ${info.rawState}). Run the same command again; if it keeps failing, open ${info.webUrl}.`, { phase: 'start', state: info.rawState, neverRan: true });
+    }
+    if (nowOf(env) >= deadline) {
+      throw new HandsfreeError('cloud', `GitHub did not finish starting the machine within 15 minutes (it is still ${info.rawState}). It keeps starting: run the same command again.`, { phase: 'start', state: info.rawState });
+    }
+    await sleepOf(env)(START_POLL_MS);
+    const now = nowOf(env);
+    if (now - lastNote >= 60_000) {
+      lastNote = now;
+      onProgress?.({ step: 'start', detail: `GitHub is still starting the machine (${Math.floor((now - t0) / 60_000)} min)…` });
+    }
+    info = await read();
+  }
+}
+
 async function waitHealthy(env: HandsfreeEnv, client: CloudClient): Promise<void> {
   const deadline = nowOf(env) + (env.healthTimeoutMs ?? 5 * 60_000);
   for (;;) {
@@ -231,7 +280,7 @@ async function waitHealthy(env: HandsfreeEnv, client: CloudClient): Promise<void
       // port_private.
       if (nowOf(env) > deadline) {
         if (err instanceof PortPrivateError) throw new HandsfreeError('port_private', err.message);
-        throw new HandsfreeError('cloud', `the cloud machine did not answer within 5 minutes (${(err as Error).message})`);
+        throw new HandsfreeError('cloud', `the machine started but its server did not answer within 5 minutes (${(err as Error).message}). It keeps running: run the same command again.`, { phase: 'health' });
       }
       await sleepOf(env)(5000);
     }
@@ -271,6 +320,11 @@ async function ensureRunning(env: HandsfreeEnv, o: { needCoreMinutes?: number; a
     }
   }
   let startedByUs = false;
+  // GitHub refuses a start while the machine is still shutting down (409): let it finish first.
+  for (let waited = 0; info.state === 'stopping' && waited < 2 * 60_000; waited += START_POLL_MS) {
+    await sleepOf(env)(START_POLL_MS);
+    info = (await env.provider.get(info.name)) ?? info;
+  }
   if (info.state !== 'available') {
     o.onProgress?.({ step: 'start', detail: `starting ${info.name}` });
     try {
@@ -281,6 +335,20 @@ async function ensureRunning(env: HandsfreeEnv, o: { needCoreMinutes?: number; a
     }
     startedByUs = true;
     await updateConfig(env.home, (c) => countUptime(c, true, cores, nowOf(env)));
+  }
+  if (info.state !== 'available') {
+    // GitHub's own start first (its cold start alone took ~5 min in smoke #4); the server's
+    // health deadline starts only once GitHub says the machine is available.
+    try {
+      info = await waitAvailable(env, info.name, o.onProgress);
+    } catch (err) {
+      // A machine that never came up does not run: close the count (a timeout keeps it open,
+      // the machine keeps starting and the next observation reconciles it).
+      if (err instanceof HandsfreeError && err.detail.neverRan === true) {
+        await updateConfig(env.home, (c) => countUptime(c, false, cores, nowOf(env)));
+      }
+      throw err;
+    }
   }
   const secret = await ensureTransferSecret(env.home);
   const client = env.connect(info.url, secret);

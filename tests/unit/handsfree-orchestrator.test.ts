@@ -840,6 +840,131 @@ describe('smoke #3: AC3 a CLI go registers its project; AC23 the own uptime coun
   });
 });
 
+describe('smoke #4: GitHub\'s own cold start is waited for before the 5-minute health deadline', () => {
+  const MIN = 60_000;
+  let t: number;
+  let startAt: number | null;
+  /** The machine's state by minutes since the start request: [untilMin, state, rawState][]. */
+  let plan: Array<[number, 'starting' | 'available' | 'stopped' | 'other', string]>;
+  let healthNever: boolean;
+  let events: Array<{ step: string; detail?: string; t: number }>;
+  /** What GitHub reports BEFORE the start (r13: never judged). */
+  let preStart: readonly ['stopped' | 'other', string];
+
+  beforeEach(() => {
+    t = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 15, 6);
+    startAt = null;
+    preStart = ['stopped', 'Shutdown'];
+    healthNever = false;
+    events = [];
+    const name = readConfig(laptopHome)!.codespace!.name;
+    const stateNow = () => {
+      if (startAt === null) return preStart;
+      const el = (t - startAt) / MIN;
+      for (const [until, st, raw] of plan) if (el < until) return [st, raw] as const;
+      const last = plan[plan.length - 1];
+      return [last[1], last[2]] as const;
+    };
+    provider.start = async (n: string) => { provider.calls.push(`start:${n}`); startAt = t; };
+    const realGet = provider.get.bind(provider);
+    provider.get = async (n: string) => {
+      const m = await realGet(n);
+      if (!m || n !== name) return m;
+      const [state, rawState] = stateNow();
+      return { ...m, state, rawState };
+    };
+  });
+  /** Health through the forwarder: 404 until GitHub says the machine is available (smoke #4). */
+  const gated = () => new Proxy(fake, {
+    get: (target, p) => (p === 'publicHealth'
+      ? async () => {
+        const m = await provider.get(readConfig(laptopHome)!.codespace!.name);
+        if (healthNever || m?.state !== 'available') throw new CloudError(404, 'not_found', 'GET /api/health failed (404)');
+        return target.publicHealth();
+      }
+      : Reflect.get(target, p)),
+  }) as unknown as CloudClient;
+  const env = () => makeEnv({ now: () => t, sleep: async (ms: number) => { t += ms; }, healthTimeoutMs: 5 * MIN, connect: () => gated() });
+  const goNow = () => go(env(), { contextRoot: ctx, onProgress: (e) => events.push({ ...e, t }) });
+
+  it('(a) a start that stays "starting" for 8 minutes, then available and healthy, succeeds; (e) one progress line a minute at most', async () => {
+    plan = [[8, 'starting', 'Starting'], [Infinity, 'available', 'Available']];
+    const g = await goNow();
+    expect(fake.tripId).toBe(g.tripId);
+    expect(readTripState(laptopHome).phase).toBe('away');
+    const notes = events.filter((e) => e.step === 'start' && /still starting the machine/.test(e.detail ?? ''));
+    expect(notes.length).toBeGreaterThanOrEqual(7);
+    expect(notes.length).toBeLessThanOrEqual(8);
+    for (let i = 1; i < notes.length; i++) expect(notes[i].t - notes[i - 1].t).toBeGreaterThanOrEqual(MIN);
+    expect(notes[0].detail).toBe('GitHub is still starting the machine (1 min)…');
+  });
+
+  it('(b) still "starting" after 15 minutes: the start-phase message, and the count stays open (it keeps starting)', async () => {
+    plan = [[Infinity, 'starting', 'Starting']];
+    const err = await goNow().catch((e) => e);
+    expect(err).toMatchObject({ code: 'cloud', detail: { phase: 'start' } });
+    expect(err.message).toBe('GitHub did not finish starting the machine within 15 minutes (it is still Starting). It keeps starting: run the same command again.');
+    expect(t - startAt!).toBeGreaterThanOrEqual(15 * MIN);
+    expect(t - startAt!).toBeLessThan(15 * MIN + 10_000);
+    expect(readConfig(laptopHome)!.uptime.runningSince).toBe(startAt);
+    expect(readTripState(laptopHome).phase).toBe('home');
+  });
+
+  it('(c) a machine that goes back to stopped fails at once (not at the timeout) and its count is closed', async () => {
+    plan = [[1, 'starting', 'Starting'], [Infinity, 'stopped', 'Shutdown']];
+    const err = await goNow().catch((e) => e);
+    expect(err).toMatchObject({ code: 'cloud', detail: { phase: 'start', state: 'Shutdown' } });
+    expect(err.message).toMatch(/^GitHub stopped starting the machine \(it is Shutdown\)\. Run the same command again/);
+    expect(t - startAt!).toBeLessThan(2 * MIN);
+    expect(readConfig(laptopHome)!.uptime.runningSince).toBeNull();
+    // A failed machine ('other') too.
+    startAt = null;
+    plan = [[Infinity, 'other', 'Failed']];
+    const err2 = await goNow().catch((e) => e);
+    expect(err2.message).toMatch(/^GitHub stopped starting the machine \(it is Failed\)/);
+  });
+
+  it('(f) r13: a pre-start reading of Archived or Unknown is never judged: start accepted, starting, then available succeeds', async () => {
+    for (const raw of ['Archived', 'Unknown']) {
+      preStart = ['other', raw];
+      startAt = null;
+      plan = [[2, 'starting', 'Starting'], [Infinity, 'available', 'Available']];
+      if (readTripState(laptopHome).phase === 'away') await returnTrip(env());
+      const g = await goNow();
+      expect(fake.tripId).toBe(g.tripId);
+      expect(startAt).not.toBeNull();
+      expect(t - startAt!).toBeGreaterThanOrEqual(2 * MIN);
+    }
+  });
+
+  it('(g) r13: Failed after the start still fails at once, and its uptime count is closed', async () => {
+    plan = [[Infinity, 'other', 'Failed']];
+    const err = await goNow().catch((e) => e);
+    expect(err).toMatchObject({ code: 'cloud', detail: { phase: 'start', state: 'Failed', neverRan: true } });
+    expect(err.message).toMatch(/^GitHub stopped starting the machine \(it is Failed\)/);
+    expect(t - startAt!).toBeLessThan(10_000);
+    expect(readConfig(laptopHome)!.uptime.runningSince).toBeNull();
+  });
+
+  it('(h) r13: a transient Updating for 3 minutes, then available, succeeds (only Failed/Deleted are terminal)', async () => {
+    plan = [[3, 'other', 'Updating'], [Infinity, 'available', 'Available']];
+    const g = await goNow();
+    expect(fake.tripId).toBe(g.tripId);
+    expect(t - startAt!).toBeGreaterThanOrEqual(3 * MIN);
+  });
+
+  it('(d) available but its server never answers: the server-phase message, 5 minutes counted from "available"', async () => {
+    plan = [[3, 'starting', 'Starting'], [Infinity, 'available', 'Available']];
+    healthNever = true;
+    const err = await goNow().catch((e) => e);
+    expect(err).toMatchObject({ code: 'cloud', detail: { phase: 'health' } });
+    expect(err.message).toBe('the machine started but its server did not answer within 5 minutes (GET /api/health failed (404)). It keeps running: run the same command again.');
+    const availableAt = startAt! + 3 * MIN;
+    expect(t).toBeGreaterThanOrEqual(availableAt + 5 * MIN);
+    expect(t).toBeLessThan(availableAt + 5 * MIN + 15_000);
+  });
+});
+
 describe('review round 1: multi-pass returns', () => {
   it('an epoch moved before wipe-secrets runs the second delta return and goes home (AC13); every pass receipt is kept', async () => {
     const env = makeEnv();
