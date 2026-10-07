@@ -33,7 +33,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 
 const { startChatSession, tagCloudDeviceSocket, DEVICE_REVOKED_CLOSE } = await import('../../src/server/routes/agent-chat.js');
 const { writeClaudeAccounts } = await import('../../src/lib/claude-accounts.js');
-const { setCloudPhaseSource } = await import('../../src/server/cloud-mode.js');
+const { setCloudPhaseSource, setCloudTripRootsSource } = await import('../../src/server/cloud-mode.js');
 const { HandsfreeAuth, DEVICE_TTL_MS, hashPassphrase, setHandsfreeAuthForTests, sha256Hex, handleHandsfreeLogout } = await import('../../src/server/handsfree-auth.js');
 
 class FakeWs extends EventEmitter {
@@ -71,9 +71,13 @@ function openFor(deviceId: string, sessionId: string): { ws: FakeWs; child: Fake
   const ws = new FakeWs();
   tagCloudDeviceSocket(ws, sha256Hex(deviceId));
   const project = join(home, 'proj');
+  const before = spawned.length;
   startChatSession(ws as unknown as import('ws').WebSocket, project, {
     bypass: false, sessionId, resumeId: '', model: '', effort: '', mode: 'basic', account: '', initialPrompt: '', deferPrompt: false,
   });
+  // A legitimate trip chat really started (r17: outside a trip root it is refused with cloud_not_trip).
+  expect(JSON.stringify(ws.send.mock.calls)).not.toContain('cloud_not_trip');
+  expect(spawned.length).toBe(before + 1);
   return { ws, child: spawned[spawned.length - 1] };
 }
 
@@ -91,6 +95,8 @@ beforeEach(async () => {
   writeClaudeAccounts([{ id: 'acc', accountUuid: '', email: 'a@example.invalid', organizationUuid: '', organizationName: '', tier: 'max', configDir: join(home, '.dreamcontext', 'claude-accounts', 'acc'), preferred: true }], home);
   process.env.DREAMCONTEXT_CLOUD = '1';
   setCloudPhaseSource(() => 'active');
+  // The chats below are the trip's own: `proj` is the trip root (r17 runs cloud agents only there).
+  setCloudTripRootsSource(() => [join(home, 'proj')]);
   now = Date.now();
   auth = new HandsfreeAuth({ dir: join(home, 'dc-server'), now: () => now });
   mkdirSync(join(home, 'dc-server'), { recursive: true });
@@ -104,6 +110,7 @@ afterEach(() => {
   killSpy.mockRestore();
   setHandsfreeAuthForTests(null);
   setCloudPhaseSource(() => 'sealed');
+  setCloudTripRootsSource(() => []);
   for (const k of ENV_KEYS) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
