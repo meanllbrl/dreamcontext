@@ -71,7 +71,7 @@ import {
   handleLauncherUiGet,
   handleLauncherUiSet,
 } from './routes/launcher.js';
-import { handleBrainSettingsGet, handleBrainSettingsPut, handleRoadmapPrefsGet, handleRoadmapPrefsPut, handleLabPrefsGet, handleLabPrefsPut } from './routes/ui-settings.js';
+import { handleBrainSettingsGet, handleBrainSettingsPut, handleRoadmapPrefsGet, handleRoadmapPrefsPut, handleLabPrefsGet, handleLabPrefsPut, handleWhiteboardPrefsGet, handleWhiteboardPrefsPut } from './routes/ui-settings.js';
 import {
   handleObjectivesList,
   handleObjectivesCreate,
@@ -649,6 +649,11 @@ export function buildRouter(): Router {
   // per-machine, persisted for the same reason.
   router.get('/api/lab-prefs', handleLabPrefsGet);
   router.put('/api/lab-prefs', handleLabPrefsPut);
+
+  // Whiteboard page memory (open tabs + groups, last board, viewports, agent panel) —
+  // per-machine, persisted for the same reason.
+  router.get('/api/whiteboard-prefs', handleWhiteboardPrefsGet);
+  router.put('/api/whiteboard-prefs', handleWhiteboardPrefsPut);
 
   // Roadmap computed model (progress, forecast, member tasks, warnings).
   router.get('/api/roadmap', handleRoadmapModel);

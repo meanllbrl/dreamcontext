@@ -12,7 +12,9 @@
  *       menu and the two sit together after the chip; recolouring changes the chip's hue;
  *   T4  a chip click collapses the group (its other tabs leave the strip, the open one stays)
  *       and another click unfolds it;
- *   T5  the layout (order, group, colour, collapse) survives a reload;
+ *   T5  the layout (order, group, colour, collapse) survives a reload, and a relaunch: the
+ *       desktop app gets a new loopback origin each launch, so localStorage is wiped and the
+ *       layout must come back from `state/.whiteboard-prefs.json`;
  *   T6  dragging a tab onto the strip's start reorders it;
  *   T7  closing a tab first asks "are you sure" (Cancel keeps it); confirmed, it takes the tab
  *       off the strip, the board still exists on disk, the open board moves to its
@@ -22,7 +24,7 @@
  * Screenshots both themes to <scratch>/shots.
  */
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,6 +151,26 @@ async function main() {
     await page.reload({ waitUntil: 'networkidle' });
     await page.locator('.wbt-tab').first().waitFor({ timeout: 10000 });
     ok('T5 the layout survives a reload (collapsed, coloured, named)',
+      JSON.stringify(await tabNames(page)) === '["Control Panel","Launch plan"]'
+      && (await page.locator('.wbt-chip').getAttribute('data-color')) === 'blue'
+      && (await page.locator('.wbt-chip').innerText()).includes('Research'),
+      JSON.stringify(await tabNames(page)));
+    await page.waitForTimeout(800);
+    const prefsFile = join(PROJ, '_dream_context', 'state', '.whiteboard-prefs.json');
+    let savedTabs = '';
+    try { savedTabs = JSON.parse(readFileSync(prefsFile, 'utf-8')).tabs ?? ''; } catch { /* missing */ }
+    ok('T5 the layout is written to the per-machine prefs file', savedTabs.includes('Research'), savedTabs.slice(0, 120));
+    // A relaunch: empty localStorage and no URL hash, opened from the rail like a fresh app.
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(`${ORIGIN}/?vault=proj`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(800);
+    if (await page.locator('.announcements-modal-scrim').count()) {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+    }
+    await page.locator('.sidebar-item', { hasText: /Whiteboard(?!s)/ }).first().click();
+    await page.locator('.wbt-tab').first().waitFor({ timeout: 10000 });
+    ok('T5 …and survives a relaunch that wipes localStorage (a new origin)',
       JSON.stringify(await tabNames(page)) === '["Control Panel","Launch plan"]'
       && (await page.locator('.wbt-chip').getAttribute('data-color')) === 'blue'
       && (await page.locator('.wbt-chip').innerText()).includes('Research'),

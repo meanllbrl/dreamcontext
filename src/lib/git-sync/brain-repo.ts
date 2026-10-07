@@ -211,6 +211,7 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     'state/.auto-upgrade.json',
     'state/.brain-local.json',
     'state/.lab-prefs.json',
+    'state/.whiteboard-prefs.json',
     // Lab freshness checks are per machine (an unchanged probe must never dirty
     // the synced cache), and a board materialize staging dir is transient.
     'state/.lab-freshness.json',
@@ -288,6 +289,7 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   '_dream_context/state/.version-check.json',
   '_dream_context/state/.auto-upgrade.json',
   '_dream_context/state/.lab-prefs.json',
+  '_dream_context/state/.whiteboard-prefs.json',
   '_dream_context/state/.lab-freshness.json',
   '_dream_context/lab/.boards-staging-*/',
   '_dream_context/state/.tasks-sync.lock',

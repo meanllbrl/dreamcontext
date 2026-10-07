@@ -1,18 +1,21 @@
 import { useCallback, useRef, useState } from 'react';
 import { useVault } from '../../context/VaultContext';
+import { readWhiteboardPref, writeWhiteboardPref } from '../../components/whiteboard/whiteboardPrefs';
 import { sanitizeLayout, type TabLayout } from './tabStripLogic';
 
 /**
  * Which boards sit open as tabs, and how they are grouped, remembered per machine and per
  * project — like Chrome's tabs, a working arrangement rather than something the team shares.
- * Absent or unreadable → no tabs; the open board then takes the first one.
+ * Kept in whiteboardPrefs.ts, so it survives the desktop app's relaunch (a new origin, an empty
+ * localStorage). Absent or unreadable → no tabs; the open board then takes the first one.
  */
 const KEY_PREFIX = 'dreamcontext:whiteboard-tabs:';
+const PREF_KEY = 'tabs';
 const storageKey = (vault: string | null) => `${KEY_PREFIX}${vault ?? ''}`;
 
 function readLayout(vault: string | null): TabLayout {
   try {
-    const raw = localStorage.getItem(storageKey(vault));
+    const raw = readWhiteboardPref(vault ?? '', PREF_KEY, storageKey(vault));
     return sanitizeLayout(raw ? JSON.parse(raw) : null);
   } catch {
     return sanitizeLayout(null);
@@ -30,7 +33,7 @@ export function useTabLayout(): [TabLayout, (update: (l: TabLayout) => TabLayout
     const next = update(cur);
     if (next === cur) return;
     latest.current = next;
-    try { localStorage.setItem(storageKey(vault), JSON.stringify(next)); } catch { /* best-effort */ }
+    writeWhiteboardPref(vault ?? '', PREF_KEY, storageKey(vault), JSON.stringify(next));
     setLayout(next);
   }, [vault]);
   return [layout, change];

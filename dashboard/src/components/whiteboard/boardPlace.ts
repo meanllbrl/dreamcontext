@@ -3,11 +3,14 @@
  * coming back opens exactly there (owner, 2026-10-05): the board, each board's viewport (scroll
  * and zoom), and whether the board's agent panel was open.
  *
- * localStorage, per project (vault); never the synced board file, since a viewport is one
- * person's, not the team's. Every read is checked and a bad value reads as "nothing saved".
+ * Per project (vault), on this machine (whiteboardPrefs.ts: the server's gitignored copy, with
+ * localStorage as the mirror); never the synced board file, since a viewport is one person's,
+ * not the team's. Every read is checked and a bad value reads as "nothing saved".
  *
  * No React, no CSS: root vitest imports this file.
  */
+
+import { readWhiteboardPref, writeWhiteboardPref } from './whiteboardPrefs';
 
 export interface BoardViewport {
   scrollX: number;
@@ -15,28 +18,29 @@ export interface BoardViewport {
   zoom: number;
 }
 
-const lastBoardKey = (vault: string) => `dc.wbLastBoard.${vault}`;
-const viewportKey = (vault: string, board: string) => `dc.wbViewport.${vault}.${board}`;
-const panelKey = (vault: string) => `dc.wbAgentPanel.${vault}`;
+// [key in the project's prefs file, localStorage key]
+const lastBoardKey = (vault: string) => ['lastBoard', `dc.wbLastBoard.${vault}`] as const;
+const viewportKey = (vault: string, board: string) => [`viewport.${board}`, `dc.wbViewport.${vault}.${board}`] as const;
+const panelKey = (vault: string) => ['agentPanel', `dc.wbAgentPanel.${vault}`] as const;
 
 const BOARD_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
 
-function read(key: string): string | null {
-  try { return localStorage.getItem(key); } catch { return null; }
+function read(vault: string, [key, localKey]: readonly [string, string]): string | null {
+  return readWhiteboardPref(vault, key, localKey);
 }
 
-function write(key: string, value: string): void {
-  try { localStorage.setItem(key, value); } catch { /* best-effort: the page opens on the default */ }
+function write(vault: string, [key, localKey]: readonly [string, string], value: string): void {
+  writeWhiteboardPref(vault, key, localKey, value);
 }
 
 /** The board open when the owner last left the page, or null. */
 export function readLastBoard(vault: string): string | null {
-  const v = read(lastBoardKey(vault));
+  const v = read(vault, lastBoardKey(vault));
   return v && BOARD_SLUG_RE.test(v) ? v : null;
 }
 
 export function writeLastBoard(vault: string, board: string): void {
-  if (BOARD_SLUG_RE.test(board)) write(lastBoardKey(vault), board);
+  if (BOARD_SLUG_RE.test(board)) write(vault, lastBoardKey(vault), board);
 }
 
 /** A viewport is usable when every number is finite and the zoom is in Excalidraw's range. */
@@ -49,14 +53,14 @@ export function parseViewport(raw: unknown): BoardViewport | null {
 }
 
 export function readViewport(vault: string, board: string): BoardViewport | null {
-  const raw = read(viewportKey(vault, board));
+  const raw = read(vault, viewportKey(vault, board));
   if (!raw) return null;
   try { return parseViewport(JSON.parse(raw)); } catch { return null; }
 }
 
 export function writeViewport(vault: string, board: string, vp: BoardViewport): void {
   const ok = parseViewport(vp);
-  if (ok) write(viewportKey(vault, board), JSON.stringify(ok));
+  if (ok) write(vault, viewportKey(vault, board), JSON.stringify(ok));
 }
 
 /** An element's box on the scene, as Excalidraw stores it (a line's width can be negative). */
@@ -90,9 +94,9 @@ export function viewportShowsAny(vp: BoardViewport, width: number, height: numbe
 
 /** Whether the agent panel was open (default closed). */
 export function readPanelOpen(vault: string): boolean {
-  return read(panelKey(vault)) === '1';
+  return read(vault, panelKey(vault)) === '1';
 }
 
 export function writePanelOpen(vault: string, open: boolean): void {
-  write(panelKey(vault), open ? '1' : '0');
+  write(vault, panelKey(vault), open ? '1' : '0');
 }

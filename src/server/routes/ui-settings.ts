@@ -163,3 +163,11 @@ export const handleRoadmapPrefsPut = roadmapPrefsHandlers.put;
 const labPrefsHandlers = makeSettingsHandlers('state/.lab-prefs.json', 'lab-prefs');
 export const handleLabPrefsGet = labPrefsHandlers.get;
 export const handleLabPrefsPut = labPrefsHandlers.put;
+
+// ─── Whiteboard page memory (per-machine) ────────────────────────────────────
+// The open board tabs and their groups, the last board, each board's viewport and
+// the agent panel — personal to this machine, mirrored server-side because the
+// desktop app's relaunch wiped them with localStorage (whiteboardPrefs.ts).
+const whiteboardPrefsHandlers = makeSettingsHandlers('state/.whiteboard-prefs.json', 'whiteboard-prefs');
+export const handleWhiteboardPrefsGet = whiteboardPrefsHandlers.get;
+export const handleWhiteboardPrefsPut = whiteboardPrefsHandlers.put;

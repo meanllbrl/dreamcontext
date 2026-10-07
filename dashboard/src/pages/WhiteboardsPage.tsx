@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../context/I18nContext';
-import { useVault } from '../context/VaultContext';
+import { useApi, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useDefaultWhiteboard, useWhiteboardEditor, useWhiteboardList } from '../hooks/useWhiteboards';
 import { useAutomations } from '../hooks/useAutomations';
@@ -12,6 +12,7 @@ import { BoardAgentPanel } from '../components/whiteboard/BoardAgentPanel';
 import { setAgentPanelOpen, useAgentPanelOpen, useBoardCards } from '../components/whiteboard/agentPanelState';
 import { dropBoardAgentScratch, sweepHomeSessions } from '../components/whiteboard/boardAgentScratch';
 import { readLastBoard, writeLastBoard } from '../components/whiteboard/boardPlace';
+import { hydrateWhiteboardPrefs, isWhiteboardPrefsHydrated } from '../components/whiteboard/whiteboardPrefs';
 import { BoardTabs } from './whiteboards/BoardTabs';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import './WhiteboardsPage.css';
@@ -30,6 +31,28 @@ interface WhiteboardsPageProps {
  * no slug it opens the default board, which the server ensures exists; there is no list page.
  */
 export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
+  const { t } = useI18n();
+  const { vault } = useVault();
+  const api = useApi();
+  // The page's memory (tabs, groups, last board, viewports, panel) is read back from the server
+  // before anything reads it synchronously: after a desktop relaunch localStorage is empty.
+  const prefsKey = vault ?? '';
+  const [readFor, setReadFor] = useState<string | null>(() => (isWhiteboardPrefsHydrated(prefsKey) ? prefsKey : null));
+  const prefsReady = readFor === prefsKey;
+  useEffect(() => {
+    if (prefsReady) return;
+    let live = true;
+    void hydrateWhiteboardPrefs(prefsKey, {
+      load: () => api.get<{ settings: unknown }>('/whiteboard-prefs').then((r) => r.settings),
+      save: (values) => api.put('/whiteboard-prefs', { settings: values }),
+    }).then(() => { if (live) setReadFor(prefsKey); });
+    return () => { live = false; };
+  }, [api, prefsKey, prefsReady]);
+  if (!prefsReady) return <div className="wbp-editor"><div className="wbp-loading">{t('common.loading')}</div></div>;
+  return <WhiteboardsPageBody key={prefsKey} focus={focus} />;
+}
+
+function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   const { t } = useI18n();
   const { instanceId, vault } = useVault();
   // The board open before a reload: the URL hash (see boardHash). There is one URL per window,
