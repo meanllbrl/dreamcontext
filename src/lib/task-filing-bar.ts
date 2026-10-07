@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dedupCandidate, type DedupVerdict } from './embeddings/dedup.js';
-import { isEmbedModelDownloaded } from './embeddings/embedder.js';
+import { isEmbedModelComplete } from './embeddings/embedder.js';
 import { embeddingCacheCoversType, embeddingCacheUsable } from './embeddings/store.js';
 import { slugify } from './id.js';
 import { inspectSleepLock, type SleepState } from './sleep-consolidation.js';
@@ -246,7 +246,9 @@ type SemanticSkip = 'disabled' | 'no-index' | 'model-unavailable';
  *  docstring explains what each clause prevents; the ORDER is cheapest-first. */
 function semanticSkipReason(contextRoot: string): SemanticSkip | null {
   if (process.env.DREAMCONTEXT_FILING_BAR_SEMANTIC === '0') return 'disabled';
-  if (!isEmbedModelDownloaded()) return 'model-unavailable';
+  // COMPLETE, not merely downloaded: a half-fetched model would make the embed call below
+  // re-open the remote fetch inline, inside a task-filing call.
+  if (!isEmbedModelComplete()) return 'model-unavailable';
   if (!embeddingCacheUsable(contextRoot)) return 'no-index';
   if (!embeddingCacheCoversType(contextRoot, 'task')) return 'no-index';
   return null;

@@ -1,8 +1,8 @@
 ---
 id: know_HS7cx_QA
-name: "Decision: Local Embedding Layer (experimental hybrid recall + semantic dedup)"
+name: "Decision: Local Embedding Layer (hybrid recall — the default — + semantic dedup)"
 description: >-
-  Decision + design for an experimental LOCAL embedding layer: hybrid BM25+dense
+  GRADUATED 2026-10-07: hybrid is the default recall mode with EmbeddingGemma-300m. Decision + design for the LOCAL embedding layer (originally experimental): hybrid BM25+dense
   recall (RRF) and semantic sleep-time dedup, via transformers.js
   multilingual-e5-small, content-hash chunk cache, brute-force cosine.
   Supersedes the 'embedding overlay deferred' decision. Cited prior art
@@ -16,12 +16,32 @@ tags:
   - 'topic:embeddings'
 pinned: false
 date: '2026-06-29'
-updated: '2026-07-08'
+updated: '2026-10-07'
 ---
+
+## Update (2026-10-07) — GRADUATED: hybrid is the default mode, EmbeddingGemma-300m the default model
+
+The sections below record the experimental rollout (v0.14.0, e5-small, opt-in). They are history except where this section says otherwise.
+
+**What changed.** `recall_mode` defaults to **`hybrid`**; the Haiku mode is gone ([[haiku-recall-architecture]]), so modes are `hybrid | raw | off`. The default model is **EmbeddingGemma-300m (q8, 768-dim)**; `DREAMCONTEXT_EMBED_MODEL=e5-small` keeps the previous model with its previous tuning (its on-disk index key is unchanged, so an existing e5 index stays valid).
+
+**The "never a surprise download on first prompt" rule still holds — by construction.** Default-hybrid is safe on a fresh machine because the hook only ever *reads* readiness: with no model or no usable index it answers from BM25 and its header says `(BM25 …)`. Provisioning is a separate, background step: SessionStart, `dreamcontext init` and `dreamcontext update` start a **detached** `dreamcontext embed ensure --quiet` (model download under a cross-process lock, then the first index build; retried at most once per 24 h after a failure). `doctor` reports the state, `doctor --fix` / `embed ensure` provision on demand (`--no-download` = index only, `--repair` = wipe and re-fetch a damaged model), and `DREAMCONTEXT_EMBED_AUTO=0` switches every automatic step off (also the post-sleep index build). The first index is checkpointed and a *partial* index is never used for ranking; once complete, the hook embeds at most 8 new/changed chunks inline.
+
+**Graduation gates, re-measured** (frozen corpora, pinned clock, blind gold sets on three corpora — full tables in `eval/RESULTS.md` "2026-10-07 — Recall maintenance"): pooled MRR train 0.756 (G1 BM25) → 0.857 and held-out 0.714 → 0.793; Turkish pooled r@3 train 65.4 → 84.6, held-out 50.0 → 65.4 (the pre-goal hybrid had *lost* to BM25 there); per-set r@1/r@3/r@5 non-inferior to both G1 BM25 and G1 hybrid; search mean ≥ 3× faster per mode, hook raw overhead ~7× lower (dc raw p50 1701 → 519 ms), hook hybrid p50 4.0× (dc) / 5.4× (h-f) lower. Exact-term and field-match never regressed except one accepted single-query flip (h26-008, rank 1 → 2, category count unchanged). **Owner accepted five held-out single-query category flips** (h018, hfh-022, hfh-042, hfh-048, h26-008) — no retuning on held-out; they are the first targets of the next recall round.
+
+**Model screening verdicts** (dense-only, train splits, `eval/runs/2026-10-07-models.json`):
+- **EmbeddingGemma-300m q8 — WON**: dense MRR dc 0.719 → 0.845, h-f 0.698 → 0.807; Turkish r@3 +29.5 (dc) / +11.1 (h-f) points. Cost: ~294 MB download (vs ~113 MB), cold load 1.15 s (vs 0.76 s), warm embed ~71 ms (vs ~3 ms), ~2× index size — paid for by the dense gate.
+- **q4 variant — not shipped**: 187 MB, faster query embed, slower index build, quality never measured; one more profile entry if ever wanted.
+- **granite-embedding-97m-multilingual-r2 — rejected**: dc dense MRR 0.728 vs the e5 control's 0.719, below the +0.02 screening bar, so not carried to h-f.
+- **Cross-encoder reranker (mMiniLMv2-L12) over the top-20 — rejected**: blend MRR +0.003 dc / +0.014 h-f (noise level), rerank-only *worse*, 3.4–6.0 s per query. `bge-reranker-v2-m3` not run by rule.
+
+**Licence — a conscious choice.** EmbeddingGemma ships under Google's **Gemma Terms of Use**: commercial use is permitted, with use restrictions that flow down to downstream users. It is **not an OSI open-source licence** (e5-small is MIT, granite Apache-2.0). The owner accepted this on 2026-10-07. The model is **not bundled in the npm package** — it downloads from Hugging Face on first use (~294 MB) — so dreamcontext itself ships no Gemma weights; users who object select `DREAMCONTEXT_EMBED_MODEL=e5-small`.
+
+**Per-profile tuning (the lesson of this round).** Anything calibrated on cosines or dense rank quality is model-specific and lives in the model profile (`src/lib/embeddings/profiles.ts`), never as a global: hybrid fusion (Gemma: weighted-RRF below BM25 top-raw 12, λ 0.7, RRF BM25 weight 0.6, pin 1.35; e5: cutoff 18, λ 0.1 as before), the **dense gate** (skip the dense channel when BM25 is sure: raw ≥ 24, or ≥ 12 with a ≥ 1.25 lead; e5: none), and the sleep-dedup / declined-idea cosine gates (Gemma merge 0.93 / margin 0.05 / review 0.78 / declined 0.68, measured with 0 % false merges at 0.93 on the frozen dc corpus and an h-f sample; e5 0.97 / 0.02 / 0.91 / 0.82). The cache key includes the quantization (`<repo>#q8`; e5's is the bare repo id), so a model switch discards the index and falls back to BM25 until `embed ensure` rebuilds it.
 
 ## Status
 
-**SHIPPED v0.14.0 (2026-07-07) as EXPERIMENTAL / BETA — flag-gated, off by default. Dashboard control added v0.14.1 (2026-07-07). ALL FOUR GRADUATION GATES MET — default-on now blocked only by operational rollout (first-run download/index UX), not quality.**
+**(Superseded 2026-10-07 — now the default; see the section above.) SHIPPED v0.14.0 (2026-07-07) as EXPERIMENTAL / BETA — flag-gated, off by default. Dashboard control added v0.14.1 (2026-07-07). ALL FOUR GRADUATION GATES MET — default-on now blocked only by operational rollout (first-run download/index UX), not quality.**
 
 **A/B verdict v2 (full numbers: `eval/RESULTS.md` "Embedding A/B"):** hybrid
 beats BM25 on overall r@1/r@5/MRR/nDCG on BOTH gold sets with **not one
@@ -188,5 +208,7 @@ The "epic" is **this document**. The umbrella/organizing view lives in knowledge
 These findings are captured in the multi-review report; the fixes shipped same-day and are regression-tested (suite 2988 green post-hardening vs 2922 at initial ship).
 
 ## Last Verified
+
+2026-10-07 (graduated to default; EmbeddingGemma-300m; measured on three corpora — see the 2026-10-07 section and `eval/RESULTS.md`).
 
 2026-07-08 (tasks 1–4 built + A/B measured + post-ship hardening; verdict: opt-in beta, category-shaped win — see Status. Full suite 2988 tests green, build clean. Tasks 5–6 remain.)

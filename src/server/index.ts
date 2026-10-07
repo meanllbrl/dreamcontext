@@ -207,7 +207,7 @@ import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
-import { handleRecallGet, handleRecallHaikuGet } from './routes/recall.js';
+import { handleRecallGet } from './routes/recall.js';
 import {
   handleBrainAuthDeviceStart,
   handleBrainAuthDevicePoll,
@@ -371,9 +371,7 @@ export function buildRouter(): Router {
   router.get('/api/knowledge/*slug', handleKnowledgeGet);
   router.patch('/api/knowledge/*slug', handleKnowledgeUpdate);
 
-  // Recall — local BM25 search across the brain (powers the Sleepy view).
-  // The /haiku variant adds intent-aware, LLM-filtered recall for Ask mode.
-  router.get('/api/recall/haiku', handleRecallHaikuGet);
+  // Recall — local BM25 (+ dense embeddings in hybrid mode) search across the brain.
   router.get('/api/recall', handleRecallGet);
 
   // Brain cloud-sync — GitHub sign-in (app-global) + per-vault brain repo ops.

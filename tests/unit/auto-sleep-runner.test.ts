@@ -293,7 +293,7 @@ describe('every sleep-state lock site RE-READS inside the lock', () => {
    * The bug this guards: locking the WRITE while holding a stale snapshot from
    * minutes earlier is not protection at all — the stale object is written back
    * whole and silently erases whatever landed in between. It happened once, in
-   * the knowledge-access bump, where an awaited Haiku recall sits between the
+   * the knowledge-access bump, where a slow per-prompt recall sits between the
    * read and the write. A source check is the right shape here: the property is
    * "no lock closure writes an object read outside it", which is structural.
    */
@@ -322,7 +322,7 @@ describe('every sleep-state lock site RE-READS inside the lock', () => {
 });
 
 describe('C4 — the nag silence', () => {
-  const noisy = { debt: 200, bookmarks: [{ id: 'b', message: 'critical thing', salience: 3, created_at: '', session_id: null, task_slug: null }], sessions: [], sleep_started_at: null, last_consolidated_at: null, sessions_since_last_sleep: 0, triggers: [], knowledge_access: {}, dashboard_changes: [], compaction_log: [], pendingMigrationNotices: [], last_sleep: null, last_sleep_summary: null, recall_mode: 'haiku', consolidation_depth: null } as unknown as SleepState;
+  const noisy = { debt: 200, bookmarks: [{ id: 'b', message: 'critical thing', salience: 3, created_at: '', session_id: null, task_slug: null }], sessions: [], sleep_started_at: null, last_consolidated_at: null, sessions_since_last_sleep: 0, triggers: [], knowledge_access: {}, dashboard_changes: [], compaction_log: [], pendingMigrationNotices: [], last_sleep: null, last_sleep_summary: null, recall_mode: 'hybrid', consolidation_depth: null } as unknown as SleepState;
 
   it('normally shouts at 200 debt with a ★★★ bookmark', () => {
     expect(getConsolidationDirective(noisy)).toContain('CONSOLIDATION REQUIRED');

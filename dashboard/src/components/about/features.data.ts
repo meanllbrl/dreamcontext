@@ -65,10 +65,10 @@ const SNAPSHOT_FLOW: FlowSpec = {
 const RECALL_MINI_FLOW: FlowSpec = {
   viewBox: MINI_VB,
   ariaLabel:
-    'Memory recall: a question is scored by BM25 keyword match, optionally refined by a small Haiku agent, returning the most relevant docs in under 100 milliseconds.',
+    'Memory recall: a question is scored by BM25 keyword match, blended with local embeddings when available, returning the most relevant docs in under 100 milliseconds.',
   nodes: [
     { id: 'q', x: 14, y: 52, w: 96, h: 66, title: 'question', sub: 'any language', variant: 'hook' },
-    { id: 'bm25', x: 132, y: 52, w: 96, h: 66, title: 'BM25', sub: '+ Haiku', variant: 'region', breathe: true },
+    { id: 'bm25', x: 132, y: 52, w: 96, h: 66, title: 'BM25', sub: '+ embeddings', variant: 'region', breathe: true },
     { id: 'docs', x: 250, y: 52, w: 96, h: 66, title: 'top docs', sub: '<100ms', variant: 'rem' },
   ],
   edges: [
@@ -252,7 +252,7 @@ export const FEATURES: FeatureItem[] = [
     id: 'memory-recall',
     title: 'Memory recall',
     tagline: 'Ask "where did we decide X?" and get an answer in under 100ms.',
-    body: 'A deterministic BM25 search ranks every knowledge file, PRD, task, memory entry and changelog line — optionally sharpened by a small Haiku agent — so the right context surfaces without scrolling or grepping. Handles English, Turkish and mixed queries.',
+    body: 'A deterministic BM25 search ranks every knowledge file, PRD, task, memory entry and changelog line — blended with local embeddings when available — so the right context surfaces without scrolling or grepping. Handles English, Turkish and mixed queries.',
     defaultOpen: true,
     tag: 'Memory',
     flow: RECALL_MINI_FLOW,

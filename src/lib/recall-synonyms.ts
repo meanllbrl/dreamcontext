@@ -111,6 +111,98 @@ const DIRECTED_BRIDGES: Record<string, string[]> = {
 };
 
 /**
+ * Turkish → English bridges for the product vocabulary Turkish task notes are written in.
+ * ~370 of the 2000-odd docs across the dreamcontext and h-f brains are Turkish, so a Turkish
+ * query matches OTHER Turkish tasks on shared Turkish words and never reaches the English
+ * canonical doc that answers it — the doc has no Turkish term to match. Each row maps the
+ * indexed stems of one Turkish concept to the English words the canonical docs use.
+ *
+ * Provenance: the concepts are the most frequent Turkish content nouns by document
+ * frequency over the Turkish docs of both brains (function words, verbs and loanwords
+ * dropped), translated by hand — no gold query was used to pick or shape a row.
+ * Selection rule, applied to the whole table: an English target that appears in more
+ * than 25% of the docs of either brain (file, user, live, decision, status, code...)
+ * is left out — it cannot tell docs apart, only reshuffles near-ties — and a row left
+ * with no target is dropped.
+ * Keys are the stems the tokenizer actually produces for the observed spellings
+ * (diacritic and ascii forms, plus the inflections the stemmer leaves unmerged, e.g.
+ * `ekranda` → `ekra`, `ekranı` kept whole); a test asserts every key is a stable stem.
+ *
+ * Directed and query-side only, like the bridges above: weighted SYNONYM_WEIGHT into
+ * rankScore, never the raw `.score`, and never part of the built corpus.
+ */
+const TR_EN_BRIDGE_ROWS: ReadonlyArray<readonly [turkish: string, english: string]> = [
+  ['kaynak kaynağı kaynagi', 'source'],
+  ['ekran ekranı ekrani ekrana ekra', 'screen'],
+  ['hata', 'error bug'],
+  ['soru', 'question'],
+  ['sorun sorunu', 'problem issue'],
+  ['veri', 'data'],
+  ['sayfa', 'page'],
+  ['bulgu', 'finding'],
+  ['gelir', 'revenue income'],
+  ['zaman', 'time'],
+  ['pencere pencer', 'window'],
+  ['mevcut', 'current'],
+  ['tablo', 'table'],
+  ['kart kartı karti', 'card'],
+  ['kontrol kontrolü kontrolu', 'control'],
+  ['kural kuralı kurali', 'rule'],
+  ['hedef hedefi', 'goal target'],
+  ['kapsam kapsamı kapsami', 'scope'],
+  ['uygulama', 'application'],
+  ['fiyat fiyatı', 'price pricing'],
+  ['ürün ürünü urun', 'product'],
+  ['hesap hesabı hesabi', 'account calculation'],
+  ['mesaj mesajı mesaji', 'message'],
+  ['ölçüm ölçümü olcum olcumu', 'measurement'],
+  ['doğrulama dogrulama', 'verification validation'],
+  ['abonelik', 'subscription'],
+  ['ödeme odeme', 'payment'],
+  ['reklam', 'ad ads advertising'],
+  ['kampanya', 'campaign'],
+  ['trafik', 'traffic'],
+  ['kanıt kanıtı kanit kaniti', 'evidence proof'],
+  ['sebep sebebi', 'reason cause'],
+  ['etki', 'effect impact'],
+  ['takip', 'tracking track'],
+  ['cihaz', 'device'],
+  ['kimlik', 'identity auth'],
+  ['tarih tarihi', 'date'],
+  ['giriş', 'login entry'],
+  ['hafta haftalık haftalik', 'week weekly'],
+  ['günlük', 'daily'],
+  ['ayar', 'setting settings'],
+  ['kurulum', 'install setup'],
+  ['bildirim', 'notification'],
+  ['arama', 'search'],
+  ['öneri oneri', 'recommendation suggestion'],
+  ['bütçe butce', 'budget'],
+  ['iade', 'refund'],
+  ['harita', 'map'],
+  ['mekanizma', 'mechanism'],
+  ['mimari', 'architecture'],
+  ['kayıt kayit kaydı', 'record registry log'],
+  ['son', 'latest last recent'],
+  ['güncel guncel', 'current latest'],
+  ['telefon', 'phone mobile'],
+  ['bağlantı', 'connection link'],
+  ['yetki izin', 'permission authorization'],
+  ['erişim erisim erişimi', 'access'],
+  ['beyin', 'brain memory'],
+  ['özet', 'summary'],
+  ['sistem', 'system'],
+  ['dil', 'language'],
+];
+
+for (const [turkish, english] of TR_EN_BRIDGE_ROWS) {
+  const targets = english.split(' ');
+  for (const key of turkish.split(' ')) {
+    DIRECTED_BRIDGES[key] = [...new Set([...(DIRECTED_BRIDGES[key] ?? []), ...targets])];
+  }
+}
+
+/**
  * Built lookup: raw surface term -> set of raw expansion terms (excluding the
  * term itself). Constructed once at module load. Keys/values are the surface
  * forms as authored above; the caller folds both query terms and expansions
@@ -206,4 +298,4 @@ export function expandQueryTerms(
 }
 
 // Exposed for tests.
-export { SYNONYMS, DIRECTED_BRIDGES };
+export { SYNONYMS, DIRECTED_BRIDGES, TR_EN_BRIDGE_ROWS };

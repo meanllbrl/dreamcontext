@@ -1,6 +1,7 @@
 import { buildCorpus, docKey, type CorpusDoc, type CorpusType } from '../recall.js';
 import { chunkDoc } from './chunker.js';
 import { embedPassages } from './embedder.js';
+import { EMBED_PROFILE } from './profiles.js';
 import { refreshEmbeddings, type DenseIndex } from './store.js';
 
 /**
@@ -81,6 +82,42 @@ function envThreshold(name: string, fallback: number, min = DEDUP_MIN_THRESHOLD)
 // missed merge only costs a duplicate the next curator pass folds in; a false
 // merge silently LOSES distinct content).
 
+// ── Per-model defaults ───────────────────────────────────────────────────────
+// Cosine SCALES are model-specific, so each embedding profile (profiles.ts) carries its own
+// merge / margin / review gates; the exports below read the ACTIVE profile's. The numbers above
+// and in the three doc blocks below are e5-small's (0.97 / 0.02 / 0.91 — unchanged).
+//
+// EmbeddingGemma-300m q8 (the default since 2026-10-07) spreads over 0.25–1.0 instead of e5's
+// 0.83–1.0, so e5's gates would NEVER fire on it (same-topic max 0.908 < 0.91; a 30%-reworded twin
+// ~0.95 < 0.97). Measured the same way (short candidates = title + description; scoring =
+// maxSimByDoc below), on the frozen dc brain (186 knowledge+feature docs, 138 probes) and a
+// deterministic 24-probe sample of the h-f brain (430 docs, Turkish-heavy):
+//
+//   band (max cosine over chunk pairs)                        dc  min/p25/p50/p90/max      h-f p50/p90/max
+//   SAME-TOPIC  short cand → own body                         .553/.787/.822/.880/.908     .832/.875/.905
+//   OTHER       short cand → nearest other doc                .506/.597/.659/.761/.835     .747/.854/.905
+//   TWIN-10%    whole doc, 10% of words dropped               .917/.984/.991/1.00/1.00     .943/.972/.978
+//   TWIN-30%    whole doc, 30% of words dropped               .850/.927/.955/.978/1.00     .924/.942/.947
+//   TWIN-SECT   one 120-word section, 30% dropped             .795/.884/.916/.950/.969     .927/.952/.955
+//   DISTINCT    a doc's own chunks → nearest OTHER doc        .522/.718/.789/.853/.888     .833/.919/1.00*
+//   UNRELATED   random doc pairs                              .249/.481/.535/.640/.855     .521/.638/.716
+//   margins top1−top2: twins p10 .12–.14 (dc) / .05–.07 (h-f); distinct docs p50 .03, p90 .10–.15.
+//   (* h-f holds true duplicate docs: 8% of docs have a neighbor ≥ 0.97.)
+//
+// Gates, set with the same rules as e5's: MERGE sits ~0.025 above the highest NOT-a-twin pair
+// measured on EITHER corpus (h-f's OTHER max .905 → 0.93; dc's was .835–.888), so auto-merge stays
+// a high-precision signal (0% false merges on both corpora at 0.93; it still catches ~99% / ~50% of
+// 10%-dropped twins on dc / h-f) — a missed merge costs a duplicate the next curator pass folds in, a
+// false merge loses content. MARGIN 0.05: Gemma's spread is ~3× e5's, so e5's 0.02 scales to ≈0.05;
+// 91–100% of twins clear it while only ~29% of distinct neighborhoods do. REVIEW 0.78 is the e5 rule
+// (catch ~¾ of same-topic candidates, flag only the closer novel ones): dc catches 78% / flags 6%
+// of novel, h-f 71% / 29% — Gemma's same-topic and other bands overlap far less than e5's did.
+// The declined-idea gate (task-declined.ts) is the same story: same-idea p10 .74/.63, distinct
+// max .664 on both corpora → 0.68 (e5: 0.82).
+//
+// RE-CALIBRATE when the model changes: scripts/dedup-calibrate.ts measures SAME-TOPIC / OTHER for the
+// active model; twin bands = the doc restated with words dropped, scored against the same index.
+
 /**
  * Absolute cosine floor for an auto-MERGE verdict. 0.97 — high on purpose: it
  * fires only on a NEAR-VERBATIM single-twin restatement (a re-documented decision/
@@ -93,7 +130,7 @@ function envThreshold(name: string, fallback: number, min = DEDUP_MIN_THRESHOLD)
  * with {@link DEDUP_MERGE_MARGIN}. Override: `DREAMCONTEXT_DEDUP_MERGE` (0–1);
  * re-run the calibration if the model changes — these numbers are model-specific.
  */
-export const DEDUP_MERGE_THRESHOLD = envThreshold('DREAMCONTEXT_DEDUP_MERGE', 0.97);
+export const DEDUP_MERGE_THRESHOLD = envThreshold('DREAMCONTEXT_DEDUP_MERGE', EMBED_PROFILE.dedupMerge);
 
 /**
  * A MERGE also requires the top neighbor to beat the 2nd-nearest doc by at least
@@ -106,7 +143,7 @@ export const DEDUP_MERGE_THRESHOLD = envThreshold('DREAMCONTEXT_DEDUP_MERGE', 0.
  * thresholds, a legitimately tiny gap is meaningful, and 0 merely disables the
  * secondary gate rather than widening the primary one).
  */
-export const DEDUP_MERGE_MARGIN = envThreshold('DREAMCONTEXT_DEDUP_MERGE_MARGIN', 0.02, 0);
+export const DEDUP_MERGE_MARGIN = envThreshold('DREAMCONTEXT_DEDUP_MERGE_MARGIN', EMBED_PROFILE.dedupMergeMargin, 0);
 
 /**
  * Cosine at/above which the nearest doc is SURFACED for the agent to judge
@@ -118,7 +155,7 @@ export const DEDUP_MERGE_MARGIN = envThreshold('DREAMCONTEXT_DEDUP_MERGE_MARGIN'
  * automatic action. Leans toward RECALL: a REVIEW false positive costs a glance;
  * a miss costs a duplicate. Override: `DREAMCONTEXT_DEDUP_REVIEW` (0–1).
  */
-export const DEDUP_REVIEW_THRESHOLD = envThreshold('DREAMCONTEXT_DEDUP_REVIEW', 0.91);
+export const DEDUP_REVIEW_THRESHOLD = envThreshold('DREAMCONTEXT_DEDUP_REVIEW', EMBED_PROFILE.dedupReview);
 
 export interface DedupCandidate {
   title: string;

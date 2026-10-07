@@ -61,8 +61,7 @@ import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
 import { registerChat, isDelegatedConversation, listChats, type ChatHandle } from '../../lib/assistant/chat-registry.js';
-import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
-import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
+import { isEmbedModelComplete } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
 import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '../../lib/assistant/session-state.js';
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
@@ -335,17 +334,17 @@ export function mcpConfigArgs(paths: Array<string | null>): string[] {
 
 /**
  * The recall mode a spawn's hooks run under, as an env override — or `{}` to leave the
- * vault's own mode alone. The Assistant, and a chat it delegated into a vault whose mode is
- * `haiku` (a `claude -p` per prompt: 10-27 s measured), get `hybrid` when the embedding model
- * is on disk, else `raw`. NOT gated on index readiness: the env is fixed for the child's
+ * vault's own mode alone. The Assistant gets `hybrid` when the embedding model is on disk,
+ * else `raw`; every other chat (including a delegated one) keeps its vault's mode, which
+ * is hybrid by default and falls back to BM25 on its own. NOT gated on index readiness: the env is fixed for the child's
  * life, and the hook re-checks `hybridReady` per prompt and falls back to BM25 until the
  * index lands. NOTE: DREAMCONTEXT_RECALL_MODE overrides the vault's mode for EVERY hook in
  * that child process (sleep.ts resolveRecallMode), not one gate.
  */
 export function recallEnvFor(o: {
-  isAssistant: boolean; delegated: boolean; vaultRecallMode: RecallMode | null; modelOnDisk: boolean;
+  isAssistant: boolean; modelOnDisk: boolean;
 }): Record<string, string> {
-  if (o.isAssistant || (o.delegated && o.vaultRecallMode === 'haiku')) {
+  if (o.isAssistant) {
     return { DREAMCONTEXT_RECALL_MODE: o.modelOnDisk ? 'hybrid' : 'raw' };
   }
   return {};
@@ -1257,15 +1256,10 @@ export function startChatSession(
   });
   const spawnModel = spawnModelFor({ isAssistant, assistantModel: assistantConfig?.model, urlModel: model });
   let recallEnv: Record<string, string> = {};
-  if (isAssistant || delegated) {
+  if (isAssistant) {
     try {
-      recallEnv = recallEnvFor({
-        isAssistant,
-        delegated,
-        vaultRecallMode: isAssistant ? null : resolveRecallMode(contextRoot),
-        modelOnDisk: isEmbedModelDownloaded(),
-      });
-    } catch { /* an unreadable sleep state leaves the vault's own mode in charge */ }
+      recallEnv = recallEnvFor({ isAssistant, modelOnDisk: isEmbedModelComplete() });
+    } catch { /* an unreadable model dir leaves the vault's own mode in charge */ }
   }
   // The Assistant's own index, built in the background without the owner doing anything
   // (every spawn: covers create, a model/version change that invalidated it, and existing

@@ -1,0 +1,8 @@
+[
+  {
+    "id": "smoke-3",
+    "key": "task/haiku-recall-extraction",
+    "since": "2026-10-07",
+    "reason": "gold.smoke.jsonl is a 3-query smoke fixture, not a measured set; its target task was archived. Left unrepaired (the smoke query text is part of the fixture) and parked here so the integrity check stays green."
+  }
+]
