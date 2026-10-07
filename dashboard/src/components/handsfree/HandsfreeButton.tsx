@@ -7,6 +7,7 @@ import { focusHandsfreeBanner, onHandsfreeEvent, OPEN_SHEET, openHandsfreeSheet,
 import { fill, JobProgress } from './HandsfreeParts';
 import { HandsfreeSheet } from './HandsfreeSheet';
 import type { HandsfreeJob, HandsfreeStatus } from './handsfreeTypes';
+import { handsfreeVisible } from './handsfreeReveal';
 import './handsfree.css';
 
 /**
@@ -37,7 +38,7 @@ export function HandsfreeButton({ vault }: { vault: string }) {
 
   useEffect(() => onHandsfreeEvent(OPEN_SHEET, () => { setElsewhereOpen(false); setOpen(true); }), []);
 
-  if (!isDesktop() || unavailable || !vault) return null;
+  if (!isDesktop() || unavailable || !vault || !handsfreeVisible(status)) return null;
   const phase = status?.phase ?? 'home';
   const goRunning = job?.kind === 'go' && job.status === 'running';
   const action = chipAction(view, phase, goRunning);
