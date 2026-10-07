@@ -7,6 +7,8 @@ import '../../lab/blocks/dataBlocks.css';
 import { EMPTY_VIEW, setTab, type CardView } from '../../lab/board/cardViewState';
 import { chartEntry, detailBodyFor } from '../../lab/chartRegistry';
 import { formatValue } from '../../lab/chartBody';
+import { HtmlInsightBody } from '../../lab/HtmlInsightBody';
+import { LabAppBody } from '../../lab/LabAppBody';
 import { LineChart } from '../../lab/LineChart';
 import { Sparkline } from '../../lab/Sparkline';
 import { InsightView, toSummary } from '../../sleepy/chat/InsightView';
@@ -84,6 +86,8 @@ export function InsightWidget({ payload, active, size }: WidgetProps) {
         <InsightChart detail={data} />
       </div>
     );
+  } else if (data.cache?.app || data.cache?.html) {
+    body = <FramedInsight detail={data} />;
   } else if (fillsCard(data)) {
     body = <FilledInsight detail={data} full={size === 'xl'} />;
   } else {
@@ -131,6 +135,27 @@ function FilledInsight({ detail, full }: { detail: InsightDetail; full: boolean 
           <Body summary={summary} cache={detail.cache ?? null} series={series} full={full} emptyHint={entry.emptyHint} height={Math.floor(box.height)} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * An app/v1 or html/v1 body filling the card: the frame takes the body's whole height and
+ * scrolls its own document when the content is taller. An app stays interactive (its own
+ * `lab.navigate` switches the page in place).
+ */
+function FramedInsight({ detail }: { detail: InsightDetail }) {
+  const summary = toSummary(detail);
+  const cache = detail.cache ?? null;
+  return (
+    <div className="lab-block-insight lab-block-insight--fill wb-insight-fill">
+      <div className="lab-block-insight-body">
+        {cache?.app ? (
+          <LabAppBody summary={summary} cache={cache} series={cache.series ?? []} emptyHint={chartEntry(summary.render).emptyHint} fill />
+        ) : cache?.html ? (
+          <HtmlInsightBody html={cache.html} title={summary.title} fill />
+        ) : null}
+      </div>
     </div>
   );
 }

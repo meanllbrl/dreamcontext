@@ -21,6 +21,9 @@ import './lab-app-card-nav.css';
  * board card holds the open page, so fullscreen keeps it). In-page params are
  * not kept on a board: a navigation lands on the page's start.
  *
+ * FILL (`fill` on, a host-sized box: LabFrameFill): the same interactive frame filling the
+ * block, without the pills; the page's own `lab.navigate` still switches the page.
+ *
  * Either way the frame is keyed `${slug}:${page}`, so a page switch is always a
  * REMOUNT (fresh nonce, fresh load count: LabAppFrame's teardown contract).
  * A pinned page the app no longer declares falls back to `spec.card ??
@@ -32,11 +35,13 @@ export interface LabAppBodyProps extends ChartBodyProps {
   pageId?: string | null;
   /** Page pills in the card, the frame interactive. */
   nav?: boolean;
+  /** The frame fills the block (interactive, no pills) instead of a 320px preview. */
+  fill?: boolean;
   /** Switch the card's page (the board card's view state). Absent = the body keeps it itself. */
   onNavigate?: (pageId: string) => void;
 }
 
-export function LabAppBody({ summary, cache, emptyHint, pageId = null, nav = false, onNavigate }: LabAppBodyProps) {
+export function LabAppBody({ summary, cache, emptyHint, pageId = null, nav = false, fill = false, onNavigate }: LabAppBodyProps) {
   const { t } = useI18n();
   const [local, setLocal] = useState<string | null>(null);
   const app = cache?.app;
@@ -58,7 +63,7 @@ export function LabAppBody({ summary, cache, emptyHint, pageId = null, nav = fal
     </p>
   ) : null;
 
-  if (!nav) {
+  if (!nav && !fill) {
     return (
       <>
         {missing}
@@ -77,8 +82,8 @@ export function LabAppBody({ summary, cache, emptyHint, pageId = null, nav = fal
   }
 
   return (
-    <div className="lab-app-card-nav" data-lab-app-nav data-lab-app-page={page}>
-      {spec.pages.length > 1 && (
+    <div className="lab-app-card-nav" data-lab-app-nav={nav ? '' : undefined} data-lab-app-fill={fill && !nav ? '' : undefined} data-lab-app-page={page}>
+      {nav && spec.pages.length > 1 && (
         <div
           className="lab-app-card-pills"
           role="tablist"

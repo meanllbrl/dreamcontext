@@ -81,10 +81,12 @@ function clampHeight(px: number, full: boolean): number {
     : Math.min(CARD_MAX_HEIGHT, Math.max(CARD_MIN_HEIGHT, rounded));
 }
 
-export function HtmlInsightBody({ html, title, full = false }: {
+export function HtmlInsightBody({ html, title, full = false, fill = false }: {
   html: string;
   title: string;
   full?: boolean;
+  /** Fill the parent's height (a host-sized box: LabFrameFill); a taller body scrolls inside. */
+  fill?: boolean;
 }) {
   const theme = useDataTheme();
   const scheme = theme === 'dark' ? 'dark' : 'light';
@@ -154,7 +156,7 @@ export function HtmlInsightBody({ html, title, full = false }: {
       onLoad={askForHeight}
       style={{
         width: '100%',
-        height: height !== null ? clampHeight(height, full) : PENDING_HEIGHT,
+        height: fill ? '100%' : height !== null ? clampHeight(height, full) : PENDING_HEIGHT,
         border: 'none',
         display: 'block',
         colorScheme: scheme,

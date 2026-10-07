@@ -1,5 +1,7 @@
+import { useContext } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { chartEntry, detailBodyFor } from '../chartRegistry';
+import { LabFrameFill } from '../frameFill';
 import { HtmlInsightBody } from '../HtmlInsightBody';
 import { LabAppBody } from '../LabAppBody';
 import { useBlockSize, type BlockViewProps } from './blockCommon';
@@ -21,6 +23,9 @@ import './dataBlocks.css';
  * `nav` (true) puts the app's page pills in the card and makes the frame
  * interactive, filling the cell. The open page lives in the card's view state
  * (`appPage` / `onAppPage`), so fullscreen keeps it; it wins over `page`.
+ *
+ * In a host-sized box (`LabFrameFill`, a whiteboard widget) an app/v1 or html/v1 body fills the
+ * cell like `nav` does, instead of standing as a 320px preview over an empty band.
  */
 export function InsightBlock({ summary, cache, full, options, appPage, onAppPage }: BlockViewProps) {
   const { t } = useI18n();
@@ -30,17 +35,18 @@ export function InsightBlock({ summary, cache, full, options, appPage, onAppPage
   const entry = summary ? chartEntry(summary.render) : null;
   const fill = !!entry && !cache?.app && !cache?.html && entry.fit === 'fill';
   const nav = !!cache?.app && options.nav === true;
+  const frameFill = useContext(LabFrameFill) && !full && (!!cache?.app || !!cache?.html);
   const page = appPage ?? (typeof options.page === 'string' && options.page ? options.page : null);
-  const app: AppView = { pageId: page, nav, onNavigate: onAppPage };
+  const app: AppView = { pageId: page, nav, fill: frameFill, onNavigate: onAppPage };
   return (
     <div
       ref={ref}
-      className={fill || nav ? 'lab-block-insight lab-block-insight--fill' : 'lab-block-scroll lab-block-insight lab-block-insight--scroll'}
-      data-insight-fit={fill || nav ? 'fill' : 'scroll'}
+      className={fill || nav || frameFill ? 'lab-block-insight lab-block-insight--fill' : 'lab-block-scroll lab-block-insight lab-block-insight--scroll'}
+      data-insight-fit={fill || nav || frameFill ? 'fill' : 'scroll'}
     >
       {!summary || !entry ? (
         <div className="lab-block-empty">{t('lab.blocks.insight.missing')}</div>
-      ) : nav ? (
+      ) : nav || frameFill ? (
         <div className="lab-block-insight-body">
           <InsightBody summary={summary} cache={cache ?? null} full={full} fill={false} height={Math.floor(box.height)} app={app} />
         </div>
@@ -54,6 +60,8 @@ export function InsightBlock({ summary, cache, full, options, appPage, onAppPage
 interface AppView {
   pageId: string | null;
   nav: boolean;
+  /** The frame fills the block (`LabFrameFill`). */
+  fill: boolean;
   onNavigate?: (pageId: string) => void;
 }
 
@@ -83,10 +91,11 @@ function InsightBody({ summary, cache, full, fill, height, app }: {
       emptyHint={entry.emptyHint}
       pageId={app.pageId}
       nav={app.nav}
+      fill={app.fill}
       onNavigate={app.onNavigate}
     />
   ) : cache?.html ? (
-    <HtmlInsightBody html={cache.html} title={summary.title} full={full} />
+    <HtmlInsightBody html={cache.html} title={summary.title} full={full} fill={app.fill} />
   ) : (
     <Body summary={summary} cache={cache} series={series} full={full} emptyHint={entry.emptyHint} />
   );

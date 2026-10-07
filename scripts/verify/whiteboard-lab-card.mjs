@@ -22,6 +22,9 @@
  *       re-syncs, and the label follows.
  *   L1  the lab-card widget draws the board's card (title, chips, tabs); full screen opens over
  *       the app and Esc closes it.
+ *   A1  a tall app/v1 insight fills its card on the board: as a lab-card widget and as an insight
+ *       widget at a custom 376x560 size, the frame runs to the card's bottom edge instead of
+ *       stopping at Lab's 320px preview over an empty band (owner, 2026-10-07).
  *   E   no page errors. Screenshots (light + dark) in tmp/whiteboard-lab-card-shots/.
  *
  * COLLECT-DON'T-FAIL-FAST: every check reports; the exit code is non-zero if any failed.
@@ -75,6 +78,18 @@ async function waitForServer(url, ms = 20000) {
 
 const FUNNEL = 'acme-funnel';
 const BOARD = 'acquisition';
+const TALL = 'tall-app';
+
+// An app/v1 page far taller than Lab's 320px card preview: a title over a 40-row table.
+const TALL_ROWS = Array.from({ length: 40 }, (_, i) => `<tr><td>Day ${i + 1}</td><td class="lk-num">${(i + 1) * 37}</td></tr>`).join('');
+const TALL_HTML = `<p class="lk-title">Tall app</p><table class="lk-table"><tr><th>Day</th><th class="lk-num">Users</th></tr>${TALL_ROWS}</table>`;
+const TALL_SCRIPT = `export default async function () {
+  return {
+    data: { kind: 'dataset/v1', primary: 'days', datasets: [{ key: 'days', dims: [{ key: 'day' }], rows: [{ d: { day: 'd1' }, v: 37 }], total: { v: 37 } }] },
+    app: { kind: 'app/v1', entry: 'overview', card: 'overview', pages: [{ id: 'overview', title: 'Overview', html: ${JSON.stringify(TALL_HTML)} }] },
+  };
+}
+`;
 
 function setup() {
   rmSync(SCRATCH, { recursive: true, force: true });
@@ -92,8 +107,13 @@ function setup() {
   writeFileSync(join(LAB, 'scripts', `${FUNNEL}.mjs`), `${demo}\nexport default async function () { return (await demo()).data.funnel; }\n`, 'utf-8');
   dc(['lab', 'sync', FUNNEL]);
 
+  dc(['lab', 'create', TALL, '--title', 'Tall app', '--render', 'app', '--adapter', 'script', '--no-board']);
+  writeFileSync(join(LAB, 'scripts', `${TALL}.mjs`), TALL_SCRIPT, 'utf-8');
+  dc(['lab', 'sync', TALL]);
+
   dc(['lab', 'board', 'create', BOARD, '--title', 'Acquisition']);
   dc(['lab', 'board', 'add-card', BOARD, '--preset', 'funnel-explorer', '--insight', FUNNEL, '--locale', 'en']);
+  dc(['lab', 'board', 'add-card', BOARD, '--insight', TALL]);
 
   // The default board (the rail's Whiteboard entry opens it), seeded before the dashboard makes it.
   dc(['whiteboard', 'create', 'Control Panel']);
@@ -102,6 +122,8 @@ function setup() {
     mini: add(['insight', '--ref', FUNNEL, '--size', 'm', '--at', '0,0']),
     wide: add(['insight', '--ref', FUNNEL, '--size', 'xl', '--at', '0,196']),
     card: add(['lab-card', '--ref', `${BOARD}/c-${FUNNEL}`, '--at', '0,588']),
+    tallCard: add(['lab-card', '--ref', `${BOARD}/c-${TALL}`, '--size', '376,560', '--at', '800,0']),
+    tallInsight: add(['insight', '--ref', TALL, '--size', '376,560', '--at', '1196,0']),
   };
 }
 
@@ -115,6 +137,7 @@ async function main() {
   const ids = setup();
   ok('fixture: the funnel synced', dc(['lab', 'show', FUNNEL]).includes('Quiz checkout'));
   ok('fixture: three widgets on the board', !!(ids.mini && ids.wide && ids.card));
+  ok('fixture: the tall app synced and sits on the board twice', dc(['lab', 'show', TALL]).includes('Tall app') && !!(ids.tallCard && ids.tallInsight));
   const lookupNote = dc(['lab', 'board', 'show', BOARD, '--select', 'platform=Meta Ads']);
   const languageTab = lookupNote.slice(lookupNote.indexOf('(tab Language)'));
   ok('F3 CLI: the Language segments tab under platform=Meta Ads prints no "Not measured" header',
@@ -143,11 +166,29 @@ async function main() {
       await sleep(300);
     }
     await page.locator('.sidebar-item', { hasText: /Whiteboard(?!s)/ }).click();
-    await until(() => page.locator('[data-widget-kind]').count().then((n) => n >= 3), 20000);
+    await until(() => page.locator('[data-widget-kind]').count().then((n) => n >= 5), 20000);
     // Fit the three widgets in view (Excalidraw's zoom-to-fit), so every one is mounted and visible.
     await page.locator('.wbp-canvas .excalidraw-container').first().focus().catch(() => {});
     await page.keyboard.press('Shift+1');
     await sleep(800);
+
+    // A1: the tall app fills its card (layout pixels, so the canvas zoom does not matter).
+    for (const name of ['lab-card', 'insight']) {
+      const fit = await until(() => page.evaluate((kind) => {
+        const widget = [...document.querySelectorAll(`[data-widget-kind="${kind}"]`)].find((w) => w.querySelector('.wb-widget-title')?.textContent === 'Tall app');
+        const body = widget?.querySelector('.wb-widget-body');
+        const frame = body?.querySelector('iframe.lab-app-frame');
+        if (!body || !frame || frame.offsetHeight === 0) return null;
+        const b = body.getBoundingClientRect();
+        const f = frame.getBoundingClientRect();
+        return { frame: frame.offsetHeight, body: body.offsetHeight, gap: (b.bottom - f.bottom) / (b.height || 1) };
+      }, name), 15000);
+      ok(`A1 the tall app ${name} widget draws its frame`, !!fit, String(fit));
+      if (fit) {
+        ok(`A1 the ${name} frame is taller than Lab's 320px preview`, fit.frame > 400, JSON.stringify(fit));
+        ok(`A1 the ${name} frame runs to the card's bottom edge (no empty band)`, fit.gap < 0.08, JSON.stringify(fit));
+      }
+    }
 
     // F1: the M funnel widget.
     const mini = page.locator('[data-wb-funnel-mini]').first();
@@ -158,7 +199,7 @@ async function main() {
     ok('F1 no table in the M funnel widget', await page.locator('[data-widget-size="m"][data-widget-kind="insight"] table').count() === 0);
 
     // F2: the XL funnel widget is the explorer.
-    const xl = page.locator('[data-widget-size="xl"][data-widget-kind="insight"]');
+    const xl = page.locator('[data-widget-size="xl"][data-widget-kind="insight"]', { hasText: 'Acme acquisition funnel' });
     await until(() => xl.locator('[data-wb-labcard]').count(), 15000);
     ok('F2 the XL funnel widget draws the Lab card', await xl.locator('[data-wb-labcard]').count() === 1);
     const tabs = await xl.locator('[role="tab"]').allTextContents();
@@ -217,7 +258,7 @@ async function main() {
     }
 
     // L1: the lab-card widget and full screen.
-    const card = page.locator('[data-widget-kind="lab-card"]');
+    const card = page.locator('[data-widget-kind="lab-card"]', { hasText: 'Acme acquisition funnel' });
     ok('L1 the lab-card widget draws the board card', await card.locator('[data-wb-labcard]').count() === 1);
     ok('L1 with its title', /Acme acquisition funnel/.test(await card.innerText()));
     const cardBox = await card.boundingBox();

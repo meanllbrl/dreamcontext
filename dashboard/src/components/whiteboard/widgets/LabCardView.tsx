@@ -8,6 +8,7 @@ import { BoardCard } from '../../lab/board/BoardCard';
 import { EMPTY_VIEW, type CardView } from '../../lab/board/cardViewState';
 import type { BoardResponse, Card } from '../../lab/board/boardTypes';
 import { renderBlock } from '../../lab/blocks/blockRegistry';
+import { LabFrameFill } from '../../lab/frameFill';
 import '../../lab/board/board.css';
 import '../../lab/board/lab-shell.css';
 import './labCardWidget.css';
@@ -23,6 +24,9 @@ import './labCardWidget.css';
  * keeps the pick. Nothing of it is saved, as in Lab. Full screen is a portal over the whole
  * app (the canvas would clip and zoom it); Esc or the card's × closes it, queued on the app's
  * overlay stack with menus and panels.
+ *
+ * On the board the widget sizes the card, so an app/html insight body fills it (`LabFrameFill`)
+ * instead of stopping at Lab's 320px preview; full screen keeps Lab's own layout.
  */
 export function LabCardView({ response, card, fullscreen, onExitFullscreen, initialView }: {
   response: Pick<BoardResponse, 'frames' | 'summaries'>;
@@ -63,7 +67,7 @@ export function LabCardView({ response, card, fullscreen, onExitFullscreen, init
   return (
     <div className="wb-labcard" data-wb-labcard={card.id}>
       {/* ONE live copy: while full screen, the widget keeps its place as an empty box (an app card never runs two iframes). */}
-      {fullscreen ? <div className="wb-labcard-lifted" aria-hidden="true" /> : node(false)}
+      {fullscreen ? <div className="wb-labcard-lifted" aria-hidden="true" /> : <LabFrameFill.Provider value>{node(false)}</LabFrameFill.Provider>}
       {fullscreen && (
         <FullscreenLayer label={card.title ?? (card.insight ? summaries[card.insight]?.title : undefined) ?? t('lab.board.card.fullscreen')} onClose={onExitFullscreen}>
           {node(true)}
