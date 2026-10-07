@@ -77,6 +77,8 @@ export function recallNavTarget(hit: RecallHit): RecallNavTarget {
     case 'whiteboard':
       // The board slug IS the Whiteboard page's focus id: the hit opens that board.
       return { page: 'whiteboards', slug: hit.slug };
+    case 'core':
+      // Soul, style guide, tech stack, system flow: the Core page opens the file.
     case 'changelog':
     case 'memory':
     default:

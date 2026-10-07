@@ -21,7 +21,8 @@ import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
 // automation slugs are already uniqueness-enforced by the store, and a run output
 // is machine-generated — "this run resembles last run" is expected, not a dupe.
 // `whiteboard` stays out too: a board is a layout over other docs, so it
-// legitimately resembles the knowledge and tasks its cards point at.
+// legitimately resembles the knowledge and tasks its cards point at. `core`
+// neither: its files are fixed slots, never created through a dedup-gated flow.
 const VALID_DEDUP_TYPES: readonly CorpusType[] = [
   'knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis',
 ];

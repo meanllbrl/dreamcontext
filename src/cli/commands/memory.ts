@@ -38,6 +38,7 @@ export const TYPE_LABELS: Record<CorpusType, string> = {
   thesis: 'thesis',
   automation: 'automation',
   whiteboard: 'whiteboard',
+  core: 'core',
   skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
 
@@ -551,7 +552,7 @@ export function registerMemoryCommand(program: Command): void {
         knowledge: 'files', feature: 'PRDs', task: 'task files',
         memory: 'LIFO entries', changelog: 'entries', objective: 'objectives',
         insight: 'insights', thesis: 'theses', automation: 'manifests + runs',
-        whiteboard: 'boards',
+        whiteboard: 'boards', core: 'files',
       };
       const width = Math.max(...CORPUS_TYPES.map((t) => TYPE_LABELS[t].length));
       console.log(header('Memory Corpus'));

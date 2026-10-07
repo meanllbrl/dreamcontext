@@ -237,3 +237,14 @@ locks extended to 19 tests (pin guard, dense-channel exclusion).
 | held-out (`gold-heldout.jsonl`) | 50.0 = | 63.3 = | 0.581 → 0.580 (exact-term 0.800 → 0.792) |
 
 No recall@k cell moves; the MRR deltas are IDF wobble from the three new docs.
+
+## 2026-10-07 — `core` channel added (no regression)
+
+Same-corpus A/B (with and without `core` evaluated on ONE `buildCorpus` in one process; the live brain grew between separate runs while another session worked). 4 core docs: 0.soul, 3.style_guide_and_branding, 4.tech_stack, 6.system_flow.
+
+| set | r@1 | r@3 | MRR without → with |
+|---|---|---|---|
+| train | 66.7 = | 86.7 = | 0.766 → 0.765 |
+| held-out | 50.0 = | 63.3 = | 0.580 → 0.580 |
+
+Rank moves, all outside the top 3: q028 7→8 and q059 5→6 (`core/6.system_flow` above the gold doc), h012 8→9 (`core/0.soul` above). All three are on-topic answers, not noise.

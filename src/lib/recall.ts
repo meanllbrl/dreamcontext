@@ -20,7 +20,7 @@ import { resolveWhiteboardPath, whiteboardsDir } from './whiteboards/store.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation' | 'whiteboard';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation' | 'whiteboard' | 'core';
 
 /**
  * Every corpus type `buildCorpus` can produce, in snapshot/report order. The
@@ -33,7 +33,7 @@ export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelo
  */
 export const CORPUS_TYPES: readonly CorpusType[] = [
   'knowledge', 'feature', 'task', 'memory', 'changelog',
-  'objective', 'insight', 'thesis', 'automation', 'whiteboard',
+  'objective', 'insight', 'thesis', 'automation', 'whiteboard', 'core',
 ];
 
 /**
@@ -145,6 +145,7 @@ function priorityLevel(value: unknown): DocLevel | undefined {
  *  - automation    enabled → 2, disabled → 1
  *  - feature       no marker → default
  *  - whiteboard    no marker → default
+ *  - core          no marker → default
  *
  * Level 3 is meant to be RARE — "someone deliberately marked this", not "this
  * type is usually important". Any signal that fires on most docs of its type
@@ -976,6 +977,19 @@ export function buildCorpus(
   }
   if (types.has('whiteboard')) {
     docs.push(...loadWhiteboardDocs(contextRoot));
+  }
+  if (types.has('core')) {
+    // The rest of core — soul, style guide, tech stack, system flow, any 3-9 —
+    // one doc per file. Extended core (3+) reaches the snapshot only as an
+    // index line, so before this its content was findable by nothing. Flat
+    // files only: `objectives/` is its own channel, and `2.memory.md` is split
+    // into LIFO entries by the memory channel.
+    docs.push(...loadMarkdownDocs(
+      join(contextRoot, 'core'),
+      'core',
+      contextRoot,
+      ['*/**', '2.memory.md'],
+    ));
   }
   if (opts.minLevel !== undefined) {
     const floor = opts.minLevel;

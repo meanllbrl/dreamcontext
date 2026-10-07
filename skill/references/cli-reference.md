@@ -344,7 +344,7 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 
 | Command | Description |
 |---|---|
-| `memory recall <query...>` | Search all ten channels (knowledge, feature, task, memory, changelog, objective, insight, thesis, automation, whiteboard — a board's text and its cards' contents). `-t/--top <n>`, `--types <csv>`, `--level 1\|2\|3` (min importance ★/★★/★★★), `--json`, `--plain`, `--vault <name>` (repeatable), `--connected`, `--all-vaults`. |
+| `memory recall <query...>` | Search all eleven channels (knowledge, feature, task, memory, changelog, objective, insight, thesis, automation, whiteboard — a board's text and its cards' contents, core — soul, style guide, tech stack, system flow). `-t/--top <n>`, `--types <csv>`, `--level 1\|2\|3` (min importance ★/★★/★★★), `--json`, `--plain`, `--vault <name>` (repeatable), `--connected`, `--all-vaults`. |
 | `changelog list` | Page through `core/CHANGELOG.json` chronologically (newest first) — the "what happened, in order?" counterpart to recall's relevance search. `--page <n>`, `--size <n>` (max 50), `--type <t>`, `--scope <s>`, `--grep <text>` (case-insensitive over summary+description+scope), `--json`. The snapshot's Recent Changelog footer points here at every rung. |
 | `memory remember <text...>` | Quick-append a CHANGELOG entry (`type=note`, `scope=quick`). `--summary`, `--type`, `--scope`, `--references <csv>`, `--person <csv>`. |
 | `memory update <slug>` | Update a knowledge file. `-d/--description`, `-t/--tags`, `-c/--content`, `--append <text>`, `--pin`, `--unpin`. |

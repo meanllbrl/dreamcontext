@@ -174,6 +174,7 @@ const BY_TYPE: Record<RecallHit['type'], (p: IconProps) => React.ReactElement> =
   thesis: ThesisIcon,
   automation: AutomationIcon,
   whiteboard: WhiteboardIcon,
+  core: CoreIcon,
 };
 
 /** Render the stroke icon for a recall type. */

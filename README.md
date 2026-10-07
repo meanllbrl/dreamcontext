@@ -784,7 +784,7 @@ Set `pinned: true` in frontmatter to surface a file prominently (with its descri
 
 ```bash
 dreamcontext memory recall <query...> [--top 10] [--types <csv>] [--level 1|2|3] [--json] [--plain]
-#   --types: knowledge, feature, task, memory, changelog, objective, insight, thesis, automation, whiteboard
+#   --types: knowledge, feature, task, memory, changelog, objective, insight, thesis, automation, whiteboard, core
 dreamcontext memory recall <query...> [--vault other] [--connected] [--all-vaults]   # federation-aware
 dreamcontext memory remember "<text>" [--type fix] [--scope api] [--summary "..."] [--references commit:abc,task:auth]
 dreamcontext memory update <slug> [--description "..."] [--tags a,b] [--append "..."] [--pin|--unpin]
