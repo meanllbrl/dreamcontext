@@ -19,11 +19,11 @@
  * So every case below drives the probe through its INJECTED spawn, and the outcome is decided
  * by what came back on stdout, then by the cache's own age and `accountUuid`.
  */
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { probeAccountForDecision, probeAccountUsage, resetSharedProbes, SHARED_PROBE_TTL_MS, USAGE_PROBE_TIMEOUT_MS, type ProbeRun } from '../../src/lib/claude-usage-probe.js';
+import { probeAccountForDecision, probeAccountUsage, RELOGIN_RECHECK_DELAY_MS, resetSharedProbes, SHARED_PROBE_TTL_MS, USAGE_PROBE_TIMEOUT_MS, type ProbeRun } from '../../src/lib/claude-usage-probe.js';
 import { sandboxDirFor, writeClaudeAccounts, type ClaudeAccount } from '../../src/lib/claude-accounts.js';
 import { SHARED_SANDBOX_ENTRIES } from '../../src/lib/claude-account-sandbox.js';
 import type { ClaudeAuthStatus } from '../../src/lib/claude-auth.js';
@@ -92,6 +92,22 @@ function judge(verdict: Partial<ClaudeAuthStatus>) {
   };
   return { fn, calls };
 }
+
+/** A judge that answers each verdict in turn (the last one repeats) and records every ask. */
+function judgeSequence(...verdicts: Array<Partial<ClaudeAuthStatus>>) {
+  const calls: Array<{ dir?: string; timeoutMs?: number }> = [];
+  const fn = (dir?: string, timeoutMs?: number): Promise<ClaudeAuthStatus> => {
+    const verdict = verdicts[Math.min(calls.length, verdicts.length - 1)]!;
+    calls.push({ dir, timeoutMs });
+    return Promise.resolve({
+      loggedIn: null, supported: true, loginCommand: 'claude auth login', ...verdict,
+    } as ClaudeAuthStatus);
+  };
+  return { fn, calls };
+}
+
+/** The re-check's pause, without the wall-clock wait. */
+const instant = async () => {};
 
 /** A judge that must never be reached. */
 const noJudge = () => {
@@ -294,19 +310,21 @@ describe('stale — the refreshed cache belongs to a DIFFERENT account', () => {
   });
 });
 
-describe('needs-relogin — a non-refresh escalates ONCE to the authoritative judge', () => {
+describe('needs-relogin — a non-refresh escalates to the judge, and a "signed out" is confirmed', () => {
   it('the sandbox NEVER had a credential (deleted by hand)', async () => {
     // No sandbox config at all — the shape `ensureSandbox` recreates but cannot re-authenticate.
     const j = judge({ loggedIn: false });
     const res = await probeAccountUsage(SANDBOX, {
       home: HOME,
       authStatus: j.fn as never,
+      sleep: instant,
       runProbe: async () => ({ timedOut: false }), // exits 0, writes nothing — the measured shape
     });
 
     expect(res.status).toBe('needs-relogin');
-    expect(j.calls).toHaveLength(1);
-    expect(j.calls[0]!.dir).toBe(SANDBOX);
+    // Asked, then asked again to confirm — never more.
+    expect(j.calls).toHaveLength(2);
+    expect(j.calls.every((c) => c.dir === SANDBOX)).toBe(true);
   });
 
   it('the credential BROKE — stale oauthAccount AND stale cache survive, fetchedAtMs does not move', async () => {
@@ -322,11 +340,12 @@ describe('needs-relogin — a non-refresh escalates ONCE to the authoritative ju
     const res = await probeAccountUsage(SANDBOX, {
       home: HOME,
       authStatus: j.fn as never,
+      sleep: instant,
       runProbe: async () => ({ timedOut: false }), // 0 / success / no cache write
     });
 
     expect(res.status).toBe('needs-relogin');
-    expect(j.calls).toHaveLength(1);
+    expect(j.calls).toHaveLength(2);
   });
 
   it('escalates with what is LEFT of the probe budget, never a second budget on top', async () => {
@@ -334,11 +353,69 @@ describe('needs-relogin — a non-refresh escalates ONCE to the authoritative ju
     await probeAccountUsage(SANDBOX, {
       home: HOME,
       authStatus: j.fn as never,
+      sleep: instant,
       runProbe: async () => ({ timedOut: false }),
     });
-    const handed = j.calls[0]!.timeoutMs!;
-    expect(handed).toBeGreaterThan(0);
-    expect(handed).toBeLessThanOrEqual(USAGE_PROBE_TIMEOUT_MS);
+    for (const call of j.calls) {
+      expect(call.timeoutMs!).toBeGreaterThan(0);
+      expect(call.timeoutMs!).toBeLessThanOrEqual(USAGE_PROBE_TIMEOUT_MS);
+    }
+    // The re-ask gets what the first ask left, not a fresh allowance.
+    expect(j.calls[1]!.timeoutMs!).toBeLessThanOrEqual(j.calls[0]!.timeoutMs!);
+  });
+
+  it('THE INCIDENT: one false then true is NOT an elimination — it is the healthy account it was', async () => {
+    // 2026-10-07: two signed-in accounts read `loggedIn: false` once during a limit storm, and
+    // the banner said "every account is at its limit" with half the quota unspent.
+    writeSandboxConfig({
+      oauthAccount: { accountUuid: ACCOUNT_UUID },
+      cachedUsageUtilization: usageCache({ fetchedAtMs: 1_000 }),
+    });
+    const j = judgeSequence({ loggedIn: false }, { loggedIn: true, email: 'b@example.com' });
+    const pauses: number[] = [];
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: j.fn as never,
+      sleep: async (ms) => { pauses.push(ms); },
+      runProbe: async () => ({ timedOut: false }),
+    });
+
+    expect(res.status).toBe('healthy-unmeasured');
+    expect(j.calls).toHaveLength(2);
+    // The re-ask waited before asking — an immediate re-ask lands inside the same refresh.
+    expect(pauses).toEqual([RELOGIN_RECHECK_DELAY_MS]);
+  });
+
+  it('one false then a non-answer is `unknown` — never an accusation', async () => {
+    const j = judgeSequence({ loggedIn: false }, { loggedIn: null, error: 'The sign-in check timed out.' });
+    const res = await probeAccountUsage(SANDBOX, {
+      home: HOME,
+      authStatus: j.fn as never,
+      sleep: instant,
+      runProbe: async () => ({ timedOut: false }),
+    });
+    expect(res.status).toBe('unknown');
+    expect(j.calls).toHaveLength(2);
+  });
+
+  it('one false with no budget left to confirm is `unknown`, and the judge is not re-asked', async () => {
+    const j = judge({ loggedIn: false });
+    const realNow = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const res = await probeAccountUsage(SANDBOX, {
+        home: HOME,
+        authStatus: j.fn as never,
+        // The pause ate the rest of the budget.
+        sleep: async () => { clock.mockReturnValue(realNow + 10 * USAGE_PROBE_TIMEOUT_MS); },
+        runProbe: async () => ({ timedOut: false }),
+      });
+      expect(res.status).toBe('unknown');
+      if (res.status === 'unknown') expect(res.reason).toMatch(/signed out once/);
+      expect(j.calls).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
 
@@ -416,6 +493,7 @@ describe('the probe repairs the sandbox before spawning', () => {
     await probeAccountUsage(SANDBOX, {
       home: HOME,
       authStatus: judge({ loggedIn: false }).fn as never,
+      sleep: instant,
       runProbe: async () => ({ timedOut: false }),
     });
     // Had ensureSandbox only run at creation time, the CLI would have opened a REAL projects/.
@@ -499,7 +577,7 @@ describe('probeAccountForDecision — one probe per account, never blinder than 
     });
     const spawn = heldSpawn({ timedOut: false, stdout: '' });
     spawn.release();
-    const res = await probeAccountForDecision(SANDBOX, { home: HOME, runProbe: spawn.runProbe, authStatus: judge({ loggedIn: false }).fn });
+    const res = await probeAccountForDecision(SANDBOX, { home: HOME, runProbe: spawn.runProbe, authStatus: judge({ loggedIn: false }).fn, sleep: instant });
     expect(res.status).toBe('needs-relogin');
   });
 });

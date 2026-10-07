@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { ensureSandbox } from './claude-account-sandbox.js';
-import { claudeAuthStatus, PROBE_TIMEOUT_MS } from './claude-auth.js';
+import { claudeAuthStatus, PROBE_TIMEOUT_MS, resetClaudeAuthCache } from './claude-auth.js';
 import { readUsageLimits, usageReadingIsCurrent, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
 import { parseUsageReport, withLockedReasons } from './claude-usage-report.js';
 
@@ -92,8 +92,14 @@ export interface ProbeDeps {
   runProbe?: (configDir: string, timeoutMs: number) => Promise<ProbeRun>;
   /** Injectable for tests: the authoritative judge. */
   authStatus?: typeof claudeAuthStatus;
+  /** Injectable for tests: the pause before a "signed out" is re-asked. */
+  sleep?: (ms: number) => Promise<void>;
   home?: string;
 }
+
+/** How long a first "signed out" is left to settle before the judge is asked again. Long
+ *  enough for a concurrent token refresh to finish writing, short against the budget. */
+export const RELOGIN_RECHECK_DELAY_MS = 1_500;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
@@ -234,6 +240,17 @@ function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
  * its own 10s internal ceiling, and stacking them would make the unhappy path feel frozen. It
  * takes whatever is left; if nothing is left the answer is `unknown`, which is the safe answer
  * anyway.
+ *
+ * ── Why a "signed out" is asked TWICE ─────────────────────────────────────────────────
+ * One `loggedIn: false` is not proof. Observed 2026-10-07: during a limit storm the judge
+ * answered `false` for two accounts that were signed in — `auth status` minutes later said
+ * `true` for both, and the next decision moved the session onto one of them — and the banner
+ * read "every account is at its limit" with half the quota unspent. `needs-relogin` is an
+ * ELIMINATION, so it needs a confirmation: the judge's memo is dropped, and after
+ * {@link RELOGIN_RECHECK_DELAY_MS} the question is asked again. Only a second `false` is
+ * `needs-relogin`. A `true` on the re-ask is the `healthy-unmeasured` it always was. Anything
+ * else — no answer, or no budget left to ask — is `unknown`, which never accuses the account.
+ * The re-check, its pause included, comes out of the same budget as the first judge.
  */
 export async function probeAccountUsage(
   configDir: string,
@@ -242,6 +259,7 @@ export async function probeAccountUsage(
   const home = deps.home ?? homedir();
   const runProbe = deps.runProbe ?? defaultRunProbe;
   const authStatus = deps.authStatus ?? claudeAuthStatus;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   let dir: string;
   try {
@@ -292,9 +310,20 @@ export async function probeAccountUsage(
   if (remaining <= 0) {
     return { status: 'unknown', reason: 'No usage came back and there was no budget left to check why.' };
   }
-  const judged = await authStatus(dir, Math.min(remaining, PROBE_TIMEOUT_MS));
+  let judged = await authStatus(dir, Math.min(remaining, PROBE_TIMEOUT_MS));
   if (judged.loggedIn === false) {
-    return { status: 'needs-relogin', reason: 'This account is signed out — it needs to sign in again.' };
+    // Confirm before eliminating — see "Why a signed out is asked TWICE" above.
+    await sleep(RELOGIN_RECHECK_DELAY_MS);
+    const left = USAGE_PROBE_TIMEOUT_MS - (Date.now() - startedAt);
+    if (left <= 0) {
+      return { status: 'unknown', reason: 'The account read as signed out once, and there was no budget left to confirm it.' };
+    }
+    // The judge memoizes per directory; without this the re-ask would return the same answer.
+    resetClaudeAuthCache(dir);
+    judged = await authStatus(dir, Math.min(left, PROBE_TIMEOUT_MS));
+    if (judged.loggedIn === false) {
+      return { status: 'needs-relogin', reason: 'This account is signed out — it needs to sign in again.' };
+    }
   }
   // The judge ANSWERED, and it answered "signed in". That is a positive fact about the
   // account, not an absence of one, and it is the whole difference between a fallback we can
