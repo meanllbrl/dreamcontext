@@ -585,7 +585,7 @@ async function main() {
     // clicking an agent's name in any message — and the chips are keyed by channel, not by
     // component, precisely so a glance at the roster does not throw away a file you just
     // attached. The bucket is dropped when the PAGE goes, not when the feed remounts.
-    await page.locator('.agents-switch-opt', { hasText: 'Automations' }).first().click();
+    await page.locator('.agents-switch-opt', { hasText: 'Agents' }).first().click();
     await page.locator('.agents-switch-opt', { hasText: 'Messages' }).first().click();
     check('a staged attachment survives a trip to the roster and back',
       await until(async () => (await chip.count()) === 1, 5000), `chips: ${await chip.count()}`);
@@ -1278,6 +1278,19 @@ async function main() {
     const afterPill = await scrollState();
     check('[C5] the pill takes you to the newest message and goes (absent pre-fix)',
       pillText.length > 0 && afterPill.gap <= 48 && (await newPill.count()) === 0, `${JSON.stringify(afterPill)} pill=${await newPill.count()}`);
+    // A row that GROWS after it rendered (a picture decoding, a block settling) changes no
+    // message and fires no scroll event; at the bottom, the channel must still follow it.
+    await page.locator('.agents-feed-scroll article.agent-msg').last().evaluate((el) => {
+      const pad = document.createElement('div');
+      pad.className = 'verify-late-growth';
+      pad.style.height = '320px';
+      el.appendChild(pad);
+    });
+    await page.waitForTimeout(400);
+    const afterGrow = await scrollState();
+    check('[C5] at the bottom, a row that grows after render keeps the newest end in view (was: the reader had to scroll down to reach it)',
+      afterGrow.gap <= 48, JSON.stringify(afterGrow));
+    await page.evaluate(() => document.querySelectorAll('.verify-late-growth').forEach((e) => e.remove()));
     await slotFree();
     // A row that arrives while you are at the bottom fades and rises in. The observer records
     // the moment a wrapper gains `--arrived`, so a 240ms animation cannot finish unseen.

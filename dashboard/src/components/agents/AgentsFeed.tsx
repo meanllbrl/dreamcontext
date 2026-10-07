@@ -201,6 +201,22 @@ export function AgentsFeed({
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [visible]);
 
+  // ...and when a row grows AFTER it rendered: a picture decoding, a card or a rendered block
+  // settling, the floater clearance landing in the scroller's padding. None of those changes
+  // `visible` or fires a scroll event, so the effect above never saw them and the channel opened
+  // a screen short of its newest end (owner 2026-10-07: "en altı görmem için kaydırmam
+  // gerekiyor"). The same re-pin ChatPane does; RO callbacks land before paint.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    for (const row of el.children) ro.observe(row);
+    return () => ro.disconnect();
+  }, [visible]);
+
   /**
    * WHICH ROWS ARRIVED. The first read is the channel as it was when the page opened, so none of
    * it animates; every key seen after that is an arrival. An arrival that the filter shows fades
