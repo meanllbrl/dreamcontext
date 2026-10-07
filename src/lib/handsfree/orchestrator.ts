@@ -87,7 +87,11 @@ export interface HandsfreeEnv {
 export type HandsfreeErrorCode =
   | 'not_setup' | 'not_home' | 'not_away' | 'busy' | 'preflight' | 'disk' | 'quota' | 'port_private' | 'tampered' | 'ownership'
   | 'confirm_take_over' | 'superseded' | 'turns_running' | 'equality' | 'parity' | 'cloud_preflight' | 'trip_lost' | 'write_started' | 'cloud_content'
-  | 'nothing_to_resume' | 'nothing_to_roll_back' | 'needs_recovery' | 'unreadable_state' | 'cloud' | 'not_published' | 'registry';
+  | 'nothing_to_resume' | 'nothing_to_roll_back' | 'needs_recovery' | 'unreadable_state' | 'cloud' | 'not_published' | 'registry'
+  | 'cloud_compromised';
+
+/** r18: what status and go say once the cloud reported its setup checkout changed by an agent. */
+export const CLOUD_COMPROMISED_MESSAGE = 'The cloud machine\'s setup folder was changed by an agent; run `dreamcontext handsfree teardown` then `setup`';
 
 export class HandsfreeError extends Error {
   constructor(readonly code: HandsfreeErrorCode, message: string, readonly detail: Record<string, unknown> = {}) {
@@ -308,7 +312,7 @@ async function ensureRunning(env: HandsfreeEnv, o: { needCoreMinutes?: number; a
     }
     recreated = true;
     const fresh = info;
-    cfg = (await updateConfig(env.home, (c) => ({ ...c, codespace: { name: fresh.name, machine: fresh.machine, url: fresh.url, webUrl: fresh.webUrl, retentionExpiresAt: fresh.retentionExpiresAt }, lastTrip: null }))) as typeof cfg;
+    cfg = (await updateConfig(env.home, (c) => ({ ...c, codespace: { name: fresh.name, machine: fresh.machine, url: fresh.url, webUrl: fresh.webUrl, retentionExpiresAt: fresh.retentionExpiresAt }, lastTrip: null, cloudCompromised: false }))) as typeof cfg;
   }
   cfg = ((await reconcileUptime(env, info)) ?? cfg) as typeof cfg;
   const cores = coresFor(info.machine);
@@ -580,7 +584,7 @@ export async function setup(env: HandsfreeEnv, o: { token?: string; login?: stri
       created = true;
       const fresh = info;
       machineName = fresh.name;
-      await updateConfig(env.home, (c) => ({ ...c, codespace: { name: fresh.name, machine: fresh.machine, url: fresh.url, webUrl: fresh.webUrl, retentionExpiresAt: fresh.retentionExpiresAt } }));
+      await updateConfig(env.home, (c) => ({ ...c, codespace: { name: fresh.name, machine: fresh.machine, url: fresh.url, webUrl: fresh.webUrl, retentionExpiresAt: fresh.retentionExpiresAt }, cloudCompromised: false }));
     }
     // Start once (the in-codespace gh makes 8080 public), push the verifiers, leave it stopped.
     step = 'start';
@@ -965,6 +969,7 @@ export async function go(env: HandsfreeEnv, o: GoOpts): Promise<GoResult> {
   const st = requireState(env);
   if (st.phase !== 'home') throw new HandsfreeError('not_home', `a trip is already ${st.phase} (${st.tripId}); return, resume or abandon it first`);
   const cfg = requireConfig(env);
+  if (cfg.cloudCompromised) throw new HandsfreeError('cloud_compromised', CLOUD_COMPROMISED_MESSAGE);
   const scope = await computeScope({ run: env.run, home: env.home, contextRoot: o.contextRoot, claudeProjectsDir: projectsDir(env) });
   // Step 1: preflight (setup, scope + size vs the machine's disk, git preflight).
   o.onProgress?.({ step: 'preflight' });
@@ -1118,6 +1123,11 @@ async function goAfterLock(env: HandsfreeEnv, o: GoOpts, scope: TripScope, tripI
   onUp(up);
   const client = up.client;
   let health = await client.health();
+  if (health.checkoutCompromised) {
+    // r18: nothing is sent to a machine whose setup folder an agent changed; remembered for status.
+    await updateConfig(env.home, (c) => ({ ...c, cloudCompromised: true }));
+    throw new HandsfreeError('cloud_compromised', CLOUD_COMPROMISED_MESSAGE);
+  }
   assertOwnership(cfg, health, { takeOver: o.takeOver, confirmLive: o.confirmTakeOverLive });
   if ((await runQueued(env, client, up.info.name, { stop: false })).length) health = await client.health();
   let recovery: RecoveryReport | null = null;
@@ -2434,7 +2444,7 @@ export async function teardown(env: HandsfreeEnv, o: { discardAbandonedWork?: bo
   }
   await updateConfig(env.home, (c) => {
     const { codespace: _gone, ...rest } = c;
-    return countUptime({ ...rest, queued: null } as HandsfreeConfig, false, coresFor(cfg.codespace.machine), nowOf(env));
+    return countUptime({ ...rest, queued: null, cloudCompromised: false } as HandsfreeConfig, false, coresFor(cfg.codespace.machine), nowOf(env));
   });
   return { deleted: info?.name ?? null, recovery };
 }
@@ -2478,6 +2488,7 @@ export async function status(env: HandsfreeEnv, o: { probe?: boolean } = {}): Pr
   }
   const rw = retentionWarning(info ?? cfg?.codespace ?? null, cfg?.lastTrip, nowOf(env));
   if (rw) warnings.push(rw);
+  if (cfg?.codespace && cfg.cloudCompromised) warnings.push(CLOUD_COMPROMISED_MESSAGE);
   let journal: StatusReport['journal'] = null;
   if (st.tripId && st.phase !== 'home' && !st.unreadable) {
     const dir = tripDirFor(env, st.tripId);

@@ -88,6 +88,7 @@ export function createFakeCloud(ctx: FakeCloudContext) {
     mirrorPending = 0;
     liveProcesses = 0;
     sealedEpoch: number | null = null;
+    checkoutCompromised = false;
     loseSealReply = false;
     privateTimes = 0;
     beforeWipe: (() => void) | null = null;
@@ -110,7 +111,7 @@ export function createFakeCloud(ctx: FakeCloudContext) {
       return { version: this.version, fingerprint: 'fp' };
     }
     async health(): Promise<CloudHealth> {
-      return { version: this.version, fingerprint: 'fp', phase: this.phase, tripId: this.tripId, laptopId: this.laptopId, epoch: this.epoch, verifierGeneration: this.verifierGeneration, supersededLaptopIds: this.superseded, sealedEpoch: this.sealedEpoch };
+      return { version: this.version, fingerprint: 'fp', phase: this.phase, tripId: this.tripId, laptopId: this.laptopId, epoch: this.epoch, verifierGeneration: this.verifierGeneration, supersededLaptopIds: this.superseded, sealedEpoch: this.sealedEpoch, checkoutCompromised: this.checkoutCompromised };
     }
     async uploadFile(path: string) {
       const id = `up-${String(++this.n).padStart(8, '0')}`;

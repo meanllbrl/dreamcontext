@@ -28,7 +28,7 @@ import { CloudError, CloudUnreachableError, PortPrivateError, manifestDigest, ty
 import { FakeCloudProvider, gitBlobSha, ProviderQuotaError } from '../../src/lib/handsfree/provider.js';
 import { PIN_PATH, pinFile } from '../../src/lib/handsfree/npm-pin.js';
 import {
-  abandonTrip, go, HandsfreeError, resumeTrip, returnTrip, rollbackTrip, setup, status, type HandsfreeEnv,
+  abandonTrip, go, HandsfreeError, resumeTrip, returnTrip, rollbackTrip, setup, status, teardown, type HandsfreeEnv,
 } from '../../src/lib/handsfree/orchestrator.js';
 import { readTripState } from '../../src/lib/handsfree/trip-state.js';
 import { readConfig, updateConfig } from '../../src/lib/handsfree/local-store.js';
@@ -489,6 +489,38 @@ describe('take-over and superseded (AC24)', () => {
     expect(r.outcome).toBe('superseded');
     expect(readTripState(laptopHome).phase).toBe('home');
     expect(gitState(vault)).toEqual(before);
+  });
+});
+
+describe('r18: a cloud whose setup checkout an agent changed', () => {
+  const MSG = "The cloud machine's setup folder was changed by an agent; run `dreamcontext handsfree teardown` then `setup`";
+  it('go refuses (nothing sent, home, machine stopped) and remembers it; status and the next go print the same message; teardown clears it', async () => {
+    const env = makeEnv();
+    fake.checkoutCompromised = true;
+    const before = gitState(vault);
+    await expect(go(env, { contextRoot: ctx })).rejects.toMatchObject({ code: 'cloud_compromised', message: MSG });
+    expect(readTripState(laptopHome).phase).toBe('home');
+    expect(gitState(vault)).toEqual(before);
+    expect([...provider.machines.values()][0].state).toBe('stopped');
+    expect(fake.tripId).toBeNull();
+    expect(readConfig(laptopHome)!.cloudCompromised).toBe(true);
+    expect((await status(env, { probe: false })).warnings).toContain(MSG);
+    // The next go refuses at once from the remembered flag, before any machine starts.
+    fake.checkoutCompromised = false;
+    const startSpy = vi.spyOn(provider, 'start');
+    await expect(go(env, { contextRoot: ctx })).rejects.toMatchObject({ code: 'cloud_compromised', message: MSG });
+    expect([...provider.machines.values()][0].state).toBe('stopped');
+    expect(startSpy).not.toHaveBeenCalled();
+    await teardown(env);
+    expect(readConfig(laptopHome)!.cloudCompromised).toBe(false);
+    expect((await status(env, { probe: false })).warnings).not.toContain(MSG);
+  });
+
+  it('a clean cloud (or an older one without the field) is not flagged', async () => {
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    expect(readConfig(laptopHome)!.cloudCompromised).toBeFalsy();
+    expect((await status(env, { probe: false })).warnings).not.toContain(MSG);
   });
 });
 

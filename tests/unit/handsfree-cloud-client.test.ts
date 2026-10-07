@@ -51,6 +51,13 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const client = (fetchImpl: typeof fetch, now = () => Date.now()) => new HttpCloudClient({ origin: ORIGIN, secret, fetchImpl, sleep: async () => {}, now });
 
 describe('transfer proof', () => {
+  it('r18: health carries the cloud\'s checkoutCompromised flag (only a literal true counts)', async () => {
+    for (const [v, want] of [[true, true], ['true', false], [1, false]] as const) {
+      const { fetchImpl } = server(() => ({ status: 200, json: { phase: 'sealed', version: '1', fingerprint: 'fp', tripId: null, laptopId: null, epoch: 0, verifierGeneration: 1, supersededLaptopIds: [], checkoutCompromised: v } }));
+      expect((await client(fetchImpl).health()).checkoutCompromised).toBe(want);
+    }
+  });
+
   it('every request carries a fresh nonce + HMAC bound to method and exact target; writes carry Origin', async () => {
     const { seen, fetchImpl } = server((s) => (s.target.startsWith('/api/handsfree/cloud/state')
       ? { status: 200, json: { kind: 'files', manifest: [] } }
@@ -58,6 +65,8 @@ describe('transfer proof', () => {
     const c = client(fetchImpl);
     const h = await c.health();
     expect(h).toMatchObject({ phase: 'active', epoch: 3, tripId: 't-1' });
+    expect(h.checkoutCompromised).toBe(false); // an older cloud without the field
+
     await c.state('r-0123456789abcdef');
     expect(seen.map((s) => s.target)).toEqual(['/api/health', '/api/handsfree/cloud/state?rootId=r-0123456789abcdef']);
     expect(seen.every((s) => s.ok)).toBe(true);

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { Router } from '../../src/server/router.js';
 import { cloudGate, sendError } from '../../src/server/middleware.js';
-import { isCloud, setCloudMirrorPrefix, setCloudPhaseSource } from '../../src/server/cloud-mode.js';
+import { isCloud, setCheckoutCompromisedFileForTests, setCloudMirrorPrefix, setCloudPhaseSource } from '../../src/server/cloud-mode.js';
 import {
   HandsfreeAuth, hashPassphrase, setHandsfreeAuthForTests, sha256Hex, transferAuthorization, transferKeyFromSecret,
 } from '../../src/server/handsfree-auth.js';
@@ -182,6 +182,19 @@ describe('transfer credential', () => {
     expect(priv.phase).toBe('sealed');
     expect(priv.verifierGeneration).toBe(1);
     expect(priv.supersededLaptopIds).toEqual([]);
+    expect(priv.checkoutCompromised).toBe(false);
+  });
+
+  it('r18: root\'s compromise flag reaches the laptop through the proven health only', async () => {
+    const flag = join(mkdtempSync(join(tmpdir(), 'hf-flag-')), 'checkout-compromised');
+    writeFileSync(flag, 'x');
+    setCheckoutCompromisedFileForTests(flag);
+    try {
+      expect((await transfer('GET', '/api/health')).json().checkoutCompromised).toBe(true);
+      expect(Object.keys((await raw('GET', '/api/health', {})).json()).sort()).toEqual(['fingerprint', 'version']);
+      rmSync(flag);
+      expect((await transfer('GET', '/api/health')).json().checkoutCompromised).toBe(false);
+    } finally { setCheckoutCompromisedFileForTests(null); }
   });
 
   it('every transfer route answers 404 off the cloud', async () => {

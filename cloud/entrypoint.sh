@@ -98,6 +98,35 @@ PY
 )
 publog() { python3 -c "$PUBLOG_PY" "$PUBLOG" "$1" "${2:-}" 2>/dev/null; }
 
+# claude-login's verdict: the cloud's `claude auth status --json` on stdin, the account id in
+# argv, the account registry (read as dcuser) in DC_REG. A sign-in whose email is not the one
+# this slot is registered for is a clear WARNING (the owner signed the wrong account in).
+LOGIN_STATUS_PY=$(cat <<'PY'
+import json, os, sys, unicodedata
+def clean(v):
+    # Printed to the owner's terminal: no control characters (ESC, CSI, newlines...), bounded.
+    v = v if isinstance(v, str) else ""
+    return "".join(c for c in v if not unicodedata.category(c).startswith("C"))[:254]
+acct = clean(sys.argv[1])
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("unknown")
+    sys.exit(0)
+email = clean(d.get("email"))
+print("signed in" if d.get("loggedIn") else "NOT signed in", email)
+want = ""
+try:
+    for a in json.loads(os.environ.get("DC_REG") or "{}").get("accounts", []):
+        if isinstance(a, dict) and a.get("id") == acct:
+            want = clean(a.get("email"))
+except Exception:
+    pass
+if d.get("loggedIn") and want and email and want.strip().lower() != email.strip().lower():
+    print("WARNING: the slot %s is registered for %s, but %s signed in here. Run the login again and sign in as %s." % (acct, want, email, want))
+PY
+)
+
 # The mirror root the supervisor mounted (/Users/<name>, the laptop HOME), empty before a trip.
 mirror_root() {
   local m
@@ -178,11 +207,11 @@ sys.stdout.buffer.write(struct.pack(">I",len(h))+h)' "$CD" \
     || { echo "could not prepare the account sandbox"; exit 1; }
   "${ENVV[@]}" CLAUDE_CONFIG_DIR="$CD" "${DROP[@]}" /bin/bash -lc 'umask 0077; claude auth login'
   echo "--- claude auth status:"
+  # The account's registered email, read AS dcuser (the registry is dcuser's file; root never
+  # opens a path dcuser controls), so a sign-in with another email is called out.
+  REG=$("${ENVV[@]}" "${DROP[@]}" /usr/bin/head -c 1048576 -- "$MIRROR/.dreamcontext/claude-accounts.json" 2>/dev/null)
   "${ENVV[@]}" CLAUDE_CONFIG_DIR="$CD" "${DROP[@]}" /bin/bash -lc 'claude auth status --json' 2>/dev/null \
-    | python3 -c 'import sys,json
-try: d=json.load(sys.stdin)
-except Exception: print("unknown"); sys.exit(0)
-print("signed in" if d.get("loggedIn") else "NOT signed in", d.get("email") or "")'
+    | DC_REG="$REG" python3 -c "$LOGIN_STATUS_PY" "$ID"
   ;;
 *)
   echo "usage: entrypoint.sh start <codespace> <domain> | claude-login <accountId>"; exit 2 ;;

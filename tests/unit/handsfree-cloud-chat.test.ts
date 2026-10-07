@@ -37,7 +37,7 @@ const { setWorkerInProcessForTests } = await import('../../src/server/cloud-work
 const { cutLiveChats, liveChatsSnapshot, CUT_KILL_GRACE_MS } = await import('../../src/server/routes/agent-chat-live.js');
 const { writeClaudeAccounts, sandboxDirFor } = await import('../../src/lib/claude-accounts.js');
 const { beginGoing } = await import('../../src/lib/handsfree/trip-state.js');
-const { setCloudPhaseSource } = await import('../../src/server/cloud-mode.js');
+const { setCloudPhaseSource, setCloudTripRootsSource } = await import('../../src/server/cloud-mode.js');
 
 class FakeWs extends EventEmitter {
   OPEN = 1;
@@ -69,6 +69,8 @@ beforeEach(() => {
   delete process.env.DREAMCONTEXT_DESKTOP;
   spawned.length = 0;
   setCloudPhaseSource(() => 'active');
+  // The trip's root (a laptop path, mirrored at the same path here): the only place a cloud agent runs.
+  setCloudTripRootsSource(() => [join(home, 'proj')]);
 });
 
 afterEach(() => {
@@ -78,6 +80,7 @@ afterEach(() => {
   }
   vi.useRealTimers();
   setCloudPhaseSource(() => 'sealed');
+  setCloudTripRootsSource(() => []);
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -362,8 +365,9 @@ describe('GET /api/agent/file in the cloud (AC19: project root only, grants refu
 /** The claude argv a spawn's login-shell script really yields: bash itself parses it. */
 async function argvOfScript(script: string): Promise<string[]> {
   const { spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
-  expect(script.startsWith('exec claude ')).toBe(true);
-  const printer = `printargs() { for a in "$@"; do printf '%s\\0' "$a"; done; }; printargs ${script.slice('exec claude '.length)}`;
+  const m = /^(?:cd -- '[^']*' && )?exec claude /.exec(script);
+  expect(m).not.toBeNull();
+  const printer = `printargs() { for a in "$@"; do printf '%s\\0' "$a"; done; }; printargs ${script.slice(m![0].length)}`;
   // A timeout and empty stdin: a mis-quoted script (backticks in the briefing prose run as
   // commands under double quotes) must fail here, never hang.
   const r = spawnSync('/bin/bash', ['-c', printer], { encoding: 'utf8', input: '', timeout: 15_000 });
@@ -449,6 +453,63 @@ describe('the error card shows the real error, not the login shell\'s job-contro
       const err = frames.find((f) => f.type === '_meta' && f.subtype === 'error');
       expect(err?.message).toBe('Error processing settings: EACCES');
     }
+  });
+});
+
+describe('smoke #5 (Critical): a cloud chat runs ONLY in a trip root, never in the codespace\'s checkout', () => {
+  const sentErrors = (ws: FakeWs) => ws.send.mock.calls.map((c) => JSON.parse(String(c[0])) as { type: string; code?: string; message?: string }).filter((f) => f.type === 'dc_meta');
+
+  it('the trip\'s project spawns, and the script itself goes to the root (a shell init that changes directory cannot move it)', async () => {
+    process.env.DREAMCONTEXT_CLOUD = '1';
+    writeClaudeAccounts([account('first', true)], home);
+    const project = join(home, 'proj');
+    mkdirSync(join(project, 'sub'), { recursive: true });
+    open(project);
+    expect(spawned).toHaveLength(1);
+    const script = spawned[0].args[spawned[0].args.length - 1];
+    expect(script.startsWith(`cd -- '${project}' && exec claude `)).toBe(true);
+    // What claude's cwd really is, after a login shell that cd'd somewhere else first.
+    const { spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    const probe = `cd / && ${script.replace(/exec claude .*$/s, 'pwd -P')}`;
+    const { realpathSync } = await vi.importActual<typeof import('node:fs')>('node:fs');
+    expect(spawnSync('/bin/bash', ['-c', probe], { encoding: 'utf8' }).stdout.trim()).toBe(realpathSync(project));
+    // A folder inside the trip root is fine too.
+    open(join(project, 'sub'));
+    expect(spawned).toHaveLength(2);
+  });
+
+  it('the codespace\'s own checkout, a look-alike sibling, and a cloud with no trip are refused with a clear message; nothing spawns', () => {
+    process.env.DREAMCONTEXT_CLOUD = '1';
+    writeClaudeAccounts([account('first', true)], home);
+    const checkout = join(home, 'dreamcontext-handsfree');
+    const sibling = join(home, 'proj2');
+    for (const d of [join(home, 'proj'), checkout, sibling]) mkdirSync(d, { recursive: true });
+    for (const where of [checkout, sibling]) {
+      const ws = open(where);
+      const err = sentErrors(ws).find((f) => f.code === 'cloud_not_trip');
+      expect(err?.message).toMatch(/not part of the trip on this cloud machine/);
+      expect(ws.close).toHaveBeenCalled();
+    }
+    setCloudTripRootsSource(() => []);
+    const ws = open(join(home, 'proj'));
+    expect(sentErrors(ws).find((f) => f.code === 'cloud_not_trip')?.message).toMatch(/No trip is on this cloud machine/);
+    expect(spawned).toEqual([]);
+  });
+
+  it('a request naming no vault or an unknown one resolves to NO root (refused at the upgrade, never a default root)', async () => {
+    const { resolveVaultProjectRoot } = await import('../../src/server/routes/agent-spawn-shared.js');
+    expect(resolveVaultProjectRoot(null)).toBeNull();
+    expect(resolveVaultProjectRoot('')).toBeNull();
+    expect(resolveVaultProjectRoot('dreamcontext-handsfree')).toBeNull(); // not registered
+  });
+
+  it('the laptop is unchanged: no cd prefix, no trip check', () => {
+    writeClaudeAccounts([account('first', true)], home);
+    const elsewhere = join(home, 'anywhere');
+    mkdirSync(elsewhere, { recursive: true });
+    open(elsewhere);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].args[spawned[0].args.length - 1].startsWith('exec claude ')).toBe(true);
   });
 });
 

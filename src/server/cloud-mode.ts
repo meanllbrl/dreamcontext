@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type StdioOptions } from 'node:child_process';
+import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 /**
@@ -98,6 +99,43 @@ export function cloudMirrorPrefix(): string | null {
 export function cloudLocalPath(laptopAbs: string): string {
   const p = resolve(laptopAbs);
   return mirrorPrefix ? join(mirrorPrefix, p) : p;
+}
+
+// ─── The trip's roots: the only places an agent may run in the cloud ─────────
+
+/** The trip's project roots (laptop paths, `transcripts` excluded); `cloud serve` wires it to the trip record. */
+let tripRootsSource: () => string[] = () => [];
+export function setCloudTripRootsSource(source: () => string[]): void {
+  tripRootsSource = source;
+}
+
+/**
+ * Smoke #5 (Critical): an agent in the cloud runs ONLY inside one of the trip's roots (as mirrored
+ * here), never in the codespace's own checkout, the server's dir or anywhere a registry entry
+ * points. Null = allowed; else the reason to show. Compared by realpath, so a link cannot dodge it.
+ */
+export function cloudChatRootRefusal(projectRoot: string): string | null {
+  const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  let roots: string[] = [];
+  try { roots = tripRootsSource().map((r) => real(cloudLocalPath(r))); } catch { roots = []; }
+  if (!roots.length) return 'No trip is on this cloud machine, so no agent can start here.';
+  const want = real(projectRoot);
+  if (roots.some((r) => want === r || want.startsWith(r.endsWith(sep) ? r : r + sep))) return null;
+  return 'This project is not part of the trip on this cloud machine; only the trip\'s own projects can run an agent here.';
+}
+
+// ─── The codespace's own checkout, found changed by an agent (r18) ───────────
+
+/** Root's sticky flag (cloud/supervisor.mjs COMPROMISED_FILE); readable, never writable, by the server. */
+let compromisedFlag = '/opt/dc-hf/checkout-compromised';
+export function setCheckoutCompromisedFileForTests(path: string | null): void {
+  compromisedFlag = path ?? '/opt/dc-hf/checkout-compromised';
+}
+
+/** Did root find this machine's setup checkout changed by an agent? (then only teardown + setup helps) */
+export function checkoutCompromised(): boolean {
+  if (!isCloud()) return false;
+  try { return lstatSync(compromisedFlag).isFile(); } catch { return false; }
 }
 
 /** The inverse of {@link cloudLocalPath}: null for a path outside the mirror. */

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmodSync, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { CloudStateStore, parseTripRecord } from '../../src/server/cloud-state.j
 import { seamRefusal } from '../../src/cli/commands/cloud.js';
 // @ts-expect-error: a plain .mjs script (copied verbatim into the private repo), no types.
 import {
-  CLONE_NAME, CLI_WRAPPER, computeFingerprint, restoreLastGood, swapInBuild, writeCliWrapper, copyVerifiers, ensureInstalled, fetchVerified, installInto, INTEGRITY_RE, isPin, lockdownClones, NPM_CONFIG_ARGS, NPM_CWD, readRuntimeRequest,
+  CLONE_NAME, CLI_WRAPPER, RELOCK_INTERVAL_MS, checkoutCompromised, compromisedStartRefusal, gitConfigRisks, scanCheckout, computeFingerprint, restoreLastGood, swapInBuild, writeCliWrapper, copyVerifiers, ensureInstalled, fetchVerified, installInto, INTEGRITY_RE, isPin, lockdownClones, NPM_CONFIG_ARGS, NPM_CWD, readRuntimeRequest,
   repoPin, SEMVER_RE, setShForTests, validMirrorPath,
 } from '../../cloud/supervisor.mjs';
 import { INTEGRITY_RE as TS_INTEGRITY_RE, SEMVER_RE as TS_SEMVER_RE } from '../../src/lib/handsfree/npm-pin.js';
@@ -271,7 +271,7 @@ describe('the repo checkout is untrusted until root locks it down (AC19)', () =>
     for (const d of [repo, join(repo, '.devcontainer'), b]) chmodSync(d, 0o777);
   };
   const pinFiles = () => ({ 'version.json': JSON.stringify(PIN) });
-  const lockdown = () => lockdownClones({ workspaces: ws, chown: () => {}, owners: [process.getuid!()], stripAcl: () => {}, logLine: log });
+  const lockdown = () => lockdownClones({ workspaces: ws, chown: () => {}, reown: () => {}, owners: [process.getuid!()], stripAcl: () => {}, logLine: log, compromisedFile: join(dir, 'cc'), runtime: dir });
   const pin = () => repoPin({ workspaces: ws, logLine: log, trust: TRUST });
 
   it('a pin planted in a dcuser-writable checkout is refused; after the lockdown the same checkout is read', () => {
@@ -318,11 +318,13 @@ describe('the repo checkout is untrusted until root locks it down (AC19)', () =>
     const dst = join(dir, 'srv-verifiers.json');
     expect(copyVerifiers({ workspaces: ws, dst, owner: null, logLine: log, trust: TRUST })).toBe(false);
     lockdown();
-    expect(lstatSync(join(repo, '.devcontainer')).isSymbolicLink()).toBe(true); // never unlinked
+    // r18: a planted link is compromise: moved (never followed) into root's quarantine, flag up.
+    expect(() => lstatSync(join(repo, '.devcontainer'))).toThrow();
     expect(statSync(elsewhere).mode & 0o777).toBe(0o777); // never followed
-    expect(lines.join('\n')).toMatch(/lockdown: .*\.devcontainer is a link; left alone, never followed/);
+    expect(readFileSync(elsewhere + '/bootstrap/version.json', 'utf8')).toBe(JSON.stringify(PIN));
+    expect(lines.join('\n')).toMatch(/COMPROMISED checkout: quarantined \.devcontainer \(a symlink\)/);
+    expect(existsSync(join(dir, 'cc'))).toBe(true);
     expect(pin()).toBeNull();
-    rmSync(join(repo, '.devcontainer')); // the owner removes it
 
     // The bootstrap dir as a link inside a real .devcontainer.
     lines = [];
@@ -373,7 +375,8 @@ describe('root touches ONLY the private repo\'s checkout, strips setuid, and tig
   let ws: string; let lines: string[]; let chowned: number[];
   beforeEach(() => { ws = join(dir, 'workspaces'); mkdirSync(ws); lines = []; chowned = []; });
   const lockdown = (owners = [uid]) => lockdownClones({
-    workspaces: ws, chown: (fd: number) => { chowned.push(fstatSync(fd).ino); }, owners, stripAcl: () => {}, logLine: (m: string) => lines.push(m),
+    workspaces: ws, chown: (fd: number) => { chowned.push(fstatSync(fd).ino); }, reown: () => {}, owners, stripAcl: () => {}, logLine: (m: string) => lines.push(m),
+    compromisedFile: join(dir, 'cc'), runtime: dir,
   });
   const mode = (p: string) => lstatSync(p).mode & 0o7777;
 
@@ -413,7 +416,7 @@ describe('root touches ONLY the private repo\'s checkout, strips setuid, and tig
     expect(mode(join(b, 'version.json'))).toBe(0o644);
     expect(mode(b)).toBe(0o755);
     expect(mode(join(repo, '.devcontainer'))).toBe(0o755);
-    expect(mode(repo)).toBe(0o755);
+    expect(mode(repo)).toBe(0o700); // r18: dcuser cannot traverse into it at all
     expect(chowned.sort()).toEqual([join(repo, '.devcontainer'), b, join(b, 'tool'), join(b, 'version.json')].map((p) => lstatSync(p).ino).sort());
   });
 
@@ -646,6 +649,190 @@ describe('the `dreamcontext` command after EVERY install path (review: runtime u
     const build = src.slice(src.indexOf('function installBuild('), src.indexOf('// ─── the mirror'));
     expect(build).toContain('swapInBuild();');
     expect(build).not.toMatch(/renameSync\(/);
+  });
+});
+
+describe('smoke #5 / r18 (Critical, AC19): dcuser can never reach the checkout; a checkout it wrote is compromised, never trusted', () => {
+  const uid = process.getuid!();
+  const PIN = { version: '0.30.0', integrity: `sha512-${createHash('sha512').update('x').digest('base64')}` };
+  const VERIFIERS = { generation: 3, passphrase: { alg: 'scrypt', hash: 'h' }, transferSha256: 'a'.repeat(64) };
+  const STOCK_CONFIG = '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n[remote "origin"]\n\turl = https://github.com/me/dreamcontext-handsfree\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch "main"]\n\tremote = origin\n\tmerge = refs/heads/main\n';
+  let ws: string; let repo: string; let lines: string[]; let stripped: string[]; let stripCalls: string[][]; let flag: string; let runtime: string;
+  beforeEach(() => {
+    ws = join(dir, 'workspaces'); repo = join(ws, CLONE_NAME); lines = []; stripped = []; stripCalls = [];
+    flag = join(dir, 'opt', 'checkout-compromised'); runtime = join(dir, 'runtime');
+    mkdirSync(join(dir, 'opt')); mkdirSync(runtime);
+    // A stock checkout, world-writable as Codespaces' ACL leaves it.
+    mkdirSync(join(repo, '.git', 'hooks'), { recursive: true });
+    mkdirSync(join(repo, '.git', 'info'), { recursive: true });
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    mkdirSync(join(repo, '.devcontainer', 'bootstrap'), { recursive: true });
+    writeFileSync(join(repo, 'README.md'), '# hf\n');
+    writeFileSync(join(repo, 'src', 'run.sh'), '#!/bin/sh\n');
+    writeFileSync(join(repo, '.git', 'config'), STOCK_CONFIG);
+    writeFileSync(join(repo, '.git', 'info', 'exclude'), '# git ls-files --others --exclude-from=.git/info/exclude\n');
+    writeFileSync(join(repo, '.git', 'hooks', 'pre-commit.sample'), '#!/bin/sh\n');
+    writeFileSync(join(repo, '.devcontainer', 'bootstrap', 'version.json'), JSON.stringify(PIN));
+    writeFileSync(join(repo, '.devcontainer', 'bootstrap', 'verifiers.json'), JSON.stringify(VERIFIERS));
+    for (const f of ['README.md', '.git/config']) chmodSync(join(repo, f), 0o666);
+    chmodSync(join(repo, 'src', 'run.sh'), 0o777);
+    chmodSync(join(repo, '.git', 'hooks', 'pre-commit.sample'), 0o755);
+    for (const d of ['src', '.git/hooks', '.git', '']) chmodSync(join(repo, d), 0o777);
+  });
+  const mode = (rel: string) => lstatSync(join(repo, rel)).mode & 0o7777;
+  const lockdown = (o: { owners?: number[]; reown?: (fd: number) => void } = {}) => lockdownClones({
+    workspaces: ws, chown: () => {}, owners: o.owners ?? [uid], repoOwners: [uid], reown: o.reown ?? (() => {}),
+    stripAcl: (paths: string[]) => { stripCalls.push(paths); stripped.push(...paths); }, logLine: (m: string) => lines.push(m), compromisedFile: flag, runtime,
+  });
+  const pin = () => repoPin({ workspaces: ws, logLine: (m: string) => lines.push(m), trust: TRUST, compromisedFile: flag });
+  const verifiers = (dst = join(dir, 'v.json')) => copyVerifiers({ workspaces: ws, dst, owner: null, logLine: (m: string) => lines.push(m), trust: TRUST, compromisedFile: flag });
+  const quarantined = () => readdirSync(runtime).filter((n) => n.startsWith('quarantine-')).flatMap((q) => readdirSync(join(runtime, q)));
+  /** The bootstrap is not read, the flag is up, the offender is gone from the checkout (moved, never followed). */
+  const expectCompromised = (rel: string) => {
+    lockdown();
+    expect(checkoutCompromised(flag)).toBe(true);
+    expect(readFileSync(flag, 'utf8')).toContain(rel);
+    expect(() => lstatSync(join(repo, rel))).toThrow();
+    expect(quarantined()).toContain(rel.replace(/\//g, '__'));
+    expect(pin()).toBeNull();
+    expect(verifiers()).toBe(false);
+    expect(lines.join('\n')).toMatch(/version pin NOT read: the checkout was changed by an agent/);
+    expect(lines.join('\n')).toMatch(/bootstrap verifiers NOT read/);
+    expect(compromisedStartRefusal({ compromisedFile: flag, verifiers: join(dir, 'none.json') })).toMatch(/server NOT started/);
+    // Verifiers installed BEFORE the compromise (the last good copy) are kept and the server starts.
+    writeFileSync(join(dir, 'earlier.json'), '{}');
+    expect(compromisedStartRefusal({ compromisedFile: flag, verifiers: join(dir, 'earlier.json') })).toBeNull();
+  };
+
+  it('a clean stock checkout: not compromised, read; the TOP dir is 0700 (dcuser cannot traverse) after prepare and after every re-lock', () => {
+    expect(scanCheckout(repo, [uid])).toEqual([]);
+    const reowned: number[] = [];
+    lockdown({ reown: (fd: number) => { reowned.push(fstatSync(fd).ino); } });
+    expect(checkoutCompromised(flag)).toBe(false);
+    expect(mode('')).toBe(0o700);
+    expect(reowned).toContain(lstatSync(repo).ino); // the codespace user's, through its fd
+    expect(stripCalls[0]).toEqual([repo]); // its ACL (default too) stripped on its own, before the scan
+    expect(mode('.git')).toBe(0o700);
+    expect(mode('.git/config')).toBe(0o644);
+    expect(mode('README.md')).toBe(0o644);
+    expect(mode('src/run.sh')).toBe(0o755);
+    expect(pin()).toEqual(PIN);
+    expect(verifiers()).toBe(true);
+    expect(compromisedStartRefusal({ compromisedFile: flag, verifiers: join(dir, 'none.json') })).toBeNull();
+    // GitHub re-opens it (smoke #5): the next re-lock closes the top dir again.
+    chmodSync(repo, 0o777);
+    lockdown();
+    expect(mode('')).toBe(0o700);
+    expect(checkoutCompromised(flag)).toBe(false);
+  });
+
+  it('a symlinked hook (.git/hooks/pre-push -> /tmp/x) is compromise; the target is never touched', () => {
+    const target = join(dir, 'outside');
+    writeFileSync(target, 'x'); chmodSync(target, 0o777);
+    symlinkSync(target, join(repo, '.git', 'hooks', 'pre-push'));
+    expectCompromised('.git/hooks/pre-push');
+    expect(lstatSync(target).mode & 0o777).toBe(0o777);
+    expect(readFileSync(target, 'utf8')).toBe('x');
+  });
+
+  it('a symlinked .git/hooks dir, .git/config, .gitattributes or .vscode/tasks.json is compromise', () => {
+    for (const rel of ['.git/hooks', '.git/config', '.gitattributes', '.vscode/tasks.json']) {
+      rmSync(flag, { force: true }); rmSync(runtime, { recursive: true, force: true }); mkdirSync(runtime); lines = [];
+      chmodSync(repo, 0o777);
+      rmSync(join(repo, rel), { recursive: true, force: true });
+      mkdirSync(join(repo, rel, '..'), { recursive: true });
+      symlinkSync(join(dir, 'elsewhere'), join(repo, rel));
+      expectCompromised(rel);
+      if (rel === '.git/config') writeFileSync(join(repo, '.git', 'config'), STOCK_CONFIG);
+    }
+  });
+
+  it('a non-sample hook file is compromise (a stock sample is not)', () => {
+    writeFileSync(join(repo, '.git', 'hooks', 'post-checkout'), '#!/bin/sh\ncurl evil\n');
+    expectCompromised('.git/hooks/post-checkout');
+    expect(lstatSync(join(repo, '.git', 'hooks', 'pre-commit.sample')).isFile()).toBe(true);
+  });
+
+  for (const [what, cfg] of [
+    ['include.path', '[include]\n\tpath = /tmp/cfg\n'],
+    ['includeIf.*.path', '[includeIf "gitdir:/workspaces/"]\n\tpath = /tmp/cfg\n'],
+    ['alias !', '[alias]\n\tst = !sh -c "curl evil"\n'],
+    ['filter.*.clean', '[filter "x"]\n\tclean = /tmp/x\n'],
+    ['diff.*.textconv', '[diff "x"]\n\ttextconv = /tmp/x\n'],
+    ['core.fsmonitor', '[core]\n\tfsmonitor = /tmp/x\n'],
+  ] as const) {
+    it(`a git config with ${what} is compromise`, () => {
+      writeFileSync(join(repo, '.git', 'config'), STOCK_CONFIG + cfg);
+      expectCompromised('.git/config');
+    });
+  }
+
+  it('the other git config files count too: config.worktree, a submodule config, info/attributes, a worktree .gitattributes', () => {
+    const cases: Array<[string, string]> = [
+      ['.git/config.worktree', '[core]\n\thooksPath = /tmp\n'],
+      ['.git/modules/sub/config', '[core]\n\tsshCommand = /tmp/x\n'],
+      ['.git/info/attributes', '* filter=x\n'],
+      ['.gitattributes', '*.md diff=x\n'],
+      ['src/.gitattributes', '*.sh merge=x\n'],
+    ];
+    for (const [rel, text] of cases) {
+      rmSync(flag, { force: true }); rmSync(runtime, { recursive: true, force: true }); mkdirSync(runtime); lines = [];
+      chmodSync(repo, 0o777);
+      mkdirSync(join(repo, rel, '..'), { recursive: true });
+      writeFileSync(join(repo, rel), text);
+      expectCompromised(rel);
+    }
+  });
+
+  it('an entry owned by anyone but root/codespace (dcuser) is compromise: the checkout is not read', () => {
+    mkdirSync(join(repo, '.vscode'));
+    writeFileSync(join(repo, '.vscode', 'tasks.json'), '{"tasks":[{"runOptions":{"runOn":"folderOpen"}}]}');
+    // Here every entry is "foreign" (the test cannot chown): the scan flags each top-most one.
+    const found = scanCheckout(repo, [uid + 4242]);
+    expect(found.map((f: { rel: string }) => f.rel)).toEqual(expect.arrayContaining(['.vscode', '.git', 'README.md']));
+    expect(found.every((f: { why: string }) => /owned by uid/.test(f.why))).toBe(true);
+    lockdown({ owners: [uid + 4242] });
+    expect(checkoutCompromised(flag)).toBe(true);
+    expect(pin()).toBeNull();
+    expect(quarantined()).toEqual(expect.arrayContaining(['.vscode', '.git', 'README.md']));
+  });
+
+  it('the flag is sticky: a later clean re-lock never lowers it; nothing is re-logged for what is already quarantined', () => {
+    writeFileSync(join(repo, '.git', 'hooks', 'post-checkout'), 'x');
+    lockdown();
+    expect(checkoutCompromised(flag)).toBe(true);
+    lines = [];
+    lockdown();
+    expect(checkoutCompromised(flag)).toBe(true);
+    expect(lines).toEqual([]);
+  });
+
+  it('the git config parser: every exec / include key class, the legacy and header-line forms; a stock config is clean', () => {
+    expect(gitConfigRisks(STOCK_CONFIG)).toEqual([]);
+    expect(gitConfigRisks('[core]\n\tfsmonitor = true\n[alias]\n\tst = status\n[diff]\n\talgorithm = histogram\n')).toEqual([]);
+    const risky = [
+      '[include]\n\tpath = x', '[includeIf "onbranch:main"]\n\tpath = x', '[alias]\n\tx = !sh', '[filter "lfs"]\n\tprocess = x', '[filter "a"]\n\tsmudge = x',
+      '[diff "a"]\n\ttextconv = x', '[diff]\n\texternal = x', '[merge "a"]\n\tdriver = x', '[gpg]\n\tprogram = x', '[core]\n\thooksPath = x',
+      '[core]\n\tsshCommand = x', '[core]\n\tpager = x', '[core]\n\teditor = x', '[credential]\n\thelper = x', '[pager]\n\tlog = x',
+      '[sequence]\n\teditor = x', '[uploadpack]\n\tpackObjectsHook = x', '[remote "origin"]\n\tuploadpack = x', '[core]\n\tgitProxy = x',
+      '[submodule "s"]\n\tupdate = !x', '[protocol "ext"]\n\tallow = always', '[filter.legacy]\n\tclean = x', '[core] hooksPath = x',
+      '[core]\n\thooks\\\nPath = x', '[core]\n\tsomething that is not git syntax',
+    ];
+    for (const r of risky) expect(gitConfigRisks(r), r).not.toEqual([]);
+  });
+
+  it('the re-lock is cheap: the ACL strip sends the paths on stdin, never as one argv per path', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'cloud', 'supervisor.mjs'), 'utf8');
+    const strip = src.slice(src.indexOf('function stripAclXattrs('), src.indexOf('function stripAclXattrs(') + 900);
+    expect(strip).toMatch(/sys\.stdin\.buffer\.read\(\)/);
+    expect(strip).toMatch(/input: Buffer\.from\(paths\.join\('\\0'\)/);
+    expect(strip).not.toMatch(/\.\.\.paths/);
+  });
+
+  it('the supervisor re-locks it every minute and refuses to serve a compromised checkout with no earlier verifiers', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'cloud', 'supervisor.mjs'), 'utf8');
+    expect(RELOCK_INTERVAL_MS).toBe(60_000);
+    expect(src).toMatch(/function main\(\)[\s\S]*relockPeriodically\(\);[\s\S]*compromisedStartRefusal\(\);\n\s*if \(refusal\) \{ log\(refusal\);.*return; \}.*\n\s*start\(\);/);
   });
 });
 

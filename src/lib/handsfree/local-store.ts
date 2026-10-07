@@ -55,6 +55,8 @@ export interface HandsfreeConfig {
   tripEstimateHours: number;
   queued?: QueuedFinalization | null;
   lastTrip?: { tripId: string; status: LastTripStatus; recovered?: boolean; at: string; epoch?: number } | null;
+  /** r18: the cloud reported its setup checkout changed by an agent; sticky until a new codespace. */
+  cloudCompromised?: boolean;
 }
 
 export const DEFAULT_BUDGET_CORE_MINUTES = 120 * 60;

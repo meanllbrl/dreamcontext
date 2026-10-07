@@ -2,7 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../middleware.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { getUpgradeReadyVersion } from '../lifecycle.js';
-import { isCloud } from '../cloud-mode.js';
+import { checkoutCompromised, isCloud } from '../cloud-mode.js';
 import { buildFingerprint } from '../cloud-fingerprint.js';
 import { carriesTransferAuth, handsfreeAuth, hasValidTransferProof } from '../handsfree-auth.js';
 import { cloudServices } from './handsfree-cloud.js';
@@ -51,6 +51,7 @@ export async function handleHealthGet(
         sealBlocked: rec.sealBlocked,
         verifierGeneration: handsfreeAuth().store.generation,
         supersededLaptopIds: rec.supersededLaptopIds,
+        checkoutCompromised: checkoutCompromised(),
       });
     }
     sendJson(res, 200, body);

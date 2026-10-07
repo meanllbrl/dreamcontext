@@ -344,11 +344,13 @@ export function readCloneFile(repoDir, rel, maxBytes, trust = TRUST) {
 function stripAclXattrs(paths) {
   if (!paths.length) return;
   try {
+    // The paths ride on stdin (NUL-separated), never as argv: a big tree cannot blow the arg limit.
     sh('python3', ['-c', `import os,sys
-for p in sys.argv[1:]:
+for p in sys.stdin.buffer.read().split(b"\\0"):
+    if not p: continue
     for a in ("system.posix_acl_access", "system.posix_acl_default"):
         try: os.removexattr(p, a, follow_symlinks=False)
-        except OSError: pass`, ...paths]);
+        except OSError: pass`], { input: Buffer.from(paths.join('\0') + '\0'), stdio: ['pipe', 'pipe', 'pipe'] });
   } catch (e) { log(`acl strip failed: ${e.message}`); }
 }
 
@@ -381,6 +383,45 @@ function lockTree(p, ctx) {
 }
 
 /**
+ * Smoke #5 (Critical, AC19): the REST of the codespace's checkout (everything but .devcontainer),
+ * fd-based, a dir locked before its entries are read, links never followed. Every entry loses
+ * group/other write (its ACLs are stripped by the caller); an entry owned by anyone but root or
+ * codespace (dcuser's commit files) is re-owned to codespace through its own fd; `.git` becomes
+ * 0700 so dcuser cannot even reach it; a hook file in `.git/hooks` loses its exec bits (a planted
+ * hook never runs for the codespace user). What dcuser may already have planted is the job of
+ * {@link scanCheckout}: a compromised checkout is quarantined and never trusted, not sanitized.
+ */
+function lockCheckoutTree(p, ctx, rel) {
+  let st;
+  try { st = lstatSync(p); } catch (e) { if (e.code !== 'ENOENT') ctx.logLine(`lockdown: ${p}: ${e.message}`); return; }
+  if (st.isSymbolicLink()) return; // never followed; git and the readers never trust one either
+  if (!st.isDirectory() && !st.isFile()) { ctx.logLine(`lockdown: ${p} is not a file or a directory; skipped`); return; }
+  let fd;
+  try { fd = openSync(p, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_NONBLOCK); } catch (e) { ctx.logLine(`lockdown: ${p}: ${e.message}`); return; }
+  let dir = false;
+  try {
+    const f = fstatSync(fd);
+    if (f.ino !== st.ino || f.dev !== st.dev) { ctx.logLine(`lockdown: ${p} changed while it was locked; skipped`); return; }
+    if (!ctx.owners.includes(f.uid)) {
+      ctx.reown(fd);
+      ctx.logLine(`lockdown: ${p} was owned by uid ${f.uid}; now the codespace user's`);
+    }
+    let mode = f.mode & 0o755;
+    if (rel === '.git') mode = 0o700;
+    else if (f.isFile() && /^\.git\/hooks\/[^/]+$/.test(rel) && !rel.endsWith('.sample')) {
+      if (f.mode & 0o111) ctx.logLine(`lockdown: disarmed the hook ${p}`);
+      mode &= 0o644;
+    }
+    fchmodSync(fd, mode);
+    ctx.locked.push(p);
+    dir = f.isDirectory();
+  } finally {
+    closeSync(fd);
+  }
+  if (dir) for (const name of readdirSync(p)) lockCheckoutTree(join(p, name), ctx, rel ? `${rel}/${name}` : name);
+}
+
+/**
  * /workspaces itself (W0 b: `drwxr-xrwx codespace root`) loses other-write, so dcuser can no
  * longer create, rename or remove entries there. Its writers are root (the dc-* dirs, made by
  * this entrypoint) and GitHub's agent as root/codespace (the owner): neither needs other-write.
@@ -406,14 +447,195 @@ function tightenWorkspaces(workspaces, logLine) {
  * group/other write and setuid/setgid/sticky, and its `.devcontainer` tree is locked
  * ({@link lockTree}) and stripped of ACLs (default ones too).
  */
+// ─── A checkout dcuser ever wrote is compromised: quarantined, never trusted (r18) ──────
+
+/** Root-owned, sticky until the machine is torn down; the server reports it in /api/health. */
+export const COMPROMISED_FILE = '/opt/dc-hf/checkout-compromised';
+const BOOLEAN_VALUES = new Set(['', 'true', 'false', 'yes', 'no', 'on', 'off', '1', '0']);
+
+/** Is the git config key (section/subsection/key lowercased, the subsection as written) one that
+ *  runs a program, includes another file, or redirects git to something that does? */
+function riskyGitKey(section, sub, key, value) {
+  const v = value.trim();
+  const bang = v.startsWith('!');
+  switch (section) {
+    case 'include': case 'includeif': return key === 'path';
+    case 'alias': return bang;
+    case 'core':
+      if (key === 'fsmonitor') return !BOOLEAN_VALUES.has(v.toLowerCase());
+      return ['hookspath', 'sshcommand', 'pager', 'editor', 'askpass', 'gitproxy', 'alternaterefscommand', 'worktree'].includes(key);
+    case 'sequence': return key === 'editor';
+    case 'credential': return key === 'helper';
+    case 'filter': return ['clean', 'smudge', 'process'].includes(key);
+    case 'diff': return sub === null ? key === 'external' : ['textconv', 'command'].includes(key);
+    case 'merge': return sub !== null && key === 'driver';
+    case 'gpg': return key === 'program';
+    case 'pager': return true;
+    case 'interactive': return key === 'difffilter';
+    case 'difftool': case 'mergetool': case 'browser': case 'man': return ['cmd', 'path'].includes(key);
+    case 'submodule': return key === 'update' && bang;
+    case 'uploadpack': return key === 'packobjectshook';
+    case 'remote': return ['uploadpack', 'receivepack'].includes(key);
+    case 'web': return key === 'browser';
+    case 'trailer': return ['command', 'cmd'].includes(key);
+    case 'sendemail': return ['smtpserver', 'tocmd', 'cccmd'].includes(key);
+    case 'protocol': return key === 'allow' && v.toLowerCase() === 'always';
+    default: return false;
+  }
+}
+
+/**
+ * The risky keys of one git config file (git's own syntax: `[section "sub"]` or the legacy
+ * `[section.sub]`, `key = value`, comments, continuation lines). A line it cannot parse is a risk
+ * too: a stock config parses cleanly.
+ */
+export function gitConfigRisks(text) {
+  const out = [];
+  let section = '';
+  let sub = null;
+  const lines = text.replace(/\\\r?\n/g, ' ').split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.replace(/^﻿/, '').trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const head = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(.*)$/.exec(line);
+    if (head) {
+      const name = head[1];
+      const dot = name.indexOf('.');
+      section = (dot === -1 ? name : name.slice(0, dot)).toLowerCase();
+      sub = head[2] !== undefined ? head[2] : dot === -1 ? null : name.slice(dot + 1);
+      const rest = head[3].trim();
+      if (!rest || rest.startsWith('#') || rest.startsWith(';')) continue;
+      // `[core] hooksPath = x` on the header line: parse what follows as a key line.
+      const kv0 = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/.exec(rest);
+      if (!kv0) { out.push(`unparsable line: ${line.slice(0, 80)}`); continue; }
+      if (riskyGitKey(section, sub, kv0[1].toLowerCase(), kv0[2] ?? '')) out.push(`${section}${sub !== null ? `.${sub}` : ''}.${kv0[1]}`);
+      continue;
+    }
+    const kv = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/.exec(line);
+    if (!kv || !section) { out.push(`unparsable line: ${line.slice(0, 80)}`); continue; }
+    if (riskyGitKey(section, sub, kv[1].toLowerCase(), kv[2] ?? '')) out.push(`${section}${sub !== null ? `.${sub}` : ''}.${kv[1]}`);
+  }
+  return out;
+}
+
+/** A gitattributes file that names a filter / diff / merge driver (our bootstrap repo has none). */
+export function gitAttributesRisks(text) {
+  return text.split(/\r?\n/).filter((l) => !/^\s*(#|$)/.test(l) && /(^|\s)(filter|diff|merge)=/.test(l)).map((l) => `attribute: ${l.trim().slice(0, 80)}`);
+}
+
+/** Read a small regular file without following a link (null when it is not one). */
+function readNoFollow(p, max = 1 << 20) {
+  let fd;
+  try { fd = openSync(p, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_NONBLOCK); } catch { return null; }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > max) return null;
+    const buf = Buffer.alloc(st.size);
+    readSync(fd, buf, 0, st.size, 0);
+    return buf.toString('utf-8');
+  } finally { closeSync(fd); }
+}
+
+/**
+ * Walk the checkout with lstat only (never following a link) BEFORE anything is locked, and list
+ * what makes it untrustworthy: a link anywhere under .git, .devcontainer or .vscode or at a
+ * top-level .git* entry; any entry owned by anyone but root/codespace; a git config file
+ * (.git/config, config.worktree, modules / worktrees configs) with a key that runs a program or
+ * includes a file; an attributes file naming a driver; a hook that is not a stock `*.sample`.
+ * Returns `[{ rel, why }]` with the top-most offending path of each finding.
+ */
+export function scanCheckout(repo, owners = TRUST.repoOwners) {
+  const found = [];
+  const visit = (abs, rel) => {
+    let st;
+    try { st = lstatSync(abs); } catch { return; }
+    const top = rel.split('/')[0];
+    const guarded = top === '.git' || top === '.devcontainer' || top === '.vscode' || (rel === top && top.startsWith('.git'));
+    // The top dir's own owner is lockdownClones' check (repoOwners); everything in it is scanned here.
+    if (rel && !owners.includes(st.uid)) { found.push({ rel, why: `owned by uid ${st.uid}` }); return; }
+    if (st.isSymbolicLink()) { if (guarded) found.push({ rel, why: 'a symlink' }); return; }
+    if (st.isFile()) {
+      const isConfig = rel === '.git/config' || /^\.git\/(config\.worktree|(modules\/.+|worktrees\/[^/]+)\/config(\.worktree)?)$/.test(rel);
+      const isAttrs = rel === '.git/info/attributes' || /(^|\/)\.gitattributes$/.test(rel);
+      const isHook = /^\.git\/(modules\/.+\/)?hooks\/[^/]+$/.test(rel) && !rel.endsWith('.sample');
+      if (isHook) found.push({ rel, why: 'a hook that is not a stock sample' });
+      if (isConfig || isAttrs) {
+        const text = readNoFollow(abs);
+        if (text === null) found.push({ rel, why: 'unreadable or oversized' });
+        else {
+          const risks = isConfig ? gitConfigRisks(text) : gitAttributesRisks(text);
+          if (risks.length) found.push({ rel, why: risks.join(', ') });
+        }
+      }
+      return;
+    }
+    if (st.isDirectory()) {
+      let names = [];
+      try { names = readdirSync(abs); } catch { return; }
+      for (const n of names) visit(join(abs, n), rel ? `${rel}/${n}` : n);
+    }
+  };
+  visit(repo, '');
+  return found;
+}
+
+/** Has root ever found this machine's checkout compromised? (sticky, root-owned) */
+export function checkoutCompromised(file = COMPROMISED_FILE) {
+  try { return lstatSync(file).isFile(); } catch { return false; }
+}
+
+/**
+ * Rename `<repo>/<rel>` into `dir` through directory fds: every component opened O_NOFOLLOW
+ * relative to its parent's fd, the last one renamed (renameat: a link is moved, never followed).
+ */
+const MOVE_PY = `import os,sys
+repo, rel, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+fl = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = os.open(repo, fl)
+parts = rel.split("/")
+for c in parts[:-1]:
+    if c in ("", ".", ".."): raise SystemExit("bad path")
+    n = os.open(c, fl, dir_fd=fd); os.close(fd); fd = n
+q = os.open(dst, fl)
+os.rename(parts[-1], rel.replace("/", "__"), src_dir_fd=fd, dst_dir_fd=q)`;
+function moveNoFollow(repo, rel, dir) {
+  execFileSync('python3', ['-c', MOVE_PY, repo, rel, dir], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
+}
+
+/**
+ * On compromise: the flag (root 0644, the findings, never the content), then each offending
+ * entry renamed (a link is renamed, never followed) into a root-only quarantine dir. Called only
+ * once the checkout's top dir is locked (0700), so dcuser can no longer race the renames.
+ */
+function quarantine(repo, found, { file, runtime, logLine, move }) {
+  const first = !checkoutCompromised(file);
+  try {
+    if (first) writeFileSync(file, `${new Date().toISOString()}\n${found.map((f) => `${f.rel}: ${f.why}`).join('\n')}\n`, { mode: 0o644, flag: 'wx' });
+  } catch (e) { logLine(`lockdown: could not write ${file}: ${e.message}`); }
+  const dir = join(runtime, `quarantine-${Date.now()}`);
+  let made = false;
+  for (const f of found) {
+    if (!f.rel || found.some((o) => o !== f && o.rel && f.rel.startsWith(`${o.rel}/`))) continue; // its parent moves
+    if (!made) {
+      try { mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch (e) { logLine(`lockdown: COMPROMISED checkout, but no quarantine dir (${e.message})`); return; }
+      made = true;
+    }
+    try {
+      move(repo, f.rel, dir);
+      logLine(`lockdown: COMPROMISED checkout: quarantined ${f.rel} (${f.why})`);
+    } catch (e) { logLine(`lockdown: could not quarantine ${f.rel}: ${e.message}`); }
+  }
+}
+
 export function lockdownClones({
   workspaces = '/workspaces', chown = (fd) => fchownSync(fd, 0, 0), owners = TRUST.repoOwners, stripAcl = stripAclXattrs, logLine = log,
+  reown = (fd) => fchownSync(fd, CODESPACE_UID, CODESPACE_UID), repoOwners = owners, compromisedFile = COMPROMISED_FILE, runtime = RUNTIME, move = moveNoFollow,
 } = {}) {
   tightenWorkspaces(workspaces, logLine);
   const repo = join(workspaces, CLONE_NAME);
   let st;
   try { st = lstatSync(repo); } catch { return; } // no checkout yet
-  if (st.isSymbolicLink() || !st.isDirectory() || !owners.includes(st.uid)) {
+  if (st.isSymbolicLink() || !st.isDirectory() || !repoOwners.includes(st.uid)) {
     logLine(`lockdown: ${repo} is not a plain directory owned by root or codespace (uid ${st.uid}); skipped`);
     return;
   }
@@ -422,21 +644,37 @@ export function lockdownClones({
   try {
     const f = fstatSync(fd);
     if (f.ino !== st.ino || f.dev !== st.dev) { logLine(`lockdown: ${repo} changed while it was locked; skipped`); return; }
-    fchmodSync(fd, f.mode & 0o755);
+    // r18: dcuser can never reach the checkout again, whatever the inner modes: the codespace
+    // user's own, 0700 (its gh / poststart / stop-helper run as that user; root reads anyway).
+    reown(fd);
+    fchmodSync(fd, 0o700);
   } finally {
     closeSync(fd);
   }
+  stripAcl([repo]); // the top dir's ACL (default entries too) first: nothing below it is reachable
+  // r18: whatever dcuser ALREADY planted is found before anything is locked or trusted.
+  const found = scanCheckout(repo, owners);
+  if (found.length) quarantine(repo, found, { file: compromisedFile, runtime, logLine, move });
   const locked = [repo];
   lockTree(join(repo, '.devcontainer'), { chown, owners, locked, logLine });
+  let names = [];
+  try { names = readdirSync(repo); } catch (e) { logLine(`lockdown: ${repo}: ${e.message}`); }
+  for (const name of names) {
+    if (name !== '.devcontainer') lockCheckoutTree(join(repo, name), { owners, reown, locked, logLine }, name);
+  }
   stripAcl(locked);
 }
+
+/** GitHub re-opens the workspace folder's permissions after a start (smoke #5): lock it again every minute. */
+export const RELOCK_INTERVAL_MS = 60_000;
 
 /**
  * The version pin the laptop wrote into the repo (`.devcontainer/bootstrap/version.json`,
  * blob-sha checked by the laptop before every start/create), read through
  * {@link readCloneFile} only. Returns `{version, integrity}`, or null with the reason logged.
  */
-export function repoPin({ workspaces = '/workspaces', logLine = log, trust = TRUST } = {}) {
+export function repoPin({ workspaces = '/workspaces', logLine = log, trust = TRUST, compromisedFile = COMPROMISED_FILE } = {}) {
+  if (checkoutCompromised(compromisedFile)) { logLine('version pin NOT read: the checkout was changed by an agent (compromised)'); return null; }
   for (const repo of cloneDirs(workspaces)) {
     let pin;
     try {
@@ -456,7 +694,9 @@ export function repoPin({ workspaces = '/workspaces', logLine = log, trust = TRU
  * lower generation; sanitized to the three fields `cloud serve` installs. Read through
  * {@link readCloneFile}; written O_EXCL|O_NOFOLLOW (dcserver owns that dir) and renamed in.
  */
-export function copyVerifiers({ workspaces = '/workspaces', dst = join(SRV, 'bootstrap-verifiers.json'), owner = { uid: DCSERVER_UID, gid: DCSERVER_GID }, logLine = log, trust = TRUST } = {}) {
+export function copyVerifiers({ workspaces = '/workspaces', dst = join(SRV, 'bootstrap-verifiers.json'), owner = { uid: DCSERVER_UID, gid: DCSERVER_GID }, logLine = log, trust = TRUST, compromisedFile = COMPROMISED_FILE } = {}) {
+  // r18: a compromised checkout is never read; the copy already installed (if any) stays.
+  if (checkoutCompromised(compromisedFile)) { logLine('bootstrap verifiers NOT read: the checkout was changed by an agent (compromised); keeping the installed copy'); return false; }
   let best = null;
   for (const repo of cloneDirs(workspaces)) {
     let v;
@@ -808,6 +1048,21 @@ export function holdListener(fd = 3) {
   return fd;
 }
 
+function relockPeriodically() {
+  setInterval(() => {
+    try { lockdownClones(); } catch (e) { log(`lockdown: ${e.message}`); }
+  }, RELOCK_INTERVAL_MS).unref();
+}
+
+/**
+ * r18: a compromised checkout with no verifiers installed before it was compromised: the server
+ * would have nothing trustworthy to authenticate the laptop with, so it is never started.
+ */
+export function compromisedStartRefusal({ compromisedFile = COMPROMISED_FILE, verifiers = join(SRV, 'bootstrap-verifiers.json') } = {}) {
+  if (!checkoutCompromised(compromisedFile) || existsSync(verifiers)) return null;
+  return 'server NOT started: the checkout was changed by an agent and no earlier verifiers are installed; run `dreamcontext handsfree teardown` then `setup` on the laptop';
+}
+
 function main() {
   // First, before anything else: without the entrypoint's listening socket there is nothing
   // to serve on, and a supervisor that binds its own would be the bug smoke #4 found.
@@ -827,6 +1082,9 @@ function main() {
   const known = readLine(join(PUB, 'mirror-mounted'));
   if (known && validMirrorPath(known)) mountMirror(known);
   log('bound 0.0.0.0:8080 (the entrypoint bound it; root holds fd 3 and never polls it)');
+  relockPeriodically();
+  const refusal = compromisedStartRefusal();
+  if (refusal) { log(refusal); setInterval(() => {}, 1 << 30); return; } // alive (the relock runs), nothing serves
   start();
   watchMirrorRequests();
 }

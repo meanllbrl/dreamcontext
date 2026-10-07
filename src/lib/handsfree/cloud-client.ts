@@ -41,6 +41,8 @@ export interface CloudHealth extends PublicHealth {
   supersededLaptopIds: string[];
   /** D21: the epoch the cloud was last sealed under (null before the first seal). */
   sealedEpoch: number | null;
+  /** r18: root found the codespace's own setup checkout changed by an agent (false from an older cloud). */
+  checkoutCompromised: boolean;
 }
 
 export type InstallResultWire =
@@ -186,6 +188,7 @@ function healthOf(v: unknown): CloudHealth {
     verifierGeneration: isInt(o.verifierGeneration) ? o.verifierGeneration : 0,
     supersededLaptopIds: Array.isArray(o.supersededLaptopIds) ? o.supersededLaptopIds.filter((x): x is string => typeof x === 'string') : [],
     sealedEpoch: isInt(o.sealedEpoch) ? o.sealedEpoch : null,
+    checkoutCompromised: o.checkoutCompromised === true,
   };
 }
 

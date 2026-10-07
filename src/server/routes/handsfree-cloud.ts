@@ -511,7 +511,9 @@ async function runInstalls(go: GoManifest): Promise<void> {
     const done = cloudIdle()?.installBegin() ?? (() => { /* no clock */ });
     const code = await new Promise<number | null>((resolvePromise) => {
       try {
-        const child = spawnAsWorker('/bin/bash', ['-lc', cmd], { cwd: local, stdio: ['ignore', 'ignore', 'ignore'] });
+        // Smoke #5: the login shell's own init may change directory; the install goes to the
+        // trip root itself first (single-quoted: any path is taken verbatim).
+        const child = spawnAsWorker('/bin/bash', ['-lc', `cd -- '${local.replace(/'/g, `'\\''`)}' && ${cmd}`], { cwd: local, stdio: ['ignore', 'ignore', 'ignore'] });
         child.on('error', () => resolvePromise(null));
         child.on('close', (c) => resolvePromise(c));
       } catch {

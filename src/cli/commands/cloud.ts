@@ -71,6 +71,11 @@ async function serve(opts: ServeOpts): Promise<void> {
 
   const routes = await import('../../server/routes/handsfree-cloud.js');
   cloudMode.setCloudPhaseSource(routes.cloudPhaseFromStore);
+  // Smoke #5: agents run only inside the trip's roots (read live: the trip changes over a run).
+  cloudMode.setCloudTripRootsSource(() => {
+    const go = routes.cloudServices().state.get().go as { roots?: Array<{ absPath?: unknown; kind?: unknown }> } | null;
+    return (go?.roots ?? []).filter((r) => r.kind !== 'transcripts' && typeof r.absPath === 'string').map((r) => r.absPath as string);
+  });
 
   // The bootstrap verifiers the root entrypoint copied from the private repo (a stale or equal
   // generation is a no-op inside installVerifiers).

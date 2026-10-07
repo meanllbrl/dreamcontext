@@ -12,7 +12,7 @@ import {
 import { sendJson, sendError, isForeignOriginUpgrade } from '../middleware.js';
 import { serveMedia } from '../media.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
-import { cloudPhase, cloudWorkDir, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
+import { cloudChatRootRefusal, cloudPhase, cloudWorkDir, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
 import { isCloudOriginAllowed } from '../middleware.js';
 import { recordCloudAction } from '../cloud-idle.js';
 import { deviceIdHash, handsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
@@ -917,6 +917,15 @@ export function startChatSession(
     try { ws.close(); } catch { /* already closed */ }
     return;
   }
+  // Smoke #5 (Critical): in the cloud an agent runs ONLY inside the trip's own roots, never in
+  // the codespace's checkout or wherever else a name resolves; anything else is refused here,
+  // at the one chokepoint every chat spawn (and respawn) passes.
+  const outsideTrip = isCloud() ? cloudChatRootRefusal(projectRoot) : null;
+  if (outsideTrip) {
+    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'cloud_not_trip', message: outsideTrip })); } catch { /* gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
   // Hands-free (AC6): while this project is away in the cloud, the laptop never starts an
   // agent inside it — the cloud copy is the live one, and work here would be lost at Return.
   // One message for every spawn chokepoint (lane F's peer-delivery.ts).
@@ -1305,7 +1314,10 @@ export function startChatSession(
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
   // The cloud's inline prose/JSON (`inlineArgs`) can hold anything: single-quoted, which the
   // shell takes verbatim. Every other element keeps the double quotes above.
-  const script = `exec claude ${argv.map((a) => (inlineArgs.has(a) ? shellSingleQuote(a) : `"${a}"`)).join(' ')}`;
+  // In the cloud the login shell's own init (`bash -ilc`: /etc/profile, profile.d, bashrc) may
+  // change directory; smoke #5's chat ran in the codespace's checkout. The script itself goes to
+  // the trip root first, and claude never starts anywhere else.
+  const script = `${isCloud() ? `cd -- ${shellSingleQuote(projectRoot)} && ` : ''}exec claude ${argv.map((a) => (inlineArgs.has(a) ? shellSingleQuote(a) : `"${a}"`)).join(' ')}`;
 
   // An agent-chat process exports its tab's STABLE roster id so the SessionStart/Stop
   // hooks (which inherit this env through `claude`) record roster id → live conversation
