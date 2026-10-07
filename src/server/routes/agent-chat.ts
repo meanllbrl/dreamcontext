@@ -21,8 +21,9 @@ import { handsfreeSpawnRefusal } from '../../lib/peer-delivery.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
-import { readHandoffRecord, stampHandoffRecord, writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, shouldRotateForHandoff } from '../../lib/context-watch.js';
+import { readHandoffRecord, stampHandoffRecord, writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, shouldRotateForHandoff, contextTokensFromUsage } from '../../lib/context-watch.js';
 import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
+import { startHandoffRun, advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
@@ -1460,6 +1461,17 @@ export function startChatSession(
    *  prompt printed while detached reached no socket, so an adopting socket is handed them
    *  again — otherwise the turn would wait forever on a card nobody can see. */
   const outstandingAsks = new Map<string, string>();
+  /** The context handoff in progress (or the last one), drawn live by the chat as a staged
+   *  card — see handoff-progress.ts. Replayed to an adopting socket like `outstandingAsks`. */
+  let handoffRun: HandoffRun | null = null;
+  /** The main chain's context as of its latest assistant frame — the handoff's "before" when
+   *  the record itself did not carry one. */
+  let lastMainContext = 0;
+  const setHandoffRun = (next: HandoffRun | null): void => {
+    if (!next) return;
+    handoffRun = next;
+    sendMeta(handoffProgressFrame(next));
+  };
 
   /** A turn edge — the ONLY place the live entry's activity fields move (see the contract in
    *  agent-chat-live.ts: sockets, pings and replays never touch them). */
@@ -1763,6 +1775,7 @@ export function startChatSession(
     for (const line of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }
+    if (handoffRun) sendMeta(handoffProgressFrame(handoffRun));
     // A switch announced to the socket that went away is still owed: the client that just
     // arrived never read it, and without it the held messages wait for a restart nobody asks for.
     reannounceSwitch();
@@ -1886,6 +1899,15 @@ export function startChatSession(
         observedConversation = obj.session_id;
       }
 
+      // A rotation in progress moves through its stages on these same frames. Read BEFORE the
+      // result block below, which may START a run: the frame that triggers a rotation must
+      // not also advance it, and `turnsInFlight` must be the count before this frame closes one.
+      if (handoffRun) setHandoffRun(advanceHandoffRun(handoffRun, obj, turnsInFlight));
+      if (obj.type === 'assistant' && !obj.parent_tool_use_id) {
+        const used = contextTokensFromUsage((obj.message as { usage?: Record<string, unknown> } | undefined)?.usage);
+        if (used > 0) lastMainContext = used;
+      }
+
       if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
         closeTurn();
         // An autonomy change waited for this boundary.
@@ -1925,16 +1947,23 @@ export function startChatSession(
             openTurn();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
 
-            // Reuses the existing system-notice frame rather than inventing a second
-            // one — it is already a dismissible, toned, single-slot banner saying
-            // "something about this conversation changed", which is exactly this.
-            const size = pending.contextTokens ? ` — handed off at ${Math.round(pending.contextTokens / 1000)}k` : '';
-            sendMeta({ subtype: 'branch_start', kind: 'moved', message: `Fresh session${size}. Continuing ${pending.title}.` });
+            // Its own frame, not the branch notice's one-liner: the chat draws the run as it
+            // happens (handoff-progress.ts), so "it is happening" is on screen from now on
+            // rather than a sentence sent after it was over.
+            setHandoffRun(startHandoffRun({
+              task: pending.task,
+              title: pending.title,
+              contextTokens: pending.contextTokens ?? lastMainContext,
+              fromSession: observedConversation,
+            }));
           }
         } catch (handoffErr) {
           // A failed rotation must leave the pane exactly as it was — still usable,
           // just not rotated. The agent can always hand off again.
-          sendMeta({ subtype: 'branch_start', kind: 'failed', message: `Context handoff could not open a fresh session: ${(handoffErr as Error).message}` });
+          const message = (handoffErr as Error).message;
+          const failed = handoffRun ? failHandoffRun(handoffRun, message) : null;
+          if (failed) setHandoffRun(failed);
+          else sendMeta(handoffProgressFrame({ id: Date.now(), stage: 'failed', task: '', title: '', message }));
         }
       }
 
@@ -2016,6 +2045,7 @@ export function startChatSession(
   child.on('close', (code) => {
     teardown();
     if (handedOff) { spawnSuccessor(); return; }
+    if (handoffRun) setHandoffRun(failHandoffRun(handoffRun, 'The session exited before the fresh one answered.'));
     sendMeta({ subtype: 'exit', code });
     const stderrMessage = withoutShellJobControlNoise(stderrTail).trim();
     if (code !== 0 && stderrMessage) {

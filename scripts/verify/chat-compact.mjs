@@ -160,7 +160,7 @@ async function run(chromium, base, report) {
     await until(async () => (await dividerText()).includes('Compacting conversation')), await dividerText());
   await page.screenshot({ path: join(SHOTS, 'running.png') });
   ok('C2 the boundary fills in the token drop',
-    await until(async () => (await dividerText()).includes('Conversation compacted · 281k → 19k tokens')), await dividerText());
+    await until(async () => /compacted/.test(await dividerText()) && /281k\s*→\s*19k/.test(await dividerText())), await dividerText());
   ok('C3 the summary is folded by default',
     !(await vis('.chat-m-compact-body').count()) && (await dividerText()).includes('Show summary'), await dividerText());
   await vis('.chat-m-compact-head').first().click();

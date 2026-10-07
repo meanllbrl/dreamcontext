@@ -124,6 +124,19 @@ export interface BackgroundTaskEntry {
  *  turns severe. `nudgeAt`/`hardAt` are the composer's band edges (CONTEXT_BAND_EDGES,
  *  owned by src/lib/setup-config.ts); the literals below are only the last-resort
  *  fallback for a frame from an older server that does not send them. */
+/** A context handoff as the server watches it happen (src/lib/handoff-progress.ts). MIRRORED
+ *  from the server's `HandoffRun` wire shape; change one side, change the other. `id` is the
+ *  run's start time and its identity: a replayed frame updates the same card. */
+export interface HandoffProgress {
+  id: number;
+  stage: 'clearing' | 'resuming' | 'done' | 'failed';
+  task: string;
+  title: string;
+  contextTokens?: number;
+  postTokens?: number;
+  message?: string;
+}
+
 export interface ContextHandoffState {
   enabled: boolean;
   nudgeAt: number;
@@ -139,6 +152,8 @@ export type ChatEvent =
    *  RESUMED pane shows server truth rather than a remembered click; and again after every
    *  `setContextHandoff`, so the switch is confirmation rather than optimism. */
   | { kind: 'context-handoff'; state: ContextHandoffState }
+  /** A context handoff moving through its stages — the chat draws it live. */
+  | { kind: 'handoff-progress'; run: HandoffProgress }
   /** The CLI's authoritative roster of tasks STILL RUNNING in the background, pushed on
    *  every change (empirically verified on CLI 2.1.220: fires when a `run_in_background`
    *  Bash starts, and again with `tasks: []` when the last one ends).
@@ -1016,6 +1031,29 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
         nudgeAt: typeof st.nudgeAt === 'number' && st.nudgeAt > 0 ? st.nudgeAt : 300_000,
         hardAt: typeof st.hardAt === 'number' && st.hardAt > 0 ? st.hardAt : 650_000,
         remindEvery: typeof st.remindEvery === 'number' && st.remindEvery > 0 ? st.remindEvery : 100_000,
+      },
+    };
+  }
+  // Read strictly: an unknown stage is dropped rather than guessed at, because the card it
+  // drives says what happened to the user's conversation.
+  if (subtype === 'handoff_progress') {
+    const stage = obj.stage;
+    if (typeof obj.id !== 'number' || (stage !== 'clearing' && stage !== 'resuming' && stage !== 'done' && stage !== 'failed')) {
+      return ignored('_meta:handoff_progress');
+    }
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
+    const contextTokens = num(obj.contextTokens);
+    const postTokens = num(obj.postTokens);
+    return {
+      kind: 'handoff-progress',
+      run: {
+        id: obj.id,
+        stage,
+        task: str(obj.task) ?? '',
+        title: str(obj.title) ?? str(obj.task) ?? '',
+        ...(contextTokens === undefined ? {} : { contextTokens }),
+        ...(postTokens === undefined ? {} : { postTokens }),
+        ...(str(obj.message) ? { message: str(obj.message)! } : {}),
       },
     };
   }

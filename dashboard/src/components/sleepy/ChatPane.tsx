@@ -54,7 +54,7 @@ import {
 import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
-  AccountSwitchBanner,
+  AccountSwitchBanner, HandoffCard,
   BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner,
   SignInBanner, WorkingIndicator,
 } from './chat/Banners';
@@ -1517,6 +1517,7 @@ export function ChatPane({
     setSlideOver(null);
     onOpenAppPage?.(page, id, vault);
   }, [onOpenAppPage]);
+  const openHandoffTask = useCallback((slug: string) => handleNavApp('tasks', slug), [handleNavApp]);
 
   // ── The buttons an answer asked for (`dream-actions`). Every one of them lands on a
   //    surface this pane ALREADY owns — the slide-over, the lightbox, the app's navigation,
@@ -1984,6 +1985,15 @@ export function ChatPane({
                 is this conversation waiting on right now", and a question the run itself
                 raised belongs in the same spot as one the CLI's own turn raised. */}
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
+            {/* The context handoff, live while it runs and a receipt once it has — the
+                pane's biggest self-driven operation must look like one. */}
+            {conv.handoff && !conv.handoff.dismissed && (
+              <HandoffCard
+                run={conv.handoff}
+                onDismiss={session.dismissHandoff}
+                onOpenTask={openHandoffTask}
+              />
+            )}
             {conv.branchNotice && (
               <BranchStartBanner
                 tone={conv.branchNotice.tone}

@@ -1,18 +1,19 @@
 ---
-id: "feat_t7P6EZZS"
-type: "feature"
-name: "opt-in-context-handoff"
+id: feat_t7P6EZZS
+type: feature
+name: opt-in-context-handoff
 description: >-
   Past ~300k tokens the agent is handed a note with its own numbers and told it
   may write its state into the task and continue in a fresh session — its own
-  call, never forced. The note ESCALATES: firm from 300k, must-hand-off-or-say-why
-  from 650k. `tasks handoff` records it and the next session opens on a HANDOFF
-  banner. Off by default, per pane, remembered per vault per machine.
+  call, never forced. The note ESCALATES: firm from 300k,
+  must-hand-off-or-say-why from 650k. `tasks handoff` records it and the next
+  session opens on a HANDOFF banner. Off by default, per pane, remembered per
+  vault per machine.
 pinned: false
-date: "2026-09-13"
-status: "in_review"
-created: "2026-09-13"
-updated: "2026-09-13"
+date: '2026-09-13'
+status: in_review
+created: '2026-09-13'
+updated: '2026-10-07'
 released_version: null
 product: desktop
 tags:
@@ -25,7 +26,10 @@ tags:
 related_tasks:
   - >-
     opt-in-context-handoff-the-agent-is-told-at-200k-that-it-may-move-its-state-into-the-task-and-continue-in-a-fresh-session
-  - composer-in-kullanim-paneli-mod-gostergesi-ve-baglam-halkasi-premium-bir-tasarima-gecer
+  - >-
+    composer-in-kullanim-paneli-mod-gostergesi-ve-baglam-halkasi-premium-bir-tasarima-gecer
+  - >-
+    chat-notices-speak-in-pictures-and-the-eco-handoff-shows-itself-while-it-runs
 ---
 
 ## Why
@@ -54,7 +58,7 @@ Full measurement, model parameters and raw data: `knowledge/context-ceiling-econ
 - [x] With the feature on and main-chain context ≥ `nudgeAt`, the next Edit/Write (PostToolUse) or user prompt (UserPromptSubmit) injects the nudge via `additionalContext` exactly once, then again every `remindEvery` tokens. Disabled ⇒ zero output, zero extra work.
 - [x] The nudge never fires inside a sub-agent — `agent_id`/`agent_type` on the payload (pinned against a real captured payload), `/subagents/` in the transcript path, or an `isSidechain` tail record all skip it.
 - [x] `dreamcontext tasks handoff <slug> [note]` logs the note to the task changelog, sets the task `in_progress`, writes `state/.handoff-requests/<key>.json`, writes a partial session digest, and appends a `CompactionRecord {trigger:'handoff', context_tokens}`. It writes **no** global active-task pointer.
-- [x] Desktop Chat: at the next main-chain result frame after a handoff record appears for the tab, the server stamps `actedAt`, sends `/clear` then the continue prompt as user frames, and shows a system notice; SessionStart fires with `source=clear` and the agent-session-map records the rotated id.
+- [x] Desktop Chat: at the next main-chain result frame after a handoff record appears for the tab, the server stamps `actedAt`, sends `/clear` then the continue prompt as user frames, and reports the rotation in stages (`_meta handoff_progress`: clearing → resuming → done/failed, `src/lib/handoff-progress.ts`) which the chat draws live as a staged card ending on a receipt (`HandoffCard`, 2026-10-07); SessionStart fires with `source=clear` and the agent-session-map records the rotated id.
 - [x] SessionStart banner printed before the snapshot on a tab match, or on `source=clear` without a tab for the newest unconsumed record < 15 min; a startup/resume session without a tab id never receives or consumes a record (automation-hijack test). `consumedAt` set once, never re-printed.
 - [x] `contextTokensFromUsage` is the single formula (`computeSessionStats` imports it); `liveTranscriptPath` is shared between CLI and server; a 7-day prune covers `.context-watch/` and `.handoff-requests/` from SessionStart only; both dirs gitignored.
 - [x] Per-pane toggle in the composer's usage popover, sending `setContextHandoff`; the server writes the pane's tab file and the state echoes back; the switch reflects server truth on resume via the augmented init.

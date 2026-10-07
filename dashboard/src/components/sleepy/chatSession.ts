@@ -7,7 +7,7 @@ import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { raiseAskAttention } from '../../lib/attention';
 import {
   parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
-  type ChatEvent, type QuestionSpec, type ClientControl,
+  type ChatEvent, type QuestionSpec, type ClientControl, type HandoffProgress,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
 import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
@@ -235,6 +235,10 @@ export interface ConversationModel {
    *  in it — and because a `git checkout` the user did not ask for is not something to let
    *  scroll away. Dismissable: `dismissBranchNotice` clears it. */
   branchNotice?: { tone: 'info' | 'warn'; message: string };
+  /** The context handoff this pane is going through (or just went through), drawn live as a
+   *  staged card. `dismissed` survives a replay of the SAME run (same `id`), so a reattach
+   *  does not reopen a receipt the reader closed. */
+  handoff?: HandoffProgress & { dismissed?: boolean };
   /** This pane's context-handoff toggle, as the SERVER has it on disk. Arrives on connect
    *  (the augmented init) and again after every toggle, so the switch is always showing
    *  server truth rather than an optimistic click — unlike `effort`, this one IS queryable,
@@ -425,6 +429,8 @@ export interface ChatSession {
   /** Take down the fresh-session branch notice ({@link ConversationModel.branchNotice}).
    *  Dismissable because it reports a one-time event: once read, it is history. */
   dismissBranchNotice: () => void;
+  /** Take down the handoff card once it has finished. */
+  dismissHandoff: () => void;
   /** Take down the account-switch notice. Dismissable for the same reason the branch notice
    *  is: it reports a one-time event, and once read it is history. */
   dismissAccountSwitch: () => void;
@@ -1000,6 +1006,7 @@ export function createChatSession(
     sendText,
     syncDraft,
     dismissBranchNotice,
+    dismissHandoff,
     dismissAccountSwitch,
     noteAccountSwitch,
     focus: () => { focusTarget?.focus(); },
@@ -1117,6 +1124,12 @@ export function createChatSession(
     // Mirror only — no subscriber fire (a per-keystroke transcript re-render buys nothing)
     // and no epoch bump (the textarea already shows this text; adoption would be a no-op).
     conv = { ...conv, draft: text };
+  }
+
+  function dismissHandoff(): void {
+    if (!conv.handoff || conv.handoff.dismissed) return;
+    conv = { ...conv, handoff: { ...conv.handoff, dismissed: true } };
+    renderFlush.flush();
   }
 
   function dismissBranchNotice(): void {
@@ -1667,6 +1680,13 @@ export function createChatSession(
         // Server truth, not a click. Never touches `busy`: like `branch-start`, this frame
         // says nothing about whether a turn is running.
         conv = { ...conv, contextHandoff: ev.state };
+        return;
+      }
+      case 'handoff-progress': {
+        // Never touches `busy`: the server opened the rotation's turns itself and the stream's
+        // own frames report them. A replay of the run the reader already closed stays closed.
+        const keep = conv.handoff?.id === ev.run.id && conv.handoff.dismissed;
+        conv = { ...conv, handoff: { ...ev.run, ...(keep ? { dismissed: true } : {}) } };
         return;
       }
       case 'branch-start': {
