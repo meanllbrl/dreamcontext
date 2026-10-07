@@ -309,6 +309,24 @@ describe('sanitizeRoster — mode (how a chat tab is briefed)', () => {
   });
 });
 
+describe('sanitizeRoster: the agent a chat tab speaks as', () => {
+  const entry = (over: Record<string, unknown>) =>
+    sanitizeRoster({ sessions: [{ title: 'A', bypass: false, minimized: false, size: 1, ...over }] })![0];
+
+  it('keeps a well-formed agent slug alongside kind: chat', () => {
+    expect(entry({ kind: 'chat', agent: 'funnel-watch' }).agent).toBe('funnel-watch');
+  });
+
+  it('drops a malformed slug, and any agent on a kind that is not chat', () => {
+    for (const agent of ['../etc', 'Funnel Watch', '', 42, null, {}, 'a--b', 'x-']) {
+      expect('agent' in entry({ kind: 'chat', agent })).toBe(false);
+    }
+    for (const kind of ['agent', 'shell', 'automation', undefined]) {
+      expect('agent' in entry({ ...(kind ? { kind } : {}), agent: 'funnel-watch' })).toBe(false);
+    }
+  });
+});
+
 /**
  * X2: a restored automation tab must not attempt a resume this machine cannot serve. The
  * WS resume gate (`agent-chat.ts`) rejects at the HTTP upgrade level, which closes BEFORE

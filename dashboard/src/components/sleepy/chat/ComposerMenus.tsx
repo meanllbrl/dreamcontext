@@ -8,6 +8,8 @@ import {
 import { CHAT_MODE_ROWS, type ChatMode } from '../../../lib/chatModes';
 import { MaturityTag } from '../../common/MaturityTag';
 import { SleepyMascot } from '../SleepyMascot';
+import { AgentAvatar } from '../../agents/AgentAvatar';
+import { useAutomations } from '../../../hooks/useAutomations';
 
 /**
  * The three panels behind the redesigned composer toolbar: mode+permission (left trigger),
@@ -35,11 +37,113 @@ const PERMISSIONS: Array<{ id: PermissionMode; label: string; glyph: string; des
   { id: 'bypass', label: 'Bypass', glyph: '⚡', desc: 'Everything auto-approved — reloads this conversation. Use with care.' },
 ];
 
+// ── Agent (who this chat talks to) ───────────────────────────────────────────────────
+
+/** An automation agent picked in the composer: what the surface needs to open its chat. */
+export interface ChatAgentPick {
+  slug: string;
+  title: string;
+}
+
+/**
+ * WHO this chat talks to, under the modes (owner, 2026-10-07, picked from three drawn options):
+ * ONE row naming the current agent, which opens the roster right under itself. The closed menu
+ * grows by a single row and carries no explanatory text; the list exists only while it is open.
+ *
+ * Picking an agent opens a NEW conversation with it (AgentSurface's `pickChatAgent`). An
+ * unapproved agent is listed but unpickable; its tooltip says where to fix it.
+ */
+function AgentSelect({ agent, onPick, close }: {
+  agent: string;
+  onPick: (agent: ChatAgentPick | null) => void;
+  close: () => void;
+}) {
+  const { data: agents = [] } = useAutomations();
+  const [open, setOpen] = useState(false);
+  if (agents.length === 0 && !agent) return null;
+  const current = agent ? agents.find((a) => a.slug === agent) : undefined;
+  const pick = (next: ChatAgentPick | null) => { onPick(next); close(); };
+  const face = (slug: string | null, title: string, hasPhoto: boolean) => (
+    <span className={`chat-cmp-agentface${slug ? '' : ' is-claude'}`} aria-hidden>
+      {slug
+        ? <AgentAvatar slug={slug} title={title} hasPhoto={hasPhoto} size={24} />
+        : <SleepyMascot size={24} mood="idle" compact mode="basic" />}
+    </span>
+  );
+  const option = (slug: string | null, title: string, hasPhoto: boolean, opts: { disabled?: boolean; tip?: string } = {}) => {
+    const selected = (slug ?? '') === agent;
+    return (
+      <button
+        key={slug ?? 'claude'}
+        type="button"
+        role="option"
+        aria-selected={selected}
+        disabled={opts.disabled}
+        title={opts.tip}
+        className={`chat-cmp-agentoption${selected ? ' is-selected' : ''}`}
+        onClick={() => pick(slug ? { slug, title } : null)}
+      >
+        {face(slug, title, hasPhoto)}
+        <span className="chat-cmp-agentoption-name">{title}</span>
+        {selected && (
+          <svg className="chat-cmp-agentoption-check" width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+            <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+    );
+  };
+  return (
+    <>
+      <div className="chat-cmp-menu-divider" />
+      <div className={`chat-cmp-agentpicker${open ? ' is-open' : ''}`}>
+        <button
+          type="button"
+          className="chat-cmp-agentselect"
+          aria-label="Agent"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {face(agent || null, current?.title ?? agent, !!current?.hasPhoto)}
+          <span className="chat-cmp-agentselect-name">{agent ? current?.title ?? agent : 'Claude'}</span>
+          <svg className="chat-cmp-agentselect-chevron" width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+            <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {open && (
+          <div className="chat-cmp-agentlist" role="listbox" aria-label="Agent">
+            {option(null, 'Claude', false)}
+            {agents.map((a) => option(a.slug, a.title, a.hasPhoto, {
+              disabled: !a.approved,
+              tip: a.approved ? a.cadenceLabel : 'Approve it in Automations first',
+            }))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** The trigger's name for a chat bound to an agent: its face and title. */
+export function AgentTriggerName({ slug, title, hasPhoto }: { slug: string; title: string; hasPhoto: boolean }) {
+  return (
+    <>
+      <AgentAvatar slug={slug} title={title} hasPhoto={hasPhoto} size={16} />
+      <span className="chat-cmp-modeltrigger-model">{title}</span>
+    </>
+  );
+}
+
 export function ModeMenu({
-  mode, onModeChange, permission, projectPermission, onPermissionChange, close,
+  mode, onModeChange, agent = '', onAgentPick, permission, projectPermission, onPermissionChange, close,
 }: {
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
+  /** The agent this chat speaks as, `''` for Claude. */
+  agent?: string;
+  /** Absent = no Agent section (a surface whose agent is fixed, or that has none to offer). */
+  onAgentPick?: (agent: ChatAgentPick | null) => void;
   /** THIS SESSION's permission mode, not the remembered vault default — see Composer.tsx's
    *  prop doc. Rendered verbatim; a security indicator that can disagree with the running
    *  process is worse than none. */
@@ -110,7 +214,10 @@ export function ModeMenu({
           refuses that switch live — and its own note says so. */}
       <p className="chat-cmp-permnote">Switching mode reloads this conversation — the transcript and what you&apos;ve typed are kept.</p>
 
+      {onAgentPick && <AgentSelect agent={agent} onPick={onAgentPick} close={close} />}
+
       <div className="chat-cmp-menu-divider" />
+
 
       <div className="chat-cmp-permrow">
         <span className="chat-cmp-grouplabel">Permission</span>

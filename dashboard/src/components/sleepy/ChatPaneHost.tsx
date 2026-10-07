@@ -4,6 +4,7 @@ import type { ModelConfig } from '../../lib/agentComposer';
 import type { AutomationRunRef } from '../../lib/automationRunChat';
 import type { ChatMode } from '../../lib/chatModes';
 import type { ChatSession } from './chatSession';
+import type { ChatAgentPick } from './chat/ComposerMenus';
 
 /**
  * The MEMO BOUNDARY between AgentSurface and a chat transcript.
@@ -47,6 +48,11 @@ export interface ChatSurfaceActions {
    *  this RESPAWNS the session under the new brief (same conversation UUID, transcript kept)
    *  rather than switching anything live — see AgentSurface's `changeChatMode`. */
   changeMode: (sid: string, mode: ChatMode) => void;
+  /** Talk to one of this project's automation agents (null = plain Claude). Opens a NEW
+   *  conversation bound to it — see AgentSurface's `pickChatAgent` for why never a respawn.
+   *  Optional: a host whose agent is fixed (the Assistant's notch, a whiteboard card) has no
+   *  picker, so the menu draws no Agent section there. */
+  pickAgent?: (sid: string, agent: ChatAgentPick | null) => void;
   /** Move a RUNNING conversation to another Claude account. RESPAWNS at the turn boundary —
    *  an account is `CLAUDE_CONFIG_DIR`, read once at spawn, so there is nothing to switch
    *  live. Same shape as `changeMode` beside it for exactly that reason; see AgentSurface's
@@ -96,6 +102,7 @@ function ChatPaneHostInner({
     (next: 'auto' | 'bypass') => actions.changePermissionMode(session.id, next), [actions, session],
   );
   const onModeChange = useCallback((next: ChatMode) => actions.changeMode(session.id, next), [actions, session]);
+  const onAgentPick = useCallback((agent: ChatAgentPick | null) => actions.pickAgent?.(session.id, agent), [actions, session]);
   const onHandoffToDevelop = useCallback(
     (taskSlug: string) => actions.handoffToDevelop(session, taskSlug), [actions, session],
   );
@@ -118,6 +125,7 @@ function ChatPaneHostInner({
       onPermissionModeChange={onPermissionModeChange}
       mode={mode}
       onModeChange={onModeChange}
+      onAgentPick={actions.pickAgent ? onAgentPick : undefined}
       onHandoffToDevelop={onHandoffToDevelop}
       onResume={onResume}
       automation={automation}

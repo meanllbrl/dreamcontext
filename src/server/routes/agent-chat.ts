@@ -27,7 +27,8 @@ import { startHandoffRun, advanceHandoffRun, failHandoffRun, handoffProgressFram
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
-import { parseCardRef, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
+import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
+import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
@@ -705,6 +706,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       ? parseCardRef(url.searchParams.get('cardAgent'), url.searchParams.get('cardBoard'))
       : null;
     if (cardAsked && !card) { rejectUpgrade(socket, 400); return; }
+    // An agent spoken to in a Chat tab (the composer's agent picker). Same rule: a malformed
+    // slug, one aimed at the Assistant's vault, or one beside a card is refused, never opened
+    // as a plain chat that only looks like the agent.
+    const agentAsked = url.searchParams.has('chatAgent');
+    const chatAgent = agentAsked && !assistant && !card ? parseChatAgent(url.searchParams.get('chatAgent')) : null;
+    if (agentAsked && !chatAgent) { rejectUpgrade(socket, 400); return; }
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -765,7 +772,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}) });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
           return;
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
@@ -776,7 +783,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
         let accepted = false;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}) });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
         settleSupersede(accepted);
         // D14: opening a session is a real owner action (a reattach is not: it is a reconnect).
         if (accepted) recordCloudAction();
@@ -822,6 +829,9 @@ interface ChatSpawnOpts {
    *  and a home-board agent under its board scope (lib/whiteboards/card-chat.ts). Kept out of
    *  the Assistant's chat registry and off the default-branch move; never the Assistant's. */
   card?: CardRef;
+  /** An agent spoken to in an ordinary Chat tab (lib/whiteboards/card-chat.ts `prepareAgentChat`):
+   *  its identity and envelope as on a card, while the tab stays a Chat tab in every other way. */
+  agent?: string;
 }
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
@@ -1030,7 +1040,24 @@ export function startChatSession(
     }
     card = prep;
   }
-  const scopedCard = !!card?.permissionArgs;
+  // ── An agent in a Chat tab: the same envelope, decided the same way at every spawn ──────
+  let agentChat: Extract<ReturnType<typeof prepareAgentChat>, { ok: true }> | null = null;
+  if (opts.agent && !opts.card) {
+    const prep = prepareAgentChat(contextRoot, opts.agent);
+    const unsafe = prep.ok && prep.permissionArgs?.some((a) => /[$`]/.test(a));
+    if (!prep.ok || unsafe) {
+      if (prep.ok) prep.dispose();
+      const reason = prep.ok ? 'its folders contain a character the shell would expand' : prep.reason;
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'agent_refused', message: `This agent cannot talk here: ${reason}.` })); } catch { /* gone */ }
+      try { ws.close(); } catch { /* already closed */ }
+      return;
+    }
+    agentChat = prep;
+  }
+  /** Whose identity and permission envelope this child runs under: a card's or a Chat tab
+   *  agent's. Only `card` decides what a card skips (registry, tab env, branch move). */
+  const envelope = card ?? agentChat;
+  const scopedCard = !!envelope?.permissionArgs;
 
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
@@ -1092,6 +1119,32 @@ export function startChatSession(
   let cleanupBriefing = () => { /* nothing written */ };
   /** Cloud-only argv values carried INLINE (prose / JSON): single-quoted into the script. */
   const inlineArgs = new Set<string>();
+  // The project's approved agents, callable as sub-agents from any Chat tab (not the Assistant's,
+  // not a card's): an `--agents` definition each, and a roster in the briefing so the model knows
+  // it can (lib/automations/chat-subagents.ts). Read at every spawn, so a new or re-approved agent
+  // is callable after the next Resume. A failed read costs the roster, never the spawn.
+  let subagents: ReturnType<typeof chatSubagents> = null;
+  // A scoped agent's allowlist disallows the Agent tool, so a roster there would name a door it lacks.
+  if (!isAssistant && !card && !scopedCard) {
+    try { subagents = chatSubagents(contextRoot, { exclude: opts.agent }); } catch { subagents = null; }
+  }
+  let agentsArg: string[] = [];
+  let cleanupAgents = () => { /* nothing written */ };
+  if (subagents) {
+    try {
+      const json = JSON.stringify(subagents.agents);
+      if (isCloud()) {
+        agentsArg = ['--agents', json];
+        inlineArgs.add(json);
+      } else {
+        const file = join(tmpdir(), `dreamcontext-chat-agents-${randomUUID()}.json`);
+        if (!isShellSafePath(file)) throw new Error('unsafe tmpdir');
+        writeFileSync(file, json, { encoding: 'utf-8', mode: 0o600 });
+        agentsArg = ['--agents', file];
+        cleanupAgents = () => { try { rmSync(file, { force: true }); } catch { /* tmp cleanup */ } };
+      }
+    } catch { agentsArg = []; subagents = null; }
+  }
   try {
     const brief = join(tmpdir(), `dreamcontext-chat-surface-${randomUUID()}.md`);
     // Our own filename, but `tmpdir()` comes from TMPDIR — the one argv element below that
@@ -1112,8 +1165,13 @@ export function startChatSession(
       if (roster.carriesProjectText) markTainted();
       assistantCtx = { name: assistantConfig.name, character: readAssistantCharacter(), autonomy: assistantConfig.autonomy, roster: renderRoster(roster) };
     }
-    // A card speaks as its agent: the card briefing takes the mode brief's place.
-    const modeBrief = card ? card.briefing : modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
+    // A card speaks as its agent: the card briefing takes the mode brief's place. An agent in a
+    // Chat tab keeps the tab's mode too: who it is first, then how this tab asked it to work.
+    const tabBrief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
+    const ownBrief = card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
+    // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
+    // when their file could not be written), so the model is never told about agents it lacks.
+    const modeBrief = [ownBrief, subagents?.roster ?? ''].filter(Boolean).join('\n\n');
     const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
     if (isCloud()) {
       // The cloud's child (dcuser) cannot open dcserver's 0600 file: the text rides inline,
@@ -1223,8 +1281,9 @@ export function startChatSession(
     '--permission-prompt-tool', 'stdio',
     // A home-board card runs under its board's rules (dontAsk, project settings only, an exact
     // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
-    ...(card?.permissionArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
+    ...(envelope?.permissionArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
     ...briefingArg,
+    ...agentsArg,
     // The `--settings` file is a flag source the scope cannot narrow: a scoped card goes without.
     ...(scopedCard ? [] : modeNoteArg),
     ...idArg,
@@ -1275,7 +1334,7 @@ export function startChatSession(
     }
   } catch { /* an unseeded pane falls back to the vault default — never a failed spawn */ }
 
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(card?.env ?? {}) } as Record<string, string | undefined>;
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, DREAMCONTEXT_DEVELOP_LEAD: mode === 'develop' ? '1' : '', DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
   // The cloud spawns every agent as dcuser through the one worker chokepoint: an allow-listed
   // env (never the server's own, so no DC_HF_*, transfer secret or GitHub token), only THIS
   // account's CLAUDE_CONFIG_DIR, and bash (the image has no zsh). Its own process group either
@@ -1642,8 +1701,9 @@ export function startChatSession(
     releaseHeld();
     cleanupDeferred();
     cleanupBriefing();
+    cleanupAgents();
     cleanupModeNote();
-    card?.dispose();
+    envelope?.dispose();
     unwatchAuth();
     registry?.exited();
     // A respawn in place hands the notch's surface to its successor on the same socket.

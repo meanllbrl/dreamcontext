@@ -334,12 +334,14 @@ export interface AutomationRunJob {
 }
 
 /** List every automation (for the board). Empty on an older backend / no route. */
-export function useAutomations() {
+/** `enabled: false` reads nothing (a Chat composer not bound to an agent asks for no list). */
+export function useAutomations(opts: { enabled?: boolean } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: ['automations'],
     queryFn: () => api.get<{ automations: AutomationSummary[] }>('/automations').then((r) => r.automations),
     retry: 0,
+    enabled: opts.enabled ?? true,
   });
 }
 

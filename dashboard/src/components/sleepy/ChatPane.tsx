@@ -9,6 +9,7 @@ import { ClaudeUpdateChatNotice } from '../settings/SystemDependencies';
 import { anchorsBySession, launchedSessionIds, withTeammates } from './chat/teammates';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { ChatMode } from '../../lib/chatModes';
+import type { ChatAgentPick } from './chat/ComposerMenus';
 import { isJudgeRole } from '../../lib/agentRoles';
 import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
@@ -550,7 +551,7 @@ interface PdfState { path: string; label?: string }
 export function ChatPane({
   session, modelConfig, model, effort, onModelChange, onEffortChange, onAccountChange,
   taskSlug, onContinueInTerminal,
-  permissionMode, onPermissionModeChange, mode, onModeChange, onHandoffToDevelop,
+  permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
   canSignInInApp, signInCommand, bare = false, idlePlaceholder,
 }: {
@@ -587,6 +588,9 @@ export function ChatPane({
   /** Re-brief it. Respawns the session under the new brief — see AgentSurface's
    *  `changeChatMode`; the composer's mode menu says so before the reconnect happens. */
   onModeChange: (mode: ChatMode) => void;
+  /** The composer's agent picker. Optional: a host that fixes the agent (a whiteboard card)
+   *  or has none to offer omits it, and the menu draws no Agent section. */
+  onAgentPick?: (agent: ChatAgentPick | null) => void;
   /** A `develop` action button asked to hand this plan off. Opens a NEW Develop session
    *  carrying the slug and closes this tab (AgentSurface's `handoffToDevelop`). */
   onHandoffToDevelop: (taskSlug: string) => void;
@@ -2147,6 +2151,8 @@ export function ChatPane({
           onPermissionModeChange={bare ? undefined : onPermissionModeChange}
           mode={mode}
           onModeChange={bare ? undefined : onModeChange}
+          agent={session.agent}
+          onAgentPick={bare ? undefined : onAgentPick}
           showModel={!bare}
           idlePlaceholder={idlePlaceholder}
           // One object, not two cards: whenever the shelf grows a bordered shell above the

@@ -4,6 +4,7 @@ import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { splitNotchCue, stripNotchCue, type NotchCue } from '../../lib/notchCue';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
+import { chatAgentFor } from '../../lib/chatAgentBinding';
 import { raiseAskAttention } from '../../lib/attention';
 import {
   parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
@@ -413,6 +414,10 @@ export interface ChatSession {
    * future "just set it and re-render" from silently claiming a brief the process never got.
    */
   readonly mode: ChatMode;
+  /** The automation agent this conversation speaks as (the composer's agent picker), or `''`
+   *  for plain Claude. Read at spawn from `chatAgentFor(claudeId)`, so it follows the
+   *  conversation through every respawn; readonly for the reason `mode` is. */
+  readonly agent: string;
   ensureOpen: () => void;
   fitAndResize: () => void;
   applyZoom: (zoom: number) => void;
@@ -843,6 +848,9 @@ export function createChatSession(
   // On BOTH URLs: a reconnect that found its child gone respawns it, and must respawn it as
   // the same card (its agent's identity and its board's scope), never as a plain chat.
   const cardParam = card ? `&cardAgent=${encodeURIComponent(card.agent)}&cardBoard=${encodeURIComponent(card.board)}` : '';
+  // The agent this Chat tab speaks as, on BOTH URLs for the same reason. Never beside a card.
+  const agent = card ? '' : chatAgentFor(claudeId);
+  const agentParam = agent ? `&chatAgent=${encodeURIComponent(agent)}` : '';
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -852,14 +860,14 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach=1` so the server
    *  adopts the live child instead of spawning a twin. Never carries the opening prompt (it
    *  already went out) nor `origin` (the server re-derives it). `bypass` is read now, not at
    *  construction: a live permission switch may have moved it. */
   const reconnectUrl = (): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=1`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 
@@ -997,6 +1005,7 @@ export function createChatSession(
     model,
     effort,
     mode,
+    agent,
     accountId,
     ensureOpen: () => { /* no DOM-open step — the AgentSurface portal mount IS "open" */ },
     // No terminal grid to refit — the transcript's equivalent is "you were just moved or

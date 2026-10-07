@@ -47,6 +47,7 @@ import {
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
+import { bindChatAgent } from '../../lib/chatAgentBinding';
 import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt } from '../../lib/agentPrompt';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
@@ -133,6 +134,9 @@ interface SessionMeta {
    *  so a legacy roster needs no migration. Round-tripped through the server roster so a
    *  Develop tab reopens as one after a relaunch. */
   mode?: ChatMode;
+  /** The automation agent this CHAT tab speaks as (the composer's agent picker); absent for
+   *  plain Claude. Round-tripped through the roster so the agent's tab reopens as that agent. */
+  agent?: string;
   /** The current title was set by the tab's own agent (a `title` dream-view block), so the
    *  agent may rename it again when the work moves on. Cleared by a user rename — a name the
    *  user typed is theirs for good. Round-tripped through the roster so it survives a relaunch. */
@@ -233,6 +237,8 @@ interface SavedMeta {
   /** The chat mode this tab was last in. Mirrors the server's `SavedMeta.mode`, which keeps it
    *  only alongside `kind: 'chat'` and only for a known `CHAT_MODES` value. */
   mode?: ChatMode;
+  /** The agent this chat tab speaks as. Mirrors the server's `SavedMeta.agent`. */
+  agent?: string;
   /** 0-based index of the pane this tab sat in, left to right. Absent on legacy rosters →
    *  pane 0, which is exactly the single-pane restore this surface used to do unconditionally. */
   pane?: number;
@@ -1023,10 +1029,14 @@ export function AgentSurface() {
               // on Bypass yesterday came back on Auto, because the project default is resolved
               // from a store that does not survive the relaunch. It cannot escalate anything:
               // the value is whatever this tab's own process was acknowledged to be under.
+              // Bound BEFORE the spawn: `createChatSession` reads the agent from the binding.
+              const savedAgent = kind === 'chat' && m.agent ? m.agent : '';
+              bindChatAgent(m.sessionId, savedAgent);
               const s = spawn(m.bypass, m.sessionId, true, kind, '', '', true, '', false, '', true, savedMode);
               return {
                 id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId,
                 ...(kind === 'chat' ? { mode: savedMode } : {}),
+                ...(savedAgent ? { agent: savedAgent } : {}),
                 ...(m.titleByAgent ? { titleByAgent: true } : {}),
               };
             }
@@ -1137,6 +1147,7 @@ export function AgentSurface() {
             // and `coerceMeta` keeps it only alongside `kind: 'chat'`. Basic is the absent
             // state on BOTH sides, so a plain chat tab's payload is unchanged.
             ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
+            ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
           })),
       };
       // `baseGeneration` = the last GET's; a 409 roster_stale re-hydrates and never re-sends
@@ -1570,6 +1581,57 @@ export function AgentSurface() {
         active: p.active === chat.id ? s.id : p.active,
       }));
     });
+  }, [spawn, modelForSession, effortForSession]);
+
+  /**
+   * The composer's agent picker: talk to one of this project's automation agents in a Chat tab.
+   *
+   * A NEW conversation, never a respawn of this one. An agent is a system prompt, and a resumed
+   * conversation keeps the system prompt it was born with (see `changeChatMode`'s server note),
+   * so "this conversation, now as the Funnel agent" would be a label over plain Claude. So the
+   * pick opens a fresh conversation bound to the agent (`chatAgentBinding.ts`): in THIS tab when
+   * nothing has been said in it yet, beside it in the same pane otherwise, so a conversation
+   * with history is never closed by a menu click. `agent` empty = back to plain Claude, the same
+   * way. Mode, permission, model, effort and account carry over; the draft does when the tab is reused.
+   */
+  const pickChatAgent = useCallback((sid: string, agent: { slug: string; title: string } | null) => {
+    const cs = sessions.current.get(sid);
+    if (!cs || cs.kind !== 'chat') return;
+    const chat = cs as ChatSession;
+    const slug = agent?.slug ?? '';
+    if (chat.agent === slug) return;
+    const fresh = !chat.busy && chat.getModel().items.length === 0;
+    const carried = fresh ? chat.getModel().draft : '';
+    const claudeId = newClaudeId();
+    bindChatAgent(claudeId, slug);
+    if (fresh) {
+      try { chat.dispose(); } catch { /* best-effort */ }
+      sessions.current.delete(chat.id);
+    }
+    const s = spawn(chat.bypass, claudeId, false, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, chat.mode, chat.accountId) as ChatSession;
+    carryDraftInto(s, carried);
+    const meta: SessionMeta = {
+      id: s.id, title: agent ? agent.title : titleFor(s), titleByAgent: true, kind: 'chat', bypass: s.bypass, claudeId,
+      ...(chat.mode !== DEFAULT_CHAT_MODE ? { mode: chat.mode } : {}),
+      ...(slug ? { agent: slug } : {}),
+    };
+    if (fresh) {
+      setSessionList((prev) => prev.map((m) => (m.id === chat.id ? meta : m)));
+      setPanes((prev) => prev.map((p) => ({
+        ...p,
+        tabs: p.tabs.map((t) => (t === chat.id ? s.id : t)),
+        active: p.active === chat.id ? s.id : p.active,
+      })));
+      return;
+    }
+    setSessionList((prev) => [...prev, meta]);
+    setPanes((prev) => prev.map((p) => {
+      const at = p.tabs.indexOf(chat.id);
+      if (at < 0) return p;
+      const tabs = [...p.tabs];
+      tabs.splice(at + 1, 0, s.id);
+      return { ...p, tabs, active: s.id };
+    }));
   }, [spawn, modelForSession, effortForSession]);
 
   /**
@@ -2633,6 +2695,7 @@ export function AgentSurface() {
     resumeChat: resumeChatSession,
     changePermissionMode: changeChatPermissionMode,
     changeMode: changeChatMode,
+    pickAgent: pickChatAgent,
     changeAccount: changeChatAccountFor,
     handoffToDevelop,
     openAppPage: onOpenAppPage,
@@ -2647,6 +2710,7 @@ export function AgentSurface() {
     resumeChat: (cs) => chatActionsRef.current.resumeChat(cs),
     changePermissionMode: (sid, mode) => chatActionsRef.current.changePermissionMode(sid, mode),
     changeMode: (sid, mode) => chatActionsRef.current.changeMode(sid, mode),
+    pickAgent: (sid, agent) => chatActionsRef.current.pickAgent?.(sid, agent),
     changeAccount: (sid, accountId) => chatActionsRef.current.changeAccount(sid, accountId),
     handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),

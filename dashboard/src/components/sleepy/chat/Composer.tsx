@@ -31,6 +31,7 @@ import { peerLogoUrl } from '../../../api/client';
 import { usePeerMentions } from '../../../hooks/usePeerMentions';
 import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chatModes';
 import { patchAgentSettings } from '../../../lib/agentSettings';
+import { useAutomations } from '../../../hooks/useAutomations';
 import {
   composerBodyHeight, composerHeightBounds, measureBodyChrome, measureFieldContent, readFieldMetrics,
 } from './composerHeight';
@@ -42,7 +43,7 @@ import {
   settleAttachment, subscribeScratch, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
-import { ModeMenu, ModelMenu, UsageMenu, type AccountOption } from './ComposerMenus';
+import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
@@ -185,7 +186,7 @@ export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, onOpenTaskPicker, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, onMcpPanel, onPeerMessage,
-  mode = DEFAULT_CHAT_MODE, onModeChange, onSetModelDefault, shelved = false,
+  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, onSetModelDefault, shelved = false,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
   idlePlaceholder, unavailable,
   showModel = true,
@@ -283,6 +284,10 @@ export function Composer({
   mode?: ChatMode;
   /** Inert by default for the same reason — see `mode`. */
   onModeChange?: (mode: ChatMode) => void;
+  /** The automation agent this chat speaks as (`''` = Claude), shown on the trigger. */
+  agent?: string;
+  /** The mode menu's Agent section. Absent = no section (see ModeMenu). */
+  onAgentPick?: (agent: ChatAgentPick | null) => void;
   /**
    * OVERRIDE for "Set as default" — not the thing that makes the button work.
    *
@@ -1224,6 +1229,11 @@ export function Composer({
   const modelLabel = modelLabelFor(modelConfig, model);
   const effortValue = effort || modelConfig.defaultEffort;
   const modeRow = chatModeRow(mode);
+  // The agent this chat speaks as, read live so a rename in Automations shows here. Only a
+  // bound chat asks for the list; while it loads (or if the agent is gone) the slug stands in.
+  const { data: agentList } = useAutomations({ enabled: !!agent });
+  const agentSummary = agent ? agentList?.find((a) => a.slug === agent) : undefined;
+  const agentName = agentSummary?.title ?? agent;
 
   // ── Toolbar menus (mode / model+effort / usage) ──────────────────────────────────
   // One open at a time, absolutely positioned inside `.chat-cmp` and opening upward — the
@@ -1361,6 +1371,8 @@ export function Composer({
           <ModeMenu
             mode={mode}
             onModeChange={(m) => onModeChange?.(m)}
+            agent={agent}
+            onAgentPick={onAgentPick}
             permission={permissionMode}
             projectPermission={projectPermissionMode}
             onPermissionChange={(m) => onPermissionModeChange?.(m)}
@@ -1495,7 +1507,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : busy ? 'Claude is working — ⏎ queues your next message…' : idlePlaceholder ?? 'Message Claude…   ·   "/" for skills'}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -1594,11 +1606,16 @@ export function Composer({
               {...{ [MENU_TRIGGER_ATTR]: '' }}
               className="chat-cmp-modeltrigger"
               onClick={() => menu.toggle('mode')}
-              title={`Mode: ${modeRow.name} · Permission: ${permissionMode}`}
+              title={`${agent ? `Agent: ${agentName} · ` : ''}Mode: ${modeRow.name} · Permission: ${permissionMode}`}
               aria-haspopup="menu"
               aria-expanded={menu.open === 'mode'}
             >
-              <span className="chat-cmp-modeltrigger-model">{modeRow.name}</span>
+              {/* Who you are talking to comes first: an agent's face and name when the chat is
+                  bound to one, with its mode beside it only when that is not Basic. */}
+              {agent ? <AgentTriggerName slug={agent} title={agentName} hasPhoto={!!agentSummary?.hasPhoto} /> : null}
+              {(!agent || mode !== DEFAULT_CHAT_MODE) && (
+                <span className="chat-cmp-modeltrigger-model">{agent ? `· ${modeRow.name}` : modeRow.name}</span>
+              )}
               {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
               <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
               <span className="chat-cmp-caret" aria-hidden>▾</span>

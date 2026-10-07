@@ -84,6 +84,14 @@ export interface SavedMeta {
    */
   mode?: ChatMode;
   /**
+   * Present only alongside `kind: 'chat'` — the agent this conversation speaks as (the composer's
+   * agent picker), so an agent's Chat tab reopens as that agent after a relaunch. Only a slug
+   * that passes `isSafeAutomationSlug` is kept: the server reads the manifest by it at every
+   * spawn and refuses one that is gone or unapproved, so a hand-edited value can name an agent
+   * but never grant one anything its own approval does not.
+   */
+  agent?: string;
+  /**
    * Which PANE this tab sat in, as a 0-based index into the surface's left-to-right pane row.
    *
    * The roster used to persist titles only, and the client's own comment said so out loud:
@@ -199,6 +207,7 @@ function coerceMeta(raw: unknown): SavedMeta {
   const mode = kind === 'chat' && typeof o.mode === 'string' && (CHAT_MODES as readonly string[]).includes(o.mode)
     ? (o.mode as ChatMode)
     : undefined;
+  const agent = kind === 'chat' && typeof o.agent === 'string' && isSafeAutomationSlug(o.agent) ? o.agent : undefined;
   // A pane index is clamped into range rather than dropped: it is a layout hint, and the
   // worst a clamped value can do is put a tab in the nearest real pane. MAX_SESSIONS is the
   // ceiling because a roster of N tabs can never need more than N panes.
@@ -214,6 +223,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(kind ? { kind } : {}),
     ...(automation ? { automation } : {}),
     ...(mode ? { mode } : {}),
+    ...(agent ? { agent } : {}),
     ...(pane !== undefined ? { pane } : {}),
     ...(o.active === true ? { active: true } : {}),
     ...(o.titleByAgent === true ? { titleByAgent: true } : {}),

@@ -9,6 +9,8 @@
  *      an attached agent gets no permission argv, a home-board agent gets its run's own scope.
  *   4. cardTurnContext: silent outside a card; the whole board for a home agent on its board,
  *      the index otherwise; dragged refs expanded; one fresh nonce per message.
+ *   5. The same agent in a Chat tab (parseChatAgent / prepareAgentChat): no card, the same
+ *      identity and approval gate, and a home-board agent's scope and board kept.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,7 +24,8 @@ import { createWhiteboard, nextIndices, readWhiteboard } from '../../src/lib/whi
 import { serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
 import {
-  CARD_AGENT_ENV, CARD_BOARD_ENV, cardChatBriefing, cardTurnContext, parseCardRef, prepareCardChat,
+  agentChatBriefing, CARD_AGENT_ENV, CARD_BOARD_ENV, cardChatBriefing, cardTurnContext, parseCardRef, parseChatAgent,
+  prepareAgentChat, prepareCardChat,
 } from '../../src/lib/whiteboards/card-chat.js';
 
 let projectRoot: string;
@@ -211,5 +214,57 @@ describe('cardTurnContext', () => {
     const attached = { [CARD_AGENT_ENV]: 'board-pilot', [CARD_BOARD_ENV]: board };
     const ctx = cardTurnContext(contextRoot, attached, `Explain dcref:wb/${board}/t1`) as string;
     expect(ctx).toContain('Hire two designers');
+  });
+});
+
+// ── An agent in a Chat tab (the composer's agent picker) ───────────────────────────────
+describe('parseChatAgent', () => {
+  it('takes a well-formed agent slug and nothing else', () => {
+    expect(parseChatAgent('board-pilot')).toBe('board-pilot');
+    expect(parseChatAgent('../etc')).toBeNull();
+    expect(parseChatAgent('Board Pilot')).toBeNull();
+    expect(parseChatAgent('')).toBeNull();
+    expect(parseChatAgent(null)).toBeNull();
+  });
+});
+
+describe('prepareAgentChat', () => {
+  it('refuses an unknown agent and an unapproved manifest, naming why', () => {
+    expect(prepareAgentChat(contextRoot, 'nobody', home)).toEqual({ ok: false, reason: 'no agent named "nobody" in this project' });
+    makeAgent({ slug: 'fresh-agent', whiteboard: null, approve: false });
+    const unapproved = prepareAgentChat(contextRoot, 'fresh-agent', home);
+    expect(unapproved.ok).toBe(false);
+    if (!unapproved.ok) expect(unapproved.reason).toContain('is not approved');
+  });
+
+  it('an agent with no board speaks as itself in the tab: no permission argv, no card env', () => {
+    const m = makeAgent({ whiteboard: null, learning: true });
+    const prep = prepareAgentChat(contextRoot, 'board-pilot', home);
+    expect(prep.ok).toBe(true);
+    if (!prep.ok) return;
+    expect(prep.permissionArgs).toBeNull();
+    expect(prep.env).toEqual({});
+    expect(prep.briefing).toBe(agentChatBriefing(m, null));
+    expect(prep.briefing).toContain('You are "Board pilot" (the dreamcontext agent `board-pilot`), talking with the owner in a dreamcontext Chat tab.');
+    expect(prep.briefing).toContain('Keep the board tidy.');
+    expect(prep.briefing).toContain('dreamcontext automations learn board-pilot --lesson');
+    expect(prep.briefing).not.toContain('SCOPE:');
+    expect(prep.briefing).not.toContain('WHITEBOARD CARD');
+  });
+
+  it('a home-board agent keeps its scope, and its card env names its home so the board rides every message', () => {
+    makeAgent();
+    const prep = prepareAgentChat(contextRoot, 'board-pilot', home);
+    expect(prep.ok).toBe(true);
+    if (!prep.ok) return;
+    expect(prep.env).toMatchObject({
+      [CARD_AGENT_ENV]: 'board-pilot', [CARD_BOARD_ENV]: board, [AGENT_BOARD_ENV]: board, [AGENT_SELF_ENV]: 'board-pilot',
+    });
+    expect(prep.permissionArgs?.slice(0, 2)).toEqual(['--permission-mode', 'dontAsk']);
+    expect(prep.briefing).toContain(`SCOPE: you act only on your whiteboard "${board}"`);
+    const turn = cardTurnContext(contextRoot, prep.env, 'What is left?') as string;
+    expect(turn).toContain('Ship the Q4 plan');
+    prep.dispose();
+    expect(existsSync(prep.env[AGENT_SCRATCH_ENV])).toBe(false);
   });
 });

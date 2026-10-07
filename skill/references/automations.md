@@ -153,6 +153,12 @@ dreamcontext whiteboard add control-panel agent --ref panel-keeper
 
 Card, sizes, drag-to-ask and the full allowlist → [whiteboards.md](whiteboards.md) § Agent cards.
 
+### Talking to an agent in a Chat tab
+
+The Chat composer's mode menu lists every agent under **Agent**, below the modes. Picking one opens a **new conversation with that agent** (in the same tab when nothing has been said in it yet, beside it otherwise): it speaks under its approved prompt, with its pattern as notes and its learning directive, so a correction made there becomes a lesson. Like a card, the conversation is **not its thread**: nothing reaches the channel or a run. The tab stays an ordinary Chat tab otherwise (its mode, permission, model and title), and it reopens as that agent after a relaunch. An unapproved agent is listed but cannot be picked; the server checks approval again at every spawn and refuses with a named reason. A home-board agent keeps its board scope here too, and its board rides along with every message. It is a new conversation, never the current one re-labelled: a resumed conversation keeps the system prompt it was born with.
+
+**Any Chat can call them as sub-agents.** Every Chat tab is spawned with an `--agents` definition per **approved** agent (up to 24; an agent's own tab leaves itself out) and a short roster in its briefing, so the owner's Claude knows it can: "ask the funnel agent how signups look" is an Agent-tool dispatch with `subagent_type` set to the slug. The sub-agent works under its approved prompt, pattern and learning directive and returns its answer to the calling chat, which relays it; nothing reaches its channel or its runs. It runs inside that chat, under **that chat's** permissions, not its run's board scope. A scoped home-board agent's own tab gets no roster (its allowlist has no Agent tool). Read at every spawn: an agent created or re-approved meanwhile is callable after the next Resume. Built in `src/lib/automations/chat-subagents.ts`.
+
 ---
 
 ## Sharing: automations are private by default

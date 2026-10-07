@@ -308,9 +308,10 @@ async function run(chromium, base, report) {
   ok('the mode menu opens', (await vis('.chat-cmp-modemenu').count()) === 1);
   // Three checks, not one `&&`: a compound assertion that fails tells you nothing about
   // which half broke, which is exactly the debugging cost a verify script exists to remove.
+  // The mode GRID only: the Agent section below it draws rows of the same class.
   ok('…with one row per mode',
-    (await vis('.chat-cmp-modemenu .chat-cmp-modelrow').count()) === 4,
-    `rows=${await vis('.chat-cmp-modemenu .chat-cmp-modelrow').count()}`);
+    (await vis('.chat-cmp-modemenu .chat-cmp-scroll.is-grid .chat-cmp-modelrow').count()) === 4,
+    `rows=${await vis('.chat-cmp-modemenu .chat-cmp-scroll.is-grid .chat-cmp-modelrow').count()}`);
   ok('…J.A.R.V.I.S is rendered but unpickable',
     (await page.locator('.chat-cmp-modemenu .chat-cmp-modelrow[disabled]').count()) === 1,
     `disabled=${await page.locator('.chat-cmp-modemenu .chat-cmp-modelrow[disabled]').count()}`);
