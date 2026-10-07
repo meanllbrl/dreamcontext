@@ -767,6 +767,7 @@ function spawnSessionResume(
       // dashboard process happened to be started under. The hints spread after it cannot
       // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
       env: { ...accountEnvFor(account.configDir, opts.home), ...hints, ...scopeVars },
+      sharedMcpHome: scopeArgs ? undefined : opts.home ?? homedir(),
       spawnImpl: opts.spawnImpl,
       killImpl: opts.killImpl,
       log: opts.log,

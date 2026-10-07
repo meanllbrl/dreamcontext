@@ -13,7 +13,7 @@ import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
 import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
 import { accountEnvFor } from '../claude-accounts.js';
-import { ensureSandbox } from '../claude-account-sandbox.js';
+import { ensureSandbox, ensureSharedMcpConfig } from '../claude-account-sandbox.js';
 import { recordAccountRejection } from '../claude-limit-rejections.js';
 import type { ProbeOutcome } from '../claude-usage-probe.js';
 import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
@@ -1117,6 +1117,15 @@ export interface ClaudeExecOptions {
    * collected, so there is no buffer to leak into a file, a response, or a log.
    */
   discardOutput?: boolean;
+  /**
+   * Hand a SANDBOXED account the user's own MCP servers, by reference (`--mcp-config`), the
+   * way a chat spawn does (agent-chat.ts). A sandbox's `.claude.json` carries no MCP keys, so
+   * without this a run that lands on a second account silently loses every local server
+   * (Slack, the KB) the same job has on the machine's own account. Account #0 needs nothing.
+   * The value is the HOME whose `.claude.json` servers are shared; absent means off. Off for a
+   * board-scoped agent, whose allowlist names no MCP tool (same rule as chat).
+   */
+  sharedMcpHome?: string;
   /** HOME whose hands-free state is checked. Tests only; production reads the real one. */
   home?: string;
 }
@@ -1173,10 +1182,13 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
     detached: true,
   };
+  // `--mcp-config` is variadic: it must stay the LAST argv element or it swallows what follows.
+  const mcpConfig = opts.sharedMcpHome && opts.env?.CLAUDE_CONFIG_DIR ? ensureSharedMcpConfig(opts.sharedMcpHome) : null;
+  const argv = mcpConfig ? [...args, '--mcp-config', mcpConfig] : args;
   const claudeBin = findClaudeBin();
   const child: ChildProcess = claudeBin
-    ? spawnFn(claudeBin, args, spawnOptions)
-    : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...args], spawnOptions);
+    ? spawnFn(claudeBin, argv, spawnOptions)
+    : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...argv], spawnOptions);
   // Async 'error' events (agent-terminal.ts:803) must always have a listener
   // even though spawn-failure detection below is synchronous — an unhandled
   // 'error' event crashes the whole Node process.
@@ -2018,6 +2030,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         ...scopeVars,
       },
       timeoutMs: budgetMs,
+      sharedMcpHome: scopeArgs ? undefined : accountsHome,
       spawnImpl: spawnFn,
       killImpl: killFn,
       log: logFn,

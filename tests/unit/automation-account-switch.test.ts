@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
@@ -175,6 +175,22 @@ describe('a run the API refuses moves to the next account', () => {
     });
     expect(outcome.status).toBe('ok');
     expect(calls[1].args.slice(0, 2)).toEqual(['--resume', 'sess_worked']);
+  });
+
+  it('the sandboxed account gets the machine\'s MCP servers by reference; account #0 needs none', async () => {
+    addAccounts();
+    setSwitchPolicy({ strategy: 'sequential' }, home);
+    writeFileSync(join(home, '.claude.json'), JSON.stringify({ mcpServers: { slack: { type: 'stdio', command: 'slack-mcp' } } }));
+    createApproved('digest');
+    const { impl, calls } = scriptedSpawn([envelope(BANNER), envelope('# Digest\n\nAll good.\n')]);
+    const outcome = await runAutomation(contextRoot, 'digest', {
+      now: () => NOW, home, spawnImpl: impl, killImpl: vi.fn(), notify: () => {}, log: () => {},
+      probeUsage: async () => limits(10),
+    });
+    expect(outcome.status).toBe('ok');
+    expect(calls[0].args).not.toContain('--mcp-config');
+    // Variadic flag: last in argv, pointing at the one shared file.
+    expect(calls[1].args.slice(-2)).toEqual(['--mcp-config', join(home, '.dreamcontext', 'claude-accounts', 'mcp-config.json')]);
   });
 
   it('every account refused: one attempt each, then the honest limit failure', async () => {
