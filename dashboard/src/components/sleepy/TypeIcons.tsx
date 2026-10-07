@@ -145,6 +145,19 @@ export function AutomationIcon(p: IconProps) {
   );
 }
 
+/** Whiteboard — the Whiteboard page's easel. */
+export function WhiteboardIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="3" y="3.5" width="18" height="12.5" rx="1.5" />
+      <path d="M6.5 12.5c1.6-3.2 3-3.2 4 0s2.6 3 4.4-1.2" />
+      <line x1="16.5" y1="7" x2="18" y2="7" />
+      <line x1="8" y1="16" x2="6" y2="21" />
+      <line x1="16" y1="16" x2="18" y2="21" />
+    </Svg>
+  );
+}
+
 // One entry per RecallHit['type'] — the Record (not Partial) is deliberate: a new
 // corpus channel must fail the build here rather than silently fall back to the
 // knowledge book, which is how objectives/insights/theses shipped wearing the
@@ -160,6 +173,7 @@ const BY_TYPE: Record<RecallHit['type'], (p: IconProps) => React.ReactElement> =
   insight: InsightIcon,
   thesis: ThesisIcon,
   automation: AutomationIcon,
+  whiteboard: WhiteboardIcon,
 };
 
 /** Render the stroke icon for a recall type. */

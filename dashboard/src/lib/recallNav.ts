@@ -74,6 +74,9 @@ export function recallNavTarget(hit: RecallHit): RecallNavTarget {
       // A run-output hit (`run#<automation>-<date>`) opens the automation it
       // belongs to — the run detail lives inside that automation's panel.
       return { page: 'automations', slug: automationSlug(hit) };
+    case 'whiteboard':
+      // The board slug IS the Whiteboard page's focus id: the hit opens that board.
+      return { page: 'whiteboards', slug: hit.slug };
     case 'changelog':
     case 'memory':
     default:

@@ -13,7 +13,7 @@ import type { ApiClient } from '../api/client';
 export interface RecallHit {
   type:
     | 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog'
-    | 'objective' | 'insight' | 'thesis' | 'automation';
+    | 'objective' | 'insight' | 'thesis' | 'automation' | 'whiteboard';
   slug: string;
   title: string;
   path: string;

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
@@ -14,10 +14,13 @@ import {
   diagramFolderDirs,
   isDarkDiagramSibling,
 } from './excalidraw-text.js';
+import { parseWhiteboard } from './whiteboards/format.js';
+import { whiteboardRecallText } from './whiteboards/recall-text.js';
+import { resolveWhiteboardPath, whiteboardsDir } from './whiteboards/store.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation' | 'whiteboard';
 
 /**
  * Every corpus type `buildCorpus` can produce, in snapshot/report order. The
@@ -30,7 +33,7 @@ export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelo
  */
 export const CORPUS_TYPES: readonly CorpusType[] = [
   'knowledge', 'feature', 'task', 'memory', 'changelog',
-  'objective', 'insight', 'thesis', 'automation',
+  'objective', 'insight', 'thesis', 'automation', 'whiteboard',
 ];
 
 /**
@@ -141,6 +144,7 @@ function priorityLevel(value: unknown): DocLevel | undefined {
  *  - insight       bound to an objective's KR → 3 (it moves the roadmap)
  *  - automation    enabled → 2, disabled → 1
  *  - feature       no marker → default
+ *  - whiteboard    no marker → default
  *
  * Level 3 is meant to be RARE — "someone deliberately marked this", not "this
  * type is usually important". Any signal that fires on most docs of its type
@@ -777,6 +781,76 @@ function loadAutomationRunDocs(contextRoot: string): CorpusDoc[] {
 }
 
 /**
+ * Load whiteboards (`whiteboards/<slug>/<slug>.excalidraw.md`) as `whiteboard`
+ * corpus docs. A board is curated brain content — git-tracked, synced, edited
+ * by hand — so it gets full standing (no capture penalty, default level).
+ *
+ * The body is {@link whiteboardRecallText}: text elements PLUS every widget's
+ * `customData.dc` words (note markdown, todo items, wiki pages, HTML block
+ * text), never the scene JSON. A board that does not parse (Obsidian's
+ * compressed-json) falls back to its `## Text Elements` via
+ * extractExcalidrawText, so it is still findable by its labels.
+ *
+ * Board folders are resolved through the store's `resolveWhiteboardPath`:
+ * a symlinked folder or file is never followed, and `.trash/` (dot-prefixed,
+ * machine-local) never enters the corpus.
+ */
+function loadWhiteboardDocs(contextRoot: string): CorpusDoc[] {
+  let slugs: string[];
+  try {
+    slugs = readdirSync(whiteboardsDir(contextRoot)).filter((s) => !s.startsWith('.')).sort();
+  } catch {
+    return [];
+  }
+  const out: CorpusDoc[] = [];
+  for (const slug of slugs) {
+    try {
+      const { file } = resolveWhiteboardPath(contextRoot, slug);
+      const raw = readFileSync(file, 'utf-8');
+      const { data, content } = readFrontmatter(file);
+      let body: string;
+      let refs: string[] = [];
+      try {
+        ({ body, refs } = whiteboardRecallText(parseWhiteboard(raw).elements));
+      } catch {
+        body = extractExcalidrawText(content);
+      }
+      const title = String(data.name ?? slug);
+      const description = String(data.description ?? '');
+      // `excalidraw` is the format marker every board carries, not a topic.
+      const tags = Array.isArray(data.tags)
+        ? data.tags.map(String).filter((t) => t !== 'excalidraw')
+        : [];
+      const fields = buildFields({ slug, title, description, tags, body });
+      out.push({
+        type: 'whiteboard',
+        path: file,
+        relPath: file.replace(contextRoot + '/', ''),
+        slug,
+        title,
+        description,
+        tags,
+        body,
+        tokens: fields.tokens,
+        tokenSet: new Set(fields.tokens),
+        termFreq: fields.termFreq,
+        fieldFreq: fields.fieldFreq,
+        fieldLen: fields.fieldLen,
+        links: [...new Set([...fields.links, ...refs])],
+        identityTokens: fields.identityTokens,
+        // Boards carry no date in their frontmatter (byte-deterministic writes).
+        updatedAt: statSync(file).mtime.toISOString(),
+        federated: data.federated === true,
+        level: deriveLevel('whiteboard', data as Record<string, unknown>, `${title} ${description} ${body}`),
+      });
+    } catch {
+      // not a board folder, a symlink, or unreadable — skip
+    }
+  }
+  return out;
+}
+
+/**
  * Load top-level skill packs as corpus docs for related-skill recall.
  *
  * Only scans `<pack>/SKILL.md` (the `*\/SKILL.md` glob does NOT recurse into
@@ -899,6 +973,9 @@ export function buildCorpus(
       ['cache/**', 'output/**'],
     ));
     docs.push(...loadAutomationRunDocs(contextRoot));
+  }
+  if (types.has('whiteboard')) {
+    docs.push(...loadWhiteboardDocs(contextRoot));
   }
   if (opts.minLevel !== undefined) {
     const floor = opts.minLevel;

@@ -20,6 +20,8 @@ import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
 // `theses create` recall-dedups against). `automation` and `skill` stay OUT:
 // automation slugs are already uniqueness-enforced by the store, and a run output
 // is machine-generated — "this run resembles last run" is expected, not a dupe.
+// `whiteboard` stays out too: a board is a layout over other docs, so it
+// legitimately resembles the knowledge and tasks its cards point at.
 const VALID_DEDUP_TYPES: readonly CorpusType[] = [
   'knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis',
 ];

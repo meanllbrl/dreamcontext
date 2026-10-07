@@ -226,3 +226,14 @@ index) — recommended rollout is staged: opt-in beta → auto-enable when the
 model + cache are already warm on the machine (never a surprise download on
 first prompt). That wiring belongs to the beta-rollout task.** Regression
 locks extended to 19 tests (pin guard, dense-channel exclusion).
+
+## 2026-10-07 — `whiteboard` channel added (no regression)
+
+`scripts/recall-ab.ts` on the stable corpus, before vs after adding the tenth corpus type (3 boards, 1382 → 1385 docs):
+
+| set | r@1 | r@3 | MRR before → after |
+|---|---|---|---|
+| train (`gold.jsonl`) | 66.7 = | 86.7 = | 0.766 → 0.766 (paraphrase 0.759 → 0.758) |
+| held-out (`gold-heldout.jsonl`) | 50.0 = | 63.3 = | 0.581 → 0.580 (exact-term 0.800 → 0.792) |
+
+No recall@k cell moves; the MRR deltas are IDF wobble from the three new docs.
