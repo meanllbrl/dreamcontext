@@ -127,6 +127,61 @@ export function automationAccountWithoutProbe(deps: PickDeps = {}): AutomationAc
 }
 
 /**
+ * The account a NEW chat opens on when nobody picked one — decided from what is already on
+ * disk (each account's cached usage and the recorded refusals), with NO probe.
+ *
+ * Before this a chat with no `account` always opened on the preferred account, whatever its
+ * state; the per-turn check then found it full on the FIRST message and restarted the session
+ * elsewhere. Observed 2026-10-06: the preferred account at 97% of its 5-hour window, three
+ * others with room, and every new chat still opened on the full one, showed it in the picker,
+ * and moved only after the user had already typed.
+ *
+ * No probe on purpose: this runs inside the socket upgrade, and a probe can take seconds (its
+ * ceiling is 20s). The per-turn check (`maybeSwitchAccount`) is still the safety net, so a
+ * cache that is wrong here costs the same restart as before, never worse. Same rules as the
+ * turn path otherwise: OFF / one account / `sequential` without a refusal keep the preferred
+ * account; only a refusal or a CURRENT reading past the switch threshold moves it; and a blind
+ * pick (`unmeasured`) is refused, since staying put lets the turn path probe properly.
+ */
+export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
+  /** Injectable so a test reads its own fixture, not a `.claude.json` under the real HOME. */
+  readUsage?: (configDir: string) => UsageLimitsResponse;
+} = {}): AutomationAccount {
+  try {
+    const c = contextFor(deps);
+    const { home, now, accounts, preferred, fallback, rejectedUntil } = c;
+    if (accounts.length < 2 || !autoSwitchEnabled(home) || !preferred) return fallback;
+    const dirOf = (a: ClaudeAccount): string => a.configDir ?? home;
+    const read = deps.readUsage ?? cachedUsage;
+    if (!rejectedUntil[preferred.id]) {
+      if (switchStrategyFor(home) === 'sequential') return fallback;
+      const cached = read(dirOf(preferred));
+      if (!usageReadingIsCurrent(cached, now) || !shouldSwitchAway(cached, undefined, now)) return fallback;
+    }
+    const readings = accounts.map((a): AccountReading => {
+      const cached = read(dirOf(a));
+      return usageReadingIsCurrent(cached, now) ? { id: a.id, limits: cached } : { id: a.id, problem: 'stale' };
+    });
+    const choice = chooseAccount(readings, {
+      threshold: SWITCH_THRESHOLD_PERCENT,
+      currentId: preferred.id,
+      preferredId: preferred.id,
+      orderedIds: accounts.map((a) => a.id),
+      rejectedUntil,
+      strategy: switchStrategyFor(home),
+      weights: switchWeightsFor(home),
+      now,
+    });
+    const winner = choice.accountId === null || choice.unmeasured
+      ? null
+      : accounts.find((a) => a.id === choice.accountId);
+    return winner ? toAccount(winner, home) : fallback;
+  } catch {
+    return preferredOnly(deps);
+  }
+}
+
+/**
  * The full decision, probing where the cache cannot answer. NEVER rejects: a register or
  * probe that breaks leaves the run on the preferred account, which is what it did before
  * this existed, rather than failing a job nobody is watching.

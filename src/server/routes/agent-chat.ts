@@ -55,6 +55,7 @@ import {
 } from '../../lib/claude-account-switch.js';
 import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
 import { readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
+import { chatSpawnAccount } from '../../lib/automations/account.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
@@ -953,9 +954,14 @@ export function startChatSession(
   // #0 (the default, and the only path a single-account machine ever takes) and otherwise
   // repairs the sandbox — every spawn, not only the first, so a symlink broken since the last
   // one does not silently hand this process its own private `projects/`.
+  // No account asked for → the default, but not BLINDLY the preferred one: an account the
+  // cache already shows as full (or a recorded refusal) is skipped here, so the chat opens on
+  // one with room instead of restarting on the first message (`chatSpawnAccount`). An account
+  // somebody picked is never second-guessed at spawn.
+  const spawnAccount = account || (isCloud() ? '' : (chatSpawnAccount().id ?? ''));
   let accountConfigDir: string;
   try {
-    accountConfigDir = resolveConfigDir(account || null);
+    accountConfigDir = resolveConfigDir(spawnAccount || null);
     // In the cloud the sandbox is dcuser's (0700): the entrypoint's `claude-login` built it as
     // dcuser (D13), and dcserver must not write into it.
     if (!isCloud()) ensureSandbox(accountConfigDir);
@@ -975,7 +981,7 @@ export function startChatSession(
   const computerMcpPath = isAssistant && process.platform === 'darwin' && !isCloud() ? ensureComputerMcpConfig() : null;
   // Recorded beside `spawnAuthEpoch` so the live panel can be labelled with the account it is
   // really billing, and so the chooser knows which account NOT to move away from on a tie.
-  const activeAccountId = account
+  const activeAccountId = spawnAccount
     || listClaudeAccounts().find((a) => (a.configDir ?? homedir()) === accountConfigDir)?.id
     || '';
 
@@ -1629,6 +1635,11 @@ export function startChatSession(
   const cachedSlash = readSlashCache(contextRoot);
   if (cachedSlash) sendMeta({ subtype: 'slash_commands', commands: cachedSlash });
 
+  // Which account this process really runs on. The client asked for one (or for the default),
+  // and the default may have skipped a full account — so the composer's account chip reads
+  // this, not its own request. Said again on every reattach for a client that just arrived.
+  if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
+
   // A reattach found no live child (it exited while the client was away), so this is a fresh
   // resume: nothing is running, and the client replays the transcript it missed.
   if (opts.reattachFallback) sendMeta({ subtype: 'reattached', adopted: false, busy: false });
@@ -1844,6 +1855,7 @@ export function startChatSession(
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
     for (const line of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }

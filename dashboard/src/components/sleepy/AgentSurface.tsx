@@ -2530,7 +2530,7 @@ export function AgentSurface() {
     const cs = sessions.current.get(sid);
     if (!cs || cs.kind !== 'chat') return;
     const chat = cs as ChatSession;
-    if (chat.accountId === accountId) return;  // picking the account you are on is not a restart
+    if ((chat.getModel().activeAccountId || chat.accountId) === accountId) return;  // picking the account you are on is not a restart
     if (chat.busy || chat.asking) {
       // Not silently dropped and not a mid-turn kill: the notice says the move is queued, and
       // `armAccountSwitch` is not involved — this is a deliberate user action, so it waits

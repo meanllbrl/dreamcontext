@@ -357,6 +357,13 @@ export interface ConversationModel {
    * closed and a genuinely different one (another account, another reason) still shows.
    */
   accountSwitchDismissed?: string;
+  /**
+   * The account this process REALLY runs on, as the server spawned it. A session that asked
+   * for none (`accountId === ''`) does not necessarily get the preferred one: the default
+   * skips an account the cache already shows as full. Read this, not `accountId`, to SHOW the
+   * account; `accountId` stays what was asked for, so a respawn re-decides the default.
+   */
+  activeAccountId?: string;
 }
 
 // ─── Public session API (contract C4) ──────────────────────────────────────────────
@@ -1204,6 +1211,10 @@ export function createChatSession(
           // silently kill the composer's `/` menu mid-conversation.
           slashCommands: ev.slashCommands ?? conv.slashCommands,
         };
+        return;
+      }
+      case 'account-active': {
+        conv = { ...conv, activeAccountId: ev.accountId };
         return;
       }
       case 'slash-commands': {

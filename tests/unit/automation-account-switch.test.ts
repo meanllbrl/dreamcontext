@@ -4,13 +4,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { runAutomation, type SpawnImpl } from '../../src/lib/automations/runner.js';
-import { automationAccountWithoutProbe, pickAutomationAccount } from '../../src/lib/automations/account.js';
+import { automationAccountWithoutProbe, chatSpawnAccount, pickAutomationAccount } from '../../src/lib/automations/account.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { readThread } from '../../src/lib/automations/threads.js';
-import { sandboxDirFor, setSwitchPolicy, upsertClaudeAccount } from '../../src/lib/claude-accounts.js';
+import { sandboxDirFor, setAutoSwitchEnabled, setSwitchPolicy, upsertClaudeAccount } from '../../src/lib/claude-accounts.js';
 import { readAccountRejections, recordAccountRejection } from '../../src/lib/claude-limit-rejections.js';
 import type { ProbeOutcome } from '../../src/lib/claude-usage-probe.js';
+import type { UsageLimitsResponse } from '../../src/lib/claude-usage.js';
 
 /**
  * AUTOMATIONS USE EVERY ACCOUNT, not only the preferred one.
@@ -133,6 +134,59 @@ describe('picking the account before the run', () => {
     const probe = vi.fn();
     expect(automationAccountWithoutProbe({ home, probe, now: NOW.getTime() })?.id).toBe('first');
     expect(probe).not.toHaveBeenCalled();
+  });
+});
+
+/** Each account's cached usage, keyed by its config dir — what `.claude.json` would hold. */
+function cacheOf(byDir: Record<string, { session: number; ageMs?: number }>): (dir: string) => UsageLimitsResponse {
+  return (dir) => {
+    const entry = byDir[dir];
+    if (!entry) return { limits: [], fetchedAtMs: null };
+    const { limits: reading } = limits(entry.session) as Extract<ProbeOutcome, { status: 'ok' }>;
+    return { ...reading, fetchedAtMs: NOW.getTime() - (entry.ageMs ?? 0) };
+  };
+}
+
+/**
+ * A NEW CHAT OPENS ON AN ACCOUNT WITH ROOM. Reported 2026-10-06: the preferred account sat at
+ * 97% of its 5-hour window, and every new chat still opened on it and moved only after the
+ * first message. The spawn now reads the cache (no probe) and skips an account it shows full.
+ */
+describe('picking the account a new chat opens on', () => {
+  it('a preferred account the cache shows full is skipped for one with room', () => {
+    addAccounts();
+    const readUsage = cacheOf({ [home]: { session: 97 }, [sandboxDirFor('second', home)]: { session: 15 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('second');
+  });
+
+  it('a preferred account the API refused is skipped even when its cache looks fine', () => {
+    addAccounts();
+    const readUsage = cacheOf({ [home]: { session: 6 }, [sandboxDirFor('second', home)]: { session: 15 } });
+    recordAccountRejection('first', { window: 'session', resetsAtMs: NOW.getTime() + 3_600_000, via: 'apiError' }, home, NOW.getTime());
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('second');
+  });
+
+  it('a preferred account with room keeps the chat', () => {
+    addAccounts();
+    const readUsage = cacheOf({ [home]: { session: 40 }, [sandboxDirFor('second', home)]: { session: 5 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('first');
+  });
+
+  it('no blind pick: when no other account has a current reading, the preferred one stays', () => {
+    addAccounts();
+    const readUsage = cacheOf({ [home]: { session: 97 }, [sandboxDirFor('second', home)]: { session: 15, ageMs: 2 * 3_600_000 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('first');
+  });
+
+  it('sequential, auto-switch off and one account all keep the preferred account', async () => {
+    const readUsage = cacheOf({ [home]: { session: 97 }, [sandboxDirFor('second', home)]: { session: 15 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBeNull();
+    addAccounts();
+    setSwitchPolicy({ strategy: 'sequential' }, home);
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('first');
+    setSwitchPolicy({ strategy: 'score' }, home);
+    await setAutoSwitchEnabled(false, home);
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('first');
   });
 });
 

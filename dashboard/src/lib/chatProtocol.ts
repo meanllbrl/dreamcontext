@@ -258,6 +258,9 @@ export type ChatEvent =
    * The last two exist because the forecast was measured wrong on 2026-09-05 (a refused
    * account read 6% three minutes later), and a surface that only forecasts cannot recover.
    */
+  /** Which account the server ACTUALLY spawned this process on. Differs from the session's
+   *  requested `accountId` when none was requested and the default skipped a full one. */
+  | { kind: 'account-active'; accountId: string }
   | {
       kind: 'account-switch';
       switched: boolean;
@@ -1005,6 +1008,10 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       ? obj.commands.filter((c): c is string => typeof c === 'string' && !!c)
       : [];
     return commands.length ? { kind: 'slash-commands', commands } : ignored('_meta:slash_commands');
+  }
+  if (subtype === 'account_active') {
+    const accountId = str(obj.accountId);
+    return accountId ? { kind: 'account-active', accountId } : ignored('_meta:account_active');
   }
   // The opening prompt the server submitted on our behalf (see agent-chat.ts's echo note).
   if (subtype === 'prompt_echo') {

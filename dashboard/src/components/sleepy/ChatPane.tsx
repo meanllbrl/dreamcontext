@@ -636,6 +636,9 @@ export function ChatPane({
   const api = useApi();
 
   const conv = session.getModel();
+  // The account the server really spawned on; a session that asked for the default may not
+  // be on the preferred one (see `ConversationModel.activeAccountId`).
+  const runningAccountId = conv.activeAccountId || session.accountId;
   // The pinned shelf's whole state. Declared up here with the pane's other session-scoped
   // hooks because BOTH the shelf and the composer read from it: the composer squares its top
   // corners for exactly the states in which the shell grows a border, and asking the same
@@ -2101,7 +2104,7 @@ export function ChatPane({
         <SignInBanner
           canSignInInApp={canSignInInApp}
           command={signInCommand}
-          accountId={session.accountId}
+          accountId={runningAccountId}
           onSignIn={onSignIn}
           onRetry={onResume}
         />
@@ -2120,7 +2123,7 @@ export function ChatPane({
           modelConfig={modelConfig}
           onModelChange={onModelChange}
           onEffortChange={onEffortChange}
-          activeAccountId={session.accountId}
+          activeAccountId={runningAccountId}
           onAccountChange={onAccountChange}
           contextHandoff={conv.contextHandoff}
           onContextHandoffChange={session.setContextHandoff}
@@ -2181,7 +2184,7 @@ export function ChatPane({
           mode="mcp"
           // The account this conversation is actually billed to and spawned under — the panel
           // must report on THAT Claude install, not on whichever one the machine defaults to.
-          accountId={session.accountId}
+          accountId={runningAccountId}
           onClose={() => setSlideOver(null)}
         />
       )}
