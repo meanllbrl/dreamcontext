@@ -4,6 +4,10 @@
    which part matters. */
 
 .chat-notice {
+  /* The card answers to ITS OWN width, not the viewport: the chat pane is a split that can be
+     260px wide on a 2560px screen, so a media query would never fire. */
+  container: chat-notice / inline-size;
+  position: relative;
   align-self: stretch;
   width: 100%;
   max-width: var(--chat-line-width, 100%);
@@ -37,6 +41,7 @@
   background: var(--color-accent-soft);
   color: var(--color-accent-ink);
 }
+.chat-notice.is-slim .chat-notice-x { top: calc(var(--space-2) + 12px); }
 .chat-notice.is-slim .chat-notice-badge { width: 24px; height: 24px; border-radius: 7px; }
 .chat-notice-badge svg { width: 17px; height: 17px; }
 .chat-notice.is-slim .chat-notice-badge svg { width: 14px; height: 14px; }
@@ -58,8 +63,15 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+.chat-notice-head:has(> .chat-notice-x) { padding-right: 22px; }
+/* Pinned to the card's top-right corner, level with the badge, rather than a flex item: when a
+   narrow card wraps the meta or a button onto a second line, a flex × went with them and
+   landed mid-card. */
 .chat-notice-x {
-  flex: 0 0 auto;
+  position: absolute;
+  top: calc(var(--space-3) + 15px);
+  right: 10px;
+  transform: translateY(-50%);
   border: 0;
   background: none;
   padding: 0 2px;
@@ -117,6 +129,8 @@
 }
 .chat-notice-chip:has(> .chat-notice-av:first-child) { padding-left: 3px; }
 .chat-notice-chip svg { width: 12px; height: 12px; flex: 0 0 auto; }
+/* The name is the one part of a chip that gives way: avatar, state icon and meters stay whole. */
+.chat-notice-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chat-notice-chip[data-tone='good'] { background: var(--color-success-subtle); color: var(--color-success-ink); }
 .chat-notice-chip[data-tone='warn'] { background: var(--color-warning-subtle); color: var(--color-warning-ink); }
 .chat-notice-chip[data-tone='bad'] { background: var(--color-error-subtle); color: var(--color-error-ink); }
@@ -284,7 +298,7 @@
 .chat-notice-av.is-off { filter: grayscale(1); opacity: 0.5; }
 
 .chat-notice-move { display: flex; align-items: center; gap: 10px; margin: 12px 0 0 40px; min-width: 0; }
-.chat-notice-node { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-notice-node { flex: 0 1 auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .chat-notice-node > div { min-width: 0; }
 .chat-notice-who {
   font-size: 12.5px;
@@ -299,7 +313,13 @@
   text-decoration: line-through;
   text-decoration-color: var(--color-error);
 }
-.chat-notice-st { font-size: var(--font-size-2xs, 11px); color: var(--color-text-tertiary); white-space: nowrap; }
+.chat-notice-st {
+  font-size: var(--font-size-2xs, 11px);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .chat-notice-wire {
   flex: 1 1 24px;
   min-width: 24px;
@@ -320,7 +340,7 @@
 }
 @keyframes chat-notice-flow { from { background-position: 0 0; } to { background-position: 20px 0; } }
 
-.chat-notice-meters { display: flex; gap: 10px; margin-top: 4px; }
+.chat-notice-meters { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 4px; }
 .chat-notice-meter {
   display: inline-flex;
   align-items: center;
@@ -363,6 +383,8 @@
   display: inline-flex;
   align-items: center;
   gap: 0;
+  max-width: 100%;
+  min-width: 0;
   padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
@@ -373,7 +395,7 @@
 }
 .chat-notice-chipbtn:hover:not(:disabled) { border-color: var(--color-accent); }
 .chat-notice-chipbtn:disabled { opacity: 0.6; cursor: default; }
-.chat-notice-chipbtn .chat-notice-chip { border-radius: var(--radius-full) 0 0 var(--radius-full); }
+.chat-notice-chipbtn .chat-notice-chip { flex: 0 1 auto; min-width: 0; border-radius: var(--radius-full) 0 0 var(--radius-full); }
 .chat-notice-chipbtn-cta {
   padding: 0 10px 0 8px;
   font-size: var(--font-size-xs);
@@ -397,4 +419,49 @@ button.chat-notice-chip:hover { filter: brightness(0.97); }
   width: auto;
   max-width: none;
   margin: 0 12px 12px;
+}
+
+/* ── narrow cards ──────────────────────────────────────────
+   A from → to track needs ~440px to keep both names, the "back at" time and two meters on one
+   line. Below that the move turns vertical: from on top, the wire pointing DOWN, to below, so
+   nothing is clipped and nothing runs past the card's edge. */
+@container chat-notice (max-width: 440px) {
+  .chat-notice-move { flex-direction: column; align-items: stretch; gap: 6px; }
+  .chat-notice-move > .chat-notice-meta { padding-left: 26px; }
+  .chat-notice-wire {
+    flex: 0 0 auto;
+    width: 2px;
+    min-width: 0;
+    height: 14px;
+    margin: 0 0 4px 15px; /* centred under a 32px avatar */
+    background: repeating-linear-gradient(180deg, var(--color-accent) 0 4px, transparent 4px 7px);
+    background-size: 2px 7px;
+    animation-name: chat-notice-flow-down;
+  }
+  .chat-notice-wire::after {
+    right: auto;
+    top: auto;
+    left: -4px;
+    bottom: -5px;
+    border: 5px solid transparent;
+    border-top: 7px solid var(--color-accent);
+    border-bottom: 0;
+  }
+}
+@keyframes chat-notice-flow-down { from { background-position: 0 0; } to { background-position: 0 7px; } }
+
+/* Very narrow: the 40px indent that lines rows up under the title is a sixth of the card, so
+   the rows take the full width instead. */
+@container chat-notice (max-width: 340px) {
+  .chat-notice-row,
+  .chat-notice.is-slim .chat-notice-row,
+  .chat-notice-move,
+  .chat-notice-ctx,
+  .chat-notice-steps,
+  .chat-notice-cmd,
+  .chat-notice-error { margin-left: 0; }
+  .chat-notice-step-label { padding-right: 4px; overflow-wrap: anywhere; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-notice .chat-notice-wire { animation: none; }
 }

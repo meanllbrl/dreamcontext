@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BotMark } from '../AgentSetup';
 import { useClaudeAccounts, type ClaudeAccountWire } from '../../../hooks/useAgentCapabilities';
@@ -161,7 +161,7 @@ export function HandoffCard({ run, onDismiss, onOpenTask }: {
 
   const taskChip = run.task ? (
     <button type="button" className="chat-notice-chip is-task" onClick={() => onOpenTask?.(run.task)} title="Open the task">
-      <Glyph.task />{run.title || run.task}
+      <Glyph.task /><span className="chat-notice-chip-name">{run.title || run.task}</span>
     </button>
   ) : null;
 
@@ -272,7 +272,7 @@ function OtherAccounts({ rejected, exclude, accounts }: {
         const chip = (
           <NoticeChip tone={st.tone} title={`${who.email}: ${r.why}`}>
             <AccountAvatar email={who.email} off={st.tone !== undefined} />
-            {who.short}
+            <span className="chat-notice-chip-name">{who.short}</span>
             {st.icon}
             {st.session !== undefined && <UsageMeter label="5h" percent={st.session} />}
             {st.weekly !== undefined && <UsageMeter label="wk" percent={st.weekly} />}
@@ -291,7 +291,7 @@ function OtherAccounts({ rejected, exclude, accounts }: {
             {chip}
             <span className="chat-notice-chipbtn-cta">{busy === r.id ? 'Waiting…' : 'Sign in'}</span>
           </button>
-        ) : <span key={r.id}>{chip}</span>;
+        ) : <Fragment key={r.id}>{chip}</Fragment>;
       })}
     </NoticeRow>
   );
