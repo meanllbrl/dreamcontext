@@ -555,13 +555,39 @@ pub fn assistant_set_enabled<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Re
         ensure_notch(&app)?;
         return Ok(apply_hotkey(&app));
     }
+    hide_notch(&app);
+    let _ = app.autolaunch().disable();
+    Ok(apply_hotkey(&app))
+}
+
+/// Hide the notch panel without destroying it.
+fn hide_notch<R: Runtime>(app: &AppHandle<R>) {
     if let Ok(panel) = app.get_webview_panel(NOTCH_LABEL) {
         panel.hide();
     }
     // A notch hidden while open never folds, so it would never let Esc go.
-    set_escape_grab(&app, false);
-    let _ = app.autolaunch().disable();
-    Ok(apply_hotkey(&app))
+    set_escape_grab(app, false);
+}
+
+/// Whether a close request on this window must be refused. Only the notch: tauri-nspanel
+/// swaps the built NSWindow's class for its panel class, which drops the KVO registration
+/// WebKit's `WKWindowVisibilityObserver` made on it. Closing the panel detaches the webview,
+/// WebKit removes an observer AppKit no longer knows, and the exception aborts the whole app
+/// (crash 2026-10-07: `closeAllWindows` closed every window, the notch among them).
+pub fn refuses_close(label: &str) -> bool {
+    label == NOTCH_LABEL
+}
+
+/// Refuse a close request on the notch and hide it instead. Covers every route a close can
+/// take — a page's `close()`, Cmd+W while the panel is key — since they all pass through
+/// `CloseRequested`. `destroy()` skips that event, so nothing may call it on the notch.
+pub fn guard_close<R: Runtime>(app: &AppHandle<R>, label: &str, api: &tauri::CloseRequestApi) {
+    if !refuses_close(label) {
+        return;
+    }
+    api.prevent_close();
+    hide_notch(app);
+    crate::page_focus::diag_line("[assistant] close refused, notch hidden");
 }
 
 /// Show the notch (after the wizard's "Wake up"), registering the hotkey too.
@@ -757,6 +783,14 @@ mod tests {
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
     const OPEN: NSRect = NSRect { origin: NSPoint { x: 610.0, y: 520.0 }, size: NSSize { width: 580.0, height: 560.0 } };
+
+    #[test]
+    fn only_the_notch_refuses_a_close() {
+        assert!(refuses_close(NOTCH_LABEL));
+        for label in ["main", "vault-acme-storefront", "inbox", "splash", "error", "assistant-x"] {
+            assert!(!refuses_close(label), "{label} must close normally");
+        }
+    }
 
     #[test]
     fn a_click_outside_the_open_panel_is_reported() {

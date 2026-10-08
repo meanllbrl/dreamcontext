@@ -112,26 +112,51 @@ export async function closeCurrentWindow(): Promise<void> {
   } catch { /* ACL / non-desktop — ignore */ }
 }
 
+/** The Assistant notch panel's window label (NOTCH_LABEL in desktop/src-tauri/src/assistant.rs). */
+export const NOTCH_WINDOW_LABEL = 'assistant';
+
 /**
- * Close EVERY open app window so the app actually quits — the auto-relaunch flow
- * needs a real quit, and closing a single window doesn't quit a multi-window app
- * (launcher + one window per vault). After the server has armed its detached
- * `open <app>` relauncher, quitting tears down the stale server and the reopened
- * (swapped) bundle spawns a fresh one. Falls back to closing just this window if
- * the window list can't be enumerated. No-op off-desktop.
+ * Quit the whole app — the auto-relaunch flow needs a real quit. After the server
+ * has armed its detached `open <app>` relauncher, quitting tears down the stale
+ * server and the reopened (swapped) bundle spawns a fresh one. No-op off-desktop.
+ *
+ * The shell's `quit_app` exits without closing a single window. Closing windows is
+ * NOT a quit any more: the notch panel refuses to close (closing it aborted the
+ * whole app, crash 2026-10-07), so the app would stay up and the relauncher's
+ * `open` would only bring the OLD build forward.
+ *
+ * An older shell has no `quit_app`; there closing every window is still the only
+ * quit. The notch goes last so every project window is already closed cleanly.
  */
-export async function closeAllWindows(): Promise<void> {
+export async function quitApp(): Promise<void> {
   if (!isDesktop()) return;
   try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('quit_app');
+    return;
+  } catch { /* older shell — close every window instead */ }
+  try {
     const mod = await import('@tauri-apps/api/webviewWindow');
-    const WW = mod.WebviewWindow as unknown as { getAll?: () => Promise<Array<{ close: () => Promise<void> }>> };
+    const WW = mod.WebviewWindow as unknown as {
+      getAll?: () => Promise<Array<{ label: string; close: () => Promise<void> }>>;
+    };
     const wins = WW.getAll ? await WW.getAll() : [];
     if (wins.length > 0) {
-      await Promise.all(wins.map((w) => w.close().catch(() => { /* already gone */ })));
+      const { first, last } = closeOrder(wins);
+      await Promise.all(first.map((w) => w.close().catch(() => { /* already gone */ })));
+      await Promise.all(last.map((w) => w.close().catch(() => { /* already gone */ })));
       return;
     }
   } catch { /* fall through to single-window close */ }
   await closeCurrentWindow();
+}
+
+/** Split windows for an old shell's quit: everything else first, the notch last. */
+export function closeOrder<W extends { label: string }>(wins: W[]): { first: W[]; last: W[] } {
+  return {
+    first: wins.filter((w) => w.label !== NOTCH_WINDOW_LABEL),
+    last: wins.filter((w) => w.label === NOTCH_WINDOW_LABEL),
+  };
 }
 
 /**

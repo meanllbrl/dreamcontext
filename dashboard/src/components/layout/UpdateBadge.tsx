@@ -3,7 +3,7 @@ import { useVersionCheck } from '../../hooks/useVersionCheck';
 import { MarkdownPreview } from '../core/MarkdownPreview';
 import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
-import { closeCurrentWindow } from '../../lib/desktop';
+import { quitApp } from '../../lib/desktop';
 import './UpdateBadge.css';
 
 /**
@@ -109,9 +109,10 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
     try {
       const r = await api.post<{ ok?: boolean; reason?: string }>('/launcher/relaunch', {});
       if (r?.ok) {
-        // The detached relauncher WILL reopen the app after this window closes. Only then is
-        // it safe to quit — the window is going away, so no need to reset state.
-        await closeCurrentWindow();
+        // The detached relauncher WILL reopen the app once it quits. Only then is it safe
+        // to quit — the app is going away, so no need to reset state. A quit, not a window
+        // close: other windows and the notch would keep the old build running.
+        await quitApp();
         return;
       }
       // Nothing will reopen the app (not installed / stale manifest). Closing here would quit

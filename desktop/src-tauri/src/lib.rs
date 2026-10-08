@@ -73,6 +73,7 @@ pub fn run() {
             pick_paths,
             confirm_dialog,
             set_pinned,
+            quit_app,
             assistant::assistant_geometry,
             assistant::assistant_haptic,
             assistant::assistant_apply_hotkey,
@@ -153,6 +154,10 @@ pub fn run() {
         // here whether this click launched the app or it was already running.
         // A window coming forward gives its keyboard to its page (src/page_focus.rs). Not the
         // notch: it is a non-activating panel that manages its own key state.
+        // The notch is never closed, only hidden (src/assistant.rs `refuses_close`).
+        if let RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event {
+            assistant::guard_close(app_handle, label, api);
+        }
         if let RunEvent::WindowEvent { label, event: tauri::WindowEvent::Focused(true), .. } = &event {
             if label != assistant::NOTCH_LABEL {
                 page_focus::give_keyboard_to_page(app_handle, label);
@@ -312,6 +317,16 @@ async fn pick_paths(
     rx.recv()
         .await
         .unwrap_or_else(|| Err("The file picker closed without an answer.".to_string()))
+}
+
+/// Quit the whole app. The update relaunch needs a real quit, and closing every window no
+/// longer gives one: the notch refuses to close (src/assistant.rs `refuses_close`), so the
+/// app would stay up and the relauncher's `open` would only bring the OLD build forward.
+/// `exit` ends the process without tearing any window down, so the notch's webview is never
+/// detached; ExitRequested still fires, so the dashboard server is reaped as on any quit.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
 }
 
 /// Pin or unpin the calling window above EVERY app, on every Space.

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
-import { isDesktop, closeAllWindows } from '../../lib/desktop';
+import { isDesktop, quitApp } from '../../lib/desktop';
 import './UpgradeRelaunchBanner.css';
 
 /**
@@ -54,10 +54,10 @@ export function UpgradeRelaunchBanner() {
       // exception — when the app isn't installed / the manifest is stale.
       const r = await api.post<{ ok?: boolean; reason?: string }>('/launcher/relaunch', {});
       if (r?.ok) {
-        // Only NOW is it safe to quit: a detached open WILL reopen the app. Close
-        // every window → the app quits → the stale server dies → the reopened
-        // (swapped) bundle spawns a fresh server on the new CLI.
-        await closeAllWindows();
+        // Only NOW is it safe to quit: a detached open WILL reopen the app. The app
+        // quits → the stale server dies → the reopened (swapped) bundle spawns a
+        // fresh server on the new CLI.
+        await quitApp();
         return;
       }
     } catch {

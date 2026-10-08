@@ -1651,7 +1651,7 @@ export async function handleLauncherUpgradeStatus(
  * De-dup guard for concurrent relaunch arms. The desktop app is multi-window, and
  * the auto-relaunch banner mounts in EVERY window — so an upgrade can make N
  * windows each POST here within the same tick. Arming N detached `sleep 2; open`
- * children is wasteful (and races N `closeAllWindows()`), so once one is armed we
+ * children is wasteful (and races N `quitApp()`), so once one is armed we
  * report success for the rest without spawning again. Time-boxed (not a latch) so
  * a manual retry after a relaunch that failed to actually quit still works. The
  * value naturally resets to 0 on the fresh process after a successful relaunch.

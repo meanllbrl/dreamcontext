@@ -23,6 +23,7 @@
     "allow-pick-paths",
     "allow-confirm-dialog",
     "allow-take-app-link",
+    "allow-quit-app",
     "allow-focus-diag",
     "allow-assistant-apply-hotkey",
     "allow-assistant-set-autostart",
