@@ -299,7 +299,7 @@ export const SLEEP_FLOW_SPEC: FlowSpec = {
 
 // ───────────────────────────────────────────────────────────────────────────
 // 3. RECALL FLOW — the read pipeline, left → right
-//    prompt → BM25F keyword match → Haiku recall → SessionStart snapshot.
+//    prompt → BM25F keyword match → local embeddings (hybrid) → SessionStart snapshot.
 // ───────────────────────────────────────────────────────────────────────────
 
 const RECALL_CY = 230; // viewBox 0 0 1150 460 (boxes span x 40..1110; symmetric 40px margins)
@@ -326,10 +326,10 @@ const RECALL_STAGES: RecallStage[] = [
     variant: 'region',
   },
   {
-    id: 'haiku',
+    id: 'embeddings',
     x: 600,
-    title: 'Haiku recall',
-    sub: 'smallest cloud agent · 0-3 docs · BM25 fallback',
+    title: 'Local embeddings',
+    sub: 'hybrid blend · multilingual · BM25 fallback',
     variant: 'region',
   },
   {
@@ -368,7 +368,7 @@ const recallEdges: FlowEdge[] = RECALL_STAGES.slice(0, -1).map((s, i) => {
 export const RECALL_FLOW_SPEC: FlowSpec = {
   viewBox: '0 0 1150 460',
   ariaLabel:
-    'Memory recall pipeline: your prompt is matched by field-weighted BM25F keyword search with stemming and synonyms; a small Haiku cloud agent picks zero to three directly relevant docs (falling back to BM25 when unavailable); and the SessionStart snapshot assembles warm and cold knowledge, features, the index and pinned docs.',
+    'Memory recall pipeline: your prompt is matched by field-weighted BM25F keyword search with stemming and synonyms; a local multilingual embedding model blends semantic matches into the ranking (falling back to BM25 when the model or index is not ready); and the SessionStart snapshot assembles warm and cold knowledge, features, the index and pinned docs.',
   nodes: recallNodes,
   edges: recallEdges,
 };

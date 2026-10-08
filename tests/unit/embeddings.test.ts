@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, utimesSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { chunkDoc } from '../../src/lib/embeddings/chunker.js';
 import {
   refreshEmbeddings, embeddingCacheExists, embeddingCacheUsable, embeddingCacheChunkCount,
-  embeddingCacheCoversType, TYPE_COVERAGE_MIN,
+  embeddingCacheCoversType, embeddingCacheLockPath, EmbeddingLockBusyError, HOOK_MAX_INLINE_CHUNKS, TYPE_COVERAGE_MIN,
 } from '../../src/lib/embeddings/store.js';
 import { rrfFuse, relativeFuse, denseRank, hybridSearch, ADAPTIVE_RAW_CUTOFF } from '../../src/lib/embeddings/hybrid.js';
 import { buildFields, type CorpusDoc } from '../../src/lib/recall.js';
+import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
+import { EMBED_PROFILES, embedCacheModelKey } from '../../src/lib/embeddings/profiles.js';
 
 // The embedder is mocked module-wide: unit tests must never load the ONNX
 // model. Individual tests steer behaviour via these fns.
@@ -161,6 +163,47 @@ describe('embeddings store (incremental refresh)', () => {
     utimesSync(cachePath, now, now);
     expect(embeddingCacheExists(root)).toBe(true);   // still on disk
     expect(embeddingCacheUsable(root)).toBe(false);  // but not usable → BM25 fallback
+  });
+
+  it('the cache is stamped with the ACTIVE profile\'s key: any other model (or quantization) is unusable', async () => {
+    const p1 = writeDocFile('a', 'alpha '.repeat(150));
+    const corpus = [makeDoc({ slug: 'a', path: p1, body: 'alpha '.repeat(150) })];
+    await refreshEmbeddings(root, corpus, fakeEmbed);
+
+    const cachePath = join(root, '.embeddings', 'cache.json');
+    const parsed = JSON.parse(readFileSync(cachePath, 'utf-8'));
+    expect(parsed.model).toBe(embedCacheModelKey());
+
+    const stampWith = (model: string, bump: number): void => {
+      writeFileSync(cachePath, JSON.stringify({ ...parsed, model }));
+      const t = Date.now() / 1000 + bump; // fresh mtime so the usability memo re-evaluates
+      utimesSync(cachePath, t, t);
+    };
+    stampWith(embedCacheModelKey(), 5);
+    expect(embeddingCacheUsable(root)).toBe(true);
+    let bump = 10;
+    for (const profile of EMBED_PROFILES) {
+      if (embedCacheModelKey(profile) === embedCacheModelKey()) continue;
+      stampWith(embedCacheModelKey(profile), (bump += 5));
+      expect(embeddingCacheUsable(root)).toBe(false); // e5 ↔ Gemma (and any future quantization) never share an index
+    }
+  });
+
+  it('a switched model rebuilds the index instead of mixing vector spaces', async () => {
+    const p1 = writeDocFile('a', 'alpha '.repeat(150));
+    const corpus = [makeDoc({ slug: 'a', path: p1, body: 'alpha '.repeat(150) })];
+    const first = await refreshEmbeddings(root, corpus, fakeEmbed);
+
+    const cachePath = join(root, '.embeddings', 'cache.json');
+    const other = EMBED_PROFILES.find((p) => embedCacheModelKey(p) !== embedCacheModelKey())!;
+    writeFileSync(cachePath, JSON.stringify({ ...JSON.parse(readFileSync(cachePath, 'utf-8')), model: embedCacheModelKey(other) }));
+    const t = Date.now() / 1000 + 20;
+    utimesSync(cachePath, t, t);
+
+    const rebuilt = await refreshEmbeddings(root, corpus, fakeEmbed);
+    expect(rebuilt!.stats.embedded).toBe(first!.stats.embedded); // everything re-embedded
+    expect(rebuilt!.stats.reused).toBe(0);
+    expect(JSON.parse(readFileSync(cachePath, 'utf-8')).model).toBe(embedCacheModelKey());
   });
 
   it('additive refresh (recall) never evicts out-of-scope vectors; prune (default) does', async () => {
@@ -333,8 +376,9 @@ describe('hybridSearch invariants', () => {
     expect(hybrid.map((h) => h.rankScore)).toEqual(bm25.map((h) => h.rankScore));
   });
 
-  it('exposes the tuned adaptive cutoff', () => {
-    expect(ADAPTIVE_RAW_CUTOFF).toBe(18);
+  it('exposes the active model\'s tuned adaptive cutoff (Gemma: 12)', () => {
+    expect(ADAPTIVE_RAW_CUTOFF).toBe(EMBED_PROFILES.find((p) => p.id === 'embeddinggemma-q8')!.adaptiveCutoff);
+    expect(ADAPTIVE_RAW_CUTOFF).toBe(12);
   });
 
   it('pin guard: a decisive BM25 rankScore margin holds rank 1 in the RRF zone', async () => {
@@ -539,5 +583,305 @@ describe('embeddingCacheCoversType (task-corpus warmth gate)', () => {
     await refreshEmbeddings(root, [knowledgeDoc('k1')], fakeEmbed);
     // Zero covered task docs is never warm, whatever ratio the caller asks for.
     expect(embeddingCacheCoversType(root, 'task', 0)).toBe(false);
+  });
+});
+
+describe('parsed-cache memo (one parse per cache-file version per process)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dc-parsememo-'));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const BODY = 'alpha beta gamma '.repeat(60);
+  const cacheFile = () => join(root, '.embeddings', 'cache.json');
+
+  function doc(slug: string, body = BODY): CorpusDoc {
+    const path = join(root, `${slug}.md`);
+    writeFileSync(path, body);
+    return makeDoc({ slug, path, body });
+  }
+
+  /** Count only the parses of a real cache file (the cache JSON carries a `vectors` key). */
+  function spyCacheParses() {
+    const real = JSON.parse;
+    const spy = vi.spyOn(JSON, 'parse').mockImplementation((text: string, reviver?: (k: string, v: unknown) => unknown) =>
+      real(text, reviver));
+    const count = () => spy.mock.calls.filter(([t]) => typeof t === 'string' && t.includes('"vectors"')).length;
+    return { count };
+  }
+
+  it('the readiness gate and the refresh that follows it share ONE parse', async () => {
+    const corpus = [doc('a'), doc('b')];
+    await refreshEmbeddings(root, corpus, fakeEmbed);
+
+    const { count } = spyCacheParses();
+    expect(embeddingCacheUsable(root)).toBe(true);                 // parse #1
+    const res = await refreshEmbeddings(root, corpus, fakeEmbed, { additive: true, waitForLock: false });
+    expect(res!.stats.embedded).toBe(0);                           // nothing changed → no lock, no reload
+    expect(embeddingCacheChunkCount(root)).toBe(res!.index.chunks.length);
+    expect(count()).toBe(1);
+  });
+
+  it('a refresh that saves drops the memo: the next read sees the new content', async () => {
+    const a = doc('a');
+    await refreshEmbeddings(root, [a], fakeEmbed);
+    const before = embeddingCacheChunkCount(root);                 // memoised
+    expect(before).toBeGreaterThan(0);
+
+    const b = doc('b', 'delta epsilon zeta '.repeat(80));
+    const res = await refreshEmbeddings(root, [a, b], fakeEmbed);
+    expect(res!.stats.embedded).toBeGreaterThan(0);
+    expect(embeddingCacheChunkCount(root)).toBe(res!.index.chunks.length);
+    expect(embeddingCacheChunkCount(root)).toBeGreaterThan(before);
+  });
+
+  it('an external rewrite is re-parsed even when the mtime is restored (size is the second signal)', async () => {
+    await refreshEmbeddings(root, [doc('a'), doc('b')], fakeEmbed);
+    const mtime = new Date(Date.now() - 60_000);
+    utimesSync(cacheFile(), mtime, mtime);
+    expect(embeddingCacheChunkCount(root)).toBeGreaterThan(0);     // memoised at (mtime, size)
+
+    const parsed = JSON.parse(readFileSync(cacheFile(), 'utf-8'));
+    parsed.docs = {};
+    writeFileSync(cacheFile(), JSON.stringify(parsed));
+    utimesSync(cacheFile(), mtime, mtime);                         // same mtime, smaller file
+    expect(embeddingCacheChunkCount(root)).toBe(0);
+  });
+
+  it('a refresh that throws leaves no dirty memo: counts and later refreshes match a clean run', async () => {
+    const corpus = [doc('a')];
+    await refreshEmbeddings(root, corpus, fakeEmbed);
+    const baseline = embeddingCacheChunkCount(root);               // memoised
+
+    const grown = [...corpus, doc('b', 'delta epsilon zeta '.repeat(80))];
+    await expect(refreshEmbeddings(root, grown, async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    expect(embeddingCacheChunkCount(root)).toBe(baseline);         // snapshot never mutated
+
+    const res = await refreshEmbeddings(root, grown, fakeEmbed);
+    expect(res!.stats.embedded).toBeGreaterThan(0);                // b is embedded exactly now
+    expect(embeddingCacheChunkCount(root)).toBe(res!.index.chunks.length);
+  });
+
+  it('a lock-busy hook refresh searches its in-memory vectors but memoises none of them', async () => {
+    const a = doc('a');
+    await refreshEmbeddings(root, [a], fakeEmbed);
+    const baseline = embeddingCacheChunkCount(root);
+
+    const lock = embeddingCacheLockPath(root);
+    expect(acquireFileLock(lock, Date.now(), 60_000)).toBe(true);
+    try {
+      const b = doc('b', 'delta epsilon zeta '.repeat(80));
+      const res = await refreshEmbeddings(root, [a, b], fakeEmbed, { additive: true, waitForLock: false });
+      expect(res!.index.chunks.some((c) => c.docKey === 'knowledge/b')).toBe(true); // searched in memory
+      expect(embeddingCacheChunkCount(root)).toBe(baseline);                         // disk + memo untouched
+    } finally {
+      releaseFileLock(lock);
+    }
+  });
+});
+
+describe('full-refresh checkpoints, partial caches and the inline cap', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dc-checkpoint-'));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const cacheFile = () => join(root, '.embeddings', 'cache.json');
+  const onDisk = () => JSON.parse(readFileSync(cacheFile(), 'utf-8')) as {
+    partial?: boolean; vectors: Record<string, string>; docs: Record<string, unknown>;
+  };
+
+  /** `n` one-chunk docs with distinct content (one chunk ≈ 150 words, well under the split size). */
+  function docs(n: number, from = 0): CorpusDoc[] {
+    return Array.from({ length: n }, (_, k) => {
+      const i = from + k;
+      const body = `topic${i} detail${i} `.repeat(75);
+      const path = join(root, `d${i}.md`);
+      writeFileSync(path, body);
+      return makeDoc({ slug: `d${i}`, path, body });
+    });
+  }
+
+  /** Embedder that logs every call; `hook` runs first and may throw or answer null. */
+  function embedder(hook?: (call: number, texts: string[]) => Float32Array[] | null | void) {
+    const sizes: number[] = [];
+    const fn = async (texts: string[]): Promise<Float32Array[] | null> => {
+      const call = sizes.length;
+      sizes.push(texts.length);
+      const r = hook?.(call, texts);
+      if (r === null) return null;
+      return r ?? texts.map(fakeVec);
+    };
+    return { fn, sizes, total: () => sizes.reduce((a, b) => a + b, 0) };
+  }
+
+  it('a full run checkpoints as it goes: the file holds finished slices, flagged partial and unusable, until the run ends', async () => {
+    const seen: Array<{ call: number; vectors: number; partial: boolean | undefined; usable: boolean; chunkCount: number }> = [];
+    const e = embedder((call) => {
+      if (call > 0) {
+        const c = onDisk();
+        seen.push({
+          call, vectors: Object.keys(c.vectors).length, partial: c.partial,
+          usable: embeddingCacheUsable(root), chunkCount: embeddingCacheChunkCount(root),
+        });
+      }
+    });
+    const res = await refreshEmbeddings(root, docs(12), e.fn, { checkpointEvery: 4 });
+
+    expect(e.sizes).toEqual([4, 4, 4]);
+    expect(seen.map((s) => s.vectors)).toEqual([4, 8]);          // saved after each finished slice
+    expect(seen.every((s) => s.partial === true)).toBe(true);
+    expect(seen.every((s) => s.usable === false)).toBe(true);    // BM25 keeps answering mid-build
+    expect(seen.map((s) => s.chunkCount)).toEqual([4, 8]);        // …but the progress is visible
+    expect(res!.stats.embedded).toBe(12);
+
+    const done = onDisk();
+    expect(Object.keys(done.vectors)).toHaveLength(12);
+    expect(done.partial).toBeUndefined();                         // the finished run clears the flag
+    expect(embeddingCacheUsable(root)).toBe(true);
+  });
+
+  it('a killed run resumes from its last checkpoint: only the missing chunks are embedded', async () => {
+    const corpus = docs(12);
+    const snapshot = join(root, 'killed-cache.json');
+    const killed = embedder((call) => {
+      if (call === 2) copyFileSync(cacheFile(), snapshot); // the disk state a SIGKILL here would leave
+    });
+    await refreshEmbeddings(root, corpus, killed.fn, { checkpointEvery: 4 });
+
+    copyFileSync(snapshot, cacheFile());                     // rewind to the moment of the kill
+    const future = new Date(Date.now() + 5000);
+    utimesSync(cacheFile(), future, future);
+    const survivors = Object.keys(onDisk().vectors).length;
+    expect(survivors).toBe(8);
+    expect(embeddingCacheUsable(root)).toBe(false);          // unfinished → ensure will pick it up
+
+    const resumed = embedder();
+    const res = await refreshEmbeddings(root, corpus, resumed.fn, { checkpointEvery: 4 });
+    expect(resumed.total()).toBe(12 - survivors);            // nothing already embedded is redone
+    expect(res!.index.chunks).toHaveLength(12);
+    expect(onDisk().partial).toBeUndefined();
+    expect(embeddingCacheUsable(root)).toBe(true);
+  });
+
+  it('an embedder that throws mid-run still leaves everything it finished on disk', async () => {
+    const corpus = docs(40);
+    const e = embedder((call) => { if (call === 1) throw new Error('boom'); });
+    // 40 > one 32-chunk slice, and the 40-chunk bar is not reached before the throw.
+    await expect(refreshEmbeddings(root, corpus, e.fn, { checkpointEvery: 40 })).rejects.toThrow('boom');
+    expect(e.sizes).toEqual([32, 8]);
+    expect(Object.keys(onDisk().vectors)).toHaveLength(32);  // flushed on the way out
+    expect(onDisk().partial).toBe(true);
+
+    const next = embedder();
+    await refreshEmbeddings(root, corpus, next.fn, { checkpointEvery: 40 });
+    expect(next.total()).toBe(8);
+  });
+
+  it('a model that vanishes mid-run (null) flushes progress and returns null', async () => {
+    const corpus = docs(40);
+    const e = embedder((call) => (call === 1 ? null : undefined));
+    expect(await refreshEmbeddings(root, corpus, e.fn, { checkpointEvery: 40 })).toBeNull();
+    expect(Object.keys(onDisk().vectors)).toHaveLength(32);
+    expect(embeddingCacheUsable(root)).toBe(false);
+  });
+
+  it('an already-usable index stays usable through a checkpointed incremental update', async () => {
+    await refreshEmbeddings(root, docs(6), embedder().fn);
+    expect(embeddingCacheUsable(root)).toBe(true);
+
+    const states: boolean[] = [];
+    const e = embedder((call) => { if (call > 0) states.push(embeddingCacheUsable(root)); });
+    await refreshEmbeddings(root, docs(12), e.fn, { checkpointEvery: 4 }); // 6 old + 6 new docs
+    expect(e.sizes).toEqual([4, 2]);
+    expect(states).toEqual([true]);                                         // never flipped to BM25
+    expect(onDisk().partial).toBeUndefined();
+  });
+
+  it('checkpointEvery: 0 disables checkpointing (one embedder call, one final save)', async () => {
+    const e = embedder((call) => {
+      if (call === 0) expect(existsSync(cacheFile())).toBe(false);
+    });
+    await refreshEmbeddings(root, docs(12), e.fn, { checkpointEvery: 0 });
+    expect(e.sizes).toEqual([12]);
+  });
+
+  it('a busy lock only skips checkpoints; the run itself still ends with the usual busy error', async () => {
+    const lock = embeddingCacheLockPath(root);
+    expect(acquireFileLock(lock, Date.now(), 60_000)).toBe(true);
+    try {
+      const e = embedder();
+      await expect(refreshEmbeddings(root, docs(12), e.fn, { checkpointEvery: 4, lockWaitMs: 30 }))
+        .rejects.toBeInstanceOf(EmbeddingLockBusyError);
+      expect(e.total()).toBe(12);
+      expect(existsSync(cacheFile())).toBe(false);
+    } finally {
+      releaseFileLock(lock);
+    }
+  });
+
+  describe('the recall path never embeds more than a small bounded number of chunks inline', () => {
+    it('additive + waitForLock:false embeds at most HOOK_MAX_INLINE_CHUNKS and searches what it has', async () => {
+      const warm = docs(3);
+      await refreshEmbeddings(root, warm, embedder().fn);
+
+      const all = [...warm, ...docs(20, 3)];
+      const e1 = embedder();
+      const r1 = await refreshEmbeddings(root, all, e1.fn, { additive: true, waitForLock: false });
+      expect(HOOK_MAX_INLINE_CHUNKS).toBeLessThanOrEqual(16);
+      expect(e1.total()).toBe(HOOK_MAX_INLINE_CHUNKS);
+      expect(r1!.index.chunks).toHaveLength(3 + HOOK_MAX_INLINE_CHUNKS);
+      expect(embeddingCacheUsable(root)).toBe(true);                         // quality gate untouched
+      expect(Object.keys(onDisk().docs)).toHaveLength(3 + HOOK_MAX_INLINE_CHUNKS);
+
+      // Each later prompt takes another bounded bite until the corpus is caught up.
+      const e2 = embedder();
+      await refreshEmbeddings(root, all, e2.fn, { additive: true, waitForLock: false });
+      expect(e2.total()).toBe(HOOK_MAX_INLINE_CHUNKS);
+      const e3 = embedder();
+      const r3 = await refreshEmbeddings(root, all, e3.fn, { additive: true, waitForLock: false });
+      expect(e3.total()).toBe(20 - 2 * HOOK_MAX_INLINE_CHUNKS);
+      expect(r3!.index.chunks).toHaveLength(23);
+    });
+
+    it('an explicit maxInline wins; 0 embeds nothing and still serves the existing vectors', async () => {
+      const warm = docs(3);
+      await refreshEmbeddings(root, warm, embedder().fn);
+      const e = embedder();
+      const res = await refreshEmbeddings(root, [...warm, ...docs(5, 3)], e.fn, { additive: true, waitForLock: false, maxInline: 0 });
+      expect(e.total()).toBe(0);
+      expect(res!.index.chunks).toHaveLength(3);
+    });
+
+    it('callers that wait for the lock (dedup) and full refreshes keep the uncapped behaviour', async () => {
+      const warm = docs(3);
+      await refreshEmbeddings(root, warm, embedder().fn);
+      const e = embedder();
+      await refreshEmbeddings(root, [...warm, ...docs(20, 3)], e.fn, { additive: true, waitForLock: true });
+      expect(e.total()).toBe(20);
+    });
+
+    it('a lock-busy capped refresh persists nothing and a cold cache stays unusable', async () => {
+      const lock = embeddingCacheLockPath(root);
+      expect(acquireFileLock(lock, Date.now(), 60_000)).toBe(true);
+      try {
+        const e = embedder();
+        const res = await refreshEmbeddings(root, docs(20), e.fn, { additive: true, waitForLock: false });
+        expect(e.total()).toBe(HOOK_MAX_INLINE_CHUNKS);
+        expect(res!.index.chunks).toHaveLength(HOOK_MAX_INLINE_CHUNKS);
+      } finally {
+        releaseFileLock(lock);
+      }
+      expect(embeddingCacheUsable(root)).toBe(false);
+    });
   });
 });

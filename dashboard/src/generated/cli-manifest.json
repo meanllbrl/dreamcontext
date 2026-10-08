@@ -1052,7 +1052,7 @@
     },
     {
       "path": "embed",
-      "desc": "EXPERIMENTAL: manage the local embedding index used by hybrid recall",
+      "desc": "Manage the local embedding model and index used by hybrid recall (the default mode)",
       "args": [],
       "group": true
     },
@@ -1074,6 +1074,11 @@
         "--review-threshold",
         "--exclude"
       ]
+    },
+    {
+      "path": "embed ensure",
+      "desc": "Make hybrid recall engage: download the embedding model once and build this vault's index (what SessionStart, init and update start in the background)",
+      "args": []
     },
     {
       "path": "embed refresh",
@@ -2437,13 +2442,13 @@
     },
     {
       "path": "recall",
-      "desc": "Control memory recall mode (haiku / raw / hybrid / off)",
+      "desc": "Control memory recall mode (hybrid / raw / off)",
       "args": [],
       "group": true
     },
     {
       "path": "recall hybrid",
-      "desc": "EXPERIMENTAL: BM25 + local dense embeddings fused via RRF (no LLM call)",
+      "desc": "Use BM25 + local dense embeddings (the default)",
       "args": []
     },
     {
@@ -2453,12 +2458,12 @@
     },
     {
       "path": "recall on",
-      "desc": "Enable Haiku-powered recall (default)",
+      "desc": "Enable the default recall mode (hybrid) — alias for `recall hybrid`",
       "args": []
     },
     {
       "path": "recall raw",
-      "desc": "Use BM25 keyword search only (no LLM call)",
+      "desc": "Use BM25 keyword search only",
       "args": []
     },
     {

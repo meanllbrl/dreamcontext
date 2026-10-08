@@ -4,7 +4,7 @@ import { RECALL_FLOW_SPEC } from './flow-specs';
 import './RecallFlowSection.css';
 
 // The three stages of the read pipeline. Grounded in src/lib/recall.ts (BM25F),
-// recall-query-extractor.ts + haiku-recall-architecture.md (Haiku), and
+// src/lib/embeddings/hybrid.ts (local dense embeddings), and
 // src/cli/commands/snapshot.ts (the SessionStart snapshot assembly).
 const STAGES: { n: string; tag: string; title: string; body: string }[] = [
   {
@@ -16,10 +16,10 @@ const STAGES: { n: string; tag: string; title: string; body: string }[] = [
   },
   {
     n: '02',
-    tag: 'Intent recall',
-    title: 'The Haiku agent',
+    tag: 'Semantic recall',
+    title: 'Local embeddings',
     body:
-      'The smallest cloud agent reads your full prompt and a relevance-ranked corpus index, then returns only the 0–3 documents that are directly relevant — resolving intent across languages. If it is unavailable, the pipeline falls back to raw BM25.',
+      'A small multilingual embedding model runs on your machine and blends its semantic matches with the keyword ranking — so a paraphrase or a Turkish question still finds the English doc. Nothing is uploaded, and if the model or index is not ready the pipeline falls back to plain BM25.',
   },
   {
     n: '03',

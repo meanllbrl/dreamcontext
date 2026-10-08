@@ -3,7 +3,7 @@ import { sendJson, sendError } from '../middleware.js';
 import {
   getEmbedModelStatus,
   startEmbedModelDownload,
-  isEmbedModelDownloaded,
+  isEmbedModelComplete,
 } from '../../lib/embeddings/embedder.js';
 import { buildCorpus } from '../../lib/recall.js';
 import { refreshEmbeddings, embeddingCacheUsable, embeddingCacheChunkCount } from '../../lib/embeddings/store.js';
@@ -34,13 +34,17 @@ export async function handleEmbeddingModelStatus(
 /**
  * POST /api/embeddings/download — start (or retry) the model download and return
  * the current status. Idempotent: a ready/in-flight model is left as-is. Progress
- * is then polled via GET /api/embeddings/status.
+ * is then polled via GET /api/embeddings/status. The fetch is an opted-in load, so it
+ * runs under the machine-wide download lock (embedder.ts withModelDownloadLock) — it
+ * waits for, never races, a detached `embed ensure` — and a torn leftover is wiped first.
  */
 export async function handleEmbeddingModelDownload(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  const status = startEmbedModelDownload();
+  // `?repair=1`: wipe the model directory and fetch afresh (damaged files), same lock.
+  const repair = new URL(req.url ?? '/', 'http://localhost').searchParams.get('repair') === '1';
+  const status = startEmbedModelDownload({ repair });
   sendJson(res, 200, { ok: true, ...status });
 }
 
@@ -108,7 +112,8 @@ export async function handleEmbeddingIndexStatus(
 /**
  * POST /api/embeddings/index — build (or refresh) this vault's embedding cache in
  * the background, so hybrid recall can run instantly afterwards. Requires the model
- * to already be downloaded (so this never silently kicks the 113 MB fetch). Progress
+ * to already be fully on disk — graph AND weights — so this never silently kicks a fetch
+ * (a half-downloaded model would, unlocked, race `embed ensure`). Progress
  * is polled via GET /api/embeddings/index/status.
  */
 export async function handleEmbeddingIndexBuild(
@@ -118,7 +123,7 @@ export async function handleEmbeddingIndexBuild(
   contextRoot: string,
 ): Promise<void> {
   if (!contextRoot) { sendError(res, 400, 'no_vault', 'No vault selected.'); return; }
-  if (!isEmbedModelDownloaded()) {
+  if (!isEmbedModelComplete()) {
     sendError(res, 409, 'model_missing', 'Download the embedding model first.');
     return;
   }
@@ -146,7 +151,7 @@ export interface StartIndexBuildOpts {
  * door every build goes through, keyed by contextRoot in {@link indexRuns}. Returns the run
  * and whether THIS call started it. Never downloads the model: refreshEmbeddings only embeds
  * with a model already on disk (see embedder.ts's offline flag); callers check
- * `isEmbedModelDownloaded()` first. Errors land in the run's error state, never thrown.
+ * `isEmbedModelComplete()` first. Errors land in the run's error state, never thrown.
  */
 export function startIndexBuild(
   contextRoot: string,
@@ -196,8 +201,8 @@ export function startIndexBuild(
 }
 
 /**
- * The Assistant's own index, built without the owner doing anything: iff the model is on
- * disk and the vault's cache is not usable (never built, or invalidated by a model/version
+ * The Assistant's own index, built without the owner doing anything: iff the model is fully
+ * on disk (graph and weights — a half-fetched model is NOT on disk here) and the vault's cache is not usable (never built, or invalidated by a model/version
  * change), start a background build through {@link startIndexBuild}. Never downloads the
  * model, never blocks, and a second call during a build (or inside the error cooldown) starts
  * nothing. Returns whether a build was started.
@@ -207,7 +212,7 @@ export function ensureIndexBuilt(
   deps: { modelOnDisk?: () => boolean; usable?: (root: string) => boolean } & StartIndexBuildOpts = {},
 ): boolean {
   try {
-    const modelOnDisk = (deps.modelOnDisk ?? isEmbedModelDownloaded)();
+    const modelOnDisk = (deps.modelOnDisk ?? isEmbedModelComplete)();
     if (!modelOnDisk || (deps.usable ?? embeddingCacheUsable)(contextRoot)) return false;
     return startIndexBuild(contextRoot, deps).started;
   } catch {

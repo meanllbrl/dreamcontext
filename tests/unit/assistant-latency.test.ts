@@ -4,7 +4,7 @@
 //
 //   • --allowedTools 'Bash(dreamcontext assistant:*)' only on the Assistant, only under auto;
 //   • autonomy auto → ask respawns a live Assistant in place, without --allowedTools;
-//   • recall env: hybrid/raw for the Assistant and its haiku-vault delegations, else untouched;
+//   • recall env: hybrid/raw for the Assistant only; every other chat (delegated or not) keeps its vault's mode;
 //   • --effort: the Assistant's own (default medium); a delegated basic chat defaults to medium;
 //   • the delegation marker survives a respawn of the same conversation, and dies with the entry;
 //   • the Assistant's index is built in the background, once, never with the model absent.
@@ -30,7 +30,6 @@ const fakeHome = vi.hoisted(() => {
 
 const state = vi.hoisted(() => ({
   modelOnDisk: false,
-  vaultMode: 'haiku' as 'haiku' | 'raw' | 'hybrid' | 'off',
   transcripts: new Set<string>(),
   embedCalls: 0,
   releaseEmbed: null as null | (() => void),
@@ -105,6 +104,8 @@ vi.mock('../../src/lib/embeddings/embedder.js', async (importOriginal) => {
   return {
     ...real,
     isEmbedModelDownloaded: () => state.modelOnDisk,
+    // The routes ask the COMPLETE question (graph and weights); a fake model on disk is both.
+    isEmbedModelComplete: () => state.modelOnDisk,
     // A slow fake model: the build stays `building` until the test releases it.
     embedPassages: vi.fn(async (texts: string[]) => {
       state.embedCalls += 1;
@@ -117,11 +118,6 @@ vi.mock('../../src/lib/embeddings/embedder.js', async (importOriginal) => {
 vi.mock('../../src/server/routes/agent-spawn-shared.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/server/routes/agent-spawn-shared.js')>();
   return { ...real, claudeConversationExists: (id: string) => state.transcripts.has(id) };
-});
-
-vi.mock('../../src/cli/commands/sleep.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../src/cli/commands/sleep.js')>();
-  return { ...real, resolveRecallMode: () => state.vaultMode };
 });
 
 const {
@@ -190,7 +186,6 @@ function makeAssistantVault(autonomy: 'ask' | 'auto' | 'bypass', extra: Record<s
 beforeEach(() => {
   spawned.length = 0;
   state.modelOnDisk = false;
-  state.vaultMode = 'haiku';
   state.transcripts.clear();
   state.embedCalls = 0;
   state.releaseEmbed = null;
@@ -378,28 +373,21 @@ describe('autonomy auto → ask while the Assistant lives', () => {
 
 // ─── Recall env ─────────────────────────────────────────────────────────────────────
 
-describe('recallEnvFor — 4 modes × model present/absent × delegated/ordinary', () => {
-  for (const vaultRecallMode of ['haiku', 'raw', 'hybrid', 'off'] as const) {
-    for (const modelOnDisk of [true, false]) {
-      for (const delegated of [true, false]) {
-        const expected = delegated && vaultRecallMode === 'haiku'
-          ? { DREAMCONTEXT_RECALL_MODE: modelOnDisk ? 'hybrid' : 'raw' }
-          : {};
-        it(`${vaultRecallMode} vault, model ${modelOnDisk ? 'present' : 'absent'}, ${delegated ? 'delegated' : 'ordinary'} → ${JSON.stringify(expected)}`, () => {
-          expect(recallEnvFor({ isAssistant: false, delegated, vaultRecallMode, modelOnDisk })).toEqual(expected);
-        });
-      }
-    }
+describe('recallEnvFor — Assistant vs everyone else × model present/absent', () => {
+  for (const modelOnDisk of [true, false]) {
+    it(`a non-Assistant chat, model ${modelOnDisk ? 'present' : 'absent'} → {} (the vault's own mode stands)`, () => {
+      expect(recallEnvFor({ isAssistant: false, modelOnDisk })).toEqual({});
+    });
   }
 
-  it('the Assistant is hybrid with the model on disk, else raw — never haiku', () => {
-    expect(recallEnvFor({ isAssistant: true, delegated: false, vaultRecallMode: null, modelOnDisk: true }))
+  it('the Assistant is hybrid with the model on disk, else raw', () => {
+    expect(recallEnvFor({ isAssistant: true, modelOnDisk: true }))
       .toEqual({ DREAMCONTEXT_RECALL_MODE: 'hybrid' });
-    expect(recallEnvFor({ isAssistant: true, delegated: false, vaultRecallMode: null, modelOnDisk: false }))
+    expect(recallEnvFor({ isAssistant: true, modelOnDisk: false }))
       .toEqual({ DREAMCONTEXT_RECALL_MODE: 'raw' });
   });
 
-  it('at the spawn: the Assistant env carries it; a delegated haiku-vault chat does; an owner chat does not', () => {
+  it('at the spawn: the Assistant env carries it; a delegated chat and an owner chat do not', () => {
     makeAssistantVault('ask');
     state.modelOnDisk = true;
     expect(spawnChat({ mode: 'assistant' }).child.env.DREAMCONTEXT_RECALL_MODE).toBe('hybrid');
@@ -407,12 +395,9 @@ describe('recallEnvFor — 4 modes × model present/absent × delegated/ordinary
     expect(spawnChat({ mode: 'assistant' }).child.env.DREAMCONTEXT_RECALL_MODE).toBe('raw');
 
     const inherited = process.env.DREAMCONTEXT_RECALL_MODE;
-    state.vaultMode = 'haiku';
     state.modelOnDisk = true;
-    expect(spawnChat({ fromAssistant: true }).child.env.DREAMCONTEXT_RECALL_MODE).toBe('hybrid');
-    expect(spawnChat({ fromAssistant: false }).child.env.DREAMCONTEXT_RECALL_MODE).toBe(inherited);
-    state.vaultMode = 'raw';
     expect(spawnChat({ fromAssistant: true }).child.env.DREAMCONTEXT_RECALL_MODE).toBe(inherited);
+    expect(spawnChat({ fromAssistant: false }).child.env.DREAMCONTEXT_RECALL_MODE).toBe(inherited);
   });
 });
 
@@ -435,16 +420,15 @@ describe('the delegation marker', () => {
     }
   });
 
-  it('a --resume spawn of a delegated conversation inherits it (recall env + effort), with no URL flag', () => {
+  it('a --resume spawn of a delegated conversation inherits it (effort), with no URL flag', () => {
     state.transcripts.add(CONV);
     state.modelOnDisk = true;
     const first = spawnChat({ resumeId: CONV, fromAssistant: true });
-    expect(first.child.env.DREAMCONTEXT_RECALL_MODE).toBe('hybrid');
+    expect(flagValue(first.child, '--effort')).toBe('medium');
     first.child.emit('close', 0); // close …
 
     const again = spawnChat({ resumeId: CONV }); // … + resume the same id, no origin
     expect(flagValue(again.child, '--resume')).toBe(CONV);
-    expect(again.child.env.DREAMCONTEXT_RECALL_MODE).toBe('hybrid');
     expect(flagValue(again.child, '--effort')).toBe('medium');
   });
 

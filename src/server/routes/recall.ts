@@ -9,7 +9,6 @@ import {
   type RecallHit,
 } from '../../lib/recall.js';
 import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
-import { haikuRecall, makeClaudeExecutor } from '../../lib/recall-query-extractor.js';
 import { resolveRecallMode } from '../../cli/commands/sleep.js';
 import { sendJson, sendError } from '../middleware.js';
 
@@ -125,74 +124,6 @@ export async function handleRecallGet(
     const tookMs = Date.now() - started;
 
     sendJson(res, 200, { query, mode, tookMs, hits: hits.map(serializeHit) });
-  } catch (err) {
-    sendError(res, 500, 'recall_failed', err instanceof Error ? err.message : 'Recall failed');
-  }
-}
-
-/**
- * GET /api/recall/haiku?q=<query>&types=knowledge,task,...
- *
- * Intent-aware recall. Instead of BM25 keyword overlap, a single stateless
- * `claude --model haiku` call reads the whole corpus index and returns only the
- * 0–3 docs DIRECTLY relevant to the question (with a one-line reason each) —
- * resolving vague, cross-language, or noisy prompts that keyword search misses.
- *
- * This is a deliberate one-shot (Ask mode), not a per-keystroke search: it spends
- * a few seconds and a few tokens, so the UI showcases a staged loading state
- * while it runs. Degrades gracefully:
- *   - claude CLI missing / errors  → falls back to BM25, `mode: 'bm25'`
- *   - pure greeting/acknowledgment → `skip: true`, no hits
- *
- * The executor timeout (25s) is kept under the server's 30s socket timeout so the
- * call can never out-live its own response.
- */
-export async function handleRecallHaikuGet(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-  const query = (url.searchParams.get('q') ?? '').trim();
-
-  if (!query) {
-    sendJson(res, 200, { query: '', mode: 'haiku', skip: false, hits: [], tookMs: 0 });
-    return;
-  }
-
-  const requestedTypes = parseTypes(url.searchParams.get('types'));
-  const minLevel = parseLevel(url.searchParams.get('level'));
-
-  try {
-    const started = Date.now();
-    const result = haikuRecall(query, contextRoot, { executor: makeClaudeExecutor(25_000) });
-    const tookMs = Date.now() - started;
-
-    // Pure greeting — Haiku says there's nothing to recall.
-    if (result === 'skip') {
-      sendJson(res, 200, { query, mode: 'haiku', skip: true, hits: [], tookMs });
-      return;
-    }
-
-    // null = claude unavailable or errored → fall back to the proven BM25 path
-    // so Ask always returns grounded hits, even without the CLI installed.
-    if (result === null) {
-      const types = requestedTypes ?? ALL_TYPES;
-      const corpus = corpusFor(contextRoot, types, minLevel);
-      const hits = bm25Search(query, corpus, 4);
-      sendJson(res, 200, { query, mode: 'bm25', skip: false, tookMs, hits: hits.map(serializeHit) });
-      return;
-    }
-
-    // Haiku already filtered by relevance; honour an explicit type + level filter
-    // on top. Haiku picks from the whole corpus (it has no level notion), so the
-    // level gate is applied to its RESULT rather than its input.
-    let hits = requestedTypes
-      ? result.filter(h => requestedTypes.includes(h.doc.type))
-      : result;
-    if (minLevel !== null) hits = hits.filter(h => docLevel(h.doc) >= minLevel);
-    sendJson(res, 200, { query, mode: 'haiku', skip: false, tookMs, hits: hits.map(serializeHit) });
   } catch (err) {
     sendError(res, 500, 'recall_failed', err instanceof Error ? err.message : 'Recall failed');
   }
