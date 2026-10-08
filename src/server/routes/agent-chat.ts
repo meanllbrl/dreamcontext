@@ -866,6 +866,22 @@ const SWITCH_STALL_MS = Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS) > 0
   ? Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS)
   : 60_000;
 
+/**
+ * The turn a post-hoc switch resubmits when the refused turn is not one the owner's text can
+ * replay: a turn the CLI started itself (a background task or sub-agent finishing), or an owner
+ * turn that had already done work before the wall.
+ *
+ * Until 2026-10-08 such a refusal moved the pane and resubmitted NOTHING, so the restarted chat
+ * sat idle under "You've hit your session limit" with a free account behind it. Observed that
+ * day on six panes, goal-skill builds among them: the refusal landed on a builder's
+ * task-notification turn or right after a tool result, and each pane waited until the owner
+ * typed "devam et", one of them for 46 minutes. Replaying the owner's original text instead
+ * would be worse: forty minutes into a run it restarts the whole request.
+ */
+export const LIMIT_CONTINUE_TEXT =
+  'The previous turn was cut off by a Claude usage limit, and this chat has moved to another account. '
+  + 'Continue exactly where you stopped; do not redo finished work.';
+
 /** How long a chat's `claude` child may outlive its WebSocket to finish an in-flight turn.
  *
  *  A `claude -p --input-format stream-json` process whose stdin stays open waits for the
@@ -1455,6 +1471,10 @@ export function startChatSession(
    * do NOT set it — resubmitting one after a switch would replay a setting, not a message.
    */
   let lastSentText: string | null = null;
+  /** Whether the main agent has answered since `lastSentText` went out. A refusal after that
+   *  point cuts off WORK, not a request, so the switch resubmits `LIMIT_CONTINUE_TEXT` rather
+   *  than replaying the request from the top. */
+  let turnProgressed = false;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1573,6 +1593,7 @@ export function startChatSession(
       // A refused opening prompt is the worst one to lose: the user never typed it into a
       // composer they could scroll back to.
       lastSentText = submitPrompt;
+      turnProgressed = false;
       registry?.userSent(submitPrompt);
       child.stdin.write(JSON.stringify({
         type: 'user',
@@ -1604,6 +1625,7 @@ export function startChatSession(
   const writeOwnerTurn = (text: string): void => {
     openTurn();
     lastSentText = text;
+    turnProgressed = false;
     registry?.userSent(text);
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
@@ -2049,6 +2071,7 @@ export function startChatSession(
       // quota, and the main turn it belongs to is about to fail for the same reason.
       const limit = readLimitSignal(obj);
       if (limit) onLimitRejected(limit);
+      else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
       // turn's end the text has been answered, so a LATER refusal (a background task's turn,
       // which no user frame of ours opened) must not resubmit it.
@@ -2388,11 +2411,15 @@ export function startChatSession(
     if (listClaudeAccounts().length < 2) return;   // nothing to switch to
 
     // The turn that was refused may not be one WE sent: a background task finishing, or a
-    // sub-agent, starts a turn inside the CLI with no user frame from us. That turn has nothing
-    // to resubmit — but the pane still moves NOW, while it is idle, instead of leaving the next
-    // message to walk into the same wall first. (`lastSentText` is cleared at every turn end,
-    // so it can no longer hand an hours-old message to a refusal it has nothing to do with.)
-    const text = lastSentText;
+    // sub-agent, starts a turn inside the CLI with no user frame from us. Or it was ours but
+    // had already worked for a while. Neither is replayed (`lastSentText` is cleared at every
+    // turn end, and a request forty minutes in would start over); the restarted pane is told
+    // to continue instead (`LIMIT_CONTINUE_TEXT`), so it does not sit idle under the refusal.
+    // The Assistant keeps the old rule: its wakes are redelivered by their own owner, and a
+    // resubmitted turn would clear a taint only the owner may clear.
+    const text = isAssistant
+      ? lastSentText
+      : lastSentText && !turnProgressed ? lastSentText : LIMIT_CONTINUE_TEXT;
 
     // Onto the SAME serialisation chain as the pre-emptive path. A rejection frame and a
     // user frame arriving together must not both decide to switch: the gate is what makes

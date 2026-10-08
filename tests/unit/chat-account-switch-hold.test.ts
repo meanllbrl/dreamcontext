@@ -76,7 +76,7 @@ vi.mock('../../src/lib/claude-usage-probe.js', async (importOriginal) => {
   return { ...real, probeAccountUsage: probe, probeAccountForDecision: probe };
 });
 
-const { startChatSession } = await import('../../src/server/routes/agent-chat.js');
+const { startChatSession, LIMIT_CONTINUE_TEXT } = await import('../../src/server/routes/agent-chat.js');
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 
 class FakeWs extends EventEmitter {
@@ -171,7 +171,7 @@ describe('an owed account switch', () => {
     for (const m of switchMetas(ws)) expect(m).toMatchObject({ switched: true, accountId: 'spare', pendingTexts: ['go'] });
   });
 
-  it('a refusal of a turn WE did not send moves the pane — and resubmits nothing old', async () => {
+  it('a refusal of a turn WE did not send moves the pane and tells it to continue, never the old message (2026-10-08)', async () => {
     const { ws, child } = start();
     say(ws, 'an hour-old message');
     await vi.waitFor(() => expect(userFrames(child)).toEqual(['an hour-old message']));
@@ -181,8 +181,45 @@ describe('an owed account switch', () => {
     await vi.waitFor(() => expect(switchMetas(ws)).toHaveLength(1));
     const [meta] = switchMetas(ws);
     expect(meta).toMatchObject({ switched: true, reason: 'limit_hit', accountId: 'spare' });
-    expect(meta).not.toHaveProperty('pendingText');
-    expect(meta).not.toHaveProperty('pendingTexts');
+    // Without a turn to resubmit, the restarted pane sat idle under the refusal until the owner
+    // typed "devam et" (six panes on 2026-10-08, one for 46 minutes).
+    expect(meta.pendingTexts).toEqual([LIMIT_CONTINUE_TEXT]);
+    expect(meta.pendingTexts).not.toContain('an hour-old message');
+  });
+
+  it('a refusal after the turn already did work resubmits a continue, not the request from the top', async () => {
+    const { ws, child } = start();
+    say(ws, '/goal-skill build the whole thing');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['/goal-skill build the whole thing']));
+    // Forty minutes of tool calls, then the wall lands right after a tool result.
+    emit(child, { type: 'assistant', message: { model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] } });
+    emit(child, refusal);
+    emit(child, result);
+    await vi.waitFor(() => expect(switchMetas(ws).some((m) => m.turnInFlight === false)).toBe(true));
+    for (const m of switchMetas(ws)) expect(m.pendingTexts).toEqual([LIMIT_CONTINUE_TEXT]);
+  });
+
+  it('progress is per turn: a second message refused before any answer is replayed, not continued', async () => {
+    const { ws, child } = start();
+    say(ws, 'first');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['first']));
+    emit(child, { type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'done' }] } });
+    emit(child, result);
+    say(ws, 'second');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['first', 'second']));
+    emit(child, refusal);
+    await vi.waitFor(() => expect(switchMetas(ws)).toHaveLength(1));
+    expect(switchMetas(ws)[0].pendingTexts).toEqual(['second']);
+  });
+
+  it('a sub-agent answering does not count as the turn having progressed', async () => {
+    const { ws, child } = start();
+    say(ws, 'go');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['go']));
+    emit(child, { type: 'assistant', parent_tool_use_id: 'toolu_sub', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'sub' }] } });
+    emit(child, refusal);
+    await vi.waitFor(() => expect(switchMetas(ws)).toHaveLength(1));
+    expect(switchMetas(ws)[0].pendingTexts).toEqual(['go']);
   });
 
   it('a restart that never comes releases the held messages to this account, once, and stops moving', async () => {

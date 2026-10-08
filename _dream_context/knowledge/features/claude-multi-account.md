@@ -312,6 +312,18 @@ and moving before the limit lands did not exist at all.
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-08] A refused turn with nothing to replay is told to CONTINUE.** Observed on six
+  panes that day (goal-skill builds among them): the refusal landed on a CLI-started turn (a
+  background builder's task-notification) or right after a tool result. The pane moved to a free
+  account and then sat idle under "You've hit your session limit" until the owner typed "devam
+  et", one of them for 46 minutes. The 2026-10-04 rule ("moves the pane without resubmitting an
+  old message") was correct about the old message and wrong about leaving nothing. Now the switch
+  resubmits `LIMIT_CONTINUE_TEXT` when the refused turn was not ours OR was ours but had already
+  produced a main-agent frame (`turnProgressed`); replaying a request forty minutes in would
+  restart it. A refusal before any answer still replays the owner's text. The Assistant keeps the
+  old rule (wakes are redelivered by their owner; a resubmit would clear its taint).
+  Proof: `tests/unit/chat-account-switch-hold.test.ts` (mutation-checked: 2 red on the old line).
+
 - **[2026-10-04] A switch is never left owed.** Observed 16:41–16:54: a weekly limit landed on
   the preferred account and four panes earned the same refusal on every message for 13 minutes
   with three accounts at 3–14%. The client watcher `stop()`ed on the first `switched:false`
@@ -322,7 +334,8 @@ and moving before the limit lands did not exist at all.
   the client queue; a restart not performed within `SWITCH_STALL_MS` (60s, attached, at the
   boundary) releases the held messages to the current account, retracts the notice
   (`switch_stalled`) and stops moving that pane. `lastSentText` is cleared at turn end, so a
-  refused background-task turn moves the pane without resubmitting an old message. Decision
+  refused background-task turn moves the pane without resubmitting an old message (since
+  2026-10-08 it resubmits a "continue" instead, see above). Decision
   probes are shared per account (`probeAccountForDecision`) and an `unknown` probe falls back to a
   CURRENT disk cache — the racing probes were turning free accounts into `all_exhausted`.
   Known edge: a message sent in the milliseconds between the server sending the restart frame and
