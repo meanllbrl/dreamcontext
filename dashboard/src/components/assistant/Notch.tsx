@@ -60,7 +60,9 @@ import './notch.css';
  * A NOTIFICATION CENTER TOO. Collapsed, it also tells the owner what happened elsewhere (the
  * inbox, `GET /api/assistant/inbox`): a chat that finished off screen, an automation's unread
  * post, an automation that started, an account limit. Each drops a peek; all of them wait under
- * "Now" until seen, and a click lands in the window they are about.
+ * "Now" until seen, and a click lands in the window they are about. It is that even with no
+ * assistant created (owner, 2026-10-08): the shell seats it anyway (assistant.rs
+ * `notch_wanted`), and it is "Now" alone, with no conversation behind it.
  */
 
 export const ASSISTANT_VAULT = '__assistant__';
@@ -480,6 +482,11 @@ export function Notch() {
   /** The panel was summoned by the hotkey for a voice take: it folds once the words are sent. */
   const voiceSummonRef = useRef(false);
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
+  /** The assistant was created. Without one the notch is a notification center only (owner,
+   *  2026-10-08): no Chat tab, no conversations, no pop-out, no listening state. */
+  const hasAssistant = !!status?.exists;
+  const hasAssistantRef = useRef(hasAssistant);
+  hasAssistantRef.current = hasAssistant;
 
   const startSession = useCallback((conversationId: string | null) => {
     const id = conversationId ?? crypto.randomUUID();
@@ -492,31 +499,35 @@ export function Notch() {
     setSession(cs);
   }, []);
 
-  // Boot: who am I, and resume my conversation.
+  /** Who am I, and resume my conversation. With no assistant the notch is notifications only:
+   *  no session, and the wizard's wake (`assistant://enabled`) asks again. */
+  const loadStatus = useCallback(async (alive: () => boolean = () => true) => {
+    // The remembered chat defaults live server-side; a fresh notch window has an empty
+    // localStorage until this lands, and the session below reads them.
+    await initAgentSettingsFromServer();
+    const res = await fetch('/api/assistant/status');
+    const st = await res.json() as AssistantStatus;
+    if (!alive()) return;
+    setStatus(st);
+    if (st.config?.autonomy) setAutonomy(st.config.autonomy);
+    profileRef.current = {
+      model: st.config?.model || ASSISTANT_MODEL,
+      effort: st.config?.effort || ASSISTANT_EFFORT,
+    };
+    if (st.exists && st.config && !sessionRef.current) startSession(st.config.conversationId);
+  }, [startSession]);
+
+  // Boot.
   useEffect(() => {
     let alive = true;
     void (async () => {
-      try {
-        // The remembered chat defaults live server-side; a fresh notch window has an empty
-        // localStorage until this lands, and the session below reads them.
-        await initAgentSettingsFromServer();
-        const res = await fetch('/api/assistant/status');
-        const st = await res.json() as AssistantStatus;
-        if (!alive) return;
-        setStatus(st);
-        if (st.config?.autonomy) setAutonomy(st.config.autonomy);
-        profileRef.current = {
-          model: st.config?.model || ASSISTANT_MODEL,
-          effort: st.config?.effort || ASSISTANT_EFFORT,
-        };
-        if (st.exists && st.config) startSession(st.config.conversationId);
-      } catch { /* server not up yet — the pill stays empty */ }
+      try { await loadStatus(() => alive); } catch { /* server not up yet — the pill stays empty */ }
       const g = await readGeometry();
       // The first placement is not a motion: it lands in one frame.
       if (alive) { setGeo(g); void seat(false, g, 0); }
     })();
     return () => { alive = false; };
-  }, [startSession]);
+  }, [loadStatus]);
 
   // The session outlives every collapse; only the window going away ends it.
   useEffect(() => () => { sessionRef.current?.dispose(); }, []);
@@ -927,7 +938,8 @@ export function Notch() {
   // The OWNER opened it (a click, the hotkey): it never folds by itself. `from` is the island
   // as it was drawn before the open (the hotkey measures it before its flushSync).
   const expand = useCallback((to?: 'now' | 'chat', from?: IslandRect) => {
-    setTab(to ?? (waitingRef.current ? 'now' : 'chat'));
+    // Without an assistant there is no conversation: the notch only has "Now".
+    setTab(!hasAssistantRef.current ? 'now' : to ?? (waitingRef.current ? 'now' : 'chat'));
     setPeek(null);
     setExpanded(true);
     setAttention(false);
@@ -1105,12 +1117,14 @@ export function Notch() {
         const fn = await listen<{ enabled: boolean }>('assistant://enabled', (e) => {
           switchedOff = e.payload?.enabled === false;
           if (switchedOff) { setExpanded(false); stillIsland('closed'); }
+          // The wizard just created the assistant under a notch that was notifications only.
+          else if (!sessionRef.current) void loadStatus().catch(() => { /* the next wake retries */ });
         });
         if (cancelled) fn(); else unlisten = fn;
       } catch { /* no runtime */ }
     })();
     return () => { cancelled = true; unlisten?.(); };
-  }, [stillIsland]);
+  }, [stillIsland, loadStatus]);
 
   // Hotkey edges from Rust (assistant://hotkey) — the ONE chord that summons the notch AND
   // talks to it. Hold: press summons and opens the mic, release closes it (a tap just opens
@@ -1381,7 +1395,7 @@ export function Notch() {
     signIn: async () => { /* sign in from a project window */ },
   }), [startSession]);
 
-  const name = status?.config?.name ?? 'Assistant';
+  const name = status && !status.exists ? 'dreamcontext' : status?.config?.name ?? 'Assistant';
   const bubbles = pillBubbles(rollup);
   const label = pillLabel(rollup);
   // Asking, the pill says WHO in place of the assistant's own name: "acme needs you".
@@ -1485,6 +1499,7 @@ export function Notch() {
         <NotchPeek
           ref={peekRef}
           item={peekNow}
+          assistant={hasAssistant}
           onOpenChat={() => void expand(peekNow.kind === 'summary' ? undefined : 'chat')}
           onDone={() => {
             const id = peekId(peekNow);
@@ -1502,18 +1517,24 @@ export function Notch() {
             <button type="button" role="tab" aria-selected={tab === 'now'} className="dc-notch__tab" onClick={() => { setTab('now'); setConvosOpen(false); }}>
               Now{nowCount > 0 && <span className="dc-notch__count">{nowCount}</span>}
             </button>
-            <button type="button" role="tab" aria-selected={tab === 'chat'} className="dc-notch__tab" onClick={() => { setTab('chat'); window.setTimeout(() => sessionRef.current?.focus(), 0); }}>
-              Chat
-            </button>
+            {hasAssistant && (
+              <button type="button" role="tab" aria-selected={tab === 'chat'} className="dc-notch__tab" onClick={() => { setTab('chat'); window.setTimeout(() => sessionRef.current?.focus(), 0); }}>
+                Chat
+              </button>
+            )}
           </div>
           <span className="dc-notch__spacer" />
-          <button type="button" className="dc-notch__action" aria-expanded={convosOpen} onClick={() => setConvosOpen((v) => !v)} title="Earlier conversations">
-            Conversations ▾
-          </button>
-          <button type="button" className="dc-notch__action" onClick={newConversation} title="Start fresh — this one stays in Conversations">＋</button>
+          {hasAssistant && (
+            <>
+              <button type="button" className="dc-notch__action" aria-expanded={convosOpen} onClick={() => setConvosOpen((v) => !v)} title="Earlier conversations">
+                Conversations ▾
+              </button>
+              <button type="button" className="dc-notch__action" onClick={newConversation} title="Start fresh — this one stays in Conversations">＋</button>
+            </>
+          )}
           {popped
             ? <button type="button" className="dc-notch__action dc-notch__dock" onClick={dock} title="Put it back in the notch">Dock</button>
-            : <button type="button" className="dc-notch__action dc-notch__popout" onClick={popOut} title="Open as a window">Pop out</button>}
+            : hasAssistant && <button type="button" className="dc-notch__action dc-notch__popout" onClick={popOut} title="Open as a window">Pop out</button>}
         </div>
         {convosOpen && (
           <ConversationMenu
@@ -1543,14 +1564,14 @@ export function Notch() {
           />
           {handoffs.length > 0 && <HandoffList handoffs={handoffs} onAnswered={dropRow} onDismiss={clearHandoff} />}
           {glance.length === 0 && proposals.length === 0 && handoffs.length === 0 && inboxCount === 0 && inbox.running.length === 0 && (
-            <p className="dc-notch__empty">Nothing running and nothing waiting on you. Ask {name} to start something.</p>
+            <p className="dc-notch__empty">Nothing running and nothing waiting on you.{hasAssistant && ` Ask ${name} to start something.`}</p>
           )}
         </div>
         <div className="dc-notch__chat" ref={hostRef} hidden={tab !== 'chat' || convosOpen} />
         {/* While the mic is open the notch says so, unmistakably (owner, 2026-10-04). */}
-        <ListeningOverlay vault={ASSISTANT_VAULT} avatar={status?.avatar ?? null} name={name} mode={hotkeyMode} />
-        {!status?.exists && status && (
-          <p className="dc-notch__empty">Create the Assistant from the Launcher first.</p>
+        {hasAssistant && <ListeningOverlay vault={ASSISTANT_VAULT} avatar={status?.avatar ?? null} name={name} mode={hotkeyMode} />}
+        {status && !hasAssistant && (
+          <p className="dc-notch__empty">Set up the Assistant from the Launcher to talk to it here.</p>
         )}
       </div>
 

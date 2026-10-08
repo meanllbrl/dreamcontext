@@ -44,9 +44,12 @@ export function peekItem(chats: GlanceChat[], handoffs: Handoff[], finishedId: s
 
 export const NotchPeek = forwardRef<HTMLDivElement, {
   item: PeekItem;
+  /** An assistant exists to talk to. Without one the notch only notifies: no "ask" buttons,
+   *  and opening it shows everything waiting. */
+  assistant: boolean;
   onOpenChat: () => void;
   onDone: () => void;
-}>(function NotchPeek({ item, onOpenChat, onDone }, ref) {
+}>(function NotchPeek({ item, assistant, onOpenChat, onDone }, ref) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const answer = async (sessionId: string, ask: GlanceChat['ask'], choice: 'allow' | 'deny') => {
@@ -80,7 +83,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
           {item.chat.ask.text && <p className="dc-peek__text">{item.chat.ask.text}</p>}
           <div className="dc-glance__actions">
             <button type="button" className="dc-glance__btn dc-glance__btn--primary" onClick={() => { openChat(item.chat.vault, item.chat.sessionId); onDone(); }}>Answer in {item.chat.vault}</button>
-            <button type="button" className="dc-peek__quiet" onClick={onOpenChat}>Ask the assistant</button>
+            {assistant && <button type="button" className="dc-peek__quiet" onClick={onOpenChat}>Ask the assistant</button>}
           </div>
         </>
       )}
@@ -93,7 +96,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
           {item.handoff.lastText && <p className="dc-peek__text">{item.handoff.lastText}</p>}
           <div className="dc-glance__actions">
             <button type="button" className="dc-glance__btn dc-glance__btn--primary" onClick={() => { openChat(item.handoff.vault, item.handoff.sessionId); onDone(); }}>Open {item.handoff.vault}</button>
-            <button type="button" className="dc-peek__quiet" onClick={onOpenChat}>Follow up</button>
+            {assistant && <button type="button" className="dc-peek__quiet" onClick={onOpenChat}>Follow up</button>}
             {handoffPhase(item.handoff) === 'closed' && (
               <button type="button" className="dc-peek__quiet" onClick={() => { dismissHandoff(item.handoff.sessionId); onDone(); }}>Clear</button>
             )}
@@ -151,7 +154,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
       )}
       {item.kind === 'summary' && (
         <>
-          {item.chats.length === 0 && item.handoffs.length === 0 && !item.inbox && !item.running?.length && <p className="dc-peek__line dc-peek__idle">All quiet. Hold the hotkey to talk.</p>}
+          {item.chats.length === 0 && item.handoffs.length === 0 && !item.inbox && !item.running?.length && <p className="dc-peek__line dc-peek__idle">{assistant ? 'All quiet. Hold the hotkey to talk.' : 'All quiet.'}</p>}
           {!!item.running?.length && (
             <div className="dc-peek__running" aria-label="Automations running">
               {item.running.slice(0, 5).map((r) => (
@@ -175,7 +178,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
               </li>
             ))}
           </ul>
-          <button type="button" className="dc-peek__quiet dc-peek__open" onClick={onOpenChat}>Open the assistant ↵</button>
+          <button type="button" className="dc-peek__quiet dc-peek__open" onClick={onOpenChat}>{assistant ? 'Open the assistant ↵' : 'See everything ↵'}</button>
         </>
       )}
     </div>

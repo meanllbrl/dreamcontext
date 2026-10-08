@@ -139,6 +139,14 @@ pub fn assistant_enabled() -> bool {
     assistant_exists() && read_cfg().ok().flatten().map(|c| c.enabled).unwrap_or(true)
 }
 
+/// The notch is on screen: the assistant is on, OR it was never created. Without an assistant
+/// the notch is still the notification center (finished chats, permissions, automation posts,
+/// account notices), just with no conversation and no hotkey (owner, 2026-10-08). Only the
+/// owner's off switch on an assistant they created takes it away.
+pub fn notch_wanted() -> bool {
+    !assistant_exists() || assistant_enabled()
+}
+
 /// Parse the config's physical `KeyboardEvent.code` + modifier names into a Shortcut.
 /// A chord without a modifier is refused — it would fire on every keystroke in every app.
 fn shortcut_from_config() -> Result<Option<(Shortcut, String)>, String> {
@@ -559,6 +567,9 @@ pub fn assistant_set_enabled<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Re
 /// Show the notch (after the wizard's "Wake up"), registering the hotkey too.
 #[tauri::command]
 pub fn assistant_wake<R: Runtime>(app: AppHandle<R>) -> Result<HotkeyStatus, String> {
+    // A notch already up without an assistant (notifications only) is not rebuilt; this tells
+    // it the assistant now exists, so it loads it and starts the conversation.
+    let _ = app.emit_to(NOTCH_LABEL, "assistant://enabled", serde_json::json!({ "enabled": true }));
     ensure_notch(&app)?;
     Ok(apply_hotkey(&app))
 }
@@ -585,7 +596,8 @@ fn apply_seat<R: Runtime>(app: &AppHandle<R>, window: bool) {
     // `window-seat` / `clear` preset after the frame lands (src/frames.rs).
 }
 
-/// Boot: remember the port; if the assistant exists, register its hotkey and seat the notch.
+/// Boot: remember the port; register the hotkey if the assistant is on, and seat the notch
+/// whenever it is wanted (`notch_wanted`: also with no assistant at all).
 pub fn setup<R: Runtime>(app: &AppHandle<R>, port: u16) {
     app.manage(AssistantState { port, current: Mutex::new(None) });
     // Pop out / dock. An event rather than a command so no other file has to register it. Any
@@ -620,6 +632,8 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>, port: u16) {
     let _ = app.run_on_main_thread(move || watch_hover(&h));
     if assistant_enabled() {
         let _ = apply_hotkey(app);
+    }
+    if notch_wanted() {
         let _ = ensure_notch(app);
     }
 }
