@@ -1,5 +1,20 @@
 [
   {
+    "id": "rel_PJSnoLce",
+    "version": "0.30.3",
+    "date": "2026-10-08",
+    "summary": "Patch on 0.30.2 (f8ebe991..52c629ab). CHAT: talk to an automation agent from Chat, and Claude can call automations as sub-agents (0afa91fc); notices speak in pictures and the eco handoff shows itself while it runs (044407df). RECALL: whiteboards become the tenth channel (2a513b54) and the rest of core the eleventh (ee4cc492; note: a core-only brain now pays one Haiku recall call per prompt). AUTOMATIONS/ACCOUNTS: sandboxed-account runs get the machine MCP servers by reference (35371143), the channel follows rows that grow (e4aab5c1), one signed-out reading no longer eliminates an account (cf2a3641). WHITEBOARDS: open tabs and groups survive a relaunch (e8e9e25b), app/html insights fill their card (938b7b58). HANDS-FREE (still unannounced, hidden by eae84dcd): the cloud chat runs only inside the trip root and agents cannot touch the codespace setup checkout (top dir 0700, compromise detection + quarantine, go refuses until teardown+setup) (f72fbc2a). Release gate fixes: stale revoke test, feed folds 0.30.2+0.30.3 into the 0.30.0 story, cloud-chat test flake, hook debt tests pinned to raw recall.",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "hands-free-cloud-mode",
+      "whiteboards"
+    ],
+    "tasks": [
+      "hands-free-mode-moves-the-active-project-to-a-cloud-machine-the-phone-drives-it-through-a-link-and-password-and-return-brings-every-diff-and-session-back-to-the-laptop"
+    ]
+  },
+  {
     "id": "rel_VKWGjvvt",
     "version": "0.30.2",
     "date": "2026-10-07",
