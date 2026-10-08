@@ -1354,6 +1354,7 @@ describe('hook pre-tool-use (integration)', () => {
 describe('hook user-prompt-submit (integration)', () => {
   let tmpDir: string;
   let ctx: string;
+  let savedRecallMode: string | undefined;
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
@@ -1364,11 +1365,20 @@ describe('hook user-prompt-submit (integration)', () => {
     // the live npm registry and flake against the 5s test timeout. The nudge
     // itself is covered by version-nudge.test.ts with a pre-seeded cache.
     process.env.DREAMCONTEXT_VERSION_CHECK = '0';
+    // These tests are about sleep debt, not recall. Since core/*.md became a recall channel the
+    // scaffold's soul file makes the corpus non-empty, so the default `haiku` mode would make a
+    // real `claude --model haiku` call per prompt (network, tokens, ~4 s). `raw` keeps the recall
+    // block itself running (BM25 over that corpus) with no LLM call; the spawned call's env
+    // spreads process.env, so it is pinned too.
+    savedRecallMode = process.env.DREAMCONTEXT_RECALL_MODE;
+    process.env.DREAMCONTEXT_RECALL_MODE = 'raw';
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.DREAMCONTEXT_VERSION_CHECK;
+    if (savedRecallMode === undefined) delete process.env.DREAMCONTEXT_RECALL_MODE;
+    else process.env.DREAMCONTEXT_RECALL_MODE = savedRecallMode;
   });
 
   it('silent when debt < 4 (no output)', () => {
