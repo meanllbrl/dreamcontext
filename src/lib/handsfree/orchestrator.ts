@@ -36,7 +36,7 @@ import { stageGlobalSet, vaultNameForPath } from './global-set.js';
 import { addVault, listVaults, VaultError } from '../vaults.js';
 import {
   acquireTripRunLock, createJournal, journalPath, journalStatus, loadJournal, rollbackJournal, runJournal, tripDir as tripDirOf, type Journal,
-  type JournalOp, type OpHandlers, backupDir, conflictsDir,
+  type JournalOp, type OpHandler, type OpHandlers, backupDir, conflictsDir,
 } from './journal.js';
 import {
   countUptime, ensureTransferSecret, readConfig, readCredentials, RETURN_RESERVE_MINUTES, updateConfig, updateCredentials, usedCoreMinutes,
@@ -48,9 +48,9 @@ import {
 } from './manifest.js';
 import { NpmPinError, PIN_PATH, pinFile, registryPin, type VersionPin } from './npm-pin.js';
 import { readPack, writePack } from './pack.js';
-import { atomicWriteFile, checkRelPath } from './paths.js';
+import { atomicWriteFile, checkRelPath, PathGuardError } from './paths.js';
 import { coresFor, gitBlobSha, ProviderError, ProviderQuotaError, type CloudProvider, type MachineInfo, type TemplateRepo } from './provider.js';
-import { computeScope, dirBytes, estimateRepoBytes, goManifestFor, type TripScope } from './scope.js';
+import { computeScope, dirBytes, estimateRepoBytes, goManifestFor, lstatKind, transcriptDirKind, type TripScope } from './scope.js';
 import { isSessionStatePath, ROSTER_REL, SESSION_MAP_REL, sessionMergeHandlers, TITLES_REL, type RosterIO, type RosterMergeReport } from './session-merge.js';
 import { beginGoing, handsfreeDir, readTripState, setPhase, updateTripState, type TripState } from './trip-state.js';
 import { UNKNOWN_WORK_ID, type RunningWork, type TurnControl } from './turns.js';
@@ -1528,7 +1528,7 @@ export interface Receipt {
   /** The receipts of earlier passes of this Return (a second delta return after an epoch move). */
   previousPasses?: Receipt[];
   /** Roots the cloud sent that are no destination on this laptop (ignored, never written). */
-  ignoredRoots: Array<{ rootId: string; reason: string }>;
+  ignoredRoots: IgnoredRoot[];
   deletedInCloudReason: string;
   conflictsDir: string;
   backupDir: string;
@@ -1573,7 +1573,92 @@ function withPassScopes(op: Pick<JournalOp, 'id' | 'kind' | 'params' | 'writes'>
   return op;
 }
 
+/** A cloud root that is no destination here, or (D28) a transcripts root the laptop could not create or write. */
+export interface IgnoredRoot {
+  rootId: string;
+  reason: string;
+  /** D28: the files that did not come home (relative to the root). */
+  notReturned?: string[];
+  /** D28: where their bytes are kept (a dreamcontext pack under trips/<trip>/not-returned/, never cleaned up). */
+  keptAt?: string;
+}
+
+/** D28: carried on every op of a transcripts root (dir.ensure, files.preserve, files.apply, root.resweep). */
+interface TranscriptsTag { rootId: string; root: string; files: string[]; pack: string; keep: string }
+interface SkippedRoot { reason: string; files: string[]; keptAt: string | null }
+
+/**
+ * D28: skip a transcripts root: its downloaded pack is COPIED to `<keep>.pack` (outside the pass
+ * download dir, which a re-planned pass clears; nothing ever cleans `not-returned/`) and the
+ * decision is persisted at `<keep>.json`, so every later op of the root (and Resume) skips too.
+ */
+function keepSkippedRoot(t: TranscriptsTag, reason: string): SkippedRoot {
+  const prior = readJsonSafe<SkippedRoot>(`${t.keep}.json`);
+  if (prior) return prior;
+  mkdirSync(dirname(t.keep), { recursive: true });
+  let keptAt: string | null = null;
+  if (existsSync(t.pack)) {
+    keptAt = `${t.keep}.pack`;
+    if (!existsSync(keptAt)) copyFileSync(t.pack, keptAt);
+  }
+  const s: SkippedRoot = {
+    reason: `${reason}; not returned: ${t.files.length ? t.files.join(', ') : 'nothing'}${keptAt ? `; kept in ${keptAt}` : ''}`,
+    files: t.files, keptAt,
+  };
+  atomicWriteFile(`${t.keep}.json`, JSON.stringify(s, null, 2) + '\n', 0o600);
+  return s;
+}
+
+const DEST_DIR_ERRNO = new Set(['ENOENT', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EACCES', 'EPERM', 'ELOOP', 'EROFS', 'ENAMETOOLONG']);
+const DEST_DIR_GUARDS = new Set(['parent_escapes', 'parent_not_dir', 'parent_spelling', 'parent_symlink', 'symlink_loop']);
+/** D28: a failure tied to the destination dir (not to the payload's content). */
+function isDestinationDirError(err: unknown): boolean {
+  if (err instanceof PathGuardError) return DEST_DIR_GUARDS.has(err.reason);
+  if (err instanceof HandsfreeError) return err.code === 'preflight';
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && DEST_DIR_ERRNO.has(code);
+}
+
+/**
+ * D28: an op of a transcripts root never throws out of the Return for a destination reason: it
+ * records `{ skipped }` (the op is done, so Resume never retries it; its undo still runs at Roll
+ * back from its own backups) and the root's later ops skip too. Code roots carry no tag.
+ */
+function transcriptsSkippable(h: OpHandler): OpHandler {
+  const tagOf = (op: JournalOp) => (op.params as { transcripts?: TranscriptsTag }).transcripts;
+  return {
+    ...h,
+    ...(h.isDone ? {
+      isDone: async (op: JournalOp) => {
+        const t = tagOf(op);
+        if (!t) return h.isDone!(op);
+        if (readJsonSafe<SkippedRoot>(`${t.keep}.json`)) return false;
+        try { return await h.isDone!(op); } catch { return false; }
+      },
+    } : {}),
+    apply: async (op: JournalOp) => {
+      const t = tagOf(op);
+      if (!t) return h.apply(op);
+      const prior = readJsonSafe<SkippedRoot>(`${t.keep}.json`);
+      if (prior) return { skipped: prior, created: [] };
+      try {
+        return await h.apply(op);
+      } catch (err) {
+        if (!isDestinationDirError(err)) throw err;
+        const s = keepSkippedRoot(t, `the transcript dir ${t.root} could not be ${op.kind === 'dir.ensure' ? 'created' : 'written'} on this laptop (${(err as Error).message})`);
+        return { skipped: s, created: (err as { created?: string[] }).created ?? [] };
+      }
+    },
+  };
+}
+
 function returnOpsHandlers(env: HandsfreeEnv, dir: string): OpHandlers {
+  const h = returnOpsHandlersRaw(env, dir);
+  for (const k of ['dir.ensure', 'files.preserve', 'files.apply', 'root.resweep']) h[k] = transcriptsSkippable(h[k]);
+  return h;
+}
+
+function returnOpsHandlersRaw(env: HandsfreeEnv, dir: string): OpHandlers {
   type P = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
   return {
     ...gitOpHandlers(env.run, { tripDir: dir }),
@@ -1593,13 +1678,35 @@ function returnOpsHandlers(env: HandsfreeEnv, dir: string): OpHandlers {
       },
     },
     'dir.ensure': {
-      // A new worktree's transcript dir (wire v1.1): created, and removed again by Roll back when still empty.
-      isDone: async (op) => existsSync((op.params as P).path),
+      // A transcript dir the laptop does not have yet (a new worktree's, wire v1.1, or a manifest
+      // root never opened here, smoke #6): created, and removed again by Roll back when still empty.
+      // r24/r25: the configured projects dir (`base`) is trusted and followed even when it is a
+      // link; below it, lstat only: a link or a file there is never taken for the dir. Planning
+      // already skipped such a root, so this throws only for a link created after planning.
+      isDone: async (op) => {
+        const p = op.params as P;
+        return transcriptDirKind(p.path as string, (p.base as string | undefined) ?? dirname(p.path as string)) === 'dir';
+      },
       apply: async (op) => {
+        const p = op.params as P;
+        const path = p.path as string;
+        const base = (p.base as string | undefined) ?? dirname(path);
+        if (transcriptDirKind(path, base) === 'other') {
+          throw new HandsfreeError('preflight', `${path} is not a real directory under ${base} on this laptop (a link or a file appeared there after the Return was planned); remove it, then Resume`);
+        }
         const created: string[] = [];
-        let cur = (op.params as P).path as string;
-        while (!existsSync(cur)) { created.unshift(cur); cur = dirname(cur); }
-        for (const d of created) mkdirSync(d);
+        let cur = path;
+        // Missing segments, the base's own missing ancestors included (lstat of a path through
+        // the trusted base follows it; the base itself, when a link, is an existing stop).
+        while (lstatKind(cur) === 'missing') { created.unshift(cur); cur = dirname(cur); }
+        const made: string[] = [];
+        try {
+          for (const d of created) { mkdirSync(d); made.push(d); }
+        } catch (err) {
+          // D28: what this op did create rides on the error, so a skipped op's undo removes it.
+          Object.assign(err as object, { created: made });
+          throw err;
+        }
         return { created };
       },
       undo: async (op) => {
@@ -1645,6 +1752,7 @@ async function planReturnPass(env: HandsfreeEnv, goM: GoManifest, dir: string, p
   const trip = goM.tripId;
   const ops: Array<Pick<JournalOp, 'id' | 'kind' | 'params' | 'writes'>> = [];
   const meta: PassMeta = { repos: [], files: [], resweep: [], ignored: [] };
+  const transcriptTags = new Map<string, TranscriptsTag>();
   const linkRels = new Map<string, Set<string>>();
   const scopes = new Map<string, Set<string>>();
   const addLinks = (rootId: string, rels: Iterable<string>) => {
@@ -1766,7 +1874,6 @@ async function planReturnPass(env: HandsfreeEnv, goM: GoManifest, dir: string, p
     if (goM.roots.some((r) => r.rootId === entry.rootId)) spec = rootFor(goM, entry.rootId);
     else if (extra) {
       spec = { rootId: entry.rootId, kind: 'transcripts', absPath: extra, localPath: extra };
-      ops.push({ id: `dir:${entry.rootId}`, kind: 'dir.ensure', writes: true, params: { path: extra } });
     } else {
       // Not a root of this trip and not a worktree this Return creates: never a destination.
       meta.ignored.push({ rootId: entry.rootId, reason: 'not a root of this trip' });
@@ -1775,6 +1882,33 @@ async function planReturnPass(env: HandsfreeEnv, goM: GoManifest, dir: string, p
     const root = spec.localPath;
     const startM = readManifestFile(join(dir, 'agreed', `${entry.rootId}.files.json`)) ?? new Map();
     const cloudM = manifestFromJSON(entry.manifest);
+    const packPath = join(pdir, `${entry.rootId}.pack`);
+    let ensureDir = false;
+    let tag: TranscriptsTag | undefined;
+    if (spec.kind === 'transcripts') {
+      // D28: a transcripts root the laptop cannot create or write never stops the Return. Every
+      // op of the root carries this tag; a destination failure skips the root (kept copy below).
+      tag = {
+        rootId: entry.rootId, root,
+        files: [...cloudM.keys()].filter((p) => !sameContent(startM.get(p), cloudM.get(p))).sort(),
+        pack: packPath,
+        keep: join(dir, 'not-returned', `pass-${pass}-${entry.rootId}-${randomBytes(4).toString('hex')}`),
+      };
+      transcriptTags.set(entry.rootId, tag);
+      // What is at the transcript dir NOW (r24/r25: the configured projects dir is trusted, lstat
+      // below it): a link (even a dangling one) or a file there is never written through: no
+      // mkdir at it, no realpath into its target (AC10). The root is skipped, its files named as
+      // not returned and kept; the rest of the Return goes on.
+      const at = transcriptDirKind(root, projectsDir(env));
+      if (at === 'other') {
+        const s = keepSkippedRoot(tag, `the transcript dir ${root} is not a real directory on this laptop (a link, a file, or under a dangling link): nothing was written through it`);
+        meta.ignored.push({ rootId: entry.rootId, reason: s.reason, notReturned: s.files, ...(s.keptAt ? { keptAt: s.keptAt } : {}) });
+        continue;
+      }
+      // Missing here (a new worktree's dir, wire v1.1, or a manifest root never opened here,
+      // smoke #6): created first when the cloud holds something, journaled so Roll back removes it.
+      ensureDir = at === 'missing' && (!!extra || cloudM.size > 0);
+    }
     const include = readJsonSafe<{ include?: string[] }>(join(dir, 'scope.json'))?.include ?? [];
     const { manifest: laptopNow } = await laptopManifest(env, spec, include, startM);
     const plan = planNonGitReturn(startM, laptopNow, cloudM, entry.refused.map((r) => r.path));
@@ -1796,8 +1930,8 @@ async function planReturnPass(env: HandsfreeEnv, goM: GoManifest, dir: string, p
         transcriptCopies.push(c.path);
       }
     }
-    const packPath = join(pdir, `${entry.rootId}.pack`);
     if (!existsSync(packPath)) await packFile(packPath, root, []);
+    if (ensureDir) ops.push({ id: `dir:${entry.rootId}`, kind: 'dir.ensure', writes: true, params: { path: root, base: projectsDir(env), transcripts: tag } });
     if (sessionPaths.length) {
       const cloudDir = join(pdir, 'session', entry.rootId);
       await extractFromPack(packPath, new Set(sessionPaths), cloudDir, capFor(cloudM));
@@ -1813,11 +1947,11 @@ async function planReturnPass(env: HandsfreeEnv, goM: GoManifest, dir: string, p
       }
     }
     if (transcriptCopies.length) {
-      ops.push({ id: `files:${entry.rootId}#preserve`, kind: 'files.preserve', writes: false, params: { root, paths: transcriptCopies, conflictsDir: conflictsDir(dir, entry.rootId) } });
+      ops.push({ id: `files:${entry.rootId}#preserve`, kind: 'files.preserve', writes: false, params: { root, paths: transcriptCopies, conflictsDir: conflictsDir(dir, entry.rootId), ...(tag ? { transcripts: tag } : {}) } });
     }
     ops.push({
       id: `files:${entry.rootId}`, kind: 'files.apply', writes: true,
-      params: filesApplyParams({ root, scope: entry.rootId, packPath, plan, expected: laptopNow, incoming: cloudM, policy: 'conflict', maxBytes: capFor(cloudM) }),
+      params: { ...filesApplyParams({ root, scope: entry.rootId, packPath, plan, expected: laptopNow, incoming: cloudM, policy: 'conflict', maxBytes: capFor(cloudM) }), ...(tag ? { transcripts: tag } : {}) },
     });
     addScope(entry.rootId, entry.rootId);
     if (sessionPaths.length) {
@@ -1841,7 +1975,8 @@ async function planReturnPass(env: HandsfreeEnv, goM: GoManifest, dir: string, p
   for (const [rootId, rels] of linkRels) {
     const p = rootIdToPath(goM, rootId) ?? newWorktreeDest.get(rootId) ?? newTranscripts.get(rootId) ?? null;
     if (!p) continue;
-    ops.push({ id: `resweep:${rootId}`, kind: 'root.resweep', writes: false, params: { root: p, linkRels: [...rels], scopes: [...(scopes.get(rootId) ?? [])] } });
+    const t = transcriptTags.get(rootId);
+    ops.push({ id: `resweep:${rootId}`, kind: 'root.resweep', writes: false, params: { root: p, linkRels: [...rels], scopes: [...(scopes.get(rootId) ?? [])], ...(t ? { transcripts: t } : {}) } });
     meta.resweep.push(rootId);
   }
   ops.push(...baseOps);
@@ -1856,7 +1991,7 @@ interface PassMeta {
   files: Array<{ rootId: string; path: string; transcriptCopies: string[] }>;
   resweep: string[];
   /** Cloud roots that are no destination here (never written). */
-  ignored: Array<{ rootId: string; reason: string }>;
+  ignored: IgnoredRoot[];
 }
 
 /** The park-only plan (same op shape as planRepoApply's park branch). */
@@ -1907,7 +2042,7 @@ async function noIndexDiff(env: HandsfreeEnv, a: string, b: string): Promise<str
 /** Build the receipt from the finished journal (results ride on the ops). */
 async function buildReceipt(env: HandsfreeEnv, goM: GoManifest, dir: string, j: Journal, meta: PassMeta, pass: number): Promise<Receipt> {
   const receipt: Receipt = {
-    version: 1, tripId: goM.tripId, createdAt: new Date(nowOf(env)).toISOString(), pass, repos: [], files: [], sessions: [], autoExec: [], links: [], ignoredRoots: meta.ignored ?? [],
+    version: 1, tripId: goM.tripId, createdAt: new Date(nowOf(env)).toISOString(), pass, repos: [], files: [], sessions: [], autoExec: [], links: [], ignoredRoots: [...(meta.ignored ?? [])],
     deletedInCloudReason: DELETED_IN_CLOUD_REASON, conflictsDir: join(dir, 'conflicts'), backupDir: join(dir, 'backup'),
     finalization: { secretsWiped: false, sealed: false, stopped: false, queued: [] },
   };
@@ -1938,7 +2073,17 @@ async function buildReceipt(env: HandsfreeEnv, goM: GoManifest, dir: string, j: 
     }
     receipt.repos.push(rr);
   }
+  // D28: a transcripts root skipped at apply time is a not-returned root (files + where kept).
+  const skippedRoots = new Set<string>();
+  for (const op of j.ops) {
+    const sk = (op.result as { skipped?: SkippedRoot } | undefined)?.skipped;
+    const t = (op.params as { transcripts?: TranscriptsTag }).transcripts;
+    if (!sk || !t || skippedRoots.has(t.rootId)) continue;
+    skippedRoots.add(t.rootId);
+    receipt.ignoredRoots.push({ rootId: t.rootId, reason: sk.reason, notReturned: sk.files, ...(sk.keptAt ? { keptAt: sk.keptAt } : {}) });
+  }
   for (const f of meta.files) {
+    if (skippedRoots.has(f.rootId)) continue;
     const op = j.ops.find((x) => x.id === `files:${f.rootId}`);
     const res = op?.result as { written?: string[]; conflicts?: Conflict[]; refused?: Conflict[]; deletedInCloud?: string[]; notReturned?: string[]; secrets?: string[] } | undefined;
     const fr: FilesReceipt = {
@@ -1958,15 +2103,16 @@ async function buildReceipt(env: HandsfreeEnv, goM: GoManifest, dir: string, j: 
   }
   for (const rid of meta.resweep) {
     const op = j.ops.find((x) => x.id === `resweep:${rid}`);
-    const res = (op?.result ?? { undone: [], escaping: [] }) as { undone: string[]; escaping: string[] };
+    const res = { undone: [], escaping: [], ...((op?.result ?? {}) as object) } as { undone: string[]; escaping: string[] };
     if (res.undone.length || res.escaping.length) receipt.links.push({ rootId: rid, ...res });
   }
   return receipt;
 }
 
 /** The agreed baseline after a pass: the cloud's state as this pass applied it. */
-function advanceAgreed(dir: string, snap: SnapshotReply, meta: PassMeta, trip: string): void {
+function advanceAgreed(dir: string, snap: SnapshotReply, meta: PassMeta, trip: string, notReturned: ReadonlySet<string> = new Set()): void {
   for (const r of snap.roots) {
+    if (notReturned.has(r.rootId)) continue;
     if (r.kind === 'repo') {
       const m = meta.repos.find((x) => x.rootId === r.rootId);
       if (m && !m.parkReasons.length) writeJson(join(dir, 'agreed', `${r.rootId}.git.json`), parseRepoSnapshot(r.snapshot, trip));
@@ -2131,7 +2277,8 @@ async function runReturnPasses(env: HandsfreeEnv, getClient: () => Promise<Cloud
       beforeOp: env.beforeOp,
     });
     receipt = await buildReceipt(env, goM, dir, j, meta, pass);
-    advanceAgreed(dir, snap, meta, trip);
+    // D28: a skipped transcripts root keeps its old baseline, so a later pass tries it again.
+    advanceAgreed(dir, snap, meta, trip, new Set(receipt.ignoredRoots.filter((x) => x.notReturned).map((x) => x.rootId)));
     const receiptPath = join(dir, `receipt-${pass}.json`);
     writeJson(receiptPath, receipt);
     const prog: ReturnProgress = { epoch, pass, receipts: [...new Set([...(readJsonSafe<ReturnProgress>(progressPath(dir))?.receipts ?? []), receiptPath])] };

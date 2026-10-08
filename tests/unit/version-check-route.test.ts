@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleVersionCheckGet } from '../../src/server/routes/version-check.js';
+import { beginGoing, setPhase } from '../../src/lib/handsfree/trip-state.js';
 import type { VersionCache } from '../../src/lib/version-check.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -51,7 +52,9 @@ function installSkillOnDisk(tmpDir: string, name: string): void {
   writeFileSync(join(dir, 'SKILL.md'), `# ${name}\n`, 'utf-8');
 }
 
-// contextRoot = <tmpDir>/_dream_context
+// contextRoot = <tmpDir>/_dream_context. tmpDir is also the HOME every call passes (test
+// isolation): the route reads the hands-free trip state from it, never from the developer's
+// real ~/.dreamcontext/handsfree (an away trip there refuses upgrades and broke these tests).
 let tmpDir: string;
 let contextRoot: string;
 let prevDesktopEnv: string | undefined;
@@ -78,7 +81,7 @@ afterEach(() => {
 describe('GET /api/version-check', () => {
   it('returns { cache: null, fresh: false, nudge: null } when no cache file exists', async () => {
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
     const payload = body() as { cache: unknown; fresh: boolean; nudge: unknown };
     expect(payload.cache).toBeNull();
@@ -96,7 +99,7 @@ describe('GET /api/version-check', () => {
     writeCacheFile(tmpDir, cache);
 
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
     const payload = body() as { cache: VersionCache; fresh: boolean; nudge: string | null };
@@ -117,7 +120,7 @@ describe('GET /api/version-check', () => {
     writeCacheFile(tmpDir, cache);
 
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
     const payload = body() as { cache: VersionCache; fresh: boolean; nudge: string | null };
@@ -136,7 +139,7 @@ describe('GET /api/version-check', () => {
     writeCacheFile(tmpDir, cache);
 
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
     const payload = body() as { cache: VersionCache; fresh: boolean; nudge: string | null };
@@ -153,7 +156,7 @@ describe('GET /api/version-check', () => {
     writeFileSync(join(dir, '.version-check.json'), 'not valid json {{', 'utf-8');
 
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
     const payload = body() as { cache: unknown; fresh: boolean; nudge: unknown };
@@ -178,7 +181,7 @@ describe('GET /api/version-check', () => {
     installSkillOnDisk(tmpDir, 'engineering'); // and it's installed on disk
 
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
     const payload = body() as { newPacks: string[]; nudge: string | null };
@@ -199,7 +202,7 @@ describe('GET /api/version-check', () => {
     writeConfigFile(tmpDir, ['engineering']); // opted in but NOT installed on disk
 
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
     const payload = body() as { newPacks: string[]; nudge: string | null };
@@ -219,7 +222,7 @@ describe('GET /api/version-check', () => {
     // no .config.json written
 
     const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
     expect(status()).toBe(200);
 
     const payload = body() as { newPacks: string[]; nudge: string | null };
@@ -240,7 +243,7 @@ describe('GET /api/version-check', () => {
       writeCacheFile(tmpDir, cache);
 
       const { res, status, body } = makeRes();
-      await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+      await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
       expect(status()).toBe(200);
 
       const payload = body() as { fresh: boolean; nudge: string | null };
@@ -251,5 +254,21 @@ describe('GET /api/version-check', () => {
       if (prev === undefined) delete process.env.DREAMCONTEXT_DESKTOP;
       else process.env.DREAMCONTEXT_DESKTOP = prev;
     }
+  });
+});
+
+describe('GET /api/version-check while hands-free is away (AC18)', () => {
+  it('offers no upgrade: no CLI nudge, cliOutdated false, upgradeBlocked names the trip', async () => {
+    writeCacheFile(tmpDir, { checkedAt: Date.now() - 60 * 60 * 1000, latestCli: '99.99.99', availablePacks: [], ttlHours: 24 });
+    await beginGoing('t-20261009-0a0b0c0d', [], tmpDir);
+    await setPhase('away', 't-20261009-0a0b0c0d', tmpDir);
+    const { res, status, body } = makeRes();
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
+    expect(status()).toBe(200);
+    const payload = body() as { nudge: string | null; cliOutdated: boolean; upgradeBlocked?: string; latestCli: string | null };
+    expect(payload.latestCli).toBe('99.99.99');
+    expect(payload.cliOutdated).toBe(false);
+    expect(payload.nudge ?? '').not.toContain('99.99.99');
+    expect(payload.upgradeBlocked).toMatch(/Hands-free mode is away \(trip t-20261009-0a0b0c0d\)/);
   });
 });

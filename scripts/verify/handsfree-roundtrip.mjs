@@ -41,7 +41,7 @@ import { dirname, join } from 'node:path';
 import {
   CLI, CLOUD, LH, M, Phone, REPO, SCRATCH, diffMaps, diffState, driver, driverAsync, exists, git, gitState, nonGitSet, put, read, sha, treeShas,
 } from './handsfree-roundtrip/lib.mjs';
-import { ATLAS, CTX, NFC, NFD, NOTES, PAY, SPAWN_LOG, VAULT, VAULT_TRANSCRIPTS, buildFixtures, freezePackage } from './handsfree-roundtrip/fixtures.mjs';
+import { ATLAS, CTX, NFC, NFD, NOTES, PAY, PROJECTS, SPAWN_LOG, VAULT, VAULT_TRANSCRIPTS, buildFixtures, enc, freezePackage } from './handsfree-roundtrip/fixtures.mjs';
 
 // ─── reporting ──────────────────────────────────────────────────────────────────────────
 
@@ -417,6 +417,11 @@ async function trip2() {
   section('Trip 2 · go (the laptop dashboard stays open)');
   const dash = await startLaptopDashboard();
   let browser = null;
+  // Smoke #6 (AC5): acme-payments was never opened in Claude on this laptop, so it has NO
+  // transcript dir at go; a session the phone starts there must still come home (case 3b).
+  const PAY_TRANSCRIPTS = join(PROJECTS, enc(PAY));
+  const PAY_SESSION = '6b0f3c2e-7d1a-4e5b-9c8d-0a1b2c3d4e5f';
+  const payDirAtGo = existsSync(PAY_TRANSCRIPTS);
   try {
     const g = goTrip();
     if (!check('go succeeds', g.ok, errOf(g))) return;
@@ -538,6 +543,11 @@ async function trip2() {
     browser = null;
 
     // ── Return ───────────────────────────────────────────────────────────────────────
+    // Case 3b: the phone's claude starts a session in acme-payments (written into the cloud copy,
+    // see SEAM LIMITS); its cwd names another folder, which must never choose the destination.
+    put(M(PAY_TRANSCRIPTS), `${PAY_SESSION}.jsonl`, JSON.stringify({ type: 'user', cwd: join(LH, 'projects', 'not-in-trip'), sessionId: PAY_SESSION, message: { role: 'user', content: 'Ledger on the phone' } }) + '\n');
+    const payCloudTranscript = read(M(PAY_TRANSCRIPTS), `${PAY_SESSION}.jsonl`);
+
     section('Trip 2 · return');
     const cloudTranscript = sid ? read(M(VAULT_TRANSCRIPTS), `${sid}.jsonl`) : null;
     const r = call('return');
@@ -554,6 +564,14 @@ async function trip2() {
     check('the title store (.session-titles.json) carries it', !!sid && titles.includes(sid) && titles.includes('Phone: price test'), short(titles, 300));
     const sess = r.value.receipt?.sessions?.find((x) => x.rootId && x.roster);
     check('the receipt lists the session opened on the phone', !!sess?.roster?.openedOnPhone?.includes('Phone: price test'), short(r.value.receipt?.sessions));
+
+    section('Case 3b · a phone session in a root with NO laptop transcript dir at go comes home (smoke #6, AC5)');
+    check('precondition: acme-payments had no transcript dir on the laptop at go', !payDirAtGo, PAY_TRANSCRIPTS);
+    const payLt = join(PAY_TRANSCRIPTS, `${PAY_SESSION}.jsonl`);
+    check('Return created the dir and the transcript is on the laptop, byte-equal to the cloud\'s', existsSync(payLt) && readFileSync(payLt).equals(payCloudTranscript), payLt);
+    const payRec = r.value.receipt?.files?.find((f) => f.path === PAY_TRANSCRIPTS);
+    check('the receipt lists it under that dir', !!payRec?.written?.includes(`${PAY_SESSION}.jsonl`), short(payRec ?? r.value.receipt?.files?.map((f) => f.path)));
+    check('its cwd (another folder) chose nothing: no dir for it was created', !existsSync(join(PROJECTS, enc(join(LH, 'projects', 'not-in-trip')))));
 
     section('Case 10 · after Return the laptop server serves the phone\'s sessions (AC5)');
     const lr1 = await laptopRoster(dash.base);

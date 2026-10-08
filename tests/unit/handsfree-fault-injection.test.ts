@@ -26,6 +26,7 @@ import { abandonTrip, go, resumeTrip, returnTrip, rollbackTrip, setup, status, t
 import { readTripState } from '../../src/lib/handsfree/trip-state.js';
 import { journalStatus, loadJournal, tripDir, type JournalOp } from '../../src/lib/handsfree/journal.js';
 import { NO_TURNS } from '../../src/lib/handsfree/turns.js';
+import { encodeProjectDir } from '../../src/lib/handsfree/manifest.js';
 import { readRosterSurface, writeMergedRosterSurface } from '../../src/server/routes/agent-sessions.js';
 import { createFakeCloud, FAKE_CLOUD_VERSION, fakeRegistry, type FakeCloud } from '../helpers/handsfree-fake-cloud.js';
 
@@ -198,6 +199,10 @@ function phoneWorks(c: Case, multi: boolean): void {
     { title: 'Kept, renamed on phone', bypass: true, minimized: false, size: 1, sessionId: S1, kind: 'chat' },
     { title: 'Opened on phone', bypass: true, minimized: false, size: 1, sessionId: S3, kind: 'chat' },
   ], 'bypass'));
+  // Smoke #6 / D28: the vault was never opened in Claude on the laptop (no transcript dir at
+  // go); the phone's session there makes the Return create it (dir.ensure + files.apply of a
+  // transcripts root), so those ops are injection points too.
+  put(join(c.cloudHome, '.claude', 'projects', encodeProjectDir(c.vault)), `${S3}.jsonl`, '{"type":"user","phone":true}\n');
   if (multi) {
     c.fake.beforeSeal = () => {
       put(C, 'late.txt', 'after the snapshot\n');
@@ -211,17 +216,19 @@ interface LaptopState { files: string[]; refs: string; stash: string; head: stri
 
 function laptopState(c: Case): LaptopState {
   const files: string[] = [];
-  const walkDir = (abs: string, rel: string) => {
+  const walkDir = (abs: string, rel: string, dirs = false) => {
     for (const n of readdirSync(abs).sort()) {
       if (rel === '' && n === '.git') continue;
       const p = join(abs, n);
       const r = rel ? `${rel}/${n}` : n;
       const st = lstatSync(p);
-      if (st.isDirectory()) walkDir(p, r);
+      if (st.isDirectory()) { if (dirs) files.push(`${r}/`); walkDir(p, r, dirs); }
       else files.push(`${r} ${createHash('sha256').update(readFileSync(p)).digest('hex')} ${st.mode & 0o111 ? 'x' : '-'}`);
     }
   };
   walkDir(c.vault, '');
+  // The transcript dirs too: a Roll back removes the dir this Return created (byte for byte).
+  if (existsSync(join(c.laptopHome, '.claude'))) walkDir(join(c.laptopHome, '.claude'), '~/.claude', true);
   const sh = (...args: string[]) => execFileSync('git', args, { cwd: c.vault, env: c.gitenv, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
   return {
     files,
@@ -322,6 +329,8 @@ describe(`fault-injection points are generated from the recorded op and call lis
       expect(labels.some((l) => l.startsWith('client.')), `${s} has cloud calls`).toBe(true);
     }
     expect(recorded.get('return-multi')!.filter((l) => l.startsWith('client.quiesce')).length).toBeGreaterThanOrEqual(2);
+    // D28: the transcripts root the Return creates is an injection point (crash, crash + Roll back).
+    for (const s of ['return-single', 'return-multi'] as const) expect(recorded.get(s)!.some((l) => l.startsWith('op.dir.ensure')), `${s} creates a transcript dir`).toBe(true);
     console.log(`[fault-injection] points: go=${recorded.get('go')!.length} return-single=${recorded.get('return-single')!.length} return-multi=${recorded.get('return-multi')!.length}; cases=${CASES.length}`);
   });
 });

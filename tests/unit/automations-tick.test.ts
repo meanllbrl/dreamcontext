@@ -2,13 +2,23 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { tickAll, tickProject } from '../../src/lib/automations/tick.js';
+import { tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
 import { createAutomation, setAutomationEnabled, writeAutomationCache } from '../../src/lib/automations/store.js';
 import { enqueueFire, queuedFire } from '../../src/lib/automations/queue.js';
 import { registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
 import { automationsLogPath } from '../../src/lib/automations/launchd.js';
 import { LOG_ROTATE_BYTES, type AutomationCache, type RunOutcome } from '../../src/lib/automations/types.js';
 import type { runAutomation } from '../../src/lib/automations/runner.js';
+
+/**
+ * Test isolation: tickProject first asks the hands-free lock (`handsfreeLockFor(projectRoot,
+ * opts.home)`). Without a home it reads the developer's REAL ~/.dreamcontext/handsfree: an
+ * unreadable trip state there locks every project and fails these tests. Every call gets an
+ * empty temp home unless it passes its own (tickAll calls all pass one, or pin $HOME).
+ */
+const HANDSFREE_HOME = mkdtempSync(join(tmpdir(), 'tick-hf-home-'));
+afterAll(() => rmSync(HANDSFREE_HOME, { recursive: true, force: true }));
+const tickProject = (root: string, opts: Parameters<typeof tickProjectReal>[1] = {}) => tickProjectReal(root, { home: HANDSFREE_HOME, ...opts });
 
 /** Fixed, injected — never Date.now()/new Date() in assertions. Schedule fires
  *  daily at 18:00; NOW sits exactly at that fire.

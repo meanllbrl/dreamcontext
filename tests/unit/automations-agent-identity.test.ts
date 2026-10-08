@@ -253,6 +253,8 @@ describe('the dispatcher never fires a mode:call agent', () => {
     const ran: string[] = [];
     const result = await tickProject(projectRoot, {
       now,
+      // A temp home, never the developer's real ~/.dreamcontext (hands-free lock, registry).
+      home: join(projectRoot, 'fakehome'),
       // Stubbed runner: this test is about WHICH slugs reach it, not about
       // spawning claude.
       runImpl: async (_root, slug) => {

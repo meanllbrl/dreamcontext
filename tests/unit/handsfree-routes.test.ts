@@ -36,6 +36,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { FakeCloudProvider } from '../../src/lib/handsfree/provider.js';
 import { NO_TURNS, processTurnControl, under } from '../../src/lib/handsfree/turns.js';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { encodeProjectDir } from '../../src/lib/handsfree/manifest.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HandsfreeEnv } from '../../src/lib/handsfree/orchestrator.js';
@@ -291,7 +292,13 @@ describe('wave 3: preflight and the live Cut', () => {
     await handleHandsfreePreflight(req({ url: '/api/handsfree/preflight' }), r, {}, ctx);
     expect(r.status).toBe(200);
     const body = r.body as { roots: Array<{ kind: string; bytes: number }>; totalBytes: number; machine: Record<string, unknown>; runningTurns: unknown[]; refusal: unknown };
-    expect(body.roots).toEqual([expect.objectContaining({ kind: 'files', bytes: 1000 })]);
+    // Smoke #6 (AC5): the vault's transcript dir is a root of the trip even though it does not
+    // exist yet (never opened in Claude here): listed, 0 bytes, so a phone session there comes home.
+    const transcripts = join(home, '.claude', 'projects', encodeProjectDir(realpathSync(join(home, 'projects', 'app'))));
+    expect(body.roots).toEqual([
+      expect.objectContaining({ kind: 'files', bytes: 1000 }),
+      expect.objectContaining({ kind: 'files', path: transcripts, bytes: 0 }),
+    ]);
     expect(body.totalBytes).toBe(1000);
     expect(body.machine).toMatchObject({ name: 'basicLinux32gb', needBytes: 1300, quotaSource: 'laptop', running: false });
     expect(body.runningTurns).toEqual([{ kind: 'chat', id: 'c1', busy: true }]);

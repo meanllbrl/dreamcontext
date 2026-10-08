@@ -304,7 +304,8 @@ const OFFLINE_STRINGS = {
     asleep: 'The cloud machine is asleep',
     lead: 'It sleeps when nobody uses it. Wake it with GitHub:',
     step1: 'Tap Wake. GitHub opens in a new tab and starts the machine.',
-    step2: 'Wait until GitHub shows the editor (about a minute).',
+    android: 'On Android: if the GitHub page stays white, tap ⋮ (top right) and turn on Desktop site.',
+    step2: 'Wait until the new tab shows GitHub\'s editor (about a minute).',
     step3: 'Come back to THIS tab. It opens your chat by itself as soon as the machine answers.',
     step3App: 'Come back to THIS app. It opens your chat by itself as soon as the machine answers.',
     wake: 'Wake',
@@ -321,7 +322,8 @@ const OFFLINE_STRINGS = {
     asleep: 'Bulut makinesi uyuyor',
     lead: 'Kimse kullanmayınca uyur. GitHub ile uyandır:',
     step1: 'Uyandır\'a dokun. GitHub yeni bir sekmede açılır ve makineyi başlatır.',
-    step2: 'GitHub editörü gösterene kadar bekle (yaklaşık bir dakika).',
+    android: 'Android\'de: GitHub sayfası beyaz kalırsa sağ üstteki ⋮ menüsünden Masaüstü sitesi\'ni aç.',
+    step2: 'Yeni sekmede GitHub editörü görünene kadar bekle (yaklaşık bir dakika).',
     step3: 'BU sekmeye geri dön. Makine cevap verir vermez sohbetin kendiliğinden açılır.',
     step3App: 'BU uygulamaya geri dön. Makine cevap verir vermez sohbetin kendiliğinden açılır.',
     wake: 'Uyandır',
@@ -334,9 +336,20 @@ const OFFLINE_STRINGS = {
   },
 } as const;
 
-/** The language and the standalone (home-screen app) wording are picked on the device: the
- *  page is cached once and must speak the phone's language offline. */
+/**
+ * Pure: is this device Android (smoke #7: there github.dev stays white until Chrome's Desktop
+ * site is on)? Self-contained on purpose: its source is embedded verbatim into OFFLINE_JS,
+ * which runs on the device, since the cached page is rendered once per process.
+ */
+export function isAndroid(ua: unknown, uaData: unknown): boolean {
+  const platform = uaData && typeof uaData === 'object' ? (uaData as { platform?: unknown }).platform : undefined;
+  return platform === 'Android' || /Android/i.test(String(ua || ''));
+}
+
+/** The language, the standalone (home-screen app) wording and the Android step are picked on
+ *  the device: the page is cached once and must speak the phone's language offline. */
 const OFFLINE_JS = `(function(){
+  var isAndroid=(${isAndroid.toString()});
   var d=JSON.parse(document.getElementById('dc-data').textContent);
   var langs=(navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||'en']);
   var lang='en';for(var i=0;i<langs.length;i++){var l=String(langs[i]).toLowerCase();if(l==='tr'||l.indexOf('tr-')===0){lang='tr';break;}if(l==='en'||l.indexOf('en-')===0){break;}}
@@ -345,6 +358,7 @@ const OFFLINE_JS = `(function(){
   var ids=['lead','step1','step2','wake','alt','signin','stuck'];
   for(var k=0;k<ids.length;k++){var el=document.getElementById(ids[k]);if(el)el.textContent=s[ids[k]];}
   document.getElementById('step3').textContent=app?s.step3App:s.step3;
+  var andr=document.getElementById('android');andr.textContent=s.android;andr.hidden=!isAndroid(navigator.userAgent,navigator.userAgentData);
   var h=document.getElementById('h'),st=document.getElementById('st'),steps=document.getElementById('steps');
   h.textContent=s.checking;st.textContent=s.first;
   var fails=0,last=0,busy=false,done=false;
@@ -389,6 +403,7 @@ export function renderOfflinePage(lang: Lang, wakeUrl: string | null): { html: s
 <p id="lead">${esc(s.lead)}</p>
 <ol>
 <li id="step1">${esc(s.step1)}</li>
+<li id="android" hidden>${esc(s.android)}</li>
 <li id="step2">${esc(s.step2)}</li>
 <li id="step3">${esc(s.step3)}</li>
 </ol>

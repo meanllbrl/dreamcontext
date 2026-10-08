@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { setCloudPhaseSource, type CloudPhase } from '../../src/server/cloud-mode.js';
 import { DEVICE_COOKIE, HandsfreeAuth, handleHandsfreeLogin, hashPassphrase, setHandsfreeAuthForTests, sha256Hex } from '../../src/server/handsfree-auth.js';
@@ -18,6 +19,7 @@ import { rootIdFor } from '../../src/lib/handsfree/manifest.js';
 import {
   handleHandsfreePhone,
   handlePhonePages,
+  isAndroid,
   pickLang,
   renderLoginPage,
   renderOfflinePage,
@@ -244,6 +246,81 @@ describe('service worker and offline page routes', () => {
     expect(wakeUrlFromOrigin('http://localhost:8080')).toBeNull();
     expect(wakeUrlFromOrigin(undefined)).toBeNull();
     expect(renderOfflinePage('en', null).html).toContain('href="https://github.com/codespaces" target="_blank"');
+  });
+
+  it('on Android, tells the owner to turn on Desktop site when the Wake tab stays white (smoke #7)', () => {
+    for (const lang of ['en', 'tr'] as const) {
+      const html = renderOfflinePage(lang, 'https://dc-hf-phone.github.dev').html;
+      // Right after step 1, hidden until the device says it is Android.
+      expect(html).toMatch(/<li id="step1">[^<]*<\/li>\n<li id="android" hidden>[^<]*<\/li>\n<li id="step2">/);
+      // Both languages ride along: the page is cached once and re-picks its language on the device.
+      expect(html).toContain('On Android: if the GitHub page stays white, tap ⋮ (top right) and turn on Desktop site.');
+      expect(html).toContain('Android\'de: GitHub sayfası beyaz kalırsa sağ üstteki ⋮ menüsünden Masaüstü sitesi\'ni aç.');
+    }
+  });
+
+  it('isAndroid reads the user agent or Client Hints, nothing else', () => {
+    const PIXEL = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36';
+    const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+    expect(isAndroid(PIXEL, undefined)).toBe(true);
+    expect(isAndroid('Mozilla/5.0 (Linux; K) Chrome/129.0.0.0 Mobile', { platform: 'Android' })).toBe(true);
+    expect(isAndroid(IPHONE, undefined)).toBe(false);
+    expect(isAndroid('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', { platform: 'macOS' })).toBe(false);
+    expect(isAndroid(undefined, null)).toBe(false);
+  });
+
+  describe('the offline script on a device', () => {
+    const PIXEL = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36';
+    const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+
+    /** Runs the page's inline script against a minimal fake DOM; returns the element map. */
+    function runOn(device: { ua: string; uaData?: unknown; languages: string[]; standalone?: boolean }) {
+      const html = renderOfflinePage('en', 'https://dc-hf-phone.github.dev').html;
+      const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1];
+      const data = /<script type="application\/json" id="dc-data">([\s\S]*?)<\/script>/.exec(html)![1];
+      const els: Record<string, { textContent: string; hidden: boolean }> = {};
+      for (const m of html.matchAll(/<[a-z0-9]+ [^>]*id="([^"]+)"([^>]*)>/g)) {
+        els[m[1]] = { textContent: '', hidden: /\shidden(\s|>|$)/.test(m[0]) };
+      }
+      els['dc-data'].textContent = data;
+      const noop = () => 0;
+      runInNewContext(script, {
+        document: { getElementById: (id: string) => els[id] ?? null, documentElement: {}, addEventListener: noop, visibilityState: 'visible' },
+        navigator: { userAgent: device.ua, userAgentData: device.uaData, languages: device.languages, standalone: false },
+        window: { matchMedia: () => ({ matches: !!device.standalone }), addEventListener: noop, AbortController: undefined },
+        matchMedia: () => ({ matches: !!device.standalone }),
+        fetch: () => new Promise(() => {}),
+        setTimeout: noop,
+        clearTimeout: noop,
+        setInterval: noop,
+        location: { reload: noop },
+        JSON,
+        String,
+        Math,
+        Date,
+      });
+      return els;
+    }
+
+    it('shows the Desktop site step on an Android Chrome tab, in the phone\'s language', () => {
+      const en = runOn({ ua: PIXEL, languages: ['en-US'] });
+      expect(en.android.hidden).toBe(false);
+      expect(en.android.textContent).toBe('On Android: if the GitHub page stays white, tap ⋮ (top right) and turn on Desktop site.');
+      const tr = runOn({ ua: PIXEL, languages: ['tr-TR'] });
+      expect(tr.android.hidden).toBe(false);
+      expect(tr.android.textContent).toBe('Android\'de: GitHub sayfası beyaz kalırsa sağ üstteki ⋮ menüsünden Masaüstü sitesi\'ni aç.');
+    });
+
+    it('shows it in the installed home-screen app too', () => {
+      const app = runOn({ ua: PIXEL, uaData: { platform: 'Android' }, languages: ['en'], standalone: true });
+      expect(app.android.hidden).toBe(false);
+      expect(app.step3.textContent).toContain('Come back to THIS app.');
+    });
+
+    it('keeps it hidden on an iPhone', () => {
+      expect(runOn({ ua: IPHONE, languages: ['en-US'] }).android.hidden).toBe(true);
+      expect(runOn({ ua: IPHONE, languages: ['tr-TR'], standalone: true }).android.hidden).toBe(true);
+    });
   });
 
   it('are 404 off the cloud', () => {

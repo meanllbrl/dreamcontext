@@ -5,7 +5,7 @@
  * from which every later laptop destination is derived (AC10).
  */
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { resolveLinkedRepos } from '../linked-repos.js';
 import { gitOut, listWorktrees, type ProcessRunner } from './git-snapshot.js';
 import { encodeProjectDir, rootIdFor, type GoManifest, type RootSpec } from './manifest.js';
@@ -96,12 +96,62 @@ export async function computeScope(o: { run: ProcessRunner; home: string; contex
   for (const r of roots.filter((x) => x.kind === 'repo')) {
     repos.push({ rootId: r.rootId, path: r.absPath, nested: roots.filter((x) => x !== r && x.kind !== 'worktree' && inside(r.absPath, x.absPath)).map((x) => x.absPath) });
   }
-  // Transcripts: the encoded dir of every code root, when it exists.
+  // Transcripts: the encoded dir of EVERY code root, whether or not it exists on the laptop yet
+  // (smoke #6, AC5): a project never opened in Claude here has no dir, and a session started on
+  // the phone must still come home. A missing dir walks as empty on both sides; Return creates
+  // it (journaled `dir.ensure`) only when the cloud holds something in it. Anything that exists
+  // there but is not a real directory (a link, even a dangling one) is never a root: lstat only.
   for (const r of [...roots]) {
     const dir = join(o.claudeProjectsDir, encodeProjectDir(r.absPath));
-    if (existsSync(dir) && lstatSync(dir).isDirectory()) roots.push({ rootId: rootIdFor(dir), kind: 'transcripts', absPath: dir });
+    const kind = transcriptDirKind(dir, o.claudeProjectsDir);
+    if (kind === 'missing' || kind === 'dir') roots.push({ rootId: rootIdFor(dir), kind: 'transcripts', absPath: dir });
   }
   return { vaultRoot, roots, repos, include: readHandsfreeInclude(vaultRoot) };
+}
+
+/** What is at `p` itself, never following a link: nothing, a real directory, or anything else. */
+export function lstatKind(p: string): 'missing' | 'dir' | 'other' {
+  try {
+    return lstatSync(p).isDirectory() ? 'dir' : 'other';
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'other';
+  }
+}
+
+/**
+ * What is at a transcript dir `root`, judged against the configured Claude projects dir `base`
+ * (r25). The base itself is TRUSTED and may be a link (moved to another disk; the account dirs
+ * link to it): it is followed. Everything BELOW it (the encoded dir, and any segment between) is
+ * checked by lstat: a link or a file there is `other`, never written through. A truly absent
+ * base (under a real directory), or a missing segment below it, is `missing` (created by
+ * Return); a base that is or sits under a DANGLING link is `other` (r26). A root outside the
+ * base is `other`.
+ */
+export function transcriptDirKind(root: string, base: string): 'missing' | 'dir' | 'other' {
+  const rel = relative(base, root);
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return 'other';
+  try {
+    if (!statSync(base).isDirectory()) return 'other';
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return 'other';
+    // r26: the base does not resolve. `missing` only when it, and every absent ancestor up to the
+    // first one that exists, is truly absent by lstat AND that first existing ancestor is a
+    // directory by stat; a dangling link anywhere there (an unmounted disk) is `other`.
+    let cur = base;
+    while (lstatKind(cur) === 'missing') {
+      const up = dirname(cur);
+      if (up === cur) return 'other';
+      cur = up;
+    }
+    try { return statSync(cur).isDirectory() ? 'missing' : 'other'; } catch { return 'other'; }
+  }
+  let cur = base;
+  for (const seg of rel.split(sep)) {
+    cur = join(cur, seg);
+    const k = lstatKind(cur);
+    if (k !== 'dir') return k;
+  }
+  return 'dir';
 }
 
 export function goManifestFor(scope: TripScope, o: { tripId: string; laptopId: string; home: string; now?: Date }): GoManifest {

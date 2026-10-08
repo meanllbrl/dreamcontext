@@ -7,11 +7,11 @@
 // -> second delta return, quota refusal never wedges, the run lock.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { vaultNameForPath, withTripVault } from '../../src/lib/handsfree/global-set.js';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createReadStream, createWriteStream } from 'node:fs';
 import {
   createBundle, createSpawnRunner, fetchBundle, parseRepoSnapshot, snapshotBundleRefs, snapshotId, snapshotRepo, type ProcessRunner, type RepoSnapshot,
@@ -474,6 +474,352 @@ describe('quota and the run lock', () => {
     expect(r.outcome).toBe('home');
     expect(fake.calls.indexOf('cut')).toBeGreaterThan(-1);
     expect(fake.calls.indexOf('cut')).toBeLessThan(fake.calls.indexOf('seal'));
+  });
+});
+
+describe('smoke #6 (AC5): a session started on the phone in a root with NO laptop transcript dir at go comes home', () => {
+  const projects = () => join(laptopHome, '.claude', 'projects');
+  /** The vault was never opened in Claude on this laptop: no encoded transcript dir at go. */
+  const neverOpened = () => { rmSync(join(projects(), encodeProjectDir(vault)), { recursive: true, force: true }); return join(projects(), encodeProjectDir(vault)); };
+  const phoneSession = () => {
+    put(C(), '_dream_context/state/.agent-sessions.json', roster([
+      { title: 'Kept', bypass: true, minimized: false, size: 1, sessionId: S1, kind: 'chat' },
+      { title: 'Closed on phone', bypass: false, minimized: false, size: 1, sessionId: S2, kind: 'chat' },
+      { title: 'Started on phone', bypass: false, minimized: false, size: 1, sessionId: S3, kind: 'chat' },
+    ], 'auto'));
+    // The transcript's own cwd names somewhere else: it never chooses the destination (AC10).
+    put(join(cloudHome, '.claude', 'projects', encodeProjectDir(vault)), `${S3}.jsonl`, `{"type":"user","cwd":${JSON.stringify(join(laptopHome, 'elsewhere'))}}\n`);
+  };
+
+  it('go declares the missing dir as a transcripts root; Return creates it, writes the phone session, lists it in the receipt; its title and roster entry come home', async () => {
+    const tdir = neverOpened();
+    const env = makeEnv();
+    const g = await go(env, { contextRoot: ctx });
+    const goM = JSON.parse(readFileSync(join(tripDirOf(g.tripId), 'go-manifest.json'), 'utf8')) as GoManifest;
+    expect(goM.roots.filter((r) => r.kind === 'transcripts').map((r) => r.absPath)).toEqual([tdir]);
+    expect(existsSync(tdir)).toBe(false); // go never creates it on the laptop
+    phoneSession();
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(read(tdir, `${S3}.jsonl`)).toContain('"type":"user"');
+    const rec = r.receipt!.files.find((f) => f.path === tdir)!;
+    expect(rec.written).toEqual([`${S3}.jsonl`]);
+    const j = JSON.parse(readFileSync(join(tripDirOf(r.tripId), 'return-journal.pass-1.json'), 'utf8')) as { ops: JournalOp[] };
+    expect(j.ops.find((o) => o.kind === 'dir.ensure' && (o.params as { path: string }).path === tdir)?.state).toBe('done');
+    // AC5 history AND title: the phone-started session's roster entry and title are merged home.
+    const merged = readRosterSurface(ctx);
+    expect(merged.sessions.find((x) => x.sessionId === S3)?.title).toBe('Started on phone');
+    // Its cwd named another folder: nothing was written there.
+    expect(existsSync(join(projects(), encodeProjectDir(join(laptopHome, 'elsewhere'))))).toBe(false);
+  });
+
+  it('Roll back after that Return removes the created dir again (empty) and restores everything else', async () => {
+    const tdir = neverOpened();
+    let failBase = false;
+    // Killed at the very last op (the base refs), after the transcript landed.
+    const killing: ProcessRunner = (cmd, args, opts) => {
+      if (failBase && args.includes('update-ref') && String((opts as { input?: Buffer }).input ?? '').includes('refs/handsfree/base/')) {
+        return Promise.reject(new Error('killed at the base refs'));
+      }
+      return run(cmd, args, opts);
+    };
+    const env = makeEnv({ run: killing });
+    await go(env, { contextRoot: ctx });
+    phoneSession();
+    put(C(), '_dream_context/state/notes.md', 'cloud note\n');
+    failBase = true;
+    await expect(returnTrip(env)).rejects.toThrow(/killed at the base refs/);
+    expect(readTripState(laptopHome).phase).toBe('returning');
+    expect(existsSync(join(tdir, `${S3}.jsonl`))).toBe(true); // it had landed
+    const rb = await rollbackTrip(env);
+    expect(readTripState(laptopHome).phase).toBe('away');
+    expect(rb.cloudUnquiesced).toBe(true);
+    expect(existsSync(tdir)).toBe(false);
+    expect(read(vault, '_dream_context/state/notes.md')).toBe('state note\n');
+    expect(readRosterSurface(ctx).sessions.map((x) => x.sessionId)).toEqual([S1, S2]);
+  });
+
+  it('a cloud transcript dir that is NOT the encoded dir of a manifest code root is ignored, never created (AC10)', async () => {
+    neverOpened();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    const foreign = join(projects(), encodeProjectDir(join(laptopHome, 'not-in-trip')));
+    put(join(cloudHome, '.claude', 'projects', encodeProjectDir(join(laptopHome, 'not-in-trip'))), `${S3}.jsonl`, '{}\n');
+    fake.forged = { rootId: rootIdFor(foreign), kind: 'files', manifest: [], refused: [] };
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(existsSync(foreign)).toBe(false);
+    expect(r.receipt!.ignoredRoots).toEqual([{ rootId: rootIdFor(foreign), reason: 'not a root of this trip' }]);
+  });
+
+  it('r24: a DANGLING link at the encoded path at go is never a transcripts root', async () => {
+    const tdir = neverOpened();
+    mkdirSync(projects(), { recursive: true });
+    symlinkSync(join(root, 'nowhere'), tdir);
+    const g = await go(makeEnv(), { contextRoot: ctx });
+    const goM = JSON.parse(readFileSync(join(tripDirOf(g.tripId), 'go-manifest.json'), 'utf8')) as GoManifest;
+    expect(goM.roots.filter((r) => r.kind === 'transcripts')).toEqual([]);
+    expect(existsSync(join(root, 'nowhere'))).toBe(false);
+  });
+
+  it('r24: a dangling link planted between go and Return: Return still goes home, the session is not returned, nothing is created through or at the link', async () => {
+    const tdir = neverOpened();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    phoneSession();
+    mkdirSync(projects(), { recursive: true });
+    symlinkSync(join(root, 'nowhere'), tdir);
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(lstatSync(tdir).isSymbolicLink()).toBe(true); // untouched
+    expect(existsSync(join(root, 'nowhere'))).toBe(false); // nothing created through it
+    const ign = r.receipt!.ignoredRoots.find((x) => x.rootId === rootIdFor(tdir));
+    expect(ign?.reason).toMatch(/not a real directory/);
+    expect(ign?.reason).toContain(`${S3}.jsonl`);
+    // Everything else of the trip landed (the roster merge of the vault root).
+    expect(readRosterSurface(ctx).sessions.find((x) => x.sessionId === S3)?.title).toBe('Started on phone');
+  });
+
+  it('r24: a link planted between go and Return that resolves to a real dir elsewhere: nothing is written into its target', async () => {
+    const tdir = neverOpened();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    phoneSession();
+    const target = join(root, 'elsewhere-real');
+    mkdirSync(target, { recursive: true });
+    mkdirSync(projects(), { recursive: true });
+    symlinkSync(target, tdir);
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(readdirSync(target)).toEqual([]);
+    expect(r.receipt!.ignoredRoots.map((x) => x.rootId)).toContain(rootIdFor(tdir));
+  });
+
+  /** r25: ~/.claude/projects itself is a link (moved to another disk; the owner's account dirs link to it). */
+  const linkProjects = () => {
+    const real = join(root, 'other-disk', 'projects');
+    mkdirSync(dirname(real), { recursive: true });
+    renameSync(projects(), real);
+    symlinkSync(real, projects());
+    return real;
+  };
+
+  it('r25: a LINKED projects dir (the configured base) is trusted: the phone session lands in <real projects>/<encoded>, Return goes home', async () => {
+    neverOpened();
+    const real = linkProjects();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    phoneSession();
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(read(join(real, encodeProjectDir(vault)), `${S3}.jsonl`)).toContain('"type":"user"');
+    expect(lstatSync(projects()).isSymbolicLink()).toBe(true);
+    expect(r.receipt!.ignoredRoots).toEqual([]);
+  });
+
+  it('r25: Roll back under a linked projects dir removes the created dir from the real projects dir, the link stays', async () => {
+    neverOpened();
+    const real = linkProjects();
+    let failBase = false;
+    const killing: ProcessRunner = (cmd, args, opts) => {
+      if (failBase && args.includes('update-ref') && String((opts as { input?: Buffer }).input ?? '').includes('refs/handsfree/base/')) {
+        return Promise.reject(new Error('killed at the base refs'));
+      }
+      return run(cmd, args, opts);
+    };
+    const env = makeEnv({ run: killing });
+    await go(env, { contextRoot: ctx });
+    phoneSession();
+    failBase = true;
+    await expect(returnTrip(env)).rejects.toThrow(/killed at the base refs/);
+    expect(existsSync(join(real, encodeProjectDir(vault), `${S3}.jsonl`))).toBe(true);
+    await rollbackTrip(env);
+    expect(readTripState(laptopHome).phase).toBe('away');
+    expect(existsSync(join(real, encodeProjectDir(vault)))).toBe(false);
+    expect(lstatSync(projects()).isSymbolicLink()).toBe(true);
+    expect(existsSync(real)).toBe(true);
+  });
+
+  it('r25: a new worktree\'s transcript dir (wire v1.1) is created under a linked projects dir too', async () => {
+    linkProjects();
+    writeFileSync(join(vault, '.git', 'info', 'exclude'), '**/.claude/worktrees/\n');
+    mkdirSync(join(vault, '.claude', 'worktrees'), { recursive: true });
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    const wt = join(vault, '.claude', 'worktrees', 'wt-one');
+    mkdirSync(join(C(), '.claude', 'worktrees'), { recursive: true });
+    sh(C(), 'worktree', 'add', '-q', '-b', 'wt-one', toCloud(wt));
+    put(join(cloudHome, '.claude', 'projects', encodeProjectDir(wt)), `${S3}.jsonl`, '{"type":"user","wt":true}\n');
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(read(join(root, 'other-disk', 'projects', encodeProjectDir(wt)), `${S3}.jsonl`)).toBe('{"type":"user","wt":true}\n');
+    expect(r.receipt!.ignoredRoots).toEqual([]);
+  });
+
+  it('r25: under a linked projects dir, a link BELOW it (at the encoded dir) is still skipped and never written through', async () => {
+    const tdir = neverOpened();
+    linkProjects();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    phoneSession();
+    const target = join(root, 'elsewhere-real');
+    mkdirSync(target, { recursive: true });
+    symlinkSync(target, tdir);
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(readdirSync(target)).toEqual([]);
+    expect(r.receipt!.ignoredRoots.find((x) => x.rootId === rootIdFor(tdir))?.reason).toContain(`${S3}.jsonl`);
+  });
+
+  it('a root whose dir is absent on BOTH sides stays absent: no empty dir is created on the laptop', async () => {
+    const tdir = neverOpened();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(existsSync(tdir)).toBe(false);
+  });
+});
+
+describe('D28: a transcripts root the laptop cannot create or write never stops a Return', () => {
+  const projects = () => join(laptopHome, '.claude', 'projects');
+  const enc = () => encodeProjectDir(vault);
+  const neverOpened = () => { rmSync(join(projects(), enc()), { recursive: true, force: true }); return join(projects(), enc()); };
+  const phoneTranscript = () => put(join(cloudHome, '.claude', 'projects', enc()), `${S3}.jsonl`, '{"type":"user","phone":true}\n');
+  const goM = (trip: string) => JSON.parse(readFileSync(join(tripDirOf(trip), 'go-manifest.json'), 'utf8')) as GoManifest;
+  /** Everything of the laptop a Return may touch, byte for byte (the vault's .git excluded; refs via git). */
+  const laptopBytes = () => {
+    const out: string[] = [];
+    const walkDir = (abs: string, rel: string) => {
+      let names: string[] = [];
+      try { names = readdirSync(abs).sort(); } catch { return; }
+      for (const n of names) {
+        if (n === '.git') continue;
+        const p = join(abs, n);
+        const st = lstatSync(p);
+        if (st.isSymbolicLink()) out.push(`${rel}${n} -> ${readlinkSync(p)}`);
+        else if (st.isDirectory()) { out.push(`${rel}${n}/`); walkDir(p, `${rel}${n}/`); }
+        else out.push(`${rel}${n} ${createHash('sha256').update(readFileSync(p)).digest('hex')}`);
+      }
+    };
+    walkDir(vault, 'vault/');
+    walkDir(join(laptopHome, '.claude'), '.claude/');
+    return { files: out, git: gitState(vault) };
+  };
+  const killAtBase = () => {
+    const s = { fail: false };
+    const runner: ProcessRunner = (cmd, args, opts) => {
+      if (s.fail && args.includes('update-ref') && String((opts as { input?: Buffer }).input ?? '').includes('refs/handsfree/base/')) return Promise.reject(new Error('killed at the base refs'));
+      return run(cmd, args, opts);
+    };
+    return { s, runner };
+  };
+  const ro: string[] = [];
+  const readOnly = (p: string) => { chmodSync(p, 0o555); ro.push(p); };
+  afterEach(() => { for (const p of ro.splice(0)) { try { chmodSync(p, 0o755); } catch { /* gone */ } } });
+
+  it('a DANGLING configured projects dir at go (an unmounted disk) declares no transcripts root; nor one under a dangling ancestor', async () => {
+    neverOpened();
+    rmSync(projects(), { recursive: true, force: true });
+    symlinkSync(join(root, 'unmounted-disk', 'projects'), projects());
+    const g = await go(makeEnv(), { contextRoot: ctx });
+    expect(goM(g.tripId).roots.filter((r) => r.kind === 'transcripts')).toEqual([]);
+    expect(existsSync(join(root, 'unmounted-disk'))).toBe(false);
+  });
+
+  it('a projects dir missing under a dangling ancestor is not "missing" either', async () => {
+    rmSync(join(laptopHome, '.claude'), { recursive: true, force: true });
+    symlinkSync(join(root, 'unmounted-disk', 'claude'), join(laptopHome, '.claude'));
+    const g = await go(makeEnv(), { contextRoot: ctx });
+    expect(goM(g.tripId).roots.filter((r) => r.kind === 'transcripts')).toEqual([]);
+  });
+
+  it('the projects dir becomes dangling between go and Return: Return goes home; the receipt names the file and where its bytes are kept; the kept payload exists', async () => {
+    neverOpened();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    phoneTranscript();
+    put(C(), 'scratch.txt', 'cloud untracked\n');
+    const moved = join(root, 'unplugged-projects');
+    renameSync(projects(), moved);
+    symlinkSync(join(root, 'unmounted-disk', 'projects'), projects());
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(read(vault, 'scratch.txt')).toBe('cloud untracked\n'); // the code root came home
+    const ign = r.receipt!.ignoredRoots.find((x) => x.notReturned?.includes(`${S3}.jsonl`))!;
+    expect(ign).toBeTruthy();
+    expect(ign.keptAt).toMatch(/not-returned/);
+    expect(existsSync(ign.keptAt!)).toBe(true);
+    expect(ign.reason).toContain(ign.keptAt!);
+    expect(existsSync(join(root, 'unmounted-disk'))).toBe(false); // nothing created through the dangling link
+  });
+
+  it('EACCES at dir.ensure apply (projects dir read-only): the root is skipped, Return goes home, the kept payload exists', async () => {
+    const tdir = neverOpened();
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    phoneTranscript();
+    readOnly(projects());
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(existsSync(tdir)).toBe(false);
+    const ign = r.receipt!.ignoredRoots.find((x) => x.rootId === rootIdFor(tdir))!;
+    expect(ign.reason).toMatch(/could not be created/);
+    expect(ign.notReturned).toEqual([`${S3}.jsonl`]);
+    expect(existsSync(ign.keptAt!)).toBe(true);
+    expect(r.receipt!.files.some((f) => f.path === tdir)).toBe(false);
+    const j = JSON.parse(readFileSync(join(tripDirOf(r.tripId), 'return-journal.pass-1.json'), 'utf8')) as { ops: JournalOp[] };
+    expect(j.ops.find((o) => o.kind === 'dir.ensure')).toMatchObject({ state: 'done', result: { skipped: { files: [`${S3}.jsonl`] } } });
+  });
+
+  it('EACCES at the transcripts root\'s files.apply (its dir read-only): skipped, Return goes home', async () => {
+    const tdir = join(projects(), enc()); // exists at go (makeVault put S1 there)
+    const env = makeEnv();
+    await go(env, { contextRoot: ctx });
+    phoneTranscript();
+    readOnly(tdir);
+    const r = await returnTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(existsSync(join(tdir, `${S3}.jsonl`))).toBe(false);
+    const ign = r.receipt!.ignoredRoots.find((x) => x.rootId === rootIdFor(tdir))!;
+    expect(ign.reason).toMatch(/could not be written/);
+    expect(existsSync(ign.keptAt!)).toBe(true);
+  });
+
+  it('Resume after a crash INSIDE that op reaches home (the skip, not a retry loop)', async () => {
+    neverOpened();
+    let crash = true;
+    const env = makeEnv({ beforeOp: (op: JournalOp) => { if (crash && op.kind === 'dir.ensure') { crash = false; throw new Error('simulated process crash at dir.ensure'); } } } as Partial<HandsfreeEnv>);
+    await go(env, { contextRoot: ctx });
+    phoneTranscript();
+    readOnly(projects());
+    await expect(returnTrip(env)).rejects.toThrow(/simulated process crash/);
+    expect(readTripState(laptopHome).phase).toBe('returning');
+    const r = await resumeTrip(env);
+    expect(r.outcome).toBe('home');
+    expect(r.receipt!.ignoredRoots.some((x) => x.notReturned?.includes(`${S3}.jsonl`))).toBe(true);
+  });
+
+  it('Roll back after a skipped root restores the laptop byte for byte; the kept payload stays', async () => {
+    neverOpened();
+    const k = killAtBase();
+    const env = makeEnv({ run: k.runner });
+    await go(env, { contextRoot: ctx });
+    phoneTranscript();
+    put(C(), 'scratch.txt', 'cloud untracked\n');
+    put(C(), '_dream_context/state/notes.md', 'cloud note\n');
+    readOnly(projects());
+    const before = laptopBytes();
+    k.s.fail = true;
+    await expect(returnTrip(env)).rejects.toThrow(/killed at the base refs/);
+    expect(read(vault, 'scratch.txt')).toBe('cloud untracked\n'); // it had written
+    const trip = readTripState(laptopHome).tripId!;
+    const kept = readdirSync(join(tripDirOf(trip), 'not-returned')).filter((n) => n.endsWith('.pack'));
+    expect(kept).toHaveLength(1);
+    await rollbackTrip(env);
+    expect(readTripState(laptopHome).phase).toBe('away');
+    expect(laptopBytes()).toEqual(before);
+    expect(existsSync(join(tripDirOf(trip), 'not-returned', kept[0]))).toBe(true);
   });
 });
 
