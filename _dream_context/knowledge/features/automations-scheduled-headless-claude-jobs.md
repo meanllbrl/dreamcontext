@@ -11,7 +11,7 @@ pinned: false
 date: '2026-07-26'
 status: active
 created: '2026-07-26'
-updated: '2026-10-06'
+updated: '2026-10-08'
 released_version: v0.22.0
 tags:
   - 'topic:automations'
@@ -63,6 +63,10 @@ related_tasks:
     an-automation-agent-can-be-called-with-from-any-chat-and-the-lead-claude-sees-every-agent-and-can-hand-it-work
   - >-
     an-agent-answering-an-question-never-asks-to-approve-a-document-and-a-run-never-opens-a-chat-tab-by-itself
+  - >-
+    chat-te-agent-secilir-ve-claude-projenin-agent-larini-sub-agent-olarak-cagirir
+  - >-
+    agent-lar-kendi-sayfasina-cikar-dreamcontext-agent-i-platformdan-bagimsiz-bir-varlik-olur-otomasyon-bir-agent-i-secer
 ---
 
 ## Why
@@ -213,8 +217,25 @@ The brain only works while a human is in a session. Recurring outputs—daily di
 - [ ] **Two face sizes:** 32px for rows and thread posts, 20px inline; "You" is a solid face, no dashed outline.
 - [ ] **Members card, quieter:** the footer shares the card surface behind a hairline; "has not run yet" is regular secondary ink; the dashed "New agent" card is gone (the header button is the one); card strings lost their em dashes.
 
+### Chat speaks as an agent, and Claude calls agents as sub-agents, 2026-10-07 (`0afa91fc`)
+
+- [x] **A Chat tab can talk to an automation agent.** The mode menu has an agent selector under the modes: one row naming who the chat talks to, which opens the roster inside the same card. Picking an agent opens a NEW conversation with it (in place when the tab is empty, beside it otherwise). An unapproved agent is listed but cannot be picked.
+- [x] **The agent speaks under its approved envelope, without a card.** `prepareAgentChat` (`card-chat.ts`) applies the approved prompt, pattern and learning directive, and approval is checked at every spawn. A home-board agent keeps its board scope and gets its board with every message. A malformed `chatAgent` is refused at the WS upgrade; an unapproved one is refused with a named reason.
+- [x] **The binding survives every respawn and a relaunch.** It is keyed by conversation id (`chatAgentBinding.ts`), and the saved roster keeps `agent`, so the tab reopens as that agent.
+- [x] **Every chat can call the project's agents.** Each chat spawn gets an `--agents` definition per approved agent (`chat-subagents.ts`, max 24, the tab's own agent excluded) and a roster in its briefing, so "ask the funnel agent" becomes an Agent-tool dispatch. Sub-agents run under the calling chat's permissions. A scoped board agent's tab gets no roster, because its allowlist has no Agent tool.
+- Proof: `scripts/verify/chat-agent-picker.mjs` 28/28 against the real server, WS route and Chromium; a real `claude` 2.1.292 read `--agents` from a file and dispatched the sub-agent; unit 141/141.
+
+### Run and channel fixes, 2026-10-07
+
+- [x] **A run on a sandboxed account keeps the machine's MCP servers** (`35371143`). The runner and the thread-reply resume now pass the shared `mcp-config.json` with `--mcp-config`, last in argv. Before this, a run that moved to a second account on a usage-limit switch silently lost local Slack and the KB. See [[features/claude-multi-account]].
+- [x] **The channel follows rows that grow after render** (`e4aab5c1`). The feed re-pinned to its newest end only when the message list changed, so a picture decoding or a block settling left the channel short of its bottom. A `ResizeObserver` on the scroller and its rows now re-pins while the reader is at the bottom, as `ChatPane` already does. `verify:agents-feed` has a late-growth check (gap 0 with the fix, 119px without it).
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-10-07: Picking an agent opens a new conversation instead of relabelling the current one
+
+A resumed conversation keeps the system prompt it was born with. Relabelling the open conversation as an agent would therefore give plain Claude under the agent's name. So the picker always starts a new conversation with the agent: in place when the tab is empty, beside it otherwise.
 
 ### 2026-09-29: A working agent is visible in its thread, and a message to it queues instead of being refused
 
@@ -549,6 +570,9 @@ The review-queue model (shipped 2026-08-04 under `f9ffba0`) was **retired and de
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-08 - Chat speaks as an agent; agents become sub-agents (sleep reconcile)
+- Two criteria sections added from `0afa91fc` (agent picker in Chat, `--agents` roster), `35371143` (MCP by reference for runs on a sandboxed account) and `e4aab5c1` (channel re-pins on late growth). One decision added: picking an agent opens a new conversation. `status` and `released_version` are unchanged.
 
 ### 2026-09-30 - Threads draw the Chat's blocks; the edit dialog stops truncating prompts (sleep reconcile)
 - Four criteria added from `37c3118f`, `36bf226a`, `6bff5b5c`. Trigger: the recipe-corpus run could only list two `--apply` commands as prose, and the Edit dialog had re-approved a 600-char preview as the prompt.

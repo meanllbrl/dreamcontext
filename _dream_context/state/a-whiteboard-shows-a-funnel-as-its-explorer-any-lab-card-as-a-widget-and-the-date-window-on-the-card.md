@@ -12,7 +12,7 @@ priority: high
 urgency: medium
 status: in_review
 created_at: '2026-10-04'
-updated_at: '2026-10-04'
+updated_at: '2026-10-08'
 tags:
   - 'topic:whiteboard'
   - 'topic:lab'
@@ -52,6 +52,9 @@ Tilki (2026-10-04): the founder's Acquisition whiteboard draws the edinim funnel
 
 
 
+
+### 2026-10-08 - Session Update
+- Follow-up 938b7b58 (2026-10-07, on main): an app/v1 or html/v1 insight on a whiteboard (lab-card and L/XL insight widget) now fills its card instead of clamping at 320px; whiteboard-lab-card.mjs 35/35 with a new tall-app check. Include it in the owner's installed-app check.
 ### 2026-10-04 - Status → in_review
 - Shipped and pushed; owner's check of the funnel widget, Lab card and window chip in the installed app is the open gate
 ### 2026-10-04 - Session Update

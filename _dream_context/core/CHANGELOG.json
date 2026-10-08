@@ -1,5 +1,117 @@
 [
   {
+    "date": "2026-10-08",
+    "type": "fix",
+    "scope": "whiteboard",
+    "description": "Fix whiteboards forgetting open tabs and groups on relaunch, and let an app or HTML insight fill its card instead of stopping at 320px.",
+    "breaking": false,
+    "summary": "Whiteboard tabs and groups survive an app relaunch; app and HTML insights fill their card",
+    "references": [
+      "commit:e8e9e25b",
+      "commit:938b7b58",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-08",
+    "type": "fix",
+    "scope": "handsfree",
+    "description": "Fix hands-free so the cloud chat runs only inside the trip and agents cannot modify the setup checkout, harden flaky tests, and restore hands-free on main after the 0.30.3 publish.",
+    "breaking": false,
+    "summary": "Cloud chat runs only in the trip, agents cannot touch the setup checkout; hands-free back on main after 0.30.3",
+    "references": [
+      "commit:f72fbc2a",
+      "commit:3a35976d",
+      "commit:52c629ab",
+      "commit:b1c91521",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-08",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Replace text-heavy chat notices with picture cards and show the eco handoff live. Follow-up making the cards responsive via a container query is open as PR #432.",
+    "breaking": false,
+    "summary": "Chat notices speak in pictures and the eco handoff shows itself while it runs",
+    "references": [
+      "commit:044407df",
+      "file:dashboard/src/components/sleepy/chat/Banners.tsx"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-08",
+    "type": "fix",
+    "scope": "accounts",
+    "description": "Fix the account switch treating a single needs-relogin reading as final, which made the switch banner tell the wrong story for some accounts.",
+    "breaking": false,
+    "summary": "One signed-out reading no longer eliminates an account from the switch decision",
+    "references": [
+      "commit:cf2a3641",
+      "feature:claude-multi-account"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-08",
+    "type": "fix",
+    "scope": "automations",
+    "description": "Fix a run on a sandboxed account missing the machine MCP servers by passing them by reference, and keep the automation channel following rows that grow after render.",
+    "breaking": false,
+    "summary": "Sandboxed-account runs get MCP servers by reference; the run channel follows rows that grow",
+    "references": [
+      "commit:35371143",
+      "commit:e4aab5c1",
+      "feature:automations-scheduled-headless-claude-jobs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-08",
+    "type": "feat",
+    "scope": "chat",
+    "description": "Add automation agents to the Chat agent picker and expose them to Claude as callable sub-agents.",
+    "breaking": false,
+    "summary": "Talk to an automation agent from Chat, and Claude can call automation agents as sub-agents",
+    "references": [
+      "commit:0afa91fc",
+      "feature:automations-scheduled-headless-claude-jobs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-08",
+    "type": "feat",
+    "scope": "recall",
+    "description": "Add whiteboards as the tenth recall channel and the remaining core files as the eleventh, so recall finds board content and extended core prose.",
+    "breaking": false,
+    "summary": "Whiteboards and the rest of core become recall channels ten and eleven",
+    "references": [
+      "commit:2a513b54",
+      "commit:ee4cc492",
+      "feature:memory-recall-bm25",
+      "feature:whiteboards"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-10-06",
     "type": "feat",
     "scope": "whiteboard",

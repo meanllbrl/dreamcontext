@@ -4,7 +4,7 @@ claim: >-
   60-query gold set by enough margin to justify shipping it on by default
 status: validated
 kind: experimental
-confidence: 0.880597014925373
+confidence: 0.9030303030303031
 created_by: user
 predictions:
   - id: pred_UrDg5lSj
@@ -75,6 +75,16 @@ evidence:
       and 2 (zero regressions) from a different task perspective than the A/B
       eval task itself.
     quantitative: true
+  - date: '2026-10-08'
+    cycle: 13
+    source: changelog
+    ref: CHANGELOG.json 2026-10-07
+    verdict: supports
+    note: >-
+      Haiku recall mode removed; hybrid is now the shipped default recall mode
+      (falls back to BM25 until embeddings are on disk). The claim's 'justify
+      shipping on by default' outcome has been acted on.
+    quantitative: false
 insights: []
 objectives:
   - improve-recall-mechanism
@@ -83,13 +93,16 @@ related_tasks:
 related_workflows: []
 blocked_on_instrumentation: false
 blocked_metric: null
-cycles_checked: 4
-checked_at: '2026-07-25'
+cycles_checked: 5
+checked_at: '2026-10-08'
 promoted_to: null
 created_at: '2026-07-25'
-updated_at: '2026-10-06'
+updated_at: '2026-10-08'
 ---
 ## Understanding changelog
+
+### CYCLE 13 · 2026-10-08
+Cycle 13 (epoch 2026-10-08): Fresh evidence. Committed changelog 2026-10-07 makes hybrid the default and retires Haiku, so the validated claim is now shipped; added one supports event (non-quantitative). The uncommitted eval/RESULTS.md 2026-10-07 section (from another session) shows hybrid ahead of bm25 on every held-out split at G2 (e.g. dc 2026-10 held-out r@5 92.9 vs 83.9, h-f held-out 91.1 vs 85.7). I did NOT log it as evidence because it is not committed yet; once it is committed, the next cycle should log it as quantitative evidence. Status stays validated. Promotion to knowledge is still an open PO decision ask (promoted_to null). It is below the workflow-rule bar because related_workflows is unset.
 
 ### CYCLE 20 · 2026-10-06
 Cycle 20 check (epoch 2026-10-06): no fresh evidence. Work since last cycle was whiteboard board-agent panel, hands-free cloud/phone fixes, and the 0.30.1 release — zero recall-engine or embedding work. Remains validated at 88%, all 3 predictions supported. Promotion to knowledge still outstanding (standing PO decision ask).
@@ -118,8 +131,5 @@ Cycle 10 check (epoch 2026-08-02T14:01:26.375Z, STANDARD consolidation): No fres
 ### CYCLE 8 · 2026-07-28
 Cycle 8 check (epoch 2026-07-28T17:17:30.163Z, DEEP consolidation): No fresh evidence for this thesis since the epoch. Six commits this cycle (7effb38 chat scroll-hold, a562d1d lab snapshot demotion floor, e806ba8 announcements, 40a03da v0.22.0 release, 4f2353c automations learning/session/notification, 2390e4b prior sleep output) — all Chat UI, automations, and release work, zero recall algorithm changes. The in-flight snapshot-budget rework (uncommitted) is context-snapshot sizing/compression, not a recall-algorithm change, so not evidence for this thesis's claim. Zero completed tasks since the epoch. Lab insights all demo fixtures, all stale. The linked objective improve-recall-mechanism remains at 5/8 done (63%), status active, not slipping — task recall-indexes-and-returns-automations-insights-theses-and-objectives completed 2026-07-28, but as the brief explicitly notes, that expansion widened which entity TYPES recall indexes (nine channels), not the ranking algorithm, so it is NOT evidence for or against the hybrid-vs-BM25F claim. The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO (raised continuously since cycle 3). Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.
 
-### CYCLE 7 · 2026-07-28
-Cycle 7 check (epoch 2026-07-28T10:54:59.989Z, DEEP consolidation): No fresh evidence for this thesis since the epoch. Commit 1852869 and task recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter (moved to in_review 2026-07-28) expanded recall to all nine channels (automations, insights, theses, objectives) with a --level importance filter — this advances the linked objective improve-recall-mechanism but is NOT evidence for THIS thesis's claim (hybrid vs BM25F algorithm performance, already validated). The thesis was validated in cycle 2 at 88% confidence with all 3 predictions supported and remains validated. The linked objective improve-recall-mechanism shows 4/7 tasks done (57%), status review, not slipping. The related task feat-embedding-beta-rollout remains todo. No new evidence to add. Promotion to knowledge remains outstanding (promoted_to: null) — this is a standing decision ask for the PO (raised continuously since cycle 3). Per the workflow-rule gate check: below the auto-promote bar because related_workflows is unset, so this routes to plain knowledge promotion requiring PO confirmation.
-
-### CONDENSED · 2026-10-06
-Condensed summary of 5 earlier cycles.
+### CONDENSED · 2026-10-08
+Condensed summary of 6 earlier cycles.
