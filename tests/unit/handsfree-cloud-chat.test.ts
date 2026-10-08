@@ -4,7 +4,7 @@
 // (AC12, pinned for the laptop's go/return and the cloud's `cut`).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -38,6 +38,7 @@ const { cutLiveChats, liveChatsSnapshot, CUT_KILL_GRACE_MS } = await import('../
 const { writeClaudeAccounts, sandboxDirFor } = await import('../../src/lib/claude-accounts.js');
 const { beginGoing } = await import('../../src/lib/handsfree/trip-state.js');
 const { setCloudPhaseSource, setCloudTripRootsSource } = await import('../../src/server/cloud-mode.js');
+const { spawnSync: realSpawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
 
 class FakeWs extends EventEmitter {
   OPEN = 1;
@@ -61,6 +62,24 @@ function open(projectRoot: string, opts: Partial<Parameters<typeof startChatSess
   });
   return ws;
 }
+
+type Spawned = (typeof spawned)[number];
+/**
+ * r20: count what a test means, never the total. Opening a chat also starts things that spawn on
+ * their own clock, legitimately: the account watcher's one baseline `claude auth status` probe
+ * (claude-auth-watch.ts, on its first tick after a chat subscribes; through the worker in the
+ * cloud), and in the cloud the registry write a test's own writeClaudeAccounts queues for the
+ * worker (claude-accounts.ts). Under load they land between a test's two `open()` calls.
+ */
+const isChat = (s: Spawned) => s.args.some((a) => /(^|&& )exec claude /.test(a));
+const isAuthProbe = (s: Spawned) => s.args[s.args.length - 1] === 'claude auth status --json';
+const isRegistryWrite = (s: Spawned) => s.args.includes('/bin/sh') && s.args.some((a) => a.startsWith(join(home, '.dreamcontext', 'claude-accounts.json')));
+/** The chat children (claude itself), in spawn order. */
+const chats = () => spawned.filter(isChat);
+/** Everything but the account watcher's background probe (the registry tests' worker writes). */
+const writes = () => spawned.filter((s) => !isAuthProbe(s));
+/** Everything a refused chat must NOT have started: all but the two background spawns above. */
+const foreground = () => spawned.filter((s) => !isAuthProbe(s) && !isRegistryWrite(s));
 
 beforeEach(() => {
   for (const k of ENV_KEYS) saved[k] = process.env[k];
@@ -95,8 +114,8 @@ describe('cloud agent spawn (AC19)', () => {
     const project = join(home, 'proj');
     mkdirSync(project, { recursive: true });
     open(project, { account: 'second' });
-    expect(spawned).toHaveLength(1);
-    const s = spawned[0];
+    expect(chats()).toHaveLength(1);
+    const s = chats()[0];
     expect(s.file).toBe('/usr/bin/setpriv');
     expect(s.args).toContain('--reuid=dcuser');
     expect(s.args).toContain('--ambient-caps=-all');
@@ -121,7 +140,7 @@ describe('cloud agent spawn (AC19)', () => {
     const project = join(home, 'proj');
     mkdirSync(project, { recursive: true });
     open(project);
-    expect(spawned[0].opts.env?.CLAUDE_CONFIG_DIR).toBe(sandboxDirFor('primary', home));
+    expect(chats()[0].opts.env?.CLAUDE_CONFIG_DIR).toBe(sandboxDirFor('primary', home));
   });
 });
 
@@ -131,12 +150,12 @@ describe('cloud account registry write (dcserver never writes into dcuser\'s tre
     writeClaudeAccounts([account('first', true)], home);
     return Promise.resolve().then(async () => {
       await new Promise((r) => setTimeout(r, 0));
-      expect(spawned).toHaveLength(1);
-      expect(spawned[0].file).toBe('/usr/bin/setpriv');
-      const argv = spawned[0].args;
+      expect(writes()).toHaveLength(1);
+      expect(writes()[0].file).toBe('/usr/bin/setpriv');
+      const argv = writes()[0].args;
       expect(argv.slice(argv.indexOf('--') + 1)).toEqual(expect.arrayContaining(['/bin/sh', '-c']));
       expect(argv.some((a) => a.startsWith(join(home, '.dreamcontext', 'claude-accounts.json')))).toBe(true);
-      spawned[0].child.emit('close', 0, null);
+      writes()[0].child.emit('close', 0, null);
     });
   });
 });
@@ -149,14 +168,14 @@ describe('cloud account registry: each caller learns the fate of ITS write', () 
     const a = setPreferredClaudeAccount('second', home);
     const b = setAutoSwitchEnabled(false, home);
     await new Promise((r) => setTimeout(r, 0));
-    expect(spawned).toHaveLength(1); // serialised: the second waits for the first
-    spawned[0].child.emit('close', 1, null);
+    expect(writes()).toHaveLength(1); // serialised: the second waits for the first
+    writes()[0].child.emit('close', 1, null);
     await new Promise((r) => setTimeout(r, 0));
-    spawned[1].child.emit('close', 0, null); // the failed write's own temp cleanup (rm -f)
+    writes()[1].child.emit('close', 0, null); // the failed write's own temp cleanup (rm -f)
     await expect(a).rejects.toThrow();
     await new Promise((r) => setTimeout(r, 0));
-    expect(spawned).toHaveLength(3);
-    spawned[2].child.emit('close', 0, null);
+    expect(writes()).toHaveLength(3);
+    writes()[2].child.emit('close', 0, null);
     await expect(b).resolves.toBeUndefined();
   });
 });
@@ -168,7 +187,7 @@ describe('cloud phase gate', () => {
     const project = join(home, 'proj');
     mkdirSync(project, { recursive: true });
     const ws = open(project);
-    expect(spawned).toHaveLength(0);
+    expect(foreground()).toHaveLength(0);
     expect(JSON.parse(String(ws.send.mock.calls[0][0])).code).toBe('cloud_quiescing');
   });
 });
@@ -180,7 +199,7 @@ describe('laptop lock (AC6)', () => {
     mkdirSync(project, { recursive: true });
     await beginGoing('trip-lock', [{ rootId: 'r-0000000000000001', path: project }], home);
     const ws = open(join(project));
-    expect(spawned).toHaveLength(0);
+    expect(foreground()).toHaveLength(0);
     const frame = JSON.parse(String(ws.send.mock.calls[0][0]));
     expect(frame.code).toBe('handsfree_away');
     expect(frame.message).toMatch(/hands-free/);
@@ -195,8 +214,8 @@ describe('laptop lock (AC6)', () => {
     mkdirSync(other, { recursive: true });
     await beginGoing('trip-lock', [{ rootId: 'r-0000000000000001', path: locked }], home);
     open(other);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].opts.detached).toBe(true);
+    expect(chats()).toHaveLength(1);
+    expect(chats()[0].opts.detached).toBe(true);
   });
 });
 
@@ -225,7 +244,7 @@ describe('cutLiveChats (AC12)', () => {
       const id = '6f1c2e9a-2222-4a5b-8c9d-0123456789ab';
       open(project, { sessionId: id });
       expect(liveChatsSnapshot().map((e) => [e.conversationId, e.projectRoot])).toContainEqual([id, project]);
-      const child = spawned[0].child;
+      const child = chats()[0].child;
 
       let done: string[] | null = null;
       const p = cutLiveChats((e) => e.projectRoot === project).then((ids) => { done = ids; });
@@ -254,7 +273,7 @@ describe('cutLiveChats (AC12)', () => {
       mkdirSync(project, { recursive: true });
       const id = '6f1c2e9a-5555-4a5b-8c9d-0123456789ab';
       const ws = open(project, { sessionId: id });
-      const child = spawned[0].child;
+      const child = chats()[0].child;
       ws.emit('message', JSON.stringify({ type: 'end' }));
       ws.emit('close');
       expect(child.stdin.end).toHaveBeenCalled();
@@ -382,7 +401,7 @@ describe('smoke #4: what the cloud child (dcuser) must read is never a dcserver 
     const project = join(home, 'proj');
     mkdirSync(project, { recursive: true });
     open(project);
-    const script = spawned[0].args[spawned[0].args.length - 1];
+    const script = chats()[0].args[chats()[0].args.length - 1];
     expect(script).not.toMatch(/dreamcontext-chat-(settings|mode|surface)-/); // no file handed to the child
     const argv = await argvOfScript(script);
     const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
@@ -396,7 +415,7 @@ describe('smoke #4: what the cloud child (dcuser) must read is never a dcserver 
     const project = join(home, 'proj');
     mkdirSync(project, { recursive: true });
     open(project);
-    const script = spawned[0].args[spawned[0].args.length - 1];
+    const script = chats()[0].args[chats()[0].args.length - 1];
     expect(script).toMatch(/"--settings" "[^"]*dreamcontext-chat-settings-[0-9a-f-]+\.json"/);
     expect(script).toMatch(/"--append-system-prompt-file" "[^"]*dreamcontext-chat-surface-[0-9a-f-]+\.md"/);
   });
@@ -418,7 +437,7 @@ describe('smoke #4: what the cloud child (dcuser) must read is never a dcserver 
     const project = join(home, 'proj');
     mkdirSync(project, { recursive: true });
     open(project, { initialPrompt: 'take the next task', deferPrompt: true });
-    const parked = spawned[0].opts.env?.DREAMCONTEXT_DEFERRED_PROMPT ?? '';
+    const parked = chats()[0].opts.env?.DREAMCONTEXT_DEFERRED_PROMPT ?? '';
     expect(parked.startsWith(join(home, 'dc-work', 'dreamcontext-deferred-'))).toBe(true);
     const { readFileSync, statSync } = await vi.importActual<typeof import('node:fs')>('node:fs');
     expect(readFileSync(parked, 'utf8')).toBe('take the next task');
@@ -446,7 +465,7 @@ describe('the error card shows the real error, not the login shell\'s job-contro
       const project = join(home, 'proj');
       mkdirSync(project, { recursive: true });
       const ws = open(project);
-      const child = spawned[0].child;
+      const child = chats()[0].child;
       child.stderr.emit('data', Buffer.from('bash: cannot set terminal process group (-1): Inappropriate ioctl for device\nbash: no job control in this shell\nError processing settings: EACCES\n'));
       child.emit('close', 1);
       const frames = ws.send.mock.calls.map((c) => JSON.parse(String(c[0])) as { type: string; subtype?: string; message?: string });
@@ -465,18 +484,20 @@ describe('smoke #5 (Critical): a cloud chat runs ONLY in a trip root, never in t
     const project = join(home, 'proj');
     mkdirSync(join(project, 'sub'), { recursive: true });
     open(project);
-    expect(spawned).toHaveLength(1);
-    const script = spawned[0].args[spawned[0].args.length - 1];
-    expect(script.startsWith(`cd -- '${project}' && exec claude `)).toBe(true);
-    // What claude's cwd really is, after a login shell that cd'd somewhere else first.
-    const { spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
-    const probe = `cd / && ${script.replace(/exec claude .*$/s, 'pwd -P')}`;
-    const { realpathSync } = await vi.importActual<typeof import('node:fs')>('node:fs');
-    expect(spawnSync('/bin/bash', ['-c', probe], { encoding: 'utf8' }).stdout.trim()).toBe(realpathSync(project));
-    // A folder inside the trip root is fine too.
+    expect(chats()).toHaveLength(1);
+    // A folder inside the trip root is fine too (opened before the slow real-bash part below).
     open(join(project, 'sub'));
-    expect(spawned).toHaveLength(2);
-  });
+    expect(chats()).toHaveLength(2);
+    expect(foreground()).toEqual(chats()); // nothing else was started in the foreground
+    const [root, sub] = chats().map((c) => c.args[c.args.length - 1]);
+    expect(root.startsWith(`cd -- '${project}' && exec claude `)).toBe(true);
+    expect(sub.startsWith(`cd -- '${join(project, 'sub')}' && exec claude `)).toBe(true);
+    // What claude's cwd really is, after a login shell that cd'd somewhere else first.
+    const probe = `cd / && ${root.replace(/exec claude .*$/s, 'pwd -P')}`;
+    const r = realSpawnSync('/bin/bash', ['-c', probe], { encoding: 'utf8', timeout: 20_000 });
+    expect(r.error).toBeUndefined();
+    expect(r.stdout.trim()).toBe(realpathSync(project));
+  }, 30_000);
 
   it('the codespace\'s own checkout, a look-alike sibling, and a cloud with no trip are refused with a clear message; nothing spawns', () => {
     process.env.DREAMCONTEXT_CLOUD = '1';
@@ -493,7 +514,7 @@ describe('smoke #5 (Critical): a cloud chat runs ONLY in a trip root, never in t
     setCloudTripRootsSource(() => []);
     const ws = open(join(home, 'proj'));
     expect(sentErrors(ws).find((f) => f.code === 'cloud_not_trip')?.message).toMatch(/No trip is on this cloud machine/);
-    expect(spawned).toEqual([]);
+    expect(foreground()).toEqual([]);
   });
 
   it('a request naming no vault or an unknown one resolves to NO root (refused at the upgrade, never a default root)', async () => {
@@ -508,8 +529,8 @@ describe('smoke #5 (Critical): a cloud chat runs ONLY in a trip root, never in t
     const elsewhere = join(home, 'anywhere');
     mkdirSync(elsewhere, { recursive: true });
     open(elsewhere);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].args[spawned[0].args.length - 1].startsWith('exec claude ')).toBe(true);
+    expect(chats()).toHaveLength(1);
+    expect(chats()[0].args[chats()[0].args.length - 1].startsWith('exec claude ')).toBe(true);
   });
 });
 
