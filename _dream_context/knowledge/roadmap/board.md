@@ -1,229 +1,139 @@
 ---
 name: roadmap-board
 description: >-
-  AUTO-GENERATED objective board (6 objective(s), SLIPPING: improve-sleep-quality, make-dreamcontext-team-ready, simplified-ux, make-it-a-business, hello-world-pr).
+  AUTO-GENERATED objective board (6 objective(s), SLIPPING: improve-recall-mechanism, improve-sleep-quality, make-dreamcontext-team-ready, simplified-ux, make-it-a-business, hello-world-pr).
   Regenerate with `dreamcontext roadmap` — do not edit by hand.
 tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-10-04'
+date: '2026-10-08'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-10-04 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-10-08 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
-### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 7/13 done (54%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
+### 🟡 **improve-recall-mechanism** — Improve Recall Mechanism · 4/5 done (80%) · target 2026-08-16 · forecast 2026-10-07 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
-  - captures-never-graduate-age-scratch-by-date-and-promote-what-recurs-into-knowledge (todo) · BACKLOG
   - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set (completed) · v0.14.0
   - feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh (completed) · v0.14.0
   - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids (completed) · v0.14.0
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag (completed) · v0.14.0
-  - finish-the-hybrid-recall-rollout-doctor-check-user-docs-npm-files-audit (todo) · BACKLOG
-  - nothing-records-which-patterns-actually-fire-so-forty-two-of-them-compete-for-one-budget-with-no-evidence (todo) · 0.28.0
-  - patterns-tetiklenir-hale-gelir-otomatik-tetik-turetme-deterministik-kapi-ve-slash-girisleri (in_review)
-  - recall-indexes-and-returns-automations-insights-theses-and-objectives-on-every-surface-with-an-importance-level-filter (completed) · 2026-07-28 → …
-  - soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system (completed) · 0.23.0 · 2026-07-28 → …
-  - stop-the-diagram-generator-writing-off-vocabulary-tags-then-clear-the-orphan-tag-backlog (todo) · BACKLOG
-  - the-desktop-chat-surface-truncates-the-snapshot-to-a-2kb-preview-at-around-10k-chars (todo) · BACKLOG
-  - the-sessionstart-snapshot-busts-the-harness-limit-even-fully-demoted-so-the-brain-arrives-as-a-2kb-blind-preview (completed) · 0.22.0 · 2026-07-28 → …
+  - finish-the-hybrid-recall-rollout-doctor-check-user-docs-npm-files-audit (cancelled) · BACKLOG
+  - recall-maintenance-haiku-out-hybrid-default-repaired-gold-sets-ranking-and-latency (in_review) · 2026-10-07 → 2026-10-07
 
-### 🔵 **improve-sleep-quality** — Improve sleep quality · 21/31 done (68%) · target 2026-08-02 · forecast 2026-09-29 🔴 SLIPPING
+### ⚪ **improve-sleep-quality** — Improve sleep quality · 9/13 done (69%) · target 2026-08-02 · forecast 2026-08-24 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
-  - a-merged-away-chore-gets-re-filed-as-an-empty-task-every-sleep-cycle (completed) · 0.26.0 · 2026-09-05 → 2026-09-05
-  - automations-hitl-a-run-can-stop-and-ask-and-the-verdict-comes-back-from-wherever-you-are (completed) · 0.24.0 · 2026-08-03 → …
-  - automations-learn-from-every-run-show-their-session-and-say-what-happened-in-the-notification (completed)
   - automations-scheduled-headless-claude-jobs (completed) · BACKLOG
-  - bookmark-auto-capture-misclassifies-sub-agent-notifications-skill-loader-text-as-user-correction (in_progress) · 0.26.0 · 2026-09-27 → …
-  - captures-never-graduate-age-scratch-by-date-and-promote-what-recurs-into-knowledge (todo) · BACKLOG
-  - distil-the-110kb-automations-task-body-under-the-github-issue-limit-so-its-mirror-syncs-again (todo) · 0.26.0
   - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (completed) · 0.18.0
-  - git-worktrees-split-the-brain-resolve-the-context-root-from-the-main-worktree (in_review) · 0.26.0
+  - fix-automations-every-run-binds-its-session-telegram-carries-the-report-and-a-bare-message-talks-to-the-latest-run (completed)
   - goal-skill-pack-headless-permission-flags-and-report-vs-work-gate (completed) · 0.20.0
   - improve-sleep-quality (completed) · 0.20.0 · 2026-07-18 → …
-  - install-skill-and-setup-advance-setupversion-without-running-migrations-silently-skipping-them-forever (completed) · 0.23.0 · 2026-07-30 → …
   - knowledge-move-cannot-relocate-a-board-directory-with-its-companion-files-across-context-folders (completed) · 0.20.0
   - knowledge-workflows (completed) · 0.20.0
-  - migrations-pending-goes-blind-after-update-advances-setupversion-past-an-unfinished-agenttask (completed) · 0.22.0
-  - patterns-tetiklenir-hale-gelir-otomatik-tetik-turetme-deterministik-kapi-ve-slash-girisleri (in_review)
-  - pre-publish-checklist-v0-26-1 (cancelled) · 0.26.1
+  - pin-this-repo-to-the-gh-account-that-can-actually-write-to-it-so-the-brain-sync-stops-403-ing-every-cycle (todo) · 0.28.0
   - proactive-learning-layer (completed) · 0.20.0
-  - rescale-sleep-debt-scoring-weighted-sum-token-signal (completed) · 0.23.0
-  - score-the-content-sleep-writes-signal-to-noise-staleness-inference-vs-observation (todo) · BACKLOG
-  - sleep-connectors-pull-outside-sources-on-a-cadence-and-turn-them-into-knowledge-and-theses (completed) · BACKLOG · 2026-08-17 → 2026-08-24
-  - sleep-cycle-bookmarks-its-own-sub-agent-briefs-and-reports-as-star-star-decision-entries-mis-linked-to-an-arbitrary-task (in_review) · BACKLOG
-  - sleep-debt-counts-only-real-human-work-so-the-consolidation-warning-means-something-again (completed) · 2026-09-29 → 2026-09-29
-  - sleep-folds-work-into-existing-tasks-by-default-and-files-a-new-task-only-as-a-high-confidence-exception (in_review) · 0.30.0 · 2026-09-10 → …
-  - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
-  - sleep-settings-become-tunable-debt-thresholds-and-per-specialist-models (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
-  - sleep-stops-filing-junk-tasks-a-bar-for-what-deserves-a-task-and-the-right-model-per-specialist (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
-  - sleep-umbrella-tunable-settings-a-bar-against-junk-tasks-and-background-auto-sleep-with-two-writer-safety (completed) · 0.27.0 · 2026-09-05 → 2026-09-05
-  - soul-becomes-constitution-only-and-always-loads-verbatim-while-conditionals-move-to-keyword-prioritized-patterns-across-the-whole-system (completed) · 0.23.0 · 2026-07-28 → …
-  - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
-  - the-connectors-cli-ships-as-dead-code-because-nothing-ever-registers-it (todo) · 0.28.0
-  - the-sleep-page-breaks-a-cycle-s-token-cost-down-per-specialist (todo)
+  - register-the-connectors-command-so-the-shipped-clickup-pull-is-reachable-from-the-cli (todo) · 0.28.0
+  - shorten-the-automations-task-body-so-it-fits-github-s-issue-limit-and-resumes-syncing (todo) · 0.26.0
+  - sleep-connectors (completed) · BACKLOG · 2026-08-17 → 2026-08-24
+  - the-chronic-open-thesis-gate-can-never-fire-because-cycles-checked-only-counts-cycles-that-produced-evidence (todo) · 0.28.0
 
-### ⚪ **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 20/21 done (95%) · target 2026-07-12 · forecast 2026-09-06 🔴 SLIPPING
+### ⚪ **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 16/18 done (89%) · target 2026-07-12 · forecast 2026-08-24 🔴 SLIPPING
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179 (completed) · 0.20.0
+  - clickup-task-sync-creates-duplicate-local-tasks-2-3-4-suffix-instead-of-matching-existing-task-by-name-id (completed) · 0.19.0
   - cloud-sync-connected-origin-is-invisible-unmanageable-once-set-no-view-edit-remove (completed) · 0.17.0
   - cloud-sync-origin-setup-create-attach-github-repo-ui (completed) · 2026-07-08 → …
   - cloud-sync-reports-false-sync-failed-github-sign-in-expired-while-git-is-fully-in-sync-and-settings-shows-a-valid-session (completed) · 0.17.1
   - cloud-sync-stale-config-enabled-true-in-tree-mode-renders-dishonestly (completed) · 0.18.0
-  - dashboard-build-pipeline-now-syncs-vite-output-to-the-served-directory (completed) · v0.24.0
   - feat-dashboard-live-sleep-debt-tracker-header-widget (completed) · 0.10.7 · 2026-07-04 → …
   - feat-linked-repos-shared-brain-governs-bare-code-repos-machine-local-path-registry-link-cli-trust-gated-clone-dashboard (completed) · 0.21.0 · 2026-07-09 → …
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
+  - fix-clickup-sync-duplicate-tasks-204 (completed) · 0.19.0 · 2026-07-22 → …
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
-  - install-skill-and-setup-advance-setupversion-without-running-migrations-silently-skipping-them-forever (completed) · 0.23.0 · 2026-07-30 → …
+  - github-task-sync-pull-silently-wipes-the-local-only-objectives-field-on-every-mirrored-task (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
   - multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever (completed) · 0.20.0
-  - only-the-system-may-write-control-bearing-frontmatter-pinned-federated-id-type-date (todo) · 0.26.0
-  - peer-mail-cross-vault-agent-messaging (completed) · 0.26.1 · 2026-08-26 → 2026-08-27
-  - pre-publish-checklist-v0-23-0 (completed) · 0.23.1 · 2026-08-01 → …
-  - pre-publish-checklist-v0-24-0 (completed) · 0.24.0 · 2026-08-17 → 2026-08-17
+  - pin-this-repo-to-the-gh-account-that-can-actually-write-to-it-so-the-brain-sync-stops-403-ing-every-cycle (todo) · 0.28.0
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
-  - task-statuses-become-project-declarable-data-with-a-semantic-kind-so-planned-cancelled-or-any-custom-status-syncs-to-github-and-clickup-without-a-code-change (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
-  - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
+  - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · BACKLOG
 
-### 🔵 **simplified-ux** — Simplified UX · 80/126 done (63%) · target 2026-07-31 · forecast 2026-09-29 🔴 SLIPPING
+### 🟡 **simplified-ux** — Simplified UX · 53/67 done (79%) · target 2026-07-31 · forecast 2026-09-22 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
-  - a-browser-run-shows-its-screenshots-in-chat-a-live-frame-while-it-runs-a-strip-when-it-lands (todo) · 0.28.0
-  - a-compaction-in-chat-shows-its-summary-instead-of-silently-swallowing-the-conversation (in_review) · 0.30.0
-  - a-declared-status-whose-key-collides-with-a-custom-field-is-accepted-by-the-settings-editor-then-silently-never-appears (todo) · 0.27.0
-  - a-develop-run-reads-in-order-each-build-card-names-its-real-wave-sits-where-it-happened-and-the-live-step-is-the-one-on-top (completed) · 0.28.0 · 2026-09-27 → 2026-09-29
-  - a-discuss-do-not-act-mode-whose-plan-lands-in-a-task-never-a-scratch-file (todo) · 0.26.0
-  - a-dreamcontext-assistant-lives-in-the-notch-wakes-on-a-hotkey-and-drives-every-project-as-the-owner-s-replica (in_review) · 0.28.0 · 2026-09-26 → …
-  - a-headless-builder-reads-as-a-live-teammate-in-chat-its-brief-its-steps-and-its-status-not-a-bare-shell-row (in_review) · 0.28.0 · 2026-09-25 → …
+  - a-claude-account-switch-reaches-the-sessions-already-open (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
+  - a-finished-sub-agent-s-report-becomes-a-collapsed-card-in-the-transcript-instead-of-a-wall-the-main-agent-re-types (completed) · 0.27.0 · 2026-09-02 → 2026-09-02
+  - a-lab-report-cannot-choose-its-measurement-window-so-it-silently-composes-7-day-and-30-day-tiles-side-by-side-and-aligning-them-corrupts-objective-krs (in_review) · 0.28.0 · 2026-09-01 → …
+  - a-project-chip-says-how-many-chats-it-holds-and-how-many-are-working-one-counted-bubble-per-status (completed) · 2026-08-14 → 2026-08-14
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (completed) · 0.21.0 · 2026-07-24 → …
   - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (completed) · 0.21.0 · 2026-07-23 → …
   - agent-composer-add-folder-picker-to-files-button (completed) · 0.18.0
-  - agent-questions-reach-you-when-you-re-not-looking-notification-banner-and-dock-bounce (completed) · v0.24.0
   - agent-surface-polish-unified-chrome-composer-redesign-slash-menu-inline-images-reveal-endpoint (completed) · 0.21.0
-  - agent-tab-auto-title-arrives-late-warm-the-cli-probe-and-let-a-chat-tab-carry-its-own-first-message (completed) · 0.23.0
-  - agent-tab-right-click-menu-rename-the-auto-rename-switch-from-settings (completed) · 0.26.0 · 2026-08-24 → 2026-08-24
-  - agent-work-in-chat-reads-as-a-quest-party-characters-a-quest-map-a-team-log-and-the-r-d-in-plain-words (in_review) · 0.28.0 · 2026-09-25 → …
-  - agentic-automations-reads-calm-and-alive-one-type-ladder-one-accent-per-screen-a-breathing-run-state-motion-that-keeps-your-place-and-a-first-run-that-starts-something (in_review) · 0.28.0 · 2026-09-25 → …
-  - agents-channel-after-first-real-use-answers-thread-under-your-ask-the-whole-report-lives-in-the-thread-and-diagrams-pdfs-and-clips-an-agent-posts-actually-render (in_review) · 0.28.0
-  - agents-epic-finished-end-to-end-and-the-side-menu-gets-one-maturity-model-section-hues-and-honest-icons (in_review) · 0.28.0 · 2026-09-22 → …
-  - agents-get-less-but-correct-instructions-a-budgeted-sub-agent-briefing-a-small-agent-core-skill-and-no-retired-or-contradictory-rules (completed) · 2026-09-29 → 2026-09-29
-  - agents-hesap-paneli-okunur-olur-her-hesabin-iki-limiti-surukle-birak-oncelik-ve-yenile (completed) · 0.27.0 · 2026-09-06 → 2026-09-06
-  - agents-page-round-one-leftovers-members-view-copy-empty-state-and-answer-route-messages-short-diagram-box-height-and-two-hardening-nits (todo) · 0.28.0
-  - agents-step-1-the-agents-page-becomes-a-member-list-where-i-create-and-edit-agents-with-a-photo-a-mode-and-a-model (completed) · 0.28.0 · 2026-09-20 → 2026-09-20
-  - agents-step-2-a-finished-run-pushes-one-message-into-the-agents-feed-and-the-message-shape-is-the-design-to-approve (in_review) · 0.28.0
-  - agents-step-3-a-pushed-message-can-carry-a-question-with-options-a-structured-summary-several-files-and-a-board (in_review) · 0.28.0
-  - agents-step-4-replying-in-a-thread-or-mentioning-an-agent-resumes-its-session-or-calls-it-and-the-answer-comes-back-as-a-post (in_review) · 0.28.0
-  - an-automation-run-opens-as-a-chat-session-not-an-inline-drill-in (completed) · 0.24.0
-  - an-unnamed-chat-tab-gets-a-real-name-from-its-agent-instead-of-staying-chat-n (in_review) · 0.30.0
+  - an-agent-can-drop-a-pin-whose-fact-stopped-being-true (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards (completed) · 0.21.0
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
-  - app-bundled-cli-reports-0-0-0-so-version-gated-migrations-never-fire-on-its-fallback-path (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
+  - app-status-always-reports-running-no-macos-pgrep-truncates-the-command-line-at-66-chars (completed) · 0.28.0 · 2026-09-21 → 2026-09-21
+  - approve-time-duplicate-run-warning-for-shared-automations (completed) · 2026-08-13 → 2026-08-13
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
-  - automation-runs-must-degrade-gracefully-on-the-account-usage-limit (in_review) · 0.28.0
-  - automations-are-undiscoverable-the-skill-description-omits-scheduling-entirely-and-the-snapshot-has-no-automations-channel (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
-  - automations-become-agents-every-automation-is-a-slack-like-thread-the-agent-posts-important-updates-to-and-the-user-replies-in (in_review) · 0.28.0
-  - automations-must-not-publish-a-usage-limit-reply-as-their-document (cancelled) · 0.26.0
-  - automations-redesign-the-flow-graph-is-the-manifest-the-run-asks-in-chat-and-the-queue-never-loses-a-fire (completed) · v0.24.0 · 2026-08-09 → …
-  - call-the-planning-time-box-a-cycle-in-the-ui-and-cli-with-version-staying-canonical-on-disk (todo) · BACKLOG
+  - auto-switch-iki-mod-agirlikli-puan-ve-sirayla-tuketme (completed) · 0.28.0 · 2026-09-10 → 2026-09-11
+  - automations-must-not-publish-a-usage-limit-reply-as-their-document (completed) · 0.28.0 · 2026-09-22 → 2026-09-22
+  - automations-use-every-claude-account-and-move-to-the-next-one-when-a-limit-lands (in_review) · 0.28.0
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
+  - chat-answers-become-agent-written-html-typed-chart-page-retire-dream-html-renders-in-a-themed-sandbox (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
   - chat-answers-become-interactive-inline-charts-fullscreen-boards-widget-pageviews-and-a-pinned-checklist-window (completed) · 0.21.0 · 2026-07-26 → …
   - chat-becomes-the-standard-agent-screen-the-embedded-terminal-becomes-terminal-legacy (completed) · 0.21.0
-  - chat-density-shrink-chrome-and-demote-the-context-meter-so-more-conversation-fits (completed) · 0.25.0 · 2026-08-23 → 2026-08-24
-  - chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure (in_progress) · 0.27.0 · 2026-09-04 → 2026-09-04
-  - chat-names-the-branch-and-worktree-it-acts-on-backend-done-placement-waits-on-chat-density (completed) · 0.25.0 · 2026-08-23 → 2026-08-23
-  - chat-opens-a-pdf-in-the-app-and-every-file-panel-offers-open-on-computer-reveal-in-finder (completed) · 0.24.0
-  - chat-prose-reads-at-a-body-column-rhythm-not-a-ui-label-s (completed) · 0.23.1
-  - chat-queued-messages-steer-into-the-running-turn-instead-of-waiting-for-it-to-end (completed) · 0.23.0 · 2026-07-29 → …
-  - chat-s-command-parser-reads-the-right-characters-after-a-heredoc-and-the-file-panel-drops-its-emoji-em-dashes-and-dead-css (todo) · 0.28.0
-  - chat-scroll-settles-before-the-window-mutates-momentum-safe-reveal-chunked-trim (completed) · 0.23.1
-  - chat-stays-smooth-when-the-rail-folds-a-pane-is-focused-or-the-owner-scrolls-up-mid-stream (in_review) · 0.30.0
-  - chat-tool-rows-name-their-object-not-their-type-plus-run-grouping-and-density (completed) · 0.23.0
+  - chat-depiction-becomes-a-built-board-dream-html-stops-being-the-default-for-structure (in_review) · 0.28.0 · 2026-09-04 → 2026-09-04
   - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript (completed) · 0.21.0
   - chat-view-polish-board-zoom-fullscreen-collapsed-background-agents-autogrow-composer (completed) · 0.21.0 · 2026-07-25 → …
   - chat-view-renders-what-the-agent-makes-inline-boards-media-clickable-paths-action-buttons (completed) · 0.21.0
   - chat-view-shows-background-shells-read-live-output-and-stop-them (completed) · 0.21.0
-  - chat-yuzeyi-telefonda-calisir-mobil-algilaninca-sadece-chat-acilir-oturumlar-sol-cekmeceden-secilir (in_progress) · 0.28.0
-  - closing-a-chat-tab-leaves-its-claude-process-alive-so-ram-piles-up (completed) · 0.25.0 · 2026-08-23 → 2026-08-23
+  - claude-code-cli-keeps-itself-up-to-date-the-app-checks-the-version-and-runs-claude-update (in_review)
   - cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion (completed) · 0.20.0
-  - composer-in-kullanim-paneli-mod-gostergesi-ve-baglam-halkasi-premium-bir-tasarima-gecer (in_review) · 0.28.0
   - council-v2-the-chamber (completed) · 0.21.0 · 2026-07-23 → …
   - delegate-a-task-to-a-claude-agent-from-the-board (completed) · 0.18.0
-  - desktop-file-picker-crash-fixed-by-moving-to-native-nsopenpanel-handling (completed) · v0.24.0
   - desktop-launcher-ux-drag-fix-cmd-p-project-switcher (completed) · 0.10.7 · 2026-07-04 → …
   - desktop-settings-agents-panel-hotkey-reopen-tabs-auto-title (completed) · 0.10.7 · 2026-07-04 → …
-  - develop-mode-runs-like-goal-skill-waves-on-the-map-builders-build-each-wave-a-review-closes-every-wave-a-validator-closes-the-run (in_review) · 0.28.0
-  - every-agent-role-is-a-real-dreamcontext-character-its-own-body-colour-and-prop-told-apart-at-a-glance-not-an-emoticon (in_review) · 0.28.0
   - feat-app-goal-skill-live-panel-above-the-agent-composer-sleepy-team-dock-chip (completed) · 0.20.0
   - feat-sleepy-agent-surface-ux-redesign (completed) · v0.10.5
+  - feat-tasks-present-version-as-cycle-ui-cli-relabel-version-stays-canonical (todo) · BACKLOG
   - fix-171-agent-terminal-utf-8-copy-mojibake-regression-tauri-native-clipboard (completed) · 0.17.2
   - fix-agent-session-tab-rotation-mapping-auto-title-resume-stability (completed) · v0.13.0
   - fix-desktop-auto-relaunch-on-version-drift-macos-self-heal-upgradeready-flag-auto-relaunch-banner (completed) · 0.17.0
   - fix-sleepy-agent-auto-submit-timing-race-plus-composer-skill-browser-ux (completed) · v0.13.0
   - fix-tauri-acl-shell-allow-open-for-external-links (completed) · v0.13.0
-  - full-suite-runs-intermittently-fail-on-a-vitest-reporter-rpc-timeout-under-load (completed) · 0.24.1 · 2026-08-17 → 2026-08-17
-  - heal-the-v0-24-1-release-record-npm-has-it-the-git-tag-and-announcement-do-not (todo) · 0.25.0
-  - highlighter-the-agent-can-mark-the-load-bearing-phrase-not-just-bold-it (completed) · 0.23.1
-  - hypotheses-ui-redesign-verdict-first-cards-list-board-toggle-seen-state-calm-detail-modal (completed) · v0.24.0
   - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (completed) · 0.21.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (completed) · 0.18.0
-  - insights-sync-all-make-bulk-insight-sync-a-background-job-with-bounded-concurrency (completed) · 0.23.0
-  - insights-v2-blocks-reach-a-polished-fully-customizable-chart-standard-axes-correct-hover-charts-that-fit-their-cell (in_review) · 0.30.0 · 2026-09-30 → …
-  - insights-v2-boards-of-data-bound-lego-blocks-replace-categories-and-reports-and-sync-only-pays-for-change (in_review) · 0.30.0
-  - insights-v2-funnel-explorer-every-page-a-bindable-block-and-the-whole-explorer-as-one-interactive-page (in_review) · 0.30.0 · 2026-09-30 → …
-  - install-manifest-gains-a-hash-and-an-owner-no-silent-overwrites-no-silent-pack-collisions (todo) · BACKLOG
-  - j-a-r-v-i-s-mode-konusarak-sor-sesli-cevap-al-yapiyi-ekranda-gor (cancelled)
+  - insights-breakdown-contract-matrix-v1-native-reports-layer (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
+  - jarvis-composer-bir-durum-rayi-canli-ses-olcer-ve-kelime-ustu-duzeltme-kazanir (in_review) · 0.28.0
+  - jarvis-konusurken-muzik-kendiliginden-susar-ve-cevap-bitince-geri-gelir (in_review) · 0.28.0
   - lab-funnel-analytics (completed) · 0.19.0
+  - lab-request-budget-an-upstream-freshness-gate-so-insights-and-reports-stop-re-querying-data-that-has-not-changed (todo) · 0.28.0 · 2026-09-02 → …
   - launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready (completed) · 0.17.2 · 2026-07-10 → …
+  - launcher-cross-project-multi-vault-task-view-for-portfolio-planning (todo) · BACKLOG
   - launcher-federation-board-modeless-direct-manipulation-ux (completed) · 0.18.0
-  - launcher-shows-one-task-board-across-every-registered-vault-for-portfolio-planning (todo) · BACKLOG
-  - macos-keeps-the-desktop-app-s-permissions-across-updates-because-every-build-is-signed-with-one-fixed-certificate (in_review) · 0.30.0
-  - meeting-room-hidden-launcher-chat-where-all-agents-convene (completed) · 0.26.1 · 2026-08-26 → 2026-08-27
-  - multi-account-connect-several-claude-accounts-pick-one-per-session-auto-switch-before-a-limit-lands (completed) · 0.27.0 · 2026-09-04 → 2026-09-06
-  - one-mediaembed-atom-draws-every-inline-clip-and-audio-in-chat-and-the-agents-channel-so-a-fix-in-one-place-lands-in-all-three (completed) · 0.28.0 · 2026-09-29 → 2026-09-29
+  - neonbi-request-diyeti-source-freshness-aware-sync-insight-report (todo) · 0.27.0
   - one-window-holds-every-open-project-as-a-live-chip-strip (completed) · v0.24.0 · 2026-08-09 → 2026-08-17
-  - openui-deneysel-bir-sohbet-modu-olur-ajan-bilesen-yazar-bayrak-varsayilan-kapali (completed) · 0.27.0 · 2026-09-04 → 2026-09-10
-  - opt-in-context-handoff-the-agent-is-told-at-200k-that-it-may-move-its-state-into-the-task-and-continue-in-a-fresh-session (completed) · 0.28.0 · 2026-09-13 → 2026-09-13
   - pack-badge-false-positive-declined-optional-packs-show-as-new-forever (completed) · 0.17.2
-  - peer-mail-cross-vault-agent-messaging (completed) · 0.26.1 · 2026-08-26 → 2026-08-27
-  - pre-publish-checklist-v0-23-0 (completed) · 0.23.1 · 2026-08-01 → …
-  - pre-publish-checklist-v0-24-0 (completed) · 0.24.0 · 2026-08-17 → 2026-08-17
-  - resizing-the-window-can-crash-the-whole-app-from-the-tasks-board-toolbar (completed) · 0.28.0 · 2026-09-29 → 2026-09-29
+  - reports-become-a-branded-dreamcontext-template-window-honest-items-designed-sections-native-export (completed) · 0.27.0 · 2026-09-02 → 2026-09-02
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point (completed) · 0.17.2
-  - settings-dort-gruba-toplanir-tekrarlayan-metin-teklenir-ve-save-dugmesi-kalkar (completed) · 0.27.0 · 2026-09-04 → 2026-09-06
-  - sir-girme-ve-komut-calistirma-sohbetin-icinde-olur-satir-ici-secret-karti-ve-oynat-dugmeli-canli-terminal (in_review) · 0.28.0
-  - sleep-runs-itself-in-the-background-when-debt-is-high-instead-of-nagging (completed) · 0.27.0 · 2026-09-04 → 2026-09-05
-  - sleep-umbrella-tunable-settings-a-bar-against-junk-tasks-and-background-auto-sleep-with-two-writer-safety (completed) · 0.27.0 · 2026-09-05 → 2026-09-05
-  - sleepy-acts-out-the-chat-mode-the-mascot-shows-plan-and-develop-not-just-status (completed) · 0.27.0 · 2026-08-28 → 2026-08-28
-  - stop-auto-opening-automation-runs-as-chat-tabs-and-take-automations-out-of-the-chat-screen (in_progress) · 0.28.0 · 2026-09-26 → …
+  - script-authored-insights-become-multi-page-interactive-apps-not-fixed-height-cards (completed) · 0.26.0 · 2026-08-26 → 2026-08-26
+  - sesli-asistan-ekrani-gorur-ve-acik-sekmedeki-projeye-baglanir (in_review) · 0.28.0
   - survey-questions-page-horizontally-one-question-per-view (completed) · 0.21.0
   - task-creation-scaffolds-lean-and-every-task-says-why-it-exists (completed) · 0.21.0
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance (completed) · 2026-07-08 → …
   - task-manager-show-the-agent-s-document-edits-as-a-git-style-diff (completed) · 0.18.0 · 2026-07-17 → …
-  - task-sync-pull-loses-data-silently-objectives-wiped-watermark-skips-failed-tasks (completed) · 0.25.0 · 2026-08-17 → 2026-08-24
-  - telefon-cebe-girince-oturum-olmesin-kopan-soket-yeniden-baglansin-ve-canli-tur-devam-etsin (todo) · 0.28.0
-  - the-danger-colour-is-an-undefined-token-so-ten-stylesheets-each-pick-their-own-red (todo) · 0.28.0
-  - the-dashboard-sub-package-build-leaves-the-served-directory-stale-so-a-verified-fix-is-not-in-the-app-you-run (todo) · 0.27.0
-  - the-desktop-app-opens-with-its-own-logo-animation-and-sound-instead-of-a-blank-wait (in_review) · 0.30.0
-  - the-desktop-app-reaps-the-dev-servers-and-emulators-its-chat-tabs-agents-leave-running (in_review) · 0.30.0
+  - the-insights-custom-range-applies-a-window-nobody-can-clear-and-reloads-226kb-to-do-it (completed) · 2026-08-26 → 2026-08-26
+  - the-lab-card-wrapper-caps-at-280px-while-the-iframe-inside-it-sizes-to-320-so-a-40px-band-of-content-is-cut-after-the-fix-that-was-meant-to-stop-cutting-it (todo) · 0.28.0
+  - the-meeting-room-gets-its-own-byte-channel-so-a-dropped-or-pasted-file-reaches-every-agent (cancelled) · BACKLOG
   - the-shelf-follows-a-session-into-a-linked-code-repo-not-just-the-vault-s-own (completed) · 0.27.0 · 2026-09-04 → 2026-09-04
-  - train-me-mode-the-agent-learns-your-taste-through-swipe-and-a-b-cards-and-writes-what-it-learned-into-patterns (in_review) · 0.28.0 · 2026-09-27 → …
-  - two-new-agent-actions-pinned-session-facts-that-stay-put-and-progress-read-from-the-task-file (completed) · 0.25.0 · 2026-08-23 → 2026-08-24
-  - update-exits-0-when-no-platform-is-installed-so-scripts-read-the-no-op-as-success (completed) · 0.24.2 · 2026-08-17 → 2026-08-17
-  - whiteboard-a-ajan-karti-eklenir-board-u-bilen-yalniz-kendi-board-una-yazan-ustune-birakilan-widget-i-soran-otomasyon-ajani (in_progress) · 0.30.0 · 2026-10-04 → …
-  - whiteboard-faz-2-her-board-un-yaninda-o-board-u-goren-ve-duzenleyen-bir-asistan-paneli-acilir (todo)
-  - whiteboard-modulu-her-board-ajanin-ve-kullanicinin-birlikte-cizdigi-canli-widget-tasiyan-bir-excalidraw-kontrol-paneli-olur (in_review) · 0.30.0 · 2026-09-29 → …
-  - whiteboard-sekmeleri-chrome-gibi-yan-yana-durur-renkli-gruplara-ayrilir (in_review) · 0.30.0
-  - whiteboard-wiki-olur-sayfalar-board-dan-cikmadan-popup-ta-wiki-menusunde-ve-tuval-wiki-modunda-okunur (in_review) · 0.30.0 · 2026-10-02 → …
-  - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim (in_progress) · 0.28.0
+  - upgrade-never-runs-migrations-and-maybeupdateallprojects-has-4-silent-skip-holes (todo) · BACKLOG
+  - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim (todo) · 0.28.0
 
-### 🔵 **make-it-a-business** — Make it a Business · $ 865/2000 MRR (43%) · target 2026-09-05 · forecast 2026-10-27 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
+### 🔵 **make-it-a-business** — Make it a Business · $ 865/2000 MRR (43%) · target 2026-09-05 · forecast 2026-11-04 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready
   Unblocks: hello-world-pr
-  - a-light-mode-dreamcontext-promo-video-is-cut-from-real-app-footage-in-the-reel-grammar-the-owner-keeps-sending (in_review) · 0.30.0
-  - hosted-dreamcontext-com-a-github-oauth-collaboration-layer-over-the-brain (todo) · BACKLOG
-  - share-one-knowledge-file-or-board-over-a-tunnel-via-a-read-only-mutation-free-surface (todo) · BACKLOG
+  - feat-web-hosted-dreamcontext-com-github-oauth-collaboration-layer-over-the-brain (todo) · BACKLOG
+  - feat-web-read-only-public-surface-safely-share-a-single-knowledge-file-excalidraw-board-via-tunnel (todo) · BACKLOG
 
-### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-11-24 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business
+### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-12-02 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-it-a-business

@@ -10,7 +10,7 @@ pinned: false
 date: '2026-10-03'
 status: in_progress
 created: '2026-10-03'
-updated: '2026-10-06'
+updated: '2026-10-08'
 released_version: null
 tags:
   - 'topic:mobile'
@@ -85,7 +85,7 @@ list live in the task. The load-bearing ones:
 
 ## Technical Details
 
-**Status (2026-10-06): the code is on `main` and inside the published 0.30.0 / 0.30.1 packages, deliberately UNANNOUNCED — the UI is gated on local setup and the CLI command is hidden from `--help`. Every known bug from the first real-phone and real-Codespaces runs is fixed, but the phone path has still never worked end to end, so no acceptance criterion is ticked.** The last ship-gate is a 0.30.2 publish: the phone-chat fix lives in cloud code that the codespace only ever installs from npm, so it cannot reach a phone before it is on the registry. After that publish the never-yet-run steps are, in order: give a job from the phone and have it commit; lock the screen for 10 minutes and come back to a finished turn; let the machine sleep and wake it from the phone's Wake page (never passed since W0); and a Return that brings the phone's commit and session home.
+**Status (2026-10-08): the code is on `main` and inside the published 0.30.0 through 0.30.3 packages, deliberately UNANNOUNCED.** Each release cut runs a "keep hands-free unannounced" commit and reverts it on `main` after the tag (0.30.2: `f8ebe991` / `7bfa1739`; 0.30.3: `eae84dcd` / `b1c91521`). That commit renders the window-bar button and the Settings card only on a machine that already ran setup, hides the command from `--help` (it still runs), takes the README section and the skill index line out, and moves the skill reference to `unannounced/`. **The phone path has still never worked end to end, so no acceptance criterion is ticked.** The 0.30.2 publish that the phone-chat fix (`424e2f27`) was waiting for is done; smoke #5 then found that the phone's commit landed in the wrong checkout (`f72fbc2a`, in 0.30.3). The steps that have never run, in order: give a job from the phone and have it commit into the trip; lock the screen for 10 minutes and come back to a finished turn; let the machine sleep and wake it from the phone's Wake page (never passed since W0); and a Return that brings the phone's commit and session home.
 W0 (the provider gate) closed and produced D15/D17. W1 (transports + shared path guard)
 closed after seven review rounds that produced D18-D20. W2 (cloud server, laptop
 orchestration, lock consumers) closed after five rounds that produced D21-D23. The
@@ -131,6 +131,8 @@ Every item here was found by a real Codespace or a real phone, not by a reviewer
 - **The phone landed in the launcher, not in its chat** (`b23184e9`, found on a real phone). A CLI `go` now registers the project under an ASCII, header-safe name and the cloud fills a missing registry entry, so login opens the trip's chat. A successful login, the trip's activation and a *cancelled* Return all count as the owner's action on the idle clock. The login page registers the offline service worker, so a stopped machine shows Wake instead of a browser error, and the login request times out after 30 s. The uptime count closes on GitHub's own state change and counts runs the laptop did not start.
 - **The away banner is per project, not per window** (`1fd43c6d`). The status answer now says whether the project the window asks about is in the trip (the same lock check the server uses) and names the away project; only that project renders the banner, while other projects and the launcher get the window-bar chip (Return + Show link). A project switch during a status read always re-reads for the project on screen.
 
+- **The phone's commit landed in the setup checkout, and that checkout was writable by agents** (`f72fbc2a`, smoke #5, in 0.30.3). The login shell changed directory, so the cloud chat ran in the codespace's checkout of the private setup repo instead of the trip mirror. That checkout was also world-writable, so an agent could plant git hooks or config that the `codespace` user (who holds `GITHUB_TOKEN`) would run, or swap the bootstrap verifiers root reads at start. Now the cloud chat script `cd`s to the trip root before `exec`, and `startChatSession` refuses any root outside the trip's roots (realpath, separator-safe). At every start and every minute, root locks the checkout's top dir (`codespace`, 0700, no ACL) before scanning it. Any symlink, foreign-owned entry, `exec`/`include` git-config key or non-sample hook marks the machine compromised: the offending entries are quarantined, nothing is read from the checkout, health says so, and `go` refuses with teardown-then-setup. `account-login` warns when the signed-in email is not the slot's account.
+
 ### Known residuals (stated, not fixed)
 
 - **Same-uid exposure across sibling agent children (AC19).** Every agent child runs as the one `dcuser` uid, so a lingering agent process can read a sibling child's environment through `/proc/<pid>/environ`. Every account's cloud credentials file lives in a dcuser-owned sandbox the CLI must read and refresh, so any agent can read any cloud account's login. The `dcserver` dir, `/proc/<server>/environ`, `/workspaces/.codespaces` and `/home/codespace` stay unreadable to dcuser.
@@ -147,6 +149,12 @@ Every item here was found by a real Codespace or a real phone, not by a reviewer
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-08 - Hidden in 0.30.2 and 0.30.3 too; smoke #5 found the wrong checkout (sleep reconcile)
+
+- The Status paragraph was replaced. The 0.30.2 publish it named as the last gate happened, and 0.30.3 followed. Both carried the code unannounced, through the same release-commit/revert pair as 0.30.1.
+- One new "What the real machine taught" item: `f72fbc2a`. The cloud chat now runs only inside the trip, and the setup checkout is locked and scanned.
+- Still **no criterion ticked**: the phone-to-commit-to-Return path has not run end to end. `status` stays `in_progress`, `released_version` stays `null`.
 
 ### 2026-10-06 - Shipped hidden in 0.30.0/0.30.1; the real machine found six bugs, the phone path still unproven
 

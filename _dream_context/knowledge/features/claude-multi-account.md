@@ -11,7 +11,7 @@ pinned: false
 date: '2026-09-05'
 status: in_review
 created: '2026-09-05'
-updated: '2026-10-06'
+updated: '2026-10-08'
 released_version: 0.27.0
 product: desktop
 tags:
@@ -33,6 +33,10 @@ related_tasks:
   - yanan-pencereyi-harcayan-ve-eve-donen-akilli-secim
   - >-
     an-account-switch-is-never-left-owed-held-messages-ride-it-it-is-said-again-and-a-stalled-one-gives-the-messages-back
+  - >-
+    chat-notices-speak-in-pictures-and-the-eco-handoff-shows-itself-while-it-runs
+  - >-
+    a-claude-account-row-signed-in-as-someone-else-says-so-and-a-chat-keeps-its-account-when-the-mode-or-agent-changes
 ---
 
 ## Why
@@ -98,11 +102,24 @@ and moving before the limit lands did not exist at all.
       The primary row hid "Sign in again" because the relogin route refuses it (`primary_account`)
       and nothing took its place, so a signed-out "this machine" account showed the warning with
       no action at all. The row now opens the same terminal sign-in the System doctor uses.
+- [ ] **IN PROGRESS, NOT SHIPPED (uncommitted at 2026-10-08; task `a-claude-account-row-signed-in-as-someone-else-says-so-and-a-chat-keeps-its-account-when-the-mode-or-agent-changes`).** A row whose folder is signed in as SOMEONE ELSE says so (2026-10-07, Alper's report: the
+      drag order looked ignored and KB access failed — every new session ran as the colleague's
+      account sitting in `~/.claude.json` under the "this machine" row). `signedInAsOther`
+      (`claude-account-sandbox.ts`) compares the folder's `oauthAccount` to the row (uuid first,
+      then email; a blank is never a mismatch). Settings draws the warning + a primary "Sign in
+      again" on that row (`signedInAs` on the list wire), and a chat started on it gets an
+      `account_mismatch` banner. Changing the chat mode and picking an agent now carry the
+      pane's account instead of silently respawning on the top row.
 - [x] With no second account connected, behaviour is bit-for-bit what it was: no sandbox is
       built, no symlink is laid, and no ordinary spawn is rejected.
 - [x] A sandbox's `.claude.json` carries NO MCP configuration at any depth
       (`mcpServers` / `mcpContextUris` / `enabledMcpjsonServers` / `disabledMcpjsonServers`);
       MCP reaches a sandboxed session BY REFERENCE through one 0600 file (`--mcp-config`).
+- [x] Automation runs get the same MCP reference (2026-10-07, `35371143`). The chat spawn already
+      passed the shared `mcp-config.json`; the automation runner and the thread-reply resume did
+      not, so a run that moved to a second account on a usage-limit switch silently lost local
+      Slack and the KB. Both now pass `--mcp-config`, LAST in argv (the flag is variadic). Account
+      #0 and board-scoped agents are unchanged. Proof: `tests/unit/automation-account-switch.test.ts`.
 
 ### Choosing an account
 
@@ -210,6 +227,19 @@ and moving before the limit lands did not exist at all.
       message did not fall; an earlier one did, so it was moved without trying) and `stayed_put`
       (refused, nowhere better to go — shown only after a REAL refusal) apart, alongside
       `limit_near`, `all_exhausted`, `needs_relogin` and `auto_switch_disabled`.
+- [x] One signed-out reading never eliminates an account (2026-10-07, `cf2a3641`). During a limit
+      storm the auth judge answered `loggedIn:false` once for two signed-in accounts, and the
+      banner said every account was at its limit while half the quota sat unspent. Because
+      `needs-relogin` is an elimination, it is now CONFIRMED: the judge memo is dropped and the
+      question is asked again after 1.5s inside the same probe budget. Only a second `false` is
+      `needs-relogin`; `true` is `healthy-unmeasured`; no answer or no budget left is `unknown`,
+      which never accuses the account (`claude-usage-probe.ts`, `tests/unit/claude-usage-probe.test.ts`).
+- [x] Account notices are drawn, not written (2026-10-07, `044407df`). The account-switch banner
+      used to wrap into ten lines of raw account slugs. Account switch, all-at-limit, stalled,
+      auto-switch off and sign-in are now built on the chat's shared `Notice` (toned badge, short
+      headline, accounts as avatars, usage meters, actions as buttons, the full sentence on hover;
+      `Notice.tsx` + `notices.css`). Making the cards responsive in a narrow pane is open (PR #432,
+      not merged at 2026-10-08).
 - [x] When no candidate exists the message is neither blocked nor swallowed: it is sent on the
       current account and the honest limit error surfaces with the earliest reset time.
 - [x] One switch per conversation at a time — a second trigger while a restart is pending is a
@@ -441,6 +471,14 @@ account's usage".
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-08 - Sleep reconciliation: confirmed sign-out, MCP for automation runs, notices as pictures
+
+- `cf2a3641`: `needs-relogin` takes two signed-out readings 1.5s apart; one stray `false` no longer empties the candidate list.
+- `35371143`: an automation run or thread reply that moved to a sandboxed account gets the machine's MCP servers through `--mcp-config`.
+- `044407df`: the account notices moved onto the shared picture-style `Notice`. The narrow-pane responsive fix (PR #432) was not merged at this cycle, so it is not ticked.
+- **Un-ticked:** the "signed in as SOMEONE ELSE" criterion (`signedInAsOther`, the Settings warning row, the `account_mismatch` notice, the account kept across a mode or agent change) was written in as shipped by another session. Its code is only in the uncommitted working tree on 2026-10-08. The text stays, but it is marked in progress under task `a-claude-account-row-signed-in-as-someone-else-says-so-and-a-chat-keeps-its-account-when-the-mode-or-agent-changes`. Tick it when that change is committed.
+- `status` stays `in_review`, `released_version` stays `0.27.0`.
 
 ### 2026-10-03 - The machine's own account gets its way back
 
