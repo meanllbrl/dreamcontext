@@ -124,6 +124,17 @@ export interface BackgroundTaskEntry {
  *  turns severe. `nudgeAt`/`hardAt` are the composer's band edges (CONTEXT_BAND_EDGES,
  *  owned by src/lib/setup-config.ts); the literals below are only the last-resort
  *  fallback for a frame from an older server that does not send them. */
+/** One frame of the session's headless browser, as `browser-mirror.ts` sends it. `data` is a
+ *  base64 JPEG; `width`/`height` are the page's CSS size, which the view reserves as its ratio. */
+export interface BrowserFrame {
+  data: string;
+  width: number;
+  height: number;
+  url: string;
+  title: string;
+  at: number;
+}
+
 /** A context handoff as the server watches it happen (src/lib/handoff-progress.ts). MIRRORED
  *  from the server's `HandoffRun` wire shape; change one side, change the other. `id` is the
  *  run's start time and its identity: a replayed frame updates the same card. */
@@ -154,6 +165,12 @@ export type ChatEvent =
   | { kind: 'context-handoff'; state: ContextHandoffState }
   /** A context handoff moving through its stages — the chat draws it live. */
   | { kind: 'handoff-progress'; run: HandoffProgress }
+  /** One frame of the session's headless browser (server: src/server/browser-mirror.ts). Not
+   *  conversation state: chatSession hands it to `chat/browserLiveStore.ts` before the reducer, so
+   *  a frame never re-renders the transcript. */
+  | { kind: 'browser-frame'; frame: BrowserFrame }
+  /** That browser went away (closed by the agent, or its session ended). */
+  | { kind: 'browser-closed' }
   /** The CLI's authoritative roster of tasks STILL RUNNING in the background, pushed on
    *  every change (empirically verified on CLI 2.1.220: fires when a `run_in_background`
    *  Bash starts, and again with `tasks: []` when the last one ends).
@@ -1119,6 +1136,21 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     const verb = str(obj.verb);
     if (!id || !verb) return ignored('_meta:assistant_command');
     return { kind: 'assistant-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
+  }
+  // Read strictly: a frame missing its image or its size draws nothing rather than a box of
+  // the wrong shape (the view reserves its ratio from width/height before the image decodes).
+  if (subtype === 'browser_frame') {
+    const data = str(obj.data);
+    const width = typeof obj.width === 'number' && obj.width > 0 ? obj.width : 0;
+    const height = typeof obj.height === 'number' && obj.height > 0 ? obj.height : 0;
+    if (!data || !width || !height) return ignored('_meta:browser_frame');
+    return {
+      kind: 'browser-frame',
+      frame: { data, width, height, url: str(obj.url) ?? '', title: str(obj.title) ?? '', at: typeof obj.at === 'number' ? obj.at : 0 },
+    };
+  }
+  if (subtype === 'browser_state') {
+    return obj.state === 'closed' ? { kind: 'browser-closed' } : ignored('_meta:browser_state');
   }
   return ignored('_meta:' + (subtype ?? 'unknown'));
 }

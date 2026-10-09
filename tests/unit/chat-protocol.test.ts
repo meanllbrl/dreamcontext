@@ -667,6 +667,31 @@ describe('parseChatLine — result (final turn summary)', () => {
 });
 
 describe('parseChatLine — _meta (server-relay lifecycle frames)', () => {
+  it('browser_frame → browser-frame carrying the image, the page size and where it is', () => {
+    const line = JSON.stringify({ type: '_meta', subtype: 'browser_frame', data: 'AAAA', width: 1280, height: 720, url: 'https://example.test/a', title: 'A', at: 5 });
+    expect(parseChatLine(line)).toEqual({
+      kind: 'browser-frame',
+      frame: { data: 'AAAA', width: 1280, height: 720, url: 'https://example.test/a', title: 'A', at: 5 },
+    });
+  });
+
+  it('browser_frame without an image or a size → ignored (the view reserves its ratio from the size)', () => {
+    for (const bad of [
+      { data: '', width: 1280, height: 720 },
+      { data: 'AAAA', width: 0, height: 720 },
+      { data: 'AAAA', width: 1280 },
+    ]) {
+      expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'browser_frame', ...bad })))
+        .toEqual({ kind: 'ignored', rawType: '_meta:browser_frame' });
+    }
+  });
+
+  it('browser_state closed → browser-closed; any other state → ignored', () => {
+    expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'browser_state', state: 'closed' }))).toEqual({ kind: 'browser-closed' });
+    expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'browser_state', state: 'open' })))
+      .toEqual({ kind: 'ignored', rawType: '_meta:browser_state' });
+  });
+
   it('exit with a code → meta-exit', () => {
     expect(parseChatLine(META_EXIT)).toEqual({ kind: 'meta-exit', code: 0 });
   });

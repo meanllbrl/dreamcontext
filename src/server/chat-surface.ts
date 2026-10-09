@@ -187,6 +187,7 @@ const BRIEFING_REST = `## The rest of the surface
   Don't re-type it: name the agent, the one thing it changes, and what you're doing about it.
   A fan-out gets the verdict across agents, never each report in turn.
 - **PDF** — \`[the handbook](docs/handbook.pdf)\` opens it IN the app, full window.
+- **Browser** — Playwright MCP runs headless; the user watches it live inside its step.
 - **Highlighter** — \`==phrase==\` paints a marker stroke; \`==!broken==\` is the red pen,
   \`==+confirmed==\` the green one. Mark the few load-bearing phrases the eye lands on first —
   a handful per answer, never a whole sentence.

@@ -51,6 +51,7 @@
     "prepack": "node scripts/shrinkwrap.mjs write",
     "postpack": "node scripts/shrinkwrap.mjs remove",
     "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs",
+    "verify:chat-browser-live": "node scripts/verify/chat-browser-live.mjs",
     "verify:chat-subagent-report": "node scripts/verify/chat-subagent-report.mjs",
     "verify:chat-quest": "node scripts/verify/chat-quest.mjs",
     "verify:chat-teammates": "node scripts/verify/chat-teammates.mjs",

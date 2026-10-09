@@ -356,6 +356,11 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    *
    * 12,739 -> 12,774 on 2026-09-27, no raise: the title rule now says "plain words ... spaced
    * like a sentence, never a slug or hyphens" (owner: tab names drowned in dashes).
+   *
+   * 12,774 -> 12,865 on 2026-10-08, no raise: one line saying a project's Playwright MCP runs
+   * headless and the user watches it live above the composer (chat/BrowserLive.tsx), so the
+   * agent stops sending the owner to a Chrome window that no longer exists. Written as one
+   * clause after a 230-character draft would have needed a raise.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12900);
@@ -369,7 +374,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12774)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12865)).toBeLessThanOrEqual(20);
   });
 
   /**

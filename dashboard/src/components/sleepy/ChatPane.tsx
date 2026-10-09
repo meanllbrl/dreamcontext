@@ -35,6 +35,7 @@ import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
 import { TeamBoard, teamBoardState } from './chat/TeamBoard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { QueuedMessages } from './chat/QueuedMessages';
+import { BrowserHostProvider, lastBrowserToolId } from './chat/browserHost';
 import { PeerSessionHolder } from './chat/PeerSessionCard';
 import { usePeerMentions } from '../../hooks/usePeerMentions';
 import type { PeerMention } from '../../lib/agentComposer';
@@ -636,6 +637,10 @@ export function ChatPane({
   const api = useApi();
 
   const conv = session.getModel();
+  // The one step that draws the live browser: the last browser call in the transcript
+  // (chat/browserHost.tsx). Recomputed only when the item list changes.
+  const browserHostToolId = useMemo(() => lastBrowserToolId(conv.items), [conv.items]);
+  const browserHost = useMemo(() => ({ sessionId: session.id, hostToolId: browserHostToolId }), [session.id, browserHostToolId]);
   // The account the server really spawned on; a session that asked for the default may not
   // be on the preferred one (see `ConversationModel.activeAccountId`).
   const runningAccountId = conv.activeAccountId || session.accountId;
@@ -1806,6 +1811,7 @@ export function ChatPane({
         />
       )}
       {session.status === 'connecting' && <ReconnectingChip />}
+      <BrowserHostProvider value={browserHost}>
       <div className="chat-transcript">
         <div
           className="chat-scroll"
@@ -2059,6 +2065,7 @@ export function ChatPane({
           </button>
         )}
       </div>
+      </BrowserHostProvider>
       {/* Docked above the composer, OUTSIDE the scroller: a background shell outlives the
           turn that started it, so its row must not scroll away while the process runs. Shown
           even when the session has ended — a shell dies with the CLI process, and its last

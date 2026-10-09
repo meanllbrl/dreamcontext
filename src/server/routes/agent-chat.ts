@@ -36,6 +36,8 @@ import { autoModeSettings } from '../../lib/auto-mode-rules.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
 import { describeFreshStart, freshSessionOnDefaultBranch } from '../../lib/session-start-branch.js';
 import { createWorktreeWatcher } from '../worktree-frames.js';
+import { createBrowserMirror } from '../browser-mirror.js';
+import { prepareBrowserOverride } from '../../lib/browser-override.js';
 import {
   describeCheckoutClaim, describeCheckoutReset, readCheckoutDirective, readEditPaths,
 } from '../checkout-directive.js';
@@ -1088,6 +1090,10 @@ export function startChatSession(
    *  agent's. Only `card` decides what a card skips (registry, tab env, branch move). */
   const envelope = card ?? agentChat;
   const scopedCard = !!envelope?.permissionArgs;
+  // The project's Playwright MCP, re-declared headless with a loopback CDP port so its browser
+  // never takes the screen and the pane can show it live (browser-override.ts). Not for a
+  // scoped card (no MCP at all) and not in the cloud (no screen to protect, no port to share).
+  const browserOverride = scopedCard || isCloud() ? null : prepareBrowserOverride(projectRoot);
 
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
@@ -1321,7 +1327,9 @@ export function startChatSession(
     // Account #0 reads the real config directly and needs nothing. `--strict-mcp-config` is
     // deliberately NOT passed, so a project's own `.mcp.json` still applies.
     // No MCP for a scoped card (its allowlist names no MCP tool; out of scope by decision).
-    ...(scopedCard ? [] : mcpConfigArgs([mcpConfigPath, computerMcpPath])),
+    // The browser override rides LAST: between two `--mcp-config` files the later one wins,
+    // and the shared config may carry the owner's headed `playwright` too.
+    ...(scopedCard ? [] : mcpConfigArgs([mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -1644,6 +1652,11 @@ export function startChatSession(
     }
   };
 
+  // The live browser view: watches the override's CDP port once the agent calls a browser tool.
+  const browserMirror = browserOverride
+    ? createBrowserMirror({ port: browserOverride.port, server: browserOverride.server, send: (frame) => sendMeta(frame) })
+    : null;
+
   // Hand the client this project's known slash commands right away, so `/` autocompletes on
   // the very FIRST message instead of only after the CLI has emitted its own `system:init`
   // (which it withholds until a turn has started — see the cache's header note). A real init
@@ -1742,6 +1755,8 @@ export function startChatSession(
     cleanupBriefing();
     cleanupAgents();
     cleanupModeNote();
+    browserMirror?.dispose();
+    browserOverride?.dispose();
     envelope?.dispose();
     unwatchAuth();
     registry?.exited();
@@ -1876,6 +1891,7 @@ export function startChatSession(
       try { ws.send(line); } catch { /* closing */ }
     }
     if (handoffRun) sendMeta(handoffProgressFrame(handoffRun));
+    browserMirror?.replay();
     // A switch announced to the socket that went away is still owed: the client that just
     // arrived never read it, and without it the held messages wait for a restart nobody asks for.
     reannounceSwitch();
@@ -1965,6 +1981,7 @@ export function startChatSession(
       if (!obj) continue;
 
       registry?.observe(obj);
+      browserMirror?.observe(obj);
 
       // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
       if (typeof obj.request_id === 'string') {

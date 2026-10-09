@@ -3,6 +3,7 @@ import { summarizeToolRun, useToolRunCollapse } from './chatEntities';
 import { AgentAvatar, Duration, MetaText } from './atoms';
 import { CardHeader } from './molecules';
 import { ToolCard } from './ToolCard';
+import { BrowserSlot } from './browserHost';
 import { actionText, toolAction, workBeatHeadline } from './toolAction';
 import { AGENT_ROLES, type AgentRoleId } from '../../../lib/agentRoles';
 import type { ChatToolItem } from '../chatSession';
@@ -74,6 +75,9 @@ function ToolRunCardInner({
         open={open}
         onToggle={onToggle}
       />
+      {/* Closed, the run still shows the browser one of its steps is driving (browserHost.tsx);
+          open, that step's own row draws it. */}
+      {!open && <BrowserSlot ids={items.map((i) => i.id)} />}
       {open && (
         <div className="chat-toolrun-rows">
           {items.map((item) => (

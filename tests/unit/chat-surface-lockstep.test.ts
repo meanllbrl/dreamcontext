@@ -295,6 +295,11 @@ describe('CHAT_SURFACE_BRIEFING — prose first, HTML only where it beats prose'
     for (const [, ref] of html.matchAll(/data-(?:from|to)="([a-z]+)"/g)) expect(ids, ref).toContain(ref);
   });
 
+  it('names the live browser view only as what it is: headless, shown inside its step (chat/browserHost.tsx)', () => {
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/Playwright MCP runs headless/);
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/watches it live inside its step/);
+  });
+
   it('tells the author never to position nodes — the kit lays out and re-lays', () => {
     expect(CHAT_SURFACE_BRIEFING).toMatch(/Never position\s+nodes yourself/);
   });

@@ -13,6 +13,7 @@ import {
 import type { TermStatus } from './agentSession';
 import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
 import * as queue from './chat/chatQueue';
+import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 
 /**
@@ -1890,6 +1891,10 @@ export function createChatSession(
     if (!ev || ev.kind === 'ignored') return;
     // A relayed Assistant verb is not conversation state: it never reaches the reducer.
     if (ev.kind === 'assistant-command') { void runCommand(ev); return; }
+    // Nor is a browser frame: it feeds the small live window in the browser step and nothing else,
+    // so six frames a second never re-render the transcript (chat/browserLiveStore.ts).
+    if (ev.kind === 'browser-frame') { pushBrowserFrame(session.id, ev.frame); return; }
+    if (ev.kind === 'browser-closed') { dropBrowserLive(session.id); return; }
     // The ONE place coalescing is allowed: a socket frame nobody is waiting to act on can
     // ride the next paint instead of forcing a React commit per streamed token.
     applyAndNotify(() => applyEvent(ev), !isUrgentChatEvent(ev));
@@ -2493,6 +2498,7 @@ export function createChatSession(
     // that owned it stopped existing.
     renderFlush.cancel();
     speech?.dispose();
+    dropBrowserLive(session.id);
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     clearConnectTimer();
     window.removeEventListener('online', onWake);

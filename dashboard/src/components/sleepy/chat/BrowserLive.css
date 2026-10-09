@@ -1,0 +1,204 @@
+/* The agent's live browser, drawn as a macOS window inside the browser step that drives it
+   (BrowserLive.tsx, placed by browserHost.tsx, store in browserLiveStore.ts). The page box takes its ratio from the frame before the
+   image decodes and is capped in height, so the transcript above keeps most of the pane.
+
+   The three light colours are the macOS window controls: a DRAWING of a familiar object, like
+   an icon's strokes, not a state, so they never change and carry no news (the same reading as
+   a nav section hue, 2.memory.md). The one state on this window, live or still, is the small
+   dot in the address bar. */
+
+.chat-browser {
+  --browser-light-close: hsl(3 100% 67%);
+  --browser-light-min: hsl(40 99% 59%);
+  --browser-light-zoom: hsl(130 66% 47%);
+  min-width: 0;
+  font-family: var(--font-family-text);
+}
+
+/* Inside the browser step's own card (browserHost.tsx), under its header line: inset like the
+   card's body so the window reads as that step's content. */
+.chat-browser-slot {
+  padding: 2px 12px 12px;
+}
+
+/* The window HUGS the page (owner, 2026-10-09: a full-width frame around a narrower page read
+   as a picture floating in empty bands). Its width is the frame's, left-aligned with the cards
+   above; only the page sizes it, which is why the title bar is contained below. */
+.chat-browser-window {
+  width: fit-content;
+  /* A phone-shaped page would leave the title bar no room for its lights and its title; such
+     a page sits centred in a window this wide, the one case with bands beside it. */
+  min-width: min(100%, 280px);
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg);
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Title bar ─────────────────────────────────────────────────────────────── */
+
+.chat-browser-bar {
+  /* Contributes no width of its own: a long title ellipsizes instead of widening the window. */
+  contain: inline-size;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 4px 0 12px;
+  background: var(--color-bg-secondary);
+  font-size: calc(12px * var(--zoom, 1));
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.chat-browser:not([data-collapsed]) .chat-browser-bar { border-bottom: 1px solid var(--color-border); }
+
+.chat-browser-lights {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 8px;
+}
+.chat-browser-light {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+  cursor: default;
+}
+.chat-browser-light[data-light="close"] { background: var(--browser-light-close); }
+.chat-browser-light[data-light="min"] { background: var(--browser-light-min); cursor: pointer; }
+.chat-browser-light[data-light="zoom"] { background: var(--browser-light-zoom); cursor: pointer; }
+/* As on a Mac: the glyphs show only while the pointer is over the group. */
+.chat-browser-light svg {
+  width: 8px;
+  height: 8px;
+  opacity: 0;
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  fill: rgba(0, 0, 0, 0.55);
+}
+.chat-browser-light[data-light="min"] svg { fill: none; }
+.chat-browser-lights:hover .chat-browser-light svg,
+.chat-browser-light:focus-visible svg { opacity: 1; }
+.chat-browser-light:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+.chat-browser-address {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  margin: 0 auto;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--color-bg);
+  white-space: nowrap;
+}
+
+.chat-browser-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+  animation: chat-browser-breath var(--motion-breath, 1600ms) ease-in-out infinite;
+}
+.chat-browser-dot[data-idle] {
+  background: var(--color-text-tertiary, var(--color-text-secondary));
+  animation: none;
+}
+@keyframes chat-browser-breath { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.chat-browser-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text);
+  font-weight: 500;
+}
+.chat-browser-host {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+}
+
+.chat-browser-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.chat-browser-btn:hover { background: var(--color-bg); color: var(--color-text); }
+.chat-browser-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+.chat-browser-chevron { transition: transform 200ms var(--ease-out); }
+.chat-browser[data-collapsed] .chat-browser-chevron { transform: rotate(-90deg); }
+
+/* ── Body: rolls up into the title bar ─────────────────────────────────────── */
+
+.chat-browser-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms var(--ease-out), visibility 0s;
+}
+.chat-browser[data-collapsed] .chat-browser-body {
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition: grid-template-rows 220ms var(--ease-out), visibility 0s 220ms;
+}
+.chat-browser-body-inner { min-height: 0; overflow: hidden; }
+
+.chat-browser-stage {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: var(--color-bg);
+  cursor: zoom-in;
+}
+.chat-browser-stage:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* As tall as the cap allows and exactly as wide as the page's ratio makes that; in a pane
+   narrower than that it shrinks WITH its ratio (width clamps, height follows), so the picture
+   always fills its box and no band ever appears beside it. */
+.chat-browser-frame {
+  display: block;
+  width: calc(min(34vh, 380px) * var(--browser-ratio, 1.6));
+  max-width: 100%;
+  aspect-ratio: var(--browser-ratio, 1.6);
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+.chat-browser-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-browser-dot { animation: none; }
+  .chat-browser-chevron,
+  .chat-browser-body,
+  .chat-browser[data-collapsed] .chat-browser-body { transition: none; }
+}

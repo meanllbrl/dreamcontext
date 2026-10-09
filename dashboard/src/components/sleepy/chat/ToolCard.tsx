@@ -1,4 +1,5 @@
 import { memo, useState } from 'react';
+import { BrowserSlot } from './browserHost';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import {
   parseEditDiff, deriveDiffStartLine, GENERIC_RESULT_CHAR_CAP, isDreamcontextSkill,
@@ -204,6 +205,7 @@ function ToolCardInner({
           )}
         </div>
       )}
+      <BrowserSlot ids={[item.id]} />
     </div>
   );
 }
