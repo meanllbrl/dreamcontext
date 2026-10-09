@@ -112,6 +112,24 @@
     ]
   },
   {
+    "date": "2026-10-07",
+    "type": "change",
+    "scope": "recall",
+    "description": "The haiku recall mode is removed: src/lib/recall-query-extractor.ts and its test, GET /api/recall/haiku, the hook's Haiku branch, the dashboard Intelligent toggle and the Settings Haiku option are deleted. Recall modes are now hybrid | raw | off; a stored recall_mode or env DREAMCONTEXT_RECALL_MODE of haiku is read as hybrid (never off, never an error). Hybrid is the default and runs as plain BM25 until the embedding model is on disk and the vault's index is usable — the per-prompt hook never downloads a model or builds a cold index; SessionStart, init and update start a detached 'dreamcontext embed ensure' (--no-download, --quiet, --repair; DREAMCONTEXT_EMBED_AUTO=0 opts out; doctor reports the state and --fix provisions it). The default model is EmbeddingGemma-300m q8 (~294 MB, downloaded from Hugging Face on first use, not bundled in the npm package; Gemma Terms of Use — commercial use permitted with use restrictions, not an OSI open-source licence); DREAMCONTEXT_EMBED_MODEL=e5-small keeps the previous model and tuning. Also: gold sets repaired and blind sets added for dc and h-f, snippets for the returned top-K only plus a parsed-corpus cache (search >=3.4x faster, hook raw overhead ~7x lower), BOARD_RANK_FACTOR and 61 TR->EN bridges, per-model fusion, dense gate and dedup thresholds. Numbers: eval/RESULTS.md 2026-10-07; owner accepted five held-out single-query category flips (h018, hfh-022, hfh-042, hfh-048, h26-008).",
+    "breaking": false,
+    "summary": "Haiku recall mode retired; hybrid (BM25 + local EmbeddingGemma-300m) is the default recall mode",
+    "references": [
+      "knowledge:recall-engine-v2",
+      "knowledge:haiku-recall-architecture",
+      "knowledge:decision-embedding-layer",
+      "feature:memory-recall-bm25",
+      "task:recall-maintenance-haiku-out-hybrid-default-repaired-gold-sets-ranking-and-latency"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-10-06",
     "type": "feat",
     "scope": "whiteboard",

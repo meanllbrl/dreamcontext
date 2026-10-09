@@ -10,7 +10,7 @@
  * without a screenshot and without a frontier LLM reading the page?
  *
  * WHAT IT DRIVES. The real dashboard server on a scratch vault. Settings › Recall. It reads
- * the page BEFORE (default: Haiku), asks Jev, then CLICKS Hybrid, waits for the PATCH to
+ * the page BEFORE (default: Hybrid), asks Jev, then CLICKS Raw, waits for the PATCH to
  * land, re-reads, asks again. Every Jev answer is compared against DOM/API ground truth,
  * so a wrong verdict shows up as a ✗ here, not as a trusted PASS.
  *
@@ -150,7 +150,7 @@ function judge(label, p, expect) {
 async function run(base, key) {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, colorScheme: 'dark' });
-  const truth = async () => (await (await fetch(`${base}/api/sleep?vault=proj`)).json()).recall_mode ?? 'haiku';
+  const truth = async () => (await (await fetch(`${base}/api/sleep?vault=proj`)).json()).recall_mode ?? 'hybrid';
 
   await page.goto(`${base}/?vault=proj&page=settings`, { waitUntil: 'domcontentloaded' });
   // A never-seen vault raises the "What's New" modal, whose scrim swallows every click.
@@ -168,14 +168,15 @@ async function run(base, key) {
     on_recall: noul('Is the Recall section of Settings the one currently displayed, with its recall-mode options visible?'),
     hybrid_selected: noul('Is the "Hybrid" recall mode the currently SELECTED option?'),
     selected_mode: choice('Which recall mode is currently selected?', {
-      haiku: 'The Haiku option is selected.',
       raw: 'The Raw / BM25-only option is selected.',
       hybrid: 'The Hybrid option is selected.',
       off: 'The Off option is selected.',
     }),
-    hybrid_experimental: noul('Is the Hybrid option marked as experimental?'),
-    embedding_card: noul('Is a model download (with a progress indicator) shown in progress under the Hybrid option?'),
+    hybrid_recommended: noul('Is the Hybrid option marked as recommended?'),
+    embedding_card: noul('Is a local embedding model panel (download or index status) shown under the Hybrid option?'),
     // decoys — not on this screen
+    hybrid_experimental: noul('Is the Hybrid option marked as experimental?'),
+    llm_option: noul('Is there a recall option that has a cloud LLM pick the docs?'),
     github_token_field: noul('Is a GitHub token input field visible on this screen?'),
     error_shown: noul('Is an error message currently displayed on this screen?'),
   };
@@ -186,50 +187,53 @@ async function run(base, key) {
   const r1 = await jev(key, before, QUESTIONS);
   console.log(`      latency ${r1.ms} ms · ${r1.usage.input_tokens} tokens in · $${r1.usage.cost.toFixed(6)}`);
   judge('recall section is shown', r1.answers.on_recall.noul, 'yes');
-  judge('hybrid is selected (should NOT be)', r1.answers.hybrid_selected.noul, t1 === 'hybrid' ? 'yes' : 'no');
+  judge('hybrid is selected (the default)', r1.answers.hybrid_selected.noul, t1 === 'hybrid' ? 'yes' : 'no');
   check(`selected mode = ${r1.answers.selected_mode.choice} (conf ${r1.answers.selected_mode.confidence.toFixed(2)}), truth=${t1}`,
     r1.answers.selected_mode.choice === t1 && r1.answers.selected_mode.confidence >= PASS_AT);
-  judge('hybrid labelled experimental', r1.answers.hybrid_experimental.noul, 'yes');
-  judge('model download shown (should NOT be yet)', r1.answers.embedding_card.noul, 'no');
+  judge('hybrid labelled recommended', r1.answers.hybrid_recommended.noul, 'yes');
+  judge('embedding model panel shown under hybrid', r1.answers.embedding_card.noul, 'yes');
+  judge('DECOY: hybrid labelled experimental', r1.answers.hybrid_experimental.noul, 'no');
+  judge('DECOY: a cloud-LLM recall option exists', r1.answers.llm_option.noul, 'no');
   judge('DECOY: github token field visible', r1.answers.github_token_field.noul, 'no');
   judge('DECOY: an error is shown', r1.answers.error_shown.noul, 'no');
 
-  console.log('\n§2  ACT — click Hybrid, wait for the PATCH to land');
+  console.log('\n§2  ACT — click Raw, wait for the PATCH to land');
   const patched = page.waitForResponse((r) => r.url().includes('/api/sleep') && r.request().method() === 'PATCH', { timeout: 10_000 });
-  await page.locator('label.setting-choice', { hasText: 'Hybrid' }).click();
+  await page.locator('label.setting-choice', { hasText: 'Raw' }).click();
   const resp = await patched;
   check(`PATCH /api/sleep → ${resp.status()}`, resp.ok());
   await page.waitForTimeout(500);
   const t2 = await truth();
-  check(`API ground truth recall_mode = ${t2}`, t2 === 'hybrid');
+  check(`API ground truth recall_mode = ${t2}`, t2 === 'raw');
   await page.screenshot({ path: join(SHOTS, '2-after.png') });
 
   console.log('\n§3  AFTER — Jev re-reads the page');
-  const after = await pageState(page, 'Settings › Recall, after clicking Hybrid');
+  const after = await pageState(page, 'Settings › Recall, after clicking Raw');
   const r2 = await jev(key, after, QUESTIONS);
   console.log(`      latency ${r2.ms} ms · ${r2.usage.input_tokens} tokens in · $${r2.usage.cost.toFixed(6)}`);
   judge('recall section is shown', r2.answers.on_recall.noul, 'yes');
-  judge('hybrid is selected', r2.answers.hybrid_selected.noul, 'yes');
+  judge('hybrid is no longer selected', r2.answers.hybrid_selected.noul, 'no');
   check(`selected mode = ${r2.answers.selected_mode.choice} (conf ${r2.answers.selected_mode.confidence.toFixed(2)}), truth=${t2}`,
     r2.answers.selected_mode.choice === t2 && r2.answers.selected_mode.confidence >= PASS_AT);
-  judge('model download shown', r2.answers.embedding_card.noul, 'yes');
+  judge('embedding model panel hidden once hybrid is not selected', r2.answers.embedding_card.noul, 'no');
+  judge('DECOY: a cloud-LLM recall option exists', r2.answers.llm_option.noul, 'no');
   judge('DECOY: github token field visible', r2.answers.github_token_field.noul, 'no');
   judge('DECOY: an error is shown', r2.answers.error_shown.noul, 'no');
 
   console.log('\n§4  PLAIN-LANGUAGE ACCEPTANCE CRITERIA — the shape a task file would carry');
   const criteria = {
-    ac1: noul('The user can pick between at least four recall modes.'),
-    ac2: noul('Hybrid recall mode is enabled.'),
-    ac3: noul('The Hybrid option explains that it falls back to BM25 when the embedding model is unavailable.'),
-    ac4: noul('The Hybrid option warns that first use downloads a model of roughly 100 MB.'),
+    ac1: noul('The user can pick between at least three recall modes.'),
+    ac2: noul('Raw recall mode is enabled.'),
+    ac3: noul('The Hybrid option explains that it falls back to BM25 until the embedding model and index are ready.'),
+    ac4: noul('The Hybrid option mentions a one-time model download of roughly 113 MB.'),
     ac5: noul('Recall is turned off.'),
   };
   const r3 = await jev(key, after, criteria);
   console.log(`      latency ${r3.ms} ms · $${r3.usage.cost.toFixed(6)}`);
-  judge('AC1 four or more modes', r3.answers.ac1.noul, 'yes');
-  judge('AC2 hybrid enabled', r3.answers.ac2.noul, 'yes');
+  judge('AC1 three or more modes', r3.answers.ac1.noul, 'yes');
+  judge('AC2 raw enabled', r3.answers.ac2.noul, 'yes');
   judge('AC3 fallback to BM25 explained', r3.answers.ac3.noul, 'yes');
-  judge('AC4 ~100 MB download warned', r3.answers.ac4.noul, 'yes');
+  judge('AC4 ~113 MB one-time download mentioned', r3.answers.ac4.noul, 'yes');
   judge('AC5 recall is off (should be NO)', r3.answers.ac5.noul, 'no');
 
   await browser.close();

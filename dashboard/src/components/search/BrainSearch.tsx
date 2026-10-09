@@ -1,8 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
-import { useRecallMode } from '../../hooks/useSleep';
-import { useApi } from '../../context/VaultContext';
-import { TypeIcon, SearchIcon, SparkIcon } from '../sleepy/TypeIcons';
+import { useRecall, type RecallHit } from '../../hooks/useRecall';
+import { TypeIcon, SearchIcon } from '../sleepy/TypeIcons';
 import { tagHue } from '../../lib/tagColor';
 import './BrainSearch.css';
 
@@ -12,9 +10,8 @@ import './BrainSearch.css';
  * Unlike the old per-page text filter (a dumb substring match over the already
  * loaded list), this runs the real recall engine the CLI uses:
  *   - empty query   → the page's own browse surface (folder tree / list)
- *   - typing        → live, debounced BM25 recall scoped to one corpus type
- *   - Intelligent   → a submit-driven Haiku pass (intent-aware, spends tokens),
- *                     falling back to BM25 if the claude CLI is unavailable
+ *   - typing        → live, debounced recall scoped to one corpus type (hybrid
+ *                     BM25 + local embeddings when ready, else BM25)
  *
  * The widget owns the search bar + the result/browse column; the host page
  * supplies the `browse` tree (shown when idle) and the `detail` pane (right
@@ -50,8 +47,6 @@ interface BrainSearchProps {
   /** Optional formatter for a hit's display title (e.g. strip a folder prefix). */
   formatTitle?: (hit: RecallHit) => string;
 }
-
-type IntelliState = 'idle' | 'thinking' | 'done';
 
 /**
  * The slug a detail page expects is NOT always `hit.slug`. The recall corpus
@@ -89,18 +84,8 @@ function Highlight({ text, tokens }: { text: string; tokens: string[] }) {
 export function BrainSearch({
   scope, placeholder, selectedSlug, onOpen, browse, detail, formatTitle,
 }: BrainSearchProps) {
-  const api = useApi();
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  // When the vault recall mode is 'hybrid', live search already runs BM25+dense
-  // locally, so the Haiku "Intelligent" toggle is redundant — hidden + forced off.
-  const hybridActive = useRecallMode() === 'hybrid';
-  const [intelligentPref, setIntelligentPref] = useState(false);
-  const intelligent = intelligentPref && !hybridActive;
-  const [intelliHits, setIntelliHits] = useState<RecallHit[]>([]);
-  const [intelliState, setIntelliState] = useState<IntelliState>('idle');
-  const [intelliQuery, setIntelliQuery] = useState('');
-  const [intelliMode, setIntelliMode] = useState<'haiku' | 'bm25'>('haiku');
   const [focused, setFocused] = useState(0);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -108,7 +93,6 @@ export function BrainSearch({
 
   const trimmedQ = q.trim();
   const hasQuery = trimmedQ.length > 0;
-  const bm25Mode = !intelligent;
 
   // Debounce only the server-bound query — typing stays instant.
   useEffect(() => {
@@ -116,68 +100,33 @@ export function BrainSearch({
     return () => clearTimeout(id);
   }, [trimmedQ]);
 
-  // Live BM25 — disabled while Intelligent is on (that path is submit-driven).
-  const { data, isFetching } = useRecall(bm25Mode ? debouncedQ : '', types, 14);
-  const bmHits = useMemo(() => data?.hits ?? [], [data]);
-
-  const intelliReady = intelligent && intelliState === 'done' && intelliQuery === trimmedQ;
-  const rows: RecallHit[] = intelligent ? (intelliReady ? intelliHits : []) : bmHits;
+  // Live recall — the server runs hybrid when the model + index are ready, else BM25.
+  const { data, isFetching } = useRecall(debouncedQ, types, 14);
+  const rows = useMemo<RecallHit[]>(() => data?.hits ?? [], [data]);
 
   const maxScore = useMemo(
     () => (rows.length ? Math.max(...rows.map(h => h.rankScore || h.score || 1)) : 1),
     [rows],
   );
   const queryTokens = useMemo(
-    () => (intelligent ? intelliQuery : trimmedQ).toLowerCase().split(/\s+/).filter(Boolean),
-    [intelligent, intelliQuery, trimmedQ],
+    () => trimmedQ.toLowerCase().split(/\s+/).filter(Boolean),
+    [trimmedQ],
   );
 
   const showBrowse = !hasQuery;
-  const showIntelliCTA = intelligent && hasQuery && intelliState !== 'thinking' && !intelliReady;
-  const showThinking = intelligent && intelliState === 'thinking';
-  const showResults = hasQuery && (intelligent ? intelliReady : true) && rows.length > 0;
-  const showEmpty =
-    hasQuery &&
-    ((bm25Mode && !isFetching && bmHits.length === 0 && debouncedQ === trimmedQ) ||
-      (intelligent && intelliReady && intelliHits.length === 0));
+  const showResults = hasQuery && rows.length > 0;
+  const showEmpty = hasQuery && !isFetching && rows.length === 0 && debouncedQ === trimmedQ;
 
   const focusInput = useCallback(() => { try { inputRef.current?.focus(); } catch { /* noop */ } }, []);
   useEffect(() => { setFocused(f => Math.min(f, Math.max(0, rows.length - 1))); }, [rows.length]);
 
-  const runIntelli = useCallback(async () => {
-    const query = trimmedQ;
-    if (!query) return;
-    setIntelliState('thinking');
-    setIntelliQuery(query);
-    setFocused(0);
-    try {
-      const res = await haikuRecallOnce(api, query, types);
-      setIntelliHits(res.hits);
-      setIntelliMode(res.mode);
-    } catch {
-      // Haiku unreachable — degrade to local BM25 so search still answers.
-      try { setIntelliHits(await recallOnce(api, query, types, 14)); } catch { setIntelliHits([]); }
-      setIntelliMode('bm25');
-    }
-    setIntelliState('done');
-  }, [api, trimmedQ, types]);
-
-  const toggleIntelligent = () => {
-    setIntelligentPref(v => {
-      setIntelliState('idle'); setIntelliHits([]); setIntelliQuery(''); setFocused(0);
-      return !v;
-    });
-    focusInput();
-  };
-
-  const clear = () => { setQ(''); setDebouncedQ(''); setIntelliState('idle'); setIntelliHits([]); setIntelliQuery(''); setFocused(0); focusInput(); };
+  const clear = () => { setQ(''); setDebouncedQ(''); setFocused(0); focusInput(); };
 
   const open = (hit: RecallHit) => onOpen({ slug: openSlugFor(hit), title: hit.title, type: hit.type });
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') { clear(); return; }
     if (e.key === 'Enter') {
-      if (intelligent && !intelliReady) { e.preventDefault(); void runIntelli(); return; }
       if (rows[focused]) { e.preventDefault(); open(rows[focused]); }
       return;
     }
@@ -198,29 +147,14 @@ export function BrainSearch({
           className="bsearch-input"
           placeholder={placeholder}
           value={q}
-          onChange={e => { setQ(e.target.value); if (intelligent) setIntelliState('idle'); }}
+          onChange={e => setQ(e.target.value)}
           onKeyDown={onKeyDown}
           spellCheck={false}
           autoComplete="off"
         />
-        {(bm25Mode && isFetching && hasQuery) && <span className="bsearch-spin" aria-hidden="true" />}
+        {(isFetching && hasQuery) && <span className="bsearch-spin" aria-hidden="true" />}
         {hasQuery && (
           <button className="bsearch-clear" onClick={clear} title="Clear" aria-label="Clear search">×</button>
-        )}
-        {/* Hybrid mode does semantic recall locally — the Haiku toggle is
-            redundant there, so it's hidden (per the recall-mode setting). */}
-        {!hybridActive && (
-          <button
-            className={`bsearch-intel ${intelligent ? 'bsearch-intel--on' : ''}`}
-            onClick={toggleIntelligent}
-            title={intelligent
-              ? 'Intelligent search is on — reasons over your brain (uses tokens)'
-              : 'Turn on intelligent search — intent-aware, beyond keywords'}
-          >
-            <span className="bsearch-intel-dot" />
-            <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
-            Intelligent
-          </button>
         )}
       </div>
 
@@ -229,35 +163,17 @@ export function BrainSearch({
         <div className="bsearch-list">
           {showBrowse && browse}
 
-          {showIntelliCTA && (
-            <button className="bsearch-cta" onClick={() => void runIntelli()}>
-              <SparkIcon size={15} color="#fff" />
-              Run intelligent search
-              <kbd className="bsearch-kbd">↵</kbd>
-            </button>
-          )}
-
-          {showThinking && (
-            <div className="bsearch-thinking">
-              <span className="bsearch-thinking-spark"><SparkIcon size={14} color="currentColor" /></span>
-              Reasoning over your {scope}…
-              <div className="bsearch-skel"><i /><i /><i /></div>
-            </div>
-          )}
-
           {showResults && (
             <>
               <div className="bsearch-meta">
                 <span className="bsearch-count">{rows.length} {rows.length === 1 ? 'match' : 'matches'}</span>
-                <span className={`bsearch-mode ${intelligent || hybridActive ? 'bsearch-mode--intel' : ''}`}>
-                  {intelligent
-                    ? (intelliMode === 'haiku' ? 'intelligent' : 'bm25 fallback')
-                    : hybridActive ? (data?.mode ?? 'hybrid') : 'keyword'}
+                <span className={`bsearch-mode ${data?.mode === 'hybrid' ? 'bsearch-mode--intel' : ''}`}>
+                  {data?.mode === 'hybrid' ? 'hybrid' : 'keyword'}
                 </span>
               </div>
               {rows.map((hit, i) => {
                 const pct = Math.round(((hit.rankScore || hit.score || 0) / maxScore) * 100);
-                const snippet = (intelligent ? hit.snippet : hit.snippet || hit.description) ?? '';
+                const snippet = (hit.snippet || hit.description) ?? '';
                 const openSlug = openSlugFor(hit);
                 return (
                   <button
@@ -293,7 +209,6 @@ export function BrainSearch({
             <div className="bsearch-empty">
               <SearchIcon size={22} />
               <p>No {scope} match “{trimmedQ}”.</p>
-              {!intelligent && !hybridActive && <span>Try <button className="bsearch-empty-link" onClick={toggleIntelligent}>Intelligent search</button> for intent-aware matches.</span>}
             </div>
           )}
         </div>

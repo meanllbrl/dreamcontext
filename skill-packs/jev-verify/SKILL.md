@@ -99,12 +99,12 @@ and must stay on the spec's origin, a password/card field may only be filled fro
     { "click": "role=button[name='Recall']" },
     { "waitFor": "[role=radiogroup]" },
     { "label": "Recall, default", "scope": "main",
-      "expect": ["The Haiku option is the currently selected recall mode"],
+      "expect": ["The Hybrid option is the currently selected recall mode"],
       "reject": ["An error message is currently displayed"] },
-    { "click": "label:has-text('Hybrid')", "waitForResponse": { "url": "/api/sleep", "method": "PATCH" } },
-    { "label": "Recall, after Hybrid", "scope": "main",
-      "expect": ["The Hybrid option is the currently selected recall mode",
-                 "A model download is shown in progress under the Hybrid option"] }
+    { "click": "label:has-text('Raw')", "waitForResponse": { "url": "/api/sleep", "method": "PATCH" } },
+    { "label": "Recall, after Raw", "scope": "main",
+      "expect": ["The Raw option is the currently selected recall mode"],
+      "reject": ["The Hybrid option is the currently selected recall mode"] }
   ]
 }
 ```

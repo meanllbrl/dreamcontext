@@ -27,6 +27,7 @@ vi.mock('@huggingface/transformers', () => ({
 
 let home: string;
 const realHome = process.env.HOME;
+const realModel = process.env.DREAMCONTEXT_EMBED_MODEL;
 let fetchSpy: ReturnType<typeof vi.fn>;
 
 async function loadEmbedder() {
@@ -37,6 +38,9 @@ async function loadEmbedder() {
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'dc-embed-offline-'));
   process.env.HOME = home;
+  // This file exercises the offline flag of the mean-pooling (pipeline) load path with the
+  // e5-small files; the default profile (Gemma) is covered in embedder-profiles.test.ts.
+  process.env.DREAMCONTEXT_EMBED_MODEL = 'e5-small';
   tf.env.allowRemoteModels = true; // the library default
   tf.remoteAtLoad.length = 0;
   fetchSpy = vi.fn(async () => new Response('{}'));
@@ -45,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   process.env.HOME = realHome;
+  if (realModel === undefined) delete process.env.DREAMCONTEXT_EMBED_MODEL; else process.env.DREAMCONTEXT_EMBED_MODEL = realModel;
   rmSync(home, { recursive: true, force: true });
 });
 

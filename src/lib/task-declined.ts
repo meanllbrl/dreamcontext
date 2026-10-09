@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { embedPassages } from './embeddings/embedder.js';
+import { EMBED_PROFILE } from './embeddings/profiles.js';
 
 /**
  * task-declined — a durable marker that an idea was deliberately DROPPED by a
@@ -53,14 +54,15 @@ export const DECLINED_SEMANTIC_LIMIT = 100;
  * ask (`--declined-checked <key>` lifts it), never an unconditional refusal;
  * only the exact-key match is unconditional.
  *
- * 0.82 sits just under the measured same-idea minimum on purpose: misses are
+ * 0.82 (e5; Gemma's, measured on its own scale, lives in the model profile —
+ * embeddings/profiles.ts `declinedMatch`) sits just under the measured same-idea minimum on purpose: misses are
  * rarer than false alarms, and a false alarm costs the specialist one flag after
  * reading the reason, never a lost task.
  *
  * Override with `DREAMCONTEXT_DECLINED_MATCH` (0.5–1; anything else falls back).
  * Read at CALL time via {@link declinedMatchThreshold}, never captured at import.
  */
-export const DECLINED_MATCH_THRESHOLD = 0.82;
+export const DECLINED_MATCH_THRESHOLD = EMBED_PROFILE.declinedMatch;
 
 /** Lowest cosine an operator may configure. Below this every candidate would
  *  "match" the nearest declined idea, which is the opposite of a signal. */

@@ -1,5 +1,5 @@
 // dreamcontext "memory recall" source-of-truth board.
-// Mirrors the dashboard RECALL_FLOW_SPEC: prompt → BM25F → Haiku → snapshot.
+// Mirrors the dashboard RECALL_FLOW_SPEC: prompt → BM25F → local embeddings (hybrid) → snapshot.
 const path = require('node:path');
 const { buildExcalidraw } = require('../../../../../scripts/diagrams/excalidraw/build_excalidraw.js');
 const {
@@ -19,10 +19,10 @@ const stageX = (i) => X0 + i * (W + GAP);
 const STAGES = [
   { color: 'blue', title: 'Your prompt', sub: 'any language' },
   { color: 'purple', title: 'BM25F keyword match', sub: 'field-weighted · stemming' },
-  { color: 'purple', title: 'Haiku recall', sub: 'smallest cloud agent\n0-3 docs · BM25 fallback' },
+  { color: 'purple', title: 'Local embeddings', sub: 'hybrid blend · multilingual\nBM25 fallback until ready' },
   { color: 'mint', title: 'SessionStart snapshot', sub: 'warm + cold · features\nindex · pinned' },
 ];
-const LABELS = [undefined, 'match', 'sharpen', 'assemble'];
+const LABELS = [undefined, 'match', 'blend', 'assemble'];
 
 const els = [];
 els.push(...sectionTitle({ x: 60, y: 60, text: 'dreamcontext — how recall surfaces context', fontSize: 36 }));

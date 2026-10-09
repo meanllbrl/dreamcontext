@@ -1,7 +1,8 @@
 ---
-tags:
-  - 'topic:excalidraw'
+
+tags: [excalidraw]
 excalidraw-plugin: parsed
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -15,13 +16,11 @@ Your prompt
 any language ^tPKLhs4f
 
 BM25F keyword match
-field-weighted ·
-stemming ^uNUS4SHV
+field-weighted · stemming ^uNUS4SHV
 
-Haiku recall
-smallest cloud agent
-0-3 docs · BM25
-fallback ^EgbHB4SA
+Local embeddings
+hybrid blend · multilingual
+BM25 fallback until ready ^EgbHB4SA
 
 SessionStart snapshot
 warm + cold · features
@@ -29,7 +28,7 @@ index · pinned ^VTlx1hvX
 
 match ^Bd1cSZE7
 
-sharpen ^YUy8ySvL
+blend ^YUy8ySvL
 
 assemble ^hiCSoka1
 
@@ -47,8 +46,8 @@ assemble ^hiCSoka1
 			"type": "text",
 			"x": 60,
 			"y": 60,
-			"width": 912.9599999999999,
-			"height": 45,
+			"width": 727,
+			"height": 43,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -73,11 +72,11 @@ assemble ^hiCSoka1
 			"rawText": "dreamcontext — how recall surfaces context",
 			"originalText": "dreamcontext — how recall surfaces context",
 			"fontSize": 36,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "left",
 			"verticalAlign": "top",
 			"containerId": null,
-			"lineHeight": 1.25,
+			"lineHeight": 1.2,
 			"autoResize": false
 		},
 		{
@@ -145,7 +144,7 @@ assemble ^hiCSoka1
 			"rawText": "Your prompt\nany language",
 			"originalText": "Your prompt\nany language",
 			"fontSize": 18,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,
@@ -188,9 +187,9 @@ assemble ^hiCSoka1
 			"id": "uNUS4SHV",
 			"type": "text",
 			"x": 388,
-			"y": 226.25,
+			"y": 237.5,
 			"width": 250,
-			"height": 68,
+			"height": 45,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -213,11 +212,11 @@ assemble ^hiCSoka1
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "BM25F keyword match\nfield-weighted ·\nstemming",
-			"rawText": "BM25F keyword match\nfield-weighted ·\nstemming",
-			"originalText": "BM25F keyword match\nfield-weighted ·\nstemming",
+			"text": "BM25F keyword match\nfield-weighted · stemming",
+			"rawText": "BM25F keyword match\nfield-weighted · stemming",
+			"originalText": "BM25F keyword match\nfield-weighted · stemming",
 			"fontSize": 18,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,
@@ -260,9 +259,9 @@ assemble ^hiCSoka1
 			"id": "EgbHB4SA",
 			"type": "text",
 			"x": 716,
-			"y": 215,
+			"y": 226.25,
 			"width": 250,
-			"height": 90,
+			"height": 68,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -285,11 +284,11 @@ assemble ^hiCSoka1
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25\nfallback",
-			"rawText": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25\nfallback",
-			"originalText": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25\nfallback",
+			"text": "Local embeddings\nhybrid blend · multilingual\nBM25 fallback until ready",
+			"rawText": "Local embeddings\nhybrid blend · multilingual\nBM25 fallback until ready",
+			"originalText": "Local embeddings\nhybrid blend · multilingual\nBM25 fallback until ready",
 			"fontSize": 18,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,
@@ -361,7 +360,7 @@ assemble ^hiCSoka1
 			"rawText": "SessionStart snapshot\nwarm + cold · features\nindex · pinned",
 			"originalText": "SessionStart snapshot\nwarm + cold · features\nindex · pinned",
 			"fontSize": 18,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,
@@ -414,9 +413,9 @@ assemble ^hiCSoka1
 		{
 			"id": "Bd1cSZE7",
 			"type": "text",
-			"x": 317.8,
+			"x": 318.688,
 			"y": 240,
-			"width": 62.4,
+			"width": 60.624,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -442,7 +441,7 @@ assemble ^hiCSoka1
 			"rawText": "match",
 			"originalText": "match",
 			"fontSize": 16,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,
@@ -495,9 +494,9 @@ assemble ^hiCSoka1
 		{
 			"id": "YUy8ySvL",
 			"type": "text",
-			"x": 636.52,
+			"x": 648.352,
 			"y": 240,
-			"width": 80.96,
+			"width": 57.29599999999999,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -519,11 +518,11 @@ assemble ^hiCSoka1
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "sharpen",
-			"rawText": "sharpen",
-			"originalText": "sharpen",
+			"text": "blend",
+			"rawText": "blend",
+			"originalText": "blend",
 			"fontSize": 16,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,
@@ -576,9 +575,9 @@ assemble ^hiCSoka1
 		{
 			"id": "hiCSoka1",
 			"type": "text",
-			"x": 959.88,
+			"x": 962.472,
 			"y": 240,
-			"width": 90.24,
+			"width": 85.056,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -604,7 +603,7 @@ assemble ^hiCSoka1
 			"rawText": "assemble",
 			"originalText": "assemble",
 			"fontSize": 16,
-			"fontFamily": 5,
+			"fontFamily": 6,
 			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,

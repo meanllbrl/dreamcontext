@@ -20,6 +20,7 @@ process.env.USERPROFILE = tmpHome;
 const {
   EMBED_MODEL,
   EMBED_MODEL_CACHE_DIR,
+  EMBED_PROFILE,
   isEmbedModelDownloaded,
   getEmbedModelStatus,
   isEmbedPackageInstalled,
@@ -27,8 +28,10 @@ const {
 
 const modelRoot = join(EMBED_MODEL_CACHE_DIR, EMBED_MODEL);
 
-function writeModelFiles(opts: { onnx?: boolean; config?: boolean; tokenizer?: boolean }): void {
+function writeModelFiles(opts: { onnx?: boolean; config?: boolean; tokenizer?: boolean; weights?: boolean }): void {
   mkdirSync(join(modelRoot, 'onnx'), { recursive: true });
+  // The profile's external-data weights (empty for e5): part of "downloaded" now — see isEmbedModelComplete.
+  if (opts.weights) for (const f of EMBED_PROFILE.dataFiles) writeFileSync(join(modelRoot, f), 'x');
   if (opts.onnx) writeFileSync(join(modelRoot, 'onnx', 'model_quantized.onnx'), 'x');
   if (opts.config) writeFileSync(join(modelRoot, 'config.json'), '{}');
   if (opts.tokenizer) writeFileSync(join(modelRoot, 'tokenizer.json'), '{}');
@@ -64,8 +67,17 @@ describe('embedding model status', () => {
     expect(getEmbedModelStatus().state).toBe('not_downloaded');
   });
 
-  it('reports ready once all model files are present on disk', () => {
+  it('a graph + metadata WITHOUT the weights is not ready: the status agrees with the load gate', () => {
     writeModelFiles({ onnx: true, config: true, tokenizer: true });
+    expect(isEmbedModelDownloaded()).toBe(true);
+    if (EMBED_PROFILE.dataFiles.length === 0) return; // e5: nothing more to wait for
+    const s = getEmbedModelStatus();
+    expect(s.downloaded).toBe(false);
+    expect(s.state).toBe('not_downloaded');
+  });
+
+  it('reports ready once all model files are present on disk', () => {
+    writeModelFiles({ onnx: true, config: true, tokenizer: true, weights: true });
     expect(isEmbedModelDownloaded()).toBe(true);
     const s = getEmbedModelStatus();
     expect(s.state).toBe('ready');

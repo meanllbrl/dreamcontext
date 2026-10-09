@@ -158,7 +158,7 @@ describe('a fire that never ran writes NOTHING', () => {
       debt: 0, last_sleep: null, last_sleep_summary: null,
       sleep_started_at: NOW.toISOString(), sessions_since_last_sleep: 0,
       sessions: [], bookmarks: [], triggers: [], knowledge_access: {},
-      dashboard_changes: [], compaction_log: [], recall_mode: 'haiku',
+      dashboard_changes: [], compaction_log: [], recall_mode: 'hybrid',
     } as unknown as SleepState);
 
     const outcome = await runAutomation(contextRoot, manifest.slug, {
