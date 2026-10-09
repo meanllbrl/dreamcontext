@@ -2,7 +2,7 @@
 id: feat_t9fQ1w-A
 status: in_review
 created: '2026-06-27'
-updated: '2026-07-08'
+updated: '2026-10-07'
 tags:
   - frontend
   - backend
@@ -66,7 +66,7 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 - [x] Query-term highlighting: matched tokens are highlighted in violet (`#bcacff` with soft background) in hit titles and snippets.
 
 ### Shipped — Phase 3: Real Claude Code Chat + Intelligent Search Toggle
-- [x] Glowing default-OFF "Intelligent" toggle on Search: switches BM25 recall → Haiku re-ranking on submit; off by default (BM25 always fast and free).
+- [x] ~~Glowing default-OFF "Intelligent" toggle on Search: switches BM25 recall → Haiku re-ranking on submit; off by default (BM25 always fast and free).~~ _(retired 2026-10-07: the Haiku mode and `GET /api/recall/haiku` were removed; Search now runs hybrid recall — BM25 + local embeddings, plain BM25 until the model is ready — so there is nothing left for the toggle to switch. Typing is still live-debounced and free; the response's `mode` says `hybrid` or `bm25`.)_
 - [x] NavIcons stroke family replaces unicode type glyphs throughout the Sleepy view; new Memory icon added.
 - [x] `POST /api/sleepy/chat` spawns headless `claude` (stream-json output) in the vault project directory; session ID captured from `init` event.
 - [x] `GET /api/sleepy/chat/stream` is SSE: events `meta`, `thinking`, `text`, `tool`, `done`, `error`; rendered live in the chat UI (thinking trace, read-only tool chips, Markdown answer).
@@ -112,7 +112,8 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 - **[2026-06-28]** **Three-layer read-only enforcement for the chat backend.** `--permission-mode plan` gates all write tools at the Claude Code level. `--disallowedTools` removes Task/Skill/Agent/Workflow/TaskCreate so the project's SessionStart "consolidate now" directive cannot hijack a Q&A. `--append-system-prompt` adds an explicit read-only guard. The combination is intentionally redundant — any single layer could fail (e.g. custom tools circumventing permission mode) but three together are robust.
 - **[2026-06-28]** **SSE (stream-json) via `GET /api/sleepy/chat/stream`, not polling.** The `claude` process emits JSON lines; the server SSE route pipes them as typed events (`meta`, `thinking`, `text`, `tool`, `done`, `error`). Long-poll or the captureRuns polling pattern (used in the notch) would add perceptible latency on each token — SSE gives sub-100ms token delivery. Trade-off: persistent HTTP connection per active chat turn.
 - **[2026-06-28]** **Session continuity via `--resume <session_id>`.** The `init` event from `claude --stream-json` carries a session ID; subsequent turns pass `--resume <id>`. This is the same continuity mechanism Claude Code itself uses — no custom state serialization required.
-- **[2026-06-28]** **Intelligent toggle switches BM25 → Haiku recall, not model quality.** The Intelligent toggle in Search fires a Haiku re-ranking pass over the BM25 hits, not a more expensive model. This is intentionally distinct from the chat's Normal/Intelligent model toggle (Sonnet/Opus). Keep these semantically separate: Search Intelligent = better ranking; Chat Intelligent = deeper reasoning.
+- **[2026-10-07]** **Decision: the Search / ⌘K "Intelligent" (Haiku) toggle is removed; the chat's Normal/Intelligent MODEL choice stays.** Hybrid recall already does the semantic, cross-lingual matching the toggle bought, locally and for free, and the toggle was already hidden whenever the vault ran hybrid. Removed: the toggle in `BrainSearch.tsx` and the ⌘K `CommandPalette.tsx` (with its `intelliMode` state and CSS), `haikuRecallOnce` / `HaikuRecallResponse` in `useRecall.ts`, and the server route `GET /api/recall/haiku`. Extractive Ask is unaffected (`recallOnce`, no LLM). The Normal = Sonnet / Intelligent = Opus selector in the Ask chat is a different thing (it picks the chat model) and is unchanged. See [[haiku-recall-architecture]] and [[features/memory-recall-bm25]].
+- _(superseded 2026-10-07 — the Search "Intelligent" toggle is retired along with the Haiku recall mode)_ **[2026-06-28]** **Intelligent toggle switches BM25 → Haiku recall, not model quality.** The Intelligent toggle in Search fires a Haiku re-ranking pass over the BM25 hits, not a more expensive model. This is intentionally distinct from the chat's Normal/Intelligent model toggle (Sonnet/Opus). Keep these semantically separate: Search Intelligent = better ranking; Chat Intelligent = deeper reasoning.
 - **[2026-06-27]** **Extractive Ask is NOT a Claude chat.** The shipped Ask mode (`composeAnswer()`) assembles its answer from stored `snippet`/`description` fields of the top recall hits — no LLM call, no token cost, no latency. It is intentionally named "Ask" to signal the intended future direction (Phase 3 Claude chat) while shipping immediate value. Do not conflate the two in copy or technical decisions.
 - **[2026-06-27]** **DocContent fetches full records, not recall bodies, for knowledge/feature/task types.** Recall stores only extracted text (boards lose scene JSON, bodies may be truncated). DocContent must fetch the canonical API endpoint to get renderable content (scene JSON for Excalidraw, full markdown, full task body). Memory and changelog have no detail endpoint; they render from the recall body, which is complete for those types.
 - **[2026-06-27]** **Corpus cache is server-side, per `contextRoot::types` key, 8s TTL.** This prevents debounced keystrokes from hammering disk on every keystroke. 8s is short enough that edits show up promptly; long enough to absorb a burst of searches. The cache lives in the process; no persistence.
@@ -140,7 +141,7 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 - `POST /api/sleepy/chat/reset` — clears the persisted chat file.
 
 **Frontend (`dashboard/src/pages/SleepyPage.tsx`):**
-- Intelligent toggle (glowing, default-OFF): flips the Search recall mode BM25↔Haiku on submit.
+- ~~Intelligent toggle (glowing, default-OFF): flips the Search recall mode BM25↔Haiku on submit.~~ _(removed 2026-10-07)_
 - NavIcons stroke family (`TypeIcons.tsx`) replaces unicode glyphs; new Memory icon.
 - Ask chat UI: message thread, SSE streaming via `useSleepyChat.ts`, thinking-trace display, read-only tool chips, Markdown rendering via `MarkdownPreview`.
 - Normal/Intelligent model selector (hidden mapping: Sonnet/Opus).
@@ -181,6 +182,9 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-10-07 - Intelligent (Haiku) search toggle retired
+- Search and the ⌘K palette lose the "Intelligent" toggle: the Haiku recall mode is gone; both surfaces run the same hybrid recall as the CLI (BM25 + local embeddings, BM25 until the model and index are ready). `GET /api/recall/haiku`, `haikuRecallOnce` and the Settings "Haiku" option are deleted. The Ask chat's Normal/Intelligent model selector (Sonnet/Opus) is unchanged.
+
 ### 2026-06-29 - Phase 4 Agent UX rebuild (AgentSurface.tsx + AgentTerminal.css)
 - First-click close fix: `stopPropagation`+`preventDefault` on `mousedown` in draggable tab strip; hit targets enlarged (tab ✕ 20px, pane buttons 24px); active tab ✕ always visible.
 - Middle-click tab close.
@@ -201,7 +205,7 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 - All agent routes desktop-only (`DREAMCONTEXT_DESKTOP=1` gate) + loopback-only.
 
 ### 2026-06-28 - Phase 3 shipped: real Claude Code chat + Intelligent search toggle
-- Glowing Intelligent toggle (BM25→Haiku) on Search. NavIcons stroke family.
+- Glowing Intelligent toggle (BM25→Haiku) on Search _(removed 2026-10-07)_. NavIcons stroke family.
 - `POST /api/sleepy/chat` + `GET /api/sleepy/chat/stream` (SSE) + history + reset routes.
 - Multi-turn chat with `--resume` session continuity. Read-only via 3-layer enforcement. Model hidden (Normal=Sonnet, Intelligent=Opus).
 - `useSleepyChat.ts` hook; streaming chat UI with thinking trace + tool chips + Markdown.

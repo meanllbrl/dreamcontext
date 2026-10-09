@@ -34,7 +34,7 @@ function finalizeInput(over: Partial<SleepState> = {}): SleepState {
     knowledge_access: {},
     dashboard_changes: [],
     compaction_log: [],
-    recall_mode: 'haiku',
+    recall_mode: 'hybrid',
     consolidation_depth: 'standard',
     pendingMigrationNotices: [],
     ...over,

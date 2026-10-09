@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
-import { useRecallMode } from '../../hooks/useSleep';
-import { useApi } from '../../context/VaultContext';
-import { TypeIcon, SearchIcon, SparkIcon } from '../sleepy/TypeIcons';
+import { useRecall, type RecallHit } from '../../hooks/useRecall';
+import { TypeIcon, SearchIcon } from '../sleepy/TypeIcons';
 import { DocContent } from '../sleepy/DocContent';
 import { recallNavTarget } from '../../lib/recallNav';
 import { useOverlayId } from '../../lib/useOverlayId';
@@ -15,20 +13,14 @@ import './CommandPalette.css';
  * and jumps to a hit's page. Opened from the header pill or ⌘K anywhere (including
  * over the expanded agent overlay).
  *
- * Two recall modes share the surface:
- *   - Normal (default) — live, debounced BM25 over `/api/recall`. Instant, free.
- *   - Intelligent — a submit-driven Haiku pass (`/api/recall/haiku`) that reasons
- *     over the brain index for intent-aware hits; spends tokens, so it runs on ↵,
- *     not per keystroke, and falls back to BM25 if the claude CLI is unavailable.
- * The toggle preference persists across opens (localStorage).
+ * Search is live and debounced over `/api/recall`: hybrid (BM25 + local dense
+ * embeddings) when the model and index are ready, plain BM25 otherwise. Local and free.
  *
- * Keyboard: ↑/↓ move and Enter runs Intelligent (when armed) or opens the focused hit
+ * Keyboard: ↑/↓ move and Enter opens the focused hit
  * (shared with the switcher via `useListKeyboardNav`); Esc close/focus/scrim behavior
  * is owned by the shared <CommandModal> shell (capture-phase, topmost-aware, so it
  * never leaks to the agent overlay's Esc-collapse handler when the palette is on top).
  */
-
-const INTELLIGENT_PREF_KEY = 'dreamcontext.cmdk.intelligent';
 
 /**
  * Tooltip per importance-dial position (indexed by minLevel; 1 is unreachable —
@@ -39,15 +31,6 @@ const LEVEL_LABELS: Record<number, string> = {
   2: 'Curated only: skipping changelog pointers and automation run logs — click for ★★★ only',
   3: 'Marked-important only: pinned knowledge, ★★/★★★ decisions, high-priority tasks, settled hypotheses — click to clear',
 };
-
-function readIntelligentPref(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(INTELLIGENT_PREF_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -77,24 +60,10 @@ interface CommandPaletteProps {
 }
 
 export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProps) {
-  const api = useApi();
   const overlayId = useOverlayId('command-palette');
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  // When the vault's recall mode is 'hybrid', the Normal (live) search already
-  // runs BM25 + local dense embeddings server-side — so the Haiku "Intelligent"
-  // escalation is redundant. We hide the toggle and force it off in that mode.
-  const hybridActive = useRecallMode() === 'hybrid';
-
-  // Intelligent (Haiku) mode — preference persists; results are submit-driven.
-  const [intelligentPref, setIntelligentPref] = useState(readIntelligentPref);
-  const intelligent = intelligentPref && !hybridActive;
-  const [intelliHits, setIntelliHits] = useState<RecallHit[]>([]);
-  const [intelliState, setIntelliState] = useState<'idle' | 'thinking' | 'done'>('idle');
-  const [intelliQuery, setIntelliQuery] = useState('');
-  const [intelliMode, setIntelliMode] = useState<'haiku' | 'bm25'>('haiku');
 
   // Minimum importance level (see DocLevel server-side): 0 = everything (the
   // default), 2 = curated content only (drops changelog pointers and automation
@@ -110,17 +79,10 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
     return () => clearTimeout(id);
   }, [trimmed]);
 
-  // Live BM25 — empty types = all corpora. Disabled while closed (stops polling)
-  // and while Intelligent is armed (that path is submit-driven, not per-keystroke).
-  const { data, isFetching } = useRecall(open && !intelligent ? debouncedQ : '', [], 12, minLevel || undefined);
-  const bmHits = useMemo(() => data?.hits ?? [], [data]);
+  // Live recall — empty types = all corpora. Disabled while closed (stops polling).
+  const { data, isFetching } = useRecall(open ? debouncedQ : '', [], 12, minLevel || undefined);
 
-  // The non-empty `intelliQuery` guard matters for the close→reopen race: a Haiku
-  // request can resolve AFTER reset cleared `intelliQuery` to '' — without the guard,
-  // `'' === trimmed('')` would flip intelliReady true and flash stale hits over the
-  // idle hint. Requiring a non-empty query keeps the reset state clean.
-  const intelliReady = intelligent && intelliState === 'done' && intelliQuery !== '' && intelliQuery === trimmed;
-  const hits: RecallHit[] = intelligent ? (intelliReady ? intelliHits : []) : bmHits;
+  const hits = useMemo<RecallHit[]>(() => data?.hits ?? [], [data]);
 
   const go = useCallback((hit: RecallHit) => {
     const target = recallNavTarget(hit);
@@ -128,85 +90,35 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
     onClose();
   }, [onNavigate, onClose]);
 
-  const focusInput = useCallback(() => { try { inputRef.current?.focus(); } catch { /* ignore */ } }, []);
-
-  // Shared ↑/↓/Enter list nav (+ length clamp). Enter runs the Haiku pass when armed
-  // and not yet run; otherwise it opens the focused hit — identical to the prior inline
-  // handler. (`onEnter` closes over `runIntelli`/`go`, declared just below; it's only
-  // invoked on keydown, well after those initialize.)
+  // Shared ↑/↓/Enter list nav (+ length clamp): Enter opens the focused hit.
   const { focused, setFocused, onKeyDown } = useListKeyboardNav({
     length: hits.length,
-    onEnter: (i) => {
-      if (intelligent && !intelliReady && trimmed) { void runIntelli(); return; }
-      if (hits[i]) go(hits[i]);
-    },
+    onEnter: (i) => { if (hits[i]) go(hits[i]); },
   });
 
   const queryTokens = useMemo(
-    () => (intelligent ? intelliQuery : trimmed).toLowerCase().split(/\s+/).filter(Boolean),
-    [intelligent, intelliQuery, trimmed],
+    () => trimmed.toLowerCase().split(/\s+/).filter(Boolean),
+    [trimmed],
   );
-
-  // Run the Haiku pass over all corpora. Falls back to local BM25 if claude is
-  // unreachable so the palette always answers.
-  const runIntelli = useCallback(async () => {
-    const query = trimmed;
-    if (!query) return;
-    setIntelliState('thinking');
-    setIntelliQuery(query);
-    setFocused(0);
-    const level = minLevel || undefined;
-    try {
-      const res = await haikuRecallOnce(api, query, [], level);
-      setIntelliHits(res.hits);
-      setIntelliMode(res.mode);
-    } catch {
-      try { setIntelliHits(await recallOnce(api, query, [], 12, level)); } catch { setIntelliHits([]); }
-      setIntelliMode('bm25');
-    }
-    setIntelliState('done');
-  }, [api, trimmed, setFocused, minLevel]);
 
   // 0 → 2 → 3 → 0. A 3-position dial, so clicking cycles rather than opening a menu.
   const cycleLevel = useCallback(() => {
     setMinLevel((l) => (l === 0 ? 2 : l === 2 ? 3 : 0));
     setFocused(0);
-    if (intelligent) setIntelliState('idle');
-  }, [setFocused, intelligent]);
+  }, [setFocused]);
 
-  const toggleIntelligent = useCallback(() => {
-    setIntelligentPref((v) => {
-      const next = !v;
-      try { window.localStorage.setItem(INTELLIGENT_PREF_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-      return next;
-    });
-    setIntelliState('idle');
-    setIntelliHits([]);
-    setIntelliQuery('');
-    setFocused(0);
-    focusInput();
-  }, [focusInput, setFocused]);
-
-  // Reset transient state + focus on each open (the `intelligent` preference persists).
+  // Reset transient state + focus on each open.
   useEffect(() => {
     if (!open) return;
     setQ('');
     setDebouncedQ('');
     setFocused(0);
-    setIntelliHits([]);
-    setIntelliState('idle');
-    setIntelliQuery('');
     const raf = requestAnimationFrame(() => { try { inputRef.current?.focus(); } catch { /* ignore */ } });
     return () => cancelAnimationFrame(raf);
   }, [open, setFocused]);
 
   const focusedHit = hits[focused] ?? null;
-  const showIntelliCTA = intelligent && !!trimmed && intelliState !== 'thinking' && !intelliReady;
-  const showThinking = intelligent && intelliState === 'thinking';
-  const showEmpty =
-    !!trimmed &&
-    ((!intelligent && !isFetching && bmHits.length === 0 && debouncedQ === trimmed) ||
-      (intelligent && intelliReady && intelliHits.length === 0));
+  const showEmpty = !!trimmed && !isFetching && hits.length === 0 && debouncedQ === trimmed;
   const showIdleHint = !trimmed;
 
   return (
@@ -218,24 +130,23 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
       className="command-palette"
     >
       <div className="cmdk-input-row">
-        <div className={`cmdk-field${intelligent ? ' cmdk-field--intel' : ''}`}>
+        <div className="cmdk-field">
           <span className="cmdk-input-icon" aria-hidden="true"><SearchIcon size={17} /></span>
           <input
             ref={inputRef}
             className="cmdk-input"
             value={q}
-            placeholder={intelligent ? 'Ask the brain — press ↵ to reason…' : 'Search the brain…'}
+            placeholder="Search the brain…"
             spellCheck={false}
             autoComplete="off"
             aria-label="Search the brain"
             onChange={(e) => {
               setQ(e.target.value);
               setFocused(0);
-              if (intelligent) setIntelliState('idle');
             }}
             onKeyDown={onKeyDown}
           />
-          {!intelligent && isFetching && !!trimmed && <span className="cmdk-spin" aria-hidden="true" />}
+          {isFetching && !!trimmed && <span className="cmdk-spin" aria-hidden="true" />}
           {/* Importance dial — narrows the corpus to what the brain already marks
               as important, rather than re-ranking. Off by default so the palette's
               behaviour is unchanged until asked. */}
@@ -250,23 +161,6 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
               {minLevel ? '★'.repeat(minLevel) : '★'}
             </span>
           </button>
-          {/* Hybrid mode already does semantic recall locally — the Haiku toggle
-              is redundant there, so it's hidden (per the recall-mode setting). */}
-          {!hybridActive && (
-            <button
-              type="button"
-              className={`cmdk-intel${intelligent ? ' cmdk-intel--on' : ''}`}
-              onClick={toggleIntelligent}
-              aria-pressed={intelligent}
-              title={intelligent
-                ? 'Intelligent search is on — reasons over your brain with Haiku (uses tokens)'
-                : 'Turn on intelligent search — intent-aware, beyond keywords'}
-            >
-              <span className="cmdk-intel-dot" aria-hidden="true" />
-              <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
-              <span className="cmdk-intel-label">Intelligent</span>
-            </button>
-          )}
         </div>
         <kbd className="cmdk-kbd">esc</kbd>
       </div>
@@ -275,25 +169,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
         <div className="cmdk-list" role="listbox" aria-label="Search results">
           {showIdleHint && (
             <div className="cmdk-empty">
-              {intelligent
-                ? 'Ask anything — Intelligent search reasons over your whole brain.'
-                : 'Search tasks, knowledge, core and memory.'}
-            </div>
-          )}
-
-          {showIntelliCTA && (
-            <button className="cmdk-cta" onClick={() => void runIntelli()}>
-              <SparkIcon size={15} color="#fff" />
-              Run intelligent search
-              <kbd className="cmdk-cta-kbd">↵</kbd>
-            </button>
-          )}
-
-          {showThinking && (
-            <div className="cmdk-thinking">
-              <span className="cmdk-thinking-spark"><SparkIcon size={14} color="currentColor" /></span>
-              Reasoning over your brain…
-              <div className="cmdk-skel"><i /><i /><i /></div>
+              Search tasks, knowledge, core and memory.
             </div>
           )}
 
@@ -335,14 +211,10 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
 
       <div className="cmdk-foot">
         <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
-        <span><kbd>↵</kbd> {intelligent && !intelliReady ? 'reason' : 'open'}</span>
+        <span><kbd>↵</kbd> open</span>
         <span><kbd>esc</kbd> close</span>
-        <span className={`cmdk-foot-mode${intelligent || hybridActive ? ' cmdk-foot-mode--intel' : ''}`}>
-          {intelligent
-            ? (intelliReady && intelliMode === 'bm25' ? 'bm25 · fallback' : 'intelligent · haiku')
-            : hybridActive
-              ? `local · ${data?.mode ?? 'hybrid'}`
-              : 'local · bm25'}
+        <span className={`cmdk-foot-mode${data?.mode === 'hybrid' ? ' cmdk-foot-mode--intel' : ''}`}>
+          {`local · ${data?.mode === 'hybrid' ? 'hybrid' : 'bm25'}`}
         </span>
       </div>
     </CommandModal>

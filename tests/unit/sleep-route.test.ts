@@ -124,22 +124,30 @@ describe('GET /api/sleep — effective debt', () => {
 describe('PATCH /api/sleep — recall_mode + debt', () => {
   it('accepts a valid recall_mode, persists it, and records a field change', async () => {
     const { res, status, body } = makeRes();
-    await handleSleepUpdate(makePatchReq({ recall_mode: 'hybrid' }), res, {}, contextRoot);
+    await handleSleepUpdate(makePatchReq({ recall_mode: 'raw' }), res, {}, contextRoot);
     expect(status()).toBe(200);
-    expect(body().recall_mode).toBe('hybrid');
+    expect(body().recall_mode).toBe('raw');
 
     const state = readSleepState(contextRoot);
-    expect(state.recall_mode).toBe('hybrid');
+    expect(state.recall_mode).toBe('raw');
     const change = state.dashboard_changes.find((c) => c.field?.includes('recall_mode'));
     expect(change).toBeDefined();
-    expect(change?.fields).toContainEqual({ field: 'recall_mode', from: 'haiku', to: 'hybrid' });
+    expect(change?.fields).toContainEqual({ field: 'recall_mode', from: 'hybrid', to: 'raw' });
   });
 
-  it.each(['haiku', 'raw', 'hybrid', 'off'] as const)('accepts recall_mode=%s', async (mode) => {
+  it.each(['raw', 'hybrid', 'off'] as const)('accepts recall_mode=%s', async (mode) => {
     const { res, status, body } = makeRes();
     await handleSleepUpdate(makePatchReq({ recall_mode: mode }), res, {}, contextRoot);
     expect(status()).toBe(200);
     expect(body().recall_mode).toBe(mode);
+  });
+
+  it('accepts the retired recall_mode=haiku (legacy client) and stores hybrid', async () => {
+    const { res, status, body } = makeRes();
+    await handleSleepUpdate(makePatchReq({ recall_mode: 'haiku' }), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(body().recall_mode).toBe('hybrid');
+    expect(readSleepState(contextRoot).recall_mode).toBe('hybrid');
   });
 
   it('rejects an unknown recall_mode with 400 invalid_value and persists nothing', async () => {
@@ -147,7 +155,7 @@ describe('PATCH /api/sleep — recall_mode + debt', () => {
     await handleSleepUpdate(makePatchReq({ recall_mode: 'bm42' }), res, {}, contextRoot);
     expect(status()).toBe(400);
     expect(body().error).toBe('invalid_value');
-    expect(readSleepState(contextRoot).recall_mode).toBe('haiku'); // default untouched
+    expect(readSleepState(contextRoot).recall_mode).toBe('hybrid'); // default untouched
   });
 
   it('rejects a non-string recall_mode', async () => {

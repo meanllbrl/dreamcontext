@@ -1,6 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { readSleepState, writeSleepState } from '../../cli/commands/sleep.js';
+import { RECALL_MODES, isAcceptedRecallModeInput, normalizeRecallMode } from '../../lib/recall-mode.js';
 import { effectiveDebt, resolveSleepThresholds } from '../../lib/sleep-consolidation.js';
 import type { SleepState, SleepThresholds } from '../../lib/sleep-consolidation.js';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, SLEEP_SPECIALISTS } from '../../lib/setup-config.js';
@@ -15,9 +16,8 @@ import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 
-/** Allowed recall modes — mirrors RECALL_MODES in src/cli/commands/sleep.ts. */
-const RECALL_MODES = ['haiku', 'raw', 'hybrid', 'off'] as const;
-type RecallMode = typeof RECALL_MODES[number];
+// Shared with the CLI — the retired `haiku` is still ACCEPTED on write (an older
+// dashboard tab or script may send it) and stored as `hybrid`.
 
 /** The persisted state plus the derived effective-debt trio the UI levels on. */
 export interface SleepStatePayload extends SleepState {
@@ -86,7 +86,7 @@ export async function handleSleepUpdate(
   }
 
   // Validate before touching state so a bad value never partially persists.
-  if (body.recall_mode !== undefined && !RECALL_MODES.includes(body.recall_mode as RecallMode)) {
+  if (body.recall_mode !== undefined && !isAcceptedRecallModeInput(body.recall_mode)) {
     sendError(res, 400, 'invalid_value', `recall_mode must be one of: ${RECALL_MODES.join(', ')}.`);
     return;
   }
@@ -101,10 +101,11 @@ export async function handleSleepUpdate(
   }
 
   if (body.recall_mode !== undefined) {
-    const oldMode = state.recall_mode ?? 'haiku';
-    if (body.recall_mode !== oldMode) {
-      state.recall_mode = body.recall_mode as RecallMode;
-      fieldChanges.push({ field: 'recall_mode', from: oldMode, to: body.recall_mode as RecallMode });
+    const oldMode = normalizeRecallMode(state.recall_mode);
+    const newMode = normalizeRecallMode(body.recall_mode);
+    if (newMode !== oldMode) {
+      state.recall_mode = newMode;
+      fieldChanges.push({ field: 'recall_mode', from: oldMode, to: newMode });
     }
   }
 

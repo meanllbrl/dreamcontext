@@ -38,7 +38,6 @@
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px var(--color-accent-soft);
 }
-.cmdk-field--intel { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
 .cmdk-input-icon { flex: 0 0 auto; display: flex; color: var(--color-accent); }
 .cmdk-input {
   flex: 1;
@@ -78,48 +77,7 @@
 }
 @keyframes cmdkSpin { to { transform: rotate(360deg); } }
 
-/* Intelligent toggle (Normal BM25 ↔ Haiku), pinned to the right of the field. */
-.cmdk-intel {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-family-display);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
-}
-.cmdk-intel:hover {
-  color: var(--color-text-secondary);
-  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
-}
-.cmdk-intel-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
-}
-.cmdk-intel--on {
-  background: var(--color-accent-strong);
-  border-color: var(--color-accent-strong);
-  color: var(--color-accent-text);
-}
-.cmdk-intel--on:hover { color: var(--color-accent-text); }
-.cmdk-intel--on .cmdk-intel-dot {
-  background: #fff;
-  box-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
-}
-.cmdk-intel-label { white-space: nowrap; }
-
-/* Importance dial (★ / ★★ / ★★★) — same chip family as .cmdk-intel, but fixed
+/* Importance dial (★ / ★★ / ★★★) — a chip with a fixed
    width so cycling 1→2→3 stars never shifts the input's right edge. */
 .cmdk-level {
   flex: 0 0 auto;
@@ -229,55 +187,6 @@
   font-weight: 600;
 }
 
-/* Intelligent CTA (armed but not yet run) + the reasoning skeleton. */
-.cmdk-cta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  margin: var(--space-2) 0;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-accent-strong);
-  background: var(--color-accent-strong);
-  color: var(--color-accent-text);
-  font-family: var(--font-family-display);
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: filter var(--transition-fast);
-}
-.cmdk-cta:hover { filter: brightness(1.06); }
-.cmdk-cta-kbd {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.22);
-  color: #fff;
-}
-.cmdk-thinking {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-.cmdk-thinking-spark { display: inline-flex; vertical-align: -2px; color: var(--color-accent); margin-right: 6px; }
-.cmdk-skel { display: flex; flex-direction: column; gap: var(--space-2); }
-.cmdk-skel i {
-  height: 12px;
-  border-radius: 6px;
-  background: linear-gradient(90deg, var(--color-bg-tertiary) 25%, var(--color-bg-secondary) 50%, var(--color-bg-tertiary) 75%);
-  background-size: 200% 100%;
-  animation: cmdkShimmer 1.2s ease-in-out infinite;
-}
-.cmdk-skel i:nth-child(2) { width: 86%; }
-.cmdk-skel i:nth-child(3) { width: 68%; }
-@keyframes cmdkShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-
 /* Preview pane */
 .cmdk-preview {
   flex: 1;
@@ -330,7 +239,7 @@
 .cmdk-foot-mode--intel { color: var(--color-accent); }
 
 /* Scrim/dialog entrance + reduced-motion for those live in CommandModal.css. Here we
-   only silence the palette's own in-content animations (BM25 spinner, reasoning skel). */
+   only silence the palette's own in-content animations (the search spinner). */
 @media (prefers-reduced-motion: reduce) {
-  .cmdk-spin, .cmdk-skel i { animation: none !important; }
+  .cmdk-spin { animation: none !important; }
 }

@@ -16,6 +16,12 @@ import { dirname } from 'node:path';
  * @returns true if the lock is now held by THIS process; false if a live holder
  *   owns it. `nowMs` is injected so callers and tests stay deterministic.
  *
+ * `opts.maxAgeMs` is OPT-IN too (default undefined = every behaviour below unchanged): a hard
+ * age ceiling past which a lock is reclaimed EVEN IF its recorded PID looks alive. A PID can be
+ * recycled by an unrelated live process, which `verifyPidLiveness` alone would honour forever;
+ * the ceiling must sit far above any real hold (and above `staleMs`) so a genuine holder is
+ * never robbed. Only the model-download lock sets it.
+ *
  * `opts.verifyPidLiveness` (amendment 3, git-sync brain lock) is OPT-IN and
  * additive: when unset, every existing caller keeps today's timestamp-only
  * staleness semantics byte-for-byte. When set, a lock past `staleMs` is only
@@ -32,7 +38,7 @@ export function acquireFileLock(
   lockPath: string,
   nowMs: number,
   staleMs: number,
-  opts?: { verifyPidLiveness?: boolean },
+  opts?: { verifyPidLiveness?: boolean; maxAgeMs?: number },
 ): boolean {
   mkdirSync(dirname(lockPath), { recursive: true });
   const tryCreate = (): boolean => {
@@ -64,7 +70,8 @@ export function acquireFileLock(
 
   // Stale by age. With verifyPidLiveness + a real PID, don't reclaim out from
   // under a live-but-slow holder — probe it first.
-  if (opts?.verifyPidLiveness && heldPid !== null) {
+  const pastCeiling = opts?.maxAgeMs !== undefined && nowMs - heldSince > opts.maxAgeMs;
+  if (opts?.verifyPidLiveness && heldPid !== null && !pastCeiling) {
     try {
       process.kill(heldPid, 0); // no throw, or EPERM → process exists → alive
       return false;
@@ -87,12 +94,17 @@ export function acquireFileLock(
  */
 export async function acquireFileLockWithin(
   lockPath: string,
-  opts: { waitMs: number; staleMs: number; pollMs?: number; now?: () => number; verifyPidLiveness?: boolean },
+  opts: { waitMs: number; staleMs: number; pollMs?: number; now?: () => number; verifyPidLiveness?: boolean; maxAgeMs?: number },
 ): Promise<boolean> {
   const now = opts.now ?? Date.now;
   const pollMs = opts.pollMs ?? 25;
   const deadline = now() + Math.max(0, opts.waitMs);
-  const lockOpts = opts.verifyPidLiveness ? { verifyPidLiveness: true } : undefined;
+  const lockOpts = opts.verifyPidLiveness || opts.maxAgeMs !== undefined
+    ? {
+        ...(opts.verifyPidLiveness ? { verifyPidLiveness: true } : {}),
+        ...(opts.maxAgeMs !== undefined ? { maxAgeMs: opts.maxAgeMs } : {}),
+      }
+    : undefined;
   for (;;) {
     if (acquireFileLock(lockPath, now(), opts.staleMs, lockOpts)) return true;
     if (now() >= deadline) return false;

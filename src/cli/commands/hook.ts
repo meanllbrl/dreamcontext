@@ -40,18 +40,19 @@ import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { DEVELOP_LEAD_DENY_REASON, developLeadWriteDenied } from '../../lib/develop-lead-guard.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
+import { bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
+import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
 } from '../../lib/patterns.js';
 import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
+import { spawnEmbedEnsure } from '../../lib/embeddings/provision.js';
 import {
   crossVaultRecall,
   resolveConnectedVaults,
   currentVaultTarget,
   type FederatedHit,
 } from '../../lib/federation-recall.js';
-import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -2141,6 +2142,20 @@ export function registerHookCommand(program: Command): void {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[brain-sync] error:', (brainErr as Error).message ?? brainErr);
       }
 
+      // Hybrid recall provisioning: when the vault is in hybrid mode but the model
+      // or the index is not there yet, fetch/build them in a DETACHED process so
+      // this session's prompts keep running on BM25 now and switch to hybrid once
+      // it lands. Never awaited — the per-prompt hook itself only ever reads
+      // `hybridReady`. spawnEmbedEnsure declines (opt-out DREAMCONTEXT_EMBED_AUTO=0,
+      // a recent failure, a run already in flight) and never throws; one notice line.
+      try {
+        if (spawnEmbedEnsure(root)) {
+          console.log('ℹ Hybrid recall: preparing the local embedding model and index in the background (BM25 until ready; opt out with DREAMCONTEXT_EMBED_AUTO=0).');
+        }
+      } catch (embedErr) {
+        if (process.env.DREAMCONTEXT_DEBUG) console.error('[embed-ensure] error:', (embedErr as Error).message ?? embedErr);
+      }
+
       // ── Context-handoff banner ────────────────────────────────────────────
       // BEFORE the snapshot, deliberately: this session exists BECAUSE a previous
       // one handed off, and the first thing it must read is which task it is
@@ -2471,10 +2486,10 @@ export function registerHookCommand(program: Command): void {
       let hadRecallHits = false;
       let gatedSkills = false;
 
-      // Memory recall injection — single Haiku call sees corpus index + prompt,
-      // returns only relevant docs. Falls back to raw BM25 if Haiku fails.
+      // Memory recall injection — BM25, fused with local dense embeddings when the
+      // model and index are already warm (hybrid, the default), else plain BM25.
       // Mode via the shared resolver so the hook, `memory recall`, and /api/recall
-      // never disagree (env override, else persisted .sleep.json, else 'haiku').
+      // never disagree (env override, else persisted .sleep.json, else 'hybrid').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
           const prompt = String((input as Record<string, unknown>).prompt ?? '');
@@ -2485,33 +2500,19 @@ export function registerHookCommand(program: Command): void {
               let hits: RecallHit[] = [];
               let mode = 'BM25';
 
-              if (recallMode === 'haiku') {
-                const result = haikuRecall(prompt, root);
-                if (result === 'skip') {
-                  if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku: skip (no searchable intent)');
-                } else if (result !== null && result.length > 0) {
-                  hits = result;
-                  mode = 'Haiku';
-                } else if (result !== null && result.length === 0) {
-                  if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku: 0 docs selected');
-                } else if (result === null) {
-                  if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku failed, falling back to BM25');
-                  const corpus = buildCorpus(root);
-                  hits = bm25Search(prompt, corpus, 3);
-                }
-              } else if (hybridReady(root, recallMode)) {
-                // EXPERIMENTAL: BM25 + dense RRF fusion (decision-embedding-layer).
+              if (hybridReady(root, recallMode)) {
+                // BM25 + dense fusion (decision-embedding-layer).
                 // `hybridReady` gates on model-downloaded AND cache-warm, so a
                 // prompt never triggers a surprise 113 MB download or a cold
                 // multi-minute index build. (A per-process ~1s model cold-load
                 // to embed the query is still paid on the first hybrid recall in
                 // each short-lived hook process — inherent to hybrid mode.) Raw
                 // `.score` is untouched, so the >= 2.0 gate below is unchanged.
-                const corpus = buildCorpus(root);
+                const corpus = buildCorpusCached(root);
                 hits = await hybridSearch(prompt, corpus, root, 3);
                 mode = 'Hybrid';
               } else {
-                const corpus = buildCorpus(root);
+                const corpus = buildCorpusCached(root);
                 hits = bm25Search(prompt, corpus, 3);
               }
 
@@ -2519,7 +2520,7 @@ export function registerHookCommand(program: Command): void {
               // gate must test the RAW BM25 score, which may not sit at index 0 after
               // re-ranking. Use .some() so a strong raw match isn't suppressed by a
               // lower-raw-score doc winning the rankScore sort.
-              if (hits.length > 0 && (mode === 'Haiku' || hits.some((h) => h.score >= 2.0))) {
+              if (hits.length > 0 && hits.some((h) => h.score >= 2.0)) {
                 const lines: string[] = ['', `— Memory recall (${mode}, top ${hits.length}) —`];
                 for (const h of hits) {
                   lines.push(`  [${h.doc.type}] ${h.doc.relPath}`);
@@ -2544,7 +2545,7 @@ export function registerHookCommand(program: Command): void {
                 // usage, not just explicit `knowledge touch` calls.
                 // This is a read-modify-write of the WHOLE state file, so it
                 // RE-READS inside the lock. The `state` this handler read at the
-                // top is minutes old by now — an awaited Haiku recall call sits
+                // top is stale by now — a recall search sits
                 // between the two — and writing that stale object back would
                 // silently erase whatever a foreground Stop hook or a background
                 // sleep cycle landed in the meantime. Locking the write alone
