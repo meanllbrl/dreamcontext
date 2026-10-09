@@ -95,6 +95,8 @@ interface Candidate {
   dims: number;
   license: string;
   notes: string;
+  /** Static-embedding models (no transformer): run the ONNX graph directly, tokenizer from a bare tokenizer.json. */
+  staticOnnxFile?: string;
 }
 
 const MAX_TOKENS = 512; // the e5 limit; every candidate is capped the same so the model is the only variable
@@ -128,13 +130,20 @@ const CANDIDATES: Record<string, Candidate> = {
     license: 'Apache-2.0 (ibm-granite/granite-embedding-97m-multilingual-r2)',
     notes: 'ModernBERT, CLS pooling, no prompts; ~93 MB q8; Turkish listed among its languages',
   },
+  'static-mrl-multilingual-int8': {
+    id: 'static-mrl-multilingual-int8', repo: 'sentence-transformers/static-similarity-mrl-multilingual-v1', cacheDir: MODEL_DIR, localOnly: true,
+    dtype: 'q8', pooling: 'sentence_embedding', queryPrefix: '', docPrefix: '', maxTokens: MAX_TOKENS, dims: 1024,
+    license: 'Apache-2.0 (sentence-transformers/static-similarity-mrl-multilingual-v1)',
+    notes: 'STATIC embeddings (token lookup + mean, no attention) — the speed tier; int8 ONNX ~108 MB; trained for similarity, not retrieval',
+    staticOnnxFile: 'onnx/model_int8.onnx',
+  },
 };
 
 interface Reranker {
   id: string;
   repo: string;
   cacheDir: string;
-  dtype: 'q8' | 'fp32';
+  dtype: 'q8' | 'fp32' | 'int8';
   /** transformers.js builds the file name `onnx/<model_file_name><dtype suffix>.onnx`. */
   modelFileName?: string;
   maxTokens: number;
@@ -152,6 +161,12 @@ const RERANKERS: Record<string, Reranker> = {
     id: 'mmarco-mminilm-fp32', repo: 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1', cacheDir: MODEL_DIR,
     dtype: 'fp32', maxTokens: MAX_TOKENS,
     license: 'Apache-2.0', notes: 'same weights, fp32 (~449 MB) — accuracy reference for the int8 export',
+  },
+  'gte-multilingual-reranker-int8': {
+    id: 'gte-multilingual-reranker-int8', repo: 'onnx-community/gte-multilingual-reranker-base', cacheDir: MODEL_DIR,
+    dtype: 'int8', maxTokens: MAX_TOKENS,
+    license: 'Apache-2.0 upstream (Alibaba-NLP/gte-multilingual-reranker-base)',
+    notes: '306M params, 70+ languages incl. Turkish; int8 ONNX ~341 MB',
   },
   'bge-reranker-v2-m3-q8': {
     id: 'bge-reranker-v2-m3-q8', repo: 'onnx-community/bge-reranker-v2-m3-ONNX', cacheDir: MODEL_DIR,
@@ -236,7 +251,49 @@ interface Embedder {
   embedQuery(text: string): Promise<Float32Array>;
 }
 
+async function loadStaticEmbedder(cand: Candidate): Promise<Embedder> {
+  const t0 = now();
+  const tf = await loadTf(cand.cacheDir, true);
+  const ort = await import('onnxruntime-node');
+  const importMs = now() - t0;
+  const dir = join(cand.cacheDir, cand.repo);
+  const t1 = now();
+  const tokJson = JSON.parse(readFileSync(join(dir, 'tokenizer.json'), 'utf-8'));
+  const tokenizer = new tf.PreTrainedTokenizer(tokJson, {}) as unknown as TfTokenizer;
+  const tokenizerMs = now() - t1;
+  const t2 = now();
+  const session = await ort.InferenceSession.create(join(dir, cand.staticOnnxFile!));
+  const modelMs = now() - t2;
+  const embedTexts = async (texts: string[]): Promise<Float32Array[]> => {
+    // One text per run: a static model costs microseconds per text, so padding/batching buys nothing.
+    const rows: Float32Array[] = [];
+    for (const text of texts) {
+      const ids = (tokenizer as unknown as { encode: (t: string) => number[] }).encode(text).slice(0, cand.maxTokens);
+      const n = Math.max(ids.length, 1);
+      const idT = new ort.Tensor('int64', BigInt64Array.from((ids.length ? ids : [0]).map(BigInt)), [1, n]);
+      const maskT = new ort.Tensor('int64', new BigInt64Array(n).fill(1n), [1, n]);
+      const out = await session.run({ input_ids: idT, attention_mask: maskT });
+      const t = out.sentence_embedding as unknown as TfTensor;
+      const d = t.dims[t.dims.length - 1];
+      const row = new Float32Array(d);
+      for (let j = 0; j < d; j++) row[j] = Number(t.data[j]);
+      rows.push(l2normalize(row));
+    }
+    return rows;
+  };
+  const t3 = now();
+  await embedTexts(['warm up the model']);
+  const firstInferenceMs = now() - t3;
+  return {
+    cand,
+    timings: { importMs, tokenizerMs, modelMs, firstInferenceMs, coldLoadMs: importMs + tokenizerMs + modelMs + firstInferenceMs },
+    embedDocs: (texts) => embedTexts(texts.map((t) => `${cand.docPrefix}${t}`)),
+    embedQuery: async (text) => (await embedTexts([`${cand.queryPrefix}${text}`]))[0],
+  };
+}
+
 async function loadEmbedder(cand: Candidate): Promise<Embedder> {
+  if (cand.staticOnnxFile) return loadStaticEmbedder(cand);
   const t0 = now();
   const tf = await loadTf(cand.cacheDir, cand.localOnly);
   const importMs = now() - t0;
@@ -836,7 +893,8 @@ async function loadReranker(def: Reranker): Promise<RerankerRuntime> {
   })) as unknown as TfModel;
   const modelMs = now() - t2;
   const scoreBatch = async (query: string, passages: string[]): Promise<number[]> => {
-    const inputs = tokenizer(passages.map(() => query), { text_pair: passages, padding: true, truncation: true, max_length: def.maxTokens });
+    const maxLen = Number(value('--passage-tokens') ?? def.maxTokens);
+    const inputs = tokenizer(passages.map(() => query), { text_pair: passages, padding: true, truncation: true, max_length: maxLen });
     const out = await model(inputs);
     const logits = out.logits ?? fail(`${def.id}: no logits output (${Object.keys(out).join(',')})`);
     const labels = logits.dims[logits.dims.length - 1];
@@ -879,8 +937,10 @@ async function runRerank(def: Reranker): Promise<void> {
   const goldPaths = values('--gold').map(assertTrainGold);
   if (goldPaths.length === 0) fail('--gold <train.jsonl> is required (repeatable)');
   const pinned = loadNow(value('--now') ?? 'frozen');
-  const control = CANDIDATES['e5-small-q8'];
-  const TOP_N = 20;
+  // Experiment knobs: which embedder builds the candidate list, how many it hands the cross-encoder,
+  // and how long each passage may be (the cross-encoder's cost is pairs × tokens).
+  const control = CANDIDATES[value('--candidate') ?? 'e5-small-q8'] ?? fail('unknown --candidate');
+  const TOP_N = Number(value('--top') ?? 20);
 
   const corpus = stableCorpus(root);
   const byKey = new Map(corpus.map((d) => [docKey(d), d]));
