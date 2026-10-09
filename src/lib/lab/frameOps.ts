@@ -95,11 +95,38 @@ export type Selection = Record<string, string>;
 
 export type FunnelMetricFormat = 'count' | 'pct' | 'usd' | 'x' | 'seconds' | 'number';
 
+/** Which input won a ladder-derived band bound: the book value, or this level's own percentile. */
+export type BandSourceKind = 'book' | 'own';
+
+/** Why a looked-up path is missing: its axis combination was never pulled, or it fell under the declared user floor. */
+export type SliceReasonCode = 'not-pulled' | 'below-floor';
+
+/** A count over a count (`k` of `n`): what a rate shows instead when its denominator is small. */
+export interface Kn {
+  k: number;
+  n: number;
+}
+
+/** Under this denominator a rate is shown as k/n, never as a percentage. */
+export const KN_THRESHOLD = 100;
+/** The user floors the ranking offers; the default is the last. */
+export const RANKING_FLOORS = [30, 100, 300] as const;
+export const RANKING_DEFAULT_FLOOR = 300;
+/** An intersection holding at least this share of a one-axis parent's users ... */
+export const RANKING_DUP_SHARE = 0.9;
+/** ... with a value within this relative distance of the parent's is the same cohort: a duplicate. */
+export const RANKING_DUP_VALUE_TOL = 0.05;
+
 export interface FunnelFrameStep {
   key: string;
   label: string;
   users: number;
   prev?: number | null;
+  /** 'derived' = rate x first-step users, labelled on screen. Absent = measured. */
+  basis?: 'measured' | 'derived';
+  /** False = not measured for this funnel: drawn "not measured", never 0, skipped by the drop math. */
+  measured?: boolean;
+  reason?: string | null;
 }
 
 export interface FunnelFrameMetric {
@@ -117,6 +144,44 @@ export interface FunnelFrameBand {
   floorSource: string | null;
   targetSource: string | null;
   better: 'higher' | 'lower';
+  /** Ladder-derived bands only: which input won each bound, and the weeks behind the own percentiles. */
+  floorFrom?: BandSourceKind;
+  targetFrom?: BandSourceKind;
+  weeks?: number;
+}
+
+/** A reading trap or note, shown once as one line (never a wall of text). */
+export interface FunnelFrameNote {
+  code: string | null;
+  text: string;
+  level: 'trap' | 'info';
+  /** Step keys, metric keys or `dim:<key>` this note concerns (their cells get a marker). */
+  keys: string[];
+  scope: 'funnel' | 'set';
+}
+
+export type PaymentCohort = 'first' | 'renewal' | 'all';
+
+export interface FunnelFramePaymentCell {
+  /** {} = the total; else one value per dim. */
+  dims: Selection;
+  cohort: PaymentCohort;
+  attempts: number;
+  declines: number;
+  /** reason key -> declines with that reason. */
+  reasons: Record<string, number>;
+}
+
+export interface FunnelFramePayment {
+  measured: boolean;
+  reason: string | null;
+  cells: FunnelFramePaymentCell[];
+}
+
+export interface FunnelFrameAccess {
+  stages: { key: string; label: string }[];
+  rows: { funnel: string | null; dims: Selection; counts: Record<string, number | null> }[];
+  asOf: string | null;
 }
 
 export interface FunnelFrameDay {
@@ -142,6 +207,12 @@ export interface FunnelFrameFunnel {
   metrics?: Record<string, FunnelFrameMetric>;
   daily?: FunnelFrameDay[];
   segments?: FunnelFrameSegment[];
+  /** The funnel's own bands (ladder-derived or authored); paths inherit them before the set's. */
+  bands?: Record<string, FunnelFrameBand>;
+  notes?: FunnelFrameNote[];
+  payment?: FunnelFramePayment;
+  /** Part key ('segments', 'payment', `dim:<key>`, ...) -> why THIS funnel does not carry it. */
+  unmeasured?: Record<string, string>;
 }
 
 export interface FunnelFrameDimension {
@@ -158,6 +229,23 @@ export interface FunnelFrame {
   segmentMode?: 'cells' | 'lookup';
   bands?: Record<string, FunnelFrameBand>;
   lowSample?: number;
+  /** The window the set describes (from the snapshot, not the range tweak). */
+  window?: { from: string; to: string; prevFrom: string | null; prevTo: string | null };
+  provenance?: { source: string; pulledAt: string | null; freshness: string | null; filters: string[] };
+  /** Set-level notes (traps that hold for every funnel). */
+  notes?: FunnelFrameNote[];
+  /** Part key -> how to fill it when absent. */
+  hints?: Record<string, string>;
+  /** Rate metric key -> its numerator and denominator step keys (k/n under a small denominator). */
+  rates?: Record<string, { num: string; den: string }>;
+  /** The axis combinations the source was asked for, and the user floor it applied. */
+  intersections?: { dims: string[]; minUsers: number | null }[];
+  /** The benchmark ladder's stage metric keys, in order. */
+  ladder?: string[];
+  /** The all-funnels payment (a funnel without its own payment shows this one). */
+  payment?: FunnelFramePayment;
+  paymentReasons?: { key: string; label: string; note: string | null }[];
+  access?: FunnelFrameAccess;
 }
 
 /** The funnel as one exact selection sees it (`funnelSlice`). */
@@ -178,6 +266,10 @@ export interface FunnelSlice {
   daily: FunnelFrameDay[];
   lowSample: boolean;
   ignored: string[];
+  /** Set on an unmeasured slice whose path is missing: why (never pulled, or under the floor). */
+  reasonCode?: SliceReasonCode | null;
+  /** Per metric: which level its band came from. */
+  bandOrigin?: Record<string, 'set' | 'funnel' | 'path'>;
 }
 
 export interface BreakdownChip {
@@ -186,6 +278,8 @@ export interface BreakdownChip {
   enabled: boolean;
   users: number | null;
   reason: string | null;
+  /** The slice the chip leads to: why its path is missing, when known. */
+  reasonCode?: SliceReasonCode | null;
 }
 
 export interface BreakdownAxis {
@@ -202,6 +296,10 @@ export interface StepDrop {
   ofPrev: number | null;
   dropPct: number | null;
   worst: boolean;
+  /** Users of the last measured step before this one (the denominator of `ofPrev`), or null. */
+  prevUsers: number | null;
+  measured: boolean;
+  basis: 'measured' | 'derived';
 }
 
 export interface BenchmarkRow {
@@ -220,6 +318,11 @@ export interface BenchmarkRow {
   trend: 'improving' | 'worsening' | 'flat' | null;
   reason: string | null;
   inherited: boolean;
+  floorFrom: BandSourceKind | null;
+  targetFrom: BandSourceKind | null;
+  weeks: number | null;
+  /** When `inherited`: the level the band came from. */
+  inheritedFrom: 'set' | 'funnel' | null;
 }
 
 export interface SegmentRow {
@@ -229,7 +332,95 @@ export interface SegmentRow {
   reason: string | null;
   users: number;
   lowSample: boolean;
-  cells: Record<string, { v: number | null; prev: number | null; tone: 'below' | 'between' | 'above' | null }>;
+  cells: Record<string, { v: number | null; prev: number | null; tone: 'below' | 'between' | 'above' | null; kn: Kn | null }>;
+}
+
+/** One funnel's best breakdown on the ranked metric. */
+export interface RankingRow {
+  funnelId: string;
+  funnelName: string;
+  selection: Selection;
+  users: number;
+  value: number;
+  prev: number | null;
+  format: FunnelMetricFormat;
+  /** The rate as counts, when the metric has a rate definition (show it when `n < KN_THRESHOLD`). */
+  kn: Kn | null;
+  lowSample: boolean;
+  tone: 'below' | 'between' | 'above' | null;
+  /** The funnel level's own value, for context. */
+  total: number | null;
+}
+
+export interface RankingView {
+  metric: string;
+  label: string;
+  better: 'higher' | 'lower';
+  minUsers: number;
+  /** Best first. */
+  rows: RankingRow[];
+  dropped: { funnelId: string; funnelName: string; why: 'no-path' | 'no-value' }[];
+}
+
+export interface PaymentReasonShare {
+  key: string;
+  label: string;
+  count: number;
+  /** Share of the declines, 0-100, or null when there are none. */
+  share: number | null;
+  note: string | null;
+}
+
+export interface PaymentRow {
+  dims: Selection;
+  cohort: PaymentCohort;
+  attempts: number;
+  declines: number;
+  /** Decline rate, 0-100, or null with no attempts. */
+  rate: number | null;
+  /** declines of attempts (show it when `n < KN_THRESHOLD`). */
+  kn: Kn | null;
+  reasons: PaymentReasonShare[];
+  /** Declines no named reason accounts for (never negative). */
+  other: number;
+  /** The reasons add up to more than the declines: the source is inconsistent. */
+  clipped: boolean;
+  lowSample: boolean;
+}
+
+export interface PaymentView {
+  /** 'set' = the funnel has no payment of its own, the all-funnels one is shown. */
+  scope: 'funnel' | 'set' | 'none';
+  measured: boolean;
+  reason: string | null;
+  cohorts: PaymentCohort[];
+  cohort: PaymentCohort;
+  /** The cell for exactly the selection, or null. */
+  current: PaymentRow | null;
+  /** The `{}` cell, never a sum. */
+  total: PaymentRow | null;
+  byDim: { dim: string; rows: PaymentRow[] }[];
+}
+
+export interface AccessCell {
+  key: string;
+  label: string;
+  users: number | null;
+  /** Share of the row's base stage, 0-100. */
+  ofBase: number | null;
+  kn: Kn | null;
+}
+
+export interface AccessView {
+  asOf: string | null;
+  stages: { key: string; label: string }[];
+  rows: { funnel: string | null; dims: Selection; base: number | null; cells: AccessCell[] }[];
+}
+
+/** How a block's funnel frame is projected (see `projectFunnelFrame`). */
+export interface ProjectContext {
+  /** The card has a funnel picker: blocks without their own funnel option carry every funnel in full. */
+  allFunnels?: boolean;
 }
 
 export interface ValueFrame {
@@ -617,7 +808,17 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
     else effective[k] = v;
   }
   const frameBands = frame.bands ?? {};
-  const unmeasured = (reason: string | null): FunnelSlice => ({
+  const funnelBands = f && f.bands && Object.keys(f.bands).length > 0 ? f.bands : null;
+  // Per metric: the funnel's own band, else the set's.
+  const levelBands: Record<string, FunnelFrameBand> = { ...frameBands, ...(funnelBands ?? {}) };
+  const originOf = (own: Record<string, FunnelFrameBand> | null): Record<string, 'set' | 'funnel' | 'path'> => {
+    const out: Record<string, 'set' | 'funnel' | 'path'> = {};
+    for (const k of Object.keys(frameBands)) out[k] = 'set';
+    for (const k of Object.keys(funnelBands ?? {})) out[k] = 'funnel';
+    for (const k of Object.keys(own ?? {})) out[k] = 'path';
+    return out;
+  };
+  const unmeasured = (reason: string | null, reasonCode: SliceReasonCode | null = null): FunnelSlice => ({
     funnelId: f ? f.id : '',
     funnelName: f ? f.name : '',
     selection: effective,
@@ -626,17 +827,22 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
     users: 0,
     steps: [],
     metrics: {},
-    bands: frameBands,
+    bands: levelBands,
     bandsInherited: true,
-    inheritedBands: Object.keys(frameBands),
+    inheritedBands: Object.keys(levelBands),
     daily: [],
     lowSample: false,
     ignored,
+    reasonCode,
+    bandOrigin: originOf(null),
   });
   if (!f) return unmeasured(null);
 
   if (Object.keys(effective).length === 0) {
     const users = f.steps[0]?.users ?? 0;
+    // Without a ladder the set's bands ARE the funnel's (authored for every funnel), so nothing is
+    // "inherited" at this level; under a ladder a funnel without its own weeks inherits the total's.
+    const inherited = frame.ladder ? Object.keys(frameBands).filter((k) => !funnelBands || !funnelBands[k]) : [];
     return {
       funnelId: f.id,
       funnelName: f.name,
@@ -646,24 +852,27 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
       users,
       steps: f.steps.map((s) => ({ ...s })),
       metrics: f.metrics ?? {},
-      bands: frameBands,
-      bandsInherited: false,
-      inheritedBands: [],
+      bands: levelBands,
+      bandsInherited: inherited.length > 0 && funnelBands === null,
+      inheritedBands: inherited,
       daily: f.daily ?? [],
       lowSample: lowSampleOf(frame, users),
       ignored,
+      reasonCode: null,
+      bandOrigin: originOf(null),
     };
   }
 
-  const labelOf = (key: string) => f.steps.find((s) => s.key === key)?.label ?? key;
+  const stepOf = (key: string) => f.steps.find((s) => s.key === key);
   const segments = f.segments ?? [];
 
   if (frame.segmentMode === 'lookup') {
     const seg = segments.find((s) => sameSelection(s.dims, effective));
-    if (!seg || !seg.measured) return unmeasured(seg ? seg.reason : null);
-    // Per metric: the path's own band, else the set's (marked inherited for that metric).
+    if (!seg) return unmeasured(funnelPartReason(f, effective), missingPathCode(frame, effective));
+    if (!seg.measured) return unmeasured(seg.reason);
+    // Per metric: the path's own band, else the funnel's, else the set's (marked inherited for that metric).
     const own = seg.bands && Object.keys(seg.bands).length > 0 ? seg.bands : null;
-    const bands: Record<string, FunnelFrameBand> = { ...frameBands, ...(own ?? {}) };
+    const bands: Record<string, FunnelFrameBand> = { ...levelBands, ...(own ?? {}) };
     return {
       funnelId: f.id,
       funnelName: f.name,
@@ -671,21 +880,26 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
       measured: true,
       reason: null,
       users: seg.users,
-      steps: seg.steps.map((s) => ({ key: s.key, label: labelOf(s.key), users: s.users })),
+      steps: seg.steps.map((s) => pathStep(stepOf(s.key), s.key, s.users)),
       metrics: seg.metrics ?? {},
       bands,
       bandsInherited: own === null,
-      inheritedBands: Object.keys(frameBands).filter((k) => !own || !own[k]),
+      inheritedBands: Object.keys(levelBands).filter((k) => !own || !own[k]),
       daily: seg.daily ?? [],
       lowSample: lowSampleOf(frame, seg.users),
       ignored,
+      reasonCode: null,
+      bandOrigin: originOf(own),
     };
   }
 
   // cells: sum the matching measured cells; an unmeasured cell never adds to the sum.
   const matching = segments.filter((seg) => Object.keys(effective).every((k) => seg.dims[k] === effective[k]));
   const measured = matching.filter((seg) => seg.measured);
-  if (measured.length === 0) return unmeasured(matching.find((seg) => seg.reason !== null)?.reason ?? null);
+  if (measured.length === 0) {
+    const cellReason = matching.find((seg) => seg.reason !== null)?.reason ?? null;
+    return unmeasured(cellReason ?? (matching.length === 0 ? funnelPartReason(f, effective) : null));
+  }
   const byStep = new Map<string, number>();
   let users = 0;
   for (const seg of measured) {
@@ -699,15 +913,56 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
     measured: true,
     reason: null,
     users,
-    steps: f.steps.map((s) => ({ key: s.key, label: s.label, users: byStep.get(s.key) ?? 0 })),
+    steps: f.steps.map((s) => pathStep(s, s.key, byStep.get(s.key) ?? 0)),
     metrics: {},
-    bands: frameBands,
+    bands: levelBands,
     bandsInherited: true,
-    inheritedBands: Object.keys(frameBands),
+    inheritedBands: Object.keys(levelBands),
     daily: [],
     lowSample: lowSampleOf(frame, users),
     ignored,
+    reasonCode: null,
+    bandOrigin: originOf(null),
   };
+}
+
+/** A path's step: its own users, with the funnel step's label, basis and not-measured mark. */
+function pathStep(funnelStep: FunnelFrameStep | undefined, key: string, users: number): FunnelFrameStep {
+  const out: FunnelFrameStep = { key, label: funnelStep ? funnelStep.label : key, users };
+  if (funnelStep && funnelStep.basis !== undefined) out.basis = funnelStep.basis;
+  if (funnelStep && funnelStep.measured === false) {
+    out.measured = false;
+    out.reason = funnelStep.reason ?? null;
+    out.users = 0;
+  }
+  return out;
+}
+
+/** Why THIS funnel carries no path for a selection, from its `unmeasured` map: the axis, then the intersections, then all segments. */
+function funnelPartReason(f: FunnelFrameFunnel, sel: Selection): string | null {
+  const parts = f.unmeasured;
+  if (!parts) return null;
+  const dims = Object.keys(sel);
+  if (dims.length >= 2 && parts.intersections) return parts.intersections;
+  for (const k of dims) if (parts[`dim:${k}`]) return parts[`dim:${k}`];
+  return parts.segments ?? null;
+}
+
+function sameDimSet(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((k) => b.indexOf(k) !== -1);
+}
+
+/**
+ * Why a lookup path is missing, from the declared intersections: a combination
+ * the source was never asked for is 'not-pulled'; a declared one is 'below-floor'.
+ * A set that declares nothing gets no code (the generic wording stays).
+ */
+function missingPathCode(frame: FunnelFrame, sel: Selection): SliceReasonCode | null {
+  if (!frame.intersections) return null;
+  const dims = Object.keys(sel);
+  const declared = frame.intersections.some((i) => sameDimSet(i.dims, dims));
+  if (declared) return 'below-floor';
+  return dims.length >= 2 ? 'not-pulled' : null;
 }
 
 /**
@@ -723,13 +978,15 @@ export function breakdownAxes(frame: FunnelFrame, funnelId: string | null, sel: 
     chips: dim.values.map((value) => {
       const active = sel[dim.key] === value;
       const slice = funnelSlice(frame, funnelId, active ? sel : toggleSelection(sel, dim.key, value));
-      return {
+      const chip: BreakdownChip = {
         value,
         active,
         enabled: active || slice.measured,
         users: slice.measured ? slice.users : null,
         reason: slice.measured ? null : slice.reason,
       };
+      if (!slice.measured && slice.reasonCode) chip.reasonCode = slice.reasonCode;
+      return chip;
     }),
   }));
 }
@@ -739,11 +996,24 @@ export function breakdownAxes(frame: FunnelFrame, funnelId: string | null, sel: 
  * one, `dropPct` = 100 - ofPrev. The worst step is the largest drop (ties to
  * the first); with fewer than 2 steps nothing is worst. A 0-user previous
  * step gives null rates, never Infinity.
+ *
+ * A step marked `measured: false` is not a count: it gets no rates, is never
+ * the worst, and the next measured step is compared with the last measured
+ * one (so a dead event never fabricates a 100% drop and a 0 -> N rise).
  */
-export function stepDrops(steps: ReadonlyArray<{ key: string; label?: string; users: number }>): StepDrop[] {
-  const top = steps[0]?.users ?? 0;
-  const out: StepDrop[] = steps.map((s, i) => {
-    const prev = i > 0 ? steps[i - 1].users : null;
+export function stepDrops(
+  steps: ReadonlyArray<{ key: string; label?: string; users: number; measured?: boolean; basis?: 'measured' | 'derived' }>,
+): StepDrop[] {
+  const top = steps.find((s) => s.measured !== false)?.users ?? 0;
+  let lastMeasured: number | null = null;
+  const out: StepDrop[] = steps.map((s) => {
+    const measured = s.measured !== false;
+    const prev = lastMeasured;
+    const basis: 'measured' | 'derived' = s.basis === 'derived' ? 'derived' : 'measured';
+    if (!measured) {
+      return { key: s.key, label: s.label ?? s.key, users: s.users, ofTop: null, ofPrev: null, dropPct: null, worst: false, prevUsers: prev, measured, basis };
+    }
+    lastMeasured = s.users;
     const ofPrev = prev === null || !(prev > 0) ? null : (s.users / prev) * 100;
     return {
       key: s.key,
@@ -753,6 +1023,9 @@ export function stepDrops(steps: ReadonlyArray<{ key: string; label?: string; us
       ofPrev,
       dropPct: ofPrev === null ? null : 100 - ofPrev,
       worst: false,
+      prevUsers: prev,
+      measured,
+      basis,
     };
   });
   let worst = -1;
@@ -800,6 +1073,7 @@ export function benchmarkRows(slice: FunnelSlice, metricKeys: readonly string[] 
     const delta = current !== null && prev !== null ? current - prev : null;
     let status: BenchmarkRow['status'] = 'unmeasured';
     if (current !== null) status = bandTone(current, band) ?? 'no-band';
+    const inherited = !!band && (slice.inheritedBands ? slice.inheritedBands.indexOf(key) !== -1 : slice.bandsInherited);
     rows.push({
       key,
       label: m?.label ?? key,
@@ -815,7 +1089,11 @@ export function benchmarkRows(slice: FunnelSlice, metricKeys: readonly string[] 
       status,
       trend: delta === null ? null : delta === 0 ? 'flat' : (delta > 0) === (better === 'higher') ? 'improving' : 'worsening',
       reason: measured ? null : m ? m.reason : slice.reason,
-      inherited: !!band && (slice.inheritedBands ? slice.inheritedBands.indexOf(key) !== -1 : slice.bandsInherited),
+      inherited,
+      floorFrom: band && band.floorFrom ? band.floorFrom : null,
+      targetFrom: band && band.targetFrom ? band.targetFrom : null,
+      weeks: band && typeof band.weeks === 'number' ? band.weeks : null,
+      inheritedFrom: inherited ? (slice.bandOrigin && slice.bandOrigin[key] === 'funnel' ? 'funnel' : 'set') : null,
     });
   }
   return rows;
@@ -845,7 +1123,7 @@ export function segmentRows(
       const m = slice.metrics[key];
       const v = m && m.measured ? finite(m.v) : null;
       const prev = m && m.measured ? finite(m.prev) : null;
-      cells[key] = { v, prev, tone: v === null ? null : bandTone(v, slice.bands[key]) };
+      cells[key] = { v, prev, tone: v === null ? null : bandTone(v, slice.bands[key]), kn: knOf(frame, slice, key) };
     }
     return {
       value,
@@ -857,6 +1135,290 @@ export function segmentRows(
       cells,
     };
   });
+}
+
+/**
+ * A rate metric as counts (`k` of `n`), read off the slice's own steps through
+ * the set's `rates` definition. Null without a definition, on an unmeasured
+ * slice, or when either step is missing or not measured. The pair is returned
+ * whatever its size; a surface shows it instead of the rate when `isSmallKn`.
+ */
+export function knOf(frame: FunnelFrame, slice: FunnelSlice, metricKey: string): Kn | null {
+  const def = frame.rates ? frame.rates[metricKey] : undefined;
+  if (!def || !slice.measured) return null;
+  const num = slice.steps.find((s) => s.key === def.num);
+  const den = slice.steps.find((s) => s.key === def.den);
+  if (!num || !den || num.measured === false || den.measured === false) return null;
+  return { k: num.users, n: den.users };
+}
+
+/** True when a k/n pair's denominator is under KN_THRESHOLD: show "k/n", not a rate. */
+export function isSmallKn(kn: Kn | null | undefined): boolean {
+  return !!kn && kn.n < KN_THRESHOLD;
+}
+
+/**
+ * The notes a reader sees for one funnel, in reading order: the funnel's traps,
+ * the set's traps, the funnel's info notes, the set's info notes. Payload order
+ * is kept inside each group, so a funnel's own trap is never pushed behind a
+ * set-wide one.
+ */
+export function orderedNotes(frame: FunnelFrame, funnelId: string | null): FunnelFrameNote[] {
+  const f = pickFunnel(frame, funnelId);
+  const own = (f && f.notes ? f.notes : []).map((n) => ({ ...n, scope: 'funnel' as const }));
+  const set = (frame.notes ?? []).map((n) => ({ ...n, scope: 'set' as const }));
+  const traps = (list: FunnelFrameNote[]) => list.filter((n) => n.level !== 'info');
+  const infos = (list: FunnelFrameNote[]) => list.filter((n) => n.level === 'info');
+  return [...traps(own), ...traps(set), ...infos(own), ...infos(set)];
+}
+
+/** The metrics a ranking offers: the ladder's stages, else every pct or x metric the funnels carry (first seen first). */
+export function rankableMetrics(frame: FunnelFrame): string[] {
+  if (frame.ladder && frame.ladder.length > 0) return frame.ladder.slice();
+  const out: string[] = [];
+  for (const f of frame.funnels) {
+    for (const [k, m] of Object.entries(f.metrics ?? {})) {
+      if ((m.format === 'pct' || m.format === 'x') && out.indexOf(k) === -1) out.push(k);
+    }
+  }
+  return out;
+}
+
+function metricMeta(frame: FunnelFrame, key: string): { label: string; format: FunnelMetricFormat } {
+  for (const f of frame.funnels) {
+    const m = f.metrics ? f.metrics[key] : undefined;
+    if (m) return { label: m.label ?? key, format: m.format };
+    for (const seg of f.segments ?? []) {
+      const sm = seg.metrics ? seg.metrics[key] : undefined;
+      if (sm) return { label: sm.label ?? key, format: sm.format };
+    }
+  }
+  return { label: key, format: 'number' };
+}
+
+function betterOf(frame: FunnelFrame, key: string): 'higher' | 'lower' {
+  const fromSet = frame.bands ? frame.bands[key] : undefined;
+  if (fromSet) return fromSet.better;
+  for (const f of frame.funnels) {
+    const b = f.bands ? f.bands[key] : undefined;
+    if (b) return b.better;
+  }
+  return 'higher';
+}
+
+function measuredValue(m: FunnelFrameMetric | undefined): number | null {
+  return m && m.measured ? finite(m.v) : null;
+}
+
+/**
+ * Each funnel's best breakdown on one metric. Candidates are the funnel's
+ * measured lookup paths with at least `minUsers` users and a value. An
+ * intersection holding >= 90% of a one-axis parent's users with a value within
+ * 5% of the parent's is the same cohort, so it is dropped as a duplicate. Best
+ * first by the metric's direction; funnels with no candidate are listed in
+ * `dropped`. Nothing is summed: a cells-mode set has no per-path rates, so it
+ * ranks nothing.
+ */
+export function rankingRows(frame: FunnelFrame, metricKey: string, opts: { minUsers?: number } = {}): RankingView {
+  const minUsers = typeof opts.minUsers === 'number' && Number.isFinite(opts.minUsers) ? opts.minUsers : RANKING_DEFAULT_FLOOR;
+  const { label, format } = metricMeta(frame, metricKey);
+  const better = betterOf(frame, metricKey);
+  const view: RankingView = { metric: metricKey, label, better, minUsers, rows: [], dropped: [] };
+  if (frame.segmentMode !== 'lookup') return view;
+  const isBetter = (a: number, b: number) => (better === 'lower' ? a < b : a > b);
+  for (const f of frame.funnels) {
+    const paths = (f.segments ?? [])
+      .filter((seg) => seg.measured && seg.users >= minUsers)
+      .map((seg) => funnelSlice(frame, f.id, seg.dims))
+      .filter((s) => s.measured);
+    if (paths.length === 0) {
+      view.dropped.push({ funnelId: f.id, funnelName: f.name, why: 'no-path' });
+      continue;
+    }
+    const valued = paths
+      .map((slice) => ({ slice, v: measuredValue(slice.metrics[metricKey]) }))
+      .filter((c): c is { slice: FunnelSlice; v: number } => c.v !== null);
+    const parents = valued.filter((c) => Object.keys(c.slice.selection).length === 1);
+    const kept = valued.filter((c) => {
+      const dims = Object.keys(c.slice.selection);
+      if (dims.length < 2) return true;
+      return !parents.some((p) => {
+        const [pk] = Object.keys(p.slice.selection);
+        if (c.slice.selection[pk] !== p.slice.selection[pk]) return false;
+        const sameUsers = p.slice.users > 0 && c.slice.users >= RANKING_DUP_SHARE * p.slice.users;
+        return sameUsers && Math.abs(c.v - p.v) <= RANKING_DUP_VALUE_TOL * Math.abs(p.v);
+      });
+    });
+    if (kept.length === 0) {
+      view.dropped.push({ funnelId: f.id, funnelName: f.name, why: 'no-value' });
+      continue;
+    }
+    let best = kept[0];
+    for (const c of kept) if (isBetter(c.v, best.v)) best = c;
+    const m = best.slice.metrics[metricKey];
+    view.rows.push({
+      funnelId: f.id,
+      funnelName: f.name,
+      selection: best.slice.selection,
+      users: best.slice.users,
+      value: best.v,
+      prev: m && m.measured ? finite(m.prev) : null,
+      format: m ? m.format : format,
+      kn: knOf(frame, best.slice, metricKey),
+      lowSample: best.slice.lowSample,
+      tone: bandTone(best.v, best.slice.bands[metricKey]),
+      total: measuredValue(f.metrics ? f.metrics[metricKey] : undefined),
+    });
+  }
+  // Stable: equal values keep payload order.
+  view.rows = view.rows
+    .map((row, i) => ({ row, i }))
+    .sort((a, b) => (a.row.value === b.row.value ? a.i - b.i : isBetter(a.row.value, b.row.value) ? -1 : 1))
+    .map((e) => e.row);
+  return view;
+}
+
+function paymentRow(frame: FunnelFrame, cell: FunnelFramePaymentCell): PaymentRow {
+  const declared = frame.paymentReasons ?? [];
+  const keys = declared.map((r) => r.key);
+  for (const k of Object.keys(cell.reasons)) if (keys.indexOf(k) === -1) keys.push(k);
+  const named = keys.filter((k) => typeof cell.reasons[k] === 'number');
+  const sum = named.reduce((s, k) => s + cell.reasons[k], 0);
+  const threshold = typeof frame.lowSample === 'number' ? frame.lowSample : DEFAULT_LOW_SAMPLE;
+  return {
+    dims: { ...cell.dims },
+    cohort: cell.cohort,
+    attempts: cell.attempts,
+    declines: cell.declines,
+    rate: cell.attempts > 0 ? (cell.declines / cell.attempts) * 100 : null,
+    kn: { k: cell.declines, n: cell.attempts },
+    reasons: named.map((k) => {
+      const meta = declared.find((r) => r.key === k);
+      return {
+        key: k,
+        label: meta ? meta.label : k,
+        count: cell.reasons[k],
+        share: cell.declines > 0 ? (cell.reasons[k] / cell.declines) * 100 : null,
+        note: meta ? meta.note : null,
+      };
+    }),
+    other: Math.max(0, cell.declines - sum),
+    clipped: sum > cell.declines,
+    lowSample: cell.attempts < threshold,
+  };
+}
+
+/**
+ * The payment page for one funnel and selection: the funnel's own payment,
+ * else the set's (scope 'set'). One cohort at a time (never mixed): the asked
+ * one when present, else 'all', else the first. `current` is the cell for
+ * exactly the selection, `total` the `{}` cell; a total is never a sum.
+ */
+export function paymentView(frame: FunnelFrame, funnelId: string | null, sel: Selection, cohort?: PaymentCohort | null): PaymentView {
+  const f = pickFunnel(frame, funnelId);
+  const own = f && f.payment ? f.payment : null;
+  const source = own ?? frame.payment ?? null;
+  const scope: PaymentView['scope'] = own ? 'funnel' : source ? 'set' : 'none';
+  const base: PaymentView = {
+    scope,
+    measured: false,
+    reason: null,
+    cohorts: [],
+    cohort: cohort ?? 'all',
+    current: null,
+    total: null,
+    byDim: [],
+  };
+  if (!source) return { ...base, reason: f && f.unmeasured ? f.unmeasured.payment ?? null : null };
+  if (!source.measured) return { ...base, reason: source.reason };
+  const cohorts: PaymentCohort[] = [];
+  for (const c of source.cells) if (cohorts.indexOf(c.cohort) === -1) cohorts.push(c.cohort);
+  const chosen: PaymentCohort = cohort && cohorts.indexOf(cohort) !== -1
+    ? cohort
+    : cohorts.indexOf('all') !== -1 ? 'all' : cohorts[0] ?? 'all';
+  const cells = source.cells.filter((c) => c.cohort === chosen);
+  const want: Selection = {};
+  for (const [k, v] of Object.entries(sel)) if (typeof v === 'string' && v !== '') want[k] = v;
+  const exact = cells.find((c) => sameSelection(c.dims, want));
+  const totalCell = cells.find((c) => Object.keys(c.dims).length === 0);
+  const byDim: PaymentView['byDim'] = [];
+  for (const c of cells) {
+    const dims = Object.keys(c.dims);
+    if (dims.length !== 1) continue;
+    let group = byDim.find((g) => g.dim === dims[0]);
+    if (!group) {
+      group = { dim: dims[0], rows: [] };
+      byDim.push(group);
+    }
+    group.rows.push(paymentRow(frame, c));
+  }
+  for (const g of byDim) g.rows = g.rows.map((row, i) => ({ row, i })).sort((a, b) => b.row.attempts - a.row.attempts || a.i - b.i).map((e) => e.row);
+  return {
+    scope,
+    measured: true,
+    reason: null,
+    cohorts,
+    cohort: chosen,
+    current: exact ? paymentRow(frame, exact) : null,
+    total: totalCell ? paymentRow(frame, totalCell) : null,
+    byDim,
+  };
+}
+
+/** The set carries an access ladder with at least one stage and one row. */
+export function hasAccess(frame: FunnelFrame): boolean {
+  return !!frame.access && frame.access.stages.length > 0 && frame.access.rows.length > 0;
+}
+
+/**
+ * The access page: rows for this funnel (or for every funnel) whose dims agree
+ * with the selection on the dims it names. Each stage as users and share of the
+ * row's base (the first stage). Null when the set carries no access: the page
+ * is hidden, never drawn with zeros.
+ */
+export function accessView(frame: FunnelFrame, funnelId: string | null, sel: Selection): AccessView | null {
+  if (!hasAccess(frame) || !frame.access) return null;
+  const access = frame.access;
+  const f = pickFunnel(frame, funnelId);
+  const fid = f ? f.id : null;
+  const baseKey = access.stages[0].key;
+  const rows = access.rows
+    .filter((r) => r.funnel === null || r.funnel === fid)
+    .filter((r) => Object.keys(r.dims).every((k) => sel[k] === undefined || sel[k] === r.dims[k]))
+    .map((r) => {
+      const baseRaw = r.counts[baseKey];
+      const base = typeof baseRaw === 'number' && Number.isFinite(baseRaw) ? baseRaw : null;
+      return {
+        funnel: r.funnel,
+        dims: { ...r.dims },
+        base,
+        cells: access.stages.map((st) => {
+          const raw = r.counts[st.key];
+          const users = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+          return {
+            key: st.key,
+            label: st.label,
+            users,
+            ofBase: users !== null && base !== null && base > 0 ? (users / base) * 100 : null,
+            kn: users !== null && base !== null ? { k: users, n: base } : null,
+          };
+        }),
+      };
+    });
+  return { asOf: access.asOf, stages: access.stages.map((s) => ({ ...s })), rows };
+}
+
+/** Metric columns no measured row carries a value for: one note, not a column of "not measured" cells. */
+export function unmeasuredColumns(rows: readonly SegmentRow[], keys: readonly string[]): string[] {
+  const measured = rows.filter((r) => r.measured);
+  if (measured.length === 0) return [];
+  return keys.filter((k) => measured.every((r) => !r.cells[k] || r.cells[k].v === null));
+}
+
+/** How to fill a missing part, as the snapshot says (`hints`), or null. */
+export function explorerHint(frame: FunnelFrame, key: string): string | null {
+  const h = frame.hints ? frame.hints[key] : undefined;
+  return typeof h === 'string' && h !== '' ? h : null;
 }
 
 const FORMAT_UNITS: Record<FunnelMetricFormat, string | null> = {
@@ -899,11 +1461,18 @@ export function dailySeries(slice: FunnelSlice, metricKeys: readonly string[] | 
 }
 
 /** Block types that draw ONE funnel (the pick, else the first): the others travel as id, name and steps only. */
-const ONE_FUNNEL_BLOCKS = ['breakdown', 'trend', 'benchmark', 'segments'];
+const ONE_FUNNEL_BLOCKS = ['breakdown', 'trend', 'benchmark', 'segments', 'payment'];
 
-/** A funnel's other levels stripped: what a pick list and the unknown-pick note read. */
+/**
+ * A funnel's other levels stripped: what a pick list and the unknown-pick note
+ * read. Its notes and not-measured reasons stay: the header's trap lines and
+ * every "why is this missing" text read them for whichever funnel is picked.
+ */
 function funnelHead(f: FunnelFrameFunnel): FunnelFrameFunnel {
-  return { id: f.id, name: f.name, steps: f.steps };
+  const head: FunnelFrameFunnel = { id: f.id, name: f.name, steps: f.steps };
+  if (f.notes) head.notes = f.notes;
+  if (f.unmeasured) head.unmeasured = f.unmeasured;
+  return head;
 }
 
 /**
@@ -957,30 +1526,60 @@ function keepMetrics(metrics: Record<string, FunnelFrameMetric>, keys: readonly 
  * `funnelSlice` and the view functions give the same answers on the projected
  * frame as on the full one for the block's own options (`segmentRows` for
  * the block's `by`).
+ *
+ * The explorer blocks:
+ *   - `ranking` always carries every funnel in rates form (it ranks across funnels);
+ *   - `payment` carries funnel heads plus the payment, and the set's payment
+ *     and reasons (only it does); `access` carries heads plus the set's access
+ *     (only it does);
+ *   - a `breakdown` with `picker` carries rates and bands (its header shows
+ *     the picked funnel's figures).
+ * With `ctx.allFunnels` (a card with a funnel picker) and no `funnel` option,
+ * every funnel travels in full, by class, so the reader can switch funnels
+ * without a request: benchmark, segments (no `by` filter), ranking and a
+ * picker breakdown share one rates projection; funnel blocks carry steps only;
+ * trend carries the daily series. Notes and not-measured reasons travel on
+ * every funnel of every projection, heads included.
  */
 export function projectFunnelFrame(
   frame: FunnelFrame,
   blockType: string,
   options: Record<string, unknown> | null | undefined,
+  ctx: ProjectContext = {},
 ): FunnelFrame {
   const pick = options && typeof options.funnel === 'string' ? options.funnel.trim() : '';
   const picked = pick !== '' ? frame.funnels.filter((f) => f.id === pick) : [];
+  const all = ctx.allFunnels === true && pick === '';
   const oneFunnel = ONE_FUNNEL_BLOCKS.indexOf(blockType) !== -1;
   const shown = picked.length > 0 ? picked[0] : oneFunnel ? frame.funnels[0] ?? null : null;
+  const everyFull = all || blockType === 'ranking';
   const isTrend = blockType === 'trend';
-  const keepRates = isTrend || blockType === 'benchmark' || blockType === 'segments';
-  const keepBands = blockType === 'benchmark' || blockType === 'segments';
+  const isPayment = blockType === 'payment';
+  const isAccess = blockType === 'access';
+  const pickerBreakdown = blockType === 'breakdown' && !!options && options.picker === true;
+  const ratesClass = blockType === 'benchmark' || blockType === 'segments' || blockType === 'ranking' || pickerBreakdown;
+  const keepRates = isTrend || ratesClass;
+  const keepBands = ratesClass;
   const trendKeys = isTrend ? pickMetricKeys(options) : null;
-  // A segments block only ever looks up paths that name its `by` dim (the option, else the first dim).
+  // A segments block only ever looks up paths that name its `by` dim (the option, else the first dim);
+  // in the all-funnels projection it keeps every path, so it shares the frame with the other rates blocks.
   const dims = frame.dimensions ?? [];
   const byOpt = blockType === 'segments' && options && typeof options.by === 'string' ? options.by.trim() : '';
-  const by = blockType !== 'segments' ? null : dims.some((d) => d.key === byOpt) ? byOpt : dims[0]?.key ?? null;
+  const by = blockType !== 'segments' || all ? null : dims.some((d) => d.key === byOpt) ? byOpt : dims[0]?.key ?? null;
 
   const full = (f: FunnelFrameFunnel): FunnelFrameFunnel => {
+    if (isAccess) return funnelHead(f);
+    if (isPayment) {
+      const head = funnelHead(f);
+      if (f.payment) head.payment = f.payment;
+      return head;
+    }
     const next: FunnelFrameFunnel = { ...f };
+    delete next.payment;
     if (!isTrend || !f.daily) delete next.daily;
     else next.daily = trimDaily(f.daily, trendKeys, f.metrics);
     if (!keepRates) delete next.metrics;
+    if (!keepBands) delete next.bands;
     if (f.segments) {
       const reachable = by === null ? f.segments : f.segments.filter((seg) => seg.dims[by] !== undefined);
       next.segments = reachable.map((seg) => {
@@ -998,9 +1597,14 @@ export function projectFunnelFrame(
 
   const funnels = picked.length > 0
     ? picked.map(full)
-    : frame.funnels.map((f) => (shown === null || f === shown ? full(f) : funnelHead(f)));
+    : frame.funnels.map((f) => (everyFull || shown === null || f === shown ? full(f) : funnelHead(f)));
   const out: FunnelFrame = { ...frame, funnels };
   if (!keepBands) delete out.bands;
+  if (!isPayment) {
+    delete out.payment;
+    delete out.paymentReasons;
+  }
+  if (!isAccess) delete out.access;
   return out;
 }
 

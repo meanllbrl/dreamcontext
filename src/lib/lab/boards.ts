@@ -13,6 +13,7 @@ import {
   writeContainedLabFile,
 } from './block-library.js';
 import { parseDataRef } from './frames.js';
+import { FUNNEL_EXPLORER_SIZE, funnelExplorerBlocks, type PresetDim } from './presets.js';
 import { clampRect, findOverlaps, GRID_COLUMNS, isValidRect, resolveOverlaps, type GridRect } from './grid.js';
 import { isSafeInsightSlug, labDir, listInsights, readCache, resolveContainedLabFile } from './store.js';
 import { LabError, MAX_HTML_BYTES, type InsightManifest } from './types.js';
@@ -47,6 +48,8 @@ import type { Frame } from './frameOps.js';
 
 export interface BlockTab {
   label: string;
+  /** i18n key the dashboard shows the label in (`lab.explorer.tab.<id>`); `label` stays the fallback. */
+  labelKey?: string;
   blocks: Block[];
 }
 
@@ -387,7 +390,10 @@ function walkBlock(
       const blocks = (Array.isArray(tr.blocks) ? tr.blocks : [])
         .map((b, bi) => walkBlock(ctx, b, `${tpath}.blocks[${bi}]`, card, true))
         .filter((b): b is Block => b !== null);
-      tabs.push({ label: typeof tr.label === 'string' && tr.label.trim() ? tr.label.trim() : `Tab ${ti + 1}`, blocks });
+      const tab: BlockTab = { label: typeof tr.label === 'string' && tr.label.trim() ? tr.label.trim() : `Tab ${ti + 1}`, blocks };
+      // Only an explorer tab key is kept: the dashboard localizes it, `label` stays the fallback.
+      if (typeof tr.labelKey === 'string' && TAB_LABEL_KEY.test(tr.labelKey.trim())) tab.labelKey = tr.labelKey.trim();
+      tabs.push(tab);
     });
     block.tabs = tabs;
   } else if (tabsRaw !== undefined) {
@@ -434,6 +440,9 @@ function walkBlock(
   }
   return block;
 }
+
+/** The tab `labelKey`s a spec may carry: the explorer's own (`lab.explorer.tab.daily`, `lab.explorer.tab.dim.country`). */
+const TAB_LABEL_KEY = /^lab\.explorer\.tab\.[a-z.]+$/;
 
 const CARD_KEYS = ['id', 'at', 'title', 'insight', 'blocks'];
 const ROOT_KEYS = ['title', 'titleKey', 'order', 'cards'];
@@ -589,7 +598,9 @@ function blockToFile(block: Block): Record<string, unknown> {
   const value: Record<string, unknown> = {};
   if (block.data !== undefined) value.data = block.data;
   Object.assign(value, block.options);
-  if (block.tabs) value.tabs = block.tabs.map((t) => ({ label: t.label, blocks: t.blocks.map(blockToFile) }));
+  if (block.tabs) {
+    value.tabs = block.tabs.map((t) => ({ label: t.label, ...(t.labelKey ? { labelKey: t.labelKey } : {}), blocks: t.blocks.map(blockToFile) }));
+  }
   return { [block.type]: value };
 }
 
@@ -716,10 +727,17 @@ export function unplacedInsights(contextRoot: string, boards: readonly Board[]):
 // ─── Derivation from the legacy category/group board ────────────────────────
 
 /** The legacy fields derivation reads (a manifest satisfies it). */
-export type LegacyInsight = Pick<InsightManifest, 'slug' | 'title' | 'category' | 'group' | 'render' | 'size' | 'width' | 'height'> & {
+export type LegacyInsight = Pick<InsightManifest, 'slug' | 'title' | 'category' | 'group' | 'render' | 'size' | 'width' | 'height' | 'preset' | 'locale'> & {
   /** The cache carries an html/v1 body (drawn in a sandboxed cell, default h 6). */
   hasHtmlBody?: boolean;
+  /** A `funnel-explorer` insight's cached client dimensions (its axis tabs); absent before the first sync. */
+  presetDims?: PresetDim[];
 };
+
+/** The insight derives as a funnel explorer card (blocks), not as a v1 insight card. */
+function isExplorer(m: LegacyInsight): boolean {
+  return m.preset === 'funnel-explorer';
+}
 
 /** The subset of `state/.lab-prefs.json` derivation honours. */
 export interface LegacyLabPrefs {
@@ -765,6 +783,7 @@ export function dedupeSlugs(titles: readonly string[], fallback: string): string
 }
 
 function legacyWidth(m: LegacyInsight): number {
+  if (isExplorer(m)) return FUNNEL_EXPLORER_SIZE.w;
   const span = m.width === 1 || m.width === 2 || m.width === 3
     ? m.width
     : m.size === 'l' ? 2 : m.size === 's' || m.size === 'm' ? 1 : RENDER_DEFAULT_SPAN[m.render] ?? 1;
@@ -772,6 +791,7 @@ function legacyWidth(m: LegacyInsight): number {
 }
 
 function legacyHeight(m: LegacyInsight): number {
+  if (isExplorer(m)) return FUNNEL_EXPLORER_SIZE.h;
   if (m.height && HEIGHT_ROWS[m.height]) return HEIGHT_ROWS[m.height];
   if (m.size === 's') return HEIGHT_ROWS.s;
   if (m.size === 'l') return HEIGHT_ROWS.l;
@@ -862,7 +882,10 @@ export function deriveBoardsFromLegacy(insights: readonly LegacyInsight[], prefs
           x = 0;
           rowH = 0;
         }
-        cards.push({ id: `c-${m.slug}`, at: { x, y, w, h }, insight: m.slug });
+        const card: Card = { id: `c-${m.slug}`, at: { x, y, w, h }, insight: m.slug };
+        // A funnel explorer derives as the preset card, in the insight's own locale (manifest `locale`, else English).
+        if (isExplorer(m)) card.blocks = funnelExplorerBlocks(m.slug, m.presetDims ?? [], m.locale === 'tr' ? 'tr' : 'en') as Block[];
+        cards.push(card);
         x += w;
         rowH = Math.max(rowH, h);
       }
@@ -902,22 +925,37 @@ export function readLegacyLabPrefs(contextRoot: string): LegacyLabPrefs {
   }
 }
 
-/** The derivation for this vault: manifests + prefs (+ html/v1 detection on script insights). */
+/** A funnel explorer's axis tabs: the cached set's client dimensions (none before the first sync). */
+function explorerDims(contextRoot: string, slug: string): PresetDim[] {
+  const dims = readCache(contextRoot, slug)?.funnel?.set?.dimensions;
+  if (!Array.isArray(dims)) return [];
+  return dims.filter((d) => d.mode === 'client').map((d) => ({ key: d.key, label: d.label || d.key }));
+}
+
+/** The derivation for this vault: manifests + prefs (+ html/v1 detection on script insights, axis dims for explorers). */
 export function deriveBoards(contextRoot: string): DerivedBoard[] {
-  const insights: LegacyInsight[] = listInsights(contextRoot).map((m) => ({
-    slug: m.slug,
-    title: m.title,
-    category: m.category,
-    group: m.group,
-    render: m.render,
-    size: m.size,
-    width: m.width,
-    height: m.height,
-    // html/v1 bodies only ever come from script adapters; skip the cache read otherwise.
-    hasHtmlBody: m.source?.adapter === 'script' && m.render !== 'app'
-      ? typeof readCache(contextRoot, m.slug)?.html === 'string'
-      : false,
-  }));
+  const insights: LegacyInsight[] = listInsights(contextRoot).map((m) => {
+    const out: LegacyInsight = {
+      slug: m.slug,
+      title: m.title,
+      category: m.category,
+      group: m.group,
+      render: m.render,
+      size: m.size,
+      width: m.width,
+      height: m.height,
+      // html/v1 bodies only ever come from script adapters; skip the cache read otherwise.
+      hasHtmlBody: m.source?.adapter === 'script' && m.render !== 'app'
+        ? typeof readCache(contextRoot, m.slug)?.html === 'string'
+        : false,
+    };
+    if (m.preset === 'funnel-explorer') {
+      out.preset = m.preset;
+      if (m.locale) out.locale = m.locale;
+      out.presetDims = explorerDims(contextRoot, m.slug);
+    }
+    return out;
+  });
   return deriveBoardsFromLegacy(insights, readLegacyLabPrefs(contextRoot));
 }
 

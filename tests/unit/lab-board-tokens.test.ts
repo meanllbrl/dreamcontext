@@ -35,6 +35,8 @@ const FILES = [
   'components/lab/blocks/segments.css',
   'components/lab/funnel/FunnelFlow.css',
   'components/lab/funnel/FunnelLanes.css',
+  // The funnel explorer header and its ranking, payment and access blocks.
+  'components/lab/explorer/explorer.css',
 ];
 
 interface Decl { file: string; line: number; prop: string; value: string }

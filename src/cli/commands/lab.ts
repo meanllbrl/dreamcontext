@@ -37,31 +37,45 @@ import { BLOCK_CATALOG, isBlockType, listBlockCatalog } from '../../lib/lab/bloc
 import { getLibraryBlock, listLibraryBlocks, parseSafeFrontmatter, saveLibraryBlock, LIBRARY_INPUT_KINDS, type LibraryBlockInput } from '../../lib/lab/block-library.js';
 import { frameKey, resolveBoardFrames, resolveFrame, type Frame } from '../../lib/lab/frames.js';
 import {
+  accessView,
   applyFrameOps,
   benchmarkRows,
   breakdownAxes,
   dailySeries,
   frameOpsFromOptions,
   funnelSlice,
+  KN_THRESHOLD,
+  orderedNotes,
   parseSelection,
   parseSort,
+  paymentView,
+  rankableMetrics,
+  RANKING_DEFAULT_FLOOR,
+  rankingRows,
   segmentRows,
   stepDrops,
+  type AccessView,
   type BenchmarkRow,
   type BreakdownAxis,
   type FunnelFrame,
+  type FunnelFrameNote,
   type FunnelSlice,
+  type Kn,
+  type PaymentRow,
+  type PaymentView,
+  type RankingView,
   type SegmentRow,
   type Selection,
   type SeriesFrame,
   type StepDrop,
 } from '../../lib/lab/frameOps.js';
-import { FUNNEL_EXPLORER_SIZE, PRESET_IDS, funnelExplorerBlocks, type PresetLocale } from '../../lib/lab/presets.js';
+import { cardPicksFunnels, FUNNEL_EXPLORER_SIZE, PRESET_IDS, funnelExplorerBlocks, type PresetId, type PresetLocale } from '../../lib/lab/presets.js';
+import { checkLabSnapshot, readLabSnapshot, writeLabSnapshot, type SnapshotCheck } from '../../lib/lab/labData.js';
 import { findFreeSlot, isValidRect, type GridRect } from '../../lib/lab/grid.js';
 import { ProgressBar } from '../../lib/progress.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
-import { computeFunnelPrev, computeStepRows, worstDropIndex } from '../../lib/lab/funnel.js';
+import { computeFunnelPrev, computeStepRows, MAX_FUNNEL_BYTES, worstDropIndex } from '../../lib/lab/funnel.js';
 import { dimLabel, dimValues, pivotCell, MATRIX_LOW_SAMPLE_THRESHOLD, MATRIX_SET_KIND } from '../../lib/lab/matrix.js';
 import { findAppPage } from '../../lib/lab/app.js';
 import { queryDataset, resolveDatasetAsOf, type DatasetQuery } from '../../lib/lab/datasetQuery.js';
@@ -260,6 +274,41 @@ function printSyncResult(r: SyncResult): void {
   }
 }
 
+// ─── Snapshots (lab data) ───────────────────────────────────────────────────
+
+/** A snapshot file as JSON (an unreadable or invalid file is a LabError, nothing written). */
+function readSnapshotFile(file: string): unknown {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf-8');
+  } catch (err) {
+    throw new LabError(`Cannot read ${file}: ${(err as Error).message}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new LabError(`${file} is not valid JSON: ${(err as Error).message}`);
+  }
+}
+
+/** A snapshot check in a few lines: what it carries, the stored size against the cap, its notices and problems. */
+function printSnapshotCheck(check: SnapshotCheck): void {
+  const s = check.summary;
+  if (s) {
+    const yesNo = (v: boolean) => (v ? 'yes' : 'no');
+    const stored = s.storedBytes !== null ? `stored ${s.storedBytes} of ${MAX_FUNNEL_BYTES} bytes` : `${s.bytes} bytes`;
+    console.log(`  ${check.kind ?? 'unknown kind'} · ${s.funnels} funnel(s) · ${stored}`);
+    if (s.window || s.pulledAt) {
+      console.log(chalk.dim(`  ${s.window ? `window ${s.window.from} to ${s.window.to}` : 'no window'}${s.pulledAt ? ` · pulled ${s.pulledAt}` : ''}`));
+    }
+    if (s.dims.length > 0) console.log(`  dims: ${s.dims.map((d) => `${d.key} (${d.values})`).join(', ')}`);
+    console.log(`  paths ${s.segments} on ${s.segmentFunnels} funnel(s) · intersections ${s.intersections} · daily on ${s.dailyFunnels} funnel(s) · ladder ${s.ladderStages} stage(s) · payment ${yesNo(s.payment)} · access ${yesNo(s.access)}`);
+  }
+  for (const n of check.notices) warn(n);
+  for (const p of check.problems) error(p);
+  if (check.ok) success('Snapshot is valid.');
+}
+
 function printSyncPlan(p: SyncPlan): void {
   const verb = p.action === 'skip' ? chalk.dim('skip ') : p.action === 'probe' ? chalk.cyan('probe') : chalk.yellow('fetch');
   console.log(`  ${verb}  ${chalk.magentaBright(p.slug)} ${chalk.dim(`(${REASON_TEXT[p.reason] ?? p.reason}): ${p.detail}`)}`);
@@ -313,6 +362,23 @@ export interface BoardExplorerView {
   by?: string;
   drops?: StepDrop[];
   series?: SeriesFrame;
+  /** The funnel the view answers (the block's own pick, else the card's `--funnel`, else the first). */
+  funnelId?: string;
+  /** A breakdown with the funnel picker: the explorer header (window, source, notes in reading order). */
+  header?: {
+    window: NonNullable<FunnelFrame['window']> | null;
+    provenance: NonNullable<FunnelFrame['provenance']> | null;
+    notes: FunnelFrameNote[];
+  };
+  /** Ranking: each funnel's best breakdown on the default metric (the card's first). */
+  ranking?: RankingView;
+  /** Ranking: every metric the block can switch to. */
+  metrics?: string[];
+  payment?: PaymentView;
+  /** Access: null when the set carries no access data (the card hides the tab). */
+  access?: AccessView | null;
+  /** The card hides this block's tab (no data to draw, never zeros). */
+  hidden?: boolean;
 }
 
 export interface BoardCardView {
@@ -335,7 +401,7 @@ function insightHeadline(root: string, slug: string | undefined): BoardBlockView
   return { latest: cache.latest ?? null, fetchedAt: cache.fetchedAt || null, error: cache.error ?? null };
 }
 
-const EXPLORER_TYPES = new Set(['breakdown', 'trend', 'benchmark', 'segments']);
+const EXPLORER_TYPES = new Set(['breakdown', 'trend', 'benchmark', 'segments', 'ranking', 'payment', 'access']);
 
 function optString(options: Record<string, unknown>, key: string): string | null {
   const v = options[key];
@@ -389,10 +455,20 @@ function sortSegmentRows(rows: SegmentRow[], option: unknown, metricKeys: readon
  * What an explorer block (or a funnel block in explorer mode) draws for
  * `selection`, or null when the block is not one (a funnel block with default
  * options and no selection keeps today's view: no explorer field).
+ *
+ * `funnelPick` is the card's funnel (`--funnel`, the picker's choice); the
+ * block's own `funnel` option wins over it. With neither, the funnel is the
+ * first in payload order, as on the card.
  */
-export function explorerBlockView(type: string, frame: FunnelFrame, options: Record<string, unknown>, selection: Selection): BoardExplorerView | null {
+export function explorerBlockView(
+  type: string,
+  frame: FunnelFrame,
+  options: Record<string, unknown>,
+  selection: Selection,
+  funnelPick: string | null = null,
+): BoardExplorerView | null {
   if (frame.funnels.length === 0) return null;
-  const pick = optString(options, 'funnel');
+  const pick = optString(options, 'funnel') ?? funnelPick;
   const slice = funnelSlice(frame, pick, selection);
   if (type === 'funnel') {
     const inPlay = pick !== null || options.layout === 'flow' || options.markWorst === true || Object.keys(slice.selection).length > 0;
@@ -400,24 +476,47 @@ export function explorerBlockView(type: string, frame: FunnelFrame, options: Rec
   } else if (!EXPLORER_TYPES.has(type)) {
     return null;
   }
+  if (type === 'ranking') {
+    // Ranking is across funnels and ignores the selection: each funnel's best path on the default metric.
+    const available = rankableMetrics(frame);
+    const metrics = pickKnown(available, optList(options, 'metrics'));
+    const out: BoardExplorerView = { selection: {}, metrics };
+    if (metrics.length > 0) out.ranking = rankingRows(frame, metrics[0], { minUsers: RANKING_DEFAULT_FLOOR });
+    return out;
+  }
   const { daily: _daily, metrics: _metrics, bands: _bands, ...sliceView } = slice;
-  const out: BoardExplorerView = { selection: slice.selection, slice: sliceView };
+  const out: BoardExplorerView = { selection: slice.selection, slice: sliceView, funnelId: slice.funnelId };
   const levels = frame.funnels.find((f) => f.id === slice.funnelId)?.metrics ?? {};
   if (type === 'funnel') {
     out.drops = slice.measured ? stepDrops(slice.steps) : [];
+  } else if (type === 'payment') {
+    out.payment = paymentView(frame, slice.funnelId, selection);
+  } else if (type === 'access') {
+    out.access = accessView(frame, slice.funnelId, selection);
+    out.hidden = out.access === null;
   } else if (type === 'breakdown') {
     const axes = breakdownAxes(frame, pick, selection);
     const dims = optList(options, 'dims');
     out.axes = dims ? pickKnown(axes.map((a) => a.key), dims).map((k) => axes.find((a) => a.key === k)!) : axes;
+    if (options.picker === true) {
+      out.header = {
+        window: frame.window ?? null,
+        provenance: frame.provenance ?? null,
+        notes: orderedNotes(frame, slice.funnelId),
+      };
+    }
   } else if (type === 'trend') {
     const available = Object.keys(slice.metrics);
     for (const day of slice.daily) for (const k of Object.keys(day.m)) if (!available.includes(k)) available.push(k);
     out.series = dailySeries(slice, pickKnown(available, optList(options, 'metrics')), frame.insight);
   } else if (type === 'benchmark') {
     const picked = optList(options, 'metrics');
+    // A ladder names the benchmark's stages and their order; without one, every metric the funnel carries.
     const keys = picked
       ? picked.filter((k) => k in levels || k in slice.metrics)
-      : Object.keys(levels).length > 0 ? Object.keys(levels) : Object.keys(slice.metrics);
+      : frame.ladder && frame.ladder.length > 0
+        ? frame.ladder.slice()
+        : Object.keys(levels).length > 0 ? Object.keys(levels) : Object.keys(slice.metrics);
     out.rows = benchmarkRows(slice, keys).map((r) => (r.label === r.key && levels[r.key]?.label
       ? { ...r, label: levels[r.key].label as string, format: r.current === null ? levels[r.key].format : r.format }
       : r));
@@ -439,8 +538,12 @@ export function explorerBlockView(type: string, frame: FunnelFrame, options: Rec
   return out;
 }
 
-/** Resolve every card's blocks exactly as the dashboard draws them (`selection`: the card state `--select` stands for). */
-export function buildBoardView(root: string, board: Board, selection: Selection = {}): BoardView {
+/**
+ * Resolve every card's blocks exactly as the dashboard draws them (`selection`:
+ * the card state `--select` stands for; `funnel`: the funnel `--funnel` picks,
+ * honoured, like the dashboard's picker, only on a card with a funnel picker).
+ */
+export function buildBoardView(root: string, board: Board, selection: Selection = {}, funnel: string | null = null): BoardView {
   const frames = resolveBoardFrames(root, board);
   const viewBlock = (card: Card, block: Block, path: number[], tab?: string): BoardBlockView => {
     const out: BoardBlockView = { path: path.join('.'), type: block.type, data: block.data ?? null };
@@ -450,7 +553,8 @@ export function buildBoardView(root: string, board: Board, selection: Selection 
       const frame = frames[frameKey(card.id, path)];
       if (frame) out.frame = applyFrameOps(frame, frameOpsFromOptions(block.options));
       if (frame?.kind === 'funnel') {
-        const explorer = explorerBlockView(block.type, frame, block.options, selection);
+        const cardFunnel = funnel !== null && cardPicksFunnels(card.blocks) ? funnel : null;
+        const explorer = explorerBlockView(block.type, frame, block.options, selection, cardFunnel);
         if (explorer) out.explorer = explorer;
       }
     } else if (entry.data === 'inputs') {
@@ -526,17 +630,102 @@ function notMeasuredLine(reason: string | null): string {
   return chalk.yellow(`Not measured${reason ? `: ${reason}` : ''}`);
 }
 
+/** Why a slice's path is missing when the payload gave no reason: its reason code in words. */
+function sliceReason(s: ExplorerSliceView): string | null {
+  if (s.reason) return s.reason;
+  if (s.reasonCode === 'not-pulled') return 'this combination was not pulled from the source';
+  if (s.reasonCode === 'below-floor') return 'under the declared user floor, or not pulled';
+  return null;
+}
+
+/** A count over a count when the denominator is small (KN_THRESHOLD), else null. */
+function knText(kn: Kn | null | undefined): string | null {
+  return kn && kn.n < KN_THRESHOLD ? `${kn.k}/${kn.n}` : null;
+}
+
+function paymentRowText(r: PaymentRow): string {
+  const rate = knText(r.kn) ?? (r.rate === null ? 'n/a' : explorerPct(r.rate));
+  return `decline rate ${rate} (${r.declines} of ${r.attempts} attempts)${r.lowSample ? chalk.dim(' · low sample') : ''}`;
+}
+
+function paymentLines(p: PaymentView): string[] {
+  if (p.scope === 'none') return [chalk.dim('payment: no payment data in the snapshot')];
+  if (!p.measured) return [notMeasuredLine(p.reason)];
+  const lines: string[] = [];
+  if (p.scope === 'set') lines.push(chalk.dim('all funnels: this funnel has no payment split'));
+  if (p.cohorts.length > 1) lines.push(chalk.dim(`cohort ${p.cohort} (of ${p.cohorts.join(', ')})`));
+  const shown = p.current ?? p.total;
+  if (!p.current && p.total && Object.keys(p.total.dims).length === 0) lines.push(chalk.dim('not measured for this selection; the funnel total is shown'));
+  if (shown) {
+    lines.push(paymentRowText(shown));
+    for (const reason of shown.reasons) {
+      lines.push(`  ${reason.label}: ${reason.count}${reason.share !== null ? chalk.dim(` (${explorerPct(reason.share)} of declines)`) : ''}`);
+    }
+    if (shown.other > 0) lines.push(`  other or unnamed: ${shown.other}`);
+    if (shown.clipped) lines.push(chalk.red('  reasons add up to more than the declines: check the source'));
+  }
+  for (const group of p.byDim) {
+    for (const r of group.rows) lines.push(`${group.dim}=${r.dims[group.dim]}: ${paymentRowText(r)}`);
+  }
+  return lines;
+}
+
+function rankingLines(r: RankingView, metrics: readonly string[]): string[] {
+  const lines = [`ranking ${r.label} (at least ${r.minUsers} users, ${r.better} is better)${metrics.length > 1 ? chalk.dim(` · metrics ${metrics.join(', ')}`) : ''}`];
+  r.rows.forEach((row, i) => {
+    const sel = Object.entries(row.selection).map(([k, v]) => `${k}=${v}`).join(', ');
+    const value = knText(row.kn) ?? fmtNum(row.value);
+    lines.push(`${i + 1}. ${row.funnelName} ${sel}: ${value}${chalk.dim(` · ${row.users} users${row.total !== null ? ` · funnel ${fmtNum(row.total)}` : ''}`)}${row.lowSample ? chalk.dim(' · low sample') : ''}`);
+  });
+  if (r.dropped.length > 0) lines.push(chalk.dim(`no breakdown with ${r.minUsers}+ users: ${r.dropped.map((d) => d.funnelName).join(', ')}`));
+  return lines;
+}
+
 /** An explorer block in a few terminal lines: the selection, then its rows, drops, axes or series. */
 function explorerLines(x: BoardExplorerView): string[] {
+  if (x.ranking || x.metrics) {
+    return x.ranking ? rankingLines(x.ranking, x.metrics ?? []) : [chalk.dim('ranking: no rate metric to rank')];
+  }
   const sel = Object.entries(x.selection).map(([k, v]) => `${k}=${v}`).join(', ');
   const s = x.slice;
   const name = s?.funnelName ?? x.funnelName;
   const lines = [`${name ? `${name} · ` : ''}${sel ? `selection ${sel}` : 'all traffic'}${s?.ignored.length ? chalk.dim(` · not split by ${s.ignored.join(', ')}`) : ''}`];
-  if (s && !s.measured) lines.push(notMeasuredLine(s.reason));
-  else if (s?.lowSample) lines.push(chalk.dim(`low sample: ${s.users} users`));
+  if (x.header) {
+    const w = x.header.window;
+    if (w) lines.push(chalk.dim(`window ${w.from} to ${w.to}${w.prevFrom && w.prevTo ? `, previous ${w.prevFrom} to ${w.prevTo}` : ''}`));
+    const p = x.header.provenance;
+    if (p) lines.push(chalk.dim(`source: ${[p.source, p.freshness, p.pulledAt ? `pulled ${p.pulledAt}` : null].filter(Boolean).join(' · ')}`));
+    for (const n of x.header.notes) {
+      lines.push(`${n.level === 'trap' ? chalk.yellow('[trap') : chalk.dim('[info')}${n.code ? ` ${n.code}` : ''}${n.level === 'trap' ? chalk.yellow(']') : chalk.dim(']')} ${n.text}`);
+    }
+  }
+  if (x.hidden) {
+    lines.push(chalk.dim('access: hidden (no data)'));
+    return lines;
+  }
+  // Payment cells are their own lookup: a missing path does not make the payment unmeasured.
+  if (s && !s.measured && !x.payment) lines.push(notMeasuredLine(sliceReason(s)));
+  else if (s?.lowSample && !x.payment) lines.push(chalk.dim(`low sample: ${s.users} users`));
   if (x.drops) {
     for (const d of x.drops) {
-      lines.push(`${d.label}: ${d.users}${d.ofPrev !== null ? chalk.dim(` (${explorerPct(d.ofPrev)} of previous)`) : ''}${d.worst ? chalk.red(` ← biggest drop ${explorerPct(d.dropPct)}`) : ''}`);
+      if (!d.measured) {
+        const reason = s?.steps.find((st) => st.key === d.key)?.reason ?? null;
+        lines.push(`${d.label}: ${notMeasuredLine(reason)}`);
+        continue;
+      }
+      const kn = d.prevUsers !== null && d.prevUsers < KN_THRESHOLD ? `${d.users}/${d.prevUsers}` : null;
+      const ofPrev = d.ofPrev === null ? '' : chalk.dim(` (${kn ?? explorerPct(d.ofPrev)} of previous)`);
+      const derived = d.basis === 'derived' ? chalk.dim(' (derived)') : '';
+      lines.push(`${d.label}: ${d.users}${derived}${ofPrev}${d.worst ? chalk.red(` ← biggest drop ${explorerPct(d.dropPct)}`) : ''}`);
+    }
+  }
+  if (x.payment) lines.push(...paymentLines(x.payment));
+  if (x.access) {
+    if (x.access.asOf) lines.push(chalk.dim(`status as of ${x.access.asOf}; cohort from the window`));
+    for (const row of x.access.rows) {
+      const head = row.funnel ?? (Object.entries(row.dims).map(([k, v]) => `${k}=${v}`).join(', ') || 'everyone');
+      const cells = row.cells.map((c) => `${c.label} ${c.users === null ? 'not measured' : `${c.users}${knText(c.kn) ? ` (${knText(c.kn)})` : c.ofBase !== null ? ` (${explorerPct(c.ofBase)})` : ''}`}`);
+      lines.push(`${head}: ${cells.join(' · ')}`);
     }
   }
   if (x.axes) {
@@ -557,16 +746,21 @@ function explorerLines(x: BoardExplorerView): string[] {
           lines.push(`${r.label}: ${notMeasuredLine(r.reason)}`);
           continue;
         }
-        const band = r.floor !== null || r.target !== null ? chalk.dim(` · floor ${fmtNum(r.floor)}${r.floorSource ? ` (${r.floorSource})` : ''}, target ${fmtNum(r.target)}${r.targetSource ? ` (${r.targetSource})` : ''}`) : '';
+        const from = (kind: 'book' | 'own' | null, own: string, src: string | null) => (kind === 'own' ? own : kind === 'book' ? `book${src ? `: ${src}` : ''}` : src);
+        const floorSrc = from(r.floorFrom, 'own p25', r.floorSource);
+        const targetSrc = from(r.targetFrom, 'own p75', r.targetSource);
+        const weeks = r.weeks !== null && (r.floorFrom === 'own' || r.targetFrom === 'own') ? `, ${r.weeks} weeks` : '';
+        const band = r.floor !== null || r.target !== null ? chalk.dim(` · floor ${fmtNum(r.floor)}${floorSrc ? ` (${floorSrc})` : ''}, target ${fmtNum(r.target)}${targetSrc ? ` (${targetSrc})` : ''}${weeks}`) : '';
         const delta = r.delta !== null ? chalk.dim(` · ${r.delta > 0 ? '+' : ''}${fmtNum(r.delta)} vs prev${r.trend ? `, ${r.trend}` : ''}`) : '';
-        lines.push(`${r.label}: ${fmtNum(r.current)} ${r.status}${band}${delta}${r.inherited ? chalk.dim(' · inherited band') : ''}`);
+        const inherited = r.inherited ? chalk.dim(r.inheritedFrom === 'funnel' ? ' · band from the funnel' : r.inheritedFrom === 'set' ? ' · band from the total' : ' · inherited band') : '';
+        lines.push(`${r.label}: ${fmtNum(r.current)} ${r.status}${band}${delta}${inherited}`);
       } else {
         const head = `${x.by ?? ''}=${r.value}`;
         if (!r.measured) {
           lines.push(`${head}: ${notMeasuredLine(r.reason)}`);
           continue;
         }
-        const cells = Object.entries(r.cells).map(([k, c]) => `${k} ${c.v === null ? 'not measured' : fmtNum(c.v)}${c.tone ? chalk.dim(` (${c.tone})`) : ''}`);
+        const cells = Object.entries(r.cells).map(([k, c]) => `${k} ${c.v === null ? 'not measured' : knText(c.kn) ?? fmtNum(c.v)}${c.tone ? chalk.dim(` (${c.tone})`) : ''}`);
         lines.push(`${head}: ${r.users} users${cells.length ? ` · ${cells.join(', ')}` : ''}${r.lowSample ? chalk.dim(' · low sample') : ''}`);
       }
     }
@@ -721,6 +915,12 @@ async function addCard(
   return board!;
 }
 
+/** The locale a preset card is written in: `--locale`, else the insight's manifest `locale`, else English. */
+export function presetCardLocale(root: string, insight: string, flag: string | undefined): PresetLocale {
+  if (flag !== undefined) return flag === 'tr' ? 'tr' : 'en';
+  return getInsight(root, insight)?.locale === 'tr' ? 'tr' : 'en';
+}
+
 /** Why a `--preset` invocation cannot run, or null. */
 function presetProblem(opts: { insight?: string; block?: string; preset?: string; locale?: string }): string | null {
   if (opts.block !== undefined) return '--preset and --block are mutually exclusive: a preset writes the whole card.';
@@ -780,6 +980,28 @@ async function addPresetCard(
  * Derived boards place every insight by category already, so nothing is
  * written unless `--board` asks for a specific one. `--no-board` opts out.
  */
+/**
+ * `lab create --preset funnel-explorer` placement. A derived vault places the
+ * explorer card on the category board by itself (from the manifest's preset).
+ * A materialized vault (or an explicit `--board`) is never written here: the
+ * card's axis tabs come from the synced snapshot, so the add-card command to
+ * run after the first sync is printed instead.
+ */
+function placeNewExplorer(root: string, slug: string, category: string | null, board: string | false | undefined, preset: PresetId): void {
+  if (board === false) return;
+  if (!isMaterialized(root) && typeof board !== 'string') {
+    console.log(chalk.dim('  It shows as a funnel explorer card on the board for its category (boards are still derived from categories).'));
+    return;
+  }
+  let target = typeof board === 'string' ? board : null;
+  if (!target) {
+    const boards = listBoards(root).boards.filter((b) => !b.error);
+    const want = (category ?? '').trim().toLowerCase();
+    target = (want ? boards.find((b) => b.title.trim().toLowerCase() === want) : undefined)?.slug ?? boards[0]?.slug ?? '<board>';
+  }
+  console.log(chalk.dim(`  Not placed yet: after the first sync, add the explorer card with \`dreamcontext lab board add-card ${target} --insight ${slug} --preset ${preset}\`.`));
+}
+
 async function placeNewInsight(root: string, slug: string, category: string | null, board: string | false | undefined): Promise<void> {
   if (board === false) return;
   if (!isMaterialized(root) && typeof board !== 'string') {
@@ -1131,27 +1353,99 @@ export function registerLabCommand(program: Command): void {
     .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440)')
     .option('--board <slug>', 'Board to place the card on (default: the board titled like --category, else the first)')
     .option('--no-board', 'Create the insight without placing it on a board')
-    .action(async (slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; width?: string; height?: string; adapter?: string; unit?: string; ttl?: string; board?: string | false }) => {
+    .option('--preset <id>', `A ready-made insight: ${PRESET_IDS.join(', ')} (render funnel + a snapshot-reading script; not with --render <other> or --adapter http)`)
+    .option('--locale <en|tr>', 'Language the preset card speaks (written to the manifest; default: none, English)')
+    .action(async (slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; width?: string; height?: string; adapter?: string; unit?: string; ttl?: string; board?: string | false; preset?: string; locale?: string }) => {
       const root = ensureContextRoot();
+      if (opts.preset !== undefined && !(PRESET_IDS as readonly string[]).includes(opts.preset)) {
+        error(`Unknown preset "${opts.preset}". Use one of: ${PRESET_IDS.join(', ')}.`);
+        process.exitCode = 1;
+        return;
+      }
+      const preset = opts.preset as PresetId | undefined;
       try {
         const m = createInsight(root, {
+          ...(preset ? { preset } : {}),
+          // An unknown value is refused by validateManifestForWrite with the allowed list.
+          ...(opts.locale !== undefined ? { locale: opts.locale as 'en' | 'tr' } : {}),
           slug,
           title: opts.title,
           category: opts.category ?? null,
           group: opts.group ?? null,
-          render: (opts.render as Render) ?? 'number',
+          // A preset decides render and adapter: only an explicit flag is passed, so a conflict is refused.
+          render: (opts.render as Render | undefined) ?? (preset ? undefined : 'number'),
           size: opts.size as InsightSize | undefined,
           // Parsed here so a bad value hits validateManifestForWrite's message, not a silent
           // NaN that would quietly fall through to the render default.
           width: opts.width != null ? (Number(opts.width) as InsightWidth) : undefined,
           height: opts.height as InsightHeight | undefined,
-          adapter: (opts.adapter as 'http' | 'script') ?? 'http',
+          adapter: (opts.adapter as 'http' | 'script' | undefined) ?? (preset ? undefined : 'http'),
           unit: opts.unit ?? null,
           ttl_minutes: opts.ttl ? Number(opts.ttl) : undefined,
         });
         success(`Insight created: lab/insights/${m.slug}.md`);
+        if (preset) {
+          placeNewExplorer(root, m.slug, m.category, opts.board, preset);
+          console.log(chalk.dim(`  Next: fill the snapshot with the KB queries in the skill (tasks-and-features.md, Funnel explorer), check it with \`dreamcontext lab data check ${m.slug} --file <path>\`, then write it with \`dreamcontext lab data write ${m.slug} --file <path>\`.`));
+          return;
+        }
         await placeNewInsight(root, m.slug, m.category, opts.board);
         console.log(chalk.dim('  Edit the manifest to set the real endpoint/extract config, then `dreamcontext lab sync ' + m.slug + '`.'));
+      } catch (err) {
+        handleLabError(err);
+      }
+    });
+
+  const dataCmd = lab
+    .command('data')
+    .description('The snapshot a snapshot-fed insight reads (lab/data/<slug>.json): check it, or validate and write it');
+
+  dataCmd
+    .command('write')
+    .argument('<slug>', 'Insight slug')
+    .description('Validate a snapshot ({source, data}) and replace lab/data/<slug>.json with it, then hard-sync the insight (a refused snapshot writes nothing)')
+    .requiredOption('--file <path>', 'The snapshot JSON file to write')
+    .option('--json', 'Emit the check and the sync result as JSON')
+    .action(async (slug: string, opts: { file: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      try {
+        const manifest = getInsight(root, slug);
+        if (!manifest) throw new LabError(`Insight not found: ${slug}`);
+        const raw = readSnapshotFile(opts.file);
+        const check = writeLabSnapshot(root, slug, raw, { requireFunnel: manifest.preset === 'funnel-explorer' });
+        const result = await syncInsight(root, slug, { force: 'hard' });
+        if (opts.json) console.log(JSON.stringify({ check, sync: result }, null, 2));
+        else {
+          success(`Snapshot written: lab/data/${slug}.json`);
+          printSnapshotCheck(check);
+          printSyncResult(result);
+        }
+        if (result.status !== 'ok') {
+          if (!opts.json) error(`The snapshot is written, but the sync of ${slug} failed: fix the insight's script, then \`dreamcontext lab sync ${slug} --force\`.`);
+          process.exitCode = 1;
+        }
+      } catch (err) {
+        handleLabError(err);
+      }
+    });
+
+  dataCmd
+    .command('check')
+    .argument('<slug>', 'Insight slug')
+    .description('Validate a snapshot without writing anything: the one on disk, or --file')
+    .option('--file <path>', 'Check this file instead of lab/data/<slug>.json')
+    .option('--json', 'Emit the check as JSON')
+    .action((slug: string, opts: { file?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      try {
+        const manifest = getInsight(root, slug);
+        if (!manifest) throw new LabError(`Insight not found: ${slug}`);
+        const raw = opts.file !== undefined ? readSnapshotFile(opts.file) : readLabSnapshot(root, slug);
+        if (raw === null) throw new LabError(`No snapshot yet at lab/data/${slug}.json: check a file with --file <path>, or write one with \`dreamcontext lab data write ${slug} --file <path>\`.`);
+        const check = checkLabSnapshot(raw, { requireFunnel: manifest.preset === 'funnel-explorer' });
+        if (opts.json) console.log(JSON.stringify(check, null, 2));
+        else printSnapshotCheck(check);
+        if (!check.ok) process.exitCode = 1;
       } catch (err) {
         handleLabError(err);
       }
@@ -1240,8 +1534,9 @@ export function registerLabCommand(program: Command): void {
     .argument('<slug>', 'Board slug')
     .description('Show every card with its blocks resolved (the same values the dashboard draws; no fetch)')
     .option('--select <dim=value,...>', 'Breakdown selection the funnel explorer blocks draw, e.g. "platform=Web,language=EN"')
+    .option('--funnel <id>', 'The funnel an explorer card with a funnel picker draws (default: the first in the payload)')
     .option('--json', 'Emit as JSON')
-    .action((slug: string, opts: { json?: boolean; select?: string }) => {
+    .action((slug: string, opts: { json?: boolean; select?: string; funnel?: string }) => {
       const root = ensureContextRoot();
       const board = getBoard(root, slug);
       if (!board) {
@@ -1249,7 +1544,8 @@ export function registerLabCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      const view = buildBoardView(root, board, opts.select !== undefined ? parseSelection(opts.select) : {});
+      const funnel = typeof opts.funnel === 'string' && opts.funnel.trim() !== '' ? opts.funnel.trim() : null;
+      const view = buildBoardView(root, board, opts.select !== undefined ? parseSelection(opts.select) : {}, funnel);
       if (opts.json) console.log(JSON.stringify(view, null, 2));
       else printBoardView(view);
       if (board.error) process.exitCode = 1;
@@ -1281,7 +1577,7 @@ export function registerLabCommand(program: Command): void {
     .option('--at <x,y,w,h>', 'Grid position (default: the first free slot)')
     .option('--id <id>', 'Card id (default c-<insight>)')
     .option('--preset <id>', `A ready-made card for --insight: ${PRESET_IDS.join(', ')} (not with --block)`)
-    .option('--locale <en|tr>', 'Language of the labels a preset writes into the card (default en)')
+    .option('--locale <en|tr>', "Language of the labels a preset writes into the card (default: the insight's manifest locale, else en)")
     .action(async (boardSlug: string, opts: { insight?: string; block?: string; at?: string; id?: string; preset?: string; locale?: string }) => {
       const root = ensureContextRoot();
       if (opts.preset !== undefined) {
@@ -1298,7 +1594,7 @@ export function registerLabCommand(program: Command): void {
       }
       try {
         const board = opts.preset !== undefined
-          ? await addPresetCard(root, boardSlug, opts.insight!, opts.locale === 'tr' ? 'tr' : 'en', opts)
+          ? await addPresetCard(root, boardSlug, opts.insight!, presetCardLocale(root, opts.insight!, opts.locale), opts)
           : await addCard(root, boardSlug, opts);
         const card = board.cards[board.cards.length - 1];
         success(`${boardSlug}: card "${card.id}" added at ${card.at.x},${card.at.y} ${card.at.w}x${card.at.h}.`);

@@ -211,3 +211,14 @@
 
   .funnel-lanes-text { display: none; }
 }
+
+/* A step this lane's path does not count: the word, muted, never a bar of 0. */
+.funnel-lanes-cell--unmeasured {
+  display: block;
+  align-self: center;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

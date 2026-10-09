@@ -1,8 +1,9 @@
 /**
  * The add-card "Funnel explorer" preset (W3-L7): when the "Bind to" insight's
  * cache carries a funnel set, the menu offers one card holding the whole
- * explorer (breakdown chips over Daily, Benchmark, Flow, Steps and one
- * Segments tab per client dim), 12x12, titled with the insight title. Its
+ * explorer (breakdown chips with a funnel picker over Daily, Benchmark,
+ * Ranking, Flow, Steps, Compare, Payment, Access and one Segments tab per
+ * client dim), 12x18, titled with the insight title. Its
  * blocks come from the same `funnelExplorerBlocks` the CLI's
  * `add-card --preset funnel-explorer` calls, with the dims the engine's funnel
  * frame carries, so the UI preset deep-equals the CLI preset.
@@ -96,7 +97,7 @@ describe('the preset card equals the CLI preset', () => {
     });
   }
 
-  it('one 12x12 card on the insight, titled with its title, in a free slot, with a unique id', () => {
+  it('one 12x18 card on the insight, titled with its title, in a free slot, with a unique id', () => {
     const taken: Card = { id: `c-${SLUG}-explorer`, at: { x: 0, y: 0, w: 12, h: 4 } };
     const card = cardFromPreset(board([taken]), SLUG, TITLE, presetDims(cache()), 'en');
     expect(card.at.w).toBe(FUNNEL_EXPLORER_SIZE.w);
@@ -106,15 +107,18 @@ describe('the preset card equals the CLI preset', () => {
     expect(card.title).toBe(TITLE);
     expect(card.insight).toBe(SLUG);
     const [breakdown, tabs] = card.blocks!;
-    expect(breakdown).toEqual({ type: 'breakdown', data: SLUG, options: {} });
-    expect(tabs.tabs!.map((t) => t.label)).toEqual(['Daily', 'Benchmark', 'Flow', 'Steps', 'Platform', 'Language', 'country', 'Device']);
-    expect(tabs.tabs![2].blocks[0]).toEqual({ type: 'funnel', data: SLUG, options: { layout: 'flow', markWorst: true } });
+    // The breakdown carries the funnel picker (and user counts): the card's blocks follow the picked funnel.
+    expect(breakdown).toEqual({ type: 'breakdown', data: SLUG, options: { picker: true, counts: true, locale: 'en' } });
+    expect(tabs.tabs!.map((t) => t.label)).toEqual([
+      'Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access', 'Platform', 'Language', 'Country', 'Device',
+    ]);
+    expect(tabs.tabs![3].blocks[0]).toEqual({ type: 'funnel', data: SLUG, options: { layout: 'flow', markWorst: true, compare: 'off' } });
   });
 
   it('an unknown locale writes English labels, tr writes Turkish', () => {
     const labels = (locale: string) => cardFromPreset(board(), SLUG, TITLE, [], locale).blocks![1].tabs!.map((t) => t.label);
-    expect(labels('de')).toEqual(['Daily', 'Benchmark', 'Flow', 'Steps']);
-    expect(labels('tr')).toEqual(['Günlük', 'Kıyas', 'Akış', 'Adımlar']);
+    expect(labels('de')).toEqual(['Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access']);
+    expect(labels('tr')).toEqual(['Günlük', 'Benchmark', 'Sıralama', 'Akış', 'Adımlar', 'Karşılaştır', 'Ödeme', 'Erişim']);
   });
 });
 

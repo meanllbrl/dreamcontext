@@ -5,7 +5,8 @@ import {
   breakdownAxes, funnelSlice, selectionKey, toggleSelection,
   type BreakdownAxis, type FunnelFrame, type Selection,
 } from '../../../generated/frameOps';
-import { formatNumber } from '../chart';
+import { ExplorerHeader } from '../explorer/ExplorerHeader';
+import { fill, fmtCompact, minUsersFor, reasonText as pathReason } from '../explorer/explorerFormat';
 import { BlockEmpty, boolOption, drawableFrame, stringListOption, stringOption, type BlockViewProps } from './blockCommon';
 import './breakdown.css';
 
@@ -179,7 +180,15 @@ interface Tip {
   rect: { left: number; top: number; width: number; height: number };
 }
 
-export function BreakdownBlock({ frame, options, selection, onSelection, lanes, onLanes }: BlockViewProps) {
+/**
+ * An axis none of whose chips leads anywhere (every value unmeasured, none active): drawn as
+ * ONE line saying why, not a row of dead chips (the reference explorer's weakness 4 and 9).
+ */
+export function axisIsOff(axis: BreakdownAxis): boolean {
+  return axis.chips.length > 0 && axis.chips.every((c) => !c.enabled && !c.active);
+}
+
+export function BreakdownBlock({ frame, options, selection, onSelection, lanes, onLanes, onFunnel, fullscreen }: BlockViewProps) {
   const { t, locale } = useI18n();
   const uid = useId();
   const [tip, setTip] = useState<Tip | null>(null);
@@ -203,8 +212,10 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
   const dimOrder = (f.dimensions ?? []).map((d) => d.key);
   const shownName = f.funnels.find((x) => x.id === funnelId)?.name ?? f.funnels[0]?.name ?? '';
 
+  const picker = boolOption(options, 'picker');
   const notes = (
     <>
+      {picker && <ExplorerHeader frame={f} funnelId={funnelId} selection={sel} onFunnel={onFunnel} full={!!fullscreen} />}
       {unknownFunnel && (
         <div className="lab-explorer-note" data-lab-unknown-funnel="">
           {t('lab.blocks.explorer.unknownFunnel').replace('{id}', unknownFunnel).replace('{name}', shownName)}
@@ -228,7 +239,17 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
   }
 
   const reasonText = (reason: string | null) => t('lab.blocks.breakdown.unmeasured').replace('{reason}', reason ?? t('lab.blocks.breakdown.noPath'));
-  const users = (n: number) => formatNumber(n, { format: 'compact', locale });
+  const users = (n: number) => fmtCompact(n, locale);
+  // One line instead of a row of dead chips; the reason is the path's own, else why it is missing.
+  const offLine = (axis: BreakdownAxis) => {
+    const first = axis.chips[0];
+    const why = pathReason(t, first.reason, first.reasonCode, minUsersFor(f, toggleSelection(sel, axis.key, first.value)));
+    return (
+      <div key={axis.key} className="lab-x-axis-off" data-lab-breakdown-dim={axis.key} data-lab-axis-off={axis.key} role="note">
+        {fill(t('lab.explorer.axisOff'), { dim: axis.label, reason: why })}
+      </div>
+    );
+  };
   const allLabel = t('lab.blocks.breakdown.all');
   const labelOf = (s: Selection) => selectionLabel(s, dimOrder) ?? allLabel;
 
@@ -286,7 +307,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
       <div ref={fitRef} className="lab-block-fill lab-breakdown lab-breakdown--compact" data-lab-breakdown="" data-compact="true">
         {notes}
         <div className="lab-breakdown-compact-row">
-          {axes.map((axis) => (
+          {axes.map((axis) => axisIsOff(axis) ? offLine(axis) : (
             <span key={axis.key} className="lab-breakdown-select" data-lab-breakdown-dim={axis.key} data-active={sel[axis.key] !== undefined ? 'true' : undefined}>
               <select
                 aria-label={axis.label}
@@ -354,6 +375,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
           <span className="lab-breakdown-chip-value">{allLabel}</span>
         </button>
         {axes.map((axis) => {
+          if (axisIsOff(axis)) return offLine(axis);
           const labelId = `${uid}-dim-${axis.key}`;
           return (
             <div key={axis.key} className="lab-breakdown-dim" role="group" aria-labelledby={labelId} data-lab-breakdown-dim={axis.key}>

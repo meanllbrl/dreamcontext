@@ -117,8 +117,8 @@ describe('type change in place', () => {
       for (const to of catalog.types) expect(choices.includes(to)).toBe(canChangeType(catalog, from, to));
     }
     // Every block that draws a funnel frame is a choice for a funnel block (and the explorer blocks among themselves).
-    expect(typeChoices(catalog, 'funnel')).toEqual(['funnel', 'breakdown', 'trend', 'benchmark', 'segments']);
-    for (const t of ['breakdown', 'trend', 'benchmark', 'segments']) expect(typeChoices(catalog, t), t).toContain('funnel');
+    expect(typeChoices(catalog, 'funnel')).toEqual(['funnel', 'breakdown', 'trend', 'benchmark', 'segments', 'ranking', 'payment', 'access']);
+    for (const t of ['breakdown', 'trend', 'benchmark', 'segments', 'ranking', 'payment', 'access']) expect(typeChoices(catalog, t), t).toContain('funnel');
     expect(typeChoices(catalog, 'funnel')).not.toContain('line');
   });
 

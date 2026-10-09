@@ -37,12 +37,17 @@ export type BlockType =
   | 'breakdown'
   | 'trend'
   | 'benchmark'
-  | 'segments';
+  | 'segments'
+  | 'ranking'
+  | 'payment'
+  | 'access';
 
 // ─── Board spec (mirror of src/lib/lab/boards.ts) ───────────────────────────
 
 export interface BlockTab {
   label: string;
+  /** i18n key the tab's label is shown in (`lab.explorer.tab.<id>`); `label` stays the fallback. */
+  labelKey?: string;
   blocks: Block[];
 }
 
@@ -217,6 +222,12 @@ export interface BlockProps {
   onAppPage?: (id: string) => void;
   /** The card is shown fullscreen. */
   fullscreen?: boolean;
+  /** The card's funnel pick for this block's insight (cards with a funnel picker only), or null. */
+  funnel?: string | null;
+  /** Change the card's funnel pick (cards with a funnel picker only). */
+  onFunnel?: (id: string | null) => void;
+  /** `tabs` blocks: tab indexes to leave out (a page with nothing to show, e.g. Access without data). */
+  hiddenTabs?: readonly number[];
 }
 
 /** The injected renderer BoardCard draws blocks through (placeholder default until blockRegistry is wired). */

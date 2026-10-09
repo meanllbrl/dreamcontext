@@ -55,7 +55,7 @@ const REQUIRED_ENUMS: Record<string, string[]> = {
 };
 
 /** Every option that existed before this work: its key and type, per block (order-free). */
-const LEGACY_KEYS: Record<BlockType, Record<string, string>> = {
+const LEGACY_KEYS: Partial<Record<BlockType, Record<string, string>>> = {
   stat: { delta: 'enum', spark: 'boolean', unit: 'string', format: 'enum', series: 'string-list' },
   line: { area: 'boolean', color: 'number', series: 'string-list', limit: 'number' },
   bar: { orientation: 'enum', color: 'number', comparePrev: 'boolean', where: 'where', sort: 'sort', limit: 'number', series: 'string-list' },
@@ -181,8 +181,11 @@ describe('catalog options: the dashboard holds the same copy (I18nContext, EN + 
 describe('catalog options: legacy names, types and defaults are unchanged', () => {
   it('every option that existed keeps its key and type', () => {
     for (const type of BLOCK_TYPES) {
+      // Types added after this pin (ranking, payment, access) have no legacy options; the I18n half covers them.
+      const legacy = LEGACY_KEYS[type];
+      if (!legacy) continue;
       const now = Object.fromEntries(BLOCK_CATALOG[type].options.map((o) => [o.key, o.type]));
-      for (const [k, t] of Object.entries(LEGACY_KEYS[type])) expect(now[k], `${type}.${k}`).toBe(t);
+      for (const [k, t] of Object.entries(legacy)) expect(now[k], `${type}.${k}`).toBe(t);
     }
   });
 

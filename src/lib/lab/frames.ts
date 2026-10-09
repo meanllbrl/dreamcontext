@@ -3,12 +3,16 @@ import { getInsight, isSafeInsightSlug, readCache } from './store.js';
 import { BLOCK_CATALOG, HTML_INPUT_DEFAULT_FRAMES } from './blocks.js';
 import { getLibraryBlock, isSafeInputName } from './block-library.js';
 import { frameKey, projectFunnelFrame, tableTotal } from './frameOps.js';
+import { cardPicksFunnels } from './presets.js';
 import type { Block, Board, Card } from './boards.js';
 import type {
+  FunnelAccess,
   FunnelBenchmark,
   FunnelDay,
   FunnelDimension,
   FunnelMetricValue,
+  FunnelNote,
+  FunnelPayment,
   FunnelSet,
   InsightCache,
   InsightManifest,
@@ -21,10 +25,13 @@ import type {
   Frame,
   FrameKind,
   FunnelFrame,
+  FunnelFrameAccess,
   FunnelFrameBand,
   FunnelFrameDay,
   FunnelFrameFunnel,
   FunnelFrameMetric,
+  FunnelFrameNote,
+  FunnelFramePayment,
   FunnelFrameSegment,
   FunnelFrameStep,
   SeriesFrame,
@@ -159,13 +166,18 @@ function bandsOf(benchmarks: Record<string, FunnelBenchmark> | undefined): Recor
   if (!benchmarks || Object.keys(benchmarks).length === 0) return undefined;
   const out: Record<string, FunnelFrameBand> = {};
   for (const [k, b] of Object.entries(benchmarks)) {
-    out[k] = {
+    const band: FunnelFrameBand = {
       floor: typeof b.floor === 'number' ? b.floor : null,
       target: typeof b.target === 'number' ? b.target : null,
       floorSource: b.floor_source ?? null,
       targetSource: b.target_source ?? null,
       better: b.better === 'lower' ? 'lower' : 'higher',
     };
+    // Ladder-derived bands say which input won each bound and how many weeks stand behind it.
+    if (b.floor_from) band.floorFrom = b.floor_from;
+    if (b.target_from) band.targetFrom = b.target_from;
+    if (typeof b.weeks === 'number') band.weeks = b.weeks;
+    out[k] = band;
   }
   return out;
 }
@@ -173,6 +185,41 @@ function bandsOf(benchmarks: Record<string, FunnelBenchmark> | undefined): Recor
 function dailyOf(daily: FunnelDay[] | undefined): FunnelFrameDay[] | undefined {
   if (!daily || daily.length === 0) return undefined;
   return daily.map((d) => ({ t: d.t, m: { ...d.m } }));
+}
+
+function notesOf(notes: FunnelNote[] | undefined, scope: FunnelFrameNote['scope']): FunnelFrameNote[] | undefined {
+  if (!notes || notes.length === 0) return undefined;
+  return notes.map((n) => ({
+    code: n.code ?? null,
+    text: n.text,
+    level: n.level === 'info' ? 'info' : 'trap',
+    keys: n.keys ? [...n.keys] : [],
+    scope,
+  }));
+}
+
+function paymentOf(p: FunnelPayment | undefined): FunnelFramePayment | undefined {
+  if (!p) return undefined;
+  return {
+    measured: p.measured !== false,
+    reason: p.reason ?? null,
+    cells: (p.cells ?? []).map((c) => ({
+      dims: { ...c.dims },
+      cohort: c.cohort ?? 'all',
+      attempts: c.attempts,
+      declines: c.declines,
+      reasons: { ...(c.reasons ?? {}) },
+    })),
+  };
+}
+
+function accessOf(a: FunnelAccess | undefined): FunnelFrameAccess | undefined {
+  if (!a || !Array.isArray(a.stages) || a.stages.length === 0) return undefined;
+  return {
+    stages: a.stages.map((s) => ({ key: s.key, label: s.label })),
+    rows: (a.rows ?? []).map((r) => ({ funnel: r.funnel ?? null, dims: { ...(r.dims ?? {}) }, counts: { ...r.counts } })),
+    asOf: a.as_of ?? null,
+  };
 }
 
 /** A dimension's chip values: the declared ones, else those the segments carry (most users first). */
@@ -202,6 +249,11 @@ function buildFunnel(slug: string, cache: InsightCache): FunnelFrame | null {
         steps: f.steps.map((s) => {
           const step: FunnelFrameStep = { key: s.key, label: s.label, users: s.users };
           if (s.prev !== undefined) step.prev = typeof s.prev === 'number' && Number.isFinite(s.prev) ? s.prev : null;
+          if (s.basis === 'derived') step.basis = 'derived';
+          if (s.measured === false) {
+            step.measured = false;
+            step.reason = s.reason ?? null;
+          }
           return step;
         }),
       };
@@ -209,6 +261,13 @@ function buildFunnel(slug: string, cache: InsightCache): FunnelFrame | null {
       if (metrics) out.metrics = metrics;
       const daily = dailyOf(f.daily);
       if (daily) out.daily = daily;
+      const bands = bandsOf(f.benchmarks);
+      if (bands) out.bands = bands;
+      const notes = notesOf(f.notes, 'funnel');
+      if (notes) out.notes = notes;
+      const payment = paymentOf(f.payment);
+      if (payment) out.payment = payment;
+      if (f.unmeasured && Object.keys(f.unmeasured).length > 0) out.unmeasured = { ...f.unmeasured };
       if (f.segments && f.segments.length > 0) {
         out.segments = f.segments.map((seg) => {
           const s: FunnelFrameSegment = {
@@ -238,6 +297,30 @@ function buildFunnel(slug: string, cache: InsightCache): FunnelFrame | null {
   const bands = bandsOf(set.benchmarks);
   if (bands) frame.bands = bands;
   if (typeof set.low_sample_threshold === 'number' && Number.isFinite(set.low_sample_threshold)) frame.lowSample = set.low_sample_threshold;
+  if (set.window) {
+    frame.window = { from: set.window.from, to: set.window.to, prevFrom: set.window.prev_from ?? null, prevTo: set.window.prev_to ?? null };
+  }
+  if (set.provenance) {
+    const p = set.provenance;
+    frame.provenance = { source: p.source, pulledAt: p.pulled_at ?? null, freshness: p.freshness ?? null, filters: p.filters ? [...p.filters] : [] };
+  }
+  const notes = notesOf(set.notes, 'set');
+  if (notes) frame.notes = notes;
+  if (set.hints && Object.keys(set.hints).length > 0) frame.hints = { ...set.hints };
+  if (set.rates && Object.keys(set.rates).length > 0) {
+    frame.rates = Object.fromEntries(Object.entries(set.rates).map(([k, r]) => [k, { num: r.num, den: r.den }]));
+  }
+  if (set.intersections && set.intersections.length > 0) {
+    frame.intersections = set.intersections.map((i) => ({ dims: [...i.dims], minUsers: typeof i.min_users === 'number' ? i.min_users : null }));
+  }
+  if (set.ladder && set.ladder.stages.length > 0) frame.ladder = set.ladder.stages.map((s) => s.metric);
+  const payment = paymentOf(set.payment);
+  if (payment) frame.payment = payment;
+  if (set.payment_reasons && set.payment_reasons.length > 0) {
+    frame.paymentReasons = set.payment_reasons.map((r) => ({ key: r.key, label: r.label, note: r.note ?? null }));
+  }
+  const access = accessOf(set.access);
+  if (access) frame.access = access;
   return frame;
 }
 
@@ -368,6 +451,8 @@ function resolveBlocks(
   out: Record<string, Frame>,
   memo: FrameReadMemo,
 ): void {
+  // A card with a funnel picker: its blocks without their own funnel option carry every funnel.
+  const allFunnels = cardPicksFunnels(card.blocks ?? []);
   blocks.forEach((block, i) => {
     const path = [...prefix, i];
     const entry = BLOCK_CATALOG[block.type];
@@ -375,7 +460,7 @@ function resolveBlocks(
     if (entry.data === 'binding') {
       const frame = resolveFrame(contextRoot, block.data, blockFramePreference(block, entry.frames), memo);
       // Each block gets only the part of a funnel set it draws (bounds the board response).
-      out[frameKey(card.id, path)] = frame.kind === 'funnel' ? projectFunnelFrame(frame, block.type, block.options) : frame;
+      out[frameKey(card.id, path)] = frame.kind === 'funnel' ? projectFunnelFrame(frame, block.type, block.options, { allFunnels }) : frame;
     } else if (entry.data === 'inputs') {
       for (const input of htmlBlockInputs(contextRoot, block)) {
         out[frameKey(card.id, path, input.name)] = resolveFrame(contextRoot, input.ref, input.accepts, memo);

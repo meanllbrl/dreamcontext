@@ -33,6 +33,9 @@ const COPY: Record<string, string> = {
   'lab.blocks.breakdown.optionUnmeasured': '{value} (not measured)',
   'lab.blocks.explorer.unknownFunnel': 'Funnel {id} is not in the data. Showing {name}.',
   'lab.blocks.explorer.unknownMetrics': 'Not in the data: {keys}',
+  'lab.explorer.axisOff': 'No {dim} breakdown: {reason}',
+  'lab.explorer.reasonNotPulled': 'this combination was not pulled from the source',
+  'lab.explorer.reasonBelowFloor': 'under {n} users, or not pulled',
 };
 
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
@@ -62,7 +65,7 @@ vi.mock('../../dashboard/node_modules/react/index.js', async (orig) => {
 });
 
 const {
-  BreakdownBlock, selectionLabel, pickAxes, pinBlock, chipTipLeft, fitsAgain, overflows, tooBig, BREAKDOWN_MAX_SHARE, MAX_LANES,
+  BreakdownBlock, selectionLabel, pickAxes, pinBlock, chipTipLeft, fitsAgain, overflows, tooBig, BREAKDOWN_MAX_SHARE, MAX_LANES, axisIsOff,
 } = await import(
   '../../dashboard/src/components/lab/blocks/BreakdownBlock.js'
 );
@@ -183,6 +186,61 @@ describe('chips: one row per dimension, driven by breakdownAxes', () => {
   it('a frame without dimensions says so; a non-funnel frame is the shared empty state', () => {
     expect(html({ frame: { ...frame(), dimensions: [] } })).toContain('NO DIMS');
     expect(html({ frame: { kind: 'empty', reason: 'no-cache', ref: null } })).toContain('data-empty-reason="no-cache"');
+  });
+});
+
+describe('the explorer header (picker option)', () => {
+  it('off by default; with `picker` the header leads the block', () => {
+    expect(html({})).not.toContain('data-lab-explorer-header');
+    const out = html({ options: { picker: true } });
+    expect(out).toContain('data-lab-explorer-header=""');
+    expect(out.indexOf('data-lab-explorer-header')).toBeLessThan(out.indexOf('data-lab-breakdown-all'));
+    expect(out).toMatch(/<select[^>]*data-lab-funnel-picker=""/);
+  });
+
+  it('the header gets the effective funnel and the card\'s onFunnel; an unknown pick falls back to the first', async () => {
+    const { ExplorerHeader } = await import('../../dashboard/src/components/lab/explorer/ExplorerHeader.js');
+    const onFunnel = vi.fn();
+    const headerOf = (p: Props) => findAll(tree(p), (e) => e.type === ExplorerHeader)[0];
+    expect(headerOf({ options: { picker: true }, onFunnel }).props).toMatchObject({ funnelId: null, onFunnel });
+    expect(headerOf({ options: { picker: true, funnel: 'ladder' } }).props.funnelId).toBe('ladder');
+    expect(headerOf({ options: { picker: true, funnel: 'gone' } }).props.funnelId).toBeNull();
+    expect(headerOf({ options: {} })).toBeUndefined();
+  });
+});
+
+describe('an axis with nothing to choose is one line, not a row of dead chips', () => {
+  const noLanguage = (): FunnelFrame => {
+    const f = frame();
+    f.funnels[0].segments = f.funnels[0].segments!.filter((s) => s.dims.language === undefined);
+    return f;
+  };
+
+  it('every chip unmeasured: one line naming the axis and why, no chips', () => {
+    const f = noLanguage();
+    f.funnels[0].unmeasured = { 'dim:language': 'language split not pulled for this funnel' };
+    const out = html({ frame: f });
+    expect(out).toContain('data-lab-axis-off="language"');
+    expect(out).toContain('No Language breakdown: language split not pulled for this funnel');
+    expect(out).not.toContain('data-lab-breakdown-chip="EN"');
+    // The other axis keeps its chips.
+    expect(out).toContain('data-lab-breakdown-chip="Meta Ads"');
+  });
+
+  it('without a reason of its own, the reason code speaks; else the generic sentence', () => {
+    expect(html({ frame: noLanguage() })).toContain('No Language breakdown: No measured path for this combination.');
+    const f = noLanguage();
+    f.intersections = [{ dims: ['language', 'platform'], minUsers: 300 }];
+    expect(html({ frame: f, selection: { platform: 'Meta Ads' } })).toContain('No Language breakdown: under 300 users, or not pulled');
+  });
+
+  it('an axis with one live or active chip keeps its chips; the compact form collapses too', () => {
+    expect(axisIsOff({ key: 'a', label: 'A', chips: [] })).toBe(false);
+    expect(axisIsOff({ key: 'a', label: 'A', chips: [{ value: 'x', active: true, enabled: true, users: null, reason: null }] })).toBe(false);
+    expect(axisIsOff({ key: 'a', label: 'A', chips: [{ value: 'x', active: false, enabled: false, users: null, reason: null }] })).toBe(true);
+    const out = renderToStaticMarkup(tree({ frame: noLanguage() }, true));
+    expect(out).toContain('data-lab-axis-off="language"');
+    expect(out).not.toContain('data-lab-breakdown-select="language"');
   });
 });
 

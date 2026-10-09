@@ -10,6 +10,8 @@
  * recall-indexed, dashboard-renderable — with a sync engine layered on top.
  */
 
+import type { PresetId } from './presets.js';
+
 /** A single time/value observation. */
 export interface SeriesPoint {
   /** Time key: YYYY-MM-DD (daily), YYYY-Www (weekly), or YYYY-MM (monthly). */
@@ -239,6 +241,11 @@ export interface InsightManifest {
   binding: Binding | null;
   credentials_used: string[];
   unit: string | null;
+  /** A ready-made card layout this insight derives as (`preset: funnel-explorer`), or null. */
+  preset?: PresetId | null;
+  /** The language a preset card speaks (`locale: tr`), or null (English). The explorer
+   *  carries its own locale: the dashboard has no global language setting. */
+  locale?: 'en' | 'tr' | null;
   /** Absolute path of the manifest file. */
   path: string;
   /** The `## Meaning` prose (recall-indexed). */
@@ -293,6 +300,22 @@ export interface FunnelDay {
   m: Record<string, number | null>;
 }
 
+/** How a step's count was obtained: counted by the source, or rate × first-step users. */
+export type FunnelStepBasis = 'measured' | 'derived';
+
+/** Which input won a ladder-derived bound: the book value or the level's own percentile. */
+export type BandSourceKind = 'book' | 'own';
+
+/** A payment cohort; cells of different cohorts are never mixed. */
+export type FunnelPaymentCohort = 'first' | 'renewal' | 'all';
+
+/**
+ * A key of `hints` / `unmeasured`: a contract part (`daily`, `weekly`,
+ * `segments`, `intersections`, `payment`, `access`), `dim:<dimension key>` or
+ * `metric:<metric key>`. The grammar is enforced at parse.
+ */
+export type FunnelPartKey = string;
+
 /** One step in a funnel. Array ORDER is step order; `key` aligns steps across
  *  funnels (compare) and periods (deltas) — never align by index. */
 export interface FunnelStep {
@@ -303,6 +326,138 @@ export interface FunnelStep {
   prev?: number | null;
   /** Median seconds from the previous step (reserved for arc labels; optional). */
   median_seconds?: number | null;
+  /** `derived` = rate × first-step users (labelled on screen). Default `measured`. */
+  basis?: FunnelStepBasis;
+  /** False = the step is not measured for this funnel: drawn "not measured",
+   *  never 0, skipped by drop math. Its `users` is stored as 0. Default true. */
+  measured?: boolean;
+  /** Why the step is not measured (<= 200 chars). */
+  reason?: string;
+}
+
+/** A reading trap or note, shown once on screen, one line each. */
+export interface FunnelNote {
+  /** The note (<= 200 chars). */
+  text: string;
+  /** Short badge, e.g. "C1" (<= 16 chars). */
+  code?: string;
+  /** `trap` (a reading trap) or `info`. Default `trap`. */
+  level?: 'trap' | 'info';
+  /** Step keys, metric keys or `dim:<key>` this note concerns (<= 16). */
+  keys?: string[];
+}
+
+/** The window a set describes, from the snapshot (not the range tweak). YYYY-MM-DD. */
+export interface FunnelWindow {
+  from: string;
+  to: string;
+  prev_from?: string;
+  prev_to?: string;
+}
+
+/** Where the numbers came from, shown once in the explorer header. */
+export interface FunnelProvenance {
+  /** e.g. "Funnel Analysis via KB MCP" (<= 120 chars). */
+  source: string;
+  /** ISO time of the pull. */
+  pulled_at?: string;
+  /** The source's own freshness words (<= 64 chars). */
+  freshness?: string;
+  /** Applied filters as display strings (<= 8, each <= 120 chars). */
+  filters?: string[];
+}
+
+/** A rate metric defined by two step keys: lets the engine show k/n under a small denominator. */
+export interface FunnelRateDef {
+  num: string;
+  den: string;
+}
+
+/** An axis combination the source was asked for, and the user floor it applied. */
+export interface FunnelIntersection {
+  /** Declared dimension keys. */
+  dims: string[];
+  min_users?: number;
+}
+
+/** One benchmark ladder stage (higher is better). */
+export interface FunnelLadderStage {
+  /** The metric key this stage judges. */
+  metric: string;
+  /** Book (reference) floor / target in the metric's own unit. */
+  book_floor?: number;
+  book_target?: number;
+  /** Where the book comes from (<= 64 chars). */
+  book_source?: string;
+}
+
+/** The benchmark ladder: per-stage inputs the engine turns into hybrid bands. */
+export interface FunnelLadder {
+  stages: FunnelLadderStage[];
+  /** Usable weeks a level needs before it gets its own percentiles. Default 4. */
+  min_weeks?: number;
+  /** A week counts only with at least this many users. Default 300. */
+  min_week_users?: number;
+  /** Most recent usable weeks kept. Default 12. */
+  max_weeks?: number;
+}
+
+/** One week of history (INPUT ONLY: consumed at sync to derive bands, never stored). */
+export interface FunnelWeek {
+  /** Week start, YYYY-MM-DD. */
+  t: string;
+  users: number;
+  m: Record<string, number | null>;
+}
+
+/** One payment cell: attempts and declines for one selection and cohort. */
+export interface FunnelPaymentCell {
+  /** `{}` = the funnel total; else one value per dimension. */
+  dims: Record<string, string>;
+  /** Default `all`. */
+  cohort?: FunnelPaymentCohort;
+  attempts: number;
+  declines: number;
+  /** Reason key -> declines with that reason. */
+  reasons?: Record<string, number>;
+}
+
+/** A funnel's (or the whole set's) payment attempts and declines. */
+export interface FunnelPayment {
+  cells: FunnelPaymentCell[];
+  /** False = payment is not measured here; shown with the reason. Default true. */
+  measured?: boolean;
+  reason?: string;
+}
+
+/** A named decline reason. */
+export interface FunnelPaymentReason {
+  key: string;
+  label: string;
+  note?: string;
+}
+
+/** One stage of the access ladder (did the payer reach the product). */
+export interface FunnelAccessStage {
+  key: string;
+  label: string;
+}
+
+/** One access row: everyone, a funnel, or one dimension value. */
+export interface FunnelAccessRow {
+  funnel?: string;
+  dims?: Record<string, string>;
+  /** Stage key -> users who reached it (null = not measured for this row). */
+  counts: Record<string, number | null>;
+}
+
+/** The optional access ladder. */
+export interface FunnelAccess {
+  /** 1..8 stages; the first is the base. */
+  stages: FunnelAccessStage[];
+  rows: FunnelAccessRow[];
+  /** When the status was read (the cohort comes from the window). */
+  as_of?: string;
 }
 
 /** One segment. In `cells` mode (default) a disjoint cell (client-mode
@@ -352,6 +507,16 @@ export interface FunnelDef {
   segments?: FunnelSegment[];
   /** Daily metric trend, oldest first (max 92 days; the last 92 are kept). */
   daily?: FunnelDay[];
+  /** Reading traps and notes for this funnel (<= 8). */
+  notes?: FunnelNote[];
+  /** This funnel's own bands (ladder output, or set by hand); absent = inherits the set's. */
+  benchmarks?: Record<string, FunnelBenchmark>;
+  /** Payment attempts, declines and reasons for this funnel. */
+  payment?: FunnelPayment;
+  /** Part key -> why THIS funnel lacks that part (<= 16). */
+  unmeasured?: Record<FunnelPartKey, string>;
+  /** Weekly history for this funnel's own percentiles. INPUT ONLY, never stored. */
+  weekly?: FunnelWeek[];
 }
 
 /** Optional per-metric benchmark thresholds (colors rate cells; off when absent). */
@@ -366,6 +531,12 @@ export interface FunnelBenchmark {
   target_source?: string;
   /** Which direction is good. Default 'higher'; 'lower' flips the comparisons. */
   better?: 'higher' | 'lower';
+  /** Ladder-derived: which input won the floor. */
+  floor_from?: BandSourceKind;
+  /** Ladder-derived: which input won the target. */
+  target_from?: BandSourceKind;
+  /** Ladder-derived: the usable weeks behind the own percentiles. */
+  weeks?: number;
 }
 
 /** The versioned funnel-set payload an adapter returns for `render: funnel`. */
@@ -382,6 +553,28 @@ export interface FunnelSet {
   /** `cells` (default) = disjoint cells, summed for a selection; `lookup` = each
    *  segment is its own measured path for an exact selection, looked up, never summed. */
   segment_mode?: 'cells' | 'lookup';
+  /** The window the set describes (the snapshot's, not the range tweak). */
+  window?: FunnelWindow;
+  /** Where the numbers came from. */
+  provenance?: FunnelProvenance;
+  /** Set-level reading traps and notes (<= 8). */
+  notes?: FunnelNote[];
+  /** Part key -> how to fill that part when it is absent (<= 24, each <= 200 chars). */
+  hints?: Record<FunnelPartKey, string>;
+  /** Metric key -> the two step keys it divides (<= 32). */
+  rates?: Record<string, FunnelRateDef>;
+  /** Axis combinations the source was asked for (<= 16). */
+  intersections?: FunnelIntersection[];
+  /** Benchmark ladder: per-stage inputs the engine turns into hybrid bands. */
+  ladder?: FunnelLadder;
+  /** Whole-set weekly history (the total band's own percentiles). INPUT ONLY, never stored. */
+  weekly?: FunnelWeek[];
+  /** Payment for all funnels together (when the source cannot split by funnel). */
+  payment?: FunnelPayment;
+  /** Named decline reasons (<= 12). */
+  payment_reasons?: FunnelPaymentReason[];
+  /** The optional access ladder. */
+  access?: FunnelAccess;
 }
 
 /** A compact per-sync snapshot kept for deltas/trends (bounded — see funnel.ts). */

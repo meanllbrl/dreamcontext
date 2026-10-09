@@ -1,0 +1,725 @@
+/*
+ * The funnel explorer's own surfaces: the header (picker, window, source,
+ * headline cards, reading traps), the ranking, payment and access blocks, and
+ * the collapsed axis line. Tokens only (tests/unit/lab-board-tokens.test.ts):
+ * no literal colour, size, weight, duration or curve; text on the 12/14 ladder,
+ * weights 400/600, spacing on the 4px grid.
+ *
+ * Design rules that answer the reference explorer's weaknesses:
+ *   - tone is a dot or a 2px edge, never a full-cell wash (weakness 6), and a
+ *     change is signed text, never a second wash;
+ *   - strips of cards share one equal-height grid (`grid-auto-rows: 1fr`),
+ *     their column count chosen so no card is left alone (weakness 8);
+ *   - every figure is tabular and never wraps (weakness 4);
+ *   - bar rows are at least 20px with full-width tracks (weakness 10);
+ *   - a low-sample row fades, an unmeasured figure is a muted word, never 0.
+ */
+
+/* ── shared ────────────────────────────────────────────────────────── */
+
+.lab-x-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-x-unmeasured {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-x-dot {
+  display: inline-block;
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--color-border);
+}
+
+.lab-x-dot[data-tone='below'] { background: var(--color-error); }
+.lab-x-dot[data-tone='between'] { background: var(--color-warning); }
+.lab-x-dot[data-tone='above'] { background: var(--color-success); }
+
+.lab-x-note {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  overflow-wrap: break-word;
+}
+
+.lab-x-note[data-tone='caution'] {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--color-warning);
+  color: var(--color-text);
+}
+
+.lab-x-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.lab-x-empty-hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.lab-x-axis-off {
+  padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.lab-x-delta[data-sign='up'] { color: var(--color-success-ink); }
+.lab-x-delta[data-sign='down'] { color: var(--color-error-ink); }
+.lab-x-delta[data-sign='flat'] { color: var(--color-text-secondary); }
+
+.lab-x-segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.lab-x-segmented-option {
+  height: var(--space-6);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lab-x-segmented-option[aria-checked='true'],
+.lab-x-segmented-option[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  background: linear-gradient(var(--color-accent-soft), var(--color-accent-soft)), var(--color-bg);
+  color: var(--color-accent-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-x-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.lab-x-select {
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+}
+
+/* An equal-height strip of figure cards; the column count comes from balancedColumns. */
+.lab-x-cards {
+  display: grid;
+  grid-template-columns: repeat(var(--lab-x-cols, 3), minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: var(--space-2);
+}
+
+.lab-x-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.lab-x-card-label {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-x-card-value {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-x-card-sub {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── header ────────────────────────────────────────────────────────── */
+
+.lab-xh {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.lab-xh[data-mode='full'] {
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.lab-xh-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  min-width: 0;
+  font-size: var(--font-size-xs);
+}
+
+.lab-xh-picker {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lab-xh-label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-xh-select {
+  min-width: 0;
+  max-width: min(100%, 40ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  height: var(--space-7);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-xh-window,
+.lab-xh-source {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+.lab-xh-source {
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.lab-xh-source-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-xh-filters {
+  flex: none;
+}
+
+.lab-xh-window-now {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-xh-filters summary {
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.lab-xh-filters ul {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  color: var(--color-text-tertiary);
+}
+
+.lab-xh-kpis {
+  display: grid;
+  grid-template-columns: repeat(var(--lab-xh-cols, 4), minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: var(--space-2);
+}
+
+.lab-xh-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.lab-xh-kpi-label {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-xh-kpi-value {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-xh-kpi-delta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-xh-kpi-delta[data-sign='up'] { color: var(--color-success-ink); }
+.lab-xh-kpi-delta[data-sign='down'] { color: var(--color-error-ink); }
+
+/* The card form's headline figures: ONE strip, label and value inline, the change a small suffix. */
+.lab-xh-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: var(--space-5);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.lab-xh-strip-item {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.lab-xh-strip-label {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+}
+
+.lab-xh-strip-value {
+  flex: none;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-xh-strip-delta {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-xh-strip-delta[data-sign='up'] { color: var(--color-success-ink); }
+.lab-xh-strip-delta[data-sign='down'] { color: var(--color-error-ink); }
+
+.lab-xh-notes--card {
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+/* In a card the own traps sit on the label's line; the opened rest takes full rows below. */
+.lab-xh-notes--card > .lab-xh-note-list:not([data-lab-notes-rest]) {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.lab-xh-notes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+
+.lab-xh-note-list {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lab-xh-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.lab-xh-note[data-level='info'] {
+  color: var(--color-text-secondary);
+}
+
+.lab-xh-note-mark {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--color-warning);
+  transform: translateY(-1px);
+}
+
+.lab-xh-note[data-level='info'] .lab-xh-note-mark {
+  background: var(--color-border);
+}
+
+.lab-xh-note-code {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.lab-xh-note-text {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.lab-xh-notes-more {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-ink);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+/* ── ranking / payment / access: one shell ─────────────────────────── */
+
+.lab-rank,
+.lab-pay,
+.lab-acc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  height: 100%;
+}
+
+.lab-x-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lab-x-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+}
+
+.lab-x-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-normal);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.lab-x-table td {
+  height: var(--space-8);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.lab-x-table[data-density='comfortable'] td {
+  height: var(--space-10);
+}
+
+.lab-x-table .lab-x-r {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-x-table tr[data-low-sample] td {
+  opacity: 0.55;
+}
+
+.lab-x-table tr[data-active] td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.lab-x-table tr.lab-x-total td {
+  border-top: 1px solid var(--color-border-hover);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-rank-rank {
+  width: var(--space-6);
+  color: var(--color-text-secondary);
+}
+
+.lab-rank-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--space-28);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lab-rank-open:disabled {
+  cursor: default;
+}
+
+.lab-rank-sel {
+  color: var(--color-text-secondary);
+}
+
+.lab-rank-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Payment reason bars: a labelled row per reason, 20px+ tall, the track the full width. */
+.lab-pay-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lab-pay-bar {
+  display: grid;
+  /* A fixed figure column, so every track ends at the same x. */
+  grid-template-columns: minmax(var(--space-24), 30%) minmax(0, 1fr) var(--space-28);
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--space-5);
+  font-size: var(--font-size-xs);
+}
+
+.lab-pay-bar-label {
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-x-track {
+  position: relative;
+  height: var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+
+.lab-x-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-sm);
+  background: var(--chart-1);
+}
+
+.lab-pay-bar[data-lab-payment-reason='other'] .lab-x-fill {
+  background: var(--color-text-secondary);
+}
+
+.lab-pay-bar-figure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--space-13);
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.lab-pay-bar-count {
+  color: var(--color-text);
+}
+
+.lab-pay-head {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+}
+
+.lab-pay-clipped {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--color-error);
+  color: var(--color-error-ink);
+  font-size: var(--font-size-xs);
+}
+
+/* Access: one ladder per row, stage cells with a bar of the base. */
+.lab-acc-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: var(--space-20);
+}
+
+.lab-acc-stage .lab-x-track {
+  height: var(--space-1);
+}
+
+/* ── wave 3: the extended explorer blocks (trend, benchmark, segments, funnel) ── */
+
+/* A reading trap points at the cell, step or header it concerns; its text lives in the title. */
+.lab-x-note-mark {
+  display: inline-block;
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  margin-left: var(--space-1);
+  border-radius: 50%;
+  background: var(--color-warning);
+  vertical-align: middle;
+}
+
+.lab-x-note-mark[data-level='info'] {
+  background: var(--color-border);
+}
+
+/* The day-by-day table under the Daily chart shares the card with it. */
+.lab-trend-table {
+  flex: 0 1 auto;
+  max-height: 45%;
+}
+
+/* The Steps page: a fixed-height row per step, the worst drop marked by an edge and a word. */
+.lab-steps-label {
+  max-width: var(--space-28);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-steps-label-text {
+  color: var(--color-text);
+}
+
+.lab-steps-bar-col {
+  width: 25%;
+  min-width: var(--space-16);
+}
+
+.lab-steps-table tr[data-worst='true'] td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-error);
+}
+
+.lab-steps-table tr[data-worst='true'] .lab-steps-drop {
+  color: var(--color-error-ink);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lab-steps-table tr[data-worst='true'] .lab-x-fill {
+  background: var(--color-error);
+}
+
+.lab-steps-table tr[data-measured='false'] td {
+  color: var(--color-text-secondary);
+}
+
+.lab-steps-worst {
+  margin-right: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* The Steps table's data bar: a block track so the fill has a width to be a share of. */
+.lab-steps-bar-col .lab-x-track {
+  display: block;
+}
+
+/* The last column keeps air from the card edge and the scrollbar: the worst tag and its figure never clip. */
+.lab-steps-table th:last-child,
+.lab-steps-table td:last-child {
+  padding-right: var(--space-4);
+}
+
+/* The Compare page's empty state names the control as the breakdown bar renders it. */
+.lab-x-empty-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  padding: 0 var(--space-3);
+  height: var(--space-6);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.lab-x-empty-plus {
+  font-weight: var(--font-weight-semibold);
+}

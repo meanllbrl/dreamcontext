@@ -27,6 +27,9 @@ const COPY: Record<string, string> = {
   'lab.blocks.trend.metric': 'Metric',
   'lab.blocks.breakdown.optionUnmeasured': '{value} (not measured)',
   'lab.blocks.trend.metricNotMeasured': '{metric} is not measured: {reason}',
+  'lab.explorer.emptyDaily': 'No daily series in the snapshot. Add `daily` to each funnel.',
+  'lab.explorer.emptyDailyPath': 'No daily series for {sel}: the snapshot carries daily for the funnel level only.',
+  'lab.explorer.fill': 'To fill it: {hint}',
 };
 
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
@@ -250,10 +253,34 @@ describe('states: not measured, no daily, notes', () => {
     expect(out).not.toContain('data-lab-trend-chart');
   });
 
-  it('a measured slice without days says so', () => {
+  it('a measured path without days says the snapshot carries daily for the funnel level only', () => {
     const out = html({ selection: { language: 'EN' } });
     expect(out).toContain('data-state="no-daily"');
-    expect(out).toContain('No daily values for this selection.');
+    expect(out).toContain('data-lab-empty="daily"');
+    expect(out).toContain('data-scope="path"');
+    expect(out).toContain('No daily series for EN: the snapshot carries daily for the funnel level only.');
+  });
+
+  it('a snapshot without any daily names the missing part and shows its fill hint', () => {
+    const f = frame();
+    delete f.funnels[0].daily;
+    f.hints = { daily: 'kb_chart_query dims [event_date_parsed, funnel_id], granularity day' };
+    const out = html({ frame: f });
+    expect(out).toContain('data-lab-empty="daily"');
+    expect(out).toContain('data-scope="set"');
+    expect(out).toContain('No daily series in the snapshot. Add `daily` to each funnel.');
+    expect(out).toContain('data-lab-hint=""');
+    expect(out).toContain('To fill it: kb_chart_query dims [event_date_parsed, funnel_id], granularity day');
+  });
+
+  it('table: a day-by-day table under the chart, newest first, a missing day value is an empty cell', () => {
+    const out = html({ options: { table: true, switch: false } });
+    expect(out).toContain('data-lab-trend-table=""');
+    const days = [...out.matchAll(/data-lab-trend-day="([^"]+)"/g)].map((m) => m[1]);
+    expect(days).toEqual(['2026-09-03', '2026-09-02', '2026-09-01']);
+    const sep2 = out.slice(out.indexOf('data-lab-trend-day="2026-09-02"'), out.indexOf('</tr>', out.indexOf('data-lab-trend-day="2026-09-02"')));
+    expect(sep2).not.toMatch(/>0%</);
+    expect(html({ options: { switch: false } })).not.toContain('data-lab-trend-table');
   });
 
   it('an unknown funnel falls back visibly; an undeclared dim is not split', () => {

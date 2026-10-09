@@ -5,6 +5,7 @@ import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../f
 import { today } from '../id.js';
 import { writeCredentialsExample } from './required-credentials.js';
 import { parseRelativeRange } from './tweaks.js';
+import { PRESET_IDS, type PresetId } from './presets.js';
 import {
   INSIGHT_HEIGHTS,
   INSIGHT_SIZES,
@@ -277,9 +278,26 @@ export function readInsightFile(filePath: string): InsightManifest {
     binding: parseBinding(data.binding),
     credentials_used: toStringArray(data.credentials_used),
     unit: strOrNull(data.unit),
+    // Present only when set, so a manifest without a preset reads exactly as before.
+    ...(toPreset(data.preset) ? { preset: toPreset(data.preset) } : {}),
+    // Same rule: an unknown or absent locale reads as nothing at all.
+    ...(toLocale(data.locale) ? { locale: toLocale(data.locale) } : {}),
     path: filePath,
     body: content.trim(),
   };
+}
+
+/** A known card preset (`PRESET_IDS`), else null (read stays lenient). */
+function toPreset(v: unknown): PresetId | null {
+  return typeof v === 'string' && (PRESET_IDS as readonly string[]).includes(v.trim()) ? (v.trim() as PresetId) : null;
+}
+
+/** The languages a preset card can speak. */
+export const INSIGHT_LOCALES = ['en', 'tr'] as const;
+
+/** A known card locale (`INSIGHT_LOCALES`), else null (read stays lenient). */
+function toLocale(v: unknown): 'en' | 'tr' | null {
+  return typeof v === 'string' && (INSIGHT_LOCALES as readonly string[]).includes(v.trim()) ? (v.trim() as 'en' | 'tr') : null;
 }
 
 /** All insights, sorted by slug (stable). Missing directory → empty list. */
@@ -554,6 +572,151 @@ export default async function fetchApp(ctx) {
 `;
 }
 
+/**
+ * The funnel explorer's script scaffold (`lab create --preset funnel-explorer`).
+ * The generated script reads ONLY the snapshot `lab/data/<slug>.json`: no
+ * network call, no credential, no range tweak. The agent fills the snapshot
+ * through the KB MCP and writes it with `lab data write`, which validates it
+ * before it replaces the old one.
+ */
+export function funnelExplorerScriptTemplate(slug: string): string {
+  return `/**
+ * Funnel explorer adapter for the "${slug}" insight.
+ *
+ * Reads ONLY the snapshot lab/data/${slug}.json, shaped { source, data }: no
+ * network, no keys. \`data\` is a funnel-set/v1; \`source\` carries the applied
+ * filters and the freshness of the pull. The agent fills the snapshot with the
+ * KB MCP queries in the dreamcontext skill (tasks-and-features.md § Funnel
+ * explorer) and writes it with:
+ *
+ *   dreamcontext lab data write ${slug} --file <path>
+ *
+ * which validates the snapshot before it replaces the old one. The window the
+ * explorer shows comes from the snapshot, never from a range control.
+ */
+import { lstat, readFile, realpath } from 'node:fs/promises';
+import { sep } from 'node:path';
+
+const FILE = new URL('../data/${slug}.json', import.meta.url);
+const DIR = new URL('../data/', import.meta.url);
+const NAME = 'lab/data/${slug}.json';
+const MISSING = 'No snapshot yet at ' + NAME + '. Fill it (skill: tasks-and-features.md § Funnel explorer), then run dreamcontext lab data write ${slug} --file <path>.';
+
+/** Read the snapshot: never through a link, never outside lab/data, never echoing its content in an error. */
+async function load() {
+  let st;
+  try {
+    st = await lstat(FILE);
+  } catch {
+    throw new Error(MISSING);
+  }
+  if (st.isSymbolicLink() || !st.isFile()) {
+    throw new Error(NAME + ' is a symlink or not a regular file: refusing to read it.');
+  }
+  const dir = await realpath(DIR);
+  if (!dir.endsWith(sep + 'lab' + sep + 'data')) {
+    throw new Error('lab/data/ resolves outside the vault: refusing to read ' + NAME + '.');
+  }
+  let text;
+  try {
+    text = await readFile(FILE, 'utf8');
+  } catch {
+    throw new Error(MISSING);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(NAME + ' is not valid JSON. Write it again with dreamcontext lab data write ${slug} --file <path>.');
+  }
+}
+
+/** The applied filters as display strings ("field op value"), deduplicated, at most 8. */
+function filtersOf(source) {
+  const lists = [source.applied_filters].concat(
+    Array.isArray(source.queries) ? source.queries.map((q) => q && q.applied_filters) : [],
+  );
+  const out = [];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const f of list) {
+      if (!f || typeof f.field !== 'string') continue;
+      const value = Array.isArray(f.values)
+        ? f.values.join(f.op === 'between' ? '..' : ', ')
+        : f.value !== undefined ? String(f.value) : '';
+      const line = [f.field, f.op || '', value].join(' ').replace(/\\s+/g, ' ').trim().slice(0, 120);
+      if (out.indexOf(line) === -1) out.push(line);
+    }
+  }
+  return out.slice(0, 8);
+}
+
+/** Where the numbers came from, for the explorer header (when the data names none). */
+function provenanceOf(source) {
+  if (!source || typeof source !== 'object') return undefined;
+  const names = [source.chart_name]
+    .concat(Array.isArray(source.queries) ? source.queries.map((q) => q && q.chart_name) : [])
+    .filter((n, i, all) => typeof n === 'string' && n !== '' && all.indexOf(n) === i);
+  const via = typeof source.via === 'string' && source.via ? source.via : 'snapshot';
+  const out = { source: ((names.length > 0 ? names.join(' + ') : 'snapshot') + ' via ' + via).slice(0, 120) };
+  if (typeof source.pulled_at === 'string') out.pulled_at = source.pulled_at;
+  if (typeof source.freshness === 'string') out.freshness = source.freshness.slice(0, 64);
+  const filters = filtersOf(source);
+  if (filters.length > 0) out.filters = filters;
+  return out;
+}
+
+export default async function readExplorer() {
+  const snapshot = await load();
+  const data = snapshot.data;
+  if (!data || data.kind !== 'funnel-set/v1') {
+    throw new Error(NAME + ': \`data\` must be a funnel-set/v1.');
+  }
+  return data.provenance ? data : Object.assign({}, data, { provenance: provenanceOf(snapshot.source) });
+}
+
+export async function freshness() {
+  const { source } = await load();
+  const names = provenanceOf(source);
+  return {
+    marker: source.pulled_at,
+    asOf: source.pulled_at,
+    note: names ? names.source + (source.freshness ? ' · ' + source.freshness : '') : null,
+  };
+}
+`;
+}
+
+/** The `## Meaning` skeleton a funnel explorer insight starts with (the author fills each section). */
+export function funnelExplorerMeaning(title: string, description: string | null, slug = '<slug>'): string {
+  return [
+    '## Meaning',
+    '',
+    description?.trim()
+      || `(What "${title}" answers, in one paragraph: which funnels, which window, which decision it supports.)`,
+    '',
+    '### Source and filters',
+    '',
+    "(The charts the snapshot was pulled from, the product filter, the date window and the previous window, the row-level scope. Copy them from the snapshot's `source`.)",
+    '',
+    '### Window',
+    '',
+    '(The window the numbers describe and the previous window the change compares with. The explorer reads both from the snapshot, never from a range control.)',
+    '',
+    '### Steps',
+    '',
+    '(The step chain, and which counts are derived (rate × first-step users) and which are counted directly.)',
+    '',
+    '### Reading traps',
+    '',
+    "(One line per trap. The same lines go into the snapshot's `notes`, so the explorer shows them on screen.)",
+    '',
+    '### Refresh',
+    '',
+    `Data comes only from the KB MCP into \`lab/data/${slug}.json\`; the script never touches the network. To refresh, pull the queries in the dreamcontext skill (tasks-and-features.md § Funnel explorer), then run \`dreamcontext lab data write ${slug} --file <path>\`, which validates the snapshot before it replaces the old one.`,
+    '',
+  ].join('\n');
+}
+
 export interface CreateInsightInput {
   slug: string;
   title: string;
@@ -571,6 +734,11 @@ export interface CreateInsightInput {
   description?: string | null;
   unit?: string | null;
   ttl_minutes?: number;
+  /** A ready-made card this insight derives as. `funnel-explorer` forces render
+   *  funnel + a script adapter that reads the `lab/data/<slug>.json` snapshot. */
+  preset?: PresetId;
+  /** The language the preset card speaks (`en` | `tr`). Omit for none (English). */
+  locale?: 'en' | 'tr';
 }
 
 /** STRICT validation for writes (throws LabError). Reads stay lenient. */
@@ -602,6 +770,20 @@ export function validateManifestForWrite(input: CreateInsightInput): void {
   if (input.ttl_minutes !== undefined && (!Number.isFinite(input.ttl_minutes) || input.ttl_minutes <= 0)) {
     throw new LabError('ttl_minutes must be a positive number.');
   }
+  if (input.preset !== undefined) {
+    if (!(PRESET_IDS as readonly string[]).includes(input.preset)) {
+      throw new LabError(`preset must be one of: ${PRESET_IDS.join(', ')}.`);
+    }
+    if (input.render && input.render !== 'funnel') {
+      throw new LabError(`--preset ${input.preset} is a funnel insight: drop --render or pass --render funnel (got "${input.render}").`);
+    }
+    if (input.adapter === 'http') {
+      throw new LabError(`--preset ${input.preset} reads a local snapshot through a script: drop --adapter http.`);
+    }
+  }
+  if (input.locale !== undefined && !(INSIGHT_LOCALES as readonly string[]).includes(input.locale)) {
+    throw new LabError(`locale must be one of: ${INSIGHT_LOCALES.join(', ')} (got "${String(input.locale)}").`);
+  }
 }
 
 /**
@@ -614,8 +796,10 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
   const path = insightPath(contextRoot, slug);
   if (existsSync(path)) throw new LabError(`Insight already exists: ${slug}`);
 
-  const adapter = input.adapter ?? 'http';
-  const render = input.render ?? 'number';
+  // A preset decides render + adapter (validateManifestForWrite refused any conflict).
+  const preset = input.preset ?? null;
+  const adapter = preset ? 'script' : input.adapter ?? 'http';
+  const render = preset ? 'funnel' : input.render ?? 'number';
   // matrix/v1 is DEPRECATED as an authoring path (2026-08-26): existing
   // `breakdown` insights keep rendering — this is docs/scaffold steering
   // only, never a hard block, so a grandfathered manifest can still be
@@ -639,7 +823,8 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
   // Funnel/breakdown/app insights ship with the overview date-range control
   // pre-declared — the presets the dashboard's range picker offers (custom =
   // from/to tweaks).
-  const tweaks: TweakDecl[] = render === 'funnel' || render === 'breakdown' || render === 'app'
+  // A preset explorer gets none: its window comes from the snapshot, so a range picker would change nothing.
+  const tweaks: TweakDecl[] = preset === null && (render === 'funnel' || render === 'breakdown' || render === 'app')
     ? [{
         key: 'range',
         type: 'enum',
@@ -659,6 +844,8 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
     width: input.width ?? null,
     height: input.height ?? null,
     unit: input.unit ?? null,
+    ...(preset ? { preset } : {}),
+    ...(input.locale ? { locale: input.locale } : {}),
     source,
     refresh: { ttl_minutes: input.ttl_minutes ?? DEFAULT_TTL_MINUTES },
     tweaks,
@@ -668,13 +855,15 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
     updated_at: today(),
   };
 
-  const body = [
-    '## Meaning',
-    '',
-    input.description?.trim()
-      || '(What does this number MEAN? Why does it matter, and how should a reader interpret a move?)',
-    '',
-  ].join('\n');
+  const body = preset === 'funnel-explorer'
+    ? funnelExplorerMeaning(input.title, input.description ?? null, slug)
+    : [
+      '## Meaning',
+      '',
+      input.description?.trim()
+        || '(What does this number MEAN? Why does it matter, and how should a reader interpret a move?)',
+      '',
+    ].join('\n');
 
   mkdirSync(insightsDir(contextRoot), { recursive: true });
   writeFrontmatter(path, frontmatter, body);
@@ -687,7 +876,10 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
     const scriptPath = join(labDir(contextRoot), 'scripts', `${slug}.mjs`);
     if (!existsSync(scriptPath)) {
       mkdirSync(join(labDir(contextRoot), 'scripts'), { recursive: true });
-      writeFileSync(scriptPath, render === 'funnel' ? funnelScriptTemplate(slug) : appScriptTemplate(slug), 'utf-8');
+      const template = preset === 'funnel-explorer'
+        ? funnelExplorerScriptTemplate(slug)
+        : render === 'funnel' ? funnelScriptTemplate(slug) : appScriptTemplate(slug);
+      writeFileSync(scriptPath, template, 'utf-8');
     }
   }
   // Keep the tracked lab/credentials.example.json current with the new

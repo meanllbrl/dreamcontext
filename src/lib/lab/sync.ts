@@ -10,6 +10,7 @@ import { rollupSeries } from './rollup.js';
 import {
   appendFunnelHistory,
   funnelLatest,
+  funnelSetRange,
   funnelToSeries,
   makeFunnelSnapshot,
   parseFunnelSet,
@@ -742,10 +743,12 @@ export async function syncInsight(
       series = funnelToSeries(parsed.set);
       granularity = 'daily';
       latest = funnelLatest(parsed.set);
-      funnel = { set: parsed.set, notices: parsed.notices, range: resolvedTweaks.range };
+      // A set that declares its own window (a snapshot) is cached under that window, not the range tweak.
+      const funnelRange = funnelSetRange(parsed.set) ?? resolvedTweaks.range;
+      funnel = { set: parsed.set, notices: parsed.notices, range: funnelRange };
       funnelHistory = appendFunnelHistory(
         prior?.funnelHistory,
-        makeFunnelSnapshot(parsed.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
+        makeFunnelSnapshot(parsed.set, funnelRange, new Date(nowMs).toISOString()),
       );
     } else if (isRawMatrixSet(result)) {
       // ── Matrix payload: validate + cap; NO time rollup (the set is a
@@ -793,10 +796,11 @@ export async function syncInsight(
       // stored as cache.funnel (with its history) exactly as a bare funnel-set
       // would be; latest + series stay the primary dataset's.
       if (parsed.funnel) {
-        funnel = { set: parsed.funnel.set, notices: parsed.funnel.notices, range: resolvedTweaks.range };
+        const funnelRange = funnelSetRange(parsed.funnel.set) ?? resolvedTweaks.range;
+        funnel = { set: parsed.funnel.set, notices: parsed.funnel.notices, range: funnelRange };
         funnelHistory = appendFunnelHistory(
           prior?.funnelHistory,
-          makeFunnelSnapshot(parsed.funnel.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
+          makeFunnelSnapshot(parsed.funnel.set, funnelRange, new Date(nowMs).toISOString()),
         );
       }
     } else {

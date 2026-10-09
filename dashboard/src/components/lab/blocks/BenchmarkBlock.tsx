@@ -5,12 +5,15 @@ import { useMeasured } from '../chartBody';
 import {
   benchmarkRows,
   funnelSlice,
+  orderedNotes,
   type BenchmarkRow,
   type FunnelFrame,
   type FunnelFrameMetric,
+  type FunnelFrameNote,
   type FunnelMetricFormat,
   type FunnelSlice,
 } from '../../../generated/frameOps';
+import { fmtCount, fmtMetric, fmtMetricDelta } from '../explorer/explorerFormat';
 import { BlockEmpty, boolOption, drawableFrame, stringListOption, stringOption, type BlockViewProps } from './blockCommon';
 import './benchmark.css';
 
@@ -146,6 +149,7 @@ export function benchmarkFit(
   width = 0,
   unmeasured: readonly number[] = [],
   skip = 0,
+  keep = false,
 ): BenchmarkFit {
   if (!(height > 0) || rowCount === 0) return { ...tier('full', true, sources, true), count: rowCount };
   const avail = height - noteLines * BENCH_PX.note;
@@ -156,12 +160,22 @@ export function benchmarkFit(
     + wrapPx(t.mode, n) + (t.legend ? BENCH_PX.legend : 0);
   const narrow = width > 0 && width < BENCH_NARROW_PX;
   const tight = BENCH_ROW_GAPS.slice(1).map((g) => tier('compact', false, false, false, g));
-  const tiers: FitTier[] = narrow
-    ? [tier('full', true, sources, true), tier('full', true, false, true), tier('full', false, false, true), tier('full', false, false, false), tier('compact', false, false, false), ...tight]
-    : [tier('full', true, sources, true), tier('compact', true, sources, true), tier('compact', true, false, true), tier('compact', false, false, true), tier('compact', false, false, false), ...tight];
+  // `keep` (a benchmark ladder): the floor and target values and the band-source line ARE the
+  // reading (which input won each bound), so the fit tightens air and drops the legend, then
+  // rows, but never those two.
+  const kept = (mode: 'full' | 'compact', legend: boolean, gap: number = BENCH_PX.rowGap) => tier(mode, true, sources, legend, gap);
+  const tiers: FitTier[] = keep
+    ? narrow
+      ? [kept('full', true), kept('full', false), ...BENCH_ROW_GAPS.slice(1).map((g) => kept('full', false, g))]
+      : [kept('full', true), kept('compact', true), kept('compact', false), ...BENCH_ROW_GAPS.slice(1).map((g) => kept('compact', false, g))]
+    : narrow
+      ? [tier('full', true, sources, true), tier('full', true, false, true), tier('full', false, false, true), tier('full', false, false, false), tier('compact', false, false, false), ...tight]
+      : [tier('full', true, sources, true), tier('compact', true, sources, true), tier('compact', true, false, true), tier('compact', false, false, true), tier('compact', false, false, false), ...tight];
   // `skip`: tiers the rendered block already proved too tall (the estimate was short), never tried again.
   for (const t of tiers.slice(Math.min(skip, tiers.length))) if (need(t, rowCount) <= avail) return { ...t, count: rowCount };
-  const last = tier('compact', false, false, false, BENCH_ROW_GAPS[BENCH_ROW_GAPS.length - 1]);
+  const last = keep
+    ? tiers[tiers.length - 1]
+    : tier('compact', false, false, false, BENCH_ROW_GAPS[BENCH_ROW_GAPS.length - 1]);
   let count = rowCount - Math.max(0, skip - tiers.length);
   while (count > 1 && need(last, count) + BENCH_PX.note > avail) count--;
   return { ...last, count: Math.max(1, count) };
@@ -190,9 +204,14 @@ export function cellsNoRates(frame: FunnelFrame, slice: FunnelSlice): boolean {
   return frame.segmentMode !== 'lookup' && slice.measured && Object.keys(slice.selection).length > 0;
 }
 
-/** The metric keys a benchmark reads: the option's, else the picked funnel's own (so an unmeasured slice still lists them). */
-function metricKeysFor(frame: FunnelFrame, slice: FunnelSlice, picked: string[] | null): { keys: string[]; unknown: string[]; levels: Record<string, FunnelFrameMetric> } {
+/**
+ * The metric keys a benchmark reads: the option's; else the ladder's stages in ladder order (a
+ * ladder names the benchmark, exactly as `lab board show` prints it); else the picked funnel's
+ * own (so an unmeasured slice still lists them).
+ */
+export function metricKeysFor(frame: FunnelFrame, slice: FunnelSlice, picked: string[] | null): { keys: string[]; unknown: string[]; levels: Record<string, FunnelFrameMetric> } {
   const levels = frame.funnels.find((f) => f.id === slice.funnelId)?.metrics ?? {};
+  if (!picked && frame.ladder && frame.ladder.length > 0) return { keys: frame.ladder.slice(), unknown: [], levels };
   if (!picked) return { keys: Object.keys(levels).length > 0 ? Object.keys(levels) : Object.keys(slice.metrics), unknown: [], levels };
   const known = (k: string) => k in levels || k in slice.metrics;
   return { keys: picked.filter(known), unknown: picked.filter((k) => !known(k)), levels };
@@ -245,9 +264,10 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
   if (unknown.length > 0) notes.push({ key: 'metrics', attr: 'data-lab-unknown-metrics', text: t('lab.blocks.explorer.unknownMetrics').replace('{keys}', unknown.join(', ')) });
   if (slice.ignored.length > 0) notes.push({ key: 'split', attr: 'data-lab-not-split', text: t('lab.blocks.explorer.notSplit').replace('{dims}', slice.ignored.join(', ')) });
   if (slice.measured && slice.lowSample) {
-    notes.push({ key: 'low', attr: 'data-lab-low-sample', text: t('lab.blocks.explorer.lowSample').replace('{n}', formatNumber(slice.users, { maxDecimals: 0, locale })) });
+    notes.push({ key: 'low', attr: 'data-lab-low-sample', text: t('lab.blocks.explorer.lowSample').replace('{n}', fmtCount(slice.users, locale)) });
   }
-  const inherited = allRowsInherit(rows);
+  const inherited = allRowsInherit(rows) && !f.ladder;
+  const notesOf = notesByKey(orderedNotes(f, slice.funnelId));
   const anySource = sources && rows.some((r) => r.floorSource || r.targetSource || r.inherited);
   const inheritedText = t('lab.blocks.benchmark.inherited');
   const lines = notes.reduce((n, x) => n + noteLines(x.text, box.width), 0) + (inherited ? noteLines(inheritedText, box.width) : 0);
@@ -255,7 +275,7 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
   // The estimate plans the tier; the rendered block has the last word: if it still overflows, step down a tier.
   const fitKey = `${box.width}x${box.height}|${rows.map((r) => r.key).join(',')}|${lines}|${comparePrev}|${sources}`;
   const skip = shrink.key === fitKey ? shrink.skip : 0;
-  const fit = benchmarkFit(rows.length, box.height, lines, anySource, box.width, unmeasuredChars, skip);
+  const fit = benchmarkFit(rows.length, box.height, lines, anySource, box.width, unmeasuredChars, skip, !!f.ladder);
   const shown = rows.slice(0, Math.max(1, fit.count));
   const more = rows.length - shown.length;
   pendingKey.current = fitKey;
@@ -295,7 +315,18 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
       {fit.legend && anyRuler && <BenchLegend t={t} comparePrev={comparePrev} />}
       <ul className="lab-bench-rows">
         {shown.map((row) => (
-          <BenchRowView key={row.key} row={row} labels={fit.labels} showSources={fit.sources} comparePrev={comparePrev} sources={sources} t={t} locale={locale} />
+          <BenchRowView
+            key={row.key}
+            row={row}
+            labels={fit.labels}
+            showSources={fit.sources}
+            comparePrev={comparePrev}
+            sources={sources}
+            ladder={!!f.ladder}
+            notes={notesOf.get(row.key) ?? []}
+            t={t}
+            locale={locale}
+          />
         ))}
       </ul>
       {more > 0 && <div className="lab-bench-more">{t('lab.blocks.benchmark.more').replace('{n}', String(more))}</div>}
@@ -326,36 +357,109 @@ function BenchLegend({ t, comparePrev }: { t: Translate; comparePrev: boolean })
 
 const TREND_GLYPH = { up: '▲', down: '▼', flat: '▬' } as const;
 
-function BenchRowView({ row, labels, showSources, comparePrev, sources, t, locale }: {
+/**
+ * Where a row's band came from, in words. A ladder-derived bound names the input that won
+ * ("floor: book", "target: own p75") and the weeks behind the own percentiles; an authored
+ * bound keeps its source text ("Floor from <source>").
+ */
+export function bandSourceParts(row: BenchmarkRow, t: Translate): string[] {
+  const floorWord = (from: 'book' | 'own') => t(from === 'book' ? 'lab.explorer.bandBook' : 'lab.explorer.bandOwnFloor');
+  const targetWord = (from: 'book' | 'own') => t(from === 'book' ? 'lab.explorer.bandBook' : 'lab.explorer.bandOwnTarget');
+  const authored = (bound: 'floor' | 'target', source: string) =>
+    t('lab.blocks.benchmark.source').replace('{bound}', t(`lab.blocks.benchmark.${bound}`)).replace('{source}', source);
+  const parts: string[] = [];
+  if (row.floor !== null) {
+    if (row.floorFrom) parts.push(t('lab.explorer.bandFloorFrom').replace('{src}', floorWord(row.floorFrom)));
+    else if (row.floorSource) parts.push(authored('floor', row.floorSource));
+  }
+  if (row.target !== null) {
+    if (row.targetFrom) parts.push(t('lab.explorer.bandTargetFrom').replace('{src}', targetWord(row.targetFrom)));
+    else if (row.targetSource) parts.push(authored('target', row.targetSource));
+  }
+  if (row.weeks !== null && (row.floorFrom === 'own' || row.targetFrom === 'own')) {
+    parts.push(t('lab.explorer.bandWeeks').replace('{n}', String(row.weeks)));
+  }
+  return parts;
+}
+
+/**
+ * The inherited-band mark's words: under a ladder the level the band came from ("band from the
+ * funnel", "band from the total"); without one the original "Inherited" (the set's band is the
+ * funnel's own there, so only a path inherits).
+ */
+export function inheritedWords(row: Pick<BenchmarkRow, 'inherited' | 'inheritedFrom'>, ladder: boolean, t: Translate): { mark: string; title: string } | null {
+  if (!row.inherited) return null;
+  if (row.inheritedFrom === 'funnel') return { mark: t('lab.explorer.bandFromFunnel'), title: t('lab.explorer.bandFromFunnel') };
+  if (ladder) return { mark: t('lab.explorer.bandFromTotal'), title: t('lab.explorer.bandFromTotal') };
+  return { mark: t('lab.blocks.benchmark.inheritedMark'), title: t('lab.blocks.benchmark.inheritedTitle') };
+}
+
+/** The notes that concern each step, metric or `dim:<key>`, by key (a note can name several). */
+export function notesByKey(notes: readonly FunnelFrameNote[]): Map<string, FunnelFrameNote[]> {
+  const out = new Map<string, FunnelFrameNote[]>();
+  for (const n of notes) {
+    for (const k of n.keys) {
+      const list = out.get(k) ?? [];
+      list.push(n);
+      out.set(k, list);
+    }
+  }
+  return out;
+}
+
+/**
+ * The marker a cell, header or step gets when a reading trap concerns it: a small dot (amber
+ * for a trap, grey for an info note) whose title and label carry the notes' text, so the wall of
+ * text stays in the header and the cell only points at it.
+ */
+export function NoteMark({ markKey, notes, t }: { markKey: string; notes: readonly FunnelFrameNote[]; t: Translate }) {
+  if (notes.length === 0) return null;
+  const level = notes.some((n) => n.level !== 'info') ? 'trap' : 'info';
+  const text = notes.map((n) => t('lab.explorer.noteMark').replace('{text}', n.code ? `${n.code}: ${n.text}` : n.text)).join('\n');
+  return (
+    <span
+      className="lab-x-note-mark"
+      data-lab-note-mark={markKey}
+      data-level={level}
+      role="img"
+      title={text}
+      aria-label={text}
+    />
+  );
+}
+
+function BenchRowView({ row, labels, showSources, comparePrev, sources, ladder, notes, t, locale }: {
   row: BenchmarkRow;
   labels: boolean;
   showSources: boolean;
   comparePrev: boolean;
   sources: boolean;
+  ladder: boolean;
+  notes: readonly FunnelFrameNote[];
   t: Translate;
   locale: string;
 }) {
-  const fmt = (v: number) => formatMetric(v, row.format, locale);
+  // The explorer's one formatter: TR "%21,8", a rate's change in points ("−2,1 puan"), never "−0".
+  const fmt = (v: number) => fmtMetric(v, row.format, locale);
   const measured = row.current !== null;
   const statusWord = row.status === 'no-band'
     ? t('lab.blocks.benchmark.noBand')
     : row.status === 'unmeasured' ? '' : t(`lab.blocks.benchmark.status.${row.status}`);
-  const sourceParts = [
-    row.floorSource ? t('lab.blocks.benchmark.source').replace('{bound}', t('lab.blocks.benchmark.floor')).replace('{source}', row.floorSource) : null,
-    row.targetSource ? t('lab.blocks.benchmark.source').replace('{bound}', t('lab.blocks.benchmark.target')).replace('{source}', row.targetSource) : null,
-  ].filter((s): s is string => s !== null);
+  const sourceParts = bandSourceParts(row, t);
+  const inheritedText = inheritedWords(row, ladder, t);
   const showDelta = comparePrev && row.delta !== null && row.trend !== null;
   const glyph = row.delta === null ? null : row.delta > 0 ? TREND_GLYPH.up : row.delta < 0 ? TREND_GLYPH.down : TREND_GLYPH.flat;
-  const signed = showDelta ? formatMetric(row.delta as number, row.format, locale, true) : '';
+  const signed = showDelta ? fmtMetricDelta(row.delta as number, row.format, locale) : '';
   const sourceLine = sources && showSources && (sourceParts.length > 0 || row.inherited);
-  const mark = row.inherited ? (
+  const mark = inheritedText ? (
     <span
       className="lab-bench-inherit"
       data-inherited=""
-      title={t('lab.blocks.benchmark.inheritedTitle')}
-      aria-label={t('lab.blocks.benchmark.inheritedTitle')}
+      data-inherited-from={row.inheritedFrom ?? undefined}
+      title={inheritedText.title}
+      aria-label={inheritedText.title}
     >
-      {t('lab.blocks.benchmark.inheritedMark')}
+      {inheritedText.mark}
     </span>
   ) : null;
 
@@ -368,7 +472,10 @@ function BenchRowView({ row, labels, showSources, comparePrev, sources, t, local
       data-better={row.better}
       title={measured ? undefined : notMeasuredText(t, row.reason)}
     >
-      <span className="lab-bench-label" title={row.label}>{row.label}</span>
+      <span className="lab-bench-label" title={row.label}>
+        {row.label}
+        <NoteMark markKey={row.key} notes={notes} t={t} />
+      </span>
       {measured ? (
         <>
           {/* Primary: the current value. Secondary: one quiet run for the change, the previous window and the trend. */}

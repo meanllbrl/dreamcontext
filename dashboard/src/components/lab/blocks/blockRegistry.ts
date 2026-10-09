@@ -20,6 +20,9 @@ import { BreakdownBlock } from './BreakdownBlock';
 import { TrendBlock } from './TrendBlock';
 import { BenchmarkBlock } from './BenchmarkBlock';
 import { SegmentsBlock } from './SegmentsBlock';
+import { RankingBlock } from './RankingBlock';
+import { PaymentBlock } from './PaymentBlock';
+import { AccessBlock } from './AccessBlock';
 import './blocks.css';
 
 export type { BlockViewProps } from './blockCommon';
@@ -53,6 +56,9 @@ export const BLOCK_REGISTRY: Record<BlockType, ComponentType<BlockViewProps>> = 
   trend: TrendBlock,
   benchmark: BenchmarkBlock,
   segments: SegmentsBlock,
+  ranking: RankingBlock,
+  payment: PaymentBlock,
+  access: AccessBlock,
 };
 
 /**

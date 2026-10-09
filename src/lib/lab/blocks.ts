@@ -36,6 +36,9 @@ export const BLOCK_TYPES = [
   'trend',
   'benchmark',
   'segments',
+  'ranking',
+  'payment',
+  'access',
 ] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
@@ -177,6 +180,18 @@ const TOP_N = opt('topN', 'number', 'Top N, rest as Other', 'İlk N, kalanı Di�
 // Funnel explorer picks: the choices come from the block's funnel frame (or the insight cache).
 const FUNNEL_PICK = opt('funnel', 'pick', 'Funnel', 'Huni', { from: 'funnels', default: null });
 const METRICS_PICK = opt('metrics', 'pick', 'Metrics', 'Metrikler', { from: 'metrics', multi: true, default: null });
+/** The funnel explorer card: a funnel picker in the breakdown header (the reader switches funnels; blocks follow). */
+const PICKER = opt('picker', 'boolean', 'Funnel picker', 'Huni seçici', { default: false });
+/** The language the explorer card speaks (the dashboard has no global language setting): the card's own copy, tabs and number format. */
+const LOCALE = choice('locale', 'Language', 'Dil', [['en', 'English', 'İngilizce'], ['tr', 'Turkish', 'Türkçe']], 'en');
+/** A table beside or instead of the chart (trend: the days under it; funnel: the steps as a table). */
+const TABLE = opt('table', 'boolean', 'Table', 'Tablo', { default: false });
+/** When a funnel block draws pinned lanes: `auto` (today: whenever lanes are pinned), only lanes, or never. */
+const COMPARE = choice('compare', 'Lanes', 'Şeritler', [
+  ['auto', 'When pinned', 'Sabitlenince'],
+  ['lanes', 'Lanes only', 'Yalnız şeritler'],
+  ['off', 'Never', 'Hiçbir zaman'],
+], 'auto');
 
 const entry = (
   type: BlockType,
@@ -339,6 +354,8 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
       choice('layout', 'Layout', 'Yerleşim', [['bars', 'Bars', 'Çubuklar'], ['flow', 'Flow', 'Akış']], 'bars'),
       // Off by default so written boards draw exactly as before.
       opt('markWorst', 'boolean', 'Mark the biggest drop', 'En büyük düşüşü işaretle', { default: false }),
+      COMPARE,
+      TABLE,
     ],
   ),
   pivot: entry(
@@ -418,6 +435,8 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
       opt('dims', 'pick', 'Breakdowns', 'Kırılımlar', { from: 'dims', multi: true, default: null }),
       opt('counts', 'boolean', 'User counts', 'Kullanıcı sayıları', { default: false }),
       opt('lanes', 'boolean', 'Compare lanes', 'Karşılaştırma şeritleri', { default: true }),
+      PICKER,
+      LOCALE,
     ],
   ),
   trend: entry(
@@ -434,6 +453,7 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
       AXES,
       GRID,
       FORMAT,
+      TABLE,
     ],
   ),
   benchmark: entry(
@@ -462,6 +482,33 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
       LIMIT,
       DENSITY,
     ],
+  ),
+  ranking: entry(
+    'ranking', 'binding', ['funnel'],
+    { en: 'Ranking', tr: 'Sıralama' },
+    { en: 'Each funnel\'s best breakdown on one metric.', tr: 'Her huninin tek bir metrikteki en iyi kırılımı.' },
+    { w: 8, h: 6 },
+    [METRICS_PICK, DENSITY],
+  ),
+  payment: entry(
+    'payment', 'binding', ['funnel'],
+    { en: 'Payment', tr: 'Ödeme' },
+    {
+      en: 'Payment attempts, decline rate and decline reasons for the selected path.',
+      tr: 'Seçili yol için ödeme denemeleri, red oranı ve red sebepleri.',
+    },
+    { w: 8, h: 6 },
+    [FUNNEL_PICK, DENSITY],
+  ),
+  access: entry(
+    'access', 'binding', ['funnel'],
+    { en: 'Access', tr: 'Erişim' },
+    {
+      en: 'Whether payers reached the product, stage by stage. Hidden when there is no data.',
+      tr: 'Ödeyenlerin ürüne aşama aşama ulaşıp ulaşmadığı. Veri yoksa gizlenir.',
+    },
+    { w: 8, h: 5 },
+    [DENSITY],
   ),
 };
 

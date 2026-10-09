@@ -483,9 +483,24 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* A metric with no daily values: dimmed, led by a dash, its reason in the title and said once in
+   the line under the switch. Never struck through: a strike reads as "removed", not "not measured". */
 .lab-trend-switch-option[data-measured='false'] {
   color: var(--color-text-placeholder);
-  text-decoration: line-through dotted;
+}
+
+.lab-trend-switch-dash {
+  margin-right: var(--space-1);
+}
+
+.lab-trend-unmeasured {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .lab-trend-chart {

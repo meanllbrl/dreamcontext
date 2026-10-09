@@ -36,7 +36,8 @@ import { MoveBlockedError, duplicateCard, moveCardToBoard, removeCard, specOf } 
 import {
   RECHECK_MS, busySlugs, cardSyncState, freshReason, isExpired, planAutomaticSync,
 } from './boardSync';
-import { pruneViews, updateView, type CardView, type CardViews } from './cardViewState';
+import { EMPTY_VIEW, pruneViews, updateView, type CardView, type CardViews } from './cardViewState';
+import { readViewParams, viewParamsMatch, writeViewParams } from './cardViewUrl';
 import { renderBlock as registryRenderBlock } from '../blocks/blockRegistry';
 import type {
   AddCardMenuProps, Board, BlockCatalog, BlockRenderer, BoardSpec, Card, InspectorProps,
@@ -76,10 +77,15 @@ import './lab-shell.css';
  * error and "Open file", and cannot enter edit mode: the server refuses its PUT
  * (423) and the page never offers one.
  *
- * CARD VIEW STATE (filters, breakdown selection, lanes, open tab, open app page)
- * lives HERE, per card id (`cardViewState.ts`), so a card and its fullscreen
- * twin share it. A card's view dies when the card leaves the board; a board
- * switch starts every view empty. Nothing of it is saved.
+ * CARD VIEW STATE (filters, breakdown selection, lanes, open tab, open app page,
+ * picked funnel) lives HERE, per card id (`cardViewState.ts`), so a card and its
+ * fullscreen twin share it. A card's view dies when the card leaves the board; a
+ * board switch starts every view empty. Nothing of it is saved to the board file.
+ * The funnel, selection, lanes and tabs are mirrored into the URL as `v.<cardId>`
+ * (`cardViewUrl.ts`, replace, never a history step): the URL is READ once when a
+ * board opens (a reload, a shared link, a fullscreen reload), then the state is
+ * the source and the URL follows it. A Back step over a closed fullscreen
+ * therefore keeps what changed inside it.
  *
  * FULLSCREEN is the URL's `?card=<id>`: the card menu pushes a history entry
  * (Back closes), a link with the param reopens it, Esc and the exit button
@@ -145,9 +151,24 @@ function agoText(iso: string, locale: string): string {
 interface ViewState { board: string | null; views: CardViews }
 type ViewAction =
   | { type: 'update'; board: string; card: string; fn: (view: CardView) => CardView }
-  | { type: 'prune'; board: string | null; cards: string[] };
+  | { type: 'prune'; board: string | null; cards: string[] }
+  | { type: 'hydrate'; board: string; views: CardViews };
+
+/** The parts of a view the URL carries (`cardViewUrl.ts`); filters and app pages stay as they are. */
+function withUrlParts(base: CardView, from: CardView): CardView {
+  return { ...base, funnel: from.funnel, selection: from.selection, lanes: from.lanes, tabs: from.tabs };
+}
 
 export function viewReducer(state: ViewState, action: ViewAction): ViewState {
+  if (action.type === 'hydrate') {
+    // The URL's views for a board just opened (a reload, a shared link): they win over the empty state.
+    const base = state.board === action.board ? state.views : {};
+    const ids = Object.keys(action.views);
+    if (state.board === action.board && ids.length === 0) return state;
+    const views: CardViews = { ...base };
+    for (const id of ids) views[id] = withUrlParts(base[id] ?? EMPTY_VIEW, action.views[id]);
+    return { board: action.board, views };
+  }
   if (action.type === 'prune') {
     if (state.board !== action.board) return { board: action.board, views: {} };
     const views = pruneViews(state.views, action.cards);
@@ -506,6 +527,24 @@ export function BoardPage({
   }, [boardSlug, cardIds]);
 
   const [search, updateSearch] = useLabSearchParams();
+  const searchKey = search.toString();
+  // URL -> views, once per opened board (after the prune above reset the views for it).
+  const hydratedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!boardSlug || !cardIds || hydratedFor.current === boardSlug) return;
+    hydratedFor.current = boardSlug;
+    dispatchView({ type: 'hydrate', board: boardSlug, views: readViewParams(new URLSearchParams(searchKey), cardIds.split('\n')) });
+    // Only a newly opened board reads the URL (searchKey is read, not watched): later search
+    // changes are written by the effect below.
+  }, [boardSlug, cardIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Views -> URL (replace): only once this board's URL views were read, and only when they differ.
+  const views = viewState.views;
+  useEffect(() => {
+    if (!boardSlug || !cardIds || hydratedFor.current !== boardSlug || viewState.board !== boardSlug) return;
+    const ids = cardIds.split('\n');
+    if (viewParamsMatch(new URLSearchParams(searchKey), views, ids)) return;
+    updateSearch((p) => { writeViewParams(p, views, ids); });
+  }, [boardSlug, cardIds, views, viewState.board, searchKey, updateSearch]);
   const fsCard = fullscreenCard(board, search.get('card'));
   const fsId = fsCard?.id ?? null;
   /** The open fullscreen pushed its own history entry: closing goes Back over it. */
@@ -574,7 +613,6 @@ export function BoardPage({
     [boards, active, boardTitle],
   );
 
-  const views = viewState.views;
   const cardNode = useCallback((card: Card, fullscreen: boolean) => {
     const missing = !!card.insight && !!shown.data && !summaries[card.insight];
     const primary = card.insight ? summaries[card.insight] : undefined;

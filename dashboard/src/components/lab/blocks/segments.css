@@ -87,19 +87,11 @@
   color: var(--color-text-placeholder);
 }
 
-.lab-seg-table[data-bands] td[data-tone='below'] {
-  background: color-mix(in srgb, var(--color-error) 9%, var(--color-bg-secondary));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-error) 70%, var(--color-bg-secondary));
-}
-
-.lab-seg-table[data-bands] td[data-tone='between'] {
-  background: color-mix(in srgb, var(--color-warning) 9%, var(--color-bg-secondary));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-warning) 70%, var(--color-bg-secondary));
-}
-
-.lab-seg-table[data-bands] td[data-tone='above'] {
-  background: color-mix(in srgb, var(--color-success) 9%, var(--color-bg-secondary));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-success) 70%, var(--color-bg-secondary));
+/* A band tone is a dot before the figure, never a wash over the cell: a column of tinted cells
+   carries no more than the dots do, and two washes (tone and change) read as noise. The cell
+   keeps data-tone for the hooks and the title says the tone in words. */
+.lab-seg-figure .lab-x-dot {
+  align-self: center;
 }
 
 /* A small sample is shown, not hidden, but it steps back. */
@@ -148,4 +140,19 @@
 .lab-seg-dash:hover .lab-seg-reason,
 .lab-seg-dash:focus .lab-seg-reason {
   display: block;
+}
+
+/* Columns no row carries fold into this one note (with the snapshot's hint on how to fill them). */
+.lab-seg-folded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--color-border);
+}
+
+/* An unmeasured row: one muted line across its metric columns says why (the row title has it too). */
+.lab-seg-table td.lab-seg-row-why {
+  color: var(--color-text-secondary);
+  text-align: left;
 }

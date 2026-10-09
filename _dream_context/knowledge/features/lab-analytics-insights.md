@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-10-04'
+updated: '2026-10-09'
 released_version: v0.21.0
 tags:
   - 'topic:lab'
@@ -40,6 +40,8 @@ related_tasks:
     insights-v2-blocks-reach-a-polished-fully-customizable-chart-standard-axes-correct-hover-charts-that-fit-their-cell
   - >-
     insights-v2-funnel-explorer-every-page-a-bindable-block-and-the-whole-explorer-as-one-interactive-page
+  - >-
+    a-built-in-funnel-explorer-insight-reads-a-kb-filled-snapshot-and-reads-better-than-a-hand-built-app-explorer
 type: feature
 name: lab-analytics-insights
 description: >-
@@ -65,6 +67,15 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 **Naming note:** The user-facing dashboard page is labeled "Insights" (flask icon); "Lab" is the internal/CLI/technical name. This PRD uses "Lab" to match the codebase and CLI surface.
 
 ## User Stories
+
+### Insights v2: the built-in funnel explorer (2026-10-09, built, validation pending)
+
+- [ ] As a PO, `lab create <slug> --preset funnel-explorer [--locale tr]` gives me a funnel explorer for any product without copying a hand-built one: a snapshot-reading script, a Meaning skeleton, and an explorer card on the category board after the first sync.
+- [ ] As an agent, I fill the explorer's snapshot through the KB MCP with the documented queries, `lab data check` tells me what is wrong before anything is written, and `lab data write` never replaces a good snapshot with a bad one.
+- [ ] As a funnel operator, one card gives me Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access and per-axis tables (platform, country, language and their intersections) for any funnel I pick, in my language.
+- [ ] As a funnel operator, the screen is honest: not measured reads "not measured" with its reason, small samples fade, a small denominator shows k/n, derived step counts are labelled, and every empty page says what is missing and how to fill it.
+- [ ] As a funnel operator, the reading traps of the funnel I am looking at are visible in the header, and a copied link reopens the same funnel, selection, lanes and tab.
+- [ ] As an owner, a scheduled refresh that lost its KB tools fails loudly instead of publishing stale numbers as fresh.
 
 ### Insights v2: boards of blocks (Beta, 2026-09-29)
 
@@ -393,6 +404,18 @@ Validation: unit tests + `verify:lab-boards.mjs` sections 21–28 with mutations
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+### The built-in funnel explorer: a snapshot-fed preset, not a new render (2026-10-09, task `a-built-in-funnel-explorer-insight-reads-a-kb-filled-snapshot-and-reads-better-than-a-hand-built-app-explorer`)
+
+- **One contract: `funnel-set/v1` extended additively, not a `dataset/v1` bundle.** Every explorer page reads one frame kind through `frameOps`, which the dashboard mirrors and `lab board show --select` reuses; payment, access, the benchmark ladder and notes therefore live inside the funnel set (one parser, one cache entry, one projection, one CLI parity path). Dataset rows cannot carry attempts, declines and reasons per cell or step provenance without naming conventions. A `dataset/v1` bundle with a `funnel` member still works and gets every new field. Old payloads parse deep-equal; the 400 KB stored cap is unchanged; `weekly` is input only.
+- **A preset on the manifest, not a new render.** `lab create --preset funnel-explorer` keeps `render: funnel` and writes `preset: funnel-explorer`; a derived board turns that into the 12x18 explorer card. A new render would have duplicated every funnel branch (sync, store, doctor, the render registry).
+- **The explorer carries its own language.** The dashboard has no global language setting, so the manifest's `locale: tr|en` (from `--locale`) is written into the picker `breakdown` (`options.locale`) and the card renders inside a card-scoped language provider; tabs and every explorer string follow it (the Benchmark tab reads "Benchmark" in both languages). Every number goes through ONE formatter in that language (Turkish `%21,8`, English `21.8%`), and a rate change is shown in points (`puan` / `pp`), never as a percent of a percent.
+- **Data never comes from the network inside dreamcontext.** The agent fills `lab/data/<slug>.json` (`{source, data}`) through the KB MCP; the script only reads it. `lab data write` is the only write path: it validates first (pulled_at, applied filters, an explicit `between` date filter, a window that matches a date filter, the parser) and leaves the file untouched on refusal, then hard-syncs.
+- **A refresh that cannot reach its tools fails loudly.** A run whose final message carries `RUN FAILED: <why>` among its first five lines ends `failed` and publishes nothing (`declaredRunFailure` in the automation runner). A static preflight on a tool list was rejected: it cannot prove a tool is callable inside the spawned session. The documented refresh prompt also ends with `lab data check` and must show `pulled_at` advanced.
+- **The benchmark band is a hybrid ladder computed by the engine.** floor = max(book, own p25), target = max(book, own p75); own needs at least 4 weeks of 300+ users before the window (last 12). Each bound says which source won; a funnel without own weeks inherits the set's band and says "band from the total". Higher-is-better only: a lower-is-better metric keeps an explicit `benchmarks` entry.
+- **Honesty rules are on screen and in the CLI.** Unmeasured is "not measured: reason", never 0; low samples fade; a denominator under 100 shows k/n; rates are never summed (payment totals come only from the `{}` cell); derived step counts are labelled; every empty state names the missing part and the snapshot's hint; the Access tab hides when there is no data; segment tables use a tone dot, never a tinted cell.
+- **The card leaves the page its room.** In a board cell the header is one row (picker, window, source line), ONE strip of headline figures and only the current funnel's own traps, with everything else behind a "Reading traps (N)" disclosure; fullscreen shows the full header. The explorer draws its own source line (pulled when, data age), so it hides the card's freshness subtitle.
+- **View state lives in the URL.** `v.<cardId>` holds the funnel pick, selection, lanes and active tab, restored on board open, reload and fullscreen reload; it is deliberately not re-applied on browser Back/Forward, so closing fullscreen goes Back without undoing what changed inside it.
 
 ### The chart standard and the funnel explorer: the rules the drawing layer enforces (2026-09-30 / 2026-10-01, in 0.30.0)
 
@@ -744,6 +767,14 @@ A tweak is not a preference, it is part of the QUESTION the tile answers: change
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-09: The explorer card reads like a page, not a stack
+
+- The preset card grows to 12x18; in a board cell the header is one picker/window/source row, one headline strip and the current funnel's own traps behind a "Reading traps (N)" disclosure (the full header is in fullscreen); one locale formatter for every number, rate changes in points; the card's own source line replaces its freshness subtitle; the Turkish Benchmark tab label is "Benchmark".
+
+### 2026-10-09: The funnel explorer becomes a built-in, snapshot-fed preset
+
+- `lab create --preset funnel-explorer [--locale en|tr]`, `lab data check|write`, `lab board show --funnel`; `funnel-set/v1` gains window, provenance, notes, hints, unmeasured reasons, step basis, rates (k/n), intersections, a hybrid benchmark ladder, payment and access; new blocks `ranking`, `payment`, `access`; the preset card gets a funnel picker and tabs Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access plus axis tables; view state in the URL; `RUN FAILED:` marks an automation run failed. Docs: tasks-and-features.md § Funnel explorer.
 
 ### 2026-10-04 — A long slice name gives up its letters, not its share
 

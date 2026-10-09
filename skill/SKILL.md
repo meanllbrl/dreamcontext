@@ -84,10 +84,10 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Structured memory** | soul + the active person's constitution + memory + knowledge + tasks, auto-loaded each session | this file |
 | **Tasks** | Working documents: changelog, RICE, status lifecycle, dates, assignees, project-declared custom fields | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Roadmap / Objectives** | PO-authored OKR board in `core/objectives/`: many-to-many task links, dependency DAG, forecast and slip detection (`dreamcontext roadmap`) | [tasks-and-features.md](references/tasks-and-features.md) |
-| **Lab / Insights** | Curated **metrics** synced from APIs or scripts into `lab/insights/`, cached, KR-bindable; Funnel analytics and app renders. **Boards (Beta)** compose them: `lab/boards/<slug>.md`, cards of catalog blocks (`lab block list`) plus saved HTML blocks (`lab/blocks/`). Never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Lab / Insights** | Curated **metrics** synced from APIs or scripts into `lab/insights/`, cached, KR-bindable; Funnel analytics and app renders; **funnel explorer** (`lab create --preset funnel-explorer`). **Boards (Beta)** compose them: `lab/boards/<slug>.md`, cards of catalog blocks (`lab block list`) plus saved HTML blocks (`lab/blocks/`). Never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
-| **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
+| **Memory recall** | Hybrid (BM25 + local embeddings) search over the whole corpus, BM25 until the model is ready; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory — fire reminders when context matches | this file |
 | **Whiteboard** | live boards (`whiteboard`) with agent cards; default Control Panel | [whiteboards.md](references/whiteboards.md) |

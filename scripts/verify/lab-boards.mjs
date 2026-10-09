@@ -364,8 +364,11 @@ const ok = (name, cond, detail = '') => {
 /** Run one section; a throw is ONE failure line, never an abort. */
 /** The page under test, once the browser is up: a thrown section leaves a screenshot of it. */
 let sectionPage = null;
+/** The sections that ran, in order (printed at the end: a run report names what it covered). */
+const sectionsRan = [];
 async function section(name, fn) {
   if (ONLY && !ONLY.test(name)) return;
+  sectionsRan.push(name);
   try {
     await fn();
   } catch (e) {
@@ -396,6 +399,13 @@ const EXPLORER_PLUS = 'acme-explorer-plus';
 /** The synthetic 3-page app/v1 insight. */
 const APP = 'acme-onboarding-app';
 const EXPLORER_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'funnel-explorer-demo.mjs');
+/**
+ * The snapshot-fed explorer insight (`lab create --preset funnel-explorer` + `lab data write`):
+ * the only fixture with payment, access, a ladder, notes and k/n paths, so the ranking,
+ * payment and access blocks and the new options draw real data on the catalog board.
+ */
+const EXPLORER_SNAP = 'acme-explorer-snapshot';
+const SNAPSHOT_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'acme-funnel-snapshot.mjs');
 const APP_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'acme-onboarding-app.mjs');
 /**
  * The dashboard's own generated frameOps (TypeScript, bundled here on the fly):
@@ -787,7 +797,9 @@ function signatureInPage(root) {
       return;
     }
     const r = el.getBoundingClientRect();
-    const parts = [el.tagName, Math.round(r.x - r0.x), Math.round(r.y - r0.y), Math.round(r.width), Math.round(r.height),
+    // A <select>'s <option> draws no box in the page (WebKit reports an arbitrary rect): its text and paint only.
+    const boxless = el.tagName === 'OPTION';
+    const parts = [el.tagName, boxless ? 0 : Math.round(r.x - r0.x), boxless ? 0 : Math.round(r.y - r0.y), boxless ? 0 : Math.round(r.width), boxless ? 0 : Math.round(r.height),
       cs.color, cs.backgroundColor, cs.fill, cs.stroke, cs.borderLeftColor, cs.borderTopColor, cs.opacity, cs.fontWeight];
     for (const a of ATTRS) {
       const v = el.getAttribute && el.getAttribute(a);
@@ -872,6 +884,20 @@ const OPTION_CASES = [
   ['segments', { data: EXPLORER }, { sort: '-users' }],
   ['segments', { data: EXPLORER }, { limit: 2 }],
   ['segments', { data: EXPLORER }, { density: 'comfortable' }],
+  // The snapshot-fed explorer's options and blocks (bound to the snapshot fixture: payment, access, a ladder, notes).
+  ['breakdown', { data: EXPLORER_SNAP }, { picker: true }],
+  // `locale`: the picker card speaks its own language whatever the dashboard's (a Turkish header and chips).
+  ['breakdown', { data: EXPLORER_SNAP, picker: true }, { locale: 'tr' }],
+  ['trend', { data: EXPLORER_SNAP }, { table: true }],
+  // `compare`: lanes-only says how to pin when none is pinned; off draws the steps again (a lanes-only base).
+  ['funnel', { data: EXPLORER_SNAP, markWorst: true }, { compare: 'lanes' }],
+  ['funnel', { data: EXPLORER_SNAP, markWorst: true, compare: 'lanes' }, { compare: 'off' }],
+  ['funnel', { data: EXPLORER_SNAP, markWorst: true }, { table: true }],
+  ['ranking', { data: EXPLORER_SNAP }, { metrics: ['roas'] }],
+  ['ranking', { data: EXPLORER_SNAP }, { density: 'comfortable' }],
+  ['payment', { data: EXPLORER_SNAP }, { funnel: 'trial-start' }],
+  ['payment', { data: EXPLORER_SNAP }, { density: 'comfortable' }],
+  ['access', { data: EXPLORER_SNAP }, { density: 'comfortable' }],
 ];
 /** type -> option keys proven by a dedicated section instead of a signature pair. */
 const COVERED_ELSEWHERE = {
@@ -1445,8 +1471,23 @@ export default async function () {
   return out;
 }`;
 
-/** The preset's tab labels (EN), in order: the pages, then one segments tab per client dim. */
-const PRESET_TABS = ['Daily', 'Benchmark', 'Flow', 'Steps', 'Platform', 'Language', 'Country'];
+/**
+ * The preset's tabs in order, [data-lab-tab-key, EN label]: the pages, then one
+ * segments tab per client dim. Tabs are found by their key, never by position:
+ * a tab with nothing to draw (Access, on a set without access data) is hidden
+ * and would shift every index after it.
+ */
+const PRESET_TAB_DEFS = [
+  ['daily', 'Daily'], ['benchmark', 'Benchmark'], ['ranking', 'Ranking'], ['flow', 'Flow'], ['steps', 'Steps'],
+  ['compare', 'Compare'], ['payment', 'Payment'], ['access', 'Access'],
+  ['dim.platform', 'Platform'], ['dim.language', 'Language'], ['dim.country', 'Country'],
+];
+/** Every tab the preset writes into the spec (EN labels). */
+const PRESET_TABS = PRESET_TAB_DEFS.map(([, label]) => label);
+/** The tabs the demo card SHOWS: Access hides, because the demo fixture carries no access data. */
+const VISIBLE_TABS = PRESET_TAB_DEFS.filter(([key]) => key !== 'access').map(([, label]) => label);
+/** A preset tab's key from its EN label. */
+const tabKeyOf = (label) => PRESET_TAB_DEFS.find(([, l]) => l === label)?.[0] ?? null;
 
 /**
  * The demo board's separate cards (the plan's W4 setup), added one by one with
@@ -1456,13 +1497,13 @@ const PRESET_TABS = ['Daily', 'Benchmark', 'Flow', 'Steps', 'Platform', 'Languag
  * board itself is exactly the plan's (its GET size is a criterion).
  */
 const EXPLORER_CARDS = [
-  { board: 'explorer-demo', id: 'x-steps', title: 'Steps', at: '0,12,8,7', blocks: [{ breakdown: { data: EXPLORER } }, { funnel: { data: EXPLORER, layout: 'bars', markWorst: true } }] },
-  { board: 'explorer-demo', id: 'x-bench', title: 'Benchmark', at: '0,19,6,6', blocks: [{ breakdown: { data: EXPLORER } }, { benchmark: { data: EXPLORER } }] },
-  { board: 'explorer-demo', id: 'x-countries', title: 'Countries', at: '6,19,6,6', blocks: [{ segments: { data: EXPLORER, by: 'country' } }] },
+  { board: 'explorer-demo', id: 'x-steps', title: 'Steps', at: '0,18,8,7', blocks: [{ breakdown: { data: EXPLORER } }, { funnel: { data: EXPLORER, layout: 'bars', markWorst: true } }] },
+  { board: 'explorer-demo', id: 'x-bench', title: 'Benchmark', at: '0,25,6,6', blocks: [{ breakdown: { data: EXPLORER } }, { benchmark: { data: EXPLORER } }] },
+  { board: 'explorer-demo', id: 'x-countries', title: 'Countries', at: '6,25,6,6', blocks: [{ segments: { data: EXPLORER, by: 'country' } }] },
   // Payment: loss reasons as tables of the same insight (a stat reads value/series frames, not tables).
-  { board: 'explorer-demo', id: 'x-payment', title: 'Payment', at: '0,25,6,6', blocks: [{ filter: { data: `${EXPLORER}/declines`, dim: 'cohort' } }, { bar: { data: `${EXPLORER}/declines` } }, { table: { data: `${EXPLORER}/decline_rate` } }] },
-  { board: 'explorer-demo', id: 'x-daily', title: 'Daily', at: '6,25,6,4', blocks: [{ trend: { data: EXPLORER } }] },
-  { board: 'explorer-demo', id: 'x-app', title: 'Onboarding app', at: '0,31,6,8', blocks: [{ insight: { data: APP, nav: true, page: 'overview' } }] },
+  { board: 'explorer-demo', id: 'x-payment', title: 'Payment', at: '0,31,6,6', blocks: [{ filter: { data: `${EXPLORER}/declines`, dim: 'cohort' } }, { bar: { data: `${EXPLORER}/declines` } }, { table: { data: `${EXPLORER}/decline_rate` } }] },
+  { board: 'explorer-demo', id: 'x-daily', title: 'Daily', at: '6,31,6,4', blocks: [{ trend: { data: EXPLORER } }] },
+  { board: 'explorer-demo', id: 'x-app', title: 'Onboarding app', at: '0,37,6,8', blocks: [{ insight: { data: APP, nav: true, page: 'overview' } }] },
   { board: 'explorer-proof', id: 'x-trend', title: 'Conversion trend', at: '0,0,6,4', blocks: [{ trend: { data: EXPLORER, metrics: ['conversion', 'visit_to_lead'] } }] },
   { board: 'explorer-proof', id: 'x-app-plain', title: 'App card', at: '6,0,3,4', blocks: [{ insight: { data: APP } }] },
   { board: 'explorer-proof', id: 'x-app-pinned', title: 'App pinned', at: '9,0,3,4', blocks: [{ insight: { data: APP, page: 'pricing' } }] },
@@ -1502,7 +1543,8 @@ function shownEquals(text, want) {
   if (!m || want === null || want === undefined) return false;
   const k = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] ?? '').toUpperCase()] ?? 1;
   const decimals = (m[1].split('.')[1] ?? '').length;
-  return Number(m[1].replace(/,/g, '')) === Number((want / k).toFixed(decimals));
+  // Equal at the precision shown: within half a unit of the last shown digit (a .x5 tie may round either way).
+  return Math.abs(Number(m[1].replace(/,/g, '')) - want / k) <= 0.5 * 10 ** -decimals + 1e-9;
 }
 /** A stored block, in either spelling ({type, data, options, tabs} or the short {type: {...}}), as one shape. */
 function normBlock(b) {
@@ -1524,7 +1566,7 @@ function normBlock(b) {
   }
   delete options.tabs;
   const out = { type, data: data ?? null, options: Object.fromEntries(Object.entries(options).sort(([a], [z]) => a.localeCompare(z))) };
-  if (tabs) out.tabs = tabs.map((tb) => ({ label: tb.label, blocks: (tb.blocks ?? []).map(normBlock) }));
+  if (tabs) out.tabs = tabs.map((tb) => ({ label: tb.label, ...(tb.labelKey ? { labelKey: tb.labelKey } : {}), blocks: (tb.blocks ?? []).map(normBlock) }));
   return out;
 }
 /** The block at a frame path ("1.3.0" = block 1, tab 3, child 0) of a stored card. */
@@ -1806,7 +1848,7 @@ function explorerInPage(root) {
         usersText: tds[1]?.innerText.trim() ?? '',
         cells: Object.fromEntries([...tr.querySelectorAll('td[data-metric]')].map((td) => [td.getAttribute('data-metric'), {
           text: td.querySelector('.lab-seg-v')?.textContent.trim() ?? null, dash: !!td.querySelector('[data-lab-seg-unmeasured]'),
-          tone: td.getAttribute('data-tone'), bg: getComputedStyle(td).backgroundColor,
+          tone: td.getAttribute('data-tone'), bg: getComputedStyle(td).backgroundColor, dot: td.querySelector('.lab-x-dot')?.getAttribute('data-tone') ?? null,
         }])),
       };
     }),
@@ -1819,8 +1861,35 @@ function explorerInPage(root) {
     metrics: [...trendEl.querySelectorAll('[data-lab-trend-metric]')].map((b) => ({ key: b.getAttribute('data-lab-trend-metric'), on: b.getAttribute('aria-checked') === 'true' })),
     paths: [...trendEl.querySelectorAll('path[data-series]')].map((p) => p.getAttribute('d')).join('|'),
   } : null;
+  // The steps table (a funnel block with `table: true`, the preset's Steps page): one keyed row per step.
+  const steps = q('[data-lab-step]').map((r) => ({
+    key: r.getAttribute('data-lab-step'),
+    users: r.getAttribute('data-measured') === 'false' ? null : num(r.getAttribute('data-users')),
+    basis: r.getAttribute('data-basis'),
+    measured: r.getAttribute('data-measured') !== 'false',
+    worst: r.getAttribute('data-worst') === 'true',
+    dropPct: r.hasAttribute('data-drop-pct') ? num(r.getAttribute('data-drop-pct')) : null,
+    text: r.innerText.replace(/\s+/g, ' ').trim(),
+  }));
+  const rankEl = q('[data-lab-ranking]')[0];
+  const ranking = {
+    rows: rankEl ? [...rankEl.querySelectorAll('[data-lab-ranking-row]')].map((r) => ({
+      funnel: r.getAttribute('data-lab-ranking-row'), selection: r.getAttribute('data-selection'),
+      value: r.hasAttribute('data-value') ? Number(r.getAttribute('data-value')) : null, low: r.getAttribute('data-low-sample') === 'true',
+    })) : [],
+    floor: rankEl?.querySelector('[data-lab-ranking-floor]')?.getAttribute('data-lab-ranking-floor') ?? null,
+    empty: rankEl?.querySelector('[data-lab-empty]')?.getAttribute('data-lab-empty') ?? null,
+  };
+  const payEl = q('[data-lab-payment]')[0];
+  const payment = {
+    scope: payEl?.getAttribute('data-scope') ?? null,
+    empty: payEl?.querySelector('[data-lab-empty]')?.getAttribute('data-lab-empty') ?? null,
+    rate: payEl?.querySelector('[data-lab-payment-rate]')?.textContent.trim() || null,
+    reasons: payEl ? [...payEl.querySelectorAll('[data-lab-payment-reason]')].map((r) => r.getAttribute('data-lab-payment-reason')) : [],
+  };
   return {
-    chips, bars, flow, lanes, bench, seg, trend,
+    chips, bars, flow, lanes, bench, seg, trend, steps, ranking, payment,
+    emptyText: q('[data-lab-empty], .lab-x-empty, .lab-block-empty').map((e) => e.textContent.trim()),
     funnel: fx ? { layout: fx.getAttribute('data-lab-funnel-explorer'), id: fx.getAttribute('data-lab-funnel'), selection: fx.getAttribute('data-lab-selection'), measured: fx.getAttribute('data-lab-measured') } : null,
     notMeasured: q('[data-lab-not-measured]').map((e) => e.textContent.trim()),
     notSplit: q('[data-lab-not-split]').map((e) => e.textContent.trim()),
@@ -2520,6 +2589,15 @@ async function main() {
         (c?.funnel?.set?.funnels?.length ?? 0) === 2 && (c?.datasets?.bundle?.datasets?.length ?? 0) === 2 && (c?.funnelHistory?.length ?? 0) > 0,
         JSON.stringify(Object.keys(c ?? {})));
       make(EXPLORER_PLUS, 'Acme explorer plus', 'funnel', PLUS_SCRIPT);
+      // The snapshot-fed explorer: scaffolded by the preset, its data written through the snapshot gate.
+      dc(['lab', 'create', EXPLORER_SNAP, '--title', 'Acme explorer snapshot', '--preset', 'funnel-explorer', '--no-board']);
+      const snapFile = join(SCRATCH, `${EXPLORER_SNAP}.snapshot.json`);
+      writeFileSync(snapFile, JSON.stringify((await import(pathToFileURL(SNAPSHOT_FIXTURE).href)).snapshot('full')));
+      const wrote = dc(['lab', 'data', 'write', EXPLORER_SNAP, '--file', snapFile], { allowFail: true });
+      const snapCachePath = join(LAB, 'cache', `${EXPLORER_SNAP}.json`);
+      const sc = existsSync(snapCachePath) ? JSON.parse(readFileSync(snapCachePath, 'utf-8')) : null;
+      ok(`explorer fixture ${EXPLORER_SNAP} written by lab data write and synced`,
+        !!sc && !sc.error && (sc.funnel?.set?.funnels?.length ?? 0) === 3 && !!sc.funnel?.set?.access, `${wrote.slice(0, 400)} ${sc?.error ?? ''}`);
       const a = make(APP, 'Acme onboarding app', 'app', readFileSync(APP_FIXTURE, 'utf-8'));
       ok('the app fixture declares 3 pages', a?.app?.spec?.pages?.length === 3, JSON.stringify(a?.app?.spec?.pages?.map((p) => p.id)));
       explorerSynced = true;
@@ -3464,7 +3542,8 @@ async function main() {
         await sleep(250);
       }
     };
-    const tabBtn = (scope, label) => scope.locator('[data-lab-tab]').nth(PRESET_TABS.indexOf(label));
+    /** A preset tab button by its key (`data-lab-tab-key`), never by its index. */
+    const tabBtn = (scope, label) => scope.locator(`[data-lab-tab-key="${tabKeyOf(label)}"]`).first();
     const openTab = async (scope, label) => {
       await tabBtn(scope, label).click();
       await sleep(450);
@@ -3498,6 +3577,19 @@ async function main() {
       await sleep(120);
       return { value: tip?.value ?? null, detail: `pointer x ${Math.round(x)}: tooltip ${JSON.stringify(tip)}` };
     };
+    /**
+     * The preset's Daily page draws bars with a day-by-day table under them (`table: true`): the
+     * value it prints for `key` on `date`, read from the table cell (the column is the metric's label).
+     */
+    const trendTableAt = (scope, date, key) => scope.evaluate((el, [d, k, labels]) => {
+      const t = el.querySelector('[data-lab-trend-table]');
+      if (!t) return { value: null, detail: 'no day table' };
+      const heads = [...t.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+      const col = heads.findIndex((h) => labels.includes(h));
+      const row = t.querySelector(`[data-lab-trend-day="${d}"]`);
+      const value = row && col >= 0 ? row.children[col]?.textContent.trim() ?? null : null;
+      return { value, detail: `day table ${d}, column ${JSON.stringify(heads[col] ?? k)} of ${JSON.stringify(heads)}: ${JSON.stringify(value)}` };
+    }, [date, key, [selSeg.metrics[key]?.label, quiz.metrics[key]?.label, key].filter(Boolean)]);
     /** Close any open fullscreen card (a thrown check must not leave the overlay over the next section). */
     const closeOverlay = async () => {
       for (let i = 0; i < 3 && await page.locator('[data-lab-fullscreen]').count(); i++) {
@@ -3548,17 +3640,28 @@ async function main() {
         ok(`lab board set completes the multi-block cards (${slug})`, /Board saved/.test(setOut), setOut.slice(0, 600));
       }
 
-      // The preset card: breakdown + tabs (the pages, then one segments tab per dim), 12x12.
+      // The preset card: breakdown + tabs (the pages, then one segments tab per dim), 12x18.
       const pc = fileCard(X, 'x-explorer');
       const blocks = (pc?.blocks ?? []).map(normBlock);
       const tabs = blocks[1]?.tabs ?? [];
-      ok('the preset card is a breakdown over tabs Daily, Benchmark, Flow, Steps and one Segments tab per dim',
-        blocks[0]?.type === 'breakdown' && blocks[1]?.type === 'tabs' && JSON.stringify(tabs.map((t) => t.label)) === JSON.stringify(PRESET_TABS),
+      ok('the preset card is a breakdown (funnel picker, counts, the card locale) over the pages and one Segments tab per dim',
+        blocks[0]?.type === 'breakdown' && blocks[0]?.options?.picker === true && blocks[0]?.options?.counts === true && blocks[0]?.options?.locale === 'en'
+          && blocks[1]?.type === 'tabs' && JSON.stringify(tabs.map((t) => t.label)) === JSON.stringify(PRESET_TABS),
         JSON.stringify(blocks).slice(0, 600));
-      const kinds = tabs.map((t) => t.blocks.map((b) => `${b.type}${b.options.layout ? `:${b.options.layout}` : ''}${b.options.by ? `:${b.options.by}` : ''}`).join('+'));
-      ok('the preset pages are trend, benchmark, funnel flow, funnel bars and segments by each dim',
-        JSON.stringify(kinds) === JSON.stringify(['trend', 'benchmark', 'funnel:flow', 'funnel:bars', 'segments:platform', 'segments:language', 'segments:country']), JSON.stringify(kinds));
-      ok('the preset card is 12x12 and bound to the insight', pc?.at?.w === 12 && pc?.at?.h === 12 && pc?.insight === EXPLORER, JSON.stringify(pc?.at));
+      ok('every preset tab carries its labelKey (lab.explorer.tab.<key>)',
+        JSON.stringify(tabs.map((t) => t.labelKey ?? null)) === JSON.stringify(PRESET_TAB_DEFS.map(([key]) => `lab.explorer.tab.${key}`)),
+        JSON.stringify(tabs.map((t) => t.labelKey ?? null)));
+      const kindOf = (b) => [b.type, b.options.layout, b.options.compare, b.options.table === true ? 'table' : null, b.options.by].filter(Boolean).join(':');
+      const kinds = tabs.map((t) => t.blocks.map(kindOf).join('+'));
+      ok('the preset pages: trend, benchmark, ranking, flow, steps table, compare lanes, payment, access, segments by each dim',
+        JSON.stringify(kinds) === JSON.stringify([
+          'trend:table', 'benchmark', 'ranking', 'funnel:flow:off', 'funnel:bars:off:table', 'funnel:bars:lanes', 'payment', 'access',
+          'segments:platform', 'segments:language', 'segments:country',
+        ]), JSON.stringify(kinds));
+      ok('the Daily page draws bars, Flow / Steps / Compare mark the worst drop',
+        tabs[0]?.blocks[0]?.options?.chart === 'bar' && [3, 4, 5].every((i) => tabs[i]?.blocks[0]?.options?.markWorst === true),
+        JSON.stringify(tabs.map((t) => t.blocks[0]?.options)));
+      ok('the preset card is 12x18 and bound to the insight', pc?.at?.w === 12 && pc?.at?.h === 18 && pc?.insight === EXPLORER, JSON.stringify(pc?.at));
 
       // Refusals: --preset with --block, and an insight with no funnel yet.
       const both = dc(['lab', 'board', 'add-card', X, '--preset', 'funnel-explorer', '--insight', EXPLORER, '--block', '{"text": {"markdown": "x"}}'], { allowFail: true });
@@ -3616,6 +3719,7 @@ async function main() {
       ok('the skill docs have a Funnel explorer section', docSection.length > 200, String(docSection.length));
       const published = {
         'explorer fixture': readFileSync(EXPLORER_FIXTURE, 'utf-8'), 'app fixture': readFileSync(APP_FIXTURE, 'utf-8'),
+        'snapshot fixture': readFileSync(SNAPSHOT_FIXTURE, 'utf-8'),
         'preset card': JSON.stringify(pc), 'board GET': res.text, 'proof board GET': (await getBoard(XP)).text, 'skill docs (Funnel explorer)': docSection,
       };
       const leaks = [];
@@ -3715,12 +3819,17 @@ async function main() {
       await ex.scrollIntoViewIfNeeded();
       await sleep(400);
       const labels = await ex.locator('[data-lab-tab]').allInnerTexts();
-      ok('one page: the preset card shows its tabs in order', JSON.stringify(labels.map((l) => l.trim())) === JSON.stringify(PRESET_TABS), JSON.stringify(labels));
+      ok('one page: the preset card shows its tabs in order (Access hidden: the demo set has no access data)',
+        JSON.stringify(labels.map((l) => l.trim())) === JSON.stringify(VISIBLE_TABS), JSON.stringify(labels));
+      const keys = await ex.locator('[data-lab-tab]').evaluateAll((els) => els.map((e) => e.getAttribute('data-lab-tab-key')));
+      ok('one page: every tab button carries its data-lab-tab-key, in order',
+        JSON.stringify(keys) === JSON.stringify(VISIBLE_TABS.map(tabKeyOf)), JSON.stringify(keys));
+      ok('one page: the Access tab is not drawn (no access data, never zeros)', await ex.locator('[data-lab-tab-key="access"]').count() === 0);
       const t0 = Date.now();
       await selectChips(ex, SEL);
       const bad = [];
       let chipTabSyncs = [];
-      for (const label of PRESET_TABS) {
+      for (const label of VISIBLE_TABS) {
         await openTab(ex, label);
         const m = await xin(ex);
         const chipsKept = JSON.stringify(pressed(m)) === JSON.stringify(SEL);
@@ -3729,7 +3838,7 @@ async function main() {
         if (label === 'Daily') {
           const date = twoDates(selSeg.daily)[0];
           const key = m.trend?.metrics.find((x) => x.on)?.key ?? Object.keys(selSeg.metrics)[0];
-          const tip = await trendTipAt(ex, date);
+          const tip = await trendTableAt(ex, date, key);
           const want = selSeg.daily.find((d) => d.t === date)?.m[key];
           drew = m.trend?.state === 'ok' && shownEquals(tip.value, want);
           detail = `${key} ${date}: ${tip.detail} want ${want}`;
@@ -3741,8 +3850,22 @@ async function main() {
           drew = JSON.stringify(users(m.flow?.stages ?? [])) === JSON.stringify(selSeg.steps.map((s) => s.users));
           detail = `${JSON.stringify(users(m.flow?.stages ?? []))} want ${JSON.stringify(selSeg.steps.map((s) => s.users))}`;
         } else if (label === 'Steps') {
-          drew = JSON.stringify(m.bars.map((b) => [b.label, b.users])) === JSON.stringify(pathOf(selSeg));
-          detail = `${JSON.stringify(m.bars.map((b) => b.users))} want ${JSON.stringify(pathOf(selSeg).map((p) => p[1]))}`;
+          // The Steps page is the steps table: one row per step, keyed, the worst drop marked once.
+          const want = selSeg.steps.map((s) => [s.key, s.users]);
+          drew = JSON.stringify(m.steps.map((s) => [s.key, s.users])) === JSON.stringify(want) && m.steps.filter((s) => s.worst).length === 1;
+          detail = `${JSON.stringify(m.steps.map((s) => [s.key, s.users, s.worst]))} want ${JSON.stringify(want)}`;
+        } else if (label === 'Ranking') {
+          // Ranking is across funnels and ignores the selection: one row per funnel with a path over the floor.
+          drew = m.ranking.rows.length >= 1 && m.ranking.rows.every((r) => r.funnel && r.value !== null);
+          detail = JSON.stringify(m.ranking);
+        } else if (label === 'Compare') {
+          // No lanes pinned on the preset card: the Compare page says how to pin, it draws no lanes.
+          drew = !m.lanes && /pin/i.test(m.emptyText.join(' '));
+          detail = `lanes ${JSON.stringify(m.lanes)}; empty ${JSON.stringify(m.emptyText)}`;
+        } else if (label === 'Payment') {
+          // The demo set carries no payment: the empty state names the missing part, never a 0% rate.
+          drew = m.payment.empty === 'payment' && m.payment.rate === null;
+          detail = JSON.stringify(m.payment);
         } else if (label === 'Platform' || label === 'Language') {
           const dim = label.toLowerCase();
           const active = m.seg?.rows.find((r) => r.active);
@@ -3755,7 +3878,7 @@ async function main() {
         }
         ok(`one page: the ${label} tab draws the selected path`, chipsKept && drew, `chips ${JSON.stringify(pressed(m))}; ${detail}`);
         const clip = await ex.evaluate(clippedTextInPage);
-        ok(`one page: the ${label} tab has no clipped text (12x12 preset card)`, clip.length === 0, clip.slice(0, 5).join(' | '));
+        ok(`one page: the ${label} tab has no clipped text (12x18 preset card)`, clip.length === 0, clip.slice(0, 5).join(' | '));
         if (!(chipsKept && drew)) bad.push(label);
         await explorerShotBoth(`tab-${label.toLowerCase()}`, (path) => ex.screenshot({ path }));
       }
@@ -3993,7 +4116,7 @@ async function main() {
       const cplDelta = tik.metrics.cost_per_lead.v - tik.metrics.cost_per_lead.prev;
       const cplTrend = cplDelta < 0 ? 'improving' : cplDelta > 0 ? 'worsening' : 'flat';
       ok('benchmark: better: lower flips the trend word', cpl?.trend === cplTrend && (cpl?.trendWord ?? '').toLowerCase().includes(cplTrend), `${cpl?.trend} "${cpl?.trendWord}" want ${cplTrend} (delta ${cplDelta.toFixed(2)})`);
-      // The preset card itself (12x12): every row prints its sources, its floor / target numbers and the previous window.
+      // The preset card itself (12x18): every row prints its sources, its floor / target numbers and the previous window.
       const printBad = [];
       for (const r of rows) {
         const mv = tik.metrics[r.key];
@@ -4071,12 +4194,12 @@ async function main() {
         `${JSON.stringify(worstShown)} want ${worstWant}`);
       await openTab(ex, 'Daily');
 
-      // Trend: the slice's exact daily value at 2 dates (the preset's Daily page under the selection).
+      // Trend: the slice's exact daily value at 2 dates (the preset's Daily page under the selection: its day table).
       const trendKey = (await xin(ex)).trend?.metrics.find((x) => x.on)?.key ?? 'visit_to_lead';
       for (const date of twoDates(selSeg.daily)) {
-        const tip = await trendTipAt(ex, date);
+        const tip = await trendTableAt(ex, date, trendKey);
         const want = selSeg.daily.find((d) => d.t === date)?.m[trendKey];
-        ok(`trend: hover shows the slice's exact daily value (${date})`, shownEquals(tip.value, want), `${trendKey}: ${tip.detail} want ${want}`);
+        ok(`trend: the Daily page's day table shows the slice's exact daily value (${date})`, shownEquals(tip.value, want), `${trendKey}: ${tip.detail} want ${want}`);
       }
       // The metric switch changes the series (the Daily card: the funnel level).
       const daily = card('x-daily');
@@ -4107,9 +4230,10 @@ async function main() {
       const byTone = {};
       for (const c of toned) (byTone[c.tone] ??= new Set()).add(c.bg);
       const tones = Object.keys(byTone);
-      ok('segments: band tones wash the cells (a tinted background per tone)', toned.length > 0 && toned.every((c) => !transparent(c.bg))
-        && (tones.length < 2 || tones.every((t, i) => i === 0 || [...byTone[t]].every((bg) => !byTone[tones[0]].has(bg)))),
-        JSON.stringify(Object.fromEntries(tones.map((t) => [t, [...byTone[t]]]))));
+      // A band tone is a dot beside the figure, never a full-cell wash (a washed column carries no information).
+      ok('segments: band tones mark each toned cell with its tone dot, the cell itself unwashed',
+        toned.length > 0 && toned.every((c) => c.dot === c.tone && transparent(c.bg)) && tones.length >= 2,
+        JSON.stringify(toned.map((c) => [c.tone, c.dot, c.bg]).slice(0, 12)));
       const low = (s?.rows ?? []).filter((r) => r.low);
       const lowWant = platforms.filter((p) => (fixtureSegment(quiz, { platform: p, language: 'EN' })?.users ?? Infinity) < PLUS_LOW_SAMPLE);
       ok('segments: a low-sample row is faded, the others are not',
@@ -4288,10 +4412,13 @@ async function main() {
           && benchPairs.every(([k, st, d]) => d && d.status === st && (d.value === null ? cb.rows.find((r) => r.key === k).current === null : shownEquals(d.value, cb.rows.find((r) => r.key === k).current))),
         JSON.stringify(benchPairs.map(([k, st, d]) => [k, st, d?.status, d?.value, cb.rows.find((r) => r.key === k)?.current])));
       const cs = cliOf('Steps');
-      ok('CLI parity: --select step users equal the DOM', JSON.stringify((cs?.slice?.steps ?? []).map((s) => s.users)) === JSON.stringify(domSteps.bars.map((b) => b.users)),
-        `${JSON.stringify(cs?.slice?.steps?.map((s) => s.users))} vs ${JSON.stringify(domSteps.bars.map((b) => b.users))}`);
+      // The Steps page is the steps table: compared row by row on the step key.
+      const cliPairs = (cs?.slice?.steps ?? []).map((s) => [s.key, s.users]);
+      const domPairs = domSteps.steps.map((s) => [s.key, s.users]);
+      ok('CLI parity: --select step users equal the DOM', cliPairs.length > 0 && JSON.stringify(cliPairs) === JSON.stringify(domPairs),
+        `${JSON.stringify(cliPairs)} vs ${JSON.stringify(domPairs)}`);
       const cliWorst = cs?.drops?.find((d) => d.worst)?.key ?? null;
-      const domWorst = quiz.steps.find((s) => s.label === domSteps.bars.find((b) => b.worst)?.label)?.key ?? null;
+      const domWorst = domSteps.steps.find((s) => s.worst)?.key ?? null;
       ok('CLI parity: --select worst step equals the DOM', cliWorst !== null && cliWorst === domWorst, `${cliWorst} vs ${domWorst}`);
       const cg = cliOf('Platform');
       const segPairs = (cg?.rows ?? []).map((r, i) => [r, domSeg?.rows[i]]);
@@ -4397,6 +4524,7 @@ async function main() {
   console.log('\nmeasured (passing demo-finding checks):');
   for (const r of results) if (r.pass && MEASURED.test(r.name) && r.measured) console.log(`  ${r.name} — ${r.measured.slice(0, 260)}`);
   console.log(`shots: ${SHOTS}`);
+  console.log(`sections run (${sectionsRan.length}): ${sectionsRan.join(' | ')}`);
   const fails = results.filter((r) => !r.pass);
   if (!MUTATION) {
     console.log(fails.length ? `${fails.length} FAILED of ${results.length}` : `all ${results.length} green`);

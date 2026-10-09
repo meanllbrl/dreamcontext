@@ -20,18 +20,23 @@ interface TabsCardLike {
 }
 
 /**
- * Where a funnel-explorer card opens on a whiteboard: its Steps tab (the bars with users, % of
- * the top step and % of the previous step on every row), found by content, not by position, so a
- * re-ordered preset still opens on the lane. `{ path: '1', tab: 3 }` for today's preset; null when
- * the card has no such tab (it then opens on its first, as in Lab).
+ * Where a funnel-explorer card opens on a whiteboard: the tab that draws its pinned lanes, found
+ * by content, not by position, so a re-ordered preset still opens on the lanes. That is the
+ * Compare tab (a funnel block with `compare: 'lanes'`); a card without one opens on its first
+ * bars funnel (an older preset, whose Steps tab drew the lanes). `{ path: '1', tab: 5 }` for
+ * today's preset; null when the card has no funnel tab (it then opens on its first, as in Lab).
  */
 export function lanesTab(card: TabsCardLike): { path: string; tab: number } | null {
   const blocks = card.blocks ?? [];
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    if (b.type !== 'tabs') continue;
-    const tab = (b.tabs ?? []).findIndex((t) => t.blocks.some((c) => c.type === 'funnel' && (c.options?.layout ?? 'bars') === 'bars'));
-    if (tab >= 0) return { path: String(i), tab };
-  }
-  return null;
+  const find = (match: (c: { type: string; options?: Record<string, unknown> }) => boolean) => {
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (b.type !== 'tabs') continue;
+      const tab = (b.tabs ?? []).findIndex((t) => t.blocks.some(match));
+      if (tab >= 0) return { path: String(i), tab };
+    }
+    return null;
+  };
+  return find((c) => c.type === 'funnel' && c.options?.compare === 'lanes')
+    ?? find((c) => c.type === 'funnel' && (c.options?.layout ?? 'bars') === 'bars');
 }

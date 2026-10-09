@@ -25,6 +25,8 @@ const COPY: Record<string, string> = {
   'lab.blocks.explorer.unknownMetrics': 'Not in the data: {keys}',
   'lab.blocks.explorer.notSplit': 'Not split by {dims}',
   'lab.blocks.explorer.lowSample': 'Low sample: {n} users',
+  'lab.explorer.emptyColumn': '{metric} is not carried for this axis.',
+  'lab.explorer.fill': 'To fill it: {hint}',
 };
 
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
@@ -103,10 +105,15 @@ describe('segments: one row per dim value under the cross-selection', () => {
     const html = render({ by: 'platform' });
     expect(rowKeys(html)).toEqual(['Meta Ads', 'TikTok Ads', 'Unattributed']);
     expect(html).toContain('data-by="platform"');
-    for (const label of ['Platform', 'Users', 'Lead rate', 'Cost per lead', 'Checkout to purchase']) expect(html).toContain(label);
+    for (const label of ['Platform', 'Users', 'Lead rate', 'Cost per lead']) expect(html).toContain(label);
+    // A metric no row carries is one note above the table, not a column of dashes.
+    expect(html).toContain('data-lab-empty="column"');
+    expect(html).toContain('Checkout to purchase is not carried for this axis.');
+    expect(html).not.toContain('data-col="checkout_to_purchase"');
     expect(row(html, 'Meta Ads')).toContain('3,000');
-    expect(cell(row(html, 'Meta Ads'), 'lead_rate')).toContain('48%');
-    expect(cell(row(html, 'Meta Ads'), 'lead_rate')).toContain('+4%');
+    // One formatter: a rate carries one decimal and its change is in points.
+    expect(cell(row(html, 'Meta Ads'), 'lead_rate')).toContain('48.0%');
+    expect(cell(row(html, 'Meta Ads'), 'lead_rate')).toContain('+4.0 pp');
   });
 
   it('under a selection on another axis each row is that exact intersection, looked up, never summed', () => {
@@ -114,7 +121,7 @@ describe('segments: one row per dim value under the cross-selection', () => {
     const expected = segmentRows(frame(), null, 'platform', { language: 'EN' }, null);
     expect(rowKeys(html)).toEqual(expected.map((r) => r.value));
     expect(row(html, 'Meta Ads')).toContain('1,800');
-    expect(cell(row(html, 'Meta Ads'), 'lead_rate')).toContain('50%');
+    expect(cell(row(html, 'Meta Ads'), 'lead_rate')).toContain('50.0%');
     // TikTok Ads x EN is unmeasured: a dash with the reason, not the platform's own 2,000.
     const tiktok = row(html, 'TikTok Ads');
     expect(tiktok).toContain('data-lab-unmeasured');
@@ -160,16 +167,22 @@ describe('segments: band washes, low sample, not measured', () => {
 
   it('an unmeasured metric or slice is a dash with its reason, never a 0', () => {
     const html = render({ by: 'platform' });
-    const denom = cell(row(html, 'Meta Ads'), 'checkout_to_purchase');
+    const denom = cell(row(html, 'Unattributed'), 'cost_per_lead');
     expect(denom).toContain('data-lab-seg-unmeasured');
-    // The Meta Ads segment carries no checkout_to_purchase of its own: its reason is the segment's (none), never the funnel level's.
+    // The Unattributed segment carries no cost_per_lead of its own: its reason is the segment's (none), never the funnel level's.
     expect(denom).toContain('Not measured: No measured path for this combination.');
     expect(denom).not.toContain(DENOM);
     expect(denom).toContain('tabindex="0"');
-    const tiktok = row(render({ by: 'platform' }, { language: 'EN' }), 'TikTok Ads');
+    const under = render({ by: 'platform' }, { language: 'EN' });
+    const tiktok = row(under, 'TikTok Ads');
     expect(tiktok).not.toMatch(/>0%?</);
     expect(tiktok).not.toContain('$0');
-    expect((tiktok.match(/data-lab-seg-unmeasured/g) ?? []).length).toBe(4);
+    // An unmeasured row: a dash for its users, then ONE muted line across the metric columns says why,
+    // never a row of identical dashes.
+    expect((tiktok.match(/data-lab-seg-unmeasured/g) ?? []).length).toBe(1);
+    expect(tiktok).toContain('data-lab-seg-row-why=""');
+    expect(tiktok).toContain(`Not measured: ${FEW}`);
+    expect(tiktok).not.toContain('data-metric="');
   });
 });
 
@@ -262,50 +275,18 @@ describe('segments: readable table (no mid-word breaks, sideways scroll, light t
     expect(rule('.lab-seg-figure')).not.toContain('flex-wrap');
   });
 
-  // Tints: the tone mixed a little into the card surface; body text on it must read >= 4.5:1 in light AND dark.
-  const tokens = readFileSync(join(__dirname, '../../dashboard/src/styles/tokens.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  const darkAt = tokens.indexOf("[data-theme='dark']");
-  const decls = (text: string) => Object.fromEntries([...text.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
-  const light = decls(tokens.slice(0, darkAt));
-  const dark = { ...light, ...decls(tokens.slice(darkAt)) };
-  const resolve = (map: Record<string, string>, v: string): string => {
-    const m = /^var\((--[\w-]+)\)$/.exec(v.trim());
-    return m ? resolve(map, map[m[1]]) : v.trim();
-  };
-  const rgb = (c: string): [number, number, number] => {
-    let m = /^#([0-9a-f]{6})$/i.exec(c);
-    if (m) return [0, 2, 4].map((i) => parseInt(m![1].slice(i, i + 2), 16)) as [number, number, number];
-    m = /^hsl\(([\d.]+)\s+([\d.]+)%\s+([\d.]+)%\)$/i.exec(c);
-    if (m) {
-      const [h, sat, l] = [Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100];
-      const k = (n: number) => (n + h / 30) % 12;
-      const a = sat * Math.min(l, 1 - l);
-      const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-      return [f(0), f(8), f(4)].map((x) => Math.round(x * 255)) as [number, number, number];
+  // Tone is a dot before the figure (and the tone in words in the title), never a wash over the
+  // cell: a column of tinted cells carried no more than the dots and read as noise (the funnel
+  // explorer's design rule against the reference's saturated washes).
+  it('draws the band tone as a dot, not a cell wash', () => {
+    for (const tone of ['below', 'between', 'above']) {
+      expect(CSS).not.toContain(`td[data-tone='${tone}']`);
     }
-    throw new Error(`colour not parsed: ${c}`);
-  };
-  const lum = ([r, g, b]: number[]) => {
-    const ch = (x: number) => { const s = x / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
-    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
-  };
-  const contrast = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
-
-  for (const [tone, token] of [['below', '--color-error'], ['between', '--color-warning'], ['above', '--color-success']] as const) {
-    it(`the ${tone} tint is light and keeps body text >= 4.5:1 in both themes`, () => {
-      const r = rule(`.lab-seg-table[data-bands] td[data-tone='${tone}']`);
-      const m = new RegExp(`background: color-mix\\(in srgb, var\\(${token}\\) (\\d+)%, var\\(--color-bg-secondary\\)\\)`).exec(r);
-      expect(m, r).not.toBeNull();
-      const pct = Number(m![1]) / 100;
-      expect(pct).toBeLessThanOrEqual(0.12);
-      for (const map of [light, dark]) {
-        const hue = rgb(resolve(map, map[token]));
-        const surface = rgb(resolve(map, map['--color-bg-secondary']));
-        const tint = hue.map((c, i) => c * pct + surface[i] * (1 - pct));
-        expect(contrast(rgb(resolve(map, map['--color-text'])), tint)).toBeGreaterThanOrEqual(4.5);
-      }
-    });
-  }
+    expect(CSS).not.toMatch(/td\[data-tone[^{]*\{[^}]*background/);
+    expect(rule('.lab-seg-figure .lab-x-dot')).toContain('align-self: center');
+    const html = render({ by: 'platform' });
+    expect(cell(row(html, 'Meta Ads'), 'lead_rate')).toContain('<span class="lab-x-dot" data-tone="above"');
+  });
 });
 
 describe('segments: three levels and row air (owner review)', () => {
