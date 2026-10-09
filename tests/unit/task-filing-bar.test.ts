@@ -1,9 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-
-// These tests drive the verdict MECHANICS with hand-placed cosines (0.91–0.97 band, 0.80 floor…), which
-// are e5-small's scale: pin the e5 profile so the thresholds they were written against are in force.
-// Gemma's own defaults are covered in embedder-profiles.test.ts.
-vi.hoisted(() => { process.env.DREAMCONTEXT_EMBED_MODEL = 'e5-small'; });
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,16 +13,15 @@ import { SLEEP_LOCK_STALE_MS } from '../../src/lib/sleep-consolidation.js';
 
 // The embedder module is mocked so this file NEVER loads the real ONNX model and
 // never depends on whether THIS machine happens to have the 113 MB weights on
-// disk. `isEmbedModelComplete` (graph AND weights) is pinned by `probe` — TRUE unless a test flips it: it is clause 1 of the
+// disk. `isEmbedModelDownloaded` is pinned TRUE on purpose: it is clause 1 of the
 // availability check, and pinning it is what makes the clause-3 assertion below
 // ("a usable cache that does not cover the task corpus is still no-index") a real
 // regression guard rather than a machine-dependent accident. Every test that
 // wants the gates to run injects its own deterministic `embed`.
-const probe = vi.hoisted(() => ({ complete: true }));
 vi.mock('../../src/lib/embeddings/embedder.js', () => ({
   EMBED_MODEL: 'test-model',
   EMBED_DIMS: 3,
-  isEmbedModelComplete: () => probe.complete,
+  isEmbedModelDownloaded: () => true,
   embeddingsAvailable: async () => true,
   embedPassages: async () => null,
   embedQuery: async () => null,
@@ -57,7 +51,6 @@ beforeEach(() => {
   delete process.env.DREAMCONTEXT_AUTO_SLEEP;
   delete process.env.DREAMCONTEXT_DECLINED_MATCH;
   delete process.env.DREAMCONTEXT_FILING_BAR_SEMANTIC;
-  probe.complete = true;
 });
 afterEach(() => {
   rmSync(project, { recursive: true, force: true });
@@ -393,19 +386,6 @@ describe('when the semantic gates cannot run, the bar passes AND SAYS SO', () =>
     expect(v.allowed).toBe(true);
     expect(v.neighbor).toEqual({ state: 'unavailable', why: 'no-index' });
     expect(v.notices?.[0]).toContain('neighbor check skipped');
-  });
-
-  it('a model whose weights are missing is unavailable — checked BEFORE the index, so no call can re-open a fetch', async () => {
-    writeTask('the-twin', 'The twin', atCosine(0.98));
-    const ask = () => assertTaskFilingBar({
-      contextRoot: ctx, actor: 'sleep', name: 'A brand new concern', why: CANDIDATE_WHY,
-    });
-    probe.complete = true;
-    expect((await ask()).neighbor).toEqual({ state: 'unavailable', why: 'no-index' }); // model fine → falls through to the index clause
-    probe.complete = false;
-    const v = await ask();
-    expect(v.allowed).toBe(true);
-    expect(v.neighbor).toEqual({ state: 'unavailable', why: 'model-unavailable' });
   });
 
   it('the kill switch turns them off even on a warm vault', async () => {

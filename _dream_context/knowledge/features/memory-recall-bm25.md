@@ -2,7 +2,7 @@
 id: feat_mem0Recall1
 status: active
 created: '2026-05-23'
-updated: '2026-10-07'
+updated: '2026-07-30'
 released_version: v0.14.0
 tags:
   - 'domain:knowledge'
@@ -29,10 +29,6 @@ date: '2026-05-23'
 
 dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks + knowledge index every session, but once the corpus grows past ~50 docs, users need a way to ask "where did we decide X?" or "what do we know about Y?" without scrolling through the snapshot or grepping by hand. The original exploration considered integrating mem0 (vector store + LLM-extracted facts), but three independent reviewers (critic, pragmatist, security) converged on rejecting it: mem0 adds a Python + Ollama runtime cliff, every `add()` is a 1.5–4s non-deterministic LLM call, and its native dedup is documented as unreliable. dreamcontext's content is *already* curated atomic facts (knowledge files, PRDs, closed tasks, LIFO memory entries) — the LLM extraction step mem0 provides is solving a problem dreamcontext has already solved. A deterministic BM25 ranker over the existing corpus gives ~80% of the value at 1% of the complexity, with zero new dependencies, full version-control compatibility, and instant recall.
 
-## Current state (2026-10-07) — read first
-
-**Hybrid recall is the default** (BM25 + local embeddings, EmbeddingGemma-300m; plain BM25 until the model and the vault's index are ready) and **the Haiku mode is retired**. Modes are `hybrid | raw | off`; a stored or env `haiku` is read as `hybrid`. Measured on three corpora with blind gold sets: pooled held-out MRR 0.714 → 0.793, Turkish r@3 50 → 65, search ≥ 3.4× and hook raw overhead ~7× faster (`eval/RESULTS.md`). Where a section below still talks about Haiku or an "experimental, opt-in" hybrid, it is history and carries a strike-through or a supersession note.
-
 ## User Stories
 
 - [x] As a developer using dreamcontext, I can run `dreamcontext memory recall "<query>"` and see the top-5 most relevant docs across knowledge files, feature PRDs, task files, memory entries, and CHANGELOG entries.
@@ -58,7 +54,7 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] As a developer, `memory status` shows per-channel counts plus a histogram of how many docs sit at each importance level.
 - [x] As a user with connected peer vaults, my own automations are recallable locally but a peer's automations are never served across the boundary — their manifest bodies are the prompts their headless sessions run.
 
-### Hybrid/Embedding Layer (v0.14.0 experimental → the default since 2026-10-07)
+### Hybrid/Embedding Layer (v0.14.0 experimental, opt-in)
 
 - [x] As a Turkish-speaking developer, I can enable hybrid recall mode and see dramatically improved cross-lingual results (held-out Turkish recall@1 20→40%, recall@5 90→100%) because the multilingual embedding model natively maps Turkish and English into the same semantic space.
 - [x] As a developer writing paraphrase queries, hybrid mode improves my recall (train paraphrase recall@1 66.7→83.3%) because dense vectors understand meaning, not just keyword overlap.
@@ -78,27 +74,27 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] Zero new npm dependencies; uses existing `fast-glob` + `gray-matter`.
 - [x] Stopword filtering covers English + light Turkish.
 - [x] Returns a clear "No hits" message when query matches nothing.
-- [x] ~~`DREAMCONTEXT_RECALL_MODE=haiku` (default): single `claude --model haiku -p` call …~~ _(retired 2026-10-07 — the default is now `hybrid`: BM25 + local embeddings, plain BM25 until the model and the vault's index are ready; a stored/env `haiku` is read as `hybrid`)_
-- [x] `DREAMCONTEXT_RECALL_MODE=raw`: always use BM25 (no embedding step, no external process).
+- [x] `DREAMCONTEXT_RECALL_MODE=haiku` (default): single `claude --model haiku -p` call with corpus index in system prompt; returns 0–3 doc keys as `type/slug`; falls back to raw BM25 when `claude` CLI unavailable.
+- [x] `DREAMCONTEXT_RECALL_MODE=raw`: always use BM25 (no Haiku call, no external process).
 - [x] `DREAMCONTEXT_RECALL_MODE=off`: disable recall injection entirely.
-- [x] ~~Haiku mode: corpus index capped at 8,000 chars with `[...truncated]` note to avoid unbounded `--system-prompt` length.~~ _(retired 2026-10-07 with the Haiku mode)_
-- [x] ~~Haiku call uses `--setting-sources ""` `--tools ""` `--no-session-persistence` (bare, stateless invocation; no project context leakage into sub-process).~~ _(retired 2026-10-07 with the Haiku mode)_
-- [x] ~~`stripCodeBlock` regex is case-insensitive (`/i`) to handle `\`\`\`JSON` and `\`\`\`json` both.~~ _(retired 2026-10-07 with the Haiku mode)_
-- [x] ~~Haiku catch block logs to `console.error` when `DREAMCONTEXT_DEBUG=1`; otherwise silently falls back.~~ _(retired 2026-10-07 with the Haiku mode)_
-- [x] ~~Empty-corpus case returns `null` immediately (BM25 fallback path) without calling the executor.~~ _(retired 2026-10-07 with the Haiku mode)_
+- [x] Haiku mode: corpus index capped at 8,000 chars with `[...truncated]` note to avoid unbounded `--system-prompt` length.
+- [x] Haiku call uses `--setting-sources ""` `--tools ""` `--no-session-persistence` (bare, stateless invocation; no project context leakage into sub-process).
+- [x] `stripCodeBlock` regex is case-insensitive (`/i`) to handle `\`\`\`JSON` and `\`\`\`json` both.
+- [x] Haiku catch block logs to `console.error` when `DREAMCONTEXT_DEBUG=1`; otherwise silently falls back.
+- [x] Empty-corpus case returns `null` immediately (BM25 fallback path) without calling the executor.
 - [x] CHANGELOG schema supports optional `summary` (≤200 char soft cap), `references[]` (prefixed: `commit:|file:|knowledge:|feature:|task:|url:`), and `supersedes` (entry-id pointer for replaces-this-decision relationships). All three are optional and backwards-compatible.
 - [x] CHANGELOG entries are indexed in the recall corpus as their own `changelog` type — searchable via `recall` and the UserPromptSubmit hook.
 - [x] `memory remember "<text>"` writes a CHANGELOG entry (`type=note`, `scope=quick` by default; override via `--type`/`--scope`). The LIFO marker in `2.memory.md` is gone; quick captures land in CHANGELOG.json where they participate in recall.
 - [x] SessionStart snapshot renders the recent CHANGELOG section as a tiered block: top 3 entries detailed (summary + ~300 char body), next 10 titles-only under an "Older" subheading. Tier sizes are configurable via constants at the top of `src/cli/commands/snapshot.ts`.
 - [x] UserPromptSubmit memory-recall hook is **ON by default** on every non-trivial user prompt; opt out with `DREAMCONTEXT_MEMORY_HOOK=0`.
-- [x] ~~As a developer, I can set `DREAMCONTEXT_RECALL_MODE=haiku` (default) to use a single Haiku LLM call for semantic-intent-aware recall instead of raw keyword BM25, with automatic fallback to BM25 when the `claude` CLI is unavailable.~~ _(retired 2026-10-07 with the Haiku mode)_
+- [x] As a developer, I can set `DREAMCONTEXT_RECALL_MODE=haiku` (default) to use a single Haiku LLM call for semantic-intent-aware recall instead of raw keyword BM25, with automatic fallback to BM25 when the `claude` CLI is unavailable.
 
 - [x] BM25F field weighting: title×3, tags×2, description×2, body×1 (feeds `rankScore` only; raw `score` stays flat-BM25 to preserve hook gate scale).
 - [x] Conservative EN + TR morphological stemming applied symmetrically at index AND query time (`stemEn()` + `stemTr()` in `tokenize()`).
 - [x] Query-time synonym expansion via hand-curated stemmed map (`recall-synonyms.ts`); synonyms are pre-stemmed through the same pipeline as the index.
 - [x] Recency multiplier: exponential half-life 120 days, floor 0.85 (tie-breaker, not content override). `completed`/`archived` status gets 0.85× `rankScore` penalty.
 - [x] `hit.score` = raw flat-BM25 (unchanged scale vs v1); `hit.rankScore` = derived sorting signal. All v2 signals feed `rankScore` only. Regression-locked by `recall-weighting.test.ts`.
-- [x] ~~Haiku corpus index is relevance-ranked (BM25 score against query) before slicing to 8K chars — no longer positional (which silently omitted ~half the corpus).~~ _(retired 2026-10-07 with the Haiku mode)_
+- [x] Haiku corpus index is relevance-ranked (BM25 score against query) before slicing to 8K chars — no longer positional (which silently omitted ~half the corpus).
 - [x] Link-aware 2-hop boost (`buildLinkAdjacency()`, `LINK_DECAY=0.3`) built and unit-tested; shipped OFF by default (`enableLinkBoost: false`) pending real wikilinks in corpus.
 - [x] Auto transcript digest on SessionStart catch-up path (`session-digest.ts`); bounded ≤8KB; per-session try/catch.
 - [x] Auto-salience detectors (`salience.ts`): user-correction (salience 2), error→fix (salience 1), decision-keyword (salience 2); EN+TR; max 5 moments per session. Auto-bookmarks written to `.sleep.json`.
@@ -117,16 +113,16 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] PreCompact partial digest: on PreCompact hook, a bounded summary of in-progress work is written before context resets, ensuring continuity across compactions.
 - [x] Recall A/B harness (`scripts/recall-ab.ts`) runs engine comparisons on a frozen corpus (filters live captures + in-flight tasks) for deterministic measurement — required after discovering live corpus mutation caused false results.
 
-### Hybrid/Embedding Layer (v0.14.0 experimental → the default since 2026-10-07)
+### Hybrid/Embedding Layer (v0.14.0 experimental, opt-in)
 
-- [x] Local multilingual embedding model (`Xenova/multilingual-e5-small`, 384-dim, ~113 MB quantized) loads via `@huggingface/transformers` (optionalDependency, dynamic import, graceful BM25 fallback when unavailable). _(2026-10-07: the default model is now EmbeddingGemma-300m q8, 768-dim, ~294 MB, Gemma Terms of Use — `DREAMCONTEXT_EMBED_MODEL=e5-small` keeps this one; see [[decisions/decision-embedding-layer]].)_
+- [x] Local multilingual embedding model (`Xenova/multilingual-e5-small`, 384-dim, ~113 MB quantized) loads via `@huggingface/transformers` (optionalDependency, dynamic import, graceful BM25 fallback when unavailable).
 - [x] Content-hash chunk cache at `_dream_context/.embeddings/` (gitignored, never synced): heading-boundary markdown chunks (~200–380 words / ~130–512 tokens), SHA256 content hash as cache key, incremental refresh on file changes.
 - [x] Hybrid BM25+dense fusion via adaptive strategy: confident BM25 (top raw score ≥18) uses relative-score fusion (λ=0.1, preserves margins); low-confidence uses weighted RRF (0.6/0.4, lets dense rescue buried docs).
 - [x] Top-1 pin guard (`ADAPTIVE_PIN_MARGIN=1.35`): in RRF zone, a BM25 top-1 with ≥1.35× rankScore margin is pinned at rank 1 (prevents dense from overriding high-confidence lexical matches).
 - [x] Changelog docs excluded from dense channel (`DENSE_EXCLUDED_TYPES`): short pointer docs' focused vectors crowd out canonical docs — exclusion lifted dense-only held-out r@1 from 36.7→56.7.
 - [x] Incremental cache refresh: lazy at recall (~15ms when nothing changed), eager at sleep (via `sleep done` integration).
 - [x] Model cache at `~/.dreamcontext/models` (survives npm reinstalls); first download ~4 minutes one-time; cold start ~1s, warm single embed ~22ms, batched ~3ms/doc.
-- [x] `DREAMCONTEXT_RECALL_MODE=hybrid` / `dreamcontext recall hybrid` — **the default since 2026-10-07** (was opt-in; default `haiku` before that); degrades to BM25 when the model or this vault's index is not ready.
+- [x] `DREAMCONTEXT_RECALL_MODE=hybrid` or `dreamcontext recall hybrid` enables; default stays `haiku`; degrades to BM25 when model unavailable.
 - [x] A/B validated on frozen 60-query train + 30-query held-out gold sets: train r@1 76.7→81.7 (+5.0), held-out r@1 60.0→66.7 (+6.7), held-out r@5 90.0→96.7 (+6.7). Zero recall@k or MRR regressions anywhere.
 - [x] Per-category wins: Turkish/cross-lingual (held-out r@1 20→40, r@5 90→100), EN paraphrase (train r@1 66.7→83.3), recency (train r@1 +12.5). Exact-term/field-match byte-identical to BM25.
 - [x] E5 contract: queries prefixed `query: `, passages prefixed `passage: ` (model trained with these markers).
@@ -134,17 +130,15 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 
 ## Constraints & Decisions
 
-- **[2026-10-07]** **Decision: hybrid is the default recall mode; the Haiku mode is retired.** Measured on three corpora with blind gold sets (dc v1, dc 2026-10, h-f), frozen corpora and a pinned clock: pooled held-out MRR 0.714 (BM25) → 0.793, Turkish r@3 50 → 65, search ≥ 3.4× and hook raw overhead ~7× faster. The default model is EmbeddingGemma-300m q8 (e5-small selectable). "Never a surprise download on the first prompt" still holds: the hook only reads readiness and answers from BM25 until the model and index exist; SessionStart/`init`/`update` provision them in a detached `embed ensure` (`DREAMCONTEXT_EMBED_AUTO=0` opts out). Haiku (a cloud call per prompt, 10–27 s on a large vault) is removed — see [[haiku-recall-architecture]]. Full reasoning: [[decisions/decision-embedding-layer]], [[recall-engine-v2]] "Update (2026-10-07)", `eval/RESULTS.md`.
-- **[2026-10-07]** **Decision: model-specific constants live in the model profile.** Fusion cutoff/λ, the dense gate and the dedup/declined cosine gates are calibrated per embedding model (`src/lib/embeddings/profiles.ts`); the cache key carries the model + quantization so a switch falls back to BM25 until the index is rebuilt.
-- **[2026-07-07]** _(superseded 2026-10-07 — hybrid is now the default; the first-run rule below is kept by background provisioning, see the 2026-10-07 decision)_ **Decision (v0.14.0): hybrid recall shipped EXPERIMENTAL/OPT-IN, not default.** All four graduation gates were met (r@1/r@5/MRR up, exact-term preserved, zero category regression, acceptable latency), but first-run UX blocks default-on: a surprise 113MB download + 4-minute index on someone's first prompt is unacceptable. Rollout strategy: stay opt-in (`dreamcontext recall hybrid` or `DREAMCONTEXT_RECALL_MODE=hybrid`), then auto-enable hybrid only when the model + vault cache are already warm on the machine. This makes hybrid a strict invisible upgrade for users who tried it, without surprising new users. See [[decisions/decision-embedding-layer]].
+- **[2026-07-07]** **Decision (v0.14.0): hybrid recall shipped EXPERIMENTAL/OPT-IN, not default.** All four graduation gates were met (r@1/r@5/MRR up, exact-term preserved, zero category regression, acceptable latency), but first-run UX blocks default-on: a surprise 113MB download + 4-minute index on someone's first prompt is unacceptable. Rollout strategy: stay opt-in (`dreamcontext recall hybrid` or `DREAMCONTEXT_RECALL_MODE=hybrid`), then auto-enable hybrid only when the model + vault cache are already warm on the machine. This makes hybrid a strict invisible upgrade for users who tried it, without surprising new users. See [[decisions/decision-embedding-layer]].
 - **[2026-07-07]** **Decision: adaptive fusion over plain RRF.** Plain RRF (the original plan from the decision doc) was measured FIRST and killed: it regressed exact-term r@1 from 100→83.3 because rank fusion erases BM25's score margins. No global weight fixed it. The shipped fusion is an adaptive switch: confident BM25 (top raw ≥18) uses margin-preserving relative-score fusion; low-confidence uses weighted RRF so dense can rescue buried docs. Tuned on train, validated on held-out both times. Prevents the catastrophic exact-term regression while keeping the semantic wins.
 - **[2026-07-07]** **Decision: top-1 pin guard is forensically derived.** The worst EN regression (train paraphrase query that slipped rank 1→out-of-top-10 in v1) had a signature: BM25's top-1 led its runner-up by 1.55× on rankScore, while every case where dense *correctly* overrode BM25 had flat margins (1.05–1.32). The pin guard threshold (1.35×) sits between these distributions. Prevents dense from outvoting high-confidence lexical matches while still allowing it to rescue low-margin ties.
 - **[2026-06-10]** **Decision (2026-06-10): directed synonym bridges only.** Bidirectional synonym bridges measurably regressed topical-adjacency recall — adding 'fold'↔'consolidation' as bidirectional caused unrelated queries to hit sleep/consolidation docs. DIRECTED_BRIDGES enforces one-way paraphrase→canonical mapping only.
 - **Decision (2026-05-23): chose Path A over mem0 integration after 3-reviewer adversarial review.** Critic raised "premise not steel-manned" (mem0's LLM extraction solves a problem dreamcontext already solved). Pragmatist recommended cutting ~70% of the mem0 plan even in best case. Security flagged 5 critical hardening blockers (redaction order, embedding inversion, rebase data loss, finalizer crash, OpenAI exfil). Path A (BM25 over curated corpus) is deterministic, version-controllable, zero new deps. Full decision trace: see archived `/tmp/dreamcontext-mem0-{plan,decision}.md` + reviewer reports.
 - **No persistent index file.** BM25 inverted index is rebuilt in-memory on every `recall` call. With ≤500 docs the rebuild is <100ms; storing an index file would add gitignore complications and cache-invalidation bugs for negligible speedup.
 - **Stopword list is light, language-aware.** Includes Turkish particles (ve, ile, ki, için, gibi) since the user codes in Turkish; English stopwords are standard. Stemming is intentionally NOT applied — preserves slug-like terms (e.g., "manifest-bootstrap-safety-pattern") that exact-match in queries.
-- **No semantic / synonym recall in raw BM25 mode.** Trade documented: "ML practitioner" will not match "data scientist." Hybrid mode (the default) closes this gap with local multilingual embeddings; until the model is ready the fallback is raw BM25. _(Previously closed by the retired Haiku mode.)_
-- _(superseded 2026-10-07 — Haiku retired, hybrid is the default)_ **Decision (2026-05-26): Haiku single-call replaces multi-query BM25 as default recall strategy.** The original raw BM25 extracted keywords from the full prompt and ran multiple query variants. The Haiku approach sends the full prompt as-is to a single `claude --model haiku` call whose system prompt contains the full corpus index (slug + description + tags, ≤8K chars). Haiku understands intent in any language and returns exactly the relevant doc keys. The `recall-multi-query.ts` experiment (multi-query BM25 variant) was deleted in favour of this approach. Security note: `execFileSync` is used (not `exec`) and all args are positional (no shell injection). Corpus index is capped to prevent unbounded `--system-prompt` length. See `knowledge/haiku-recall-architecture.md` for full decision trace.
+- **No semantic / synonym recall in raw BM25 mode.** Trade documented: "ML practitioner" will not match "data scientist." In Haiku mode this gap is mostly closed because Haiku understands intent across vocabulary variants and languages. If the `claude` CLI is unavailable the fallback is still raw BM25.
+- **Decision (2026-05-26): Haiku single-call replaces multi-query BM25 as default recall strategy.** The original raw BM25 extracted keywords from the full prompt and ran multiple query variants. The Haiku approach sends the full prompt as-is to a single `claude --model haiku` call whose system prompt contains the full corpus index (slug + description + tags, ≤8K chars). Haiku understands intent in any language and returns exactly the relevant doc keys. The `recall-multi-query.ts` experiment (multi-query BM25 variant) was deleted in favour of this approach. Security note: `execFileSync` is used (not `exec`) and all args are positional (no shell injection). Corpus index is capped to prevent unbounded `--system-prompt` length. See `knowledge/haiku-recall-architecture.md` for full decision trace.
 - **Snippet logic prefers high-density lines** (most query-term hits per line), with ±1 line of context. Good enough for eyeballing; not designed to be definitive.
 - **Decision (2026-06-02): score/rankScore decoupling is inviolable.** All v2 ranking signals (BM25F, stemming, synonyms, recency, capture penalty) MUST feed `rankScore` only. `hit.score` must remain raw flat-BM25 at the original scale. The hook's `>= 2.0` / `>= 1.0` gates and the explore agent's `>= 5 / < 2` tiers depend on this scale remaining stable. Regression-locked by `recall-weighting.test.ts`.
 - **Decision (2026-06-02): continuous capture ON by default, guarded by rank penalty + digest cap.** Auto-digest and auto-salience fire on every SessionStart. The CAPTURE_RANK_PENALTY (0.5×) and K=50 cap prevent corpus pollution while allowing genuine session-captured decisions to surface. These constants are exported and configurable but the guard proof test must remain green.
@@ -159,14 +153,14 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - `src/lib/recall-synonyms.ts` — `expandQueryTerms()`: pre-stemmed synonym map, query-time expansion. Synonym families cover: recall/retrieval/search, embed/vector/semantic, bookmark/salience/ripple, consolidate/sleep, digest/distil/summary, capture/record/log, and more.
 - `src/lib/salience.ts` — `detectSalience()`: structural auto-salience detectors (user-correction, error→fix, decision-keyword); EN+TR; capped at 5 moments/session.
 - `src/lib/session-digest.ts` — `loadDigestDocs()`: auto transcript digest on SessionStart catch-up path; bounded ≤8KB; `capture: true` flag set on all digest+bookmark corpus docs.
-- ~~`src/lib/recall-query-extractor.ts` — `haikuRecall()`~~ — **deleted 2026-10-07** (with the Haiku mode and `/api/recall/haiku`). New in its place: `src/lib/recall-mode.ts` (`RECALL_MODES = hybrid|raw|off`, `normalizeRecallMode` — a stored/env `haiku` maps to `hybrid`), `src/lib/recall-corpus-cache.ts` (`buildCorpusCached`: the hook's parsed-corpus cache in `.recall-cache/`), `src/lib/embeddings/profiles.ts` (per-model prompt format, cache key, fusion, dense gate, dedup thresholds) and `src/lib/embeddings/provision.ts` (`ensureHybridReady`, `spawnEmbedEnsure`, the 24 h retry throttle, `DREAMCONTEXT_EMBED_AUTO`).
+- `src/lib/recall-query-extractor.ts` — `haikuRecall()`: builds BM25-relevance-ranked corpus index (B6 fix), caps at 8K chars, calls `claude --model haiku -p` via `execFileSync`, parses JSON, maps `type/slug` keys to `CorpusDoc[]`.
 - `src/cli/commands/memory.ts` — `dreamcontext memory recall`, `status`, `remember`, `update`, `delete`, `list`.
 - `eval/gold.jsonl` — 60-query gold set (deterministic benchmark; authored blind to improvements).
 - `eval/harness.ts` — eval harness; `eval/BASELINE.md` + `eval/RESULTS.md` — before/after report.
 - `tests/unit/recall-weighting.test.ts` — regression lock on `score` vs `rankScore` decoupling invariant.
 - `tests/unit/recall-capture-stress.test.ts` — guard proof: zero gold displacement under worst-case capture flood.
 
-**Key files (v0.14.0 hybrid/embedding layer; the default since 2026-10-07):**
+**Key files (v0.14.0 hybrid/embedding layer, experimental/opt-in):**
 
 - `src/lib/embeddings/chunker.ts` — heading-boundary markdown chunker: splits on `#{1,6}`, merges runts forward (≥100 words min), splits giants on paragraph boundaries (≤380 words max), deterministic SHA256 content hash per chunk.
 - `src/lib/embeddings/embedder.ts` — lazy-load wrapper for `@huggingface/transformers` (optionalDependency, dynamic import); model cache at `~/.dreamcontext/models`; `embeddingsAvailable()` predicate; E5 contract (`query:` / `passage:` prefixes).
@@ -212,35 +206,36 @@ score(D, Q) = Σ over q in Q: IDF(q) · TF(q,D)·(k1+1) / (TF(q,D) + k1·(1-b + 
 
 Top hit was the right doc on every query that had a relevant doc. No-hit case returned a clean message. Mixed-language query still scored the right knowledge file highest.
 
-## UserPromptSubmit Hook Integration (Default ON, Hybrid Mode)
+## UserPromptSubmit Hook Integration (Default ON, Haiku Mode)
 
-`src/cli/commands/hook.ts` user-prompt-submit handler injects recall hits into the agent's context for every non-trivial user prompt. **ON by default** — no opt-in step. Default mode is **hybrid** (BM25 + local embeddings). To disable, set `DREAMCONTEXT_MEMORY_HOOK=0`. To force raw BM25, set `DREAMCONTEXT_RECALL_MODE=raw`.
+`src/cli/commands/hook.ts` user-prompt-submit handler injects recall hits into the agent's context for every non-trivial user prompt. **ON by default** — no opt-in step. Default mode is **Haiku** (single LLM call). To disable, set `DREAMCONTEXT_MEMORY_HOOK=0`. To force raw BM25, set `DREAMCONTEXT_RECALL_MODE=raw`.
 
-History: shipped opt-in with raw BM25 (2026-05-23), flipped to default-on the same day, upgraded to a single Haiku LLM call (2026-05-26), and moved to **hybrid** on 2026-10-07 — the Haiku mode is retired ([[haiku-recall-architecture]]).
+Originally shipped opt-in with raw BM25 (2026-05-23). Flipped to default-on the same day. Upgraded to Haiku mode (2026-05-26) after the single-call approach proved more intent-aware, especially for multilingual (Turkish/English) and vague prompts where raw BM25 keyword extraction would miss the intent.
 
-**Behavior (current — hybrid mode):**
-- Reads the prompt from stdin (Claude Code hook payload). Skips if the prompt is < 8 chars.
-- Builds the corpus through the parsed-corpus cache (`buildCorpusCached`), then runs `hybridSearch` when `hybridReady(root, mode)` (model fully on disk **and** this vault's index usable) — else plain `bm25Search(prompt, corpus, 3)`. It never downloads a model or builds a cold index inline; the hook embeds at most 8 new/changed chunks.
-- Injects only when some hit's raw BM25 `score` ≥ 2.0 (the decoupling invariant: fusion feeds `rankScore` only), under the header `— Memory recall (Hybrid, top N) —` or `(BM25, top N)` when it fell back.
-- A BM25-confident prompt skips the dense channel entirely (the dense gate), which keeps the median prompt off the ~1.2 s model load.
+**Behavior (current — Haiku mode):**
+- Reads the prompt from stdin (Claude Code hook payload).
+- Skips if prompt < 8 chars.
+- Calls `haikuRecall(prompt, root)` — single `claude --model haiku` call with corpus index in system prompt.
+  - If Haiku returns `skip`: no injection (pure greeting/acknowledgment).
+  - If Haiku returns 1–3 hits: inject as `— Memory recall (Haiku, top N) —` block.
+  - If Haiku returns `null` (error / claude CLI unavailable): falls back to `bm25Search(prompt, corpus, 3)` and injects only if top BM25 score ≥ 2.0.
 - Wrapped in try/catch — always best-effort, never breaks the prompt flow.
-- SessionStart / `init` / `update` start a detached `embed ensure` when hybrid is not ready (`DREAMCONTEXT_EMBED_AUTO=0` opts out).
 
 **Mode matrix (`DREAMCONTEXT_RECALL_MODE`):**
 
 | Value | Behaviour |
 |---|---|
-| `hybrid` (default) | BM25 + dense fusion via local embeddings; no LLM call; plain BM25 until the model and index are ready |
-| `raw` | BM25 only, no embedding step |
+| `haiku` (default) | Single Haiku call; BM25 fallback on failure |
+| `raw` | BM25 only, no external process |
+| `hybrid` (v0.14.0 experimental, opt-in) | BM25+dense fusion via local embeddings; fully offline, no LLM call; falls back to BM25 when model unavailable |
 | `off` | No recall injection |
-| `haiku` (retired) | Read as `hybrid` — never an error, never `off` |
 
-**Output format (`— Memory recall (Hybrid, top N) —`):**```
-— Memory recall (Hybrid, top 2) —
-  [feature] knowledge/features/memory-recall-bm25.md
-    Why dreamcontext chose BM25 over mem0 and ships hybrid recall as the default.
-  [knowledge] knowledge/decisions/decision-mem0-vs-bm25-recall.md
-    Decision trace for mem0 rejection and BM25 adoption.```## CHANGELOG Schema (2026-05-23)
+**Output format (`— Memory recall (Haiku, top N) —`):**```
+— Memory recall (Haiku, top 2) —
+  [feature] core/features/memory-recall-bm25.md
+    Why dreamcontext chose BM25 over mem0 and ships Haiku-mode recall as default.
+  [knowledge] knowledge/decision-mem0-vs-bm25-recall.md
+    Decision trace for mem0 rejection and BM25/Haiku adoption.```## CHANGELOG Schema (2026-05-23)
 
 CHANGELOG entries gained three optional fields, all backwards-compatible:
 
@@ -280,18 +275,14 @@ Recall answers **"where did we do X?"** (relevance-ranked, cross-type). It canno
 - If usage grows past ~500 docs, add a build-once-cache-in-memory pattern (`memory recall --watch`) to amortize tokenization cost.
 - Add SessionStart hint: when corpus size grows past N docs, log a one-line "tip: `dreamcontext memory recall <query>` is available" reminder (off by default).
 - Make hook toggle configurable via `_dream_context/state/.config.json` (`memoryHook: true|false`) so it's project-scoped rather than env-var-scoped.
-- ~~Make Haiku timeout configurable~~ — moot: the Haiku mode was retired 2026-10-07.
+- Make Haiku timeout configurable (currently hardcoded at 15s in `recall-query-extractor.ts`).
 - ~~Tiered CHANGELOG display in snapshot (3 detailed + 10 titles)~~ — **shipped 2026-05-23.**
 - ~~CHANGELOG entries as a recall corpus type~~ — **shipped 2026-05-23.**
 - ~~`memory remember` writes to CHANGELOG instead of LIFO~~ — **shipped 2026-05-23.**
-- ~~Haiku single-call semantic recall (default mode)~~ — **shipped 2026-05-26.** Retired 2026-10-07 — replaced by hybrid recall.
+- ~~Haiku single-call semantic recall (default mode)~~ — **shipped 2026-05-26.**
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
-
-### 2026-10-07 — Haiku retired; hybrid + EmbeddingGemma-300m the default; gold sets repaired; ranking and latency
-
-**Removed:** the `haiku` recall mode (`src/lib/recall-query-extractor.ts` + its test, `GET /api/recall/haiku`, the hook branch and gate bypass, the dashboard "Intelligent" toggle and Settings option). **Default:** `hybrid`, with a BM25 fallback until the model and index are ready; provisioned by a detached `embed ensure` from SessionStart / `init` / `update` (`doctor` reports, `doctor --fix` provisions, `DREAMCONTEXT_EMBED_AUTO=0` opts out). **Model:** EmbeddingGemma-300m q8 (~294 MB, not bundled, Gemma Terms of Use); e5-small via `DREAMCONTEXT_EMBED_MODEL=e5-small`. **Engine:** snippets for the returned top-K only, a parsed-corpus cache for the hook, `BOARD_RANK_FACTOR`, 61 TR→EN bridges, per-model fusion + dense gate. **Evidence:** gold sets repaired + blind sets for dc and h-f, frozen corpora and pinned clock — see [[recall-engine-v2]] "Update (2026-10-07)" and `eval/RESULTS.md`. Owner accepted five held-out single-query category flips (h018, hfh-022, hfh-042, hfh-048, h26-008).
 
 ### 2026-07-28 — Full-channel coverage + the `--level` importance filter
 

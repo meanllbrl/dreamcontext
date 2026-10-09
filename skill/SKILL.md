@@ -87,7 +87,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Lab / Insights** | Curated **metrics** synced from APIs or scripts into `lab/insights/`, cached, KR-bindable; Funnel analytics and app renders. **Boards (Beta)** compose them: `lab/boards/<slug>.md`, cards of catalog blocks (`lab block list`) plus saved HTML blocks (`lab/blocks/`). Never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
-| **Memory recall** | Hybrid (BM25 + local embeddings) search over the whole corpus, BM25 until the model is ready; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
+| **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory — fire reminders when context matches | this file |
 | **Whiteboard** | live boards (`whiteboard`) with agent cards; default Control Panel | [whiteboards.md](references/whiteboards.md) |
@@ -362,7 +362,7 @@ It refuses while a part is missing. Details → [tasks-and-features.md](referenc
 ## Memory & Knowledge — essentials
 
 - **Quick updates (no sleep):** edit `core/0.soul.md`/`core/2.memory.md`/`people/<slug>.md` directly; `dreamcontext core changelog add` for code changes; `dreamcontext tasks log` for progress.
-- **Recall modes:** default **`hybrid`** (BM25 + local embeddings; BM25 alone until the model and this vault's index are ready, which `embed ensure` provisions in the background); `raw` (BM25 only), `off`; switch with `dreamcontext recall hybrid|raw|off|status`. The old `haiku` mode is retired — a vault or env still saying `haiku` runs `hybrid`. Auto-injected on prompts (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
+- **Recall modes:** default **`haiku`** (a small model picks docs); `raw` (BM25), `hybrid` (BM25 + local embeddings), `off`; switch with `dreamcontext recall on|raw|hybrid|off|status`. Auto-injected on prompts (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
 - **Quick capture:** `dreamcontext memory remember "<text>"` writes a `type=note` CHANGELOG entry; sleep reconciles it later.
 - **Knowledge files:** `dreamcontext knowledge create <name>`; pin frequently-needed ones (`pinned: true`); `knowledge touch` after reading one; group files with `dreamcontext knowledge move <slug> <folder>`, never `mv` plus hand-edited links.
 

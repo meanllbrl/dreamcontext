@@ -5,9 +5,8 @@ import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, warn, error } from '../../lib/format.js';
 import { buildCorpus, type CorpusType } from '../../lib/recall.js';
-import { refreshEmbeddings, embeddingCacheUsable, EmbeddingLockBusyError } from '../../lib/embeddings/store.js';
-import { EMBED_MODEL, embeddingsAvailable, getEmbedLoadError, isEmbedModelComplete } from '../../lib/embeddings/embedder.js';
-import { ensureHybridReady } from '../../lib/embeddings/provision.js';
+import { refreshEmbeddings, embeddingCacheExists, EmbeddingLockBusyError } from '../../lib/embeddings/store.js';
+import { EMBED_MODEL, embeddingsAvailable } from '../../lib/embeddings/embedder.js';
 import {
   dedupCandidate,
   DEDUP_MIN_THRESHOLD,
@@ -51,82 +50,30 @@ function readStdin(): string {
 }
 
 /**
- * `dreamcontext embed` — manage the local embedding model and index that back
- * hybrid recall, the default recall mode. Recall itself refreshes lazily per
- * query, so these commands exist for provisioning (`ensure`), eager/periodic
- * freshness (cron, sleep, prewarm) and visibility — not correctness.
+ * `dreamcontext embed` — manage the EXPERIMENTAL local embedding index that
+ * backs hybrid recall (DREAMCONTEXT_RECALL_MODE=hybrid / `dreamcontext recall
+ * hybrid`). Off by default; recall itself also refreshes lazily per query, so
+ * these commands exist for eager/periodic freshness (cron, sleep, prewarm) and
+ * visibility — not correctness.
  */
 export function registerEmbedCommand(program: Command): void {
   const embed = program
     .command('embed')
-    .description('Manage the local embedding model and index used by hybrid recall (the default mode)');
-
-  embed
-    .command('ensure')
-    .description('Make hybrid recall engage: download the embedding model once and build this vault\'s index (what SessionStart, init and update start in the background)')
-    .option('--no-download', 'Never fetch the model — only build the index when the model is already on disk')
-    .option('--quiet', 'Print nothing on success (for detached/background runs)')
-    .option('--repair', 'Wipe the model directory and download it afresh — for model files that are on disk but damaged (needs the network)')
-    .action(async (opts: { download?: boolean; quiet?: boolean; repair?: boolean }) => {
-      const root = ensureContextRoot();
-      if (opts.repair && opts.download === false) {
-        error('--repair downloads the model afresh; it cannot be combined with --no-download.');
-        process.exitCode = 1;
-        return;
-      }
-      const outcome = await ensureHybridReady(root, { allowDownload: opts.download !== false, repair: opts.repair === true });
-      const say = (fn: (m: string) => void, msg: string): void => { if (!opts.quiet) fn(msg); };
-      switch (outcome) {
-        case 'ready':
-          say(info, 'Hybrid recall is ready — model on disk and index usable.');
-          break;
-        case 'downloaded':
-          say(success, `Embedding model downloaded (${EMBED_MODEL}); the index was already usable.`);
-          break;
-        case 'indexed':
-          say(success, 'Hybrid recall is ready — embedding index built.');
-          break;
-        case 'skipped:optout':
-          say(info, 'Skipped — DREAMCONTEXT_EMBED_AUTO=0 disables automatic embedding provisioning.');
-          break;
-        case 'skipped:mode':
-          say(info, 'Skipped — this vault\'s recall mode is not hybrid (`dreamcontext recall hybrid` to enable).');
-          break;
-        case 'skipped:package':
-          say(warn, 'Skipped — @huggingface/transformers is not installed, so recall stays on BM25.');
-          break;
-        case 'failed':
-          warn(
-            opts.download === false && !isEmbedModelComplete()
-              ? `Embedding model (${EMBED_MODEL}) is not on disk and --no-download was given.`
-              : `Could not finish provisioning (${getEmbedLoadError() ?? 'model unavailable, or another provisioning run is in progress'}) — recall stays on BM25; retry with \`dreamcontext embed ensure\`.`,
-          );
-          process.exitCode = 1;
-          break;
-      }
-    });
+    .description('EXPERIMENTAL: manage the local embedding index used by hybrid recall');
 
   embed
     .command('refresh')
     .description('Bring the embedding index up to date with the corpus (embeds only changed chunks)')
     .option('--force', 'Re-chunk every doc (content hash fully authoritative; catches same-mtime+size edits)')
-    .option('--if-present', 'Exit quietly unless the model is fully on disk and a usable embedding cache exists (safe for cron/sleep: never downloads, never rebuilds an old index)')
+    .option('--if-present', 'Exit quietly unless an embedding cache already exists (safe for cron/sleep: never triggers a first-time model download)')
     .action(async (opts: { force?: boolean; ifPresent?: boolean }) => {
       const root = ensureContextRoot();
-      // "Usable" for the CURRENT model, not mere existence: a cache left by a previous model keeps
-      // existing on disk, and refreshing it would re-embed the whole corpus inline.
-      if (opts.ifPresent && !(isEmbedModelComplete() && embeddingCacheUsable(root))) {
-        info('No usable embedding cache with a complete model in this vault — nothing to refresh (run `dreamcontext embed ensure`).');
-        return;
-      }
-      // Refresh never downloads: the model's fetch is `embed ensure`'s job, under the download lock.
-      if (!isEmbedModelComplete()) {
-        warn(`Embedding model (${EMBED_MODEL}) is not fully on disk — run \`dreamcontext embed ensure\` to download it.`);
-        process.exitCode = 1;
+      if (opts.ifPresent && !embeddingCacheExists(root)) {
+        info('No embedding cache in this vault — nothing to refresh (enable hybrid recall first).');
         return;
       }
       if (!(await embeddingsAvailable())) {
-        warn(`Embedding model unavailable (${EMBED_MODEL}) — @huggingface/transformers is not installed or the model failed to load.`);
+        warn(`Embedding model unavailable (${EMBED_MODEL}) — install optional deps / check network for the first download.`);
         process.exitCode = 1;
         return;
       }
@@ -170,7 +117,7 @@ export function registerEmbedCommand(program: Command): void {
     .option('--exclude <docKey>', 'Exclude a type/slug from neighbors (when re-checking an existing doc you are updating)')
     .option('--json', 'Machine-readable JSON output')
     .option('--no-log', 'Do not append the decision to .embeddings/dedup-log.jsonl')
-    .option('--if-present', 'Exit quietly (verdict "unknown") unless the model is fully on disk and a usable embedding cache exists (safe for sleep: never downloads, never re-indexes)')
+    .option('--if-present', 'Exit quietly (verdict "unknown") unless an embedding cache already exists (safe for sleep: never triggers a first-time model download)')
     .action(async (opts: {
       title: string;
       description?: string;
@@ -189,11 +136,11 @@ export function registerEmbedCommand(program: Command): void {
     }) => {
       const root = ensureContextRoot();
 
-      if (opts.ifPresent && !(isEmbedModelComplete() && embeddingCacheUsable(root))) {
+      if (opts.ifPresent && !embeddingCacheExists(root)) {
         if (opts.json) {
           console.log(JSON.stringify({ verdict: 'unknown', reason: 'no-embedding-cache' }));
         } else {
-          info('No usable embedding cache with a complete model in this vault — semantic dedup skipped (run `dreamcontext embed ensure`). Fall back to keyword recall.');
+          info('No embedding cache in this vault — semantic dedup skipped (enable hybrid recall first). Fall back to keyword recall.');
         }
         return;
       }
@@ -275,23 +222,6 @@ export function registerEmbedCommand(program: Command): void {
         warn(`Ignoring --top "${opts.top}" (must be an integer ≥ 1) — using 5.`);
       }
       const topK = Number.isFinite(topRaw) && topRaw >= 1 ? topRaw : 5;
-
-      // Dedup never downloads a model and never indexes a corpus inline: its refresh would embed
-      // every missing chunk (unbounded) in the middle of a sleep run. Either gap → a clear
-      // "unknown" verdict and the one command that fixes it.
-      const dedupSkip =
-        !isEmbedModelComplete() ? { reason: 'model-incomplete', hint: `Embedding model (${EMBED_MODEL}) is not fully on disk` }
-        : !embeddingCacheUsable(root) ? { reason: 'embedding-cache-unusable', hint: 'This vault has no usable embedding index for the current model' }
-        : null;
-      if (dedupSkip !== null) {
-        if (opts.json) {
-          console.log(JSON.stringify({ verdict: 'unknown', reason: dedupSkip.reason }));
-        } else {
-          warn(`${dedupSkip.hint} — semantic dedup skipped; run \`dreamcontext embed ensure\`. Fall back to keyword recall.`);
-        }
-        process.exitCode = 1;
-        return;
-      }
 
       if (!(await embeddingsAvailable())) {
         if (opts.json) {
@@ -393,8 +323,8 @@ export function registerEmbedCommand(program: Command): void {
       console.log(header('Embedding Index'));
       const path = join(root, '.embeddings', 'cache.json');
       if (!existsSync(path)) {
-        info('No embedding cache yet — recall runs on BM25 until the model and index are provisioned.');
-        info(`Provision now: ${chalk.cyan('dreamcontext embed ensure')} (SessionStart, init and update also start it in the background; opt out with DREAMCONTEXT_EMBED_AUTO=0).`);
+        info('No embedding cache — hybrid recall has not been used in this vault.');
+        info(`Enable: ${chalk.cyan('dreamcontext recall hybrid')} (or DREAMCONTEXT_RECALL_MODE=hybrid), then run ${chalk.cyan('dreamcontext embed refresh')} to prewarm.`);
         return;
       }
       try {

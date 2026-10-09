@@ -36,8 +36,8 @@ interface Bookmark {
   created_at: string;
 }
 
-/** Mirrors `recall_mode` in `_dream_context/state/.sleep.json` (default 'hybrid'; drift-tested against RECALL_MODES). */
-export type RecallMode = 'hybrid' | 'raw' | 'off';
+/** Mirrors `recall_mode` in `_dream_context/state/.sleep.json` (default 'haiku'). */
+export type RecallMode = 'haiku' | 'raw' | 'hybrid' | 'off';
 
 export interface SleepState {
   /** The exact persisted ledger — the sum of finalized session scores. */
@@ -106,12 +106,13 @@ export function useSleep() {
 }
 
 /**
- * The vault's effective recall mode (default 'hybrid'), shared by the surfaces
- * that need to reflect it.
+ * The vault's effective recall mode (default 'haiku'), shared by the search
+ * surfaces so they can reflect it — notably: when it's 'hybrid', search runs
+ * BM25+dense locally and the Haiku "Intelligent" toggle is redundant (hidden).
  */
 export function useRecallMode(): RecallMode {
   const { data } = useSleep();
-  return data?.recall_mode ?? 'hybrid';
+  return data?.recall_mode ?? 'haiku';
 }
 
 /** PATCH /api/sleep — partial update (recall_mode, manual debt). Returns the fresh state. */

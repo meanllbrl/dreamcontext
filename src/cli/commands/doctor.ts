@@ -16,11 +16,6 @@ import { buildRoadmapModel } from '../../lib/roadmap-model.js';
 import { auditObjectiveLinkLoss } from '../../lib/roadmap-link-audit.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
 import { dirname } from 'node:path';
-import { resolveRecallMode } from './sleep.js';
-import type { RecallMode } from '../../lib/recall-mode.js';
-import { isEmbedModelComplete, isEmbedPackageInstalled } from '../../lib/embeddings/embedder.js';
-import { embeddingCacheUsable } from '../../lib/embeddings/store.js';
-import { embedAutoDisabled, ensureHybridReady, type EnsureOutcome } from '../../lib/embeddings/provision.js';
 import { listInsights, getInsight, readCache } from '../../lib/lab/store.js';
 import { listRejectedLabFiles } from '../../lib/lab/block-library.js';
 import { parseFunnelSet, FUNNEL_HISTORY_MAX } from '../../lib/lab/funnel.js';
@@ -1423,75 +1418,13 @@ function checkTaskFeatureLinks(root: string): CheckResult[] {
   return results;
 }
 
-/** What `checkEmbeddings` reads — injectable so the report can be tested without a model on disk. */
-export interface EmbeddingProbes {
-  mode: RecallMode;
-  packageInstalled: boolean;
-  modelDownloaded: boolean;
-  indexUsable: boolean;
-  automationOff: boolean;
-}
-
-function readEmbeddingProbes(root: string): EmbeddingProbes {
-  return {
-    mode: resolveRecallMode(root),
-    packageInstalled: isEmbedPackageInstalled(),
-    modelDownloaded: isEmbedModelComplete(),
-    indexUsable: embeddingCacheUsable(root),
-    automationOff: embedAutoDisabled(),
-  };
-}
-
-/**
- * Hybrid recall (the default) only engages once the runtime package, the model and
- * this vault's index are all in place; until then every prompt silently runs on
- * BM25. This is the one place that says which of the three is missing and how to
- * fix it. A non-hybrid mode is the user's choice, not a fault.
- */
-export function checkEmbeddings(root: string, probes: EmbeddingProbes = readEmbeddingProbes(root)): CheckResult[] {
-  const name = 'Hybrid recall';
-  const code = 'doctor/hybrid-recall';
-  if (probes.mode !== 'hybrid') {
-    return [{ name, status: 'ok', code, message: `Recall mode is ${probes.mode} — the embedding model and index are not used` }];
-  }
-  if (!probes.packageInstalled) {
-    return [{
-      name, status: 'warn', code,
-      message: 'Hybrid recall is on but @huggingface/transformers is not installed — recall runs on BM25 only (reinstall dreamcontext with optional dependencies)',
-      evidence: { packageInstalled: false },
-    }];
-  }
-  const missing = [
-    ...(probes.modelDownloaded ? [] : ['the embedding model']),
-    ...(probes.indexUsable ? [] : ['this vault\'s embedding index']),
-  ];
-  if (missing.length === 0) {
-    return [{
-      name, status: 'ok', code,
-      message: 'Hybrid recall is ready — embedding model on disk and index usable',
-      evidence: { packageInstalled: true, modelDownloaded: true, indexUsable: true },
-    }];
-  }
-  return [{
-    name, status: 'warn', code,
-    message:
-      `Hybrid recall is on but ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not ready — recall runs on BM25 until then` +
-      (probes.automationOff
-        ? ' (background provisioning is off: DREAMCONTEXT_EMBED_AUTO=0)'
-        : ' (SessionStart, init and update provision it in the background)'),
-    evidence: { packageInstalled: true, modelDownloaded: probes.modelDownloaded, indexUsable: probes.indexUsable },
-    supportedFixes: ['dreamcontext embed ensure', 'dreamcontext doctor --fix'],
-  }];
-}
-
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Validate _dream_context/ structure and report issues')
-    .option('--fix', 'Provision hybrid recall now: download the embedding model and build this vault\'s index (same as `dreamcontext embed ensure`)')
     .option('--heal-links', 'Apply the deterministic task↔feature link fixes (adopt back-refs, drop ghost/foreign related_tasks entries, canonicalize slugs) before running the checks')
     .option('--json', 'Emit a machine-readable diagnostic report: every check carries a stable code, plus subject/evidence/supportedFixes where annotated')
-    .action(async (opts: { healLinks?: boolean; json?: boolean; fix?: boolean }) => {
+    .action((opts: { healLinks?: boolean; json?: boolean }) => {
       const root = resolveContextRoot();
       if (!root) {
         if (opts.json) {
@@ -1528,17 +1461,6 @@ export function registerDoctorCommand(program: Command): void {
           for (const f of report.foreignClaimsDropped) console.log(chalk.green('  ✓') + ` ${f.feature}: dropped '${f.task}' (belongs to ${f.actual})`);
           for (const u of report.unresolved) console.log(chalk.yellow('  ⚠') + ` ${u}`);
           if (fixed === 0 && report.unresolved.length === 0) console.log(chalk.dim('  nothing to heal — links already consistent'));
-          console.log();
-        }
-      }
-
-      // --fix: provision hybrid recall BEFORE the checks, so the report below shows the result.
-      let fixOutcome: EnsureOutcome | undefined;
-      if (opts.fix) {
-        fixOutcome = await ensureHybridReady(root);
-        if (!opts.json) {
-          console.log(chalk.bold('  Hybrid recall provisioning'));
-          console.log(`  ${fixOutcome === 'failed' ? chalk.yellow('⚠') : chalk.green('✓')} ${fixOutcome}`);
           console.log();
         }
       }
@@ -1599,8 +1521,6 @@ export function registerDoctorCommand(program: Command): void {
           : []),
       ];
 
-      results.push(...checkEmbeddings(root));
-
       // Sleep SETTINGS checks — a setting that is silently ignored is worse than
       // no setting at all, so both ways that can happen are reported here.
       results.push(...checkSleepSettings(root));
@@ -1622,9 +1542,8 @@ export function registerDoctorCommand(program: Command): void {
       }
 
       if (opts.json) {
-        const report: DoctorReport & { heal?: Record<string, unknown>; fix?: { outcome: EnsureOutcome } } = buildDoctorReport(results);
+        const report: DoctorReport & { heal?: Record<string, unknown> } = buildDoctorReport(results);
         if (heal) report.heal = heal;
-        if (fixOutcome) report.fix = { outcome: fixOutcome };
         console.log(JSON.stringify(report, null, 2));
         if (report.summary.error > 0) process.exit(1);
         return;

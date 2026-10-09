@@ -263,8 +263,9 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: str
     // Find the existing managed handler (matched on command + matcher) so we can
     // both detect presence AND reconcile its timeout. Without reconciliation a
     // project written by an older installer keeps its stale timeout forever —
-    // e.g. UserPromptSubmit installed at 5s before the recall hook needed the
-    // larger 120s timeout, so the hook keeps timing out after upgrade. Re-running install now heals the drift.
+    // e.g. UserPromptSubmit installed at 5s before the Haiku recall path (which
+    // can take ~15s) made the larger 120s timeout necessary, so the hook keeps
+    // timing out after upgrade. Re-running install now heals the drift.
     let existingHandler: HookHandler | undefined;
     for (const group of settings.hooks[spec.event]) {
       if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;

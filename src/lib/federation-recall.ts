@@ -1,11 +1,11 @@
 import { basename, dirname } from 'node:path';
 import {
+  buildCorpus,
   bm25Search,
   isFederated,
   type CorpusType,
   type RecallHit,
 } from './recall.js';
-import { buildCorpusCached, peerCacheDir } from './recall-corpus-cache.js';
 import { listConnections } from './connections.js';
 import { listVaults, resolveVaultContextRoot, VaultError } from './vaults.js';
 
@@ -119,12 +119,9 @@ export function crossVaultRecall(
     // this point for the current vault or for a peer it deliberately wired up.
     const isCurrent = target.current === true;
 
-    // Unchanged files are served from the corpus cache. A PEER is only read, never
-    // written: its cache lives under the reader's home, not inside the peer's tree.
-    const corpus = buildCorpusCached(contextRoot, {
+    const corpus = buildCorpus(contextRoot, {
       ...(opts.types ? { types: opts.types } : {}),
       ...(opts.minLevel !== undefined ? { minLevel: opts.minLevel } : {}),
-      ...(isCurrent ? {} : { cacheDir: peerCacheDir(contextRoot, home) }),
     })
       // Serving exclusion: ingested-from-peer docs are first-class locally but
       // must never be served across another vault boundary (transitive-leak).

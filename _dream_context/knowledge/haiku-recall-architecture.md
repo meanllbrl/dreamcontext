@@ -1,25 +1,11 @@
 ---
 id: haiku-recall-architecture
 name: "Haiku Single-Call Recall Architecture"
-description: "RETIRED 2026-10-07 (hybrid recall replaced it). Why dreamcontext replaced multi-query BM25 keyword extraction with a single Haiku LLM call for intent-aware recall in the UserPromptSubmit hook. Covers the architecture, security hardening (execFileSync, corpus cap), fallback behaviour, multi-review security findings that shaped the implementation, and the relationship to the existing BM25 layer."
+description: "Why dreamcontext replaced multi-query BM25 keyword extraction with a single Haiku LLM call for intent-aware recall in the UserPromptSubmit hook. Covers the architecture, security hardening (execFileSync, corpus cap), fallback behaviour, multi-review security findings that shaped the implementation, and the relationship to the existing BM25 layer."
 tags: ["architecture", "decisions", "domain:knowledge", "topic:recall"]
 pinned: false
 date: "2026-05-26"
 ---
-
-## RETIRED — 2026-10-07 (read this first; the rest of the file is history)
-
-**What was retired.** The `haiku` recall mode: a single `claude --model haiku` call per prompt that read the corpus index and returned 0–3 doc keys, plus the surfaces built on it. Shipped 2026-05-26 (this file's body); removed 2026-10-07.
-
-**Why.** It cost a cloud model call (tokens, network, a `claude -p` process) on every prompt — 10–27 s measured on a large vault — and it needed the network to work at all. Its three motivating failures (intent gap, language gap, keyword noise) are now covered locally: hybrid recall fuses BM25 with a local multilingual embedding model, which closes the Turkish↔English gap Haiku was hired for, and measurably beats BM25 on paraphrase and Turkish queries (see [[recall-engine-v2]] "Update (2026-10-07)" and `eval/RESULTS.md`). The default `haiku` mode had also been silently degrading: when the call failed it fell back to BM25, so the "smart" path was often just BM25 plus latency.
-
-**Replaced by.** `hybrid` recall — BM25 + local EmbeddingGemma-300m dense embeddings, adaptive fusion, no LLM call — the default; plain BM25 until the model and the vault's index are ready ([[decisions/decision-embedding-layer]]). Recall modes are now `hybrid | raw | off`.
-
-**Compatibility.** A vault whose `state/.sleep.json` says `recall_mode: "haiku"`, or an env `DREAMCONTEXT_RECALL_MODE=haiku`, is read as `hybrid` (`normalizeRecallMode` in `src/lib/recall-mode.ts`) — never `off`, never an error. `recall on` is now an alias for `recall hybrid`.
-
-**What was deleted.** `src/lib/recall-query-extractor.ts` (`haikuRecall`, `buildCorpusIndex`, `makeClaudeExecutor`) and `tests/unit/recall-query-extractor.test.ts`; the `GET /api/recall/haiku` route and handler; the `'haiku'` entry of `RECALL_MODES` (CLI, server, dashboard mirrors) and the hook's Haiku branch with its gate bypass; the dashboard `haikuRecallOnce` client and the Search / ⌘K "Intelligent" toggle ([[features/sleepy-search-ask]]); the Settings "Haiku" option and its i18n strings; the jev-verify settings-recall assertions that expected Haiku selected. The chat's Normal/Intelligent *model* choice (Sonnet/Opus) is unrelated and stays.
-
-**Audit trail.** "Did we ever have it?" — yes, this file. "What do I use instead?" — hybrid. "When?" — shipped 2026-05-26, retired 2026-10-07 in task `recall-maintenance-haiku-out-hybrid-default-repaired-gold-sets-ranking-and-latency` (changelog entry of the same day; the commit is the release that carries it).
 
 ## Why This Exists
 
@@ -137,4 +123,4 @@ See `knowledge/recall-engine-v2.md` for the full v2 picture.
 
 ## Last Verified
 
-2026-10-07 — retired (see the note at the top); the body above describes the removed design as it was on 2026-06-02.
+2026-06-02.

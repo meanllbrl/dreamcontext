@@ -38,8 +38,7 @@ import { resolveBrainSyncToken, resolveBrainSyncEnabled } from '../../lib/git-sy
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { renderBrainSyncResult } from './brain.js';
 import { buildCorpus } from '../../lib/recall.js';
-import { refreshEmbeddings, embeddingCacheUsable } from '../../lib/embeddings/store.js';
-import { isEmbedModelComplete } from '../../lib/embeddings/embedder.js';
+import { refreshEmbeddings, embeddingCacheExists } from '../../lib/embeddings/store.js';
 import { loadProjectVocabulary, auditCorpus } from '../../lib/taxonomy.js';
 import {
   readSleepFlags,
@@ -99,10 +98,6 @@ export type {
 } from '../../lib/sleep-consolidation.js';
 
 import type { SleepState, SleepHistoryEntry, CompactionRecord, KnowledgeAccessRecord, DashboardChange } from '../../lib/sleep-consolidation.js';
-import { RECALL_MODES, DEFAULT_RECALL_MODE, normalizeRecallMode, type RecallMode } from '../../lib/recall-mode.js';
-
-// Re-exported so existing importers (hook, memory, routes) keep one import path.
-export { RECALL_MODES, type RecallMode };
 
 const DEFAULT_SLEEP_STATE: SleepState = {
   debt: 0,
@@ -117,7 +112,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
   knowledge_access: {},
   dashboard_changes: [],
   compaction_log: [],
-  recall_mode: DEFAULT_RECALL_MODE,
+  recall_mode: 'haiku',
   consolidation_depth: null,
   pendingMigrationNotices: [],
   cycle_tasks_filed: [],
@@ -153,7 +148,7 @@ function freshDefaults(): SleepState {
     knowledge_access: {},
     dashboard_changes: [],
     compaction_log: [],
-    recall_mode: DEFAULT_RECALL_MODE,
+    recall_mode: 'haiku',
     consolidation_depth: null,
     pendingMigrationNotices: [],
     cycle_tasks_filed: [],
@@ -199,8 +194,6 @@ export function readSleepState(root: string): SleepState {
         : {},
       dashboard_changes: Array.isArray(parsed.dashboard_changes) ? parsed.dashboard_changes as DashboardChange[] : [],
       compaction_log: Array.isArray(parsed.compaction_log) ? parsed.compaction_log as CompactionRecord[] : [],
-      // A vault written before the Haiku mode was retired may still say 'haiku'.
-      recall_mode: normalizeRecallMode(parsed.recall_mode),
       pendingMigrationNotices: Array.isArray(parsed.pendingMigrationNotices)
         ? (parsed.pendingMigrationNotices as unknown[]).filter((n): n is string => typeof n === 'string')
         : [],
@@ -948,39 +941,19 @@ export function registerSleepCommand(program: Command): void {
 
       // Post-sleep embedding refresh (decision-embedding-layer: "eager during
       // sleep"). Sleep just rewrote the corpus — the moment the mtime pre-filter
-      // is most likely to hide something — so a vault whose index is ALREADY usable
-      // gets a FORCE refresh (content hash fully authoritative): an incremental
-      // update that embeds only what changed.
-      //
-      // A vault with NO usable index (never indexed, or its old index was keyed to a
-      // previous model) must never be built inline here: a full build is minutes of
-      // embedding in front of the end of `sleep done`, and would race the detached
-      // `embed ensure` that SessionStart/init/update already started. Hand it to
-      // spawnEmbedEnsure instead (detached; honours the opt-out, the 24h failure
-      // throttle and the in-flight lock) and move on. Neither path downloads: a model
-      // that is not fully on disk is `embed ensure`'s job too.
-      //
-      // Off under DREAMCONTEXT_EMBED_AUTO=0, which is what keeps every test and every
-      // opted-out machine from embedding or provisioning here. Best-effort by the same
-      // discipline as the syncs above.
+      // is most likely to hide something — so run a FORCE refresh (content hash
+      // fully authoritative). Gated on an EXISTING cache: a vault that never
+      // enabled hybrid recall must never cold-start a 113 MB model download from
+      // `sleep done`. Best-effort by the same discipline as the syncs above.
       try {
-        if (process.env.DREAMCONTEXT_EMBED_AUTO !== '0' && resolveRecallMode(root) === 'hybrid') {
-          if (isEmbedModelComplete() && embeddingCacheUsable(root)) {
-            // waitForLock: a concurrent writer (the server's index build, a hook) holds the
-            // vault's cache lock for milliseconds — wait it out (bounded), never clobber it.
-            const res = await refreshEmbeddings(root, buildCorpus(root), undefined, { force: true, waitForLock: true });
-            if (res === null) {
-              warn('Embedding refresh: skipped — model unavailable (hybrid recall will refresh lazily).');
-            } else if (res.stats.embedded > 0 || res.stats.evicted > 0) {
-              info(chalk.dim(`Embedding index refreshed: +${res.stats.embedded} embedded, −${res.stats.evicted} evicted (${res.index.chunks.length} chunks).`));
-            }
-          } else {
-            // Lazy import: provision.ts reads the recall mode from this module, so a static
-            // import here would close a cycle.
-            const { spawnEmbedEnsure } = await import('../../lib/embeddings/provision.js');
-            if (spawnEmbedEnsure(root)) {
-              info(chalk.dim('Hybrid recall: the embedding index is not ready — building it in the background (BM25 until then).'));
-            }
+        if (embeddingCacheExists(root)) {
+          // waitForLock: a concurrent writer (the server's index build, a hook) holds the
+          // vault's cache lock for milliseconds — wait it out (bounded), never clobber it.
+          const res = await refreshEmbeddings(root, buildCorpus(root), undefined, { force: true, waitForLock: true });
+          if (res === null) {
+            warn('Embedding refresh: skipped — model unavailable (hybrid recall will refresh lazily).');
+          } else if (res.stats.embedded > 0 || res.stats.evicted > 0) {
+            info(chalk.dim(`Embedding index refreshed: +${res.stats.embedded} embedded, −${res.stats.evicted} evicted (${res.index.chunks.length} chunks).`));
           }
         }
       } catch (err) {
@@ -1271,25 +1244,26 @@ export function registerSleepCommand(program: Command): void {
 
 // ─── Recall Command ───────────────────────────────────────────────────────
 
+export const RECALL_MODES = ['haiku', 'raw', 'hybrid', 'off'] as const;
+export type RecallMode = typeof RECALL_MODES[number];
+
 /**
  * The effective recall mode for a vault. Single source of truth for every
  * recall consumer (the always-on hook, `memory recall`, and the dashboard's
  * `/api/recall` route) so they never disagree: an env override wins (test /
  * per-invocation), else the persisted `.sleep.json` value the dashboard and
- * `dreamcontext recall <mode>` both write, else the default `hybrid`. The retired
- * `haiku` (env or persisted) maps to `hybrid`, never to `off`.
+ * `dreamcontext recall <mode>` both write, else the default `haiku`.
  */
 export function resolveRecallMode(root: string): RecallMode {
   const env = process.env.DREAMCONTEXT_RECALL_MODE;
-  if (env === 'haiku') return DEFAULT_RECALL_MODE;
   if (env && (RECALL_MODES as readonly string[]).includes(env)) return env as RecallMode;
-  return normalizeRecallMode(readSleepState(root).recall_mode);
+  return readSleepState(root).recall_mode ?? 'haiku';
 }
 
 export function registerRecallCommand(program: Command): void {
   const recall = program
     .command('recall')
-    .description('Control memory recall mode (hybrid / raw / off)');
+    .description('Control memory recall mode (haiku / raw / hybrid / off)');
 
   recall
     .command('status')
@@ -1297,10 +1271,11 @@ export function registerRecallCommand(program: Command): void {
     .action(() => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
-      const mode = normalizeRecallMode(state.recall_mode);
+      const mode = state.recall_mode ?? 'haiku';
       const labels: Record<RecallMode, string> = {
-        hybrid: `${chalk.cyan('hybrid')} — BM25 + local dense embeddings (default; falls back to BM25 until the embedding model and index are ready)`,
-        raw: `${chalk.yellow('raw')} — BM25 keyword search only`,
+        haiku: `${chalk.green('haiku')} — Haiku LLM picks relevant docs per prompt`,
+        raw: `${chalk.yellow('raw')} — BM25 keyword search only (no LLM call)`,
+        hybrid: `${chalk.cyan('hybrid')} — EXPERIMENTAL: BM25 + local dense embeddings via RRF (no LLM call)`,
         off: `${chalk.red('off')} — memory recall disabled`,
       };
       console.log(header('Memory Recall'));
@@ -1309,13 +1284,13 @@ export function registerRecallCommand(program: Command): void {
 
   recall
     .command('on')
-    .description('Enable the default recall mode (hybrid) — alias for `recall hybrid`')
+    .description('Enable Haiku-powered recall (default)')
     .action(() => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
-      state.recall_mode = DEFAULT_RECALL_MODE;
+      state.recall_mode = 'haiku';
       writeSleepState(root, state);
-      success('Recall mode set to hybrid — BM25 + local dense embeddings (falls back to BM25 until the embedding model and index are ready)');
+      success('Recall mode set to haiku — Haiku LLM picks relevant docs per prompt');
     });
 
   recall
@@ -1331,23 +1306,23 @@ export function registerRecallCommand(program: Command): void {
 
   recall
     .command('raw')
-    .description('Use BM25 keyword search only')
+    .description('Use BM25 keyword search only (no LLM call)')
     .action(() => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
       state.recall_mode = 'raw';
       writeSleepState(root, state);
-      success('Recall mode set to raw — BM25 keyword search only');
+      success('Recall mode set to raw — BM25 keyword search, no Haiku call');
     });
 
   recall
     .command('hybrid')
-    .description('Use BM25 + local dense embeddings (the default)')
+    .description('EXPERIMENTAL: BM25 + local dense embeddings fused via RRF (no LLM call)')
     .action(() => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
       state.recall_mode = 'hybrid';
       writeSleepState(root, state);
-      success('Recall mode set to hybrid — BM25 + dense fusion (falls back to BM25 if the embedding model or index is unavailable)');
+      success('Recall mode set to hybrid — BM25 + dense RRF fusion (experimental; falls back to BM25 if the embedding model is unavailable)');
     });
 }

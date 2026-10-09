@@ -76,7 +76,7 @@ No setup, no index file, no external service — rebuilt in memory each call (<1
 | **delete** | Remove a knowledge file (irreversible; recover via git) | `dreamcontext memory delete <slug> -f` |
 | **list** | Enumerate the corpus by type | `dreamcontext memory list [--types …]` |
 | **status** | See corpus size + breakdown by type | `dreamcontext memory status` |
-| **recall mode** | Switch how recall ranks (hybrid/raw/off) | `dreamcontext recall hybrid\|raw\|off\|status` |
+| **recall mode** | Switch how recall ranks (haiku/raw/hybrid/off) | `dreamcontext recall on\|raw\|hybrid\|off\|status` |
 
 ### recall — your first-line discovery tool
 
@@ -139,29 +139,17 @@ Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconcile
 ### Recall modes
 | Mode | Behavior | Set with |
 |---|---|---|
-| `hybrid` (**default**) | BM25 + local dense embeddings fused (multilingual, no LLM call, no cloud call). Runs as plain BM25 until the embedding model is on disk and this vault's index is built — never a download or a cold index inside a prompt | `dreamcontext recall hybrid` (`recall on` is an alias) |
-| `raw` | BM25 keyword scoring only | `dreamcontext recall raw` |
+| `haiku` (**default**) | A small cloud model picks 0–3 relevant docs per prompt (smarter than keywords; BM25 fallback) | `dreamcontext recall on` |
+| `raw` | BM25 keyword scoring only — no LLM call | `dreamcontext recall raw` |
+| `hybrid` (**experimental**) | BM25 + local dense embeddings fused (multilingual, no LLM call; falls back to BM25 if the model is unavailable) | `dreamcontext recall hybrid` |
 | `off` | No recall injection at all | `dreamcontext recall off` |
 | — | Inspect current mode | `dreamcontext recall status` |
-
-The retired `haiku` mode (a small cloud model picking docs per prompt) no longer exists: a vault whose `state/.sleep.json` still says `haiku`, or an env of `DREAMCONTEXT_RECALL_MODE=haiku`, is read as `hybrid` — never `off`, never an error.
 
 - **Auto-injection (ON by default):** the UserPromptSubmit hook surfaces top hits on every non-trivial prompt. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`; override mode per-session with `DREAMCONTEXT_RECALL_MODE`.
 - **Federation:** plain `recall` automatically spans eligible readable peers; hits are namespaced `<vault>::<type>/<slug>`. Scope with `--vault`/`--connected`/`--all-vaults` (see [integrations.md](integrations.md)).
 
-### Hybrid readiness — how a fresh machine gets there
-Hybrid needs two things on disk: the embedding model (once per machine, in `~/.dreamcontext/models`) and this vault's index (`_dream_context/.embeddings/`, git-ignored). Until both exist, the per-prompt hook answers with BM25 and says so in its header (`Memory recall (BM25 …)` instead of `(Hybrid …)`); it never blocks on a download or a cold index.
-- **Who provisions it:** the SessionStart hook, `dreamcontext init` and `dreamcontext update` start `dreamcontext embed ensure --quiet` as a **detached background process** when hybrid is the mode and it is not ready (retried at most once per 24 h after a failure). `sleep done` refreshes an already-usable index; if it is not usable it hands off to `embed ensure` instead of building inline.
-- **By hand:** `dreamcontext embed ensure` (`--no-download` builds the index only when the model is already on disk; `--repair` wipes the model directory and fetches it afresh when the files are on disk but damaged). `dreamcontext doctor` reports the model/index state and `doctor --fix` runs the same provisioning.
-- **Opt out of background provisioning:** `DREAMCONTEXT_EMBED_AUTO=0` (no spawn, no download, no sleep-time index build). Hybrid then stays BM25 until you run `embed ensure` yourself.
-- **The first index is checkpointed**: a long first build saves progress as it goes, but a *partial* index is never used for ranking (BM25 keeps answering until it is complete). Once complete, the hook embeds at most **8** new or changed chunks inline per prompt and leaves the rest to ensure/sleep.
-- **The model:** default **EmbeddingGemma-300m (q8, 768-dim)**, ~294 MB, downloaded from Hugging Face on first use — it is **not bundled in the npm package**. It is released under the **Gemma Terms of Use** (Google's own licence: commercial use is permitted, with use restrictions; it is not an OSI open-source licence). The previous `multilingual-e5-small` stays selectable: `DREAMCONTEXT_EMBED_MODEL=e5-small` (pre-2026-10 behaviour and tuning; its existing index stays valid). A model switch never mixes vector spaces: the index is keyed by model + quantization and a mismatch falls back to BM25 until `embed ensure` rebuilds it.
-- **Model-specific tuning:** each profile carries its own fusion constants, dense-gate and dedup/declined cosine thresholds — they are not interchangeable between models.
-- **Corpus cache:** the hook reads a per-vault parsed-corpus cache (`_dream_context/.recall-cache/`, git-ignored; peers' caches live in `~/.dreamcontext/recall-cache/`, never inside a peer vault). It is keyed per source file (path + mtime + size) and rebuilt transparently.
-
-
 ### What recall is and isn't
-- BM25 alone is keyword/stemming-based, not semantic — "ML practitioner" won't match "data scientist", and a Turkish question won't reach an English doc. Hybrid mode's dense channel covers those paraphrase and cross-lingual cases once the model is ready.
+- BM25 is keyword/stemming-based, not semantic — "ML practitioner" won't match "data scientist" (haiku mode mitigates this).
 - Recall does **not** replace the SessionStart snapshot (soul / the active person's constitution / memory / active-tasks / knowledge-index are pre-loaded every session). It is not a vector DB or mem0; the corpus is the same set the sleep agents curate. **`people/*.md` are not in that corpus at all** — see "Person constitutions are NOT knowledge" above.
 - **Pre-loaded does not always mean verbatim — except the two constitutions and a well-slept memory.** On a brain large enough to bust the harness's 20,000-char hook limit, the snapshot demotes: an over-ceiling memory file's decisions collapse to titles (a memory at or under the 4,000-char core ceiling renders in full — sleep already distilled it), inventories fall back to names + paths, and the chain ends at Lab. Every file path stays, so `Read _dream_context/core/2.memory.md` or `memory recall "<keywords>"` recovers the full text on demand — that recoverability is exactly what makes the compression safe. `core/0.soul.md` and the active `people/<slug>.md` are the exceptions: the agent's constitution and the person's constitution always render **verbatim**, at every budget. An oversized soul or constitution is fixed by extraction (conditional rules belong in `knowledge/patterns/`; anything not about the person belongs out of that person's constitution), which the banner and `doctor` error say out loud — never by compressing it. The *roster* of other people demotes but stays named. See [cli-reference.md](cli-reference.md) for the ladder.
 
@@ -261,7 +249,7 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
 
 ### Memory and knowledge essentials in full
 
-- **Recall (first-line discovery):** `dreamcontext memory recall "<query>" [--top N] [--types knowledge,feature,task,memory,changelog,objective,insight,thesis,automation,whiteboard,core] [--level 1|2|3] [--json]`. Default mode is **`hybrid`** (BM25 + local-embedding fusion, no LLM call; plain BM25 until the model and index are ready); `raw` = BM25 only; `off` = disabled. Control with `dreamcontext recall hybrid|raw|off|status`. Auto-injected on prompts (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
+- **Recall (first-line discovery):** `dreamcontext memory recall "<query>" [--top N] [--types knowledge,feature,task,memory,changelog,objective,insight,thesis,automation,whiteboard,core] [--level 1|2|3] [--json]`. Default mode is **`haiku`** (a small cloud model picks relevant docs); `raw` = BM25 only; `hybrid` = experimental BM25+local-embedding fusion (no LLM call); `off` = disabled. Control with `dreamcontext recall on|raw|hybrid|off|status`. Auto-injected on prompts (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
 - **Quick capture:** `dreamcontext memory remember "<text>"` writes a `type=note` CHANGELOG entry; sleep reconciles it later. (`2.memory.md` no longer has a LIFO ship-narrative section — ship events live in CHANGELOG.)
 - **Knowledge files:** index auto-loaded; create with `dreamcontext knowledge create <name>`; pin frequently-needed ones (`pinned: true`); read non-pinned on demand and `knowledge touch` after. Group a flat file into a context folder with `dreamcontext knowledge move <slug> <folder>` (atomic move + inbound `[[wikilink]]` rewrite — never `mv` + hand-edit links).
 - **Insights are NOT knowledge** — a metric the user wants tracked ("create an insight", "track MRR") is a **Lab insight** (`dreamcontext lab create`), not a knowledge file. See the Entity Router above; full protocol → [tasks-and-features.md](references/tasks-and-features.md).

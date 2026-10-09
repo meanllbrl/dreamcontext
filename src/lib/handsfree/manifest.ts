@@ -176,7 +176,7 @@ export function allowedNewWorktreePath(
 // ---------------------------------------------------------------- selection rules
 
 /** Directories under `_dream_context/` that never travel. */
-export const DREAM_EXCLUDED_DIRS = ['marketing', 'tmp', '.embeddings', '.recall-cache', '.obsidian'];
+export const DREAM_EXCLUDED_DIRS = ['marketing', 'tmp', '.embeddings', '.obsidian'];
 
 /** dreamcontext's own credential files: NEVER travel, refused on Return. */
 export const NEVER_TRAVEL = ['_dream_context/state/.secrets.json', '_dream_context/lab/credentials.json'];

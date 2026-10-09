@@ -1,52 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
-import { buildCorpus, bm25Search, docKey, type CorpusDoc, type RecallHit } from '../src/lib/recall.js';
-
-// ─── Frozen-eval plumbing ────────────────────────────────────────────────────
-// Corpora, the pinned clock and every per-query result live under one machine-
-// local directory OUTSIDE the repo (held-out isolation is physical, not a rule).
-
-export const FROZEN_DIR = join(homedir(), '.dreamcontext', 'eval-frozen');
-export const FROZEN_RUNS_DIR = join(FROZEN_DIR, 'runs');
-
-/** Throws unless `path` resolves inside `dir` (the dir itself does not count). */
-export function assertUnder(dir: string, path: string, what: string): string {
-  const abs = resolve(path);
-  if (!abs.startsWith(resolve(dir) + sep)) {
-    throw new Error(`${what} must be under ${dir} (got ${abs})`);
-  }
-  return abs;
-}
-
-/**
- * The reference time for a measurement run. `undefined` → the wall clock (live
- * runs); `'frozen'` → the clock pinned at G0 in `eval-frozen/now.txt`; anything
- * else must be an ISO timestamp. Forwarded as `opts.now` to bm25Search/hybridSearch
- * so the recency multiplier can never drift between a baseline and a re-run.
- */
-export function loadNow(arg?: string): Date {
-  if (arg === undefined) return new Date();
-  const text = arg === 'frozen' ? readFileSync(join(FROZEN_DIR, 'now.txt'), 'utf-8').trim() : arg;
-  const t = Date.parse(text);
-  if (Number.isNaN(t)) throw new Error(`--now: not an ISO timestamp: ${text}`);
-  return new Date(t);
-}
-
-// Docs that did not exist when the gold sets were authored / that are
-// session-local noise. Excluded for measurement determinism.
-const EXCLUDED_SLUGS = new Set(['recall-context-uplift-v07']);
-
-/**
- * The corpus every A/B measures: capture docs (digests, bookmarks) and in-flight
- * tracking noise removed, so two runs over the same files rank identically.
- */
-export function stableCorpus(root: string): CorpusDoc[] {
-  return buildCorpus(root).filter(
-    (d) => !d.capture && !d.slug.startsWith('digest#') && !d.slug.startsWith('bookmark#')
-      && !EXCLUDED_SLUGS.has(d.slug),
-  );
-}
+import { bm25Search, docKey, type CorpusDoc, type RecallHit } from '../src/lib/recall.js';
 
 /**
  * A single labelled recall query.
@@ -264,21 +217,13 @@ export interface ExtendedReport {
  * nDCG@10 uses binary relevance with a single accepted target — the gold sets
  * label "any of these docs answers the query", not a graded full ranking — so
  * per-query nDCG@10 = 1/log2(rank+1) for rank ≤ 10, else 0.
- *
- * Latency is measured AFTER `warmup` untimed queries (default 1, the first gold
- * query): the first call of a mode pays one-off costs (JIT, model load, lazy
- * caches) that are not the steady-state per-query cost the latency gates compare.
- * The same discipline must be used by every baseline and re-run.
  */
 export async function evaluateSearch(
   search: SearchFn,
   gold: GoldQuery[],
-  warmup = 1,
 ): Promise<ExtendedReport> {
   const perQuery: ExtendedReport['perQuery'] = [];
   const times: number[] = [];
-
-  for (let i = 0; i < Math.min(warmup, gold.length); i++) await search(gold[i].query, 10);
 
   interface Acc { hit1: number; hit3: number; hit5: number; rr: number; ndcg: number; n: number }
   const acc = new Map<string, Acc>();

@@ -51,7 +51,7 @@ function setDebt(debt: number, over: Record<string, unknown> = {}): void {
     debt, last_sleep: null, last_sleep_summary: null, sleep_started_at: null,
     last_consolidated_at: null, sessions_since_last_sleep: 0, sessions: [], bookmarks: [],
     triggers: [], knowledge_access: {}, dashboard_changes: [], compaction_log: [],
-    recall_mode: 'hybrid', consolidation_depth: null, pendingMigrationNotices: [],
+    recall_mode: 'haiku', consolidation_depth: null, pendingMigrationNotices: [],
     cycle_tasks_filed: [], ...over,
   }, null, 2));
 }

@@ -26,7 +26,6 @@ import {
 } from '../../lib/manifest.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
-import { spawnEmbedEnsure } from '../../lib/embeddings/provision.js';
 
 // ─── Update Summary ──────────────────────────────────────────────────────────
 
@@ -368,13 +367,6 @@ export function registerUpdateCommand(program: Command): void {
         console.log();
         console.log(miniBox(summary.split('\n'), { color: 'green' }));
         console.log();
-
-        // Hybrid recall is the default: make sure this project's model and index get
-        // provisioned. Detached and best-effort — `update` never waits on a download.
-        const contextRoot = join(projectRoot, '_dream_context');
-        if (existsSync(contextRoot) && spawnEmbedEnsure(contextRoot)) {
-          info(chalk.dim('Hybrid recall: preparing the local embedding model and index in the background (opt out: DREAMCONTEXT_EMBED_AUTO=0).'));
-        }
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();

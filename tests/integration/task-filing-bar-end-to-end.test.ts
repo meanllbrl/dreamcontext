@@ -3,7 +3,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isEmbedModelComplete } from '../../src/lib/embeddings/embedder.js';
+import { isEmbedModelDownloaded } from '../../src/lib/embeddings/embedder.js';
 
 /**
  * B, end to end through the REAL binary: the bar, the cap, the tombstone and
@@ -16,7 +16,7 @@ import { isEmbedModelComplete } from '../../src/lib/embeddings/embedder.js';
  *    OFF. That is not a gap in the coverage, it IS an acceptance criterion — the
  *    bar must PASS and SAY SO. The declined ledger's exact-key half needs no
  *    model at all and is proven here too.
- *  - MODEL-GATED (`describe.skipIf(!isEmbedModelComplete())`): the merge band,
+ *  - MODEL-GATED (`describe.skipIf(!isEmbedModelDownloaded())`): the merge band,
  *    the review band, `--neighbor-checked` and `--declined-checked` through the
  *    real binary against real vectors. Skipped where the ~113 MB model is not on
  *    disk; this suite NEVER triggers a download.
@@ -336,22 +336,16 @@ describe('a declined idea cannot be re-filed by a cycle', () => {
  * Seeded vault: ONE near-verbatim twin plus ONE topically distinct decoy.
  *
  * NOT two twins: they would score within a hair of each other and fail the MERGE
- * margin gate (top1 − top2 ≥ the merge margin), turning the merge case into a
- * review one. The bands are placed with the documented `DREAMCONTEXT_DEDUP_*` env
- * overrides, read per child process, so each case exercises a chosen band without
- * betting on an exact cosine.
- *
- * The cosines themselves are MODEL-SPECIFIC (e5-small: twin 0.9358 / decoy 0.8163;
- * EmbeddingGemma: far lower and wider apart), so they are not hard-coded: `beforeAll`
- * measures the twin and the decoy for the ACTIVE model through the real binary
- * (`embed dedup`) and `bandsFor` places the bands between them. That keeps this suite
- * about the band MECHANICS, whichever model is installed.
+ * margin gate (top1 − top2 ≥ DEDUP_MERGE_MARGIN), turning the merge case into a
+ * review one. Measured here (e5-small q8): candidate → twin 0.9358, candidate →
+ * decoy 0.8163, margin 0.1195. The bands are then placed with the documented
+ * `DREAMCONTEXT_DEDUP_*` env overrides, read per child process, so each case
+ * exercises a chosen band without betting on an exact cosine.
  */
 const TWIN_NAME = 'The draft is lost when the tab reloads before anything persists it';
 const TWIN_SLUG = 'the-draft-is-lost-when-the-tab-reloads-before-anything-persists-it';
 const TWIN_DESC = 'Persist the composer draft to localStorage on input';
 const DECOY_NAME = 'Weekly billing export drops the currency column for refunded invoices';
-const DECOY_SLUG = 'weekly-billing-export-drops-the-currency-column-for-refunded-invoices';
 const DECOY_WHY = 'Finance reconciles refunds by hand every Monday because the export omits the currency column.';
 /** Near-verbatim restatement of the twin, with a DIFFERENT slug (an identical one
  *  would be refused by the pre-existing "task already exists" check and never
@@ -363,27 +357,17 @@ const REWORD_NAME = 'Ship a dark theme switch in settings';
 const REWORD_SLUG = 'ship-a-dark-theme-switch-in-settings';
 const REWORD_WHY = 'Users read at night and the owner asked for a way to force the dark palette from the settings page.';
 
-/** A twin must beat the decoy by at least this much for the bands to be placeable between them. */
-const MIN_TWIN_GAP = 0.05;
+/** Measured twin cosine is 0.9358, so 0.90 puts it in MERGE and leaves the decoy
+ *  (0.8163) out. Margin 0 keeps the case about the ABSOLUTE band even if a future
+ *  model moves the runner-up. */
+const MERGE_BAND = { DREAMCONTEXT_DEDUP_MERGE: '0.90', DREAMCONTEXT_DEDUP_MERGE_MARGIN: '0' };
+/** Merge out of reach, review below the twin → the review band. */
+const REVIEW_BAND = { DREAMCONTEXT_DEDUP_MERGE: '0.999', DREAMCONTEXT_DEDUP_REVIEW: '0.9' };
+/** Both bands out of reach → gate 5 returns `create`, so a refusal below it
+ *  provably came from gate 6 (declined) and not from the neighbor gate. */
+const CREATE_BAND = { DREAMCONTEXT_DEDUP_MERGE: '0.999', DREAMCONTEXT_DEDUP_REVIEW: '0.999' };
 
-/**
- * Place the bands between the measured decoy and twin cosines of the active model:
- *  - MERGE:  a threshold midway between decoy and twin (twin in, decoy out); margin 0 keeps the
- *            case about the ABSOLUTE band even if a future model moves the runner-up.
- *  - REVIEW: merge out of reach, review at the same midpoint → the review band.
- *  - CREATE: both out of reach, so a refusal below gate 5 provably came from gate 6 (declined).
- * Floored to 4 decimals so the twin always sits at/above the threshold.
- */
-function bandsFor(twinSim: number, decoySim: number) {
-  const mid = Math.floor(((twinSim + decoySim) / 2) * 1e4) / 1e4;
-  return {
-    mergeBand: { DREAMCONTEXT_DEDUP_MERGE: String(mid), DREAMCONTEXT_DEDUP_MERGE_MARGIN: '0' },
-    reviewBand: { DREAMCONTEXT_DEDUP_MERGE: '0.999', DREAMCONTEXT_DEDUP_REVIEW: String(mid) },
-    createBand: { DREAMCONTEXT_DEDUP_MERGE: '0.999', DREAMCONTEXT_DEDUP_REVIEW: '0.999' },
-  };
-}
-
-const MODEL_READY = isEmbedModelComplete();
+const MODEL_READY = isEmbedModelDownloaded();
 /** A real model load plus an additive refresh; measured ~1.5–3 s per call here. */
 const MODEL_TIMEOUT = 120_000;
 
@@ -392,10 +376,6 @@ const MODEL_TIMEOUT = 120_000;
 // a machine with no model that would be a pointless failure instead of a skip.
 describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model required)', () => {
   let mroot = '';
-  // Placed in beforeAll from the active model's measured twin / decoy cosines.
-  let MERGE_BAND: Record<string, string> = {};
-  let REVIEW_BAND: Record<string, string> = {};
-  let CREATE_BAND: Record<string, string> = {};
   const mcli = (args: string, env: Record<string, string> = {}) =>
     cli(args, { cwd: mroot, env, timeout: MODEL_TIMEOUT, lowPriority: true });
   /** Re-index after anything that WRITES a task file. The bar needs ≥80% of the
@@ -412,26 +392,6 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
     expect(mcli(`tasks create "${TWIN_NAME}" --by human -d "${TWIN_DESC}" --why "${WHY}"`).code).toBe(0);
     expect(mcli(`tasks create "${DECOY_NAME}" --by human --why "${DECOY_WHY}"`).code).toBe(0);
     reindex();
-
-    // Measure the twin and the decoy for THIS model, exactly as the filing bar embeds a candidate
-    // (title = name, description, body = --why), and place the bands between them.
-    const probe = mcli(
-      `embed dedup --types task --title "${CANDIDATE_NAME}" -d "${TWIN_DESC}" -c "${WHY}" --json --no-log`,
-    );
-    expect(probe.code).toBe(0);
-    const sims = new Map<string, number>(
-      (JSON.parse(probe.out.trim().split('\n').pop() ?? '{}').neighbors as Array<{ docKey: string; sim: number }>)
-        .map((n) => [n.docKey, n.sim]),
-    );
-    const twinSim = sims.get(`task/${TWIN_SLUG}`);
-    const decoySim = sims.get(`task/${DECOY_SLUG}`);
-    expect(twinSim, 'the twin must be among the nearest tasks').toBeDefined();
-    expect(decoySim, 'the decoy must be among the nearest tasks').toBeDefined();
-    // The suite's premise: the twin is clearly nearer than the decoy. If a model breaks it, say so
-    // here instead of failing four band cases for a reason they do not name.
-    expect(twinSim! - decoySim!, `twin ${twinSim} vs decoy ${decoySim}`).toBeGreaterThanOrEqual(MIN_TWIN_GAP);
-    ({ mergeBand: MERGE_BAND, reviewBand: REVIEW_BAND, createBand: CREATE_BAND } = bandsFor(twinSim!, decoySim!));
-
     startCycle(mroot);
   }, MODEL_TIMEOUT);
 

@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'no
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
-import { acquireFileLockWithin } from '../../src/lib/file-lock.js';
 
 /**
  * The cross-process stamp mutex behind `sleep start`. Pure-ish: `nowMs` is
@@ -117,45 +116,5 @@ describe('acquireFileLock / releaseFileLock', () => {
         killSpy.mockRestore();
       }
     });
-  });
-});
-
-/**
- * `maxAgeMs` (opt-in, default off): a hard age ceiling past which a lock is reclaimed even when
- * its recorded PID is alive — a recycled PID would otherwise hold it forever. Only the model
- * download lock sets it; every other caller must behave exactly as before.
- */
-describe('maxAgeMs (opt-in hard age ceiling)', () => {
-  let dir: string;
-  let lock: string;
-  const STALE = 60_000;
-  const CEILING = 10 * STALE;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'dc-filelock-maxage-'));
-    lock = join(dir, '.dl.lock');
-    writeFileSync(lock, JSON.stringify({ pid: process.pid, at: 1000 }) + '\n'); // holder PID is alive (us)
-  });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-  it('reclaims a lock older than the ceiling although its PID is alive', () => {
-    expect(acquireFileLock(lock, 1000 + CEILING + 1, STALE, { verifyPidLiveness: true, maxAgeMs: CEILING })).toBe(true);
-    expect(JSON.parse(readFileSync(lock, 'utf-8')).at).toBe(1000 + CEILING + 1);
-  });
-
-  it('still respects a live holder past the stale age but under the ceiling', () => {
-    expect(acquireFileLock(lock, 1000 + STALE + 1, STALE, { verifyPidLiveness: true, maxAgeMs: CEILING })).toBe(false);
-    expect(acquireFileLock(lock, 1000 + CEILING, STALE, { verifyPidLiveness: true, maxAgeMs: CEILING })).toBe(false); // age == ceiling: not past it
-  });
-
-  it('is off by default: without it a live PID is never robbed, however old the lock', () => {
-    expect(acquireFileLock(lock, 1000 + 1000 * CEILING, STALE, { verifyPidLiveness: true })).toBe(false);
-    expect(acquireFileLock(lock, 1000 + 1000 * CEILING, STALE)).toBe(true); // timestamp-only callers are unchanged too
-  });
-
-  it('acquireFileLockWithin forwards it, and without it leaves a live holder alone', async () => {
-    const now = () => 1000 + CEILING + 1;
-    expect(await acquireFileLockWithin(lock, { waitMs: 0, staleMs: STALE, verifyPidLiveness: true, now })).toBe(false);
-    expect(await acquireFileLockWithin(lock, { waitMs: 0, staleMs: STALE, verifyPidLiveness: true, maxAgeMs: CEILING, now })).toBe(true);
   });
 });

@@ -74,7 +74,7 @@ function baseState(over: Partial<SleepState> = {}): SleepState {
     knowledge_access: {},
     dashboard_changes: [],
     compaction_log: [],
-    recall_mode: 'hybrid',
+    recall_mode: 'haiku',
     consolidation_depth: null,
     pendingMigrationNotices: [],
     ...over,

@@ -18,7 +18,7 @@ const NEW_DEFAULTS = {
   triggers: [],
   knowledge_access: {},
   compaction_log: [],
-  recall_mode: 'hybrid',
+  recall_mode: 'haiku',
   consolidation_depth: null,
   pendingMigrationNotices: [],
   last_consolidated_at: null,

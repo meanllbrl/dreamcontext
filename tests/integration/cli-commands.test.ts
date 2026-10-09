@@ -899,8 +899,8 @@ parent_task: null
 
     it('reconciles a stale UserPromptSubmit timeout to the current spec', () => {
       // A project written by an older installer pinned the recall hook at 5s,
-      // before the per-prompt recall hook (which once ran a ~15s LLM call) needed the
-      // larger 120s timeout. Re-running install must heal the drift, not skip it.
+      // before the Haiku recall path (which can take ~15s) required the larger
+      // 120s timeout. Re-running install must heal the drift, not skip it.
       mkdirSync(join(tmpDir, '.claude'), { recursive: true });
       writeFileSync(join(tmpDir, '.claude', 'settings.json'), JSON.stringify({
         hooks: {

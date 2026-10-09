@@ -13,11 +13,3 @@ import { scrubSpawnEnv } from '../../src/lib/session-origin.js';
 //    the test (the same mechanism as tests/integration/hook.test.ts's explicit SERVER_PID).
 scrubSpawnEnv(process.env);
 process.env.DREAMCONTEXT_SERVER_PID = String(process.pid);
-
-// 3. Hybrid recall is the default mode, so the commands the suite drives in temp vaults (init,
-//    update, a SessionStart hook, `sleep done`) would otherwise start downloading the embedding
-//    model and building an index. No test may do that: provisioning is off for the whole run,
-//    in this process and in every child that inherits process.env. The tests that exercise
-//    provisioning itself (embed-provision.test.ts, hook-hybrid-fallback.test.ts) clear it
-//    explicitly, in a temp HOME.
-process.env.DREAMCONTEXT_EMBED_AUTO = '0';

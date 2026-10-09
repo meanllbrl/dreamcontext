@@ -1,9 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-
-// These tests drive the verdict MECHANICS with hand-placed cosines (0.91–0.97 band, 0.80 floor…), which
-// are e5-small's scale: pin the e5 profile so the thresholds they were written against are in force.
-// Gemma's own defaults are covered in embedder-profiles.test.ts.
-vi.hoisted(() => { process.env.DREAMCONTEXT_EMBED_MODEL = 'e5-small'; });
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

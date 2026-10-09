@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
@@ -20,7 +19,7 @@ import { whiteboardRecallText } from './whiteboards/recall-text.js';
 import { resolveWhiteboardPath, whiteboardsDir } from './whiteboards/store.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
-// intentionally excluded from buildCorpus defaults so they never pollute the recall corpus.
+// intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
 export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis' | 'automation' | 'whiteboard' | 'core';
 
 /**
@@ -69,11 +68,6 @@ export interface CorpusDoc {
   tags: string[];        // frontmatter tags (if any)
   body: string;          // raw body text
   tokens: string[];      // tokenized body+title+description+tags
-  /**
-   * Token count. Set (non-enumerable) only on docs revived from the corpus cache,
-   * whose `tokens` array is rebuilt lazily — read it through {@link tokenCountOf}.
-   */
-  tokenCount?: number;
   tokenSet: Set<string>; // for DF lookup
   termFreq: Map<string, number>;
   // ── B1/B2/B3/B5 ranking metadata (all optional so external CorpusDoc
@@ -237,11 +231,6 @@ export interface RecallHit {
 
 /** Stable identity for a corpus doc: `type/slug` (e.g. `knowledge/haiku-recall-architecture`). */
 export function docKey(doc: CorpusDoc): string { return `${doc.type}/${doc.slug}`; }
-
-/** A doc's token count without forcing a cache-revived doc to materialise `tokens`. */
-export function tokenCountOf(doc: CorpusDoc): number {
-  return doc.tokenCount ?? doc.tokens.length;
-}
 
 // ─── Tokenization ──────────────────────────────────────────────────────────
 
@@ -473,47 +462,11 @@ function productFromRelPath(relPath: string): string | undefined {
 
 // ─── Corpus Loader ─────────────────────────────────────────────────────────
 
-/**
- * What the corpus cache remembers about one source file (see recall-corpus-cache.ts).
- * `docs` is empty for a file that was read but kept out of the index (a dark diagram
- * sibling); `indexable` records the one frontmatter fact that exclusion depends on.
- */
-export interface CorpusSourceEntry {
-  indexable: boolean;
-  docs: CorpusDoc[];
-}
-
-/**
- * Per-source memo the loaders consult so an UNCHANGED file skips its read, frontmatter
- * parse and tokenization. `sig` is {@link fileSignature}; a lookup only hits when it
- * matches what was recorded. Passing no memo (the default) is the plain, uncached build.
- */
-export interface CorpusSourceMemo {
-  lookup(key: string, sig: string): CorpusSourceEntry | undefined;
-  record(key: string, sig: string, entry: CorpusSourceEntry): void;
-}
-
-/** Identity of a source file's content for the corpus cache: mtime + size, or null when unreadable. */
-export function fileSignature(path: string): string | null {
-  try {
-    const st = statSync(path);
-    return `${st.mtimeMs}:${st.size}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Memo key for one source file; the doc type is part of it so a path never serves two channels. */
-export function sourceKey(type: CorpusType, path: string): string {
-  return `${type}\u0000${path}`;
-}
-
 function loadMarkdownDocs(
   dir: string,
   type: CorpusType,
   contextRoot: string,
   ignore?: string[],
-  memo?: CorpusSourceMemo,
 ): CorpusDoc[] {
   if (!existsSync(dir)) return [];
   // B1: recurse into nested dirs (e.g. knowledge/products/<name>/…).
@@ -526,31 +479,13 @@ function loadMarkdownDocs(
   const boardDirs = diagramFolderDirs(files);
   const out: CorpusDoc[] = [];
   for (const file of files) {
-    const sig = memo ? fileSignature(file) : null;
-    const key = sig !== null ? sourceKey(type, file) : '';
-    if (memo && sig !== null) {
-      const cached = memo.lookup(key, sig);
-      if (cached) {
-        // The file is unchanged, but whether it is a dark sibling can still change
-        // (a board appearing or vanishing beside it), so that check runs every time.
-        if (isDarkDiagramSibling(file, boardDirs, cached.indexable)) continue;
-        if (cached.docs.length > 0) {
-          out.push(...cached.docs);
-          continue;
-        }
-        // Cached as dark, no longer dark: it has never been built — fall through.
-      }
-    }
     try {
       const { data, content } = readFrontmatter(file);
       // Exclude dark siblings — tooling beside a board — UNLESS the .md declares
       // itself as knowledge via `name:` frontmatter (a co-located teardown).
       const isIndexableKnowledge =
         typeof data.name === 'string' && data.name.trim() !== '';
-      if (isDarkDiagramSibling(file, boardDirs, isIndexableKnowledge)) {
-        if (memo && sig !== null) memo.record(key, sig, { indexable: isIndexableKnowledge, docs: [] });
-        continue;
-      }
+      if (isDarkDiagramSibling(file, boardDirs, isIndexableKnowledge)) continue;
 
       const slug = basename(file, '.md');
       // `claim` is the thesis identity field (theses/<slug>.md have no name/title) —
@@ -569,7 +504,7 @@ function loadMarkdownDocs(
         : content.trim();
       const relPath = file.replace(contextRoot + '/', '');
       const fields = buildFields({ slug, title, description, tags, body });
-      const built: CorpusDoc = {
+      out.push({
         type,
         path: file,
         relPath,
@@ -594,9 +529,7 @@ function loadMarkdownDocs(
         // Federation: a doc ingested from a peer carries `federated: true`.
         federated: data.federated === true,
         level: deriveLevel(type, data as Record<string, unknown>, `${title} ${description} ${body}`),
-      };
-      out.push(built);
-      if (memo && sig !== null) memo.record(key, sig, { indexable: isIndexableKnowledge, docs: [built] });
+      });
     } catch {
       // skip malformed
     }
@@ -604,15 +537,9 @@ function loadMarkdownDocs(
   return out;
 }
 
-function loadChangelogEntries(contextRoot: string, memo?: CorpusSourceMemo): CorpusDoc[] {
+function loadChangelogEntries(contextRoot: string): CorpusDoc[] {
   const path = join(contextRoot, 'core', 'CHANGELOG.json');
   if (!existsSync(path)) return [];
-  const sig = memo ? fileSignature(path) : null;
-  const key = sourceKey('changelog', path);
-  if (memo && sig !== null) {
-    const cached = memo.lookup(key, sig);
-    if (cached) return cached.docs;
-  }
   let entries: Array<Record<string, unknown>> = [];
   try {
     // Via readJsonArray, so a vault whose CHANGELOG.json was scaffolded as
@@ -672,7 +599,6 @@ function loadChangelogEntries(contextRoot: string, memo?: CorpusSourceMemo): Cor
       level: starLevel(`${summary} ${description}`) ?? 1,
     });
   }
-  if (memo && sig !== null) memo.record(key, sig, { indexable: false, docs: out });
   return out;
 }
 
@@ -931,7 +857,7 @@ function loadWhiteboardDocs(contextRoot: string): CorpusDoc[] {
  * Only scans `<pack>/SKILL.md` (the `*\/SKILL.md` glob does NOT recurse into
  * nested sub-skill dirs). Skills with `alwaysApply: true` are excluded — they're
  * already loaded, so surfacing them is noise. Produces `type: 'skill'` docs that
- * are intentionally NOT part of buildCorpus (recall results must stay unchanged).
+ * are intentionally NOT part of buildCorpus (haikuRecall must stay unchanged).
  */
 export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
   if (!existsSync(skillsRoot)) return [];
@@ -995,76 +921,37 @@ export function buildCorpus(
   contextRoot: string,
   opts: BuildCorpusOptions = {},
 ): CorpusDoc[] {
-  return buildCorpusWith(contextRoot, opts);
-}
-
-/**
- * Where session-digest.ts keeps its digests (its own `digestsDir` is private; the corpus
- * cache test writes a digest through `writeDigest` and would catch the two drifting).
- */
-const DIGESTS_DIR_PARTS = ['state', '.session-digests'] as const;
-
-/**
- * {@link loadDigestDocs} through the memo. The digests are loaded and capped as a GROUP
- * (newest MAX_INDEXED_DIGESTS of them), so the memo entry is the whole group, keyed by the
- * name + mtime + size of every digest file: any digest added, edited or removed rebuilds it.
- */
-function loadDigestDocsMemo(contextRoot: string, memo?: CorpusSourceMemo): CorpusDoc[] {
-  const dir = join(contextRoot, ...DIGESTS_DIR_PARTS);
-  if (!memo || !existsSync(dir)) return loadDigestDocs(contextRoot);
-  const files = fg.sync('*.md', { cwd: dir, absolute: true }).sort();
-  const sig = createHash('sha1')
-    .update(files.map((file) => `${file}:${fileSignature(file) ?? 'unreadable'}`).join('\n'))
-    .digest('hex');
-  const key = sourceKey('task', join(dir, '*.md'));
-  const cached = memo.lookup(key, sig);
-  if (cached) return cached.docs;
-  const docs = loadDigestDocs(contextRoot);
-  memo.record(key, sig, { indexable: false, docs });
-  return docs;
-}
-
-/**
- * {@link buildCorpus} with an optional per-source memo (recall-corpus-cache.ts). The
- * memo only ever stands in for read + parse + tokenize of a file that has not changed;
- * with none this IS buildCorpus, so the cached and uncached corpora share one code path.
- */
-export function buildCorpusWith(
-  contextRoot: string,
-  opts: BuildCorpusOptions,
-  memo?: CorpusSourceMemo,
-): CorpusDoc[] {
   const types = new Set(opts.types ?? CORPUS_TYPES);
   const docs: CorpusDoc[] = [];
   if (types.has('knowledge')) {
     // Exclude knowledge/features/** — features are their own corpus type and are
     // loaded below, so a migrated feature is never double-counted as knowledge.
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'knowledge'), 'knowledge', contextRoot, ['features/**'], memo));
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'knowledge'), 'knowledge', contextRoot, ['features/**']));
   }
   if (types.has('feature')) {
-    docs.push(...loadMarkdownDocs(featuresDir(contextRoot), 'feature', contextRoot, undefined, memo));
+    docs.push(...loadMarkdownDocs(featuresDir(contextRoot), 'feature', contextRoot));
   }
   if (types.has('objective')) {
     // PO-authored roadmap objectives (core/objectives/*.md) — first-class recall
     // docs so "what are we driving toward" surfaces in per-prompt recall too.
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'core', 'objectives'), 'objective', contextRoot, undefined, memo));
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'core', 'objectives'), 'objective', contextRoot));
   }
   if (types.has('insight')) {
     // Lab insight manifests (lab/insights/*.md) — the `## Meaning` prose is
     // first-class recall so "what do we measure / what does <metric> mean"
     // surfaces the curated insight, not raw numbers.
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'lab', 'insights'), 'insight', contextRoot, undefined, memo));
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'lab', 'insights'), 'insight', contextRoot));
   }
   if (types.has('thesis')) {
     // Proactive-learning-layer theses (theses/<slug>.md) — the claim prose is
     // first-class recall so "what are we testing / do we have a thesis about X"
     // surfaces the hypothesis, not just its downstream evidence.
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'theses'), 'thesis', contextRoot, undefined, memo));
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'theses'), 'thesis', contextRoot));
   }
   if (types.has('task')) {
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot, undefined, memo));
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot));
     // Session digests fold under the task channel (continuous capture, C1/C3).
-    docs.push(...loadDigestDocsMemo(contextRoot, memo));
+    docs.push(...loadDigestDocs(contextRoot));
   }
   if (types.has('memory')) {
     docs.push(...loadMemoryFile(contextRoot));
@@ -1073,7 +960,7 @@ export function buildCorpusWith(
     docs.push(...loadBookmarkDocs(contextRoot));
   }
   if (types.has('changelog')) {
-    docs.push(...loadChangelogEntries(contextRoot, memo));
+    docs.push(...loadChangelogEntries(contextRoot));
   }
   if (types.has('automation')) {
     // Automation manifests are FLAT at `automations/<slug>.md` — the sibling
@@ -1085,7 +972,6 @@ export function buildCorpusWith(
       'automation',
       contextRoot,
       ['cache/**', 'output/**'],
-      memo,
     ));
     docs.push(...loadAutomationRunDocs(contextRoot));
   }
@@ -1103,7 +989,6 @@ export function buildCorpusWith(
       'core',
       contextRoot,
       ['*/**', '2.memory.md'],
-      memo,
     ));
   }
   if (opts.minLevel !== undefined) {
@@ -1111,30 +996,6 @@ export function buildCorpusWith(
     return docs.filter((doc) => docLevel(doc) >= floor);
   }
   return docs;
-}
-
-/**
- * Fingerprint of everything that decides what a built CorpusDoc looks like: the
- * tokenizer's tables, the stemmers, the field weights and the source text of the
- * loaders and helpers that assemble a doc. The corpus cache stores it and discards
- * itself on any difference, so changing how docs are built can never leave stale
- * cached docs behind. (Function source text, not a hand-bumped version number — a
- * forgotten bump is the failure this exists to rule out.)
- */
-export function corpusBuildFingerprint(): string {
-  const parts: string[] = [
-    [...STOPWORDS].sort().join(','),
-    TR_SUFFIXES.join(','),
-    JSON.stringify(FIELD_WEIGHTS),
-  ];
-  const sources: Array<(...args: never[]) => unknown> = [
-    stemEn, stemTrOnce, stemTr, stemToken, tokenize, buildFields, parseLinks, tagIndexValue,
-    starLevel, priorityLevel, deriveLevel, readUpdatedAt, readStatus, productFromRelPath,
-    loadMarkdownDocs, loadChangelogEntries, loadDigestDocs, readFrontmatter, featureProductFromRelPath,
-    extractExcalidrawText, isDarkDiagramSibling, diagramFolderDirs, isExcalidrawPath,
-  ];
-  for (const fn of sources) parts.push(String(fn));
-  return createHash('sha1').update(parts.join('\u0000')).digest('hex');
 }
 
 // ─── BM25 Scoring ──────────────────────────────────────────────────────────
@@ -1198,29 +1059,6 @@ export const STATUS_PENALTY: Record<string, number> = { completed: 0.85 };
 // near-ties toward the canonical doc while a changelog whose match is clearly
 // strongest still surfaces.
 export const CHANGELOG_RANK_FACTOR = 0.85;
-
-// ── Boards are labels, not prose ─────────────────────────────────────────────
-// A board's indexed text is only the labels drawn on it (extractExcalidrawText /
-// whiteboardRecallText), so it is short and dense with the topic's vocabulary —
-// BM25F length normalisation over-ranks it exactly as it does a changelog line.
-// Measured on the frozen corpus: label-only boards (knowledge/sleep-debt.excalidraw,
-// knowledge/memory-uplift-comparison.excalidraw) took top-1 from the canonical feature
-// doc on six train queries. Same rankScore-only treatment as CHANGELOG_RANK_FACTOR (raw
-// `score` untouched — decoupling invariant), only stronger because a board never IS the
-// canonical doc: a board whose labels clearly match best still surfaces, just not over a
-// prose doc on a near-tie. Query-side only, so it is not part of corpusBuildFingerprint.
-export const BOARD_RANK_FACTOR = 0.6;
-
-/** True for docs whose body is board labels: a whiteboard, or a knowledge `*.excalidraw` board. */
-export function isBoardDoc(doc: CorpusDoc): boolean {
-  return doc.type === 'whiteboard' || doc.slug.endsWith('.excalidraw');
-}
-
-/** Canonical-first multiplier for the doc's kind (rankScore only): pointers and label-only boards rank below prose. */
-function kindRankFactor(doc: CorpusDoc): number {
-  if (doc.type === 'changelog') return CHANGELOG_RANK_FACTOR;
-  return isBoardDoc(doc) ? BOARD_RANK_FACTOR : 1;
-}
 
 /**
  * Recency multiplier in [minMult, 1] from an exponential half-life decay.
@@ -1293,9 +1131,9 @@ export function bm25Search(
   for (const t of synonymTerms.keys()) allTerms.add(t);
 
   const N = corpus.length;
-  const avgdl = corpus.reduce((s, d) => s + tokenCountOf(d), 0) / N;
+  const avgdl = corpus.reduce((s, d) => s + d.tokens.length, 0) / N;
   // B2: separate avg document length for the field-weighted (BM25F) channel.
-  const avgFieldLen = corpus.reduce((s, d) => s + (d.fieldLen ?? tokenCountOf(d)), 0) / N;
+  const avgFieldLen = corpus.reduce((s, d) => s + (d.fieldLen ?? d.tokens.length), 0) / N;
 
   const df: Record<string, number> = {};
   for (const term of allTerms) {
@@ -1332,7 +1170,7 @@ export function bm25Search(
     // This is the `.score` the hook thresholds against. NONE of the B2/B3/B4/B5
     // signals may leak into this value (decoupling constraint).
     let rawScore = 0;
-    const dlFlat = tokenCountOf(doc) || 1;
+    const dlFlat = doc.tokens.length || 1;
     for (const term of queryTerms) {
       const tf = doc.termFreq.get(term) ?? 0;
       if (tf === 0) continue;
@@ -1389,12 +1227,10 @@ export function bm25Search(
       * statusMultiplier(doc.status)
       * recencyMultiplier(doc.updatedAt, now)
       * (doc.capture ? CAPTURE_RANK_PENALTY : 1)
-      * kindRankFactor(doc);
+      * (doc.type === 'changelog' ? CHANGELOG_RANK_FACTOR : 1);
 
     scored.push({
-      // Snippet is filled for the returned topK only, below: extracting one re-tokenizes
-      // every line of the doc, which dominated search time when run for every match.
-      hit: { doc, score: rawScore, rankScore, snippet: '' },
+      hit: { doc, score: rawScore, rankScore, snippet: extractSnippet(doc, queryTerms) },
       rawRank: rankBase,
     });
   }
@@ -1420,7 +1256,7 @@ export function bm25Search(
           * statusMultiplier(s.hit.doc.status)
           * recencyMultiplier(s.hit.doc.updatedAt, now)
           * (s.hit.doc.capture ? CAPTURE_RANK_PENALTY : 1)
-          * kindRankFactor(s.hit.doc);
+          * (s.hit.doc.type === 'changelog' ? CHANGELOG_RANK_FACTOR : 1);
       }
     }
   }
@@ -1429,9 +1265,7 @@ export function bm25Search(
   // is returned unchanged for the hook's threshold checks.
   const hits = scored.map((s) => s.hit);
   hits.sort((a, b) => b.rankScore - a.rankScore);
-  const top = hits.slice(0, topK);
-  for (const hit of top) hit.snippet = extractSnippet(hit.doc, queryTerms);
-  return top;
+  return hits.slice(0, topK);
 }
 
 // ─── Snippet Extraction ────────────────────────────────────────────────────

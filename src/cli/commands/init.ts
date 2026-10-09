@@ -26,7 +26,6 @@ import { detectTechStack } from '../../lib/tech-stack.js';
 import { addPerson, isSafePersonSlug } from '../../lib/people-store.js';
 import { resolveAuthors } from '../../lib/people-resolve.js';
 import { readGitIdentity } from '../../lib/git-sync/git.js';
-import { spawnEmbedEnsure } from '../../lib/embeddings/provision.js';
 
 /**
  * Display name used when this machine has no usable git identity. Its slug
@@ -351,12 +350,6 @@ export function registerInitCommand(program: Command): void {
         `  Platforms: ${chalk.white(selectedPlatforms.join(', '))}`,
         `  Products: ${chalk.white(productSummary)}`,
       ], { color: 'green' }));
-
-      // Hybrid recall is the default mode, so a new vault starts provisioning its
-      // embedding model and index right away — detached, best-effort, BM25 until it lands.
-      if (spawnEmbedEnsure(contextDir)) {
-        console.log(chalk.dim('  Hybrid recall: preparing the local embedding model and index in the background (opt out: DREAMCONTEXT_EMBED_AUTO=0).'));
-      }
 
       console.log();
       console.log(`  ${chalk.bold('Created structure:')}`);

@@ -37,20 +37,6 @@ const HOME = join(SCRATCH, 'home');
 const PROJ = (n) => join(SCRATCH, 'projects', n);
 const ECHO = '<<<DC-SPAWN-ECHO>>>';
 
-/**
- * The embedder's active profile, read from its single source of truth. profiles.ts is pure
- * data with no imports, but dist is one bundle (nothing to import), so the TypeScript source
- * is transpiled in place. Selection follows DREAMCONTEXT_EMBED_MODEL of THIS process — the
- * same env the spawned server inherits.
- */
-async function activeEmbedProfile() {
-  const { default: ts } = await import('typescript');
-  const source = readFileSync(join(REPO, 'src', 'lib', 'embeddings', 'profiles.ts'), 'utf-8');
-  const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } });
-  const mod = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
-  return mod.EMBED_PROFILE;
-}
-
 const STANDIN = `#!${process.execPath}
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -147,8 +133,8 @@ function setupScratch() {
     const add = spawnSync(process.execPath, [CLI, 'vaults', 'add', n, PROJ(n)], { env: { ...process.env, HOME }, encoding: 'utf-8' });
     if (add.status !== 0) throw new Error(`vaults add ${n} failed: ${add.stderr || add.stdout}`);
   }
-  // alpha keeps the default recall mode (hybrid); beta is switched to raw — a delegation must
-  // leave every vault's own recall mode alone.
+  // alpha keeps the default recall mode (haiku); beta is switched to raw — a delegation must
+  // leave a non-haiku vault's recall alone.
   const raw = spawnSync(process.execPath, [CLI, 'recall', 'raw'], { cwd: PROJ('beta-app'), env: { ...process.env, HOME, DREAMCONTEXT_RECALL_MODE: '' }, encoding: 'utf-8' });
   if (raw.status !== 0) throw new Error(`recall raw failed: ${raw.stderr || raw.stdout}`);
   // A real task in alpha, for the W4 detail button to land on.
@@ -296,7 +282,7 @@ try {
   ok('autonomy ask → claude permission mode "default"', a.permissionMode === 'default', a.permissionMode);
   ok('the __assistant__ spawn runs --effort medium (its config default)', a.effort === 'medium', String(a.effort));
   ok('under ask the __assistant__ argv carries NO --allowedTools', a.allowedTools === null, String(a.allowedTools));
-  ok('its hooks recall raw (no embedding model on disk)', a.recallMode === 'raw', String(a.recallMode));
+  ok('its hooks recall raw (no embedding model on disk) — never haiku', a.recallMode === 'raw', String(a.recallMode));
   ok('an ordinary project chat carries no --allowedTools and no forced recall mode', alphaReport.allowedTools === null && alphaReport.recallMode === null, JSON.stringify({ allowedTools: alphaReport.allowedTools, recallMode: alphaReport.recallMode }));
   ok('the briefing carries the roster and the untrusted rule', a.briefing.includes('## Projects (3)') && a.briefing.includes('alpha-app') && a.briefing.includes('UNTRUSTED CONTENT'));
   const env = { DREAMCONTEXT_ASSISTANT_URL: a.url, DREAMCONTEXT_ASSISTANT_TOKEN: a.token };
@@ -457,7 +443,7 @@ try {
 
   // ── latency: the delegation marker, the recall it buys, effort, pre-approved verbs ──────
   // Protocol level, against the contract the notch's doorbell uses (origin=assistant on the
-  // chat URL). The stand-in reports its own env/argv; alpha is a hybrid vault, beta a raw one.
+  // chat URL). The stand-in reports its own env/argv; alpha is a haiku vault, beta a raw one.
   console.log('\n── latency: origin=assistant → cheap recall + medium effort; it survives a resume');
   {
     const turnIn = async (params, text = 'probe') => {
@@ -468,12 +454,12 @@ try {
     const pick = (r) => JSON.stringify(r && { recallMode: r.recallMode, effort: r.effort, allowedTools: r.allowedTools, sessionIdArg: r.sessionIdArg, resumeArg: r.resumeArg });
 
     const ord = await turnIn({ vault: 'alpha-app', sessionId: randomUUID(), mode: 'basic' });
-    ok('an ordinary chat in a hybrid vault is unchanged: no forced recall mode, no --effort', ord.r?.recallMode === null && ord.r?.effort === null, pick(ord.r));
+    ok('an ordinary chat in a haiku vault is unchanged: no forced recall mode, no --effort', ord.r?.recallMode === null && ord.r?.effort === null, pick(ord.r));
     ord.s.close();
 
     const delSid = randomUUID();
     const del = await turnIn({ vault: 'alpha-app', sessionId: delSid, mode: 'basic', origin: 'assistant' }, 'KEEP: delegated turn');
-    ok('a delegated chat in a hybrid vault gets no forced recall mode (its own hybrid stands)', del.r?.recallMode === null, pick(del.r));
+    ok('a delegated chat in a haiku vault recalls raw (model absent), never haiku', del.r?.recallMode === 'raw', pick(del.r));
     ok('a delegated basic chat with no URL effort runs --effort medium', del.r?.effort === 'medium', pick(del.r));
     ok('a delegated chat carries no --allowedTools', del.r !== null && del.r.allowedTools === null, pick(del.r));
 
@@ -490,7 +476,7 @@ try {
     await sleep(LINGER_MS + 1000);
     const back = await turnIn({ vault: 'alpha-app', resume: delSid, mode: 'basic' });
     ok('delegate → close → resume the same id: it is a --resume of that conversation', back.r?.resumeArg === delSid, pick(back.r) + (back.err ?? ''));
-    ok('…and it still carries the delegation marker (effort medium, no forced recall)', back.r?.recallMode === null && back.r?.effort === 'medium', pick(back.r));
+    ok('…and it still carries the delegation marker (recall raw, effort medium)', back.r?.recallMode === 'raw' && back.r?.effort === 'medium', pick(back.r));
     back.s.close();
 
     // Control: an ordinary conversation resumed the same way stays ordinary.
@@ -502,18 +488,13 @@ try {
     ok('control: an ordinary chat closed + resumed stays ordinary (no forced recall)', plainBack.r?.resumeArg === plainSid && plainBack.r?.recallMode === null, pick(plainBack.r) + (plainBack.err ?? ''));
     plainBack.s.close();
 
-    // The embedding model "on disk" (the files isEmbedModelDownloaded checks) → hybrid. The
-    // directory and file list come from the ACTIVE profile (src/lib/embeddings/profiles.ts),
-    // so a default-model change cannot leave this fixture pointing at the wrong model.
-    const profile = await activeEmbedProfile();
-    const modelDir = join(HOME, '.dreamcontext', 'models', profile.model);
-    for (const f of [...profile.files, ...profile.dataFiles]) {
-      mkdirSync(dirname(join(modelDir, f)), { recursive: true });
-      writeFileSync(join(modelDir, f), '');
-    }
+    // The embedding model "on disk" (the three files isEmbedModelDownloaded checks) → hybrid.
+    const modelDir = join(HOME, '.dreamcontext', 'models', 'Xenova', 'multilingual-e5-small');
+    mkdirSync(join(modelDir, 'onnx'), { recursive: true });
+    for (const f of ['onnx/model_quantized.onnx', 'config.json', 'tokenizer.json']) writeFileSync(join(modelDir, f), '');
     try {
       const hyb = await turnIn({ vault: 'alpha-app', sessionId: randomUUID(), mode: 'basic', origin: 'assistant' });
-      ok('with the model on disk, a delegated chat in a hybrid vault is still not forced', hyb.r?.recallMode === null, pick(hyb.r));
+      ok('with the model on disk, a delegated chat in a haiku vault recalls hybrid', hyb.r?.recallMode === 'hybrid', pick(hyb.r));
       hyb.s.close();
       const ordH = await turnIn({ vault: 'alpha-app', sessionId: randomUUID(), mode: 'basic' });
       ok('with the model on disk, an ordinary chat is still unchanged', ordH.r !== null && ordH.r.recallMode === null, pick(ordH.r));

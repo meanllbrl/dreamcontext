@@ -48,17 +48,19 @@ const PLATFORM_OPTIONS: PlatformOption[] = [
   { id: 'claude', labelKey: 'settings.platform.claude' },
 ];
 
-// ─── Memory recall modes (mirror RECALL_MODES in src/lib/recall-mode.ts) ───
+// ─── Memory recall modes (mirror RECALL_MODES in src/cli/commands/sleep.ts) ───
 
 interface RecallModeOption {
   mode: RecallMode;
   labelKey: string;
   hintKey: string;
+  experimental?: boolean;
 }
 
 const RECALL_MODE_OPTIONS: RecallModeOption[] = [
-  { mode: 'hybrid', labelKey: 'settings.recall.hybrid.label', hintKey: 'settings.recall.hybrid.hint' },
+  { mode: 'haiku', labelKey: 'settings.recall.haiku.label', hintKey: 'settings.recall.haiku.hint' },
   { mode: 'raw', labelKey: 'settings.recall.raw.label', hintKey: 'settings.recall.raw.hint' },
+  { mode: 'hybrid', labelKey: 'settings.recall.hybrid.label', hintKey: 'settings.recall.hybrid.hint', experimental: true },
   { mode: 'off', labelKey: 'settings.recall.off.label', hintKey: 'settings.recall.off.hint' },
 ];
 
@@ -190,7 +192,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // Memory recall mode lives in .sleep.json (not the setup config).
   const { data: sleepState } = useSleep();
   const updateSleep = useUpdateSleep();
-  const recallMode: RecallMode = sleepState?.recall_mode ?? 'hybrid';
+  const recallMode: RecallMode = sleepState?.recall_mode ?? 'haiku';
 
   // Learning layer (Hypotheses) switch — dedicated /api/learning endpoints.
   const { data: thesesData } = useTheses();
@@ -590,7 +592,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.recall" descKey="settings.desc.recall" />
         <div className="setting-choices" role="radiogroup" aria-label={t('settings.nav.recall')}>
-          {RECALL_MODE_OPTIONS.map(({ mode, labelKey, hintKey }) => (
+          {RECALL_MODE_OPTIONS.map(({ mode, labelKey, hintKey, experimental }) => (
             <SettingChoice
               key={mode}
               name="recall-mode"
@@ -600,6 +602,10 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               onSelect={() => updateSleep.mutate({ recall_mode: mode })}
               title={t(labelKey)}
               hint={t(hintKey)}
+              // `label`, not `level`: "Experimental" is literal copy about THIS choice, not
+              // a rung on the ladder — and a label is always muted, which is right for a
+              // mode you can pick but should think about first.
+              badge={experimental ? <MaturityTag label={t('settings.recall.experimental')} /> : undefined}
             >
               {mode === 'hybrid' && recallMode === 'hybrid' && <EmbeddingModelCard />}
             </SettingChoice>
