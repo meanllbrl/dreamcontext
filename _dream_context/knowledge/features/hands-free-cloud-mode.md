@@ -10,7 +10,7 @@ pinned: false
 date: '2026-10-03'
 status: in_progress
 created: '2026-10-03'
-updated: '2026-10-08'
+updated: '2026-10-09'
 released_version: null
 tags:
   - 'topic:mobile'
@@ -64,6 +64,9 @@ The canonical list is **AC1-AC24 in the task** `hands-free-mode-moves-the-active
 
 The full D1-D23 decision record, the residual-risk statement and the out-of-scope
 list live in the task. The load-bearing ones:
+
+- **[2026-10-08] D28 — a transcripts root that cannot land never stops a Return.** The transcript-dir class failed reviews r23, r24 and r25 (a link at the root, a linked projects dir, a dangling projects dir). A transcripts root the laptop cannot create or write is skipped, its files are listed in the receipt as not returned with where they are kept, and the bytes stay under `trips/<trip>/not-returned/`; code roots are untouched, and ENOSPC or a sha mismatch still stop the Return.
+- **[2026-10-08] D27 — Android Wake is a page instruction, not a new mechanism.** The codespace's github.dev page stays white on Android Chrome until Chrome's "Desktop site" is on; the offline page detects Android on the device and tells the owner that step. No GitHub Actions wake button, no new stored token.
 
 - **[2026-10-04] D23 — one guarded phase transition, and an offline-first Return.** The Return-state class failed W2 reviews 1, 2 and 3. One transition function owns every laptop phase change and refuses `returning → away` (or anything that would offer Abandon) once a return write has started; after any write the only exits are home or Roll back. Once the payload is downloaded, finishing the local journal (Resume included) never needs the cloud or GitHub; wipe-secrets, seal and stop are attempted after and queued with the tripId when unreachable. A fault-injection test injects a crash, a network failure, a quota refusal and a stopped codespace at every journal op and every cloud/provider call of go and of single- and multi-pass Return (75 generated points, 208 cases) and asserts Resume reaches home or Roll back, never `away` after a write, and a byte-for-byte rollback.
 - **[2026-10-04] D22 — running work is found by the process tree, not by registries.** Go and Return wait for and cut every process whose cwd is inside a scope root (claude, every descendant, hooks), whether or not the server spawned it, except the server itself; registries only label what the scan finds. A cut signals each process group with SIGTERM, then SIGKILL after the grace even when the leader exited, and waits until all are gone; the cloud does the same over `dcuser` processes via `/proc` cwd.
@@ -120,7 +123,7 @@ machine taught" below. The shape, as built:
 - **Sleep (D14/D15)** (`src/server/cloud-idle.ts` `computeStopAt`). The stop time is 15 min after the later of boot, the last real action and the last turn's end. A running turn defers it (≤ 2 h from its start), and so do a transfer (2 min grace), an install (≤ 2 h) and going/quiescing (≤ 2 h). The stop request goes to `/workspaces/dc-server-pub/stop-request` with the boot id; `cloud/stop-helper.sh` (the `codespace` user) runs `gh codespace stop`. A served quiesce with no laptop progress self-seals after 2 h (wiping first); an unserved one reverts to active after 30 min (`quiescingVerdict`).
 - **CLI** (`src/cli/commands/handsfree.ts`): `setup [--machine]`, `account-login [id] [--all] [--print]`, `password`, `go [--cut-running] [--take-over]`, `status [--json]`, `return [--cut-running]`, `resume`, `rollback`, `abandon`, `devices list`, `devices revoke --all`, `teardown [--discard-abandoned-work]`. The laptop routes (`src/server/routes/handsfree.ts`) call the same functions behind `laptopRouteRefusal()`. The desktop UI is in `dashboard/src/components/handsfree/`, and the phone's chip and quiesce overlay in `.../handsfree/phone/`.
 
-### What the real machine taught (2026-10-05/06)
+### What the real machine taught (2026-10-05/09)
 
 Every item here was found by a real Codespace or a real phone, not by a reviewer or a test.
 
@@ -132,6 +135,8 @@ Every item here was found by a real Codespace or a real phone, not by a reviewer
 - **The away banner is per project, not per window** (`1fd43c6d`). The status answer now says whether the project the window asks about is in the trip (the same lock check the server uses) and names the away project; only that project renders the banner, while other projects and the launcher get the window-bar chip (Return + Show link). A project switch during a status read always re-reads for the project on screen.
 
 - **The phone's commit landed in the setup checkout, and that checkout was writable by agents** (`f72fbc2a`, smoke #5, in 0.30.3). The login shell changed directory, so the cloud chat ran in the codespace's checkout of the private setup repo instead of the trip mirror. That checkout was also world-writable, so an agent could plant git hooks or config that the `codespace` user (who holds `GITHUB_TOKEN`) would run, or swap the bootstrap verifiers root reads at start. Now the cloud chat script `cd`s to the trip root before `exec`, and `startChatSession` refuses any root outside the trip's roots (realpath, separator-safe). At every start and every minute, root locks the checkout's top dir (`codespace`, 0700, no ACL) before scanning it. Any symlink, foreign-owned entry, `exec`/`include` git-config key or non-sample hook marks the machine compromised: the offending entries are quarantined, nothing is read from the checkout, health says so, and `go` refuses with teardown-then-setup. `account-login` warns when the signed-in email is not the slot's account.
+
+- **A phone-started session in a project never opened in Claude on the laptop stayed in the cloud** (`730875ae`, smoke #6, AC5). `computeScope` declared a transcripts root only when the laptop's encoded `~/.claude/projects` dir already existed, so the roster came home and the jsonl did not. Go now declares a transcripts root for every code root (`transcriptDirKind`: the configured projects dir is trusted even as a link, everything below it is lstat-checked, a dangling base is never a root), with D28 for the roots that still cannot land. The same commit ships D27's Android step on the offline Wake page and isolates the tests that had read the developer's real trip state.
 
 ### Known residuals (stated, not fixed)
 
@@ -149,6 +154,11 @@ Every item here was found by a real Codespace or a real phone, not by a reviewer
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-09 - Smoke #6 and #7: phone sessions come home, Android learns to Wake (sleep reconcile)
+- Two owner decisions added: **D28** (a transcripts root that cannot land is skipped, listed and kept, never stopping a Return) and **D27** (Android Wake = an on-page Desktop-site step).
+- One new "What the real machine taught" item: `730875ae` (transcripts root per code root, AC5 root cause from smoke #6).
+- Still **no criterion ticked**: smoke #7 on Android reached the asleep page and woke with Desktop site, but the phone-to-commit-to-Return path has not run end to end; the next step is the 0.30.4 publish and smoke #8. `status` stays `in_progress`.
 
 ### 2026-10-08 - Hidden in 0.30.2 and 0.30.3 too; smoke #5 found the wrong checkout (sleep reconcile)
 

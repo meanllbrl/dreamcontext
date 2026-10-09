@@ -2,7 +2,7 @@
 id: feat_bt9zRxgL
 status: active
 created: '2026-06-13'
-updated: '2026-07-11'
+updated: '2026-10-09'
 released_version: v0.8.7
 tags:
   - 'topic:desktop'
@@ -12,9 +12,14 @@ tags:
 related_tasks:
   - >-
     launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready
+  - >-
+    first-run-onboarding-detects-every-missing-piece-on-this-machine-and-installs-it-step-by-step-in-the-app-and-in-the-cli
 type: feature
 name: launcher-quiz-onboarding
-description: ''
+description: >-
+  The Launcher's project-creation backend (scaffold, detect, catalog) and the
+  Clone from GitHub flow; its quiz wizard was replaced in 2026-10 by
+  first-run-onboarding, which asks only a name and a location
 pinned: false
 date: '2026-06-13'
 ---
@@ -25,16 +30,16 @@ Onboarding a project today requires the terminal for anything beyond registering
 
 ## User Stories
 
-- [x] As a user, I can create a brand-new project OR set up an existing folder from the Launcher via a quiz, with no terminal, so onboarding is self-serve.
+- [x] As a user, I can create a brand-new project OR set up an existing folder from the Launcher via a quiz, with no terminal, so onboarding is self-serve. *(superseded 2026-10-09 by [[first-run-onboarding]]: no quiz; the project step asks only a name and a location)*
 - [x] As a user, when a folder I pick already contains `_dream_context/`, the wizard skips the quiz and registers + opens the vault directly, so I don't re-answer questions about a project that's already initialized.
-- [x] As a user, I see a copyable Claude Code prompt on the success screen so I can kick off the LLM-powered enrichment step without memorizing any commands.
-- [x] As a user, the wizard asks which coding platforms I want (e.g., Claude Code — recommended — and/or Codex) and which optional skill packs to include, for both new-project AND existing-folder flows, so I can tailor the setup without going to the terminal.
-- [x] As a user, the platform and pack choices I make are applied by the scaffold call (`setup --platforms` + `install-skill` per pack) so the resulting project is ready for my preferred tools immediately.
+- [x] As a user, I see a copyable Claude Code prompt on the success screen so I can kick off the LLM-powered enrichment step without memorizing any commands. *(superseded 2026-10-09 by [[first-run-onboarding]]: Start with Claude opens the initializer chat directly)*
+- [x] As a user, the wizard asks which coding platforms I want (e.g., Claude Code — recommended — and/or Codex) and which optional skill packs to include, for both new-project AND existing-folder flows, so I can tailor the setup without going to the terminal. *(superseded 2026-10-09 by [[first-run-onboarding]]: the app asks neither; Claude Code is the default platform and the initializer chat recommends packs)*
+- [x] As a user, the platform and pack choices I make are applied by the scaffold call (`setup --platforms` + `install-skill` per pack) so the resulting project is ready for my preferred tools immediately. *(superseded 2026-10-09 by [[first-run-onboarding]]: the scaffold API still applies them, but the UI sends no packs)*
 - [x] As a user, I can sign in with GitHub (device flow or PAT) from the Launcher and see a searchable list of my accessible repos (owner, collaborator, org member), so I can clone one locally without touching the terminal.
 - [x] As a user, when I select a GitHub repo to clone, I see a destination picker with a Browse button and can choose where to clone it, so I control my project layout.
 - [x] As a user, cloning happens as a cancelable background job with live git progress (`Receiving objects: N%...`), so I see what's happening and can cancel mid-clone if needed.
 - [x] As a user, if the cloned repo already contains `_dream_context/`, it registers directly and opens the project window immediately, skipping the quiz since it's already dreamcontext-ready.
-- [x] As a user, if the cloned repo is a bare codebase (no `_dream_context/`), the wizard flows into the existing-folder quiz (pre-filled with repo description and detected stack), so init+setup make it dreamcontext-ready.
+- [x] As a user, if the cloned repo is a bare codebase (no `_dream_context/`), the wizard flows into the existing-folder quiz (pre-filled with repo description and detected stack), so init+setup make it dreamcontext-ready. *(superseded 2026-10-09 by [[first-run-onboarding]]: there is no quiz to pre-fill; description and stack reach init silently)*
 - [x] As a user, if I try to clone into a destination that already exists, I get three clear options (Open the existing project / Use the existing folder / Choose another location) instead of a dead-end error, so I'm never stuck.
 
 ## Acceptance Criteria
@@ -43,12 +48,12 @@ Onboarding a project today requires the terminal for anything beyond registering
 - [x] Strict-pick body + validation: parentDir/projectPath must be absolute & exist; new-project name rejects path traversal (`/`, `..`); target must not be a non-empty existing dir; behind existing cross-site CSRF guard; no stderr/path leakage in errors
 - [x] Server spawns the bundled CLI via `execFile` (`process.execPath` + `process.argv[1]`) with `cwd=target` — no shell, arg array, timeout — so the server's own `cwd` is never mutated
 - [x] GET /api/launcher/detect?path=<abs> returns detected tech stack, `hasContext`, and `basename` for quiz prefill / skip-quiz when the folder is already a vault; `detectTechStack` refactored to accept a `dir` param (moved to `src/lib/tech-stack.ts`)
-- [x] Launcher shows a `+ Add Project` entry → onboarding wizard: choose new vs existing, quiz steps (name, parentDir w/ default `~/projects` + Browse, description, target user, tech stack, priority), confirm, success screen with "open window" + copyable "hand off to Claude" enrichment prompt
+- [x] Launcher shows a `+ Add Project` entry → onboarding wizard: choose new vs existing, quiz steps (name, parentDir w/ default `~/projects` + Browse, description, target user, tech stack, priority), confirm, success screen with "open window" + copyable "hand off to Claude" enrichment prompt *(superseded 2026-10-09 by [[first-run-onboarding]]: OnboardingWizard deleted; + Add Project opens the onboarding takeover)*
 - [x] Existing folder already containing `_dream_context/` skips the quiz: registers + opens directly
 - [x] Dead Rust `open_vault` command + `Port` state removed from `desktop/src-tauri/src/lib.rs`; `cargo check` passes
 - [x] Unit + integration tests: scaffold validation (bad parentDir, traversal name, idempotent existing `_dream_context/`) and a real tmpdir scaffold producing `_dream_context/` + `.claude/` + registered vault; full vitest green (1784 tests)
 - [x] Scaffold auto-ensures a PATH-resolvable global `dreamcontext` CLI: probes `command -v dreamcontext` via login shell (`$SHELL -lc`), runs `npm install -g dreamcontext@latest` only when missing; best-effort (never blocks creation); `{ cli: { status } }` returned in scaffold response and surfaced on success screen
-- [x] Wizard includes a platform-selection step (Claude Code recommended + Codex as option) and an optional skill-pack selection step; both appear for new-project AND existing-folder flows
+- [x] Wizard includes a platform-selection step (Claude Code recommended + Codex as option) and an optional skill-pack selection step; both appear for new-project AND existing-folder flows *(superseded 2026-10-09 by [[first-run-onboarding]]: no picker in the UI)*
 - [x] `GET /api/launcher/catalog` returns available platforms and skill packs
 - [x] `POST /api/launcher/scaffold` accepts `platforms[]` and `packs[]`; runs `setup --platforms <selected>` (idempotent for existing vaults) then `install-skill <pack>` for each selected pack
 - [x] `GET /api/launcher/github/repos?q=<substring>` returns the signed-in user's accessible GitHub repos (owner, collaborator, org member), sorted by last-pushed, with optional substring filter; desktop-gated, 401 no_token, 401 bad_token on GitHub auth reject
@@ -62,12 +67,14 @@ Onboarding a project today requires the terminal for anything beyond registering
 - [x] `pruneCloneRuns()` evicts finished/error jobs when the in-memory map exceeds size limit, but NEVER evicts a running job (closed eviction-bypassing-dest-guard gap)
 - [x] When the cloned repo already has `_dream_context/`, the clone route registers the vault directly (name collision auto-suffixed -2..-9), runs best-effort `ensureCliInstalled`, and returns `vaultName` so the wizard can hand off to `onReady(vaultName)`
 - [x] When the cloned repo is a bare codebase (no `_dream_context/`), the wizard flows into the existing-folder detail quiz; `probeFolder()` pre-checks the exact destination and offers "Open the existing project"/"Use the existing folder"/"Choose another location" on conflict instead of a dead-end error
-- [x] GitHub repo description pre-fills the quiz description field; detected tech stack pre-fills the stack field
+- [x] GitHub repo description pre-fills the quiz description field; detected tech stack pre-fills the stack field *(superseded 2026-10-09 by [[first-run-onboarding]]: carried silently into the scaffold call, never shown)*
 - [x] Unit tests: 16 lib tests (`git-sync-github-browse.test.ts`: token tiering, pagination/filter/direct-lookup, clone guards, askpass env hygiene incl. token never in env values + tmp file unlinked) + 8 route-guard tests (`launcher-clone-route.test.ts`: 403/401/400/409 paths); full vitest green
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-09]** Owner: the project step asks nothing about the project. The More details (optional) form (description, target user, stack, focus, platforms, skill packs) is removed; Create new and Open a folder take only a name and a location (a cloned repo's description and the detected stack still reach init silently). The initializer chat asks what it cannot detect and recommends skill packs from install-skill --list, installing only the ones the user picks; the kickoff prompt says so.
+- **[2026-10-08]** Superseded by first-run-onboarding: the quiz modal (OnboardingWizard) is deleted. The Launcher's + Add Project now opens the onboarding takeover (This Mac, Project, Start); the quiz questions first moved under More details (optional), and that form was itself removed on 2026-10-09 (decision above); scaffold gained gitInit (with a pending init while Git installs), creates a missing parent folder inside home, and skips the inline CLI install when onboarding already owns it; the copy-and-paste hand-off prompt is replaced by Start with Claude. Clone from GitHub, the conflict pre-check and the scaffold sequence below still hold. See [[first-run-onboarding]].
 - **[2026-07-10]** Clone from GitHub is a BACKGROUND JOB with live progress streaming — not synchronous. `POST /clone` validates and returns immediately with a `cloneId`; `GET /clone/status` streams state+progress+result. This keeps the dashboard server event loop responsive during a multi-minute git clone and enables the live "Receiving objects: N%" tail in the wizard.
 - **[2026-07-10]** `pruneCloneRuns()` NEVER evicts a running clone — size-limit eviction only touches finished/error jobs. A running job's eviction would bypass the `cloneDestsInFlight` 409 guard, allowing a concurrent same-dest clone (security/correctness gap). Reviewer found this in initial FAIL → fixed → PASS.
 - **[2026-07-10]** Clone timeout is SIGTERM (git cleans up) → 10s → SIGKILL, not immediate SIGKILL. Direct SIGKILL strands the partial destination folder, causing every retry to hit "already exists" with no hint it's an orphaned partial clone. The 10s window lets git remove the partial dest before hard kill.
@@ -87,18 +94,20 @@ Key files:
 - `src/server/index.ts` — registers the launcher routes (adds clone endpoints)
 - `src/lib/tech-stack.ts` — `detectTechStack(dir)` extracted from `init` command; shared by `init` and the detect endpoint
 - `src/lib/ensure-cli.ts` — `ensureCliInstalled()`: login-shell probe + `npm -g install`, injectable runner, never throws
-- `dashboard/src/pages/LauncherPage.tsx` — `+ Add Project` tile entry point
-- `dashboard/src/pages/OnboardingWizard.tsx` — multi-step quiz stepper; NEW: third mode "Clone from GitHub" (repo selection with inline GitHub sign-in + debounced search, destination picker, live clone progress with Cancel, conflict resolution with three options, auto-register or flow into quiz)
+- `dashboard/src/pages/LauncherPage.tsx` — `+ Add Project` opens the first-run onboarding takeover (see [[first-run-onboarding]])
+- `dashboard/src/pages/onboarding/ProjectStep.tsx` — replaces the deleted `OnboardingWizard.tsx`: three cards (Create new, Open a folder, Clone from GitHub), then one name + location screen
+- `dashboard/src/pages/onboarding/CloneFlow.tsx` — the Clone from GitHub mode moved here unchanged (inline GitHub sign-in + debounced search, destination picker, live clone progress with Cancel, three-option conflict resolution, auto-register or hand the folder to the project step)
 - `dashboard/src/hooks/useLauncher.ts` — `useScaffoldProject`, `useDetectStack`, `useLauncherDefaults`; NEW: `useGithubRepos`, `useCloneGithubRepo`, `useInvalidateLauncher` (re-query launcher state when a clone registers a vault)
 - `dashboard/src/lib/desktop.ts` — folder picker (already existed for the multi-vault feature)
 - `dashboard/src/context/I18nContext.tsx` — NEW i18n keys for clone mode UI strings
 - `desktop/src-tauri/src/lib.rs` — dead `open_vault` + `Port` state removed; `cargo check` clean
 
 Scaffold execution sequence per call (new-project or existing-folder mode):
-1. `init --yes --name <n> --description <d> --user <u> --stack <s> --priority <p> --platforms <selected>` (cwd=target; skipped with warning if `_dream_context/` already exists → idempotent)
+1. `init --yes --platforms <selected> --name <n>` plus `--description` / `--stack` only when a clone or detect supplied them (the API still maps `targetUser` / `priority` to `--user` / `--priority`, but the onboarding UI sends neither) (cwd=target; skipped with warning if `_dream_context/` already exists → idempotent)
 2. `setup --defaults --platforms <selected>` (cwd=target; idempotent for existing vaults)
-3. For each selected skill pack: `install-skill <pack>` (cwd=target; sequential child-spawns)
-4. `addVault` to register in `~/.dreamcontext/vaults.json`
+3. If `packs[]` is non-empty: `install-skill --packs <packs…> --platforms <selected>` (cwd=target). The onboarding UI sends none; packs are chosen in the initializer chat
+4. Optional `gitInit` (immediate, or a pending init while Git is still installing)
+5. `addVault` to register in `~/.dreamcontext/vaults.json`
 
 Clone from GitHub execution sequence:
 1. User signs in with GitHub (device flow or PAT) → token stored in `~/.dreamcontext/secrets.json` (global, not per-project)
@@ -106,18 +115,25 @@ Clone from GitHub execution sequence:
 3. User picks a repo and destination parent dir → `POST /api/launcher/clone` validates synchronously via `planGitHubClone`, returns `cloneId`
 4. Background clone job spawns: `cloneStreaming()` runs `git clone --progress` with hardened argv (askpass-credentialed, transport-locked), streams stderr progress to in-memory state
 5. Wizard polls `GET /api/launcher/clone/status?cloneId=` for live `Receiving objects: N%` tail + state (running/done/error/canceled)
-6. On completion: if cloned repo has `_dream_context/` → registers vault directly (auto-suffix on name collision) + runs `ensureCliInstalled` + opens project window; else → flows into existing-folder quiz (pre-filled) for init+setup
+6. On completion: if cloned repo has `_dream_context/` → registers vault directly (auto-suffix on name collision) + runs `ensureCliInstalled` + opens project window; else → the onboarding project step scaffolds it (description and stack carried silently)
 7. Cancel flow: `POST /api/launcher/clone/cancel` sends SIGTERM → git cleans partial dest → job state → canceled
 
-`GET /api/launcher/catalog` returns `{ platforms: [{ id, name, recommended }], packs: [{ id, name, description }] }`. Frontend renders Claude Code as the pre-checked recommended platform; Codex as an opt-in. Skill pack step is optional (zero selections is valid). If the layout overflows (many packs), the wizard scrolls within the step — no pagination needed for the current pack count.
+`GET /api/launcher/catalog` returns `{ platforms: [{ id, name, recommended }], packs: [{ id, name, description }] }`. The catalog endpoint remains; the onboarding UI no longer renders a platform or pack picker (Claude Code is the default platform).
 
 ## Notes
 
-Rich enrichment (code scan, smart fill) is intentionally deferred to the agent side. See `initializer-improvements` task for the Claude Code enrichment flow that users trigger via the copyable prompt on the success screen.
+Rich enrichment (code scan, smart fill) is intentionally deferred to the agent side. Since 2026-10-09 the enrichment starts from onboarding's Start with Claude: the initializer skill asks what it cannot detect and offers skill packs (see [[first-run-onboarding]]).
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-10-09 - Reconciled after the project form was removed (sleep)
+- Short description added; related_tasks += first-run-onboarding task.
+- Stories and criteria that described the quiz, the platform/pack picker, the pre-fill and the copyable prompt are kept ticked as shipped in v0.8.7 and marked superseded inline.
+- Technical Details now name ProjectStep.tsx / CloneFlow.tsx instead of the deleted wizard, and the scaffold sequence matches launcher.ts (packs via one `install-skill --packs` call, optional gitInit).
+
+### 2026-10-08 - Wizard superseded by first-run-onboarding.
+- The quiz wizard and its copyable prompt card were replaced by the onboarding takeover; its clone flow moved to dashboard/src/pages/onboarding/CloneFlow.tsx unchanged. Stories about the copyable prompt and the multi-step quiz are historical; see [[first-run-onboarding]].
 ### 2026-07-11 - Clone from GitHub mode added (sleep-product consolidation, working tree)
 - Added third onboarding mode: Clone from GitHub. Sign in with GitHub (device flow or PAT, reusing existing launcher-tier auth), search accessible repos (owner/collaborator/org member, sorted by last-pushed), clone to local parent dir as a cancelable background job with live git progress streaming.
 - Added 6 user stories (sign-in+browse, destination picker, live progress+cancel, direct register for dreamcontext repos, flow into quiz for bare codebases, conflict resolution with three options).

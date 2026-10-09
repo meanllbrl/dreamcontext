@@ -1,5 +1,129 @@
 [
   {
+    "date": "2026-10-09",
+    "type": "feat",
+    "scope": "cli",
+    "description": "Make dreamcontext setup the single first-run entry (uncommitted), aligned with doctor, install.sh, the CLI path shim and Claude path detection.",
+    "breaking": false,
+    "summary": "Uncommitted: dreamcontext setup becomes the front door for first run",
+    "references": [
+      "file:src/cli/commands/setup.ts",
+      "file:install.sh",
+      "file:src/lib/ensure-cli.ts",
+      "file:src/lib/claude-path.ts"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "feat",
+    "scope": "onboarding",
+    "description": "Replace the OnboardingWizard with a full-window Launcher onboarding (uncommitted): a This Mac checklist with Set everything up, a Project step reduced to name and location, a Node setup screen, and a Start with Claude hand-off; fixes a real Start-with-Claude bug in AgentSurface. verify:onboarding passes 15/15.",
+    "breaking": false,
+    "summary": "Uncommitted: full-window Launcher onboarding with a This Mac checklist, a name+location Project step and a Start with Claude hand-off",
+    "references": [
+      "file:dashboard/src/pages/LauncherPage.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/hooks/useLauncher.ts",
+      "feature:launcher-quiz-onboarding"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "chore",
+    "scope": "recall",
+    "description": "Merge PR #431 so the hybrid-default recall work already logged on 2026-10-07 runs from main for local testing before release.",
+    "breaking": false,
+    "summary": "Hybrid + EmbeddingGemma recall default (PR #431) merged to main for local testing",
+    "references": [
+      "commit:ae7d8d60",
+      "feature:memory-recall-bm25"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "fix",
+    "scope": "chat",
+    "description": "Fix the picture notice cards overflowing narrow panes with a container-query layout; merged locally for testing as PR #432.",
+    "breaking": false,
+    "summary": "Notice cards fit every width (PR #432)",
+    "references": [
+      "commit:fb0d786c",
+      "commit:9c5d56d9"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "fix",
+    "scope": "accounts",
+    "description": "Fix account selection so a new chat starts on an account with remaining usage rather than the full preferred one, and a chat switched away from a usage limit resumes its turn instead of sitting idle.",
+    "breaking": false,
+    "summary": "A new chat opens on an account with room, and a chat moved off a usage limit continues instead of idling",
+    "references": [
+      "commit:eb7759ce",
+      "commit:7ec62568",
+      "feature:claude-multi-account"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Fix the desktop app closing the notch window during window teardown, and make the update relaunch quit the app cleanly rather than closing windows one by one.",
+    "breaking": false,
+    "summary": "The notch is never closed, and the update relaunch quits instead of closing windows",
+    "references": [
+      "commit:50072494",
+      "file:desktop/src-tauri/src/lib.rs"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "feat",
+    "scope": "notch",
+    "description": "Change the notch so notifications fire without an assistant existing, instead of staying silent until one is set up.",
+    "breaking": false,
+    "summary": "The notch notifies even when no assistant has been created",
+    "references": [
+      "commit:137fb781"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "fix",
+    "scope": "handsfree",
+    "description": "Fix hands-free so a chat begun on the phone returns to the machine with it, a transcript that cannot be written back no longer stops a Return, and Android users get spoken Wake instructions.",
+    "breaking": false,
+    "summary": "A session started on the phone comes home, an unlandable transcript never blocks a Return, and Android hears how to Wake",
+    "references": [
+      "commit:730875ae",
+      "feature:hands-free-cloud-mode"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
     "date": "2026-10-08",
     "type": "fix",
     "scope": "whiteboard",

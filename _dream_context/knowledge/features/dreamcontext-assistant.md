@@ -13,7 +13,7 @@ date: '2026-09-26'
 status: in_review
 product: desktop
 created: '2026-09-26'
-updated: '2026-10-06'
+updated: '2026-10-09'
 released_version: null
 tags:
   - 'topic:desktop'
@@ -140,6 +140,9 @@ Built and unit-tested, committed in `55c6ff92`; open on the owner running it in 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-09] The notch is never closed, only hidden; an update relaunch quits the app instead of closing windows** (`50072494`). Crash 2026-10-07: `closeAllWindows()` during the update relaunch closed the notch; tauri-nspanel swaps the NSWindow's class, which drops the KVO registration WebKit made on it, so detaching the webview removed an observer AppKit no longer knew and the app aborted. Every `CloseRequested` now runs through `assistant::guard_close` (on the notch: prevent + hide), and the dashboard's relaunch calls a new `quit_app` command (`app.exit`, no window torn down; an older shell without it falls back to closing windows, the notch last).
+- **[2026-10-08] The notch is the notification center even with no Assistant created** (`137fb781`, owner: notifications from the notch even when no personal assistant is set up). The shell seats it on `notch_wanted() = !assistant_exists() || assistant_enabled()`: finished chats, permission asks, automation posts and account notices peek from it, and its open panel is "Now" only (no Chat tab, conversations, pop-out or listening state; peeks drop "Ask the assistant"). The owner's off switch on a created Assistant still hides it; the hotkey stays Assistant-only. The wizard's wake emits `assistant://enabled` so an already-seated notch loads the new Assistant without a rebuild.
+
 - **[2026-10-04] A non-activating panel gets nothing the OS reserves for the active app — ask the OS, or go native.** The notch is a non-activating panel of an app usually not in front, so WKWebView hover tracking (key window only), `NSHapticFeedbackManager` (active app only), WebAudio (suspended until a click) and Tauri's default drag-drop handler all silently failed in it. Each was replaced by a native path (cursor-position query, mouse-move monitors, direct actuator, system sound, drag-drop handler off). Platform facts behind it: `knowledge/desktop-beta-tauri-multivault.md` § "macOS activation and focus".
 - **[2026-10-04] Closing another project's chat is graded by what it would interrupt.** Idle closes freely; working or asking needs `--force`, and a forced close of a busy chat is a proposal below `bypass`. The status is re-read AFTER approval, because the owner's decision takes time and the chat may have started working in it.
 
@@ -207,6 +210,9 @@ drives all of it against the real built server on an isolated HOME.**
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-10-09 - Notifications without an Assistant; the notch can no longer crash the app (sleep reconcile)
+- Two decisions recorded from `137fb781` (notch seated with no Assistant created, Now-only panel) and `50072494` (notch close guarded, update relaunch uses `quit_app`). No criterion ticked: the notification-center task (`the-notch-becomes-a-notification-center-…`) still has its notch criteria open. `status` stays in_review.
 
 ### 2026-10-04 (later) - The Assistant can close chats, and the notch stops losing things
 

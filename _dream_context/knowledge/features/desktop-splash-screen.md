@@ -1,24 +1,26 @@
 ---
-id: "feat_X3hCuIlS"
-type: "feature"
-name: "desktop-splash-screen"
+id: feat_X3hCuIlS
+type: feature
+name: desktop-splash-screen
 description: >-
   The desktop app's opening screen: a 2.6s logo-reveal clip with sound plays in
   its own transparent Tauri window while the dashboard server boots, then
   dissolves into the Launcher through a two-key, fail-open handoff.
 pinned: false
-date: "2026-10-04"
-status: "in_progress"
+date: '2026-10-04'
+status: in_review
 product: desktop
-created: "2026-10-04"
-updated: "2026-10-04"
+created: '2026-10-04'
+updated: '2026-10-09'
 released_version: null
 tags:
   - 'topic:desktop'
   - 'topic:macos'
   - 'topic:branding'
   - 'layer:frontend'
-related_tasks: []
+related_tasks:
+  - >-
+    first-run-onboarding-detects-every-missing-piece-on-this-machine-and-installs-it-step-by-step-in-the-app-and-in-the-cli
 ---
 
 ## Why
@@ -51,12 +53,14 @@ becomes the product's own logo reveal instead of dead time.
 - [x] A slow boot says so: once the clip has ended and the app is still coming, a quiet "Starting…" hint fades in.
 - [x] `prefers-reduced-motion` shows the finished lockup still instead of the animation; a clip error or a failed fetch does the same.
 - [x] A Login Item launch with the notch enabled opens no Launcher, so it gets **no splash** either.
-- [ ] **The clip plays, with sound, in macOS Low Power Mode** (working tree): the page loads the clip and invokes `splash_play`; the shell answers with `window.eval("window.__dcSplashPlay()")`, whose `play()` counts as a user gesture. Measured in a real WKWebView under Low Power Mode, unmuted, start to `ended`; awaiting commit and the owner's launch.
+- [x] **The clip plays, with sound, in macOS Low Power Mode** (`bf861388`): the page loads the clip and invokes `splash_play`; the shell answers with `window.eval("window.__dcSplashPlay()")`, whose `play()` counts as a user gesture. Measured in a real WKWebView under Low Power Mode, unmuted, start to `ended` (`scripts/verify/splash-webkit.sh` + `splash-webkit-probe.swift`, `tests/unit/desktop-splash.test.ts`); the owner's launch is the separate sign-off below.
+- [x] The gate's successor is configurable: `open_behind(app, builder, label)` makes any hidden window the one the gate shows (default `main`), so a first run with no usable Node.js hands over to the node-setup window the same fail-open way (working tree, cargo test 42/42).
 - [ ] Owner sign-off in the installed .app: the clip plays on *every* launch and the sound is audible.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-10-08]** The splash's successor is not always the Launcher: when no usable Node.js (18 or newer) is found, the two-key gate hands over to the node-setup window (splash::open_behind with a successor label), which installs a private Node.js and then hands over to the Launcher the same way. Startup errors also reuse that window (error mode) instead of a separate error page. See [[first-run-onboarding]].
 - **[2026-10-04] The shell starts the clip, not the page.** Low Power Mode blocks gesture-less video entirely, so a page that autoplays shows a silent still on a battery-saving Mac. A play started from the shell's `evaluateJavaScript` counts as a user gesture; the page's 3 s no-start fallback (still image) stays as the fail-open path if the shell never answers.
 
 - **[2026-10-04] The opening screen may never become a reason to wait.** It exists to cover a gap the app already had, so every path out of it is fail-open: two Rust deadlines, a page-side fallback timer, click/key skip, a still-frame fallback, and an `abort` for a failed startup. Nothing on the splash path can hold a window back for more than its deadline.
@@ -67,23 +71,29 @@ becomes the product's own logo reveal instead of dead time.
 
 ## Technical Details
 
-- **Shell:** `desktop/src-tauri/src/splash.rs` — `open()` builds the window, `open_launcher_behind()` builds the Launcher hidden with an `on_page_load` key, `splash_done` is the page's IPC command, `turn()` holds the two-key `SplashGate` (managed state) and hands over exactly once, `abort()` drops it on a failed startup, `is_open()` lets `lib.rs` pick the hidden-behind-the-splash path. Deadlines: `SPLASH_DEADLINE` 6 s, `LAUNCHER_DEADLINE` 8 s, `FADE` 340 ms.
-- **Page:** `desktop/src-tauri/frontend-placeholder/splash.html` (self-contained: inline CSS + script, no bundler), with `splash.mp4` / `splash-light.mp4` and `splash-still.jpg` / `splash-still-light.jpg` beside it. It reports `splash_done` on `ended`, on mousedown/keydown, and from a 4.5 s fallback; `window.__dcSplashExit()` is called by the shell to run the fade-out class.
+- **Shell:** `desktop/src-tauri/src/splash.rs` — `open()` builds the window; `open_behind(app, builder, label)` builds any successor hidden with an `on_page_load` key and records it as `Keys.successor` (`open_launcher_behind()` is the `main` case; `node_setup.rs` uses it for the node-setup window); `splash_done` and `splash_play` are the page's IPC commands; `turn()` holds the two-key `SplashGate` (managed state), shows the successor (default `main`) and hands over exactly once; `abort()` drops it on a failed startup; `is_open()` lets `lib.rs` pick the hidden-behind-the-splash path. Deadlines: `SPLASH_DEADLINE` 8 s, `LAUNCHER_DEADLINE` 10 s, `FADE` 340 ms.
+- **Page:** `desktop/src-tauri/frontend-placeholder/splash.html` (self-contained: inline CSS + script, no bundler), with `splash.mp4` / `splash-light.mp4` and `splash-still.jpg` / `splash-still-light.jpg` beside it. It reports `splash_done` on `ended`, on mousedown/keydown, from the still shown when the clip has not started within 3 s, and from a safety timer of the clip's length plus 1 s counted from when it started; if the shell's `splash_play` eval has not landed 1.2 s after the invoke resolves, the page starts the clip itself. `window.__dcSplashExit()` is called by the shell to run the fade-out class.
 - **Permissions:** `desktop/src-tauri/capabilities/splash.json` + `desktop/src-tauri/permissions/splash-done.toml` scope the one IPC command to the splash window.
 - **Boot order:** `lib.rs` opens the splash first and polls `/api/health` on a thread (previously the poll blocked `setup`); the Login-Item-with-notch path skips both Launcher and splash.
 - **Asset origin:** the clip is `Splash-konsolidasyon` in `marketing/remotion` (chosen by the owner from three variants: pieces converging, folding, line-drawn), with a DSP-synthesised logo sting from the `marketing/gen-sfx.py` lineage; renders land in `marketing/remotion/out/splash/`.
 - **Low Power Mode:** WebKit refuses every `<video>.play()` no user gesture started, muted or not (`UserGestureRequired`), and wry's `autoplay: true` does not lift it — the owner saw only the final still, silent. A script run through `-[WKWebView evaluateJavaScript:]` (what `WebviewWindow::eval` uses) DOES count as a gesture, so the page never starts its own clip: it asks with `splash_play` (granted by `allow-splash-play`, splash window only) and the shell evaluates `window.__dcSplashPlay()`.
-- **Status:** committed in `55c6ff92`; the Low Power Mode fix and the longer deadlines are in the working tree, not committed. The owner has not yet confirmed playback and sound in the installed .app.
+- **Status (2026-10-09):** the splash is committed in `55c6ff92`; the Low Power Mode fix and the 8 s / 10 s deadlines in `bf861388`. The configurable successor (`open_behind`) is in the working tree with first-run onboarding. The owner has not yet confirmed playback and sound in the installed .app.
 
 ## Notes
 
-- No task file exists for this work yet; it came out of a single session from an owner reference reel. The PRD is the only record of the decisions until one is opened.
+- The original splash had no task file (one session, from an owner reference reel); the successor change is tracked by the first-run-onboarding task.
 - Open question for the owner, inherited from the same session's reel work: nothing here depends on it, but the splash clip and the marketing intro now share one logo-source and alignment rule — keep them in step when either is re-rendered.
 - Not in scope: a first-run / onboarding variant, a per-vault or per-theme choice inside the app, Windows/Linux shells.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-10-09 - Reconciled with splash.rs (sleep)
+- Low Power Mode criterion ticked: it landed in `bf861388` with a WebKit probe and unit tests. A criterion added and ticked for the configurable successor. `status` in_progress -> in_review: only the dissolve story and the owner's real-launch sign-off remain.
+- Technical Details corrected: deadlines are 8 s / 10 s (the text still said 6 s / 8 s), the page's fallbacks are the 3 s no-start still and the length + 1 s safety timer (not 4.5 s), and `open_behind` / `Keys.successor` are described. Status line replaced.
+
+### 2026-10-08 - Successor gate generalised
+- splash.rs gained open_behind(app, builder, label) and a successor key (default main), used by the first-run-onboarding no-Node path; see [[first-run-onboarding]].
 ### 2026-10-04 (later) - Committed, and taught to play in Low Power Mode
 
 - The splash landed in `55c6ff92`. The owner then saw only the final still, silent: WebKit's Low Power Mode refuses gesture-less `play()`. The working tree moves the start to the shell (`splash_play` → `window.eval`, which counts as a gesture), adds a 3 s no-start fallback, and lengthens the Rust deadlines to 8 s / 10 s so they never cut a late-starting clip.
