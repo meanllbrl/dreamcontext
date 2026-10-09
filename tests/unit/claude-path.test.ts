@@ -211,3 +211,37 @@ describe('ensureClaudeOnShellPath', () => {
     expect(fix.line).toBe('export PATH="$HOME/.local/bin:$PATH"'); // caller shows this manually
   });
 });
+
+describe('ensureDirOnShellPath', () => {
+  it('writes a Turkish folder byte-exact in NFC, whatever form it arrives in', async () => {
+    const { ensureDirOnShellPath, NODE_RC_MARKER } = await import('../../src/lib/claude-path.js');
+    const nfc = join(home, 'Öğretmen', 'bin');
+    const fix = ensureDirOnShellPath(nfc.normalize('NFD'), NODE_RC_MARKER, '/bin/zsh');
+    expect(fix.refused).toBeUndefined();
+    const rc = readFileSync(join(home, '.zshrc'));
+    const expected = Buffer.from(`\n${NODE_RC_MARKER}\nexport PATH="$HOME/Öğretmen/bin:$PATH"\n`.normalize('NFC'), 'utf-8');
+    expect(rc.equals(expected)).toBe(true);
+  });
+
+  it('refuses a folder that could run code in a shell, writing nothing', async () => {
+    const { ensureDirOnShellPath, CLI_RC_MARKER } = await import('../../src/lib/claude-path.js');
+    for (const bad of ['$(touch x)', 'a"b', 'a`b`', 'a\\b', 'a\nb', 'a\rb', 'a\0b']) {
+      const fix = ensureDirOnShellPath(join(home, bad), CLI_RC_MARKER, '/bin/zsh');
+      expect(fix.refused).toBe('unsafe-chars');
+      expect(fix.wrote).toEqual([]);
+    }
+    expect(existsSync(join(home, '.zshrc'))).toBe(false);
+  });
+
+  it('is idempotent and gives fish its own line', async () => {
+    const { ensureDirOnShellPath, CLI_RC_MARKER } = await import('../../src/lib/claude-path.js');
+    const dir = join(home, '.dreamcontext', 'npm-global', 'bin');
+    expect(ensureDirOnShellPath(dir, CLI_RC_MARKER, '/bin/zsh').wrote).toHaveLength(1);
+    const again = ensureDirOnShellPath(dir, CLI_RC_MARKER, '/bin/zsh');
+    expect(again.wrote).toEqual([]);
+    expect(again.alreadyConfigured).toHaveLength(1);
+    const fish = ensureDirOnShellPath(dir, CLI_RC_MARKER, '/opt/homebrew/bin/fish');
+    expect(fish.line).toBe('set -gx PATH "$HOME/.dreamcontext/npm-global/bin" $PATH');
+    expect(readFileSync(join(home, '.config', 'fish', 'config.fish'), 'utf-8')).toContain(CLI_RC_MARKER);
+  });
+});

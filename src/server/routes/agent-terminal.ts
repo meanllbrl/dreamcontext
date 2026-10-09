@@ -19,12 +19,18 @@ import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
-import { claudeAwarePath, findClaudeBin, ensureClaudeOnShellPath, claudePathExportLine } from '../../lib/claude-path.js';
+import { claudeAwarePath, findClaudeBin } from '../../lib/claude-path.js';
+import type { FixOutcome } from '../../lib/onboarding/fixes.js';
+import { detectLinuxPackageManager, manualCommand } from '../../lib/onboarding/platform.js';
+import type { FixId } from '../../lib/onboarding/types.js';
+import {
+  appendOutput, getRun, runStatusView, serverProbeContext, startFixRun, startTaskRun, type InstallRun,
+} from '../install-runs.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { readClaudeUpdateStatus, runClaudeUpdateCheck } from '../../lib/claude-update.js';
 import {
-  isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
+  isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf, requireLocalDesktop,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt, EFFORT_LEVELS,
   claudeConversationExists, redeemPromptToken,
   sanitizeExecCommand, sanitizeRelativeDir,
@@ -375,80 +381,33 @@ export async function handleOpenTerminal(
 
 // ─── In-app prerequisite installer ────────────────────────────────────────────
 //
-// When the embedded terminal's prerequisites are missing — the `claude` CLI or the
-// native `node-pty` module — the Setup panel offers a one-click install instead of
-// only falling back to an external terminal. Installs run in the user's LOGIN shell
-// (so a Finder-launched app sees their real nvm/brew PATH) and are tracked like the
-// Sleepy capture runs: POST starts it + returns an id, the UI polls status.
+// When the embedded terminal's prerequisites are missing (the `claude` CLI, the native
+// `node-pty` module, git) the Setup panel and Settings → This machine offer a one-click
+// install. Every target now runs through the onboarding fix recipes
+// (src/lib/onboarding/fixes.ts) in the shared run store (src/server/install-runs.ts), so
+// this route and `/api/onboarding/fix` can never drift into two installers. POST starts a
+// run and returns its id; the UI polls `/api/agent/install/status`.
 //
-// Trust model: identical to `ensure-cli.ts` / `open-terminal` — desktop-gated, and
-// the package names are FIXED internal literals, never user input. The only body
-// field is `target`, validated against a closed whitelist.
+// Trust model: `requireLocalDesktop` (desktop app, this machine, loopback `Host`, never the
+// cloud), and the only body field is `target`, checked against a closed list.
 
 type InstallTarget = 'claude' | 'pty' | 'git' | 'claude-path' | 'claude-update';
 
-/**
- * The step every Claude Code install ends with and the in-app installer used to
- * skip: put the binary's directory on the shell PATH. `npm install -g
- * @anthropic-ai/claude-code` drops the real binary in `~/.local/bin`, which no
- * default PATH contains — so without this the install "succeeds" and every
- * `$SHELL -ilc 'exec claude …'` spawn still dies with "command not found", and
- * the whole agent surface stays blocked behind a CLI that is installed.
- *
- * Runs after a successful `claude` install and on its own as the `claude-path`
- * target (the System doctor's Fix PATH button, for CLIs installed outside the
- * app). Idempotent — see `ensureClaudeOnShellPath`. Never throws.
- */
-function applyClaudePathFix(): { ok: boolean; message: string } {
-  const bin = findClaudeBin();
-  if (!bin) {
-    // Installed somewhere we don't know about, or not installed at all. Either way
-    // there is no directory to add — say so rather than editing rc files blindly.
-    return {
-      ok: false,
-      message:
-        "Couldn't find the claude binary in the usual install locations, so PATH was left alone. " +
-        'Add its directory to your shell profile by hand, then reopen the app.',
-    };
-  }
-  const dir = dirname(bin);
-  const fix = ensureClaudeOnShellPath(dir);
-  if (fix.wrote.length) {
-    return { ok: true, message: `Added ${dir} to your PATH in ${fix.wrote.join(', ')} — open a new terminal to pick it up.` };
-  }
-  if (fix.alreadyConfigured.length) {
-    return { ok: true, message: `${dir} is already on your PATH in ${fix.alreadyConfigured.join(', ')}.` };
-  }
-  return {
-    ok: false,
-    message: `Couldn't write your shell profile. Run this once, in your terminal:\n  echo '${claudePathExportLine(dir)}' >> ~/.zshrc`,
-  };
+/** The fix each legacy target runs. `claude-update` is not a fix: it is the update job. */
+const LEGACY_TARGET_FIX: Readonly<Record<Exclude<InstallTarget, 'claude-update'>, FixId>> = {
+  claude: 'claude-install',
+  pty: 'pty-install',
+  git: 'git-install',
+  'claude-path': 'claude-path',
+};
+
+function isInstallTarget(v: unknown): v is InstallTarget {
+  return v === 'claude' || v === 'pty' || v === 'git' || v === 'claude-path' || v === 'claude-update';
 }
 
-interface InstallRun {
-  state: 'running' | 'done' | 'error';
-  target: InstallTarget;
-  /** Combined stdout+stderr tail — shown live, and as the detail on failure. */
-  output: string;
-  startedAt: number;
-  endedAt?: number;
-}
-
-const installRuns = new Map<string, InstallRun>();
-const INSTALL_RUN_TTL_MS = 10 * 60 * 1000;
-const INSTALL_RUNS_MAX = 20;
-const INSTALL_WATCHDOG_MS = 5 * 60 * 1000; // kill a wedged npm after 5 min
-
-function pruneInstallRuns(): void {
-  const now = Date.now();
-  for (const [id, run] of installRuns) {
-    if (run.endedAt && now - run.endedAt > INSTALL_RUN_TTL_MS) installRuns.delete(id);
-  }
-  while (installRuns.size > INSTALL_RUNS_MAX) {
-    const oldest = installRuns.keys().next().value;
-    if (oldest === undefined) break;
-    installRuns.delete(oldest);
-  }
+/** The probe this file already owns, for the readiness report's built-in terminal row. */
+export function ptyPresent(): boolean {
+  return hasNodePty();
 }
 
 /**
@@ -480,45 +439,32 @@ export function cliPackageRoot(entry: string | undefined = process.argv[1]): str
   return null;
 }
 
-/** Build the shell command + cwd for a target. Returns null if it can't be run here.
- *  (`claude-path` is not here: it writes a shell rc, it doesn't run an installer; nor is
- *  `claude-update`, which runs through `runClaudeUpdateCheck`.) */
-function installPlan(target: Exclude<InstallTarget, 'claude-path' | 'claude-update'>): { script: string; cwd?: string } | null {
-  if (target === 'claude') {
-    // Anthropic's official Claude Code distribution.
-    return { script: 'npm install -g @anthropic-ai/claude-code' };
+/** What the legacy route does after its fix ends, on top of the recipe itself. */
+function afterLegacyFix(target: InstallTarget): ((outcome: FixOutcome, run: InstallRun) => void) | undefined {
+  if (target === 'pty') {
+    // node-pty just landed: restore the spawn-helper +x bit and bust the probe cache so
+    // the very next capabilities check reports the terminal as ready.
+    return (outcome) => { if (outcome.ok) { ensurePtyHelperExecutable(); resetPtyCache(); } };
   }
   if (target === 'git') {
-    // macOS: `xcode-select --install` opens Apple's Command Line Tools installer
-    // dialog and returns immediately (or exits 1 when the tools are already
-    // installed). Other platforms have no safe unattended path — the UI shows a
-    // manual command instead (installPlan returns null there).
-    return process.platform === 'darwin' ? { script: 'xcode-select --install' } : null;
+    return (outcome, run) => {
+      if (outcome.ok && !gitAvailable()) {
+        appendOutput(run, `${run.output ? '\n' : ''}Apple's Command Line Tools installer was opened. Follow the macOS window; git will show as installed here once it finishes.`);
+      }
+    };
   }
-  // node-pty is NATIVE, so it can't be bundled — it has to be installed somewhere
-  // the server can resolve it from (see `ptyResolveBases`). Pinned to the declared
-  // range; `--no-save` leaves the target manifest untouched.
-  //   • npm install / dev link → the CLI's own package root, where node's normal
-  //     walk-up from dist/index.js finds it.
-  //   • the .app bundle → there IS no package root above Contents/Resources/dist,
-  //     and the bundle is signed + replaced on update, so install into the
-  //     user-level native dir instead.
-  const cwd = cliPackageRoot() ?? ensureNativeModulesDir();
-  return { script: 'npm install node-pty@^1.1.0 --no-save', cwd };
+  return undefined;
 }
 
 /**
- * POST /api/agent/install  { target: 'claude' | 'pty' }
+ * POST /api/agent/install  { target: 'claude' | 'claude-path' | 'claude-update' | 'pty' | 'git' }
  * Starts a background install and returns `{ ok, runId }`. Poll status to track it.
  */
 export async function handleAgentInstall(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  if (!isDesktop()) {
-    sendError(res, 403, 'desktop_only', 'The in-app installer is only available in the desktop app.');
-    return;
-  }
+  if (!requireLocalDesktop(req, res)) return;
 
   let target: unknown;
   try {
@@ -527,7 +473,7 @@ export async function handleAgentInstall(
     target = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { target?: unknown }).target : undefined;
   } catch { /* invalid body → 400 below */ }
 
-  if (target !== 'claude' && target !== 'pty' && target !== 'git' && target !== 'claude-path' && target !== 'claude-update') {
+  if (!isInstallTarget(target)) {
     sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'claude-path' | 'claude-update' | 'pty' | 'git' }.");
     return;
   }
@@ -536,132 +482,44 @@ export async function handleAgentInstall(
   // the user's opt-out (they clicked). It records its outcome in the shared state file, so the
   // next capabilities poll agrees; the run here only carries the readable result.
   if (target === 'claude-update') {
-    pruneInstallRuns();
-    const updateRunId = randomUUID();
-    const updateRun: InstallRun = { state: 'running', target, output: 'Updating Claude Code...', startedAt: Date.now() };
-    installRuns.set(updateRunId, updateRun);
-    void runClaudeUpdateCheck({ force: true })
-      .then((result) => {
-        updateRun.state = result.ok ? 'done' : 'error';
-        updateRun.output = result.message;
-      })
-      .catch(() => {
-        updateRun.state = 'error';
-        updateRun.output = `Couldn't update Claude Code. Run manually: claude update`;
-      })
-      .finally(() => { updateRun.endedAt = Date.now(); });
-    sendJson(res, 200, { ok: true, runId: updateRunId });
+    const runId = startTaskRun('claude-update', () => runClaudeUpdateCheck({ force: true }), {
+      initialOutput: 'Updating Claude Code...',
+      failMessage: "Couldn't update Claude Code. Run manually: claude update",
+    });
+    sendJson(res, 200, { ok: true, runId });
     return;
   }
 
-  // `claude-path` installs nothing — it only writes the shell rc export — so it
-  // completes synchronously. It still mints a run + returns a runId so the UI's
-  // start-then-poll loop is identical for every target.
-  if (target === 'claude-path') {
-    pruneInstallRuns();
-    const pathRunId = randomUUID();
-    const result = applyClaudePathFix();
-    installRuns.set(pathRunId, {
-      state: result.ok ? 'done' : 'error',
-      target,
-      output: result.message,
-      startedAt: Date.now(),
-      endedAt: Date.now(),
-    });
-    sendJson(res, 200, { ok: true, runId: pathRunId });
+  // Automatic git install is macOS-only (Apple's developer tools dialog). Elsewhere the
+  // answer is this machine's own package-manager command, never a guessed one.
+  if (target === 'git' && process.platform !== 'darwin') {
+    const pm = process.platform === 'linux' ? detectLinuxPackageManager() : null;
+    const manual = manualCommand('git-install', process.platform, pm) ?? 'Install git with your package manager.';
+    sendError(res, 501, 'no_install_path', `Automatic git install is macOS-only. Install it with: ${manual}`);
     return;
   }
 
-  const plan = installPlan(target);
-  if (!plan) {
-    if (target === 'git') {
-      sendError(res, 501, 'no_install_path', 'Automatic git install is macOS-only — install git with your system package manager (e.g. `apt install git`).');
-      return;
-    }
-    // Unreachable for 'pty' (it falls back to the user-level native dir), but a
-    // 500 beats silently minting a run that installs nowhere.
-    sendError(res, 500, 'no_install_path', "Couldn't find a writable directory to install node-pty into.");
-    return;
-  }
-
-  pruneInstallRuns();
-  const runId = randomUUID();
-  const run: InstallRun = { state: 'running', target, output: '', startedAt: Date.now() };
-  installRuns.set(runId, run);
-
-  try {
-    const shell = process.env.SHELL || '/bin/zsh';
-    const child = spawn(shell, ['-ilc', plan.script], {
-      cwd: plan.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const append = (chunk: Buffer) => { run.output = (run.output + chunk.toString('utf-8')).slice(-8000); };
-    child.stdout?.on('data', append);
-    child.stderr?.on('data', append);
-    const watchdog = setTimeout(() => {
-      try { child.kill(); } catch { /* gone */ }
-      if (run.state === 'running') { run.state = 'error'; run.output += '\n[timed out after 5 min]'; run.endedAt = Date.now(); }
-    }, INSTALL_WATCHDOG_MS);
-    child.on('error', (err) => {
-      clearTimeout(watchdog);
-      if (run.state !== 'running') return;
-      run.state = 'error';
-      run.output = `Couldn't start install: ${err.message}. Run manually: ${plan.script}`;
-      run.endedAt = Date.now();
-    });
-    child.on('close', (code) => {
-      clearTimeout(watchdog);
-      if (run.state !== 'running') return;
-      if (target === 'git') {
-        // `xcode-select --install` exits 0 after LAUNCHING Apple's GUI installer
-        // (git lands minutes later — the capabilities poll flips it to ready),
-        // and exits 1 when the tools are already installed. Both are fine.
-        if (code === 0) {
-          run.state = 'done';
-          run.output += '\nApple’s Command Line Tools installer was opened — follow the macOS dialog. git will show as installed here once it finishes.';
-        } else if (/already installed/i.test(run.output)) {
-          run.state = 'done';
-        } else {
-          run.state = 'error';
-          if (!run.output.trim()) run.output = `Install exited with code ${code}. Run manually: ${plan.script}`;
-        }
-      } else if (code === 0) {
-        // node-pty just landed: restore the spawn-helper +x bit and bust the probe
-        // cache so the very next capabilities check reports the terminal as ready.
-        if (target === 'pty') { ensurePtyHelperExecutable(); resetPtyCache(); }
-        // claude just landed — in ~/.local/bin, which is not on any default PATH.
-        // Finish the install properly by writing the export the CLI's own installer
-        // would have echoed; without it every `exec claude` spawn still 127s.
-        if (target === 'claude') {
-          const fix = applyClaudePathFix();
-          run.output += `\n${fix.message}`;
-        }
-        run.state = 'done';
-      } else {
-        run.state = 'error';
-        if (!run.output.trim()) run.output = `Install exited with code ${code}. Run manually: ${plan.script}`;
-      }
-      run.endedAt = Date.now();
-    });
-  } catch (err) {
-    run.state = 'error';
-    run.output = `Couldn't start install: ${err instanceof Error ? err.message : 'spawn failed'}`;
-    run.endedAt = Date.now();
-  }
-
+  const { runId } = startFixRun(LEGACY_TARGET_FIX[target], serverProbeContext('desktop', ptyPresent), {
+    target,
+    // The old `git` behaviour: done once the macOS dialog opens (Settings' SystemDependencies
+    // polls until done; a 30-minute wait would hold its button for that long).
+    fixOptions: target === 'git' ? { waitForDialog: false } : {},
+    onDone: afterLegacyFix(target),
+  });
   sendJson(res, 200, { ok: true, runId });
 }
 
-/** GET /api/agent/install/status?id=<runId> — poll a background install. */
+/** GET /api/agent/install/status?id=<runId> — poll a background install or onboarding fix. */
 export async function handleAgentInstallStatus(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  if (!requireLocalDesktop(req, res)) return;
+  const url = new URL(req.url || '/', 'http://localhost');
   const id = url.searchParams.get('id') ?? '';
-  const run = id ? installRuns.get(id) : undefined;
+  const run = id ? getRun(id) : undefined;
   if (!run) { sendJson(res, 200, { state: 'unknown', output: '' }); return; }
-  sendJson(res, 200, { state: run.state, target: run.target, output: run.output.trim() });
+  sendJson(res, 200, runStatusView(run));
 }
 
 // ─── Embedded terminal (WebSocket ↔ node-pty) ─────────────────────────────────

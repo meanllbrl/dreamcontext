@@ -29,7 +29,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { AgentDock } from './AgentDock';
 import { AgentFab } from './AgentFab';
 import {
-  BypassToggle, Prereqs, Centered, BotMark,
+  BypassToggle, Centered, BotMark,
   titleStyle, subStyle, primaryBtn, secondaryBtn,
 } from './AgentSetup';
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
@@ -48,7 +48,13 @@ import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { bindChatAgent } from '../../lib/chatAgentBinding';
-import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt } from '../../lib/agentPrompt';
+import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt, initializerKickoffPrompt } from '../../lib/agentPrompt';
+import { agentCanSpawn } from '../../lib/agentReady';
+import {
+  START_CHAT_INTENT_EVENT, START_CHAT_REFUSED_EVENT, type StartChatIntentDetail,
+} from '../../lib/startChatIntent';
+import { useI18n } from '../../context/I18nContext';
+import { ReadinessChecklist } from '../../pages/onboarding/ReadinessChecklist';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { dropScratch } from './chat/composerScratch';
@@ -343,6 +349,8 @@ function carryQueueInto(next: ChatSession, held: string[], queued: { texts: stri
  *  before acting on what it has, and how often it looks. */
 const LINKED_SESSION_WAIT_MS = 8_000;
 const LINKED_SESSION_POLL_MS = 150;
+/** The onboarding start intent's wait for caps, settings and roster: the plan's 10 s bound. */
+const START_INTENT_WAIT_MS = 10_000;
 
 // ── The persistent surface ─────────────────────────────────────────────────────
 
@@ -517,6 +525,16 @@ export function AgentSurface() {
   // Can a Claude session of the CHOSEN surface spawn at all? (Terminal Claude needs
   // node-pty + the CLI; Chat needs only the CLI.)
   const claudeReady = chatMode || !!(caps?.embeddedTerminal && caps?.claudeCli);
+  // The FULL spawn guard (desktop + CLI + the chosen surface + switched on), shared with the
+  // onboarding hand-off through `agentCanSpawn` so "Start with Claude" asks exactly what this
+  // surface will. `claudeReady` alone stays where only the surface half is the question.
+  const canSpawn = agentCanSpawn({
+    desktop: !!caps?.desktop,
+    claudeCli: !!caps?.claudeCli,
+    chatView: !!agentSettings.chatView,
+    embeddedTerminal: !!caps?.embeddedTerminal,
+    enabled: !!agentSettings.enabled,
+  });
 
   const sessions = useRef<Map<string, Session | ChatSession>>(new Map());
 
@@ -916,7 +934,7 @@ export function AgentSurface() {
     // `agentSettings.chatView` too: someone who switched to Terminal (legacy) must mean
     // claudeCli alone can NEVER widen this gate — otherwise a terminal user on a pty-broken
     // machine would get agent tabs auto-restored into doomed WS connections instead of the
-    // Prereqs panel.
+    // setup checklist.
     if (hydratedRef.current || !(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) || !settingsReady) return;
     let cancelled = false;
     (async () => {
@@ -1989,7 +2007,7 @@ export function AgentSurface() {
   }, []);
 
   const runSleepAgent = useCallback(() => {
-    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return;
+    if (!canSpawn) return;
     const existing = sessionList.find((m) => !m.dormant && m.title === SLEEP_AGENT_TITLE);
     if (existing) {
       setExpanded(true);
@@ -2022,7 +2040,7 @@ export function AgentSurface() {
   // + dedup + version-handshake as runSleepAgent. When it finishes, the sidebar's
   // brain-status poll flips back to "Synced" on its own (pendingAgentMerge → false).
   const runBrainResolveAgent = useCallback(() => {
-    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return;
+    if (!canSpawn) return;
     const existing = sessionList.find((m) => !m.dormant && m.title === BRAIN_RESOLVE_TITLE);
     if (existing) {
       setExpanded(true);
@@ -2053,7 +2071,7 @@ export function AgentSurface() {
   // Returns whether it actually spawned — the caller (the board's Delegate composer) reports
   // success or a real error from this, never optimistically. See `requestDelegateAgent`.
   const delegateAgent = useCallback((detail: DelegateAgentDetail): boolean => {
-    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return false;
+    if (!canSpawn) return false;
     const title = detail.title.trim() || 'Delegated task';
     // The caller already routed the prompt to a transport (inline for a short one, a POSTed
     // token for a large one) — see `delegateTaskToAgent`. Exactly one of the two is set.
@@ -2124,7 +2142,7 @@ export function AgentSurface() {
   const [automationRuns, setAutomationRuns] = useState<Record<string, AutomationRunRef>>({});
 
   const openAutomationRunChat = useCallback((detail: AutomationRunChatDetail): boolean => {
-    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return false;
+    if (!canSpawn) return false;
     if (!detail.sessionId) return false;
     const run: AutomationRunRef = {
       slug: detail.slug,
@@ -2246,13 +2264,55 @@ export function AgentSurface() {
       return () => window.clearTimeout(timer);
     }
     setLinkedSession(null);
-    if (!existing && !(caps?.desktop && caps.claudeCli && claudeReady && agentSettings.enabled)) {
+    if (!existing && !canSpawn) {
       console.warn('[app-link] cannot open chat', claudeId, 'here: the agent surface is unavailable');
       return undefined;
     }
     resumePastSession({ id: claudeId, title: '', preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' });
     return undefined;
   }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession]);
+
+  // ── Start the initializer chat from the onboarding hand-off ("Start with Claude") ──
+  //
+  // `ProjectInstance`'s StartIntentBridge lands here with an intent that already passed
+  // `acceptStartIntent` (only 'initializer', only this project, once per nonce). TAKEN AT ONCE,
+  // ACTED ON WHEN READY, like the session link above: a window built for this intent mounts
+  // the surface before its capabilities, settings and roster load, so the request waits
+  // (bounded) for them, then starts ONE revealed chat through `delegateAgent`. A surface that
+  // cannot start Claude here says so on the bus, and the bridge shows the visible notice.
+  const { t } = useI18n();
+  const [startIntentAt, setStartIntentAt] = useState<number | null>(null);
+  // `startWaitTick` is a dependency below on purpose: readiness includes `hydratedRef`, a ref
+  // that flips without a render, so only the tick re-runs the wait. Without it the first
+  // "not ready yet" leaves the intent parked forever: no chat and no refusal notice.
+  const [startWaitTick, bumpStartWait] = useReducer((x: number) => x + 1, 0);
+  useInstanceEvent<StartChatIntentDetail>(START_CHAT_INTENT_EVENT, (detail) => {
+    if (detail?.intent !== 'initializer') return;
+    setStartIntentAt(Date.now());
+    detail.accepted = true;
+  });
+  useEffect(() => {
+    if (startIntentAt === null) return undefined;
+    const loaded = caps !== null && settingsReady;
+    const ready = loaded && hydratedRef.current;
+    // Loaded and unable to spawn at all: refuse now rather than make the user wait out the bound.
+    if (!ready && !(loaded && !canSpawn) && Date.now() - startIntentAt < START_INTENT_WAIT_MS) {
+      const timer = window.setTimeout(bumpStartWait, LINKED_SESSION_POLL_MS);
+      return () => window.clearTimeout(timer);
+    }
+    setStartIntentAt(null);
+    const detail: DelegateAgentDetail = {
+      title: t('onboarding.handoff.tabTitle'),
+      prompt: initializerKickoffPrompt(),
+      promptToken: '',
+      bypass: false,
+      model: '',
+      reveal: true,
+      accepted: false,
+    };
+    if (!delegateAgent(detail)) emitInstance(bus, START_CHAT_REFUSED_EVENT);
+    return undefined;
+  }, [startIntentAt, startWaitTick, caps, settingsReady, canSpawn, delegateAgent, t, bus]);
 
   // ── Train an automated agent (the Train button on its detail panel) ───────────────
   //
@@ -2267,7 +2327,7 @@ export function AgentSurface() {
   // for a pathological title only; there the ACK means "the guards passed" and a failed
   // mint is reported by its own dialog, the way the Develop hand-off reports one.
   const openTrainSession = useCallback((detail: TrainChatDetail): boolean => {
-    if (!(caps?.desktop && caps.claudeCli && claudeReady) || !agentSettings.enabled) return false;
+    if (!canSpawn) return false;
     const title = trainTabTitle(detail.automationTitle);
     const open = (inline: string, token: string) => {
       const s = spawn(bypass, undefined, false, 'chat', inline, '', true, token, false, '', false, 'train');
@@ -3444,7 +3504,7 @@ export function AgentSurface() {
     // machine (agent-terminal.ts:37-40's real failure mode), or a spawned chat session would
     // have nowhere to portal into. Gated on chatView too: claudeCli alone must never widen
     // this for someone on Terminal (legacy) (a terminal-only user on a pty-broken machine
-    // must still get the Prereqs recovery panel below, not a rendered tabs/panes UI with no
+    // must still get the setup checklist below, not a rendered tabs/panes UI with no
     // working session behind it).
     body = (
       <div className="agent-term">
@@ -3578,7 +3638,7 @@ export function AgentSurface() {
                       Chat is ready to use above. The embedded terminal needs one more piece:
                     </p>
                   )}
-                  <Prereqs caps={caps} onRefresh={refreshCaps} />
+                  <ReadinessChecklist scope="agent" onReady={() => { void refreshCaps(); }} />
                 </>
               )}
             </>

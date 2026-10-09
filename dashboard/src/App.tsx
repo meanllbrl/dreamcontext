@@ -13,6 +13,7 @@ import { Notch, ASSISTANT_VAULT } from './components/assistant/Notch';
 import { VaultProvider } from './context/VaultContext';
 import { ViewerWindow } from './components/appLink/ViewerWindow';
 import { InboxWindow } from './components/appLink/InboxWindow';
+import type { StartIntent } from './lib/desktop';
 import './styles/global.css';
 
 /**
@@ -81,6 +82,21 @@ if (initialLink !== null) {
     window.history.replaceState(window.history.state, '', url.toString());
   } catch (err) {
     console.warn('[app-link] could not clear the landed link from the URL:', err);
+  }
+}
+/**
+ * `&start=initializer`: the onboarding hand-off asked this NEW window to start a chat (only
+ * `openVaultWindow` writes it). Read once, taken off the URL like `open` so a reload starts
+ * nothing, and narrowed to the closed set: any other value is dropped.
+ */
+const initialStart: StartIntent | null = params.get('start') === 'initializer' ? 'initializer' : null;
+if (params.has('start')) {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('start');
+    window.history.replaceState(window.history.state, '', url.toString());
+  } catch (err) {
+    console.warn('[start-intent] could not clear the start intent from the URL:', err);
   }
 }
 /** The viewer's own bus: a lone window with no chips and no siblings. */
@@ -199,7 +215,7 @@ export function App() {
       <ThemeProvider>
         <QueryClientProvider client={windowQueryClient}>
           <I18nProvider>
-            <WindowChrome initialVault={initialVault} initialLink={initialLink} />
+            <WindowChrome initialVault={initialVault} initialLink={initialLink} initialStart={initialStart} />
           </I18nProvider>
         </QueryClientProvider>
       </ThemeProvider>

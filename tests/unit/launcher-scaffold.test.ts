@@ -6,11 +6,35 @@
  * never touched). Covers input validation, path-traversal rejection, the
  * idempotent already-a-vault path, and init→setup ordering.
  */
-import { describe, it, expect, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, writeFileSync, realpathSync } from 'node:fs';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { mkdirSync, rmSync, existsSync, writeFileSync, realpathSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { scaffoldProject, ScaffoldError, type CliRunner } from '../../src/server/routes/launcher.js';
+
+// Pass-through spies on every way a child process can start, so the pending-git test can
+// prove that branch spawns neither git nor a login shell.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawn: vi.fn(actual.spawn),
+    spawnSync: vi.fn(actual.spawnSync),
+    execFile: vi.fn(actual.execFile),
+    execFileSync: vi.fn(actual.execFileSync),
+    exec: vi.fn(actual.exec),
+    execSync: vi.fn(actual.execSync),
+  };
+});
+
+import * as childProcess from 'node:child_process';
+import {
+  scaffoldProject,
+  ScaffoldError,
+  type CliRunner,
+  type ScaffoldGitDeps,
+} from '../../src/server/routes/launcher.js';
+import { isFixActive, markFixActive, markFixDone } from '../../src/lib/onboarding/readiness.js';
+import { recordPendingGitInit } from '../../src/lib/onboarding/pending-git.js';
 
 let dirs: string[] = [];
 
@@ -211,6 +235,114 @@ describe('scaffoldProject — skill packs', () => {
     const { runner, calls } = recordingRunner();
     await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent }, runner, home);
     expect(calls.some((c) => c[0] === 'install-skill')).toBe(false);
+  });
+});
+
+// ─── parent folder auto-create, NFC, and "Track changes with Git" ─────────────
+
+function fakeGitDeps(over: Partial<ScaffoldGitDeps> = {}): ScaffoldGitDeps & { inits: string[] } {
+  const inits: string[] = [];
+  return {
+    gitAvailable: () => true,
+    initRepo: (dir) => { inits.push(dir); mkdirSync(join(dir, '.git')); },
+    isFixActive: () => false,
+    recordPendingGitInit: () => true,
+    ...over,
+    inits,
+  };
+}
+
+function spawnCallCount(): number {
+  const cp = childProcess as unknown as Record<string, { mock?: { calls: unknown[] } }>;
+  return ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync']
+    .reduce((n, k) => n + (cp[k]?.mock?.calls.length ?? 0), 0);
+}
+
+describe('scaffoldProject — parent folder', () => {
+  it('creates a missing parent folder inside home (the fresh-Mac ~/projects case)', async () => {
+    const home = mkTmp('dc-home');
+    dirs.push(home);
+    const parent = join(home, 'projects');
+    expect(existsSync(parent)).toBe(false);
+    const { runner } = recordingRunner();
+    const res = await scaffoldProject({ mode: 'new', name: 'demo', parentDir: parent }, runner, home);
+    expect(existsSync(join(parent, 'demo', '_dream_context'))).toBe(true);
+    expect(res.vault.path).toBe(join(parent, 'demo'));
+  });
+
+  it('still refuses a missing parent outside home', async () => {
+    const home = mkTmp('dc-home');
+    const elsewhere = mkTmp('dc-elsewhere');
+    dirs.push(home, elsewhere);
+    const { runner } = recordingRunner();
+    await expect(
+      scaffoldProject({ mode: 'new', name: 'x', parentDir: join(elsewhere, 'missing') }, runner, home),
+    ).rejects.toBeInstanceOf(ScaffoldError);
+    expect(existsSync(join(elsewhere, 'missing'))).toBe(false);
+  });
+
+  it('NFC-normalises a Turkish name so the folder and the vault name agree', async () => {
+    const parent = mkTmp();
+    const home = mkTmp('dc-home');
+    dirs.push(parent, home);
+    const nfc = 'Öğretmen Notları';
+    const { runner } = recordingRunner();
+    const res = await scaffoldProject({ mode: 'new', name: nfc.normalize('NFD'), parentDir: parent }, runner, home);
+    expect(res.vault.name).toBe(nfc);
+    expect(res.vault.name).toBe(res.vault.name.normalize('NFC'));
+    expect(res.vault.path).toBe(join(parent, nfc));
+  });
+});
+
+describe('scaffoldProject — gitInit', () => {
+  afterEach(() => markFixDone('git-install'));
+
+  it('is not-requested by default and touches no git', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const deps = fakeGitDeps();
+    const res = await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent }, recordingRunner().runner, home, deps);
+    expect(res.git).toEqual({ initialized: false, skipped: 'not-requested' });
+    expect(deps.inits).toEqual([]);
+  });
+
+  it('runs git init after setup when Git is usable', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const deps = fakeGitDeps();
+    const res = await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, gitInit: true }, recordingRunner().runner, home, deps);
+    expect(res.git).toEqual({ initialized: true });
+    expect(deps.inits).toEqual([join(parent, 'p')]);
+  });
+
+  it('reports already-repo for a folder that is already a repository', async () => {
+    const proj = mkTmp('dc-proj'); const home = mkTmp('dc-home'); dirs.push(proj, home);
+    mkdirSync(join(proj, '.git'));
+    const deps = fakeGitDeps();
+    const res = await scaffoldProject({ mode: 'existing', name: 'r', projectPath: proj, gitInit: true }, recordingRunner().runner, home, deps);
+    expect(res.git).toEqual({ initialized: false, skipped: 'already-repo' });
+    expect(deps.inits).toEqual([]);
+  });
+
+  it('reports no-git when Git is unusable and no Git install is running', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const deps = fakeGitDeps({ gitAvailable: () => false, isFixActive, recordPendingGitInit });
+    const res = await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, gitInit: true }, recordingRunner().runner, home, deps);
+    expect(res.git).toEqual({ initialized: false, skipped: 'no-git' });
+    expect(existsSync(join(home, '.dreamcontext', 'onboarding.json'))).toBe(false);
+  });
+
+  it('records pending-git while a git-install run is active, spawning no git and no login shell', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    markFixActive('git-install');
+    const deps = fakeGitDeps({ gitAvailable: () => false, isFixActive, recordPendingGitInit });
+    const before = spawnCallCount();
+    const res = await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, gitInit: true }, recordingRunner().runner, home, deps);
+    expect(spawnCallCount()).toBe(before);
+    expect(res.git).toEqual({ initialized: false, skipped: 'pending-git' });
+    expect(deps.inits).toEqual([]);
+    expect(existsSync(join(parent, 'p', '.git'))).toBe(false);
+    const record = JSON.parse(readFileSync(join(home, '.dreamcontext', 'onboarding.json'), 'utf-8'));
+    expect(record.pendingGitInits).toEqual([join(parent, 'p')]);
+    expect(readdirSync(join(home, '.dreamcontext')).filter((f) => f.includes('.tmp-'))).toEqual([]);
   });
 });
 

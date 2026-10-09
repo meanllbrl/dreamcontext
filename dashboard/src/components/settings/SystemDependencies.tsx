@@ -24,6 +24,18 @@ import './SystemDependencies.css';
  */
 
 type DepKey = 'git' | 'claude' | 'pty';
+
+/**
+ * The copyable git install command for THIS machine's platform. It used to be "apt" for
+ * everything that was not a Mac, which told a Windows user to run a Linux command. Linux keeps
+ * the most common package manager; the onboarding checklist (server-side, distro-aware) is
+ * where an exact per-distribution command is offered.
+ */
+function gitManualCommand(platform: string): string {
+  if (platform === 'darwin') return 'xcode-select --install';
+  if (platform === 'win32') return 'winget install Git.Git';
+  return 'sudo apt install git';
+}
 /**
  * What the server's installer can be asked to do. `claude-path` is not a package —
  * it writes the `export PATH="$HOME/.local/bin:$PATH"` line the CLI's own install
@@ -48,7 +60,7 @@ const DEPS: Record<DepKey, DepMeta> = {
     key: 'git',
     nameKey: 'system.dep.git',
     present: (c) => c.git,
-    manual: (c) => (c.platform === 'darwin' ? 'xcode-select --install' : 'sudo apt install git'),
+    manual: (c) => gitManualCommand(c.platform),
     installable: (c) => c.desktop && c.platform === 'darwin',
   },
   claude: {

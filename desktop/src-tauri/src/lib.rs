@@ -27,6 +27,8 @@
 mod app_link;
 mod assistant;
 mod frames;
+mod node_runtime;
+mod node_setup;
 mod page_focus;
 mod splash;
 
@@ -84,6 +86,12 @@ pub fn run() {
             app_link::take_app_link,
             splash::splash_done,
             splash::splash_play,
+            node_setup::node_setup_start,
+            node_setup::node_setup_status,
+            node_setup::node_setup_cancel,
+            node_setup::node_setup_retry,
+            node_setup::node_setup_quit,
+            node_setup::node_setup_open_download_page,
             page_focus::focus_diag,
             page_focus::page_wants_focus,
         ])
@@ -94,6 +102,8 @@ pub fn run() {
         .manage(frames::FramesState::default())
         // The opening screen's two-key handoff to the Launcher (src/splash.rs).
         .manage(splash::SplashGate::default())
+        // The Node setup screen a first run with no usable Node stops at (src/node_setup.rs).
+        .manage(node_setup::NodeSetupState::default())
         // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
         // and the Login Item. See src/assistant.rs.
         .plugin(tauri_nspanel::init())
@@ -443,37 +453,10 @@ async fn confirm_dialog(
 
 // ─── Resolution helpers ────────────────────────────────────────────────────
 
-/// Find an absolute path to `node`. A Finder-launched app inherits only a
-/// minimal PATH (/usr/bin:/bin), so we ask the user's login shell (which loads
-/// their nvm/brew/volta/asdf setup) and fall back to common install locations.
-fn find_node() -> Option<String> {
-    if let Ok(p) = std::env::var("DREAMCONTEXT_NODE") {
-        if Path::new(&p).exists() {
-            return Some(p);
-        }
-    }
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    if let Ok(out) = Command::new(&shell).args(["-lc", "command -v node"]).output() {
-        if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() && Path::new(&path).exists() {
-                return Some(path);
-            }
-        }
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    [
-        "/opt/homebrew/bin/node".to_string(),
-        "/usr/local/bin/node".to_string(),
-        "/usr/bin/node".to_string(),
-        format!("{home}/.volta/bin/node"),
-    ]
-    .into_iter()
-    .find(|p| Path::new(p).exists())
-}
+// `node` itself is resolved, and version-checked, in src/node_runtime.rs.
 
 /// Resolve the GLOBALLY-installed dreamcontext CLI entry via the user's login
-/// shell (`command -v dreamcontext`), same mechanism as `find_node` — a
+/// shell (`command -v dreamcontext`), the same way src/node_runtime.rs finds node — a
 /// Finder-launched app has no interactive PATH, so we must ask the login shell
 /// which loads nvm/brew/volta. Returns the resolved JS entry path (the bin is a
 /// shebang script that `node` can run directly, symlink or not).
@@ -495,19 +478,21 @@ fn find_global_cli() -> Option<String> {
         }
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    let out = Command::new(&shell)
+    let found = Command::new(&shell)
         .args(["-ilc", "command -v dreamcontext"])
         .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|path| !path.is_empty() && Path::new(path).exists());
+    if let Some(path) = found {
+        write_cli_path_cache(&path);
+        return Some(path);
     }
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if path.is_empty() || !Path::new(&path).exists() {
-        return None;
-    }
-    write_cli_path_cache(&path);
-    Some(path)
+    // The private Node's global packages (src/node_runtime.rs) live here; a first run installs
+    // the CLI there before any shell profile has been taught where it is.
+    let managed = node_runtime::npm_global_dir(&node_runtime::home_dir()?).join("bin").join("dreamcontext");
+    managed.exists().then(|| managed.to_string_lossy().into_owned())
 }
 
 /// `~/.dreamcontext/desktop-cli-path` — one line, the last shell-resolved CLI path.
@@ -609,9 +594,13 @@ fn poll_health(port: u16, timeout: Duration) -> Result<(), String> {
 }
 
 fn host_dashboard(app: AppHandle) -> Result<(), String> {
-    let node = find_node().ok_or_else(|| {
-        "Node.js was not found.\n\nInstall Node 18+ (e.g. `brew install node`) and reopen dreamcontext.".to_string()
-    })?;
+    // No usable Node (none, or older than 18): the setup screen installs a private one and
+    // boot continues on it. `fresh_install` marks that path for the longer first-boot wait
+    // and the setup screen's own hand-over to the Launcher.
+    let (node, fresh_install) = match node_runtime::resolve_usable_node() {
+        Ok(choice) => (choice.path, false),
+        Err(problem) => (node_setup::run_blocking(&app, problem)?, true),
+    };
     let cli = resolve_cli(&app)?;
     let port = pick_free_port()?;
 
@@ -662,7 +651,9 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     // Manage the child so the app-exit hook can kill it (no orphan process).
     app.manage(Arc::clone(&child_handle));
 
-    if let Err(e) = poll_health(port, Duration::from_secs(15)) {
+    // A just-installed Node starts cold (nothing cached yet), so it gets longer to answer.
+    let health_timeout = Duration::from_secs(if fresh_install { 30 } else { 15 });
+    if let Err(e) = poll_health(port, health_timeout) {
         // Tear down the (possibly half-started) child before surfacing the error.
         if let Ok(mut g) = child_handle.lock() {
             if let Some(mut c) = g.take() {
@@ -685,6 +676,9 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         // the Launcher, and the notch can open project windows itself.
         let result = if notch_only_launch() {
             Ok(())
+        } else if fresh_install {
+            // The setup screen is up: it hands over to the Launcher the way the splash does.
+            node_setup::hand_over(&h, port)
         } else if splash::is_open(&h) {
             // First window: the Launcher (no vault pinned), behind the opening screen.
             splash::open_launcher_behind(&h, port)
@@ -747,29 +741,8 @@ pub(crate) fn launcher_builder(
 
 // ─── Error window (instead of crashing) ───────────────────────────────────────
 
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-}
-
+/// A failed startup opens the setup window in its error mode (src/node_setup.rs), which
+/// offers "Try again" and "Quit" instead of a read-only message.
 fn show_error_window(app: &AppHandle, msg: &str) {
-    let html = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>dreamcontext</title>\
-<style>:root{{color-scheme:dark}}body{{font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;\
-background:#16121f;color:#ece9f1;margin:0;display:flex;align-items:center;justify-content:center;height:100vh}}\
-.card{{max-width:580px;padding:40px}}h1{{font-size:18px;margin:0 0 14px;font-weight:600}}\
-pre{{white-space:pre-wrap;background:#241c33;padding:18px 20px;border-radius:12px;color:#d6c2f5;\
-font-size:13px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}}</style></head>\
-<body><div class=\"card\"><h1>dreamcontext couldn't start</h1><pre>{}</pre></div></body></html>",
-        html_escape(msg)
-    );
-    let path = std::env::temp_dir().join("dreamcontext-error.html");
-    if std::fs::write(&path, html).is_ok() {
-        let url = format!("file://{}", path.to_string_lossy());
-        if let Ok(parsed) = url.parse() {
-            let _ = WebviewWindowBuilder::new(app, "error", WebviewUrl::External(parsed))
-                .title("dreamcontext")
-                .inner_size(660.0, 460.0)
-                .build();
-        }
-    }
+    node_setup::show_error(app, msg);
 }

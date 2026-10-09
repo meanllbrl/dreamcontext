@@ -156,3 +156,24 @@ export function trainKickoffPrompt(slug: string, automationTitle: string): strin
     'That is the only place this result goes. Do not create or edit anything in the project\'s knowledge for it.',
   ].join(' ');
 }
+
+// ── Onboarding hand-off: the initializer ─────────────────────────────────────────────
+
+/**
+ * The first message of the chat the onboarding hand-off ("Start with Claude") opens in a
+ * freshly created or freshly opened project.
+ *
+ * MIRRORED from `INITIALIZER_KICKOFF_PROMPT` in `src/lib/onboarding/copy.ts` (the CLI's
+ * `setup` hands the same text to `claude`), because the dashboard bundle cannot import from
+ * `src/`. `tests/unit/onboarding-mirror.test.ts` keeps the two equal and checks it still fits
+ * inline in the upgrade URL ({@link promptFitsInline}), so the hand-off never needs a token.
+ *
+ * Plain language naming the skill rather than a slash command, so it routes the same in the
+ * Chat view and the Terminal view. PURE.
+ */
+export function initializerKickoffPrompt(): string {
+  return "Use the initializer skill to set up this project's brain from what is already here: the code and any " +
+    'documents in this folder. If the folder is empty, ask me what the project is about first. Ask only ' +
+    'what you cannot find out yourself, then recommend the skill packs that fit and install the ones I pick. ' +
+    'No placeholders.';
+}

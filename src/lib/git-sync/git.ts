@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 
 /**
  * Thin, testable git wrapper over `execFileSync` (pattern from
@@ -77,13 +77,79 @@ export const NETWORK_OP_TIMEOUT_MS = 2 * 60 * 1000;
 /** Pushes move more data — a higher ceiling, still bounded. */
 export const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
 
-export function gitAvailable(): boolean {
+/**
+ * What {@link gitAvailable} needs from the machine, injectable for tests. Each leg is
+ * one cheap question; none of them may start `/usr/bin/git` on its own.
+ */
+export interface GitProbe {
+  platform: NodeJS.Platform;
+  /** Absolute path of the `git` the PATH resolves, or null. Reads the filesystem only. */
+  resolveGit(): string | null;
+  /** macOS: are the Command Line Tools installed (`xcode-select -p` exits 0)? */
+  cltInstalled(): boolean;
+  /** Does `git --version` succeed? The only leg that runs git itself. */
+  gitRuns(): boolean;
+}
+
+/** The PATH lookup a shell would do, as a pure filesystem walk (no spawn). */
+function resolveOnPath(cmd: string, pathValue: string = process.env.PATH ?? ''): string | null {
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, cmd);
+    try {
+      const st = statSync(candidate);
+      if (st.isFile() && (st.mode & 0o111) !== 0) return candidate;
+    } catch {
+      /* not here — keep looking */
+    }
+  }
+  return null;
+}
+
+/**
+ * macOS: are Apple's Command Line Tools installed? `xcode-select -p` only prints a path
+ * and never opens the install dialog, so it is safe to ask at any time. Always false
+ * off macOS, where the question does not exist.
+ */
+export function commandLineToolsInstalled(): boolean {
+  if (process.platform !== 'darwin') return false;
   try {
-    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    execFileSync('xcode-select', ['-p'], { stdio: 'ignore', timeout: 5000 });
     return true;
   } catch {
     return false;
   }
+}
+
+const defaultGitProbe: GitProbe = {
+  platform: process.platform,
+  resolveGit: () => resolveOnPath('git'),
+  cltInstalled: commandLineToolsInstalled,
+  gitRuns: () => {
+    try {
+      execFileSync('git', ['--version'], { stdio: 'ignore', timeout: 10_000 });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
+
+/**
+ * Is git usable here?
+ *
+ * On a Mac without the Command Line Tools, `/usr/bin/git` is Apple's stub: running
+ * it (even `git --version`) pops the "install the command line developer tools"
+ * dialog. Every capabilities poll and readiness probe used to trigger that dialog on
+ * a fresh Mac. So on macOS, when the PATH resolves to the stub, the tools are
+ * checked first with `xcode-select -p` and git is only run once they exist. A git
+ * from somewhere else (Homebrew) is run as before.
+ */
+export function gitAvailable(probe: GitProbe = defaultGitProbe): boolean {
+  const resolved = probe.resolveGit();
+  if (!resolved) return false;
+  if (probe.platform === 'darwin' && resolved === '/usr/bin/git' && !probe.cltInstalled()) return false;
+  return probe.gitRuns();
 }
 
 export function isGitRepo(cwd: string): boolean {

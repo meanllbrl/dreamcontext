@@ -133,37 +133,106 @@ export function claudePathExportLine(dir: string, shell: string = process.env.SH
     : `export PATH="${ref}:$PATH"`;
 }
 
+/** Comment header above the managed Node folders' PATH line (the desktop app / install.sh layout). */
+export const NODE_RC_MARKER = '# dreamcontext: Node.js on PATH';
+/** Comment header above the global dreamcontext CLI folder's PATH line. */
+export const CLI_RC_MARKER = '# dreamcontext: dreamcontext CLI on PATH';
+
 /**
- * The missing echo: append `export PATH="<dir>:$PATH"` to the user's shell rc so
- * `claude` is found in every future shell, theirs included.
- *
- * Idempotent — if the rc already mentions `dir` (literally or as `$HOME/…`) it is
- * left completely alone, so repeated installs never stack duplicate PATH entries.
- * Non-throwing: an unwritable rc (read-only home, odd permissions) just comes back
- * as "not written" and the caller shows the manual command instead.
+ * Characters that may never reach a shell startup file. The line is written as
+ * `export PATH="<dir>:$PATH"`, so anything that is live inside double quotes
+ * (`"`, `$`, backtick, backslash) or that ends the line (CR, LF, NUL) would let
+ * a folder name run code in every future shell. Such a folder is refused, never
+ * escaped: the caller falls back to the manual step.
  */
-export function ensureClaudeOnShellPath(
-  dir: string,
+const UNSAFE_RC_CHARS = /["$`\\\n\r\0]/;
+
+/** Result of {@link ensureDirOnShellPath}: `refused` set means nothing was written. */
+export type ShellPathFix = ShellRcFix & { refused?: 'unsafe-chars' };
+
+/**
+ * Append `export PATH="<dir>:$PATH"` (fish: `set -gx PATH "<dir>" $PATH`) under
+ * `marker` to the user's shell rc, so `dir` is on PATH in every future shell.
+ *
+ * - NFC-normalised first, so a Turkish folder name (`Öğretmen`) is written in
+ *   one canonical byte form whatever form the caller got it in.
+ * - Refuses a folder containing a character from {@link UNSAFE_RC_CHARS}.
+ * - Idempotent: an rc that already mentions `dir` (literally or as `$HOME/…`) is
+ *   left completely alone, so repeated installs never stack duplicate entries.
+ * - Non-throwing: an unwritable rc comes back absent from both lists and the
+ *   caller shows the manual command instead.
+ */
+export function ensureDirOnShellPath(
+  dirIn: string,
+  marker: string,
   shell: string = process.env.SHELL || '/bin/zsh',
-): ShellRcFix {
+): ShellPathFix {
+  const dir = dirIn.normalize('NFC');
+  if (UNSAFE_RC_CHARS.test(dir) || UNSAFE_RC_CHARS.test(marker)) {
+    return { dir, line: '', wrote: [], alreadyConfigured: [], refused: 'unsafe-chars' };
+  }
   const line = claudePathExportLine(dir, shell);
   const homeRef = homeRelative(dir);
-  const fix: ShellRcFix = { dir, line, wrote: [], alreadyConfigured: [] };
+  const fix: ShellPathFix = { dir, line, wrote: [], alreadyConfigured: [] };
 
   for (const file of rcTargets(shell)) {
     try {
       const existing = existsSync(file) ? readFileSync(file, 'utf-8') : '';
-      if (existing.includes(dir) || (homeRef && existing.includes(homeRef))) {
+      const normalized = existing.normalize('NFC');
+      if (normalized.includes(dir) || (homeRef && normalized.includes(homeRef))) {
         fix.alreadyConfigured.push(file);
         continue;
       }
       mkdirSync(dirname(file), { recursive: true }); // fish's ~/.config/fish may not exist yet
       const gap = existing && !existing.endsWith('\n') ? '\n' : '';
-      appendFileSync(file, `${gap}\n${RC_MARKER}\n${line}\n`, 'utf-8');
+      appendFileSync(file, `${gap}\n${marker}\n${line}\n`, 'utf-8');
       fix.wrote.push(file);
     } catch {
       /* unwritable — reported by absence from both lists; caller falls back to the manual hint */
     }
   }
   return fix;
+}
+
+/**
+ * The missing echo for Claude Code: put `dir` (where `claude` lives) on the
+ * user's shell PATH. A thin wrapper over {@link ensureDirOnShellPath} under the
+ * Claude marker, kept for its existing callers.
+ */
+export function ensureClaudeOnShellPath(
+  dir: string,
+  shell: string = process.env.SHELL || '/bin/zsh',
+): ShellPathFix {
+  return ensureDirOnShellPath(dir, RC_MARKER, shell);
+}
+
+/**
+ * Finish a Claude Code install properly: find the binary in the known install
+ * locations and put its folder on the user's shell PATH. Idempotent and
+ * non-throwing; the message is what the caller shows the user.
+ */
+export function fixClaudeShellPath(): { ok: boolean; message: string } {
+  const bin = findClaudeBin();
+  if (!bin) {
+    // Installed somewhere we don't know about, or not installed at all. Either way
+    // there is no directory to add — say so rather than editing rc files blindly.
+    return {
+      ok: false,
+      message:
+        "Couldn't find the claude binary in the usual install locations, so PATH was left alone. " +
+        'Add its directory to your shell profile by hand, then reopen the app.',
+    };
+  }
+  const dir = dirname(bin);
+  const fix = ensureClaudeOnShellPath(dir);
+  if (fix.wrote.length) {
+    return { ok: true, message: `Added ${dir} to your PATH in ${fix.wrote.join(', ')} — open a new terminal to pick it up.` };
+  }
+  if (fix.alreadyConfigured.length) {
+    return { ok: true, message: `${dir} is already on your PATH in ${fix.alreadyConfigured.join(', ')}.` };
+  }
+  return {
+    ok: false,
+    message: `Couldn't write your shell profile. Run this once, in your terminal:\n  echo '${claudePathExportLine(dir)}' >> ~/.zshrc`,
+  };
 }

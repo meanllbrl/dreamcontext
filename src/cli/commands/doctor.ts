@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
+import { CHECK_COPY } from '../../lib/onboarding/copy.js';
+import type { ReadinessReport } from '../../lib/onboarding/types.js';
+import { createTtyDeps, renderReadiness, type TtyDeps } from '../onboarding-tty.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
 import { hasTaskOverride, loadTaskOverride, hasCustomStatuses } from '../../lib/overrides.js';
 import { DEFAULT_STATUSES, SHIPPED_STATUS_KEYS, isKnown, normalizeStatusKey, parentOf, statusKeys, type StatusDef } from '../../lib/task-status.js';
@@ -1418,13 +1421,68 @@ function checkTaskFeatureLinks(root: string): CheckResult[] {
   return results;
 }
 
+/**
+ * The machine report as doctor checks (machine scope only): ok stays ok, a required check
+ * that is not done is an error, anything else not done is a warning. Codes are
+ * `doctor/machine-<id>`; a manual fix travels as the supported fix.
+ */
+export function machineToDoctorResults(report: ReadinessReport): CheckResult[] {
+  return report.checks
+    .filter((c) => c.scopes.includes('machine'))
+    .map((c): CheckResult => {
+      const done = c.status === 'ok' || c.status === 'unknown';
+      return {
+        name: CHECK_COPY[c.id].title,
+        status: done ? 'ok' : c.tier === 'required' ? 'error' : 'warn',
+        message: `${CHECK_COPY[c.id].title}: ${done ? 'ready' : c.status}`,
+        code: `doctor/machine-${c.id}`,
+        subject: { check: c.id },
+        ...(c.fix?.manual ? { supportedFixes: [c.fix.manual] } : {}),
+      };
+    });
+}
+
+/**
+ * `doctor --machine`: works outside a project. First runs any `git init` left pending by
+ * an earlier setup, then reports this machine. Returns the exit code (1 when a required
+ * check is not done).
+ */
+export async function runDoctorMachine(
+  opts: { json?: boolean },
+  deps: TtyDeps = createTtyDeps(),
+): Promise<number> {
+  const pending = deps.runPendingGitInits();
+  const machine = await deps.probe();
+  if (opts.json) {
+    deps.print(JSON.stringify({ version: 1, machine }, null, 2));
+    return machine.ready ? 0 : 1;
+  }
+  deps.print(header('Doctor: this machine'));
+  for (const p of pending) deps.print(`  ${chalk.green('✓')} Set up Git in ${p}`);
+  for (const line of renderReadiness(machine)) deps.print(line);
+  const results = machineToDoctorResults(machine);
+  const errors = results.filter((r) => r.status === 'error').length;
+  const warnings = results.filter((r) => r.status === 'warn').length;
+  deps.print('');
+  if (errors > 0) deps.print(`  ${chalk.red(`${errors} required item${errors > 1 ? 's' : ''} missing`)}. ${chalk.cyan('ℹ')} Next: dreamcontext setup`);
+  else if (warnings > 0) deps.print(`  ${chalk.green('Ready')}, ${chalk.yellow(`${warnings} recommended item${warnings > 1 ? 's' : ''} to add`)}`);
+  else deps.print(`  ${chalk.green('Ready')}`);
+  return machine.ready ? 0 : 1;
+}
+
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Validate _dream_context/ structure and report issues')
     .option('--heal-links', 'Apply the deterministic task↔feature link fixes (adopt back-refs, drop ghost/foreign related_tasks entries, canonicalize slugs) before running the checks')
     .option('--json', 'Emit a machine-readable diagnostic report: every check carries a stable code, plus subject/evidence/supportedFixes where annotated')
-    .action((opts: { healLinks?: boolean; json?: boolean }) => {
+    .option('--machine', "Check this machine instead (Node.js, Claude and its sign-in, Git, GitHub); works outside a project")
+    .action(async (opts: { healLinks?: boolean; json?: boolean; machine?: boolean }) => {
+      if (opts.machine) {
+        const code = await runDoctorMachine({ json: opts.json });
+        if (code !== 0) process.exit(code);
+        return;
+      }
       const root = resolveContextRoot();
       if (!root) {
         if (opts.json) {
@@ -1564,6 +1622,7 @@ export function registerDoctorCommand(program: Command): void {
       if (warnings.length > 0) summary.push(chalk.yellow(`${warnings.length} warning${warnings.length > 1 ? 's' : ''}`));
       if (errors.length > 0) summary.push(chalk.red(`${errors.length} error${errors.length > 1 ? 's' : ''}`));
       console.log(`  ${summary.join(', ')}`);
+      console.log(`  ${chalk.cyan('ℹ')} This machine's tools and sign-ins: dreamcontext doctor --machine`);
 
       if (errors.length > 0) {
         process.exit(1);

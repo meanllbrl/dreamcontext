@@ -14,7 +14,10 @@ import {
 import { VaultDot } from '../components/layout/VaultDot';
 import { VaultLogo, useVaultLogoPicker, useVaultLogoMenu } from '../components/layout/VaultLogo';
 import { VaultSyncChip } from '../components/brain/VaultSyncChip';
-import { OnboardingWizard } from './OnboardingWizard';
+import { Onboarding } from './onboarding/Onboarding';
+import { entryStage, launcherOnboardingMode, remainingSetupCount, type OnboardingStage } from './onboarding/handoffPlan';
+import { useReadiness } from '../hooks/useOnboarding';
+import { useI18n } from '../context/I18nContext';
 import { SpaceLauncher } from './space/SpaceLauncher';
 import { AssistantEntryCard } from '../components/assistant/AssistantEntryCard';
 import {
@@ -51,7 +54,14 @@ export function LauncherPage() {
   const updateAll = useUpdateAllProjects();
   const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
-  const [wizardOpen, setWizardOpen] = useState(false);
+  const { t } = useI18n();
+  /** The onboarding takeover and the step it opened at; null when the Launcher shows. */
+  const [onboarding, setOnboarding] = useState<Exclude<OnboardingStage, 'handoff'> | null>(null);
+  /** The takeover opened by itself (no projects yet), so it starts on the Welcome screen. */
+  const [onboardingWelcome, setOnboardingWelcome] = useState(false);
+  /** "Skip for now" on the automatic takeover: don't bring it straight back this launch. */
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const readiness = useReadiness('machine');
   /**
    * `null` until we know the answer. On a fresh launch the origin is new, so the
    * localStorage mirror is empty and only the server file knows what was picked —
@@ -102,6 +112,21 @@ export function LauncherPage() {
   }, []);
 
   const vaults = data?.vaults ?? [];
+  const onboardingMode = launcherOnboardingMode(vaults.length, readiness.report);
+  const setupLeft = remainingSetupCount(readiness.report);
+
+  function openOnboarding(welcome = false) {
+    setOnboardingWelcome(welcome);
+    setOnboarding(entryStage(readiness.report, !!readiness.error) === 'project' ? 'project' : 'machine');
+  }
+
+  // No projects yet: the Launcher IS onboarding. Opened once the vault list is known, and not
+  // again in this launch after "Skip for now" (the + Add Project button still opens it).
+  useEffect(() => {
+    if (isLoading || isError || onboardingDismissed || onboarding !== null) return;
+    if (onboardingMode === 'takeover') openOnboarding(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, isError, onboardingMode, onboardingDismissed]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -182,7 +207,7 @@ export function LauncherPage() {
       // window is only draggable from the tiny native strip. The ENTIRE page
       // background is the drag handle (same threshold gesture as the vault
       // Header) — the top bar alone is mostly filled with controls, leaving
-      // only a sliver to grab. Cards, the Space, and the wizard opt out via
+      // only a sliver to grab. Cards, the Space, and onboarding opt out via
       // data-no-drag so their own interactions are never hijacked.
       onMouseDown={startTitleBarDrag}
     >
@@ -231,12 +256,19 @@ export function LauncherPage() {
           <button
             type="button"
             className="launcher-btn launcher-btn-primary"
-            onClick={() => setWizardOpen(true)}
+            onClick={() => openOnboarding()}
           >
             + Add Project
           </button>
         </div>
       </header>
+
+      {onboardingMode === 'bar' && onboarding === null && (
+        <button type="button" className="launcher-finish-bar" data-no-drag onClick={() => openOnboarding()}>
+          <span className="launcher-finish-dot" aria-hidden="true" />
+          {t('onboarding.launcher.finishBar').replace('{n}', String(setupLeft))}
+        </button>
+      )}
 
       {actionError && <div className="launcher-error">{actionError}</div>}
       {/* The hidden file input + the right-click menu that opens it — rendered once. */}
@@ -256,7 +288,7 @@ export function LauncherPage() {
         <div className="launcher-space-wrap">
           <SpaceLauncher
             query={search}
-            onAddProject={() => setWizardOpen(true)}
+            onAddProject={() => openOnboarding()}
             onError={setActionError}
           />
           <AssistantEntryCard variant="space" />
@@ -360,12 +392,19 @@ export function LauncherPage() {
         </>
       )}
 
-      {wizardOpen && (
-        <OnboardingWizard
-          onClose={() => setWizardOpen(false)}
-          onReady={async (vaultName) => {
-            setWizardOpen(false);
+      {onboarding !== null && (
+        <Onboarding
+          initialStage={onboarding}
+          welcome={onboardingWelcome}
+          onClose={() => { setOnboarding(null); setOnboardingDismissed(true); }}
+          onOpenProject={async (vaultName) => {
+            setOnboarding(null);
             await openVault(vaultName);
+          }}
+          onFinished={(vaultName) => {
+            setOnboarding(null);
+            // The hand-off opened the window itself; this only stamps recency for the Space.
+            touch.mutate(vaultName);
           }}
         />
       )}

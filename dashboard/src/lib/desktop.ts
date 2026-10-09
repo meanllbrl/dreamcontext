@@ -467,13 +467,17 @@ export function vaultWindowLabel(name: string): string {
 export async function openVaultWindow(
   name: string,
   at?: { x: number; y: number; width: number; height: number },
-  opts: { open?: string } = {},
+  opts: { open?: string; start?: StartIntent } = {},
 ): Promise<'focused' | 'created' | 'browser'> {
   // `open` is a `dreamcontext://` link the NEW window routes once its project is up (App.tsx
   // reads it back off the URL). An already-open window never sees it — the caller learns that
   // from the `'focused'` answer and hands the link over by event instead.
   const openParam = opts.open ? `&open=${encodeURIComponent(opts.open)}` : '';
-  const url = `/?vault=${encodeURIComponent(name)}${openParam}`;
+  // `start` asks the new window to open a chat with a FIXED intent (the onboarding hand-off).
+  // Only this function writes it; the OS link path never does. A `'focused'` answer means an
+  // already-open window will not see it, so the caller follows up with `emitStartIntent`.
+  const startParam = opts.start === 'initializer' ? '&start=initializer' : '';
+  const url = `/?vault=${encodeURIComponent(name)}${openParam}${startParam}`;
   if (isDesktop()) {
     // Use the BUILT-IN WebviewWindow API (governed by the granted
     // `core:webview:allow-create-webview-window` permission) rather than a custom
@@ -508,6 +512,44 @@ export async function openVaultWindow(
   }
   window.open(url, '_blank');
   return 'browser';
+}
+
+/** The fixed intents a project window can be asked to start with. Closed on purpose. */
+export type StartIntent = 'initializer';
+
+/** Tauri event carrying a start intent to a project window that is already open. */
+export const START_INTENT_EVENT = 'dreamcontext-start-intent';
+
+/** What {@link emitStartIntent} broadcasts. The receiving window filters by `vault` and `nonce`. */
+export interface StartIntentPayload {
+  vault: string;
+  intent: StartIntent;
+  nonce: string;
+}
+
+/**
+ * Hand a start intent to a project window that is ALREADY open (`openVaultWindow` answered
+ * `'focused'`, so the `start` URL param never reached it). Broadcast rather than targeted: with
+ * several projects per window the holder is not derivable from the vault name, and only the
+ * window holding `vault` accepts it (see `acceptStartIntent`); the nonce stops a double start.
+ * Resolves false off-desktop or when the event API is unavailable.
+ */
+export async function emitStartIntent(vault: string, intent: StartIntent): Promise<boolean> {
+  if (!isDesktop()) return false;
+  const payload: StartIntentPayload = { vault, intent, nonce: newNonce() };
+  try {
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit(START_INTENT_EVENT, payload);
+    return true;
+  } catch {
+    return false; // event API unavailable (ACL / older shell): the caller shows its notice
+  }
+}
+
+function newNonce(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /**

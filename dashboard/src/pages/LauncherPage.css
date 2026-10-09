@@ -252,3 +252,37 @@
   display: flex;
   flex-direction: column;
 }
+
+/* "Finish setting up (N left)": the slim nudge when projects exist but this machine still
+   misses a required piece. Neutral surface, never a filled accent: the Launcher's own primary
+   stays "+ Add Project". Opens the onboarding checklist. */
+.launcher-finish-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: center;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.launcher-finish-bar:hover { border-color: var(--color-border-hover); background: var(--color-bg-tertiary); }
+.launcher-finish-bar:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+
+.launcher-finish-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .launcher-finish-bar { transition: none; }
+}

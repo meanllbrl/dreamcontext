@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react';
-import { useApi } from '../../context/VaultContext';
-import { ACCENT, type Capabilities, type ConfirmRequest } from './agentSession';
+import { useEffect, useRef, type CSSProperties } from 'react';
+import { ACCENT, type ConfirmRequest } from './agentSession';
 
 /**
  * The non-terminal chrome of the Agent surface: the destructive-action confirmation
- * sheet, the bypass toggles, the prerequisite installer, and the small presentational
+ * sheet, the bypass toggles, and the small presentational
  * helpers + shared inline styles used by the surface's intro/empty states.
  */
 
@@ -95,88 +94,6 @@ export function BypassPill({ bypass, setBypass }: { bypass: boolean; setBypass: 
   );
 }
 
-// ── Setup panel: one-click install of the embedded terminal's prerequisites ──────
-// Shown when `claude` and/or `node-pty` are missing. Each install runs server-side
-// in the user's login shell (so a Finder-launched app sees their real PATH) and is
-// polled to completion; a success re-checks capabilities so the row flips to ready.
-
-type InstallTarget = 'claude' | 'pty';
-
-export function Prereqs({ caps, onRefresh }: { caps: Capabilities; onRefresh: () => Promise<Capabilities | null> }) {
-  const api = useApi();
-  const [busy, setBusy] = useState<InstallTarget | null>(null);
-  const [log, setLog] = useState('');
-  const [err, setErr] = useState('');
-
-  const runInstall = useCallback(async (target: InstallTarget) => {
-    setBusy(target); setErr(''); setLog('');
-    try {
-      const { runId } = await api.post<{ ok: boolean; runId: string }>('/agent/install', { target });
-      // Poll until the background install ends (the server watchdog caps it ~5 min).
-      for (let i = 0; i < 260; i++) {
-        await new Promise(r => setTimeout(r, 1300));
-        const s = await api.get<{ state: string; output: string }>(`/agent/install/status?id=${encodeURIComponent(runId)}`);
-        if (s.output) setLog(s.output);
-        if (s.state === 'done') { await onRefresh(); return; }
-        if (s.state === 'error') { setErr(s.output || 'Install failed.'); return; }
-        if (s.state === 'unknown') { setErr('The install run expired before it finished.'); return; }
-      }
-      setErr('Install is taking unusually long — check a real terminal.');
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Could not start the install.');
-    } finally {
-      setBusy(null);
-    }
-  }, [api, onRefresh]);
-
-  const rows: { target: InstallTarget; label: string; ok: boolean; desc: string }[] = [
-    { target: 'claude', label: 'Claude CLI', ok: caps.claudeCli, desc: 'Anthropic’s claude command — the agent that runs in the terminal.' },
-    { target: 'pty', label: 'Embedded terminal engine', ok: caps.nodePty, desc: 'The native node-pty module that renders Claude Code in-app.' },
-  ];
-  const canInstall = caps.npm;
-  const blocked = !canInstall || busy !== null;
-
-  return (
-    <div style={{ marginTop: '22px', width: '100%', maxWidth: '440px', textAlign: 'left' }}>
-      <p style={{ ...subStyle, fontSize: '13px', marginBottom: '12px', color: 'var(--color-text-tertiary)' }}>
-        Set up what the in-app terminal needs:
-      </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {rows.map(row => (
-          <div key={row.target} style={prereqRow}>
-            <span style={{ fontSize: '15px', width: '18px', flexShrink: 0, textAlign: 'center' }}>{row.ok ? '✅' : '⬜'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--color-text)' }}>{row.label}</div>
-              <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', lineHeight: 1.4 }}>{row.desc}</div>
-            </div>
-            {row.ok
-              ? <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-success)', flexShrink: 0 }}>Ready</span>
-              : (
-                <button
-                  onClick={() => runInstall(row.target)}
-                  disabled={blocked}
-                  style={{ ...secondaryBtn, padding: '7px 14px', fontSize: '13px', flexShrink: 0, opacity: blocked ? 0.55 : 1, cursor: blocked ? 'not-allowed' : 'pointer' }}
-                >
-                  {busy === row.target ? '⏳ Installing…' : 'Install'}
-                </button>
-              )}
-          </div>
-        ))}
-      </div>
-
-      {!canInstall && (
-        <div style={{ ...bannerStyle, marginTop: '12px', background: 'rgba(255,174,59,0.1)', border: '1px solid rgba(255,174,59,0.32)', color: 'var(--color-text-secondary)' }}>
-          npm wasn’t found on your PATH, so these can’t be auto-installed. Install Node.js from <code>nodejs.org</code> (or via Homebrew), then reopen this screen.
-        </div>
-      )}
-      {busy && log && (
-        <pre style={installLog}>{log.split('\n').slice(-6).join('\n')}</pre>
-      )}
-      {err && <div style={{ ...bannerStyle, marginTop: '10px' }}>{err}</div>}
-    </div>
-  );
-}
-
 // ── Small presentational helpers ────────────────────────────────────────────────
 
 export function Centered({ children }: { children: React.ReactNode }) {
@@ -197,8 +114,6 @@ export function BotMark() {
 
 // ── Shared inline styles (exported where the surface's intro states reuse them) ──
 
-const prereqRow: CSSProperties = { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '10px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' };
-const installLog: CSSProperties = { padding: '10px 12px', borderRadius: '8px', background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '11px', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '120px', overflow: 'auto', margin: '10px 0 0' };
 const bannerStyle: CSSProperties = { marginTop: '12px', padding: '10px 14px', borderRadius: '10px', background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.32)', color: '#f8a39d', fontSize: '12.5px', lineHeight: 1.5, textAlign: 'left' };
 
 export const titleStyle: CSSProperties = { fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: '23px', color: 'var(--color-text)', margin: '0 0 8px', letterSpacing: '-0.02em' };

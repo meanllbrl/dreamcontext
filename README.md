@@ -167,7 +167,7 @@ The same memory mechanism powers every surface of the project. Files are structu
 curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
 ```
 
-> Served from the published npm package via CDN — works with a private repo, no GitHub access needed. **No Node.js? No problem** — on macOS the installer offers to install Homebrew (with your confirmation) and Node.js for you, and adds Homebrew to your shell profile so `dreamcontext` stays on PATH in your next terminal (skip the automatic install with `DREAMCONTEXT_INSTALL_NO_NODE=1`, answer every prompt yes with `DREAMCONTEXT_INSTALL_YES=1`). On macOS it also installs the optional [desktop app](#desktop-app) into `~/Applications` (skip with `DREAMCONTEXT_INSTALL_NO_APP=1`).
+> Served from the published npm package via CDN — works with a private repo, no GitHub access needed. **No Node.js? No problem.** With Homebrew the installer runs `brew install node`; without it, it downloads a pinned, checksum-verified official Node.js just for dreamcontext into `~/.dreamcontext/node` (no admin password, your other apps untouched) and adds it to your shell profile so `dreamcontext` stays on PATH in your next terminal (skip the automatic install with `DREAMCONTEXT_INSTALL_NO_NODE=1`). On macOS it also installs the optional [desktop app](#desktop-app) into `~/Applications` (skip with `DREAMCONTEXT_INSTALL_NO_APP=1`).
 
 **Manual install (npm):**
 
@@ -178,15 +178,21 @@ npm install -g dreamcontext
 > Requires **Node.js >= 18**. Currently supports **Claude Code**.
 
 ```bash
-# One-shot setup — scaffolds _dream_context/, installs the skill, agents,
-# hooks, and root instructions, and prompts for optional skill packs.
+# One-shot setup: checks this machine first (Node.js, Claude and its sign-in,
+# Git, GitHub) and fixes what is missing with your OK, then scaffolds
+# _dream_context/, installs the skill, agents, hooks and root instructions,
+# and offers to start Claude so it builds the brain with you.
 dreamcontext setup
 
-# Scriptable / non-interactive (explicit platforms, skip all prompts)
+# Scriptable / non-interactive (explicit platforms, skip all prompts;
+# the machine check only reports, it never installs)
 dreamcontext setup --platforms claude --defaults
+
+# Just check this machine (works outside a project)
+dreamcontext doctor --machine
 ```
 
-One command. Next session, the hook fires, context loads, and the agent is ready.
+One command. Next session, the hook fires, context loads, and the agent is ready. `setup --skip-machine` skips the machine check, `--no-start` skips the offer to start Claude, and `--yes` applies only the unattended fixes (never a sign-in).
 
 > **`setup` is the front door** — it runs init + install-skill + install-instructions in one step and tracks every file it writes in a manifest. The individual commands below still exist for advanced/scripted use, but `setup` is what you want on a new project.
 
@@ -338,7 +344,7 @@ dreamcontext app status       # Show installed app version and state
 
 **One window over all your projects.** The launcher lists every registered [vault](#federation), and opening one adds it to a centered **chip strip** at the top of a single window rather than spawning another window to hunt for. Every open project stays **live**: a background project's chat keeps streaming and its PTY never remounts, because visibility is not allowed to touch a WebSocket. Each chip reports what its project is doing at a glance, rolled up from that project's live sessions into asking / working / idle, and a project whose agent is waiting on you bounces the way an app bounces in the Dock, firing a native banner even when the window is already focused. Hold ⌥ and press Tab to walk the strip and release to switch (Control chords stay with the terminal, where ⌃C and ⌃D belong); ⇧-click a project to spread it into its own window anyway. Six projects stay hot at once and idle ones evict to cold chips, so the window does not degrade as you open more. Per-project status dots (green up-to-date / yellow needs-update / red folder-gone) let you update from the UI.
 
-**Onboarding without a terminal.** A quiz-style wizard creates a new project (native folder picker), initializes an existing folder, or clones one from GitHub — sign in, search your repos, clone as a cancelable background job with live progress — then scaffolds `_dream_context/`, runs `setup`, and best-effort installs the global CLI. Deterministic and LLM-free; the success screen hands you a prompt to paste into your agent for the rich enrichment pass.
+**Onboarding without a terminal.** The first launch sets your Mac up for you. No Node.js? The opening screen hands over to a short setup that downloads a private, checksum-verified copy just for dreamcontext, then the app starts. The Launcher greets you with a short welcome that says what dreamcontext is, then walks three steps. **This Mac** checks everything Claude needs (dreamcontext in Terminal, Claude and its sign-in, Git, GitHub) and fixes it with one **Set everything up** button: Git's install starts first and keeps going in the background, Claude signs in through your browser, GitHub through a short code (or reuses the GitHub command line tool's sign-in when it already has one). **Project** creates a new folder (making `~/projects` if it is missing), sets up a folder you already have (counting its documents for Claude to read in, and offering Git), or clones one of your GitHub repositories. **Start with Claude** opens the project and starts the conversation that builds its brain with you, so there is no prompt to copy and paste. Calm motion in the splash's style, and none at all with Reduce Motion on.
 
 **A real agent terminal, in-app** _(beta)_. Drive Claude Code sessions inside any vault from a split-pane, multi-session terminal — per-pane tabs, ⌘D drag-to-split, ⌘T/⌘W, minimize-to-corner dock; sessions live in a detached DOM so the PTY never remounts. Drop an image to inject it into the vault; jump anywhere with the **⌘K command palette** (live BM25 recall + intelligent toggle). The dock is **screen-true** — status is read from the visible terminal buffer, not byte-flow, so a session waiting on you surfaces as "Needs you" (shake, chime, queue-jump) instead of flapping between ready and working.
 
@@ -844,6 +850,7 @@ dreamcontext hook session-start | stop | subagent-start | pre-tool-use \
   | user-prompt-submit | post-tool-use | pre-compact     # The seven hooks
 dreamcontext snapshot [--tokens]         # The compiled context snapshot (+ estimated token count)
 dreamcontext doctor                      # Validate structure
+dreamcontext doctor --machine [--json]   # Check this machine's tools and sign-ins
 dreamcontext setup [--platforms claude --defaults]       # One-shot project setup
 dreamcontext install-skill [--platforms claude] [--packs …] [--skill <name>] [--list]
 dreamcontext install-instructions --platforms claude     # Managed root instruction blocks only

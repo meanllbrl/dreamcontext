@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
-import { isAgentHost } from '../desktop.js';
+import { isAgentHost, isDesktop } from '../desktop.js';
+import { isCloud } from '../cloud-mode.js';
 import { listVaults } from '../../lib/vaults.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
@@ -26,8 +27,53 @@ import { assistantExists, assistantProjectRoot, isAssistantVault } from '../../l
 /** True when the request arrived over the loopback interface — the hard gate every
  *  `claude`-spawning upgrade/route enforces alongside the desktop check. */
 export function isLoopback(req: IncomingMessage): boolean {
-  const remote = req.socket.remoteAddress || '';
+  const remote = req.socket?.remoteAddress || '';
   return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
+/** `localhost`, `127.0.0.1` or `[::1]`, with an optional port. Nothing else. */
+const LOOPBACK_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/i;
+/** The same three spellings as an `Origin` (scheme + host + optional port). */
+const LOOPBACK_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/i;
+
+/**
+ * The `Host` header names this machine. A loopback PEER is not enough on its own: a page on
+ * some other site can rebind its DNS name to 127.0.0.1 and reach us from the user's own
+ * browser, and that request still carries the page's own name in `Host`. Refusing every
+ * spelling but the three loopback ones closes that door for the routes that install
+ * software or sign accounts in.
+ */
+export function isLoopbackHostHeader(req: Pick<IncomingMessage, 'headers'>): boolean {
+  const host = req.headers.host;
+  return typeof host === 'string' && LOOPBACK_HOST_RE.test(host.trim());
+}
+
+/**
+ * Gate for every route that installs software, edits the user's shell profile or signs an
+ * account in (`/api/onboarding/fix`, `/fix/cancel`, `/api/agent/install` and its status):
+ * never in the hands-free cloud, only in the desktop app, only from this machine, and only
+ * under a loopback `Host`. Sends the 403 itself; the caller just returns on `false`.
+ */
+export function requireLocalDesktop(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!isCloud() && isDesktop() && isLoopback(req) && isLoopbackHostHeader(req)) return true;
+  sendError(res, 403, 'forbidden', 'This is only available in the desktop app on this computer.');
+  return false;
+}
+
+/**
+ * Gate for the read-only readiness report. It works in a plain browser tab too (no desktop
+ * flag), but only from this machine, under a loopback `Host`, and never as a cross-site
+ * request: the read can run pending `git init`s, so another site must not be able to
+ * trigger it. `Sec-Fetch-Site: cross-site` and any non-loopback `Origin` are refused.
+ */
+export function requireLocalRead(req: IncomingMessage, res: ServerResponse): boolean {
+  const site = req.headers['sec-fetch-site'];
+  const origin = req.headers.origin;
+  const crossSite = typeof site === 'string' && site.trim().toLowerCase() === 'cross-site';
+  const foreignOrigin = typeof origin === 'string' && origin !== '' && !LOOPBACK_ORIGIN_RE.test(origin.trim());
+  if (!isCloud() && isLoopback(req) && isLoopbackHostHeader(req) && !crossSite && !foreignOrigin) return true;
+  sendError(res, 403, 'forbidden', 'This is only available on this computer.');
+  return false;
 }
 
 const UPGRADE_REJECT_TEXT: Record<number, string> = {

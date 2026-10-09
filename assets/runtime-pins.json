@@ -1,0 +1,59 @@
+{
+  "node": {
+    "version": "24.21.0",
+    "minMacos": "13.5",
+    "base": "https://nodejs.org/dist/v24.21.0/",
+    "files": {
+      "darwin-arm64": {
+        "file": "node-v24.21.0-darwin-arm64.tar.gz",
+        "sha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+        "size": 52909993
+      },
+      "darwin-x64": {
+        "file": "node-v24.21.0-darwin-x64.tar.gz",
+        "sha256": "1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097",
+        "size": 54203979
+      },
+      "linux-x64": {
+        "file": "node-v24.21.0-linux-x64.tar.gz",
+        "sha256": "6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff",
+        "size": 58088022
+      },
+      "linux-arm64": {
+        "file": "node-v24.21.0-linux-arm64.tar.gz",
+        "sha256": "724282c3b43aec998aa9527380465b45d229e021b58035f5f4f63095eabfe5d5",
+        "size": 57824078
+      }
+    }
+  },
+  "gh": {
+    "version": "2.102.0",
+    "base": "https://github.com/cli/cli/releases/download/v2.102.0/",
+    "files": {
+      "darwin-arm64": {
+        "file": "gh_2.102.0_macOS_arm64.zip",
+        "sha256": "da922c20d1792e5b2cbf375593d7a658acf034c12c84e007e71c76ef959c337e",
+        "size": 14359983,
+        "format": "zip"
+      },
+      "darwin-x64": {
+        "file": "gh_2.102.0_macOS_amd64.zip",
+        "sha256": "b245f24eb2bf5f75b426b4c26da3651a107f8d5b6f4fddfbfccc5679041378b3",
+        "size": 15995994,
+        "format": "zip"
+      },
+      "linux-x64": {
+        "file": "gh_2.102.0_linux_amd64.tar.gz",
+        "sha256": "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386",
+        "size": 15319960,
+        "format": "tar.gz"
+      },
+      "linux-arm64": {
+        "file": "gh_2.102.0_linux_arm64.tar.gz",
+        "sha256": "7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484",
+        "size": 13917794,
+        "format": "tar.gz"
+      }
+    }
+  }
+}

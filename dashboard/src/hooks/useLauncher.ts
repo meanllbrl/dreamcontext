@@ -101,24 +101,36 @@ export interface ScaffoldPayload {
   platforms?: string[];
   /** Optional skill-pack names to install after setup. */
   packs?: string[];
+  /** Run `git init` once set up (or record it to run when Git finishes installing). */
+  gitInit?: boolean;
 }
 
 /** Outcome of the best-effort global `dreamcontext` CLI install during scaffold. */
 export interface CliInstallResult {
-  status: 'present' | 'installed' | 'failed';
+  /** `deferred`: onboarding already owns the CLI install (a run is active, or readiness shows it missing). */
+  status: 'present' | 'installed' | 'failed' | 'deferred';
   message?: string;
+}
+
+/** What happened to the `gitInit` request. `pending-git`: runs when the Git install finishes. */
+export interface ScaffoldGitResult {
+  initialized: boolean;
+  skipped?: 'no-git' | 'already-repo' | 'not-requested' | 'pending-git';
 }
 
 export interface ScaffoldResponse {
   vault: Vault;
   vaults: Vault[];
   cli?: CliInstallResult;
+  git?: ScaffoldGitResult;
 }
 
 /** Absolute paths the quiz prefills with (home + suggested ~/projects parent). */
 export interface LauncherDefaults {
   home: string;
   defaultParent: string;
+  /** False on a fresh machine: scaffold creates the parent (inside home) on submit. */
+  defaultParentExists?: boolean;
 }
 
 /** Home + default parent dir for the new-project quiz. */
@@ -145,43 +157,27 @@ export function useScaffoldProject() {
   });
 }
 
-// ─── Catalog (platforms + skill packs offered by the wizard) ──────────────────
-
-export interface PlatformChoice {
-  id: string;
-  label: string;
-  description: string;
-  recommended: boolean;
-}
-
-export interface PackChoice {
-  name: string;
-  description: string;
-  tags: string[];
-}
-
-export interface LauncherCatalog {
-  platforms: PlatformChoice[];
-  packs: PackChoice[];
-}
-
-/** Platforms + optional skill packs the onboarding wizard offers. */
-export function useLauncherCatalog() {
-  return useQuery({
-    queryKey: ['launcher-catalog'],
-    queryFn: () => api.get<LauncherCatalog>('/launcher/catalog'),
-    staleTime: Infinity,
-  });
-}
-
 /** What the server can tell about a picked folder before the quiz runs. */
 export interface FolderProbe {
+  /** Detected tech stack, '' when nothing recognisable. */
   stack: string;
   hasContext: boolean;
   name: string;
+  /** Absolute, NFC-normalised path the server probed. */
+  path?: string;
+  brain?: 'missing' | 'sparse' | 'healthy';
+  /** Inside a git work tree (found by walking up for `.git`; no git process runs). */
+  isGitRepo?: boolean;
+  /** Documents the initializer can read in. */
+  docs?: { count: number; folders: string[] };
+  writable?: boolean;
 }
 
-/** Probe an existing folder: detected stack, whether it's already a vault, basename. */
+/**
+ * Probe an existing folder: detected stack, whether it's already a vault, basename, plus the
+ * onboarding facts (brain state, git, documents). A symlinked folder is refused with a 400
+ * `symlink_refused` (a `RequestError` whose `code` says so).
+ */
 export async function probeFolder(path: string): Promise<FolderProbe> {
   return api.get<FolderProbe>(`/launcher/detect?path=${encodeURIComponent(path)}`);
 }

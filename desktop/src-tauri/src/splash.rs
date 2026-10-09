@@ -49,6 +49,9 @@ struct Keys {
     splash_done: bool,
     launcher_ready: bool,
     finished: bool,
+    /// The window the splash hands over to: the Launcher (`main`) unless a first run with no
+    /// usable Node put the Node setup screen behind the splash instead (src/node_setup.rs).
+    successor: Option<&'static str>,
 }
 
 /// Managed state: the two keys of the handoff.
@@ -96,13 +99,28 @@ pub(crate) fn is_open(app: &AppHandle) -> bool {
 
 /// Build the Launcher hidden behind the splash; it is shown when the gate opens.
 pub(crate) fn open_launcher_behind(app: &AppHandle, port: u16) -> Result<(), String> {
-    if app.get_webview_window("main").is_some() {
+    open_behind(app, crate::launcher_builder(app, port)?, "main")
+}
+
+/// Build `label` hidden behind the splash and make it the window the gate shows. Its page
+/// load turns the second key; a load event that never arrives is covered by the deadline.
+pub(crate) fn open_behind(
+    app: &AppHandle,
+    builder: WebviewWindowBuilder<'_, tauri::Wry, AppHandle>,
+    label: &'static str,
+) -> Result<(), String> {
+    if let Some(gate) = app.try_state::<SplashGate>() {
+        if let Ok(mut k) = gate.0.lock() {
+            k.successor = Some(label);
+        }
+    }
+    if app.get_webview_window(label).is_some() {
         // Something already built it (a link that arrived first): nothing to wait for.
         turn(app, |k| k.launcher_ready = true);
         return Ok(());
     }
     let handle = app.clone();
-    crate::launcher_builder(app, port)?
+    builder
         .visible(false)
         .on_page_load(move |_, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
@@ -156,18 +174,19 @@ pub(crate) fn splash_play(window: tauri::WebviewWindow) {
 /// Turn one key; when both have turned, hand over exactly once.
 fn turn(app: &AppHandle, set: impl FnOnce(&mut Keys)) {
     let Some(gate) = app.try_state::<SplashGate>() else { return };
-    {
+    let successor = {
         let Ok(mut k) = gate.0.lock() else { return };
         set(&mut k);
         if k.finished || !(k.splash_done && k.launcher_ready) {
             return;
         }
         k.finished = true;
-    }
-    // Launcher first, so the app is never windowless between the two.
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
+        k.successor.unwrap_or("main")
+    };
+    // The successor first, so the app is never windowless between the two.
+    if let Some(next) = app.get_webview_window(successor) {
+        let _ = next.show();
+        let _ = next.set_focus();
     }
     if let Some(splash) = app.get_webview_window(LABEL) {
         let _ = splash.eval("window.__dcSplashExit && window.__dcSplashExit()");

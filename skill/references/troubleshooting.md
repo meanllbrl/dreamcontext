@@ -212,6 +212,36 @@ dreamcontext migrations record --version 0.23.0 --step distribute-user-md-residu
 is reported. Delete `inbox/1.user-residue.md` only once every section has been placed — if
 anything remains, leave the file and say what is left and why.
 
+## "command not found" (claude, dreamcontext, node) or Claude not signed in
+
+**Symptom:** `claude: command not found` or `dreamcontext: command not found` in the user's
+Terminal, hooks failing with `npx: command not found`, the app's agent surfaces greyed out, or
+every Chat turn answering `authentication_failed`.
+
+**Cause:** something on THIS MACHINE is missing, not on PATH, or signed out. Claude Code
+installs into `~/.local/bin` (on no default PATH); the desktop app may be running on its
+private Node.js (`~/.dreamcontext/node/current`), which a Terminal only finds once its PATH
+line is written; a fresh `claude` has no account yet.
+
+**Fix:** don't reinstall by hand and don't edit rc files yourself. Run the machine check, which
+detects all of it and fixes each item with the user's consent:
+
+```bash
+dreamcontext doctor --machine   # report only (works outside a project; --json for agents)
+dreamcontext setup              # report, then fix step by step, then the project
+```
+
+In the desktop app the same checklist is the Launcher's onboarding (**This Mac**, then
+**Project**, then **Start**; one **Set everything up** button), reachable from the "Finish
+setting up" bar when a project already exists. Inside a project, the agent panel's setup
+checklist and **Settings → System** (for example **Fix PATH**) cover the same items. A fix that
+writes a PATH line appends one marked `# dreamcontext: …` line, once. Model, fixes and guards:
+[cli-reference.md](cli-reference.md) § Machine readiness.
+
+**Git on macOS** opens Apple's developer-tools window and installs in the background. A project
+created meanwhile gets `git init` when Git is ready (a pending entry in
+`~/.dreamcontext/onboarding.json`, run by the app, the next `setup` or `doctor --machine`).
+
 ## Version drift — CLI vs project files
 
 **Symptom:** the session snapshot shows an update nudge, or skill/agent files behave
@@ -231,4 +261,4 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
 ### Capability summaries
 
 - **Duplicate task family repair**: `dreamcontext tasks dedup [--dry-run] [--yes]` heals `state/<slug>-2/-3/-4.md` duplicates left by a corrupted/conflicted sync ledger (`tasks list` showing the same task 2–4×) — merges each family to its canonical slug, repoints `.tasks-map.json`, removes the redundant files. **LOCAL-ONLY, never touches the remote.** `--dry-run` first, always; the mutating run requires `--yes`.
-- **Troubleshooting**: Symptom → cause → careful fix for broken-brain states: duplicate tasks (`tasks dedup`), a `corrupt_ledger` sync refusal, a brain sync stuck `awaiting-agent`, structure drift (`doctor`; agents use `doctor --json` for machine-readable diagnoses with `supportedFixes`), CLI/project version drift
+- **Troubleshooting**: Symptom → cause → careful fix for broken-brain states: duplicate tasks (`tasks dedup`), a `corrupt_ledger` sync refusal, a brain sync stuck `awaiting-agent`, structure drift (`doctor`; agents use `doctor --json` for machine-readable diagnoses with `supportedFixes`), a machine missing a tool or a sign-in (`doctor --machine`, `setup`), CLI/project version drift

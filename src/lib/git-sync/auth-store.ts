@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ResolvedToken } from '../task-backend/secrets.js';
@@ -38,6 +38,28 @@ interface GlobalSecretsFile {
   };
 }
 
+/** Thrown when the secrets file (or its folder) is a symlink: a token is never written through one. */
+export class SecretsPathError extends Error {
+  constructor(path: string) {
+    super(`Refusing to write GitHub credentials through a symlink: ${path}`);
+    this.name = 'SecretsPathError';
+  }
+}
+
+function isSymlink(path: string): boolean {
+  try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+}
+
+/**
+ * Write the secrets file 0600. A symlinked `.secrets.json` (or `~/.dreamcontext`) is
+ * refused: following it would hand the token to whatever file the link names.
+ */
+function writeSecretsFile(path: string, secrets: GlobalSecretsFile): void {
+  if (isSymlink(dirname(path)) || isSymlink(path)) throw new SecretsPathError(path);
+  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  try { chmodSync(path, 0o600); } catch { /* best-effort on exotic filesystems */ }
+}
+
 /** `~/.dreamcontext/.secrets.json` — the per-machine, cross-project auth store. */
 export function globalSecretsPath(home: string = homedir()): string {
   return join(home, '.dreamcontext', '.secrets.json');
@@ -70,8 +92,7 @@ export function writeGlobalGitHubToken(token: string, home?: string): void {
   secrets.github = { ...(secrets.github ?? {}), token: token.trim() };
 
   // 0600 mode-on-create; belt-and-suspenders chmod for the rewrite path.
-  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
-  try { chmodSync(path, 0o600); } catch { /* best-effort on exotic filesystems */ }
+  writeSecretsFile(path, secrets);
 }
 
 /**
@@ -95,8 +116,7 @@ export function setGlobalGitHubLogin(login: string, home?: string): void {
   mkdirSync(dirname(path), { recursive: true });
   const secrets = readGlobalSecretsFile(home);
   secrets.github = { ...(secrets.github ?? {}), login: login.trim() || undefined };
-  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
-  try { chmodSync(path, 0o600); } catch { /* best-effort */ }
+  writeSecretsFile(path, secrets);
 }
 
 /** Read the cached signed-in login, or null. */
@@ -137,8 +157,7 @@ export function setGlobalGitHubAuthValid(valid: boolean, home?: string): void {
 
   const path = globalSecretsPath(home);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
-  try { chmodSync(path, 0o600); } catch { /* best-effort */ }
+  writeSecretsFile(path, secrets);
 }
 
 /** Clear the global GitHub token + login (logout). Idempotent — a missing file is a no-op. */
@@ -147,6 +166,5 @@ export function clearGlobalGitHubToken(home?: string): void {
   if (!existsSync(path)) return;
   const secrets = readGlobalSecretsFile(home);
   if (secrets.github) { delete secrets.github.token; delete secrets.github.login; delete secrets.github.needsReconnect; }
-  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
-  try { chmodSync(path, 0o600); } catch { /* best-effort */ }
+  writeSecretsFile(path, secrets);
 }

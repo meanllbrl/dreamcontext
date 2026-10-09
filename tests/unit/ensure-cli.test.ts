@@ -92,3 +92,37 @@ describe('ensureCliInstalled', () => {
     expect(installCalls.length).toBe(1);
   });
 });
+
+describe('ensureCliInstalled: EACCES fallback', () => {
+  it('retries into the user prefix, puts its bin on the shell PATH, and reports output', async () => {
+    const added: string[] = [];
+    const output: string[] = [];
+    const { runner, scripts } = runnerFrom((s) => {
+      if (s.includes('command -v dreamcontext')) return fail();
+      if (s.includes('command -v npm')) return ok('/usr/local/bin/npm');
+      if (s.includes('--prefix')) return ok('added 1 package');
+      if (s.includes('npm install -g dreamcontext')) return fail('npm ERR! code EACCES');
+      return ok();
+    });
+    const res = await ensureCliInstalled(runner, {
+      home: '/home/öğretmen',
+      onOutput: (c) => output.push(c),
+      addToShellPath: (dir) => { added.push(dir); return { ok: true }; },
+    });
+    expect(res.status).toBe('installed');
+    expect(scripts.some((s) => s.includes("--prefix '/home/öğretmen/.dreamcontext/npm-global'"))).toBe(true);
+    expect(added).toEqual(['/home/öğretmen/.dreamcontext/npm-global/bin']);
+    expect(output.join('')).toMatch(/EACCES/);
+  });
+
+  it('a non-EACCES failure never retries', async () => {
+    const { runner, scripts } = runnerFrom((s) => {
+      if (s.includes('command -v dreamcontext')) return fail();
+      if (s.includes('command -v npm')) return ok('/usr/local/bin/npm');
+      if (s.includes('npm install')) return fail('network down');
+      return ok();
+    });
+    expect((await ensureCliInstalled(runner, { addToShellPath: () => ({ ok: true }) })).status).toBe('failed');
+    expect(scripts.filter((s) => s.includes('npm install')).length).toBe(1);
+  });
+});

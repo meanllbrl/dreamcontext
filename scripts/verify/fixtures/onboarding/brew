@@ -1,0 +1,11 @@
+#!/bin/sh
+# Stand-in for Homebrew (scripts/verify/onboarding.mjs). On the login PATH so onboarding never
+# reaches the developer's real brew. `install gh` drops the gh stand-in into the tools folder.
+V="$HOME/.verify"
+printf 'brew\t%s\n' "$*" >> "$V/log"
+if [ "$1" = install ] && [ "$2" = gh ]; then
+  cp "$V/fixtures/gh" "$V/tools/gh" && chmod 755 "$V/tools/gh"
+  echo "==> gh installed"
+  exit 0
+fi
+exit 0

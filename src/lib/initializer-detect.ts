@@ -1,4 +1,4 @@
-import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, statSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, basename, extname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { featuresDir } from './features-path.js';
@@ -328,6 +328,69 @@ function resolveUserPath(token: string, cwd: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Folders {@link detectDocSources} never descends into: build output, deps, VCS, the brain. */
+const DOC_SOURCE_SKIP_DIRS = new Set([...WALK_SKIP_DIRS, '_dream_context']);
+/** How many folders {@link detectDocSources} names at most. */
+const DOC_SOURCE_MAX_FOLDERS = 10;
+
+export interface DocSources {
+  /** Documents found (capped at `limit`). */
+  count: number;
+  /** Project-relative folders holding documents, most documents first ('.' = the folder itself). */
+  folders: string[];
+}
+
+/**
+ * Count the documents already in a project folder, so onboarding can say "Found 23
+ * documents, Claude will read them in" before the initializer runs.
+ *
+ * Bounded (`maxDepth`, `limit`), total (never throws) and symlink-safe: the root is
+ * refused when it is a symlink, and a symlinked entry inside it is never followed or
+ * counted (`readdirSync` with file types reports links as links, not as what they
+ * point at). `node_modules`, `.git`, `_dream_context` and build output are skipped.
+ */
+export function detectDocSources(
+  dir: string,
+  opts: { maxDepth?: number; limit?: number } = {},
+): DocSources {
+  const maxDepth = opts.maxDepth ?? 2;
+  const limit = opts.limit ?? 500;
+  const perFolder = new Map<string, number>();
+  let count = 0;
+  try {
+    if (lstatSync(dir).isSymbolicLink() || !statSync(dir).isDirectory()) return { count: 0, folders: [] };
+  } catch {
+    return { count: 0, folders: [] };
+  }
+  const stack: Array<{ p: string; rel: string; depth: number }> = [{ p: dir, rel: '.', depth: 0 }];
+  let visited = 0;
+  while (stack.length && count < limit) {
+    const { p, rel, depth } = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(p, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (visited++ > WALK_MAX_ENTRIES || count >= limit) break;
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) {
+        if (DOC_SOURCE_SKIP_DIRS.has(e.name) || depth >= maxDepth) continue;
+        stack.push({ p: join(p, e.name), rel: rel === '.' ? e.name : `${rel}/${e.name}`, depth: depth + 1 });
+      } else if (e.isFile() && DOC_EXTENSIONS.has(extname(e.name).toLowerCase())) {
+        count++;
+        perFolder.set(rel, (perFolder.get(rel) ?? 0) + 1);
+      }
+    }
+  }
+  const folders = [...perFolder.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, DOC_SOURCE_MAX_FOLDERS)
+    .map(([f]) => f);
+  return { count, folders };
 }
 
 /** Bounded directory scan: doc count + whether it embeds a brain/Obsidian vault. */

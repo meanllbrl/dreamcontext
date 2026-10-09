@@ -386,13 +386,12 @@ All sub-agents get a budgeted context briefing via the SubagentStart hook (at mo
 
 ## Setup & Maintenance (quick map)
 
-- `dreamcontext setup`: the **front door** (init + install-skill + install-instructions, plus the desktop app on macOS).
-- `dreamcontext update`: refresh THIS project's installed skill, agents, hooks, packs and references. **Exits 1 when it refreshed nothing** or when the refresh throws, so a script may trust the exit code.
-- `dreamcontext upgrade`: the CLI, the desktop app and **every registered project** in one command; never run per-project updates by hand.
-- `dreamcontext doctor`: validate `_dream_context/` structure (`--json` for repair loops).
-- `dreamcontext dashboard` — open the web UI. `dreamcontext app install|update|status` — the desktop app.
-- **"claude: command not found" even though it's installed**: don't conclude the CLI is missing: Claude Code installs into `~/.local/bin`, on no default PATH. Point the user to **Settings → System → "Installed, not on your PATH"** and its one-click **Fix PATH** → [integrations.md](references/integrations.md).
-- **Team collaboration / shared brain / second machine**: that's **whole-project cloud sync**: `dreamcontext brain enable` / `brain status`, auto-synced at `sleep done`, prose conflicts resolved by **`/dream-sync`**. **Guide them into it, don't say "unsupported"** → [brain-sync.md](references/brain-sync.md).
+- `dreamcontext setup`: the **front door**. Checks this machine (Node.js, Claude + sign-in, Git, GitHub) and fixes with consent, then the project, then offers to start Claude (`--skip-machine`, `--no-start`). App: the Launcher's onboarding.
+- `update`: refresh THIS project's files (**exits 1 when it refreshed nothing**). `upgrade`: CLI, app and **every project** at once.
+- `doctor`: validate `_dream_context/` (`--json` for repair loops). `doctor --machine`: this machine's tools and sign-ins.
+- `dashboard`: the web UI. `app install|update|status`: the desktop app.
+- **"claude: command not found" (or dreamcontext), or Claude not signed in**: don't reinstall; send the user to `setup`, the Launcher's checklist or **Settings → System → Fix PATH** → [troubleshooting.md](references/troubleshooting.md).
+- **Team / shared brain / second machine**: **whole-project cloud sync** (`brain enable` / `brain status`, synced at `sleep done`, prose conflicts via **`/dream-sync`**). **Guide them in, don't say "unsupported"** → [brain-sync.md](references/brain-sync.md).
 
 ---
 

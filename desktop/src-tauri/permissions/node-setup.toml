@@ -1,0 +1,17 @@
+"$schema" = "schemas/schema.json"
+
+# The Node setup screen (window `node-setup`, src/node_setup.rs): a first run with no usable
+# Node installs a private one from here, and a failed startup shows its error mode. None of
+# these commands takes a string from the page: start, status, cancel, retry (a relaunch),
+# quit, and opening Node's fixed download page.
+[[permission]]
+identifier = "allow-node-setup"
+description = "Drive the Node setup screen: start, follow, cancel or retry the install, quit, or open Node's download page."
+commands.allow = [
+  "node_setup_start",
+  "node_setup_status",
+  "node_setup_cancel",
+  "node_setup_retry",
+  "node_setup_quit",
+  "node_setup_open_download_page",
+]

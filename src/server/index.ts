@@ -174,6 +174,7 @@ import {
   handleAgentCouncilLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
+import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
@@ -562,6 +563,11 @@ export function buildRouter(): Router {
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);
   router.get('/api/agent/install/status', handleAgentInstallStatus);
+  // First-run onboarding: the machine readiness report, and one fix at a time as a run polled
+  // through /api/agent/install/status. Vault-agnostic; fix + cancel are desktop + this machine only.
+  router.get('/api/onboarding/readiness', handleOnboardingReadiness);
+  router.post('/api/onboarding/fix', handleOnboardingFix);
+  router.post('/api/onboarding/fix/cancel', handleOnboardingFixCancel);
   // Hand off an initial prompt of ANY size to a terminal session about to be opened: POST the
   // text, get a token, put the token (not the text) in the WS upgrade URL. Names its own vault
   // in the body and validates it there, so it is vault-agnostic at the router level.
@@ -845,7 +851,7 @@ export function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

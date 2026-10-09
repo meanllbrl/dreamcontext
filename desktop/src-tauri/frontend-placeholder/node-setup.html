@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>dreamcontext</title>
+<!--
+  The Node setup screen (window `node-setup`, src/node_setup.rs), and, in `?mode=error`, the
+  startup error screen.
+
+  A first launch with no usable Node used to end in a plain error window. Now the boot thread
+  waits on this page while it installs a private Node: it starts the install on load (no
+  click), follows it by polling `node_setup_status`, and lets the person cancel, retry or quit
+  at every point. When the install lands, the shell builds the Launcher behind this card, calls
+  window.__dcNodeSetupExit() to fade it, and closes it.
+
+  Self-contained like splash.html: no bundler, no fetch, no remote URL. Colours and motion come
+  ONLY from the token blocks below, which mirror dashboard/src/styles/tokens.css and the gem
+  colours of marketing/remotion/src/splash/geometry.ts; tests/unit/desktop-pages-mirror.test.ts
+  fails on any drift, on a colour literal outside those blocks, and on any HTML-string sink. Every
+  string a shell or URL hands this page is rendered with textContent.
+
+  Contract with the shell (plan section 3): commands node_setup_start, node_setup_status,
+  node_setup_cancel, node_setup_retry, node_setup_quit, node_setup_open_download_page, none of
+  which takes an argument; SetupStatus { mode, phase, received, total, error?, reason }.
+-->
+<style>
+  /* tokens: mirrored from dashboard/src/styles/tokens.css (:root) */
+  :root {
+    --zoom: 1;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --font-family-display: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Inter', 'Segoe UI', Roboto, sans-serif;
+    --font-family-text: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-size-xs: calc(12px * var(--zoom));
+    --font-size-sm: calc(14px * var(--zoom));
+    --font-size-base: calc(16px * var(--zoom));
+    --font-size-lg: calc(20px * var(--zoom));
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --line-height-normal: 1.5;
+    --radius-md: 9px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-full: 999px;
+    --color-bg: #ffffff;
+    --color-bg-secondary: #ffffff;
+    --color-bg-tertiary: #e9ebf0;
+    --color-text: #292d34;
+    --color-text-secondary: #646464;
+    --color-text-tertiary: #474747;
+    --color-border: #e8e8e8;
+    --color-accent: #7b68ee;
+    --color-accent-text: #ffffff;
+    --color-accent-soft: rgba(123, 104, 238, 0.12);
+    --color-accent-strong: #6647f0;
+    --gradient-brand-strong: linear-gradient(135deg, #5535e0, var(--color-accent-strong));
+    --color-success: hsl(142 71% 40%);
+    --color-error-ink: hsl(0 72% 40%);
+    --shadow-xl: rgba(0, 0, 0, 0.12) 0px 12px 32px -8px, rgba(0, 0, 0, 0.06) 0px 4px 12px -4px;
+    --ease-out: cubic-bezier(0.2, 0, 0, 1);
+    --transition-fast: 120ms ease;
+    --transition-normal: 240ms ease;
+    --motion-breath: 1600ms;
+  }
+  /* tokens: mirrored from dashboard/src/styles/tokens.css ([data-theme='dark']) */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: #14171f;
+      --color-bg-secondary: #1c1f2a;
+      --color-bg-tertiary: #2a2f3d;
+      --color-text: #f5f6fa;
+      --color-text-secondary: #c8ccd9;
+      --color-text-tertiary: #9aa0b3;
+      --color-border: #2f3445;
+      --color-accent: #9d8cff;
+      --color-accent-text: #ffffff;
+      --color-accent-soft: rgba(157, 140, 255, 0.18);
+      --color-success: hsl(142 71% 55%);
+      --color-error-ink: hsl(0 100% 72%);
+      --shadow-xl: rgba(0, 0, 0, 0.6) 0px 16px 40px -12px, rgba(0, 0, 0, 0.4) 0px 6px 16px -6px;
+    }
+  }
+  /* tokens: gem colours mirrored from marketing/remotion/src/splash/geometry.ts (GEM_COLORS) */
+  :root {
+    --gem-body-hi: #c3a5ff;
+    --gem-body-lo: #bb9dff;
+    --gem-chevron-hi: #c2a3ff;
+    --gem-chevron-lo: #ad8fff;
+    --gem-dark: #7562df;
+    --gem-dark-lo: #6d59da;
+    --gem-dark-edge: #5142cb;
+    --gem-hairline: rgba(110, 84, 232, 0.5);
+    --gem-ring: #b696ff;
+  }
+  /* tokens: page-local (--motion-converge mirrors the dashboard token of the same name) */
+  :root {
+    --motion-converge: 520ms;
+  }
+
+  html, body {
+    margin: 0; height: 100%; background: transparent; overflow: hidden; cursor: default;
+    -webkit-user-select: none; user-select: none;
+    font-family: var(--font-family-text); color: var(--color-text);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* The window is transparent: this rounded card IS its shape, as on the splash. */
+  .card {
+    position: fixed; inset: 0; border-radius: var(--radius-xl); overflow: hidden;
+    background: var(--color-bg); border: 1px solid var(--color-border); box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: var(--space-10) var(--space-12); text-align: center;
+    opacity: 0; transition: opacity var(--transition-normal); transition-timing-function: var(--ease-out);
+  }
+  .card.in { opacity: 1; }
+  .card.out { opacity: 0; }
+
+  /* ─── The gem: four pieces converge into the mark, the ring settles around it ─── */
+  .gem { width: calc(var(--space-12) * 2); height: calc(var(--space-12) * 2); overflow: visible; margin-bottom: var(--space-6); }
+  .gem .piece, .gem .ring { transform-box: view-box; transform-origin: 50% 50%; }
+  .gem .piece {
+    animation: converge var(--motion-converge) var(--ease-out) both;
+  }
+  .gem .ring {
+    fill: none; stroke: var(--gem-ring); stroke-width: 26; stroke-linecap: round;
+    animation: ring-in var(--motion-converge) var(--ease-out) calc(var(--motion-converge) / 2) both;
+  }
+  .gem .p-left    { --from: translate(-96px, 24px) rotate(10deg) scale(1.08); }
+  .gem .p-chevron { --from: translate(96px, -32px) rotate(-12deg) scale(1.1); }
+  .gem .p-wedge   { --from: translate(64px, 24px) rotate(-6deg) scale(1.04); }
+  .gem .p-rhombus { --from: rotate(45deg) scale(0); }
+  @keyframes converge { from { transform: var(--from); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes ring-in { from { transform: scale(1.2); opacity: 0; } to { transform: none; opacity: 1; } }
+  .s-body-hi { stop-color: var(--gem-body-hi); }
+  .s-body-lo { stop-color: var(--gem-body-lo); }
+  .s-chev-hi { stop-color: var(--gem-chevron-hi); }
+  .s-chev-lo { stop-color: var(--gem-chevron-lo); }
+  .s-dark-hi { stop-color: var(--gem-dark); }
+  .s-dark-lo { stop-color: var(--gem-dark-lo); }
+  .f-body { fill: url(#g-body); }
+  .f-chev { fill: url(#g-chev); }
+  .f-dark { fill: url(#g-dark); }
+  .rhombus-edge { stroke: var(--gem-dark-edge); stroke-width: 3; }
+  .hairlines {
+    fill: none; stroke: var(--gem-hairline); stroke-width: 3;
+    animation: settle var(--motion-converge) var(--ease-out) calc(var(--motion-converge) / 2) both;
+  }
+  @keyframes settle { from { opacity: 0; } to { opacity: 1; } }
+
+  h1 {
+    margin: 0 0 var(--space-2); font-family: var(--font-family-display);
+    font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); letter-spacing: -0.01em;
+  }
+  .lede {
+    margin: 0; max-width: calc(var(--space-12) * 10); font-size: var(--font-size-sm);
+    line-height: var(--line-height-normal); color: var(--color-text-secondary); text-wrap: balance;
+  }
+  .detail {
+    margin: var(--space-3) 0 0; max-width: calc(var(--space-12) * 10); max-height: calc(var(--space-12) * 2);
+    overflow: auto; font-size: var(--font-size-xs); line-height: var(--line-height-normal);
+    color: var(--color-text-tertiary); white-space: pre-wrap; word-break: break-word;
+    -webkit-user-select: text; user-select: text;
+  }
+
+  /* ─── Progress: a determinate rail when the size is known, a calm sweep when it is not ─── */
+  .progress { width: calc(var(--space-12) * 7); margin-top: var(--space-6); }
+  .rail {
+    height: var(--space-1); border-radius: var(--radius-full); background: var(--color-bg-tertiary);
+    overflow: hidden; position: relative;
+  }
+  .fill {
+    position: absolute; inset: 0 auto 0 0; width: 0; border-radius: var(--radius-full);
+    background: var(--color-accent);
+    transition: width var(--transition-normal); transition-timing-function: var(--ease-out);
+  }
+  .rail.unknown .fill { width: 30%; animation: sweep var(--motion-breath) var(--ease-out) infinite; }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  .status {
+    display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+    margin-top: var(--space-2); min-height: var(--space-5);
+    font-size: var(--font-size-xs); color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
+  }
+  .status.error { color: var(--color-error-ink); }
+  .check { width: var(--space-4); height: var(--space-4); display: none; }
+  .check path {
+    fill: none; stroke: var(--color-success); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;
+    stroke-dasharray: 24; stroke-dashoffset: 24;
+  }
+  .done .check { display: block; }
+  .done .check path { animation: draw var(--transition-normal) var(--ease-out) forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  /* ─── Actions: one filled button at most, Quit always reachable ─── */
+  .actions { display: flex; gap: var(--space-2); justify-content: center; margin-top: var(--space-6); min-height: calc(var(--space-8) + var(--space-1)); }
+  button {
+    font: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
+    padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer;
+    border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text);
+    transition: transform var(--transition-fast), background var(--transition-fast);
+  }
+  button:hover { background: var(--color-bg-tertiary); }
+  button:active { transform: scale(0.98); }
+  button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  button.primary { border-color: transparent; background: var(--gradient-brand-strong); color: var(--color-accent-text); }
+  button.quiet { border-color: transparent; background: transparent; color: var(--color-text-secondary); }
+  button.quiet:hover { color: var(--color-text); background: var(--color-accent-soft); }
+  [hidden] { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .done .check path { stroke-dashoffset: 0; }
+    .rail.unknown .fill { width: 100%; opacity: 0.4; }
+  }
+</style>
+</head>
+<body>
+<main class="card" id="card" aria-labelledby="title">
+  <svg class="gem" viewBox="108 99 800 800" aria-hidden="true" focusable="false">
+    <defs>
+      <clipPath id="gem-clip" clipPathUnits="userSpaceOnUse">
+        <path d="M204.69 542.58 Q169.00 497.50 203.25 451.32 L340.09 266.81 Q380.00 213.00 437.99 246.56 L759.93 432.88 Q878.50 501.50 760.10 570.43 L451.17 750.30 Q395.00 783.00 354.66 732.04 Z" />
+      </clipPath>
+      <linearGradient id="g-body" x1="300" y1="230" x2="420" y2="780" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-body-hi" /><stop offset="1" class="s-body-lo" />
+      </linearGradient>
+      <linearGradient id="g-chev" x1="500" y1="250" x2="470" y2="770" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-chev-hi" /><stop offset="0.45" class="s-chev-hi" /><stop offset="1" class="s-chev-lo" />
+      </linearGradient>
+      <linearGradient id="g-dark" x1="400" y1="330" x2="780" y2="680" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-dark-hi" /><stop offset="1" class="s-dark-lo" />
+      </linearGradient>
+    </defs>
+    <path class="ring" d="M168.22 559.74 Q118.50 496.75 166.95 432.77 L320.08 230.56 Q371.25 163.00 444.33 205.92 L809.61 420.47 Q948.00 501.75 809.72 583.22 L454.93 792.25 Q384.50 833.75 333.85 769.58 Z" />
+    <g class="piece p-left"><g clip-path="url(#gem-clip)">
+      <path class="f-body" d="M353.69 248.47 Q353.69 248.47 353.69 248.47 L429.50 350.00 Q429.50 350.00 429.50 350.00 L507.99 455.13 Q540.00 498.00 508.79 541.46 L433.00 647.00 Q433.00 647.00 433.00 647.00 L363.72 743.48 Q363.72 743.48 363.72 743.48 L40.00 980.00 Q40.00 980.00 40.00 980.00 L40.00 20.00 Q40.00 20.00 40.00 20.00 Z" />
+    </g></g>
+    <g class="piece p-chevron"><g clip-path="url(#gem-clip)">
+      <path class="f-chev" d="M353.69 248.47 Q353.69 248.47 353.69 248.47 L333.69 60.00 Q333.69 60.00 333.69 60.00 L632.00 120.00 Q632.00 120.00 632.00 120.00 L564.60 315.94 Q562.00 323.50 566.84 329.87 L662.76 456.18 Q693.00 496.00 663.57 536.42 L549.35 693.27 Q547.00 696.50 548.35 700.27 L627.00 920.00 Q627.00 920.00 627.00 920.00 L333.72 960.00 Q333.72 960.00 333.72 960.00 L363.72 743.48 Q363.72 743.48 363.72 743.48 L433.00 647.00 Q433.00 647.00 433.00 647.00 L508.79 541.46 Q540.00 498.00 507.99 455.13 L429.50 350.00 Q429.50 350.00 429.50 350.00 Z" />
+    </g></g>
+    <g class="piece p-wedge"><g clip-path="url(#gem-clip)">
+      <path class="f-dark" d="M561.94 315.50 Q562.00 323.50 566.84 329.87 L662.76 456.18 Q693.00 496.00 663.57 536.42 L549.35 693.27 Q547.00 696.50 547.21 700.49 L560.00 940.00 Q560.00 940.00 560.00 940.00 L1010.00 500.00 Q1010.00 500.00 1010.00 500.00 L560.00 60.00 Q560.00 60.00 560.00 60.00 Z" />
+    </g></g>
+    <g class="piece p-rhombus">
+      <path class="f-dark rhombus-edge" d="M420.90 361.68 Q429.50 350.00 438.17 361.62 L507.99 455.13 Q540.00 498.00 508.79 541.46 L442.33 634.00 Q433.00 647.00 423.52 634.11 L351.91 536.69 Q322.00 496.00 351.94 455.33 Z" />
+    </g>
+    <path class="hairlines" d="M353.69 248.47 L429.50 350.00 M433.00 647.00 L363.72 743.48" />
+  </svg>
+
+  <h1 id="title">One thing before we start</h1>
+  <p class="lede" id="lede"></p>
+  <p class="detail" id="detail" hidden></p>
+
+  <div class="progress" id="progress">
+    <div class="rail unknown" id="rail"><div class="fill" id="fill"></div></div>
+    <div class="status" id="status" role="status" aria-live="polite">
+      <svg class="check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 L6.5 12 L13 4.5" /></svg>
+      <span id="status-text">Getting ready</span>
+    </div>
+  </div>
+
+  <div class="actions" id="actions">
+    <button type="button" id="b-start" class="primary" hidden>Set it up</button>
+    <button type="button" id="b-retry" class="primary" hidden>Try again</button>
+    <button type="button" id="b-restart" class="primary" hidden>Try again</button>
+    <button type="button" id="b-download" hidden>Get Node.js yourself</button>
+    <button type="button" id="b-cancel" hidden>Cancel</button>
+    <button type="button" id="b-quit" class="quiet">Quit</button>
+  </div>
+</main>
+<script>
+(function () {
+  'use strict';
+
+  var COPY = {
+    title: {
+      install: 'One thing before we start',
+      done: 'Node.js is ready',
+      error: 'dreamcontext couldn’t start'
+    },
+    lede: {
+      missing: 'dreamcontext runs on Node.js, and this Mac doesn’t have it yet. We’re setting up a private copy just for dreamcontext. Your other apps aren’t touched.',
+      'too-old': 'dreamcontext needs a newer Node.js than the one on this Mac. We’re setting up a private copy just for dreamcontext. Your own Node.js stays as it is.',
+      startup: 'Something stopped dreamcontext from starting. Trying again usually fixes it.'
+    },
+    phase: {
+      starting: 'Getting ready',
+      downloading: 'Downloading Node.js',
+      verifying: 'Checking the download',
+      unpacking: 'Unpacking',
+      done: 'Ready',
+      stopped: 'Stopped. Set it up whenever you’re ready.'
+    },
+    error: {
+      offline: 'You’re offline. Connect to the internet and try again.',
+      checksum: 'The download didn’t check out, so we threw it away. Try again.',
+      disk: 'There isn’t enough free space on this Mac. Free up some space and try again.',
+      os: 'This version of macOS is too old for the Node.js dreamcontext uses. Install Node.js yourself, then reopen dreamcontext.',
+      other: 'Something went wrong while setting up Node.js. Try again, or install it yourself.'
+    }
+  };
+  var POLL_MS = 200;
+  var MB = 1000 * 1000;
+
+  var el = function (id) { return document.getElementById(id); };
+  var card = el('card');
+  var title = el('title');
+  var lede = el('lede');
+  var detail = el('detail');
+  var progress = el('progress');
+  var rail = el('rail');
+  var fill = el('fill');
+  var status = el('status');
+  var statusText = el('status-text');
+  var buttons = {
+    start: el('b-start'), retry: el('b-retry'), restart: el('b-restart'),
+    download: el('b-download'), cancel: el('b-cancel'), quit: el('b-quit')
+  };
+
+  var params = new URLSearchParams(location.search);
+  var errorMode = params.get('mode') === 'error';
+  var canceled = false;
+  var finished = false;
+  var timer = null;
+
+  function invoke(cmd) {
+    var tauri = window.__TAURI_INTERNALS__;
+    if (!tauri || typeof tauri.invoke !== 'function') return Promise.reject(new Error('no shell'));
+    try { return Promise.resolve(tauri.invoke(cmd)); } catch (e) { return Promise.reject(e); }
+  }
+  // A command the shell refuses is never silent: the screen says so and keeps Quit.
+  function send(cmd) {
+    return invoke(cmd).catch(function (e) {
+      showStatus(COPY.error.other, true);
+      if (window.console) console.warn('[node-setup] ' + cmd + ' failed:', e);
+    });
+  }
+
+  function show(visible) {
+    Object.keys(buttons).forEach(function (k) {
+      buttons[k].hidden = k !== 'quit' && visible.indexOf(k) === -1;
+    });
+  }
+  function showStatus(text, isError) {
+    statusText.textContent = text;
+    status.classList.toggle('error', !!isError);
+  }
+  function mb(bytes) { return (bytes / MB).toFixed(1); }
+
+  function renderProgress(s) {
+    var known = typeof s.total === 'number' && s.total > 0;
+    var downloading = s.phase === 'downloading';
+    rail.classList.toggle('unknown', !(downloading && known));
+    fill.style.width = downloading && known ? Math.min(100, (s.received / s.total) * 100).toFixed(1) + '%' : '';
+    if (downloading && known) showStatus(COPY.phase.downloading + ' · ' + mb(s.received) + ' of ' + mb(s.total) + ' MB');
+    else showStatus(COPY.phase[s.phase] || COPY.phase.starting);
+  }
+
+  function render(s) {
+    if (s.mode === 'error') { renderStartupError(); return; }
+    title.textContent = COPY.title.install;
+    lede.textContent = COPY.lede[s.reason] || COPY.lede.missing;
+    progress.hidden = false;
+    progress.classList.remove('done');
+
+    if (s.phase === 'error') {
+      rail.hidden = true;
+      var kind = COPY.error[s.error] ? s.error : 'other';
+      showStatus(COPY.error[kind], true);
+      show(kind === 'os' ? ['download'] : ['retry', 'download']);
+      return;
+    }
+    rail.hidden = false;
+    if (s.phase === 'done') {
+      finished = true;
+      title.textContent = COPY.title.done;
+      rail.hidden = true;
+      progress.classList.add('done');
+      showStatus(COPY.phase.done);
+      show([]);
+      return;
+    }
+    if (s.phase === 'idle' && canceled) {
+      rail.hidden = true;
+      showStatus(COPY.phase.stopped);
+      show(['start']);
+      return;
+    }
+    renderProgress(s);
+    show(['cancel']);
+  }
+
+  function renderStartupError() {
+    errorMode = true;
+    stopPolling();
+    title.textContent = COPY.title.error;
+    lede.textContent = COPY.lede.startup;
+    var message = '';
+    try { message = decodeURIComponent(location.hash.slice(1)); } catch (e) { message = ''; }
+    detail.textContent = message;
+    detail.hidden = !message;
+    progress.hidden = true;
+    show(['restart']);
+  }
+
+  function poll() {
+    invoke('node_setup_status').then(function (s) {
+      if (s && typeof s === 'object') render(s);
+      if (!finished && !errorMode) timer = setTimeout(poll, POLL_MS);
+    }, function () {
+      timer = setTimeout(poll, POLL_MS * 5);
+    });
+  }
+  function stopPolling() { if (timer !== null) { clearTimeout(timer); timer = null; } }
+
+  function begin() {
+    canceled = false;
+    rail.hidden = false;
+    showStatus(COPY.phase.starting);
+    show(['cancel']);
+    send('node_setup_start');
+  }
+
+  buttons.start.addEventListener('click', begin);
+  buttons.retry.addEventListener('click', begin);
+  buttons.restart.addEventListener('click', function () { send('node_setup_retry'); });
+  buttons.download.addEventListener('click', function () { send('node_setup_open_download_page'); });
+  buttons.cancel.addEventListener('click', function () { canceled = true; send('node_setup_cancel'); });
+  buttons.quit.addEventListener('click', function () { send('node_setup_quit'); });
+
+  // Called by the shell once the Launcher behind this card is ready.
+  window.__dcNodeSetupExit = function () {
+    stopPolling();
+    card.classList.remove('in');
+    card.classList.add('out');
+  };
+
+  requestAnimationFrame(function () { card.classList.add('in'); });
+
+  if (errorMode) {
+    renderStartupError();
+  } else {
+    lede.textContent = COPY.lede.missing;
+    begin();
+    poll();
+  }
+})();
+</script>
+</body>
+</html>

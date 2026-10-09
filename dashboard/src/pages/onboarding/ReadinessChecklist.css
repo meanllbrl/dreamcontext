@@ -1,0 +1,321 @@
+/*
+ * The readiness checklist. Tokens only: no colour literal may appear in pages/onboarding/**
+ * (tests/unit/onboarding-no-colour-literals.test.ts).
+ *
+ * Motion: one entry curve (--ease-out). Rows enter together; a row that resolves draws its
+ * check and recedes to secondary ink; a live wait breathes on --motion-breath. Every animation
+ * and transition stands down under prefers-reduced-motion.
+ */
+
+.ob-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: 100%;
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+}
+
+.ob-checklist-head { display: flex; flex-direction: column; gap: var(--space-2); }
+.ob-checklist-title {
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-heading-sm);
+}
+.ob-checklist-subtitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+}
+
+.ob-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+.ob-status--failed { color: var(--color-error-ink); }
+
+.ob-banner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-ink);
+  font-size: var(--font-size-sm);
+}
+
+/* ─── Groups and rows ─────────────────────────────────────────────────────── */
+
+.ob-group { display: flex; flex-direction: column; gap: var(--space-2); }
+.ob-group-label {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  letter-spacing: var(--letter-spacing-caption);
+}
+
+.ob-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+
+.ob-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  animation: ob-enter var(--motion-converge) var(--ease-out) both;
+  transition: padding var(--transition-normal);
+}
+.ob-row + .ob-row { border-top: 1px solid var(--color-border); }
+.ob-row--done { padding-block: var(--space-3); }
+
+.ob-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--space-8);
+}
+.ob-row-text { display: flex; flex-direction: column; gap: var(--space-1); flex: 1; min-width: 0; }
+.ob-row-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  transition: color var(--transition-normal);
+}
+.ob-row--done .ob-row-title,
+.ob-row--skipped .ob-row-title { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
+.ob-row-why {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+}
+.ob-row-side { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
+.ob-row-state { font-size: var(--font-size-xs); color: var(--color-text-secondary); text-align: right; }
+.ob-row-state--failed { color: var(--color-error-ink); }
+.ob-row-note {
+  margin: 0 0 0 var(--space-8);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+}
+.ob-row-note--failed { color: var(--color-error-ink); }
+/* The waiting card slides in but is fully opaque from its first frame: a sign-in card must
+   never read as faint, even caught mid-entry. */
+.ob-row-expand { margin-left: var(--space-8); animation: ob-reveal var(--motion-converge) var(--ease-out) both; }
+
+/* ─── Status glyph: shape and motion = mode, colour = mood ────────────────── */
+
+.ob-glyph { flex-shrink: 0; overflow: visible; }
+.ob-glyph circle, .ob-glyph path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ob-glyph--todo { color: var(--color-text-tertiary); }
+.ob-glyph--blocked { color: var(--color-text-tertiary); }
+.ob-glyph--blocked .ob-glyph-ring { stroke-dasharray: 2 3; }
+.ob-glyph--working { color: var(--color-accent); animation: ob-spin var(--motion-breath) linear infinite; transform-origin: center; }
+.ob-glyph--working .ob-glyph-track { stroke: var(--color-border); }
+.ob-glyph--done { color: var(--color-success); }
+.ob-glyph--done .ob-glyph-ring { fill: var(--color-success-subtle); stroke: var(--color-success); }
+.ob-glyph--done .ob-glyph-check { stroke-width: 2; }
+.ob-glyph--animate .ob-glyph-check {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: ob-draw var(--motion-converge) var(--ease-out) forwards;
+}
+.ob-glyph--needs-you { color: var(--mood-waiting); }
+.ob-glyph--needs-you .ob-glyph-dot {
+  fill: currentColor;
+  stroke: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ob-breath var(--motion-breath) var(--ease-out) infinite alternate;
+}
+.ob-glyph--failed { color: var(--color-error-ink); }
+.ob-glyph--failed .ob-glyph-bang { stroke-width: 2; }
+.ob-glyph--failed .ob-glyph-bang-dot { fill: currentColor; stroke: none; }
+
+.ob-live-dot {
+  display: inline-block;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+  margin-right: var(--space-2);
+  vertical-align: middle;
+  animation: ob-breath var(--motion-breath) var(--ease-out) infinite alternate;
+}
+
+/* ─── Progress rail ───────────────────────────────────────────────────────── */
+
+.ob-rail {
+  position: relative;
+  margin-left: var(--space-8);
+  padding-top: var(--space-2);
+}
+.ob-rail::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+}
+.ob-rail-fill {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  transform-origin: left center;
+  transition: transform var(--transition-normal);
+}
+.ob-rail--indeterminate { padding-top: 2px; overflow: hidden; }
+.ob-rail--indeterminate .ob-rail-fill {
+  right: auto;
+  width: 30%;
+  animation: ob-slide var(--motion-breath) var(--ease-out) infinite;
+}
+.ob-rail-label { display: block; font-size: var(--font-size-xs); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+
+/* ─── Waiting card ────────────────────────────────────────────────────────── */
+
+.ob-wait {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--mood-waiting);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+}
+.ob-wait--quiet { border-left-color: var(--color-border); background: transparent; padding: var(--space-3); }
+.ob-wait-title { display: flex; align-items: center; margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.ob-wait-body { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); line-height: var(--line-height-relaxed); }
+.ob-wait-code {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  user-select: all;
+}
+.ob-wait-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+/* ─── Manual line and details ─────────────────────────────────────────────── */
+
+.ob-manual { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-left: var(--space-8); }
+.ob-manual-hint { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.ob-manual-code {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  word-break: break-all;
+}
+.ob-details { margin-left: var(--space-8); display: flex; flex-direction: column; gap: var(--space-2); }
+.ob-details-tail {
+  margin: 0;
+  max-height: calc(var(--space-24) + var(--space-8));
+  overflow: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ─── Actions ─────────────────────────────────────────────────────────────── */
+
+.ob-checklist-actions { display: flex; align-items: center; gap: var(--space-4); }
+.ob-checklist-left { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+
+.ob-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--space-8);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+.ob-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.ob-btn:active:not(:disabled) { transform: scale(0.98); }
+.ob-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* The one filled accent on the screen. */
+.ob-btn--primary {
+  min-height: var(--space-11);
+  padding: var(--space-3) var(--space-6);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-semibold);
+}
+.ob-btn--primary:hover:not(:disabled) { background: var(--gradient-brand-strong); }
+
+.ob-btn--secondary {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.ob-btn--secondary:hover:not(:disabled) { border-color: var(--color-border-hover); }
+
+.ob-btn--ghost { background: transparent; color: var(--color-text-secondary); }
+.ob-btn--ghost:hover:not(:disabled) { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+.ob-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  color: var(--color-accent-ink);
+  cursor: pointer;
+}
+.ob-link:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ─── Motion ──────────────────────────────────────────────────────────────── */
+
+@keyframes ob-enter { from { opacity: 0; transform: translateY(var(--space-1)); } to { opacity: 1; transform: none; } }
+@keyframes ob-reveal { from { transform: translateY(var(--space-1)); } to { transform: none; } }
+@keyframes ob-draw { to { stroke-dashoffset: 0; } }
+@keyframes ob-spin { to { transform: rotate(360deg); } }
+@keyframes ob-breath { from { opacity: 0.35; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+@keyframes ob-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-checklist,
+  .ob-checklist *,
+  .ob-checklist *::before,
+  .ob-checklist *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .ob-glyph--animate .ob-glyph-check { stroke-dashoffset: 0; }
+  .ob-rail--indeterminate .ob-rail-fill { width: 100%; opacity: 0.4; }
+}

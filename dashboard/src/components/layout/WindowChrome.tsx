@@ -15,12 +15,15 @@ import {
   setGoToProjectHandler,
   startTitleBarDrag,
   toggleMaximizeWindow,
+  START_INTENT_EVENT,
+  type StartIntent,
 } from '../../lib/desktop';
+import { acceptStartIntent } from '../../lib/startChatIntent';
 import { HEARTBEAT_MS, findWindowForVault, publishOpenVaults, releaseWindow } from '../../lib/windowRegistry';
 import { ASSISTANT_WAKE_EVENT } from '../../lib/assistantBridge';
 import { APP_LINK_OPEN_EVENT, isProjectAppLink, parseAppLink } from '../../lib/appLink';
 import type { ProjectRollup } from '../sleepy/agentStatus';
-import { ProjectInstance, type PendingAppLink } from '../../ProjectInstance';
+import { ProjectInstance, type PendingAppLink, type PendingStartIntent } from '../../ProjectInstance';
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
 import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
 import { HandsfreeBanner } from '../handsfree/HandsfreeBanner';
@@ -246,10 +249,12 @@ function seedPendingLinks(initialVault: string, initialLink: string | null | und
   return { [initialVault]: { raw: initialLink as string, nonce: 1 } };
 }
 
-export function WindowChrome({ initialVault, initialLink }: {
+export function WindowChrome({ initialVault, initialLink, initialStart = null }: {
   initialVault: string;
   /** A `dreamcontext://` link this window was built to land (the `?open=` param). */
   initialLink?: string | null;
+  /** The onboarding start intent this window was built to start (the `?start=` param). */
+  initialStart?: StartIntent | null;
 }) {
   const { theme, setTheme, resolved } = useTheme();
   const [zoom, setZoom] = useState(getStoredZoom);
@@ -356,6 +361,26 @@ export function WindowChrome({ initialVault, initialLink }: {
   const linkSeqRef = useRef(1);
   const consumeLink = useCallback((vault: string, nonce: number) => {
     setPendingLinks((prev) => {
+      if (prev[vault]?.nonce !== nonce) return prev;
+      const next = { ...prev };
+      delete next[vault];
+      return next;
+    });
+  }, []);
+
+  /**
+   * Start intents waiting to reach a project's agent (the onboarding hand-off), held here for
+   * the same reason as `pendingLinks`: the instance may not be mounted yet. Seeded from this
+   * window's `?start=` param for its first project only.
+   */
+  const [pendingStarts, setPendingStarts] = useState<Record<string, PendingStartIntent>>(
+    () => (initialStart ? { [initialVault]: { intent: initialStart, nonce: 1 } } : {}),
+  );
+  const startSeqRef = useRef(1);
+  /** Broadcast nonces already taken, so a re-delivered `START_INTENT_EVENT` starts nothing. */
+  const seenStartNoncesRef = useRef(new Set<string>());
+  const consumeStart = useCallback((vault: string, nonce: number) => {
+    setPendingStarts((prev) => {
       if (prev[vault]?.nonce !== nonce) return prev;
       const next = { ...prev };
       delete next[vault];
@@ -776,6 +801,38 @@ export function WindowChrome({ initialVault, initialLink }: {
   }, []);
 
   /**
+   * The onboarding hand-off for a project whose window was ALREADY open (`openVaultWindow`
+   * answered `'focused'`, so the `?start=` param never reached it): the Launcher broadcasts
+   * `START_INTENT_EVENT` and every window hears it. Only an intent that passes
+   * `acceptStartIntent` against the projects THIS window holds is taken, once per nonce; the
+   * chip comes forward and the intent waits for that project's instance.
+   */
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let off: (() => void) | null = null;
+    let gone = false;
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const fn = await listen<unknown>(START_INTENT_EVENT, (e) => {
+          const held = openRef.current.map((p) => p.vault);
+          const accepted = acceptStartIntent(e.payload, held, seenStartNoncesRef.current);
+          if (!accepted) return;
+          activate(accepted.vault);
+          void focusThisWindow();
+          startSeqRef.current += 1;
+          const nonce = startSeqRef.current;
+          setPendingStarts((prev) => ({ ...prev, [accepted.vault]: { intent: accepted.intent, nonce } }));
+        });
+        if (gone) fn(); else off = fn;
+      } catch (err) {
+        console.warn('[start-intent] this window cannot receive start intents:', err);
+      }
+    })();
+    return () => { gone = true; off?.(); };
+  }, [activate]);
+
+  /**
    * Publish this window's chips to the cross-window registry, on every change and on a
    * heartbeat.
    *
@@ -943,6 +1000,8 @@ export function WindowChrome({ initialVault, initialLink }: {
               onRollup={handleRollup}
               pendingLink={pendingLinks[p.vault] ?? null}
               onLinkConsumed={consumeLink}
+              pendingStart={pendingStarts[p.vault] ?? null}
+              onStartConsumed={consumeStart}
             />
           ))}
         </div>

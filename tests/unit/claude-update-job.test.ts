@@ -129,6 +129,8 @@ describe("POST /api/agent/install target 'claude-update'", () => {
     const s = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
     (s as { url?: string }).url = url;
     (s as { headers?: Record<string, string> }).headers = { host: 'localhost' };
+    // The install routes are desktop + this machine only (requireLocalDesktop): a loopback peer.
+    (s as { socket?: { remoteAddress: string } }).socket = { remoteAddress: '127.0.0.1' };
     return s;
   };
   async function status(runId: string) {

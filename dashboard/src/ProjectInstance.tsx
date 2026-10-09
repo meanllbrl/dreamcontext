@@ -28,6 +28,11 @@ import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch
 import type { Page } from './components/layout/Sidebar';
 import { parseAppLink } from './lib/appLink';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from './lib/openSession';
+import {
+  START_CHAT_INTENT_EVENT, START_CHAT_REFUSED_EVENT, type StartChatIntentDetail,
+} from './lib/startChatIntent';
+import type { StartIntent } from './lib/desktop';
+import { useI18n } from './context/I18nContext';
 import './ProjectInstance.css';
 
 /**
@@ -99,6 +104,88 @@ function RollupBridge({
 export interface PendingAppLink {
   raw: string;
   nonce: number;
+}
+
+/** A start intent waiting to reach this project's agent surface; `nonce` tells two apart. */
+export interface PendingStartIntent {
+  intent: StartIntent;
+  nonce: number;
+}
+
+/** How long a start intent keeps asking for the surface: 40 × 250 ms, the plan's 10 s bound. */
+const START_INTENT_RETRY_MS = 250;
+const START_INTENT_ATTEMPTS = 40;
+
+/**
+ * The landing half of the onboarding hand-off ("Start with Claude"). The chrome hands this
+ * project a start intent that already passed `acceptStartIntent`; this bridge asks the
+ * always-mounted `AgentSurface` to start the chat, ACKed like the session link below, because a
+ * window built for this very intent mounts its surface a beat after this effect runs.
+ *
+ * Never a silent no-op: if no surface takes it within the bound, or the surface takes it and
+ * then reports it could not start Claude here (`START_CHAT_REFUSED_EVENT`), a visible notice
+ * says so and points at the machine setup.
+ */
+function StartIntentBridge({
+  start, onConsumed,
+}: {
+  start: PendingStartIntent | null;
+  onConsumed: (nonce: number) => void;
+}) {
+  const { bus } = useVault();
+  const { t } = useI18n();
+  const landed = useRef(0);
+  const retry = useRef<number | null>(null);
+  const [refused, setRefused] = useState(false);
+  useEffect(() => () => { if (retry.current !== null) window.clearTimeout(retry.current); }, []);
+  useInstanceEvent(START_CHAT_REFUSED_EVENT, () => setRefused(true));
+
+  useEffect(() => {
+    if (!start || start.nonce === landed.current) return;
+    landed.current = start.nonce;
+    onConsumed(start.nonce);
+    setRefused(false);
+    if (retry.current !== null) window.clearTimeout(retry.current);
+    let attempts = 0;
+    const ask = () => {
+      retry.current = null;
+      const detail: StartChatIntentDetail = { intent: start.intent, accepted: false };
+      emitInstance(bus, START_CHAT_INTENT_EVENT, detail);
+      attempts += 1;
+      if (detail.accepted) return;
+      if (attempts >= START_INTENT_ATTEMPTS) {
+        setRefused(true);
+        return;
+      }
+      retry.current = window.setTimeout(ask, START_INTENT_RETRY_MS);
+    };
+    ask();
+  }, [start, bus, onConsumed]);
+
+  if (!refused) return null;
+  return (
+    <div className="start-intent-notice" role="status" data-no-drag>
+      <span className="start-intent-notice-text">{t('onboarding.startIntent.refused')}</span>
+      <button
+        type="button"
+        className="start-intent-notice-action"
+        onClick={() => {
+          setRefused(false);
+          emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: 'system' });
+        }}
+      >
+        {t('onboarding.startIntent.openSetup')}
+      </button>
+      <button
+        type="button"
+        className="start-intent-notice-close"
+        aria-label={t('common.close')}
+        onClick={() => setRefused(false)}
+      >
+        ×
+      </button>
+    </div>
+  );
 }
 
 /** How long a session link keeps asking for a surface to take it (a fresh window's surface
@@ -248,10 +335,15 @@ export interface ProjectInstanceProps {
   pendingLink?: PendingAppLink | null;
   /** Reports a pending link landed, so the chrome stops holding it. */
   onLinkConsumed?: (vault: string, nonce: number) => void;
+  /** An onboarding start intent ("Start with Claude") to hand this project's agent, or null. */
+  pendingStart?: PendingStartIntent | null;
+  /** Reports a pending start intent was taken, so the chrome stops holding it. */
+  onStartConsumed?: (vault: string, nonce: number) => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
+  pendingStart = null, onStartConsumed,
 }: ProjectInstanceProps) {
   /*
    * Both of these are per-instance identities that must survive every re-render: a new
@@ -278,6 +370,14 @@ export function ProjectInstance({
   }, []);
   const clearAutomationFocus = useCallback(() => setAutomationFocus(null), []);
   const consumeLink = useCallback((nonce: number) => onLinkConsumed?.(vault, nonce), [onLinkConsumed, vault]);
+  const consumeStart = useCallback((nonce: number) => onStartConsumed?.(vault, nonce), [onStartConsumed, vault]);
+  // A project opened (or reached) by "Start with Claude" is about to show the initializer chat,
+  // so the on-load "What's New" popup must not land on top of it. Latched from the first render
+  // (a window built with `?start=` carries the intent at mount), and the popup is never MOUNTED
+  // here, so nothing is marked seen: it pops in the next window as usual and stays reachable from
+  // the sidebar's Announcements page.
+  const [suppressAnnouncements, setSuppressAnnouncements] = useState(() => pendingStart !== null);
+  useEffect(() => { if (pendingStart !== null) setSuppressAnnouncements(true); }, [pendingStart]);
 
   // A board's home agent conversations outlive the Whiteboard page, never their project:
   // closing or evicting this instance ends them (and their `claude`).
@@ -320,7 +420,10 @@ export function ProjectInstance({
                       onConsumed={consumeLink}
                       onAutomationFocus={focusAutomation}
                     />
-                    <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
+                    <StartIntentBridge start={pendingStart} onConsumed={consumeStart} />
+                    {!suppressAnnouncements && (
+                      <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
+                    )}
                   </>
                 )}
               </Shell>

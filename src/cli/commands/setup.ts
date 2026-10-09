@@ -30,6 +30,13 @@ import { updateSetupConfig } from '../../lib/setup-config.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { writeProjectPlatformDefaults } from '../../lib/platform-defaults.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
+import { CHECK_COPY, INITIALIZER_KICKOFF_PROMPT } from '../../lib/onboarding/copy.js';
+import { probeFolder } from '../../lib/onboarding/folder.js';
+import { findClaudeBin } from '../../lib/claude-path.js';
+import {
+  awaitGitForInit, createTtyDeps, handOffToClaude, runMachinePhase,
+  type MachineMode, type MachinePhaseResult, type TtyDeps,
+} from '../onboarding-tty.js';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -153,6 +160,43 @@ export interface SetupOptions {
   appInstaller?: () => void;
   /** Injected app-installed check (testing); defaults to readAppManifest() !== null. */
   appInstalledCheck?: () => boolean;
+  /** Skip the machine phase (this Mac's tools and sign-ins). */
+  skipMachine?: boolean;
+  /** Commander's `--no-start`: false skips the offer to start Claude at the end. */
+  start?: boolean;
+  /** Injected terminal effects (testing); defaults to the real terminal. */
+  ttyDeps?: TtyDeps;
+}
+
+/** How the machine phase runs: questions on a terminal, automatic fixes with `--yes`, else a report. */
+export function machineMode(opts: SetupOptions, isTTY: boolean): MachineMode {
+  if (opts.yes) return 'yes';
+  return isTTY && !opts.defaults ? 'interactive' : 'report';
+}
+
+/** Is Claude usable enough to hand off to? Uses the machine report when there is one. */
+function claudeReady(machine: MachinePhaseResult | null): boolean {
+  if (!machine) return findClaudeBin() !== null;
+  const status = (id: string) => machine.report.checks.find((c) => c.id === id)?.status;
+  const claude = status('claude');
+  const auth = status('claude-auth');
+  return (claude === 'ok' || claude === 'needs-action') && (auth === 'ok' || auth === 'unknown');
+}
+
+/**
+ * After init: offer `git init` (terminal only). Git usable: run it now. A Git install this
+ * run started: wait for it (Enter skips; a skip is remembered for the next run).
+ */
+async function offerGitInit(projectRoot: string, machine: MachinePhaseResult | null, deps: TtyDeps): Promise<void> {
+  const folder = probeFolder(projectRoot);
+  if (folder.isSymlink || folder.isGitRepo) return;
+  const installing = machine?.gitInstall ?? null;
+  if (!deps.gitUsable() && !installing) {
+    info(chalk.dim(`${CHECK_COPY.git.title} is not installed, so changes in this folder are not tracked yet.`));
+    return;
+  }
+  if (!(await deps.confirm('Track changes in this folder with Git?', true))) return;
+  await awaitGitForInit(folder.path, installing, deps);
 }
 
 /**
@@ -210,7 +254,18 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
   const previousEnv = process.env[SETUP_INTERNAL_ENV];
   process.env[SETUP_INTERNAL_ENV] = '1';
 
+  const interactive = process.stdin.isTTY === true && !useDefaults && !opts.yes;
+  const tty = opts.ttyDeps ?? createTtyDeps();
+  let machine: MachinePhaseResult | null = null;
+
   try {
+    // ─── 0. This machine ──────────────────────────────────────────────────
+    // Skipped for the launcher's internal call (it runs its own onboarding) and on request.
+    if (!opts.skipMachine && !previousEnv) {
+      machine = await runMachinePhase({ mode: machineMode(opts, process.stdin.isTTY === true) }, tty);
+      console.log();
+    }
+
     // ─── 1. Resolve platforms ─────────────────────────────────────────────
     let platforms: PlatformId[];
     const explicit = parsePlatformsOption(opts.platforms);
@@ -299,7 +354,10 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       disableNativeMemory,
     });
 
-    // ─── 5b. Desktop app (macOS) ──────────────────────────────────────────
+    // ─── 5b. Git (terminal only) ──────────────────────────────────────────
+    if (interactive) await offerGitInit(projectRoot, machine, tty);
+
+    // ─── 5c. Desktop app (macOS) ──────────────────────────────────────────
     await maybeInstallApp(opts);
 
     // ─── 6. Summary ───────────────────────────────────────────────────────
@@ -328,7 +386,15 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       for (const n of notes) console.log(`  ${n}`);
       console.log();
     }
+
+    // ─── 7. Hand off to Claude (terminal only) ────────────────────────────
+    if (interactive && opts.start !== false && claudeReady(machine)) {
+      const go = await tty.confirm('Start Claude now? It reads your project and sets up its brain with you.', true);
+      if (go) await handOffToClaude(projectRoot, INITIALIZER_KICKOFF_PROMPT, tty);
+    }
   } finally {
+    // A Git install still waiting in the background must not hold this command open.
+    machine?.gitInstall?.abort();
     if (previousEnv === undefined) {
       delete process.env[SETUP_INTERNAL_ENV];
     } else {
@@ -349,6 +415,8 @@ export function registerSetupCommand(program: Command): void {
     .option('--keep-native-memory', "Keep Claude Code's native auto-memory (default: disabled so dreamcontext owns memory)")
     .option('--install-app', 'Also install the macOS desktop app (non-interactive)')
     .option('--skip-app', 'Do not install the desktop app')
+    .option('--skip-machine', "Skip checking this machine's tools and sign-ins")
+    .option('--no-start', 'Do not offer to start Claude at the end')
     .action(async (opts: SetupOptions) => {
       try {
         await runSetup(opts);

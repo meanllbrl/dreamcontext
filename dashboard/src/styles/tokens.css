@@ -326,6 +326,9 @@
      under `prefers-reduced-motion`. */
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --motion-breath: 1600ms;
+  /* The brand gem's pieces gathering into the mark (onboarding hand-off, the Node setup
+     window). node-setup.html mirrors this value; tests/unit/desktop-pages-mirror.test.ts. */
+  --motion-converge: 520ms;
 
   /* ─── Layout (compact density) ─── */
   --sidebar-width: 220px;

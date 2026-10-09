@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "node-setup-window",
+  "description": "Capability for the Node setup screen (label `node-setup`), the bundled local page a first run with no usable Node stops at, and the startup error screen in its error mode. It needs exactly the six node_setup_* commands, none of which takes a string from the page. No core window controls (the shell shows, fades and closes it from Rust), no events, no shell:*, and no remote URL: it is a local page only.",
+  "windows": ["node-setup"],
+  "permissions": ["allow-node-setup"]
+}

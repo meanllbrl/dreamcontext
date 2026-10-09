@@ -44,6 +44,13 @@ const LABELS: Record<string, string> = {
   // grant left behind would widen the default capability for no window at all.
 };
 
+/** Windows the Rust shell opens itself (src/splash.rs, src/node_setup.rs). */
+const SHELL_LABELS: Record<string, string> = {
+  splash: 'splash',
+  // The Node setup screen, and the startup error screen in its error mode.
+  'node-setup': 'node-setup',
+};
+
 /** Tauri capability `windows` entries are globs with `*` as the only wildcard. */
 function globMatches(glob: string, label: string): boolean {
   const rx = new RegExp(
@@ -105,6 +112,31 @@ describe('tauri window capabilities', () => {
       'desktop.ts creates a different number of window kinds than this test knows about — ' +
         'add the new label to LABELS above and give it a capability in desktop/src-tauri/capabilities/',
     ).toBe(5); // vault, viewer, inbox, checklist, main(re-open)
+  });
+
+  /**
+   * Windows the RUST shell builds from a bundled local page, before the dashboard exists.
+   * They are frameless cards with no title bar (nothing to drag), so they are held to the
+   * opposite rule from the frontend windows above: covered by exactly one narrow capability
+   * that grants no core window controls and admits no remote URL.
+   */
+  it.each(Object.entries(SHELL_LABELS))(
+    'the shell-built %s window (%s) is covered by one local-only capability',
+    (_kind, label) => {
+      const forWindow = caps.filter(({ cap }) =>
+        (Array.isArray(cap.windows) ? (cap.windows as string[]) : []).some((g) => globMatches(g, label)),
+      );
+      expect(forWindow.map((c) => c.file)).toHaveLength(1);
+      const cap = forWindow[0].cap as Capability & { remote?: unknown };
+      expect(cap.remote).toBeUndefined();
+      const perms = (Array.isArray(cap.permissions) ? cap.permissions : []) as unknown[];
+      expect(perms.some((p) => typeof p === 'string' && p.startsWith('core:'))).toBe(false);
+    },
+  );
+
+  it('grants the Node setup window exactly its own permission', () => {
+    const forWindow = caps.filter(({ cap }) => Array.isArray(cap.windows) && (cap.windows as string[]).includes('node-setup'));
+    expect(forWindow.map(({ cap }) => cap.permissions)).toEqual([['allow-node-setup']]);
   });
 
   it.each(Object.entries(LABELS))(

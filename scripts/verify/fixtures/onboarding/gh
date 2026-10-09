@@ -1,0 +1,38 @@
+#!/bin/sh
+# Stand-in for GitHub's command line tool (scripts/verify/onboarding.mjs).
+#   $HOME/.verify/gh-authed   present = signed in
+#   $HOME/.verify/gh-scopes   the token's scopes (default: repo, read:org, gist)
+# The token it hands out is fake and never reaches GitHub.
+V="$HOME/.verify"
+printf 'gh\t%s\n' "$*" >> "$V/log"
+case "$1" in
+  --version)
+    echo "gh version 2.99.0-verify"
+    exit 0
+    ;;
+  auth)
+    case "$2" in
+      status)
+        if [ -f "$V/gh-authed" ]; then echo "Logged in to github.com account verify-user"; exit 0; fi
+        echo "You are not logged into any GitHub hosts." >&2
+        exit 1
+        ;;
+      token)
+        if [ -f "$V/gh-authed" ]; then echo "gho_verifyFakeToken000000000000000000"; exit 0; fi
+        exit 1
+        ;;
+      login)
+        cat > /dev/null
+        : > "$V/gh-authed"
+        exit 0
+        ;;
+    esac
+    ;;
+  api)
+    scopes="repo, read:org, gist"
+    if [ -f "$V/gh-scopes" ]; then scopes=$(cat "$V/gh-scopes"); fi
+    printf 'HTTP/2.0 200 OK\nX-Oauth-Scopes: %s\nContent-Type: application/json\n\n{"login":"verify-user"}\n' "$scopes"
+    exit 0
+    ;;
+esac
+exit 1

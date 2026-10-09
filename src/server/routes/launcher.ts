@@ -1,6 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { basename, isAbsolute, join, resolve, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -27,8 +27,11 @@ import { findVaultLogo, vaultLogoCandidates } from '../../lib/vault-logo.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { compareVersions } from '../../lib/version-check.js';
-import { detectTechStack } from '../../lib/tech-stack.js';
-import { ensureCliInstalled } from '../../lib/ensure-cli.js';
+import { ensureCliInstalled, type EnsureCliResult } from '../../lib/ensure-cli.js';
+import { probeFolder, findGitDir } from '../../lib/onboarding/folder.js';
+import { cliInstallDeferred, isFixActive } from '../../lib/onboarding/readiness.js';
+import { recordPendingGitInit } from '../../lib/onboarding/pending-git.js';
+import type { FixId } from '../../lib/onboarding/types.js';
 import {
   PLATFORM_CATALOG,
   DEFAULT_PLATFORMS,
@@ -49,7 +52,7 @@ import {
   resolveLauncherGitHubToken,
   type CloneGitHubRepoResult,
 } from '../../lib/git-sync/github-browse.js';
-import { GitSyncError } from '../../lib/git-sync/git.js';
+import { GitSyncError, gitAvailable, initRepo } from '../../lib/git-sync/git.js';
 import { sanitizeModel, sanitizeEffort } from './agent-spawn-shared.js';
 import { ApiError } from '../../lib/task-backend/api-adapter.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
@@ -216,7 +219,33 @@ export interface ScaffoldAnswers {
   platforms?: string[];
   /** Optional skill-pack names to install after setup (e.g. ['engineering']). */
   packs?: string[];
+  /** Run `git init` in the project once it is set up (now, or when Git finishes installing). */
+  gitInit?: boolean;
 }
+
+/** What happened to the "Track changes with Git" request. */
+export interface ScaffoldGitResult {
+  initialized: boolean;
+  skipped?: 'no-git' | 'already-repo' | 'not-requested' | 'pending-git';
+}
+
+/**
+ * The Git side of scaffolding, injectable so tests can pin each branch without a real
+ * git, a real developer-tools probe or a real `~/.dreamcontext`.
+ */
+export interface ScaffoldGitDeps {
+  gitAvailable: () => boolean;
+  initRepo: (dir: string) => void;
+  isFixActive: (id: FixId) => boolean;
+  recordPendingGitInit: (path: string, home?: string) => boolean;
+}
+
+const defaultScaffoldGitDeps: ScaffoldGitDeps = {
+  gitAvailable: () => gitAvailable(),
+  initRepo,
+  isFixActive,
+  recordPendingGitInit,
+};
 
 /**
  * Runs a bundled-CLI subcommand in `cwd`. Injectable so tests can substitute a
@@ -249,6 +278,74 @@ const defaultCliRunner: CliRunner = async (args, cwd) => {
 /** A name usable both as a directory segment and a registry name. */
 const SAFE_NAME_RE = /^[^/\\]+$/;
 
+/**
+ * Is `dir` (absolute) inside `home`, judged on real paths? The comparison uses the realpath of
+ * the nearest EXISTING ancestor, so a symlink anywhere in the existing part of the chain is
+ * resolved before the check and cannot smuggle the new folder outside the home folder.
+ */
+function nearestAncestorInsideHome(dir: string, home: string): boolean {
+  let realHome: string;
+  try {
+    realHome = realpathSync(home);
+  } catch {
+    return false;
+  }
+  let current = dir;
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+  let realAncestor: string;
+  try {
+    realAncestor = realpathSync(current);
+  } catch {
+    return false;
+  }
+  return realAncestor === realHome || realAncestor.startsWith(realHome + sep);
+}
+
+/**
+ * Resolve the parent folder of a NEW project, creating it when it is missing but sits inside
+ * the home folder (the default `~/projects` does not exist on a fresh Mac). Anywhere else a
+ * missing parent stays an error: onboarding never creates folders outside the user's home.
+ */
+function ensureParentDir(resolvedParent: string, home: string): void {
+  if (existsSync(resolvedParent)) {
+    if (!statSync(resolvedParent).isDirectory()) {
+      throw new ScaffoldError(`Parent directory does not exist: ${resolvedParent}`);
+    }
+    return;
+  }
+  if (!nearestAncestorInsideHome(resolvedParent, home)) {
+    throw new ScaffoldError(`Parent directory does not exist: ${resolvedParent}`);
+  }
+  mkdirSync(resolvedParent, { recursive: true });
+}
+
+/**
+ * The "Track changes with Git" step, run after setup. Never spawns git unless Git is usable:
+ * while the macOS developer tools are still installing, the request is recorded and the
+ * `git init` happens later (see `pending-git.ts`).
+ */
+function applyGitInit(target: string, requested: boolean, deps: ScaffoldGitDeps, home: string): ScaffoldGitResult {
+  if (!requested) return { initialized: false, skipped: 'not-requested' };
+  if (findGitDir(target)) return { initialized: false, skipped: 'already-repo' };
+  if (deps.gitAvailable()) {
+    try {
+      deps.initRepo(target);
+      return { initialized: true };
+    } catch (err) {
+      console.error(`[launcher] git init failed in ${target}:`, err);
+      return { initialized: false, skipped: 'no-git' };
+    }
+  }
+  if (deps.isFixActive('git-install') && deps.recordPendingGitInit(target, home)) {
+    return { initialized: false, skipped: 'pending-git' };
+  }
+  return { initialized: false, skipped: 'no-git' };
+}
+
 function isNonEmptyDir(dir: string): boolean {
   try {
     return statSync(dir).isDirectory() && readdirSync(dir).length > 0;
@@ -267,8 +364,11 @@ export async function scaffoldProject(
   a: ScaffoldAnswers,
   runner: CliRunner = defaultCliRunner,
   home?: string,
-): Promise<{ vault: Vault; vaults: Vault[] }> {
-  const name = (a.name ?? '').trim();
+  gitDeps: ScaffoldGitDeps = defaultScaffoldGitDeps,
+): Promise<{ vault: Vault; vaults: Vault[]; git: ScaffoldGitResult }> {
+  // NFC first: a Turkish name typed here and the same name read back from the macOS folder
+  // panel must be the same folder and the same vault name.
+  const name = (a.name ?? '').normalize('NFC').trim();
   if (!name) throw new ScaffoldError('name must be a non-empty string.');
 
   // Resolve the target platforms: filter to known ids, default to ['claude'].
@@ -289,14 +389,12 @@ export async function scaffoldProject(
     if (name === '.' || name === '..') {
       throw new ScaffoldError('Project name is invalid.');
     }
-    const parentDir = (a.parentDir ?? '').trim();
+    const parentDir = (a.parentDir ?? '').normalize('NFC').trim();
     if (!parentDir || !isAbsolute(parentDir)) {
       throw new ScaffoldError('parentDir must be an absolute path.');
     }
     const resolvedParent = resolve(parentDir);
-    if (!existsSync(resolvedParent) || !statSync(resolvedParent).isDirectory()) {
-      throw new ScaffoldError(`Parent directory does not exist: ${resolvedParent}`);
-    }
+    ensureParentDir(resolvedParent, home ?? homedir());
     target = resolve(resolvedParent, name);
     // Defense in depth: the resolved target must be a direct child of the parent
     // (guards against a name that slipped past SAFE_NAME_RE).
@@ -308,7 +406,7 @@ export async function scaffoldProject(
     }
     mkdirSync(target, { recursive: true });
   } else if (a.mode === 'existing') {
-    const projectPath = (a.projectPath ?? '').trim();
+    const projectPath = (a.projectPath ?? '').normalize('NFC').trim();
     if (!projectPath || !isAbsolute(projectPath)) {
       throw new ScaffoldError('projectPath must be an absolute path.');
     }
@@ -348,9 +446,11 @@ export async function scaffoldProject(
     await runner(['install-skill', '--packs', ...packs, '--platforms', platformArg], target);
   }
 
+  const git = applyGitInit(target, a.gitInit === true, gitDeps, home ?? homedir());
+
   // addVault validates the path + _dream_context child and rejects dupes.
   const vault = addVault(name, target, home);
-  return { vault, vaults: listVaults(home) };
+  return { vault, vaults: listVaults(home), git };
 }
 
 /**
@@ -386,6 +486,7 @@ export async function handleLauncherScaffold(
     packs: Array.isArray(body.packs)
       ? body.packs.filter((p: unknown): p is string => typeof p === 'string')
       : undefined,
+    gitInit: body.gitInit === true,
   };
 
   try {
@@ -394,7 +495,11 @@ export async function handleLauncherScaffold(
     // `npx dreamcontext hook …` calls work when opened in Claude Code. The
     // bundled app CLI is not on PATH; install from npm if missing. Best-effort —
     // the project is already created, so a CLI-install failure is reported, not thrown.
-    const cli = await ensureCliInstalled();
+    // When onboarding already owns that install (a run in flight, or the checklist shows
+    // it missing), it is left to the checklist rather than run a second time here.
+    const cli: EnsureCliResult | { status: 'deferred' } = cliInstallDeferred()
+      ? { status: 'deferred' }
+      : await ensureCliInstalled();
     sendJson(res, 200, { ...result, cli });
   } catch (err) {
     if (err instanceof ScaffoldError || err instanceof VaultError) {
@@ -407,9 +512,10 @@ export async function handleLauncherScaffold(
 }
 
 /**
- * GET /api/launcher/detect?path=<absPath> — best-effort tech-stack detection for
- * an existing folder, used to prefill the onboarding quiz. Read-only and
- * vault-agnostic. Returns `{ stack: string }` ('' when nothing recognizable).
+ * GET /api/launcher/detect?path=<absPath> — the folder facts the onboarding Project
+ * step reads: tech stack ('' when nothing recognizable), brain state, whether it is
+ * already a git repository, how many documents it holds, and writability. Read-only,
+ * vault-agnostic and filesystem-only (never spawns git). A symlinked folder is refused.
  */
 export async function handleLauncherDetect(
   req: IncomingMessage,
@@ -423,15 +529,26 @@ export async function handleLauncherDetect(
     sendError(res, 400, 'invalid_path', 'path must be an absolute path.');
     return;
   }
-  const resolved = resolve(path);
-  if (!existsSync(resolved)) {
-    sendError(res, 400, 'invalid_path', `Path does not exist: ${resolved}`);
+  // Filesystem only: probeFolder never spawns git, so probing a folder on a Mac without the
+  // developer tools can never open Apple's install dialog.
+  const folder = probeFolder(path);
+  if (!folder.exists) {
+    sendError(res, 400, 'invalid_path', `Path does not exist: ${folder.path}`);
+    return;
+  }
+  if (folder.isSymlink) {
+    sendError(res, 400, 'symlink_refused', 'That folder is a link to another place. Choose the real folder instead.');
     return;
   }
   sendJson(res, 200, {
-    stack: detectTechStack(resolved) ?? '',
-    hasContext: existsSync(join(resolved, '_dream_context')),
-    name: basename(resolved),
+    path: folder.path,
+    name: folder.name,
+    stack: folder.stack ?? '',
+    hasContext: folder.brain !== 'missing',
+    brain: folder.brain,
+    isGitRepo: folder.isGitRepo,
+    docs: folder.docs,
+    writable: folder.writable,
   });
 }
 
@@ -1158,7 +1275,14 @@ export async function handleLauncherDefaults(
   _contextRoot: string | null,
 ): Promise<void> {
   const home = homedir();
-  sendJson(res, 200, { home, defaultParent: join(home, 'projects') });
+  const defaultParent = join(home, 'projects');
+  let defaultParentExists = false;
+  try {
+    defaultParentExists = statSync(defaultParent).isDirectory();
+  } catch {
+    defaultParentExists = false;
+  }
+  sendJson(res, 200, { home, defaultParent, defaultParentExists });
 }
 
 // ─── Per-project status (exists / update-needed) ────────────────────────────────

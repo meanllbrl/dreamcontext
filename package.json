@@ -89,6 +89,8 @@
     "verify:task-backlog": "node scripts/verify/task-backlog-and-tags.mjs",
     "verify:lab-app": "node scripts/verify/lab-app-insight.mjs",
     "verify:chat-segments": "node scripts/verify/chat-segments.mjs",
+    "verify:node-setup-page": "node scripts/verify/node-setup-page.mjs",
+    "verify:onboarding": "node scripts/verify/onboarding.mjs",
     "announce:shots:gap": "node e2e/announce-shots-gap.mjs",
     "announce:shots:chat-html": "node e2e/announce-shots-chat-html.mjs",
     "verify:pane-widen": "node scripts/verify/pane-focus-widen.mjs",

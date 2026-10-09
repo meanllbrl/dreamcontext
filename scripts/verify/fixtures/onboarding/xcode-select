@@ -1,0 +1,18 @@
+#!/bin/sh
+# Stand-in for xcode-select (scripts/verify/onboarding.mjs).
+#   -p         succeeds once $HOME/.verify/clt exists (the developer tools "landed")
+#   --install  logged, then answers like Apple's: the installer window was opened
+V="$HOME/.verify"
+case "$1" in
+  -p)
+    if [ -f "$V/clt" ]; then echo /Library/Developer/CommandLineTools; exit 0; fi
+    echo "xcode-select: error: unable to get active developer directory" >&2
+    exit 2
+    ;;
+  --install)
+    printf 'xcode-select\t--install\n' >> "$V/log"
+    echo "xcode-select: note: install requested for command line developer tools"
+    exit 0
+    ;;
+esac
+exit 1

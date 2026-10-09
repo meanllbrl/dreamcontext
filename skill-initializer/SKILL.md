@@ -36,6 +36,7 @@ placeholders**. Not when `dreamcontext init` finished. That's just the empty she
 - You detect **no `_dream_context/`**, or a **sparse** one (only template stubs, empty
   `knowledge/`, zero features) — and there is material worth ingesting.
 - "Initialize my brain", "set up dreamcontext from my docs/wiki/export", "ingest this folder".
+- **Onboarding hand-off**: the first message is the kickoff prompt ("Use the initializer skill to set up this project's brain from what is already here…"), sent by the desktop Launcher's **Start with Claude** or by `dreamcontext setup`'s "Start Claude now?". The project was just scaffolded, so treat the brain as sparse and start at Phase 0; if the folder is empty, ask what the project is about first. Onboarding asks the user nothing about the project and installs no skill packs: the Phase 0 questions and the pack choice (Phase 5) are yours.
 
 **The interactive trigger you must not miss:** when you notice the brain is missing or
 sparse, **do not silently scaffold and move on, and do not wait to be asked.** Offer:
@@ -169,6 +170,9 @@ Populate the always-loaded core from the gathered intelligence (you or a final i
 - **People** (`dreamcontext config people "A" "B"`) when >1 distinct human git author.
 - **Taxonomy** (`dreamcontext taxonomy add domain:<concept>`) for recurring nouns.
 - Optional planning version if there's a clear near-term focus (`dreamcontext core releases add …`).
+- **Skill packs.** Read `dreamcontext install-skill --list`, recommend only the packs this project's work
+  needs (one line each: why), let the user pick, then `dreamcontext install-skill --packs <names…>`.
+  Never install a pack the user did not pick; none is a valid answer.
 
 ### Phase 6 — VERIFY (the real gate)
 

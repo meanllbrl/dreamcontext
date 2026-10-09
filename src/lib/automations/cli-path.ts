@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { stableNodeExecPath } from '../onboarding/platform.js';
 
 /**
  * `dreamcontext` on a headless run's PATH — the same CLI that started the run.
@@ -63,7 +64,10 @@ export function cliAwarePath(
   base: string = process.env.PATH ?? '',
   opts: { execPath?: string; entry?: string | undefined; home?: string } = {},
 ): string {
-  const execPath = opts.execPath ?? process.execPath;
+  // On the app's private Node the running path names a version folder that a later pin
+  // bump prunes; the shim (a file that outlives this process) and the PATH name the
+  // stable `current` link instead.
+  const execPath = stableNodeExecPath(opts.execPath ?? process.execPath, opts.home);
   const entry = 'entry' in opts ? opts.entry : process.argv[1];
   let entries = base.split(delimiter).filter(Boolean);
 

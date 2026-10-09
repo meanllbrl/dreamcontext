@@ -1,0 +1,26 @@
+#!/bin/sh
+# Stand-in for npm (scripts/verify/onboarding.mjs). Logs its argv to $HOME/.verify/log.
+# `install -g dreamcontext@latest` lays a stub `dreamcontext` into the npm prefix's bin,
+# exactly where a real global install would put it. Nothing reaches the registry.
+V="$HOME/.verify"
+printf 'npm\t%s\n' "$*" >> "$V/log"
+case "$*" in
+  *"install -g"*dreamcontext*)
+    prefix="${npm_config_prefix:-${NPM_CONFIG_PREFIX:-}}"
+    if [ -z "$prefix" ]; then echo "npm stand-in: no prefix set" >&2; exit 1; fi
+    mkdir -p "$prefix/bin"
+    printf '#!/bin/sh\necho 0.0.0-verify\n' > "$prefix/bin/dreamcontext"
+    chmod 755 "$prefix/bin/dreamcontext"
+    echo "added 1 package in 1s"
+    exit 0
+    ;;
+  *"install -g"*claude-code*)
+    echo "npm stand-in: the Claude npm fallback should not run in this verify" >&2
+    exit 1
+    ;;
+  --version|-v)
+    echo "10.0.0-verify"
+    exit 0
+    ;;
+esac
+exit 0

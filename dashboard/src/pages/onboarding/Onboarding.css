@@ -1,0 +1,434 @@
+/*
+ * First-run onboarding: a full-window takeover of the Launcher.
+ *
+ * Tokens only (no colour literals). Motion follows the opening splash: one enter curve
+ * (--ease-out), a step panel that rises in, a ready moment that holds, and the gem converging
+ * at the hand-off over --motion-converge. Every animation stands down under
+ * prefers-reduced-motion (bottom of this file). Buttons, links and the live dot come from
+ * ReadinessChecklist.css, which this flow always loads with the checklist.
+ */
+
+.ob {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+}
+
+/* The top strip doubles as the window's title bar: the empty space drags the window (the
+   Launcher's handler), the traffic lights float at its left. */
+.ob-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: var(--space-12);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-24);
+  box-sizing: border-box;
+  background: var(--color-bg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ob-skip { cursor: pointer; }
+
+/* ─── Step dots ───────────────────────────────────────────────────────────── */
+
+.ob-steps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.ob-step-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-hover);
+  transition: background var(--transition-normal), border-color var(--transition-normal);
+}
+
+.ob-step--current { color: var(--color-text); font-weight: var(--font-weight-medium); }
+.ob-step--current .ob-step-dot { background: var(--color-accent); border-color: var(--color-accent); }
+.ob-step--done { color: var(--color-text-secondary); }
+.ob-step--done .ob-step-dot { background: var(--color-text-tertiary); border-color: var(--color-text-tertiary); }
+
+/* ─── The panel ───────────────────────────────────────────────────────────── */
+
+.ob-panel {
+  width: 100%;
+  max-width: 560px;
+  padding: var(--space-8) var(--space-6) var(--space-16);
+  box-sizing: border-box;
+  animation: ob-enter var(--transition-normal);
+  animation-timing-function: var(--ease-out);
+}
+
+.ob-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ob-head { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-2); }
+
+.ob-title {
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-subheading);
+  line-height: var(--line-height-heading-sm);
+  color: var(--color-text);
+}
+
+.ob-title--sm { font-size: var(--font-size-lg); letter-spacing: var(--letter-spacing-tight); }
+
+.ob-subtitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-secondary);
+}
+
+.ob-hint {
+  display: block;
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-secondary);
+}
+
+.ob-path { font-family: var(--font-mono); overflow-wrap: anywhere; }
+
+.ob-found {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.ob-error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink);
+  font-size: var(--font-size-sm);
+}
+
+.ob-notice {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.ob-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.ob-actions--center { justify-content: center; }
+
+/* The ready moment: the title settles, holds, and its end moves the flow on. */
+.ob-ready-moment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  animation: ob-ready var(--motion-converge) var(--ease-out) both;
+}
+
+/* ─── Choice cards ────────────────────────────────────────────────────────── */
+
+.ob-choices { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ob-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  text-align: left;
+  font-family: var(--font-family-text);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+}
+
+.ob-choice:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-bg-tertiary); }
+.ob-choice:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.ob-choice:active:not(:disabled) { transform: scale(0.98); }
+.ob-choice:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ob-choice-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ─── Fields ──────────────────────────────────────────────────────────────── */
+
+.ob-field { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ob-field-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.ob-input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--space-10);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+}
+
+.ob-input:focus-visible { outline: none; border-color: var(--color-border-focus); box-shadow: var(--shadow-glow); }
+
+.ob-inline { display: flex; gap: var(--space-2); align-items: stretch; }
+
+.ob-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.ob-check input { margin-top: var(--space-1); accent-color: var(--color-accent); }
+.ob-check > span { display: flex; flex-direction: column; gap: var(--space-1); }
+.ob-check-label { color: var(--color-text); }
+.ob-check--disabled { cursor: not-allowed; }
+.ob-check--disabled .ob-check-label { color: var(--color-text-tertiary); }
+
+/* ─── Clone ───────────────────────────────────────────────────────────────── */
+
+.ob-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.ob-repo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text);
+  text-align: left;
+  font-family: var(--font-family-text);
+  cursor: pointer;
+}
+
+.ob-repo:hover { background: var(--color-bg-tertiary); }
+.ob-repo:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+/* A selected row is a neutral surface: the screen's one filled accent stays the button. */
+.ob-repo--on { border-color: var(--color-border-hover); background: var(--color-bg-tertiary); }
+
+.ob-repo-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.ob-badge {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.ob-progress-log {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ─── Hand-off ────────────────────────────────────────────────────────────── */
+
+.ob-handoff { align-items: center; text-align: center; padding-top: var(--space-8); }
+
+.ob-gem { overflow: visible; }
+.ob-gem--lg { width: var(--space-24); height: var(--space-24); margin-bottom: var(--space-4); }
+.ob-gem--md { width: var(--space-16); height: var(--space-16); }
+
+.ob-gem-stop-light { stop-color: var(--color-accent); }
+.ob-gem-stop-mid { stop-color: var(--color-brand-mid); }
+.ob-gem-stop-deep { stop-color: var(--color-brand-deep); }
+.ob-gem-chevron-fill { fill: var(--color-accent); opacity: 0.85; }
+.ob-gem-rhombus-edge { stroke: var(--color-brand-deep); stroke-width: 3; }
+
+.ob-gem-piece,
+.ob-gem-ring { transform-box: view-box; transform-origin: 50% 50%; }
+
+.ob-gem-piece { animation: ob-converge var(--motion-converge) var(--ease-out) both; }
+.ob-gem-left { --ob-from: translate(-96px, 24px) rotate(10deg) scale(1.08); }
+.ob-gem-chevron { --ob-from: translate(96px, -32px) rotate(-12deg) scale(1.1); }
+.ob-gem-wedge { --ob-from: translate(64px, 24px) rotate(-6deg) scale(1.04); }
+.ob-gem-rhombus { --ob-from: rotate(45deg) scale(0); }
+
+.ob-gem-ring {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-linecap: round;
+  opacity: 0.6;
+  animation: ob-ring var(--motion-converge) var(--ease-out) calc(var(--motion-converge) / 2) both;
+}
+
+.ob-gem-hairlines {
+  fill: none;
+  stroke: var(--color-brand-deep);
+  stroke-width: 3;
+  opacity: 0.5;
+  animation: ob-settle var(--motion-converge) var(--ease-out) calc(var(--motion-converge) / 2) both;
+}
+
+/* ─── Welcome ─────────────────────────────────────────────────────────────── */
+
+/* The gem converges first; the words follow it up one by one, the button last. */
+.ob-welcome {
+  align-items: center;
+  text-align: center;
+  padding-top: var(--space-12);
+}
+.ob-welcome > :not(.ob-gem) {
+  animation: ob-enter var(--transition-slow) var(--ease-out) both;
+  animation-delay: var(--ob-welcome-delay);
+}
+.ob-welcome-word { --ob-welcome-delay: calc(var(--motion-converge) * 0.8); }
+.ob-welcome-title { --ob-welcome-delay: calc(var(--motion-converge) * 1.1); }
+.ob-welcome-body { --ob-welcome-delay: calc(var(--motion-converge) * 1.4); }
+.ob-welcome-cta { --ob-welcome-delay: calc(var(--motion-converge) * 1.8); }
+
+.ob-welcome-word {
+  font-family: var(--font-family-display);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-text);
+}
+.ob-welcome-word span { color: var(--color-accent); }
+
+.ob-welcome-title {
+  margin: 0;
+  max-width: 14em;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-heading-sm);
+  color: var(--color-text);
+  text-wrap: balance;
+}
+
+.ob-welcome-body {
+  margin: 0;
+  max-width: 34em;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-secondary);
+  text-wrap: pretty;
+}
+
+.ob-welcome-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* ─── Motion ──────────────────────────────────────────────────────────────── */
+
+@keyframes ob-enter {
+  from { opacity: 0; transform: translateY(var(--space-2)); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ob-ready {
+  0% { opacity: 0; transform: translateY(var(--space-1)); }
+  40% { opacity: 1; transform: none; }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes ob-converge {
+  from { transform: var(--ob-from); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@keyframes ob-ring {
+  from { transform: scale(1.2); opacity: 0; }
+  to { transform: none; opacity: 0.6; }
+}
+
+@keyframes ob-settle {
+  from { opacity: 0; }
+  to { opacity: 0.5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-panel,
+  .ob-ready-moment,
+  .ob-welcome > *,
+  .ob-gem-piece,
+  .ob-gem-ring,
+  .ob-gem-hairlines,
+  .ob-step-dot,
+  .ob-choice {
+    animation: none;
+    transition: none;
+  }
+}
