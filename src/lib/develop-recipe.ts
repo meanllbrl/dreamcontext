@@ -51,6 +51,16 @@ one, never on a sibling lane. A task that arrived from Plan mode with a wave map
 unchanged. On an adopted run whose impl.waves differs from the task's wave map, start fresh:
 \`dreamcontext goal-live clear || true\` on one line, then \`start\` again on the next.
 
+Every wave costs a snapshot, the slowest lane, a gate and a review, in series, so the map has
+as FEW waves as the dependencies allow:
+- Wave count = the longest dependency chain. A criterion goes in the EARLIEST wave whose
+  inputs exist; each wave after W1 names what it consumes from an earlier one, or merges back.
+- Criteria that share a file share a lane. A file clash is never a reason for a new wave.
+- Tests are written in the lane that writes their code, never a test wave.
+- Verify scripts and docs join the earliest wave that fits (against the task's stated
+  contract), never a closing wave of their own.
+- A topic split (server, then client, then docs) is not a dependency.
+
 ## 2. Each wave N
 
 ### 2a. Base snapshot (whole tree, per wave)

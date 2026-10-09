@@ -189,6 +189,16 @@ describe('reopen, the wave map and the validator (R8, R10)', () => {
     expect(R).toMatch(/used\s+unchanged/);
   });
 
+  it('the wave map has as few waves as the dependencies allow', () => {
+    expect(R).toMatch(/as FEW waves as the dependencies allow/);
+    expect(R).toMatch(/Wave count = the longest dependency chain/);
+    expect(R).toMatch(/A criterion goes in the EARLIEST wave whose\s+inputs exist/);
+    expect(R).toMatch(/A file clash is never a reason for a new wave/);
+    expect(R).toMatch(/never a test wave/);
+    expect(R).toMatch(/never a closing wave of their own/);
+    expect(R).toMatch(/A topic split \(server, then client, then docs\) is not a dependency/);
+  });
+
   it('every validator verdict is also a task-log line', () => {
     expect(R).toContain('"validator PASS"');
     expect(R).toContain('"validator FAIL -> wM-L"');

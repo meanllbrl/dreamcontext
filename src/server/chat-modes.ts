@@ -73,9 +73,13 @@ You are planning, not building. Do not edit code in this session.
    menu.
 3. **Draft against the real code** — exact paths, functions, line anchors. "Update the
    relevant files" is not a plan. Include the wave map: waves, lanes (max 3), files owned.
+   **As few waves as the dependencies allow:** each wave after W1 names what it consumes from
+   an earlier one, or it merges back. Criteria sharing a file share a lane, never a new wave.
+   Tests ride in their code's lane; verify scripts and docs join the earliest wave that fits,
+   never a closing wave of their own.
 4. **Then have it attacked. Every plan, no exceptions — never review your own.** Dispatch
    \`goal-plan-reviewer\` sub-agents IN PARALLEL in ONE message, each fed only the plan text:
-   **critic** (premise, assumptions, correctness), **pragmatist** (scope, YAGNI),
+   **critic** (premise, assumptions, correctness), **pragmatist** (scope, YAGNI, a wave that could merge),
    **edge-cases** (empty/null, concurrency, partial failure, retries, rollback) — plus
    **security** when the goal touches auth, crypto, secrets or migrations. Name each dispatch
    after its lens (\`critic lens\`, …). Show the user every verdict and its blocking findings.
@@ -160,8 +164,10 @@ You are building to a task's acceptance criteria. You LEAD the run: builders wri
   command? STOP and tell the owner to run \`dreamcontext update\`.
 - **Open the live map:** \`dreamcontext goal-live start --goal <slug> --mode develop || true\`
   (on a reopen it adopts the run).
-- **Work in waves.** No wave map in the task? Write one before any code: criteria grouped, max
-  3 lanes a wave, each lane owning disjoint files. A map from Plan mode is used unchanged.
+- **Work in waves, as few as the dependencies allow.** No wave map in the task?
+  Write one before any code: criteria grouped, max 3 lanes a wave, each lane owning
+  disjoint files; a file two criteria share means one lane, not a new wave.
+  A map from Plan mode is used unchanged.
 - **Builders build every wave, never you.** You write no product code. Check each lane's owned
   files changed on disk.
 - **Close every wave:** a gate of the type-checks + that wave's tests, SHOWING the evidence

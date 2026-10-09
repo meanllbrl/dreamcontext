@@ -326,6 +326,25 @@ describe('modeBriefing', () => {
     expect(brief.indexOf('Include the wave map')).toBeLessThan(brief.indexOf('4. **Then have it attacked'));
   });
 
+  // 2026-10-09 (owner: "plan mode splits into needless extra waves"): every wave is a serial
+  // snapshot + slowest lane + gate + review, and nothing told the planner to minimise them, so
+  // maps split by topic and bumped a shared file into a new wave instead of one lane.
+  it('plan keeps the wave count to the dependency chain, and the pragmatist checks it', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    expect(brief).toMatch(/As few waves as the dependencies allow/);
+    expect(brief).toMatch(/names what it consumes from\s+an earlier one, or it merges back/);
+    expect(brief).toMatch(/Criteria sharing a file share a lane, never a new wave/);
+    expect(brief).toMatch(/never a closing wave of their own/);
+    expect(brief).toMatch(/\*\*pragmatist\*\* \(scope, YAGNI, a wave that could merge\)/);
+    expect(brief.indexOf('As few waves')).toBeLessThan(brief.indexOf('4. **Then have it attacked'));
+  });
+
+  it('develop writes its own map with as few waves as the dependencies allow', () => {
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toMatch(/Work in waves, as few as the dependencies allow/);
+    expect(brief).toMatch(/a\s+file two criteria share means one lane, not a new wave/);
+  });
+
   it('develop iterates on review findings, and escalates one that survives a fix', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
     expect(brief).toMatch(/re-review/i);
@@ -479,6 +498,10 @@ describe('modeBriefing', () => {
   // PROCEDURE went to `goal-live recipe develop` instead; nothing procedural buys a higher
   // ceiling here.
   //
+  // `plan` went 2520 → 2900 (2026-10-09) for the fewest-waves rule in step 3 and the
+  // pragmatist's merge check: a map with needless waves costs a full gate + review per extra
+  // wave, and the planner is the only place that decides the count.
+  //
   // `train` got 2150 (2026-09-27): like develop it concatenates the worktree paragraph, and its
   // own text is a contract too, the owner's swipe verdicts: predict and show only misses, no
   // rule per round, a confirm-gated write, the automation's playbook route. The card SHAPES
@@ -493,7 +516,7 @@ describe('modeBriefing', () => {
   // "the assistant always knows every session"): the three notch cues and the live-context rule.
   // Then 4900 → 5050 (2026-10-04, owner: close finished chats in other projects): the `close`
   // tool line, its idle-vs-busy rule line, and `close` in the long-timeout list.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 2520, develop: 3200, train: 2150, assistant: 5800 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list
+  const BRIEFING_CEILING: Record<string, number> = { plan: 2900, develop: 3200, train: 2150, assistant: 5800 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list
   const DEFAULT_CEILING = 1600;
 
   it('assistant: speaks before delegating, single-quotes --prompt, takes meeting notes through a tool, and stays 150 under its ceiling', () => {
