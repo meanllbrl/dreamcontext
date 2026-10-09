@@ -132,17 +132,17 @@ describe('Lookup never sums in the UI', () => {
   it('a one-axis selection draws exactly that path', () => {
     const html = render(lookupFrame(), {}, { selection: { platform: 'Meta Ads' } });
     expect(html).toContain('data-lab-selection="platform=Meta Ads"');
-    expect(html).toContain('Visit: 600 users');
-    expect(html).toContain('Buy: 90 users');
+    expect(html).toContain('Visit: 600 · 100.0%');
+    expect(html).toContain('Buy: 90 · 15.0%');
   });
 
   it('an intersection draws exactly the intersection path, never a sum of overlapping paths', () => {
     const html = render(lookupFrame(), {}, { selection: { platform: 'Meta Ads', language: 'EN' } });
-    expect(html).toContain('Visit: 420 users');
-    expect(html).toContain('Lead: 210 users');
+    expect(html).toContain('Visit: 420 · 100.0%');
+    expect(html).toContain('Lead: 210 · 50.0%');
     // Summing Meta + EN + the intersection would read 1,720 / 790.
     expect(html).not.toContain('1,720');
-    expect(html).not.toContain('Visit: 600 users');
+    expect(html).not.toContain('Visit: 600 ·');
   });
 });
 
@@ -173,7 +173,7 @@ describe('funnel pick', () => {
   it('a picked funnel is the one drawn', () => {
     const html = render(lookupFrame(), { funnel: 'activation' });
     expect(html).toContain('data-lab-funnel="activation"');
-    expect(html).toContain('Signup: 500 users');
+    expect(html).toContain('Signup: 500 · 100.0%');
     expect(html).not.toContain('data-lab-unknown-funnel');
   });
 
@@ -192,7 +192,7 @@ describe('markWorst (bars)', () => {
     expect(worst.key).toBe('buy');
     expect(html).toContain(`data-lab-worst="${worst.key}"`);
     expect(html).toContain('Checkout → Buy');
-    expect(html).toContain('80% drop');
+    expect(html).toContain('80.0% drop');
     expect(count(html, 'data-lab-worst=')).toBe(1);
   });
 });

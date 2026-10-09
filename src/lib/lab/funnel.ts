@@ -1,19 +1,33 @@
 import {
   LabError,
+  type FunnelAccess,
+  type FunnelAccessRow,
   type FunnelBenchmark,
   type FunnelCacheEntry,
   type FunnelDay,
   type FunnelDef,
   type FunnelDimension,
+  type FunnelIntersection,
+  type FunnelLadder,
+  type FunnelLadderStage,
   type FunnelMetricFormat,
   type FunnelMetricValue,
+  type FunnelNote,
+  type FunnelPayment,
+  type FunnelPaymentCell,
+  type FunnelPaymentReason,
+  type FunnelProvenance,
+  type FunnelRateDef,
   type FunnelSegment,
   type FunnelSet,
   type FunnelSnapshot,
   type FunnelStep,
+  type FunnelWeek,
+  type FunnelWindow,
   type RawFunnelSet,
   type Series,
 } from './types.js';
+import { deriveLadderBands } from './funnelLadder.js';
 
 /**
  * Funnel-set contract (`funnel-set/v1`) — validation, caps, snapshots, deltas.
@@ -58,6 +72,35 @@ export const FUNNEL_HISTORY_MAX = 40;
 export const DEFAULT_LOW_SAMPLE_THRESHOLD = 30;
 /** Collapsed-value label for over-cap dimension values / segment cells. */
 export const OTHER_VALUE = 'Other';
+
+// ─── Explorer caps (every hit produces a notice) ────────────────────────────
+/** Notes per level (the set, each funnel). */
+export const MAX_NOTES = 8;
+export const MAX_NOTE_CHARS = 200;
+export const MAX_NOTE_KEYS = 16;
+export const MAX_NOTE_CODE_CHARS = 16;
+/** Entries in `hints` (set) and `unmeasured` (funnel). */
+export const MAX_HINTS = 24;
+export const MAX_UNMEASURED = 16;
+/** Provenance: filters, each filter's chars, the source's chars, the freshness chars. */
+export const MAX_FILTERS = 8;
+export const MAX_FILTER_CHARS = 120;
+export const MAX_PROVENANCE_CHARS = 120;
+export const MAX_FRESHNESS_CHARS = 64;
+export const MAX_INTERSECTIONS = 16;
+export const MAX_RATES = 32;
+export const MAX_LADDER_STAGES = 16;
+/** Weekly history per level (input only: the newest are kept). */
+export const MAX_WEEKS = 52;
+/** Payment cells per funnel (and for the set), reason keys per cell, named reasons. */
+export const MAX_PAYMENT_CELLS = 64;
+export const MAX_PAYMENT_REASONS = 12;
+export const MAX_ACCESS_STAGES = 8;
+export const MAX_ACCESS_ROWS = 64;
+/** Max length of a key (step, metric, dimension, reason) the explorer fields name. */
+const MAX_KEY_CHARS = 64;
+/** A `hints` / `unmeasured` key: a contract part, `dim:<key>` or `metric:<key>`. */
+export const PART_KEY = /^(daily|weekly|segments|intersections|payment|access|dim:[\w.-]{1,64}|metric:[\w.-]{1,64})$/;
 
 const FORMATS: readonly FunnelMetricFormat[] = ['count', 'pct', 'usd', 'x', 'seconds', 'number'];
 
@@ -186,7 +229,7 @@ function parseDaily(raw: unknown, metricKeys: ReadonlySet<string>, where: string
   return days.length > 0 ? days : undefined;
 }
 
-function parseStep(raw: unknown): FunnelStep | null {
+function parseStep(raw: unknown, where: string, notices: string[]): FunnelStep | null {
   if (!isRecord(raw)) return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
@@ -199,7 +242,405 @@ function parseStep(raw: unknown): FunnelStep | null {
   if ('prev' in raw) step.prev = toFiniteOrNull(raw.prev);
   const median = toFiniteOrNull(raw.median_seconds);
   if (median !== null) step.median_seconds = median;
+  if (raw.basis === 'measured' || raw.basis === 'derived') step.basis = raw.basis;
+  else if (raw.basis !== undefined) notices.push(`${where} step "${key}": unknown basis "${String(raw.basis)}", treated as measured.`);
+  if (raw.measured === false) {
+    // Not measured is not zero: the count is dropped, the drop math skips the step.
+    step.measured = false;
+    step.users = 0;
+    const reason = cleanText(raw.reason, MAX_REASON_CHARS, `${where} step "${key}" reason`, notices);
+    if (reason) step.reason = reason;
+  }
   return step;
+}
+
+// ─── Explorer field parsers (lenient: bad input is a notice, never a throw) ──
+
+function cleanKey(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const key = raw.trim();
+  return key && key.length <= MAX_KEY_CHARS ? key : null;
+}
+
+/** Keep the first `max` entries of a list, with a notice when more were given. */
+function capList<T>(list: T[], max: number, what: string, notices: string[]): T[] {
+  if (list.length <= max) return list;
+  notices.push(`${what}: ${list.length} given, kept the first ${max}.`);
+  return list.slice(0, max);
+}
+
+function parseNotes(raw: unknown, where: string, notices: string[]): FunnelNote[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    notices.push(`${where}: notes is not an array, dropped.`);
+    return undefined;
+  }
+  const out: FunnelNote[] = [];
+  raw.forEach((n, i) => {
+    const at = `${where} note ${i + 1}`;
+    if (!isRecord(n)) {
+      notices.push(`${at}: not an object, dropped.`);
+      return;
+    }
+    const text = cleanText(n.text, MAX_NOTE_CHARS, `${at} text`, notices);
+    if (!text) {
+      notices.push(`${at}: no text, dropped.`);
+      return;
+    }
+    const note: FunnelNote = { text };
+    const code = cleanText(n.code, MAX_NOTE_CODE_CHARS, `${at} code`, notices);
+    if (code) note.code = code;
+    if (n.level === 'trap' || n.level === 'info') note.level = n.level;
+    else if (n.level !== undefined) notices.push(`${at}: unknown level "${String(n.level)}", treated as trap.`);
+    if (Array.isArray(n.keys)) {
+      const keys = n.keys.map(cleanKey).filter((k): k is string => k !== null);
+      if (keys.length < n.keys.length) notices.push(`${at}: ${n.keys.length - keys.length} unusable key(s) dropped.`);
+      const capped = capList(keys, MAX_NOTE_KEYS, `${at} keys`, notices);
+      if (capped.length > 0) note.keys = capped;
+    }
+    out.push(note);
+  });
+  const capped = capList(out, MAX_NOTES, `${where} notes`, notices);
+  return capped.length > 0 ? capped : undefined;
+}
+
+function parseWindow(raw: unknown, notices: string[]): FunnelWindow | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const day = (v: unknown) => (typeof v === 'string' && isIsoDay(v.trim()) ? v.trim() : null);
+  const from = isRecord(raw) ? day(raw.from) : null;
+  const to = isRecord(raw) ? day(raw.to) : null;
+  if (!isRecord(raw) || !from || !to || from > to) {
+    notices.push('window: needs YYYY-MM-DD from <= to, dropped.');
+    return undefined;
+  }
+  const window: FunnelWindow = { from, to };
+  const prevFrom = day(raw.prev_from);
+  const prevTo = day(raw.prev_to);
+  if (prevFrom && prevTo && prevFrom <= prevTo) {
+    window.prev_from = prevFrom;
+    window.prev_to = prevTo;
+  } else if (raw.prev_from !== undefined || raw.prev_to !== undefined) {
+    notices.push('window: prev_from / prev_to need YYYY-MM-DD with prev_from <= prev_to, dropped.');
+  }
+  return window;
+}
+
+function parseProvenance(raw: unknown, notices: string[]): FunnelProvenance | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const source = isRecord(raw) ? cleanText(raw.source, MAX_PROVENANCE_CHARS, 'provenance source', notices) : undefined;
+  if (!isRecord(raw) || !source) {
+    notices.push('provenance: needs a `source` text, dropped.');
+    return undefined;
+  }
+  const out: FunnelProvenance = { source };
+  const pulled = cleanText(raw.pulled_at, MAX_FRESHNESS_CHARS, 'provenance pulled_at', notices);
+  if (pulled) out.pulled_at = pulled;
+  const freshness = cleanText(raw.freshness, MAX_FRESHNESS_CHARS, 'provenance freshness', notices);
+  if (freshness) out.freshness = freshness;
+  if (Array.isArray(raw.filters)) {
+    const filters = raw.filters
+      .map((f, i) => cleanText(f, MAX_FILTER_CHARS, `provenance filter ${i + 1}`, notices))
+      .filter((f): f is string => !!f);
+    const capped = capList(filters, MAX_FILTERS, 'provenance filters', notices);
+    if (capped.length > 0) out.filters = capped;
+  }
+  return out;
+}
+
+/** `hints` (how to fill a part) and `unmeasured` (why a funnel lacks one): part key -> text. */
+function parsePartMap(raw: unknown, where: string, max: number, notices: string[]): Record<string, string> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isRecord(raw)) {
+    notices.push(`${where}: not an object, dropped.`);
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  let kept = 0;
+  let over = 0;
+  for (const [key, value] of Object.entries(raw)) {
+    if (!PART_KEY.test(key)) {
+      notices.push(`${where}: key "${key}" is not a part (daily, weekly, segments, intersections, payment, access, dim:<key>, metric:<key>), dropped.`);
+      continue;
+    }
+    const text = cleanText(value, MAX_REASON_CHARS, `${where} "${key}"`, notices);
+    if (!text) continue;
+    if (kept >= max) {
+      over += 1;
+      continue;
+    }
+    out[key] = text;
+    kept += 1;
+  }
+  if (over > 0) notices.push(`${where}: ${kept + over} entries, kept the first ${max}.`);
+  return kept > 0 ? out : undefined;
+}
+
+function parseRates(raw: unknown, notices: string[]): Record<string, FunnelRateDef> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isRecord(raw)) {
+    notices.push('rates: not an object, dropped.');
+    return undefined;
+  }
+  const out: Record<string, FunnelRateDef> = {};
+  let kept = 0;
+  for (const [metric, def] of Object.entries(raw)) {
+    const num = isRecord(def) ? cleanKey(def.num) : null;
+    const den = isRecord(def) ? cleanKey(def.den) : null;
+    if (!num || !den) {
+      notices.push(`rates "${metric}": needs step keys num and den, dropped.`);
+      continue;
+    }
+    if (kept >= MAX_RATES) {
+      notices.push(`rates: more than ${MAX_RATES}, "${metric}" dropped.`);
+      continue;
+    }
+    out[metric] = { num, den };
+    kept += 1;
+  }
+  return kept > 0 ? out : undefined;
+}
+
+function parseIntersections(raw: unknown, declared: ReadonlySet<string>, notices: string[]): FunnelIntersection[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    notices.push('intersections: not an array, dropped.');
+    return undefined;
+  }
+  const out: FunnelIntersection[] = [];
+  raw.forEach((x, i) => {
+    const at = `intersections[${i}]`;
+    const dims = isRecord(x) && Array.isArray(x.dims)
+      ? [...new Set(x.dims.map(cleanKey).filter((k): k is string => k !== null))]
+      : [];
+    if (!isRecord(x) || dims.length === 0) {
+      notices.push(`${at}: needs a dims list, dropped.`);
+      return;
+    }
+    const unknown = dims.filter((d) => !declared.has(d));
+    if (unknown.length > 0) {
+      notices.push(`${at}: dims ${unknown.map((d) => `"${d}"`).join(', ')} are not declared dimensions, dropped.`);
+      return;
+    }
+    const entry: FunnelIntersection = { dims };
+    const min = toFiniteOrNull(x.min_users);
+    if (min !== null && min >= 0) entry.min_users = min;
+    else if (x.min_users !== undefined) notices.push(`${at}: min_users is not a number >= 0, ignored.`);
+    out.push(entry);
+  });
+  const capped = capList(out, MAX_INTERSECTIONS, 'intersections', notices);
+  return capped.length > 0 ? capped : undefined;
+}
+
+function wholeIn(v: unknown, min: number, max: number): number | null {
+  const n = toFiniteOrNull(v);
+  return n !== null && Number.isInteger(n) && n >= min && n <= max ? n : null;
+}
+
+function parseLadder(raw: unknown, notices: string[]): FunnelLadder | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isRecord(raw) || !Array.isArray(raw.stages)) {
+    notices.push('ladder: needs a stages list, dropped.');
+    return undefined;
+  }
+  const stages: FunnelLadderStage[] = [];
+  const seen = new Set<string>();
+  raw.stages.forEach((s, i) => {
+    const at = `ladder stage ${i + 1}`;
+    const metric = isRecord(s) ? cleanKey(s.metric) : null;
+    if (!isRecord(s) || !metric) {
+      notices.push(`${at}: needs a metric key, dropped.`);
+      return;
+    }
+    if (seen.has(metric)) {
+      notices.push(`${at}: metric "${metric}" repeats an earlier stage, dropped.`);
+      return;
+    }
+    seen.add(metric);
+    const stage: FunnelLadderStage = { metric };
+    const floor = toFiniteOrNull(s.book_floor);
+    if (floor !== null) stage.book_floor = floor;
+    const target = toFiniteOrNull(s.book_target);
+    if (target !== null) stage.book_target = target;
+    const source = cleanText(s.book_source, MAX_SOURCE_CHARS, `${at} book_source`, notices);
+    if (source) stage.book_source = source;
+    stages.push(stage);
+  });
+  const capped = capList(stages, MAX_LADDER_STAGES, 'ladder stages', notices);
+  if (capped.length === 0) {
+    notices.push('ladder: no usable stage, dropped.');
+    return undefined;
+  }
+  const ladder: FunnelLadder = { stages: capped };
+  const knobs: [keyof FunnelLadder & ('min_weeks' | 'min_week_users' | 'max_weeks'), number, number][] = [
+    ['min_weeks', 1, MAX_WEEKS],
+    ['min_week_users', 0, Number.MAX_SAFE_INTEGER],
+    ['max_weeks', 1, MAX_WEEKS],
+  ];
+  for (const [key, min, max] of knobs) {
+    if (raw[key] === undefined) continue;
+    const v = wholeIn(raw[key], min, max);
+    if (v === null) notices.push(`ladder ${key}: must be a whole number ${min}..${max === Number.MAX_SAFE_INTEGER ? 'up' : max}, default used.`);
+    else ladder[key] = v;
+  }
+  return ladder;
+}
+
+/** Weekly history (input only): ISO week starts, the newest MAX_WEEKS kept. */
+function parseWeekly(raw: unknown, where: string, notices: string[]): FunnelWeek[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    notices.push(`${where}: weekly is not an array, dropped.`);
+    return undefined;
+  }
+  const out: FunnelWeek[] = [];
+  let bad = 0;
+  for (const w of raw) {
+    const t = isRecord(w) && typeof w.t === 'string' ? w.t.trim() : '';
+    const users = isRecord(w) ? toFiniteOrNull(w.users) : null;
+    if (!isRecord(w) || !isIsoDay(t) || users === null || !isRecord(w.m)) {
+      bad += 1;
+      continue;
+    }
+    const m: Record<string, number | null> = {};
+    for (const [k, v] of Object.entries(w.m)) m[k] = toFiniteOrNull(v);
+    out.push({ t, users: Math.max(0, users), m });
+  }
+  if (bad > 0) notices.push(`${where}: ${bad} weekly entr${bad === 1 ? 'y' : 'ies'} without a YYYY-MM-DD \`t\`, \`users\` and an \`m\` object dropped.`);
+  out.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+  if (out.length > MAX_WEEKS) {
+    notices.push(`${where}: ${out.length} weekly entries, kept the newest ${MAX_WEEKS}.`);
+    return out.slice(out.length - MAX_WEEKS);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function parseStringMap(raw: unknown): Record<string, string> | null {
+  if (!isRecord(raw)) return null;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v === null || v === undefined) continue;
+    out[k] = String(v);
+  }
+  return out;
+}
+
+function parsePayment(raw: unknown, where: string, notices: string[]): FunnelPayment | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isRecord(raw)) {
+    notices.push(`${where} payment: not an object, dropped.`);
+    return undefined;
+  }
+  const cells: FunnelPaymentCell[] = [];
+  const rawCells = Array.isArray(raw.cells) ? raw.cells : [];
+  rawCells.forEach((c, i) => {
+    const at = `${where} payment cell ${i + 1}`;
+    const dims = isRecord(c) ? parseStringMap(c.dims ?? {}) : null;
+    const attempts = isRecord(c) ? toFiniteOrNull(c.attempts) : null;
+    const declines = isRecord(c) ? toFiniteOrNull(c.declines) : null;
+    if (!isRecord(c) || !dims || attempts === null || declines === null) {
+      notices.push(`${at}: needs dims, attempts and declines, dropped.`);
+      return;
+    }
+    const cell: FunnelPaymentCell = { dims, attempts: Math.max(0, attempts), declines: Math.max(0, declines) };
+    if (c.cohort === 'first' || c.cohort === 'renewal' || c.cohort === 'all') cell.cohort = c.cohort;
+    else if (c.cohort !== undefined) notices.push(`${at}: unknown cohort "${String(c.cohort)}", treated as all.`);
+    if (isRecord(c.reasons)) {
+      const reasons: Record<string, number> = {};
+      let kept = 0;
+      for (const [k, v] of Object.entries(c.reasons)) {
+        const n = toFiniteOrNull(v);
+        const key = cleanKey(k);
+        if (n === null || !key) continue;
+        if (kept >= MAX_PAYMENT_REASONS) {
+          notices.push(`${at}: more than ${MAX_PAYMENT_REASONS} reasons, "${key}" dropped.`);
+          continue;
+        }
+        reasons[key] = Math.max(0, n);
+        kept += 1;
+      }
+      if (kept > 0) cell.reasons = reasons;
+    }
+    cells.push(cell);
+  });
+  const payment: FunnelPayment = { cells: capList(cells, MAX_PAYMENT_CELLS, `${where} payment cells`, notices) };
+  if (raw.measured === false) {
+    payment.measured = false;
+    const reason = cleanText(raw.reason, MAX_REASON_CHARS, `${where} payment reason`, notices);
+    if (reason) payment.reason = reason;
+  }
+  if (payment.cells.length === 0 && payment.measured !== false) {
+    notices.push(`${where} payment: no usable cell, dropped.`);
+    return undefined;
+  }
+  return payment;
+}
+
+function parsePaymentReasons(raw: unknown, notices: string[]): FunnelPaymentReason[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    notices.push('payment_reasons: not an array, dropped.');
+    return undefined;
+  }
+  const out: FunnelPaymentReason[] = [];
+  const seen = new Set<string>();
+  raw.forEach((r, i) => {
+    const key = isRecord(r) ? cleanKey(r.key) : null;
+    const label = isRecord(r) ? cleanText(r.label, MAX_KEY_CHARS, `payment_reasons[${i}] label`, notices) : undefined;
+    if (!isRecord(r) || !key || !label || seen.has(key)) {
+      notices.push(`payment_reasons[${i}]: needs a unique key and a label, dropped.`);
+      return;
+    }
+    seen.add(key);
+    const reason: FunnelPaymentReason = { key, label };
+    const note = cleanText(r.note, MAX_REASON_CHARS, `payment_reasons[${i}] note`, notices);
+    if (note) reason.note = note;
+    out.push(reason);
+  });
+  const capped = capList(out, MAX_PAYMENT_REASONS, 'payment_reasons', notices);
+  return capped.length > 0 ? capped : undefined;
+}
+
+function parseAccess(raw: unknown, notices: string[]): FunnelAccess | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isRecord(raw) || !Array.isArray(raw.stages)) {
+    notices.push('access: needs a stages list, dropped.');
+    return undefined;
+  }
+  const stages = raw.stages
+    .map((s) => {
+      const key = isRecord(s) ? cleanKey(s.key) : null;
+      if (!isRecord(s) || !key) return null;
+      const label = typeof s.label === 'string' && s.label.trim() ? s.label.trim().slice(0, MAX_KEY_CHARS) : key;
+      return { key, label };
+    })
+    .filter((s): s is { key: string; label: string } => s !== null);
+  if (stages.length < raw.stages.length) notices.push(`access: ${raw.stages.length - stages.length} stage(s) without a key dropped.`);
+  const keptStages = capList(stages, MAX_ACCESS_STAGES, 'access stages', notices);
+  if (keptStages.length === 0) {
+    notices.push('access: no usable stage, dropped.');
+    return undefined;
+  }
+  const rows: FunnelAccessRow[] = [];
+  (Array.isArray(raw.rows) ? raw.rows : []).forEach((r, i) => {
+    if (!isRecord(r) || !isRecord(r.counts)) {
+      notices.push(`access row ${i + 1}: needs a counts object, dropped.`);
+      return;
+    }
+    const counts: Record<string, number | null> = {};
+    for (const [k, v] of Object.entries(r.counts)) {
+      const n = toFiniteOrNull(v);
+      counts[k] = n === null ? null : Math.max(0, n);
+    }
+    const row: FunnelAccessRow = { counts };
+    if (r.funnel !== undefined && r.funnel !== null && String(r.funnel).trim()) row.funnel = String(r.funnel).trim();
+    const dims = r.dims !== undefined ? parseStringMap(r.dims) : null;
+    if (dims && Object.keys(dims).length > 0) row.dims = dims;
+    rows.push(row);
+  });
+  const access: FunnelAccess = { stages: keptStages, rows: capList(rows, MAX_ACCESS_ROWS, 'access rows', notices) };
+  const asOf = cleanText(raw.as_of, MAX_FRESHNESS_CHARS, 'access as_of', notices);
+  if (asOf) access.as_of = asOf;
+  return access;
 }
 
 function segmentKey(dims: Record<string, string>): string {
@@ -360,6 +801,7 @@ function parseFunnel(
   dimensions: FunnelDimension[],
   mode: 'cells' | 'lookup',
   notices: string[],
+  weeklyOut: { weeks?: FunnelWeek[] },
 ): FunnelDef | null {
   if (!isRecord(raw)) {
     notices.push(`funnels[${index}] is not an object — skipped.`);
@@ -375,7 +817,7 @@ function parseFunnel(
   const seenKeys = new Set<string>();
   if (Array.isArray(raw.steps)) {
     for (const s of raw.steps) {
-      const step = parseStep(s);
+      const step = parseStep(s, `funnel ${id}`, notices);
       if (!step) continue;
       if (seenKeys.has(step.key)) {
         notices.push(`funnel ${id}: duplicate step key "${step.key}" — later occurrence dropped.`);
@@ -425,6 +867,19 @@ function parseFunnel(
     }
   }
 
+  const where = `funnel ${id}`;
+  const notes = parseNotes(raw.notes, where, notices);
+  if (notes) funnel.notes = notes;
+  const benchmarks = parseBenchmarks(raw.benchmarks, where, notices);
+  if (benchmarks) funnel.benchmarks = benchmarks;
+  const payment = parsePayment(raw.payment, where, notices);
+  if (payment) funnel.payment = payment;
+  const unmeasured = parsePartMap(raw.unmeasured, `${where} unmeasured`, MAX_UNMEASURED, notices);
+  if (unmeasured) funnel.unmeasured = unmeasured;
+  // Input only: collected for the ladder, never stored on the funnel.
+  const weeks = parseWeekly(raw.weekly, where, notices);
+  if (weeks) weeklyOut.weeks = weeks;
+
   return funnel;
 }
 
@@ -445,6 +900,10 @@ function parseBenchmarks(raw: unknown, where: string, notices: string[]): Record
     if (targetSource && target !== null) bench.target_source = targetSource;
     if (v.better === 'higher' || v.better === 'lower') bench.better = v.better;
     else if (v.better !== undefined) notices.push(`${where} benchmark "${key}": unknown better "${String(v.better)}", treated as higher.`);
+    if ((v.floor_from === 'book' || v.floor_from === 'own') && floor !== null) bench.floor_from = v.floor_from;
+    if ((v.target_from === 'book' || v.target_from === 'own') && target !== null) bench.target_from = v.target_from;
+    const weeks = wholeIn(v.weeks, 0, MAX_WEEKS);
+    if (weeks !== null) bench.weeks = weeks;
     if (bench.floor !== undefined || bench.target !== undefined || bench.better !== undefined) out[key] = bench;
   }
   return Object.keys(out).length > 0 ? out : undefined;
@@ -492,8 +951,10 @@ export function parseFunnelSet(raw: unknown): ParsedFunnelSet {
   }
   const funnels: FunnelDef[] = [];
   const seenIds = new Set<string>();
+  const funnelWeekly = new Map<string, FunnelWeek[]>();
   for (let i = 0; i < rawFunnels.length; i++) {
-    const funnel = parseFunnel(rawFunnels[i], i, dimensions, mode, notices);
+    const weeklyOut: { weeks?: FunnelWeek[] } = {};
+    const funnel = parseFunnel(rawFunnels[i], i, dimensions, mode, notices, weeklyOut);
     if (!funnel) continue;
     if (seenIds.has(funnel.id)) {
       notices.push(`duplicate funnel id "${funnel.id}" — later occurrence dropped.`);
@@ -501,6 +962,7 @@ export function parseFunnelSet(raw: unknown): ParsedFunnelSet {
     }
     seenIds.add(funnel.id);
     funnels.push(funnel);
+    if (weeklyOut.weeks) funnelWeekly.set(funnel.id, weeklyOut.weeks);
   }
 
   const set: FunnelSet = { kind: FUNNEL_SET_KIND, dimensions, funnels };
@@ -510,6 +972,33 @@ export function parseFunnelSet(raw: unknown): ParsedFunnelSet {
   const benchmarks = parseBenchmarks(raw.benchmarks, 'set', notices);
   if (benchmarks) set.benchmarks = benchmarks;
   if (raw.segment_mode !== undefined && mode === raw.segment_mode) set.segment_mode = mode;
+
+  // ── Explorer fields (all optional; a payload without them parses as before). ──
+  const window = parseWindow(raw.window, notices);
+  if (window) set.window = window;
+  const provenance = parseProvenance(raw.provenance, notices);
+  if (provenance) set.provenance = provenance;
+  const notes = parseNotes(raw.notes, 'set', notices);
+  if (notes) set.notes = notes;
+  const hints = parsePartMap(raw.hints, 'hints', MAX_HINTS, notices);
+  if (hints) set.hints = hints;
+  const rates = parseRates(raw.rates, notices);
+  if (rates) set.rates = rates;
+  const intersections = parseIntersections(raw.intersections, new Set(dimensions.map((d) => d.key)), notices);
+  if (intersections) set.intersections = intersections;
+  const ladder = parseLadder(raw.ladder, notices);
+  if (ladder) set.ladder = ladder;
+  const payment = parsePayment(raw.payment, 'set', notices);
+  if (payment) set.payment = payment;
+  const paymentReasons = parsePaymentReasons(raw.payment_reasons, notices);
+  if (paymentReasons) set.payment_reasons = paymentReasons;
+  const access = parseAccess(raw.access, notices);
+  if (access) set.access = access;
+
+  // Weekly history is a band INPUT: consumed by the ladder here, never stored.
+  const setWeekly = parseWeekly(raw.weekly, 'set', notices);
+  if (set.ladder) deriveLadderBands(set, { set: setWeekly, funnels: funnelWeekly }, notices);
+  else if (setWeekly || funnelWeekly.size > 0) notices.push('weekly history given without a ladder: ignored.');
 
   // ── Byte cap, cheapest detail first (largest funnel first at each stage):
   // segment daily, then funnel daily, then segments; still over = reject. ──
@@ -547,12 +1036,18 @@ export function parseFunnelSet(raw: unknown): ParsedFunnelSet {
 export function funnelToSeries(set: FunnelSet): Series[] {
   return set.funnels.map((f) => ({
     name: f.name || f.id,
-    points: f.steps.map((s) => ({ t: s.label || s.key, v: s.users })),
+    // A step that is not measured has no count: it is not a point at 0.
+    points: f.steps.filter(isMeasuredStep).map((s) => ({ t: s.label || s.key, v: s.users })),
   }));
 }
 
+/** A step carries a real count (an unmeasured step's stored 0 is not one). */
+function isMeasuredStep(step: FunnelStep): boolean {
+  return step.measured !== false;
+}
+
 /** The card/binding `latest` for a funnel-set: the primary metric of the first
- *  funnel, else its first-step (top) users. */
+ *  funnel, else the users of its first MEASURED step (null when none is). */
 export function funnelLatest(set: FunnelSet): number | null {
   const first = set.funnels[0];
   if (!first) return null;
@@ -560,7 +1055,7 @@ export function funnelLatest(set: FunnelSet): number | null {
     const primary = first.metrics[set.primary];
     if (primary && primary.v !== null && Number.isFinite(primary.v)) return primary.v;
   }
-  return first.steps[0]?.users ?? null;
+  return first.steps.find(isMeasuredStep)?.users ?? null;
 }
 
 // ─── History snapshots + previous-period deltas ─────────────────────────────
@@ -577,7 +1072,8 @@ export function makeFunnelSnapshot(
     funnels: set.funnels.map((f) => ({
       id: f.id,
       metrics: Object.fromEntries(Object.entries(f.metrics).map(([k, m]) => [k, m.v])),
-      steps: f.steps.map((s) => ({ key: s.key, users: s.users })),
+      // An unmeasured step is left out: a later delta reads it as no value, never 0.
+      steps: f.steps.filter(isMeasuredStep).map((s) => ({ key: s.key, users: s.users })),
     })),
   };
 }
@@ -646,9 +1142,17 @@ export function pickPreviousSnapshot(
   return best;
 }
 
-/** Compute previous-period values for every funnel/metric/step in the set. */
+/** The window a set declares as a cache range, or null when it declares none. */
+export function funnelSetRange(set: FunnelSet): { fromISO: string; toISO: string } | null {
+  return set.window ? { fromISO: set.window.from, toISO: set.window.to } : null;
+}
+
+/** Compute previous-period values for every funnel/metric/step in the set.
+ *  A set that declares its own `window` is a snapshot whose previous period is
+ *  its payload's own `prev`: history is never consulted (an earlier sync of the
+ *  same window is not a previous period). */
 export function computeFunnelPrev(entry: FunnelCacheEntry, history: FunnelSnapshot[] | undefined): FunnelPrev {
-  const snapshot = pickPreviousSnapshot(entry.range, history);
+  const snapshot = entry.set.window ? null : pickPreviousSnapshot(entry.range, history);
   const snapById = new Map((snapshot?.funnels ?? []).map((f) => [f.id, f]));
 
   const metrics: Record<string, Record<string, number | null>> = {};
@@ -662,10 +1166,14 @@ export function computeFunnelPrev(entry: FunnelCacheEntry, history: FunnelSnapsh
     }
     metrics[funnel.id] = m;
 
-    const snapSteps = new Map((snap?.steps ?? []).map((s) => [s.key, s.users]));
+    // A snapshot step without a finite count (left out, or null in an older trail) is no value, never 0.
+    const snapSteps = new Map((snap?.steps ?? [])
+      .filter((s) => typeof s.users === 'number' && Number.isFinite(s.users))
+      .map((s) => [s.key, s.users]));
     const st: Record<string, number | null> = {};
     for (const step of funnel.steps) {
-      if (step.prev !== undefined) st[step.key] = step.prev;
+      if (!isMeasuredStep(step)) st[step.key] = null;
+      else if (step.prev !== undefined) st[step.key] = step.prev;
       else st[step.key] = snapSteps.get(step.key) ?? null;
     }
     steps[funnel.id] = st;
@@ -690,16 +1198,24 @@ export interface StepRow {
   ofPrev: number | null;
   /** Absolute drop from the previous step (negative = users increased). */
   drop: number | null;
+  /** Present (false) only on a step that is not measured: no rates, no drop, never the worst. */
+  measured?: false;
 }
 
 /** Per-step rates + drops for one funnel. Honest about weird data: a 0-user
  *  mid-step yields null ofPrev on the next step (no divide-by-zero), and users
  *  INCREASING between steps yields a negative drop (rendered as ↑, not clamped). */
 export function computeStepRows(steps: FunnelStep[]): StepRow[] {
-  const top = steps[0]?.users ?? 0;
-  return steps.map((step, i) => {
-    const prev = i > 0 ? steps[i - 1].users : null;
-    return {
+  // An unmeasured step (measured: false) has no count: its users are not a 0,
+  // it gets no rates and no drop, and the next step compares with the last
+  // MEASURED one. "Top" is the first measured step.
+  const top = steps.find((s) => s.measured !== false)?.users ?? 0;
+  let prev: number | null = null;
+  return steps.map((step) => {
+    if (step.measured === false) {
+      return { key: step.key, label: step.label, users: step.users, ofTop: null, ofPrev: null, drop: null, measured: false };
+    }
+    const row: StepRow = {
       key: step.key,
       label: step.label,
       users: step.users,
@@ -707,6 +1223,8 @@ export function computeStepRows(steps: FunnelStep[]): StepRow[] {
       ofPrev: prev === null ? null : prev > 0 ? (step.users / prev) * 100 : null,
       drop: prev === null ? null : prev - step.users,
     };
+    prev = step.users;
+    return row;
   });
 }
 
@@ -716,7 +1234,7 @@ export function worstDropIndex(rows: StepRow[]): number | null {
   let worstRate = Infinity;
   for (let i = 1; i < rows.length; i++) {
     const rate = rows[i].ofPrev;
-    if (rate === null) continue;
+    if (rate === null || rows[i].measured === false) continue;
     if (rate < worstRate) {
       worstRate = rate;
       worst = i;

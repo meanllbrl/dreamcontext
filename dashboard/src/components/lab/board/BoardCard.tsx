@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { useI18n } from '../../../context/I18nContext';
+import { ScopedLocale, useI18n, type ScopedLocaleId } from '../../../context/I18nContext';
 import type { InsightCache, InsightSummary } from '../../../hooks/useLab';
 import { frameKey } from '../../../generated/frameOps';
+import { cardPicksFunnels } from '../../../generated/presets';
+import { hiddenTabIndexes } from '../explorer/explorerTabs';
 import { blockRenderKey } from '../blocks/htmlBlockBridge';
 import { headingText } from '../blocks/TextBlock';
 import {
@@ -9,7 +11,7 @@ import {
 } from '../blocks/frameShape';
 import { nextAutoSync, type CardSyncState, type FreshReason } from './boardSync';
 import {
-  EMPTY_VIEW, pathKey, setAppPage, setFilters, setLanes, setSelection, setTab, type CardView,
+  EMPTY_VIEW, pathKey, setAppPage, setFilters, setFunnel, setLanes, setSelection, setTab, type CardView,
 } from './cardViewState';
 import type { Block, BlockProps, BlockRenderer, Card, Frame } from './boardTypes';
 import './board.css';
@@ -42,10 +44,29 @@ import './board.css';
  * The selection narrows every same-insight TABLE frame by the dims it carries;
  * a table not split by a selected dim is left whole and says so.
  *
+ * A FUNNEL-PICKER card (a top-level `breakdown` with `picker: true`, the funnel
+ * explorer preset) lets the reader switch funnels: the pick is the view's
+ * `funnel[insight]`, handed to every block of that insight that names no
+ * `funnel` option of its own (the engine sends such cards every funnel). Only
+ * those cards get `funnel` / `onFunnel`. A tabs block gets `hiddenTabs`: the
+ * pages with nothing to show (`explorerTabs.ts`), never drawn as zeros.
+ *
  * A card with no blocks is one legacy `insight` block of its primary insight
  * (the v1 render). A card whose primary insight is gone says so and offers
  * Remove; it is never silently dropped.
  */
+
+/**
+ * The locale an explorer card speaks: its picker breakdown's `locale` option (the
+ * insight's manifest locale, written by the preset), else null. Only a card that
+ * picks funnels qualifies; every other card follows the dashboard as before.
+ */
+export function cardLocale(blocks: readonly Block[]): ScopedLocaleId | null {
+  if (!cardPicksFunnels(blocks)) return null;
+  const picker = blocks.find((b) => b.type === 'breakdown' && b.options.picker === true);
+  const v = picker?.options.locale;
+  return v === 'en' || v === 'tr' ? v : null;
+}
 
 /** A card with no blocks draws its primary insight exactly as v1 did. */
 export function cardBlocks(card: Card): Block[] {
@@ -230,6 +251,8 @@ export function BoardCard({
   const title = card.title ?? primary?.title ?? card.insight ?? '';
   const fresh = freshnessOf(primary);
   const blocks = useMemo(() => cardBlocks(card), [card]);
+  const picksFunnels = useMemo(() => cardPicksFunnels(blocks), [blocks]);
+  const scoped = useMemo(() => cardLocale(blocks), [blocks]);
   // A section heading card: no title row, no card box, just the heading; the menu floats at the end.
   const heading = !fullscreen && isHeadingCard(blocks, title, !!fresh || !!syncState);
 
@@ -244,11 +267,17 @@ export function BoardCard({
     // Only a table of THIS insight narrows by the selection (a same-insight table, however bound).
     const narrows = !isFilter && !!selection && !!raw && raw.kind === 'table' && raw.insight === insight;
     const at = pathKey(path);
+    // A picker card: the reader's funnel goes to every block of the insight that names none itself.
+    const follows = picksFunnels && !!insight;
+    const picked = follows ? (view.funnel ?? {})[insight as string] : undefined;
+    const ownFunnel = typeof block.options.funnel === 'string' && block.options.funnel.trim() !== '';
+    const options = picked && !ownFunnel && block.type !== 'tabs' ? { ...block.options, funnel: picked } : block.options;
+    const shown: Block = options === block.options ? block : { ...block, options };
     const props: BlockProps = {
       frame: shapeBlockFrame(block, raw, view.filters, narrows ? selection : null),
       // Colours are keyed on the RAW frame's entities: a pick or a filter never repaints a survivor.
       colorDomain: frameColorDomain(raw),
-      options: block.options,
+      options,
       summary: slug ? summaries[slug] : undefined,
       cache: block.type === 'insight' && slug ? caches?.[slug] ?? null : undefined,
       filter: isFilter ? activeFilterFor(view.filters, key) : null,
@@ -261,6 +290,11 @@ export function BoardCard({
       onLanes: insight ? (next) => update((v) => setLanes(v, insight, next)) : undefined,
       activeTab: block.type === 'tabs' ? view.tabs[at] ?? 0 : undefined,
       onTab: block.type === 'tabs' ? (i) => update((v) => setTab(v, at, i)) : undefined,
+      hiddenTabs: block.type === 'tabs'
+        ? hiddenTabIndexes(block, (p) => frames[frameKey(card.id, p)] ?? null, path)
+        : undefined,
+      funnel: follows ? picked ?? null : undefined,
+      onFunnel: follows ? (id) => update((v) => setFunnel(v, insight as string, id)) : undefined,
       appPage: block.type === 'insight' ? view.appPage[at] ?? null : undefined,
       onAppPage: block.type === 'insight' ? (id) => update((v) => setAppPage(v, at, id)) : undefined,
       fullscreen,
@@ -270,7 +304,7 @@ export function BoardCard({
       renderChild: block.type === 'tabs' ? (child, rel) => draw(child, tabChildPath(path, rel)) : undefined,
     };
     const ignored = narrows ? selectionIgnored(raw, selection) : [];
-    const drawn = renderBlock(block, props);
+    const drawn = renderBlock(shown, props);
     const node = ignored.length > 0 ? (
       <>
         <p className="board-block-note" data-lab-not-split={ignored.join(',')}>
@@ -283,7 +317,7 @@ export function BoardCard({
     return path.length > 1
       ? <div className="board-block-child" data-lab-block={block.type} data-lab-block-path={path.join('.')}>{node}</div>
       : node;
-  }, [card.id, card.insight, frames, view, update, summaries, caches, renderBlock, fullscreen, t]);
+  }, [card.id, card.insight, frames, view, update, summaries, caches, renderBlock, fullscreen, t, picksFunnels]);
 
   if (missing) {
     return (
@@ -344,9 +378,12 @@ export function BoardCard({
   ].filter(Boolean).join('\n');
   // Full: the line under the title. Compact: beside the title, ellipsized. Short: folded into the
   // title's tooltip, the element kept (visually hidden) for screen readers and the verify hooks.
+  // An explorer card draws its own localized source and refresh line, so its card subtitle folds
+  // the same way, unless a sync is running or the last one failed (those stay in sight).
+  const freshDensity: CardDensity = picksFunnels && !syncState && fresh !== 'failed' ? 'short' : density;
   const freshEl = (fresh || syncState) && (
     <p
-      className={`board-card-fresh board-card-fresh--${syncState ?? fresh}${density === 'full' ? '' : ` board-card-fresh--${density}`}`}
+      className={`board-card-fresh board-card-fresh--${syncState ?? fresh}${freshDensity === 'full' ? '' : ` board-card-fresh--${freshDensity}`}`}
       data-lab-freshness
       data-lab-sync-queued={syncState === 'queued' ? true : undefined}
       title={freshTip || undefined}
@@ -357,9 +394,20 @@ export function BoardCard({
       )}
     </p>
   );
-  const titleTip = density === 'short' && freshTip ? `${title}\n${freshTip}` : title;
+  const titleTip = freshDensity === 'short' && freshTip ? `${title}\n${freshTip}` : title;
   // Fullscreen is already the opened view; everywhere else a plain-surface click opens the insight.
   const open = !fullscreen ? onOpen : undefined;
+  // An explorer card's blocks speak its insight's locale (ScopedLocale); the card chrome follows the dashboard.
+  const blockCells = blocks.map((block, i) => (
+    <div
+      key={blockRenderKey(card.id, [i], block)}
+      className="board-card-block"
+      data-lab-block={block.type}
+      data-lab-block-path={String(i)}
+    >
+      {draw(block, [i])}
+    </div>
+  ));
   const onCardClick = open ? (e: ReactMouseEvent<HTMLElement>) => {
     if (e.defaultPrevented || e.button !== 0) return;
     if (window.getSelection()?.toString()) return; // selecting a number to copy is not a click
@@ -388,25 +436,16 @@ export function BoardCard({
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
               } : undefined}
             >{title}</h3>
-            {density !== 'full' && freshEl}
+            {freshDensity !== 'full' && freshEl}
             {menu}
             {exit}
           </div>
-          {density === 'full' && freshEl}
+          {freshDensity === 'full' && freshEl}
         </header>
       )}
-      <div className="board-card-body">
+      <div className="board-card-body" data-lab-card-locale={scoped ?? undefined}>
         {/* Keyed by card id + path + (html) content hash: an edited html block remounts (D4). */}
-        {blocks.map((block, i) => (
-          <div
-            key={blockRenderKey(card.id, [i], block)}
-            className="board-card-block"
-            data-lab-block={block.type}
-            data-lab-block-path={String(i)}
-          >
-            {draw(block, [i])}
-          </div>
-        ))}
+        {scoped ? <ScopedLocale locale={scoped}>{blockCells}</ScopedLocale> : blockCells}
       </div>
     </article>
   );

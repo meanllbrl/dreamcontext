@@ -3,6 +3,7 @@ import { useMeasured } from '../chartBody';
 import { useI18n } from '../../../context/I18nContext';
 import { stepDrops, type FunnelSlice, type StepDrop } from '../../../generated/frameOps';
 import { alignStepKeys, dropSeverity } from './funnelModel';
+import { fmtCount, fmtDrop } from '../explorer/explorerFormat';
 import { dropBadgeText, pctText } from './FunnelFlow';
 import './FunnelLanes.css';
 
@@ -25,6 +26,8 @@ export interface LaneModel {
   byKey: Map<string, StepDrop>;
   /** The lane's own first-step users: every bar in the lane is a share of it. */
   top: number;
+  /** Why a step is not measured on this lane's path (the funnel step's reason), by step key. */
+  reasons: Map<string, string | null>;
 }
 
 /**
@@ -45,7 +48,8 @@ export function laneModel(lanes: readonly LaneInput[], base: readonly { key: str
         reason: l.slice.reason,
         users: l.slice.users,
         byKey: new Map(drops.map((d) => [d.key, d])),
-        top: l.slice.steps[0]?.users ?? 0,
+        top: l.slice.steps.find((s) => s.measured !== false)?.users ?? 0,
+        reasons: new Map(l.slice.steps.filter((s) => s.measured === false).map((s) => [s.key, s.reason ?? null])),
       };
     }),
   };
@@ -60,12 +64,12 @@ export function lanesDense(steps: number, height: number): boolean {
 }
 
 /** The widest "users · share" (and share alone) a lane writes, in ch: every row of a lane keeps one track width. */
-export function laneTextWidths(lane: LaneModel): { value: number; share: number } {
+export function laneTextWidths(lane: LaneModel, locale = 'en'): { value: number; share: number } {
   let value = 1;
   let share = 1;
   for (const d of lane.byKey.values()) {
-    const pct = d.ofTop !== null ? pctText(d.ofTop) : '';
-    value = Math.max(value, d.users.toLocaleString('en-US').length + (pct ? pct.length + 3 : 0));
+    const pct = d.ofTop !== null ? pctText(d.ofTop, locale) : '';
+    value = Math.max(value, fmtCount(d.users, locale).length + (pct ? pct.length + 3 : 0));
     share = Math.max(share, pct.length);
   }
   return { value, share };
@@ -87,7 +91,7 @@ export function FunnelLanes({ lanes, base, markWorst = false, dense = false }: {
   markWorst?: boolean;
   dense?: boolean;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [measure, box] = useMeasured<HTMLDivElement>();
   const model = laneModel(lanes, base);
   const n = model.lanes.length;
@@ -108,7 +112,7 @@ export function FunnelLanes({ lanes, base, markWorst = false, dense = false }: {
       <span className="funnel-lanes-corner" aria-hidden="true" />
       {model.lanes.map((lane, li) => {
         const note = lane.measured
-          ? `${lane.users.toLocaleString('en-US')}`
+          ? fmtCount(lane.users, locale)
           : t('lab.blocks.explorer.notMeasured').replace('{sel}', lane.label).replace('{reason}', lane.reason ?? t('lab.blocks.breakdown.noPath'));
         return (
           <div
@@ -136,8 +140,24 @@ export function FunnelLanes({ lanes, base, markWorst = false, dense = false }: {
                 <span key={`c${li}`} className="funnel-lanes-cell funnel-lanes-cell--missing" data-lab-lane-missing={step.key} data-lane={li + 1}>—</span>
               );
             }
+            if (!d.measured) {
+              // Not measured on this path: the word, its reason in the title, never a bar of 0.
+              const why = t('lab.explorer.notMeasuredWhy').replace('{reason}', lane.reasons.get(step.key) ?? t('lab.blocks.breakdown.noPath'));
+              return (
+                <span
+                  key={`c${li}`}
+                  className="funnel-lanes-cell funnel-lanes-cell--unmeasured"
+                  data-lane={li + 1}
+                  data-measured="false"
+                  data-lab-not-measured={step.key}
+                  title={`${lane.label} · ${step.label}: ${why}`}
+                >
+                  {t('lab.explorer.notMeasured')}
+                </span>
+              );
+            }
             const width = lane.top > 0 ? Math.min(100, (d.users / lane.top) * 100) : 0;
-            const w = laneTextWidths(lane);
+            const w = laneTextWidths(lane, locale);
             const worst = markWorst && d.worst;
             return (
               <span
@@ -146,16 +166,16 @@ export function FunnelLanes({ lanes, base, markWorst = false, dense = false }: {
                 data-lane={li + 1}
                 data-users={d.users}
                 style={{ '--lane-value-w': `${w.value}ch`, '--lane-share-w': `${w.share}ch` } as CSSProperties}
-                title={`${lane.label} · ${step.label}: ${d.users.toLocaleString('en-US')}${d.ofTop !== null ? ` · ${pctText(d.ofTop)}` : ''}`}
+                title={`${lane.label} · ${step.label}: ${fmtCount(d.users, locale)}${d.ofTop !== null ? ` · ${pctText(d.ofTop, locale)}` : ''}`}
               >
                 <span className="funnel-lanes-row">
                 <span className="funnel-lanes-track"><span className="funnel-lanes-fill" style={{ width: `${width}%` }} /></span>
                 <span className="funnel-lanes-text">
                   <span className="funnel-lanes-value">
-                    {d.users.toLocaleString('en-US')}
-                    {d.ofTop !== null && <span className="funnel-lanes-pct"> · {pctText(d.ofTop)}</span>}
+                    {fmtCount(d.users, locale)}
+                    {d.ofTop !== null && <span className="funnel-lanes-pct"> · {pctText(d.ofTop, locale)}</span>}
                   </span>
-                  {d.ofTop !== null && <span className="funnel-lanes-share" aria-hidden="true">{pctText(d.ofTop)}</span>}
+                  {d.ofTop !== null && <span className="funnel-lanes-share" aria-hidden="true">{pctText(d.ofTop, locale)}</span>}
                 </span>
                 {d.dropPct === null ? <span className="funnel-lanes-drop funnel-lanes-drop--none" aria-hidden="true" /> : (
                   <span
@@ -165,9 +185,9 @@ export function FunnelLanes({ lanes, base, markWorst = false, dense = false }: {
                     data-drop-pct={d.dropPct.toFixed(1)}
                     data-severity={dropSeverity(d.ofPrev)}
                     data-lab-worst={worst ? step.key : undefined}
-                    title={`${lane.label}: ${t('lab.blocks.funnel.drop').replace('{pct}', pctText(d.dropPct))}${worst ? ` · ${t('lab.blocks.funnel.worst')}` : ''}`}
+                    title={`${lane.label}: ${fmtDrop(d.dropPct, locale)}${worst ? ` · ${t('lab.blocks.funnel.worst')}` : ''}`}
                   >
-                    {dropBadgeText(d)}
+                    {dropBadgeText(d, locale)}
                   </span>
                 )}
                 </span>

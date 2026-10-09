@@ -18,7 +18,10 @@
     "breakdown",
     "trend",
     "benchmark",
-    "segments"
+    "segments",
+    "ranking",
+    "payment",
+    "access"
   ],
   "blocks": [
     {
@@ -1064,6 +1067,31 @@
             "en": "Mark the biggest drop",
             "tr": "En büyük düşüşü işaretle"
           }
+        },
+        {
+          "key": "compare",
+          "type": "enum",
+          "enum": [
+            "auto",
+            "lanes",
+            "off"
+          ],
+          "default": "auto",
+          "labelKey": "lab.block.opt.compare",
+          "label": {
+            "en": "Lanes",
+            "tr": "Şeritler"
+          }
+        },
+        {
+          "key": "table",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.table",
+          "label": {
+            "en": "Table",
+            "tr": "Tablo"
+          }
         }
       ]
     },
@@ -1415,6 +1443,30 @@
             "en": "Compare lanes",
             "tr": "Karşılaştırma şeritleri"
           }
+        },
+        {
+          "key": "picker",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.picker",
+          "label": {
+            "en": "Funnel picker",
+            "tr": "Huni seçici"
+          }
+        },
+        {
+          "key": "locale",
+          "type": "enum",
+          "enum": [
+            "en",
+            "tr"
+          ],
+          "default": "en",
+          "labelKey": "lab.block.opt.locale",
+          "label": {
+            "en": "Language",
+            "tr": "Dil"
+          }
         }
       ]
     },
@@ -1543,6 +1595,16 @@
           "label": {
             "en": "Format",
             "tr": "Biçim"
+          }
+        },
+        {
+          "key": "table",
+          "type": "boolean",
+          "default": false,
+          "labelKey": "lab.block.opt.table",
+          "label": {
+            "en": "Table",
+            "tr": "Tablo"
           }
         }
       ]
@@ -1714,6 +1776,140 @@
           }
         }
       ]
+    },
+    {
+      "type": "ranking",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.ranking",
+      "label": {
+        "en": "Ranking",
+        "tr": "Sıralama"
+      },
+      "descriptionKey": "lab.block.ranking.description",
+      "description": {
+        "en": "Each funnel's best breakdown on one metric.",
+        "tr": "Her huninin tek bir metrikteki en iyi kırılımı."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "metrics",
+          "type": "pick",
+          "from": "metrics",
+          "multi": true,
+          "default": null,
+          "labelKey": "lab.block.opt.metrics",
+          "label": {
+            "en": "Metrics",
+            "tr": "Metrikler"
+          }
+        },
+        {
+          "key": "density",
+          "type": "enum",
+          "enum": [
+            "compact",
+            "comfortable"
+          ],
+          "default": "compact",
+          "labelKey": "lab.block.opt.density",
+          "label": {
+            "en": "Density",
+            "tr": "Yoğunluk"
+          }
+        }
+      ]
+    },
+    {
+      "type": "payment",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.payment",
+      "label": {
+        "en": "Payment",
+        "tr": "Ödeme"
+      },
+      "descriptionKey": "lab.block.payment.description",
+      "description": {
+        "en": "Payment attempts, decline rate and decline reasons for the selected path.",
+        "tr": "Seçili yol için ödeme denemeleri, red oranı ve red sebepleri."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 6
+      },
+      "options": [
+        {
+          "key": "funnel",
+          "type": "pick",
+          "from": "funnels",
+          "default": null,
+          "labelKey": "lab.block.opt.funnel",
+          "label": {
+            "en": "Funnel",
+            "tr": "Huni"
+          }
+        },
+        {
+          "key": "density",
+          "type": "enum",
+          "enum": [
+            "compact",
+            "comfortable"
+          ],
+          "default": "compact",
+          "labelKey": "lab.block.opt.density",
+          "label": {
+            "en": "Density",
+            "tr": "Yoğunluk"
+          }
+        }
+      ]
+    },
+    {
+      "type": "access",
+      "data": "binding",
+      "frames": [
+        "funnel"
+      ],
+      "labelKey": "lab.block.access",
+      "label": {
+        "en": "Access",
+        "tr": "Erişim"
+      },
+      "descriptionKey": "lab.block.access.description",
+      "description": {
+        "en": "Whether payers reached the product, stage by stage. Hidden when there is no data.",
+        "tr": "Ödeyenlerin ürüne aşama aşama ulaşıp ulaşmadığı. Veri yoksa gizlenir."
+      },
+      "defaultSize": {
+        "w": 8,
+        "h": 5
+      },
+      "options": [
+        {
+          "key": "density",
+          "type": "enum",
+          "enum": [
+            "compact",
+            "comfortable"
+          ],
+          "default": "compact",
+          "labelKey": "lab.block.opt.density",
+          "label": {
+            "en": "Density",
+            "tr": "Yoğunluk"
+          }
+        }
+      ]
     }
   ],
   "enumLabels": {
@@ -1783,6 +1979,30 @@
       "comfortable": {
         "en": "Comfortable",
         "tr": "Rahat"
+      }
+    },
+    "locale": {
+      "en": {
+        "en": "English",
+        "tr": "İngilizce"
+      },
+      "tr": {
+        "en": "Turkish",
+        "tr": "Türkçe"
+      }
+    },
+    "compare": {
+      "auto": {
+        "en": "When pinned",
+        "tr": "Sabitlenince"
+      },
+      "lanes": {
+        "en": "Lanes only",
+        "tr": "Yalnız şeritler"
+      },
+      "off": {
+        "en": "Never",
+        "tr": "Hiçbir zaman"
       }
     },
     "delta": {

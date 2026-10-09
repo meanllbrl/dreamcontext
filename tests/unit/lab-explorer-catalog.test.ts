@@ -34,8 +34,8 @@ const NEW_TYPES = ['breakdown', 'trend', 'benchmark', 'segments'] as const;
 
 /** Plan §2 option names, in catalog order. */
 const OPTIONS: Record<(typeof NEW_TYPES)[number], string[]> = {
-  breakdown: ['funnel', 'dims', 'counts', 'lanes'],
-  trend: ['funnel', 'metrics', 'chart', 'switch', 'legend', 'axes', 'grid', 'format'],
+  breakdown: ['funnel', 'dims', 'counts', 'lanes', 'picker', 'locale'],
+  trend: ['funnel', 'metrics', 'chart', 'switch', 'legend', 'axes', 'grid', 'format', 'table'],
   benchmark: ['funnel', 'metrics', 'comparePrev', 'sources'],
   segments: ['funnel', 'by', 'metrics', 'bands', 'sort', 'limit', 'density'],
 };
@@ -61,7 +61,7 @@ describe('explorer blocks in the catalog', () => {
 
   it('carry exactly the pinned option names', () => {
     for (const type of NEW_TYPES) expect(BLOCK_CATALOG[type].options.map((o) => o.key), type).toEqual(OPTIONS[type]);
-    expect(BLOCK_CATALOG.funnel.options.map((o) => o.key)).toEqual(['compact', 'showConversion', 'funnel', 'layout', 'markWorst']);
+    expect(BLOCK_CATALOG.funnel.options.map((o) => o.key)).toEqual(['compact', 'showConversion', 'funnel', 'layout', 'markWorst', 'compare', 'table']);
     expect(BLOCK_CATALOG.insight.options.map((o) => o.key)).toEqual(['page', 'nav']);
   });
 

@@ -199,7 +199,7 @@ describe('lab board show --select (explorer parity)', () => {
 });
 
 describe('lab board add-card --preset funnel-explorer', () => {
-  it('writes the presets.ts card for the insight\'s dims at 12x12, titled like the insight', async () => {
+  it('writes the presets.ts card for the insight\'s dims at 12x18, titled like the insight', async () => {
     expect((await run(['lab', 'board', 'create', 'ops', '--title', 'Ops'])).code).toBe(0);
     const { code, out } = await run(['lab', 'board', 'add-card', 'ops', '--preset', 'funnel-explorer', '--insight', SLUG]);
     expect(code, out).toBe(0);
@@ -216,7 +216,7 @@ describe('lab board add-card --preset funnel-explorer', () => {
     await run(['lab', 'board', 'create', 'ops', '--title', 'Ops']);
     expect((await run(['lab', 'board', 'add-card', 'ops', '--preset', 'funnel-explorer', '--insight', SLUG, '--locale', 'tr'])).code).toBe(0);
     const tabs = getBoard(root, 'ops')!.cards[0].blocks![1].tabs!.map((t) => t.label);
-    expect(tabs.slice(0, 4)).toEqual(['Günlük', 'Kıyas', 'Akış', 'Adımlar']);
+    expect(tabs.slice(0, 8)).toEqual(['Günlük', 'Benchmark', 'Sıralama', 'Akış', 'Adımlar', 'Karşılaştır', 'Ödeme', 'Erişim']);
   });
 
   it('refuses an unsynced insight with exit 1 and names the sync', async () => {

@@ -128,15 +128,23 @@ export interface StepRow {
   ofPrev: number | null;
   /** Absolute drop from the previous step (negative = users increased). */
   drop: number | null;
+  /** Present (false) only on a step that is not measured: no rates, no drop, never the worst. */
+  measured?: false;
 }
 
 /** Per-step rates + drops. Honest math: 0-user prev → null rate (no ∞), users
  *  increasing between steps → negative drop (rendered ↑, never clamped). */
-export function computeStepRows(steps: { key: string; label?: string; users: number }[]): StepRow[] {
-  const top = steps[0]?.users ?? 0;
-  return steps.map((step, i) => {
-    const prev = i > 0 ? steps[i - 1].users : null;
-    return {
+export function computeStepRows(steps: { key: string; label?: string; users: number; measured?: boolean }[]): StepRow[] {
+  // An unmeasured step (measured: false) has no count: its users are not a 0,
+  // it gets no rates and no drop, and the next step compares with the last
+  // MEASURED one. "Top" is the first measured step.
+  const top = steps.find((s) => s.measured !== false)?.users ?? 0;
+  let prev: number | null = null;
+  return steps.map((step) => {
+    if (step.measured === false) {
+      return { key: step.key, label: step.label ?? step.key, users: step.users, ofTop: null, ofPrev: null, drop: null, measured: false };
+    }
+    const row: StepRow = {
       key: step.key,
       label: step.label ?? step.key,
       users: step.users,
@@ -144,6 +152,8 @@ export function computeStepRows(steps: { key: string; label?: string; users: num
       ofPrev: prev === null ? null : prev > 0 ? (step.users / prev) * 100 : null,
       drop: prev === null ? null : prev - step.users,
     };
+    prev = step.users;
+    return row;
   });
 }
 
@@ -153,7 +163,7 @@ export function worstDropIndex(rows: StepRow[]): number | null {
   let worstRate = Infinity;
   for (let i = 1; i < rows.length; i++) {
     const rate = rows[i].ofPrev;
-    if (rate === null) continue;
+    if (rate === null || rows[i].measured === false) continue;
     if (rate < worstRate) {
       worstRate = rate;
       worst = i;

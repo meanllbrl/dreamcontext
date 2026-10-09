@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  EMPTY_VIEW, MAX_LANES, pathKey, pinLane, pruneViews, setAppPage, setFilters, setLanes, setSelection,
+  EMPTY_VIEW, MAX_LANES, pathKey, pinLane, pruneViews, setAppPage, setFilters, setFunnel, setLanes, setSelection,
   setTab, unpinLane, updateView, type CardView,
 } from '../../dashboard/src/components/lab/board/cardViewState.js';
 import type { ActiveFilter } from '../../dashboard/src/components/lab/blocks/frameShape.js';
@@ -90,6 +90,25 @@ describe('tabs, app page, filters', () => {
     const v = setFilters(EMPTY_VIEW, list);
     expect(v.filters).toBe(list);
     expect(setFilters(v, list)).toBe(v);
+  });
+});
+
+describe('funnel pick', () => {
+  it('EMPTY_VIEW carries an empty funnel map', () => {
+    expect(EMPTY_VIEW.funnel).toEqual({});
+  });
+
+  it('holds the picked funnel per insight; the same pick is a no-op; null or empty clears it', () => {
+    const v = setFunnel(EMPTY_VIEW, INS, 'quiz');
+    expect(v.funnel).toEqual({ [INS]: 'quiz' });
+    expect(setFunnel(v, INS, 'quiz')).toBe(v);
+    const other = setFunnel(v, 'other', 'ladder');
+    expect(other.funnel).toEqual({ [INS]: 'quiz', other: 'ladder' });
+    expect(setFunnel(other, INS, null).funnel).toEqual({ other: 'ladder' });
+    expect(setFunnel(v, INS, '').funnel).toEqual({});
+    expect(setFunnel(EMPTY_VIEW, INS, null)).toBe(EMPTY_VIEW);
+    // The pick leaves the rest of the view alone.
+    expect(setFunnel(setTab(EMPTY_VIEW, '1', 2), INS, 'quiz').tabs).toEqual({ 1: 2 });
   });
 });
 

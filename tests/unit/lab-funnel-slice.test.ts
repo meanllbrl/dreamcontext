@@ -282,9 +282,9 @@ describe('segmentRows', () => {
     const rows = segmentRows(lookupFrame(), null, 'platform', {}, null);
     expect(rows.map((r) => r.value)).toEqual(['Meta Ads', 'TikTok Ads']);
     expect(rows[0]).toMatchObject({ measured: true, users: 600, lowSample: false, selection: { platform: 'Meta Ads' } });
-    expect(rows[0].cells.lead_rate).toEqual({ v: 50, prev: 50, tone: 'above' });
-    expect(rows[0].cells.cost_per_lead).toEqual({ v: null, prev: null, tone: null });
-    expect(rows[1].cells.lead_rate).toEqual({ v: 25, prev: 30, tone: 'between' });
+    expect(rows[0].cells.lead_rate).toEqual({ v: 50, prev: 50, tone: 'above', kn: null });
+    expect(rows[0].cells.cost_per_lead).toEqual({ v: null, prev: null, tone: null, kn: null });
+    expect(rows[1].cells.lead_rate).toEqual({ v: 25, prev: 30, tone: 'between', kn: null });
     const byLang = segmentRows(lookupFrame(), null, 'language', { platform: 'Meta Ads' }, ['lead_rate']);
     expect(byLang[0]).toMatchObject({ value: 'EN', measured: true, users: 40, lowSample: true });
     expect(byLang[1]).toMatchObject({ value: 'ES', measured: false, users: 0 });
@@ -496,31 +496,40 @@ describe('funnel explorer preset', () => {
     { key: 'cohort', label: 'Cohort' },
   ];
 
-  it('breakdown over tabs Daily, Benchmark, Flow, Steps, then one segments tab per dim (first 4)', () => {
+  it('picker breakdown over Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access, then one segments tab per dim (first 4)', () => {
     const blocks = funnelExplorerBlocks('acme-funnel-explorer', dims.slice(0, 1), 'en');
+    const d = 'acme-funnel-explorer';
     expect(blocks).toEqual([
-      { type: 'breakdown', data: 'acme-funnel-explorer', options: {} },
+      { type: 'breakdown', data: d, options: { picker: true, counts: true, locale: 'en' } },
       {
         type: 'tabs',
         options: {},
         tabs: [
-          { label: 'Daily', blocks: [{ type: 'trend', data: 'acme-funnel-explorer', options: {} }] },
-          { label: 'Benchmark', blocks: [{ type: 'benchmark', data: 'acme-funnel-explorer', options: {} }] },
-          { label: 'Flow', blocks: [{ type: 'funnel', data: 'acme-funnel-explorer', options: { layout: 'flow', markWorst: true } }] },
-          { label: 'Steps', blocks: [{ type: 'funnel', data: 'acme-funnel-explorer', options: { layout: 'bars', markWorst: true } }] },
-          { label: 'Platform', blocks: [{ type: 'segments', data: 'acme-funnel-explorer', options: { by: 'platform' } }] },
+          { label: 'Daily', labelKey: 'lab.explorer.tab.daily', blocks: [{ type: 'trend', data: d, options: { chart: 'bar', table: true } }] },
+          { label: 'Benchmark', labelKey: 'lab.explorer.tab.benchmark', blocks: [{ type: 'benchmark', data: d, options: {} }] },
+          { label: 'Ranking', labelKey: 'lab.explorer.tab.ranking', blocks: [{ type: 'ranking', data: d, options: {} }] },
+          { label: 'Flow', labelKey: 'lab.explorer.tab.flow', blocks: [{ type: 'funnel', data: d, options: { layout: 'flow', markWorst: true, compare: 'off' } }] },
+          { label: 'Steps', labelKey: 'lab.explorer.tab.steps', blocks: [{ type: 'funnel', data: d, options: { layout: 'bars', markWorst: true, compare: 'off', table: true } }] },
+          { label: 'Compare', labelKey: 'lab.explorer.tab.compare', blocks: [{ type: 'funnel', data: d, options: { layout: 'bars', markWorst: true, compare: 'lanes' } }] },
+          { label: 'Payment', labelKey: 'lab.explorer.tab.payment', blocks: [{ type: 'payment', data: d, options: {} }] },
+          { label: 'Access', labelKey: 'lab.explorer.tab.access', blocks: [{ type: 'access', data: d, options: {} }] },
+          { label: 'Platform', labelKey: 'lab.explorer.tab.dim.platform', blocks: [{ type: 'segments', data: d, options: { by: 'platform' } }] },
         ],
       },
     ]);
     const many = funnelExplorerBlocks('acme-funnel-explorer', dims, 'en');
-    expect(many[1].tabs!.slice(4).map((t) => t.blocks[0].options.by)).toEqual(['platform', 'language', 'country', 'device']);
+    expect(many[1].tabs!.slice(8).map((t) => t.blocks[0].options.by)).toEqual(['platform', 'language', 'country', 'device']);
+    // Only the well-known dims get a labelKey; the rest keep the payload's label.
+    expect(many[1].tabs!.slice(8).map((t) => t.labelKey ?? null)).toEqual(['lab.explorer.tab.dim.platform', 'lab.explorer.tab.dim.language', 'lab.explorer.tab.dim.country', null]);
+    expect(many[1].tabs![11].label).toBe('Device');
   });
 
-  it('Turkish labels at insertion; size 12x12; deterministic', () => {
+  it('Turkish labels at insertion; size 12x18; deterministic', () => {
     const tr = funnelExplorerBlocks('acme-funnel-explorer', [], 'tr');
-    expect(tr[1].tabs!.map((t) => t.label)).toEqual(['Günlük', 'Kıyas', 'Akış', 'Adımlar']);
+    expect(tr[1].tabs!.map((t) => t.label)).toEqual(['Günlük', 'Benchmark', 'Sıralama', 'Akış', 'Adımlar', 'Karşılaştır', 'Ödeme', 'Erişim']);
+    expect(funnelExplorerBlocks('x', [{ key: 'country', label: 'Country' }], 'tr')[1].tabs![8].label).toBe('Ülke');
     expect(PRESET_LABELS['funnel-explorer'].tr).toBe('Huni gezgini');
-    expect(FUNNEL_EXPLORER_SIZE).toEqual({ w: 12, h: 12 });
+    expect(FUNNEL_EXPLORER_SIZE).toEqual({ w: 12, h: 18 });
     expect(funnelExplorerBlocks('x', dims, 'en')).toEqual(funnelExplorerBlocks('x', dims, 'en'));
     for (const l of Object.values(PRESET_LABELS)) expect(`${l.en}${l.tr}`).not.toMatch(/—/);
   });

@@ -93,3 +93,30 @@
 .funnel-bars-step--spacer {
   visibility: hidden;
 }
+
+/* An explorer step counted as rate x users, not counted directly: a quiet word after its label. */
+.funnel-bars-derived,
+.funnel-flow-derived,
+.funnel-steps-derived {
+  margin-left: var(--space-1);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  white-space: nowrap;
+}
+
+/* A step the source does not count: no bar, the words in the value column, never a 0. */
+.funnel-bars-row--unmeasured .funnel-bars-track {
+  background: transparent;
+  border: 1px dashed var(--color-border);
+}
+
+.funnel-bars-unmeasured {
+  max-width: 40ch;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+}

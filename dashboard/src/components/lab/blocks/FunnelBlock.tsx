@@ -1,14 +1,21 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
-import { funnelSlice, selectionKey, stepDrops, type FunnelFrame, type Selection } from '../../../generated/frameOps';
+import {
+  funnelSlice, KN_THRESHOLD, orderedNotes, selectionKey, stepDrops,
+  type FunnelFrame, type FunnelFrameNote, type FunnelSlice, type Selection, type StepDrop,
+} from '../../../generated/frameOps';
 import { useMeasured } from '../chartBody';
-import { FunnelBars, type FunnelStepMode } from '../funnel/FunnelBars';
-import { FunnelFlow, pctText } from '../funnel/FunnelFlow';
+import { fill, fmtCount, fmtDrop, formatShare } from '../explorer/explorerFormat';
+import { FunnelBars, type FunnelStepCopy, type FunnelStepMode } from '../funnel/FunnelBars';
+import { FunnelFlow } from '../funnel/FunnelFlow';
 import { FunnelLanes, MAX_DRAWN_LANES } from '../funnel/FunnelLanes';
 import { computeStepRows, selectionLabel } from '../funnel/funnelModel';
 import { elementFont, textWidth } from '../textMeasure';
+import { NoteMark, notesByKey } from './BenchmarkBlock';
 import { BlockEmpty, boolOption, drawableFrame, stringOption, type BlockViewProps } from './blockCommon';
 import './dataBlocks.css';
+import '../funnel/FunnelBars.css';
+import '../explorer/explorer.css';
 
 /** Natural heights (px, FunnelBars.css / blocks.css) the fit check plans with. */
 const ROW_PX = { normal: 22, dense: 18 };
@@ -118,6 +125,9 @@ export function FunnelBlock({ frame, options, selection, lanes }: BlockViewProps
   );
 }
 
+/** When pinned lanes draw: `auto` whenever some are pinned (today), `lanes` only lanes (the Compare tab), `off` never. */
+export type CompareMode = 'auto' | 'lanes' | 'off';
+
 /** What the explorer mode draws; null = none of its options or state is in play (today's render, untouched). */
 export interface ExplorerView {
   /** The picked funnel id, or null (the first funnel). */
@@ -128,6 +138,14 @@ export interface ExplorerView {
   showConversion: boolean;
   selection: Selection;
   lanes: readonly Selection[];
+  compare: CompareMode;
+  /** The Steps table instead of the bars (bars layout only). */
+  table: boolean;
+}
+
+/** The `compare` option, leniently: anything but `lanes` / `off` is the default `auto`. */
+export function compareMode(options: Record<string, unknown>): CompareMode {
+  return options.compare === 'lanes' || options.compare === 'off' ? options.compare : 'auto';
 }
 
 /**
@@ -140,10 +158,13 @@ export function explorerView(frame: FunnelFrame, options: Record<string, unknown
   const pick = stringOption(options, 'funnel');
   const layout = options.layout === 'flow' ? 'flow' : 'bars';
   const markWorst = boolOption(options, 'markWorst');
+  const compare = compareMode(options);
+  const table = boolOption(options, 'table');
   const effective = (sel: Selection) => Object.keys(funnelSlice(frame, pick, sel).selection).length > 0;
-  const liveLanes = lanes.filter((l) => l && typeof l === 'object').slice(0, MAX_DRAWN_LANES);
+  // `off` ignores the card's lanes: the Steps and Flow tabs draw the selection, the Compare tab the lanes.
+  const liveLanes = compare === 'off' ? [] : lanes.filter((l) => l && typeof l === 'object').slice(0, MAX_DRAWN_LANES);
   const hasSelection = effective(selection);
-  if (pick === null && layout === 'bars' && !markWorst && !hasSelection && liveLanes.length === 0) return null;
+  if (pick === null && layout === 'bars' && !markWorst && !hasSelection && liveLanes.length === 0 && compare === 'auto' && !table) return null;
   return {
     pick,
     layout,
@@ -152,6 +173,8 @@ export function explorerView(frame: FunnelFrame, options: Record<string, unknown
     showConversion: boolOption(options, 'showConversion', true),
     selection,
     lanes: liveLanes,
+    compare,
+    table,
   };
 }
 
@@ -174,7 +197,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
   measureRef: (el: HTMLDivElement | null) => void;
   box: { width: number; height: number };
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const slice = funnelSlice(frame, view.pick, view.selection);
   const funnel = frame.funnels.find((f) => f.id === slice.funnelId) ?? frame.funnels[0];
   if (!funnel) return <BlockEmpty />;
@@ -190,8 +213,28 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
     });
   }
   const dense = view.compact || (box.height > 0 && box.height < 240);
+  const copy: FunnelStepCopy = {
+    derived: t('lab.explorer.derived'),
+    derivedTitle: t('lab.explorer.derivedTitle'),
+    notMeasured: (reason) => t('lab.explorer.notMeasuredWhy').replace('{reason}', reason ?? t('lab.blocks.breakdown.noPath')),
+    knTitle: (k, n) => fill(t('lab.explorer.knTitle'), { min: KN_THRESHOLD, k, n }),
+    locale,
+  };
   let body: ReactNode;
-  if (view.lanes.length > 0) {
+  if (view.compare === 'lanes' && view.lanes.length === 0) {
+    // The Compare tab with nothing pinned: say how to pin, never an empty box.
+    // Name the actual control, worded exactly as the breakdown bar renders it (its button / its title).
+    const pinText = t('lab.blocks.breakdown.pin').replace('{sel}', `'${nameOf(slice.selection)}'`);
+    body = (
+      <div className="lab-x-empty" data-lab-empty="compare" role="note">
+        <span>{t('lab.explorer.emptyCompare')}</span>
+        <span className="lab-x-empty-control" data-lab-compare-control="">
+          <span className="lab-x-empty-plus" aria-hidden="true">+</span>
+          {pinText}
+        </span>
+      </div>
+    );
+  } else if (view.lanes.length > 0) {
     const laneInputs = view.lanes.map((sel) => {
       const s = funnelSlice(frame, slice.funnelId, sel);
       return { slice: s, label: nameOf(s.selection) };
@@ -207,7 +250,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
     if (slice.lowSample && Object.keys(slice.selection).length > 0) {
       notes.push({
         key: 'low',
-        text: t('lab.blocks.explorer.lowSample').replace('{n}', slice.users.toLocaleString('en-US')),
+        text: t('lab.blocks.explorer.lowSample').replace('{n}', fmtCount(slice.users, locale)),
         tone: 'caution',
         attr: { 'data-lab-low-sample': String(slice.users) },
       });
@@ -220,8 +263,10 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
       const fit = funnelFit([n], box.height, view.compact);
       const stepLabel = (pct: string) => t('lab.blocks.funnel.ofPrev').replace('{pct}', pct);
       const mode = view.showConversion ? (box.width > 0 && box.width < FLOW_NARROW_PX ? 'short' : 'full') : null;
-      const worst = view.markWorst ? stepDrops(slice.steps).find((d) => d.worst) ?? null : null;
-      const prevLabel = worst ? slice.steps[slice.steps.findIndex((s) => s.key === worst.key) - 1]?.label ?? '' : '';
+      const drops = stepDrops(slice.steps);
+      const worst = view.markWorst ? drops.find((d) => d.worst) ?? null : null;
+      // The drop into the worst step is from the last MEASURED step before it.
+      const prevLabel = worst ? lastMeasuredBefore(drops, worst.key)?.label ?? '' : '';
       body = (
         <>
           {worst && worst.dropPct !== null && (
@@ -229,14 +274,16 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
               className="funnel-explorer-worst"
               data-lab-worst-note={worst.key}
               data-drop-pct={worst.dropPct.toFixed(1)}
-              title={`${t('lab.blocks.funnel.worst')}: ${prevLabel} → ${worst.label}, ${t('lab.blocks.funnel.drop').replace('{pct}', pctText(worst.dropPct))}`}
+              title={`${t('lab.blocks.funnel.worst')}: ${prevLabel} → ${worst.label}, ${fmtDrop(worst.dropPct, locale)}`}
             >
               <span className="funnel-explorer-worst-tag">{t('lab.blocks.funnel.worst')}</span>
               <span className="funnel-explorer-worst-step">{prevLabel} → {worst.label}</span>
-              <span className="funnel-explorer-worst-pct">{t('lab.blocks.funnel.drop').replace('{pct}', pctText(worst.dropPct))}</span>
+              <span className="funnel-explorer-worst-pct">{fmtDrop(worst.dropPct, locale)}</span>
             </div>
           )}
-          <FunnelBars steps={slice.steps} dense={fit.dense} fill stepLabel={mode === null ? null : stepLabel} stepMode={mode ?? 'full'} worstKey={worst && worst.dropPct !== null ? worst.key : null} />
+          {view.table
+            ? <StepsTable slice={slice} drops={drops} markWorst={view.markWorst} notes={orderedNotes(frame, slice.funnelId)} copy={copy} />
+            : <FunnelBars steps={slice.steps} dense={fit.dense} fill stepLabel={mode === null ? null : stepLabel} stepMode={mode ?? 'full'} worstKey={worst && worst.dropPct !== null ? worst.key : null} copy={copy} />}
         </>
       );
     }
@@ -246,6 +293,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
       ref={measureRef}
       className="lab-block-funnel funnel-explorer"
       data-lab-funnel-explorer={view.layout}
+      data-compare={view.compare === 'auto' ? undefined : view.compare}
       data-lab-funnel={slice.funnelId}
       data-lab-selection={selectionKey(slice.selection) || undefined}
       data-lab-measured={slice.measured ? 'true' : 'false'}
@@ -254,6 +302,112 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
         <div key={n.key} className="funnel-explorer-note" data-tone={n.tone} title={n.text} {...n.attr}>{n.text}</div>
       ))}
       <div className="funnel-explorer-body">{body}</div>
+    </div>
+  );
+}
+
+/** The last measured step before `key` (the denominator of its drop), or null. */
+function lastMeasuredBefore(drops: readonly StepDrop[], key: string): StepDrop | null {
+  const at = drops.findIndex((d) => d.key === key);
+  for (let i = at - 1; i >= 0; i--) if (drops[i].measured) return drops[i];
+  return null;
+}
+
+/**
+ * The Steps page (`table`): one row per step with its users (and a data bar of the first step),
+ * its share of the first step, of the previous measured step, and the drop into it. The worst
+ * drop is marked; a derived step says so; an unmeasured step says "not measured" with its reason
+ * and carries no figure; a step-to-step rate over fewer than KN_THRESHOLD users reads "k/n". A
+ * reading trap that names a step puts its marker on the row.
+ */
+export function StepsTable({ slice, drops, markWorst, notes, copy }: {
+  slice: FunnelSlice;
+  drops: readonly StepDrop[];
+  markWorst: boolean;
+  notes: readonly FunnelFrameNote[];
+  copy: FunnelStepCopy;
+}) {
+  const { t, locale } = useI18n();
+  const notesOf = notesByKey(notes);
+  const top = drops.find((d) => d.measured)?.users ?? 0;
+  const reasonOf = (key: string) => slice.steps.find((s) => s.key === key)?.reason ?? null;
+  const users = (n: number) => fmtCount(n, locale);
+  return (
+    <div className="lab-x-table-wrap" data-lab-steps-table-wrap="">
+      <table className="lab-x-table lab-steps-table" data-lab-steps-table="">
+        <thead>
+          <tr>
+            <th scope="col">{t('lab.explorer.stepsStep')}</th>
+            <th scope="col" className="lab-x-r">{t('lab.explorer.stepsUsers')}</th>
+            <th scope="col" className="lab-steps-bar-col" aria-hidden="true" />
+            <th scope="col" className="lab-x-r">{t('lab.explorer.stepsOfTop')}</th>
+            <th scope="col" className="lab-x-r">{t('lab.explorer.stepsOfPrev')}</th>
+            <th scope="col" className="lab-x-r">{t('lab.explorer.stepsDrop')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {drops.map((d) => {
+            const worst = markWorst && d.worst;
+            const derived = d.basis === 'derived' ? (
+              <span className="funnel-steps-derived" data-lab-derived="" title={copy.derivedTitle}>{copy.derived}</span>
+            ) : null;
+            const label = (
+              <td className="lab-steps-label" title={d.label}>
+                <span className="lab-steps-label-text">{d.label}</span>
+                {derived}
+                <NoteMark markKey={d.key} notes={notesOf.get(d.key) ?? []} t={t} />
+              </td>
+            );
+            if (!d.measured) {
+              const why = copy.notMeasured(reasonOf(d.key));
+              return (
+                <tr key={d.key} data-lab-step={d.key} data-basis={d.basis} data-measured="false" title={why}>
+                  {label}
+                  <td className="lab-x-r" colSpan={5}>
+                    <span className="lab-x-unmeasured" data-lab-not-measured={d.key}>{why}</span>
+                  </td>
+                </tr>
+              );
+            }
+            const small = d.prevUsers !== null && d.prevUsers > 0 && d.prevUsers < KN_THRESHOLD;
+            const ofPrev = d.ofPrev === null ? '' : small ? `${users(d.users)}/${users(d.prevUsers as number)}` : formatShare(d.ofPrev, locale);
+            const width = top > 0 ? Math.max(0, Math.min(100, (d.users / top) * 100)) : 0;
+            return (
+              <tr
+                key={d.key}
+                data-lab-step={d.key}
+                data-users={d.users}
+                data-basis={d.basis}
+                data-measured="true"
+                data-worst={worst ? 'true' : undefined}
+                data-drop-pct={d.dropPct === null ? undefined : d.dropPct.toFixed(1)}
+              >
+                {label}
+                <td className="lab-x-r">{users(d.users)}</td>
+                <td className="lab-steps-bar-col" aria-hidden="true">
+                  <span className="lab-x-track"><span className="lab-x-fill" style={{ width: `${width}%` }} /></span>
+                </td>
+                <td className="lab-x-r">{d.ofTop === null ? '' : formatShare(d.ofTop, locale)}</td>
+                <td
+                  className="lab-x-r"
+                  data-lab-kn={small && d.ofPrev !== null ? `${d.users}/${d.prevUsers}` : undefined}
+                  title={small && d.ofPrev !== null ? copy.knTitle(d.users, d.prevUsers as number) : undefined}
+                >
+                  {ofPrev}
+                </td>
+                <td className="lab-x-r lab-steps-drop">
+                  {d.dropPct === null ? '' : (
+                    <>
+                      {worst && <span className="lab-steps-worst" data-lab-worst-tag="">{t('lab.blocks.funnel.worst')}</span>}
+                      <span className="lab-x-num">{formatShare(d.dropPct, locale)}</span>
+                    </>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

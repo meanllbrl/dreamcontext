@@ -196,6 +196,12 @@
 .lab-bench-zone[data-tone='between'] { background: color-mix(in srgb, var(--color-warning) 28%, var(--color-bg-tertiary)); }
 .lab-bench-zone[data-tone='above'] { background: color-mix(in srgb, var(--color-success) 28%, var(--color-bg-tertiary)); }
 
+/* Dark: the red and amber hues sit close in lightness on a dark surface, so the below-floor zone
+   takes more of its hue and the in-band zone less: the two read apart at a glance. */
+[data-theme='dark'] .lab-bench-zone[data-tone='below'] { background: color-mix(in srgb, var(--color-error) 55%, var(--color-bg-tertiary)); }
+[data-theme='dark'] .lab-bench-zone[data-tone='between'] { background: color-mix(in srgb, var(--color-warning) 18%, var(--color-bg-tertiary)); }
+[data-theme='dark'] .lab-bench-zone[data-tone='above'] { background: color-mix(in srgb, var(--color-success) 40%, var(--color-bg-tertiary)); }
+
 /* Every marker is centred on its scale position: `left` is the x, the translate centres it. */
 .lab-bench-mark {
   position: absolute;
@@ -362,12 +368,27 @@
 
 /* ── compact: one line per metric, the ruler inline ─────────────────── */
 
+/* The rows share ONE column grid (each row a subgrid of the list), so every name, figure, change
+   and pill sits in the same column and every ruler track starts and ends at the same x: the
+   bars are compared by eye down the page, so a ragged start would misread as a different value. */
+.lab-bench[data-mode='compact'] .lab-bench-rows {
+  display: grid;
+  grid-template-columns: minmax(var(--space-16), max-content) max-content max-content minmax(var(--space-16), 1fr) max-content;
+  column-gap: var(--space-3);
+}
+
 .lab-bench[data-mode='compact'] .lab-bench-row {
-  grid-template-columns: minmax(var(--space-16), max-content) auto auto minmax(var(--space-16), 1fr) auto;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   grid-template-areas:
     'label value run ruler side'
     'sources sources sources sources sources';
   align-items: start;
+}
+
+/* The source line starts under the ruler's column group, not under the name, on a one-line row. */
+.lab-bench[data-mode='compact'] .lab-bench-sources-line {
+  grid-column: 2 / -1;
 }
 
 /* On one line the ruler band (16px) centres on the 20px primary line. */

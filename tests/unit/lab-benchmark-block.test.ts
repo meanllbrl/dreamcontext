@@ -159,7 +159,8 @@ describe('benchmark: one row per metric on one ruler', () => {
     const keys = [...html.matchAll(/data-lab-bench-row="([^"]+)"/g)].map((x) => x[1]);
     expect(keys).toEqual(['lead_rate', 'cost_per_lead', 'checkout_to_purchase']);
     expect(row(html, 'lead_rate')).toContain('Lead rate');
-    expect(row(html, 'lead_rate')).toContain('40%');
+    // The explorer's one formatter: a rate always carries one decimal.
+    expect(row(html, 'lead_rate')).toContain('40.0%');
   });
 
   it('places floor, target, current and the previous ghost at their scale positions (within 1px)', () => {
@@ -209,8 +210,8 @@ describe('benchmark: the ruler explains itself', () => {
   it('floor and target carry their numbers under the ruler, at their ticks', () => {
     const lead = row(render(), 'lead_rate');
     expect(lead).toContain('data-lab-bench-bound-label="floor"');
-    expect(lead).toContain('>Floor 30%</span>');
-    expect(lead).toContain('>Target 45%</span>');
+    expect(lead).toContain('>Floor 30.0%</span>');
+    expect(lead).toContain('>Target 45.0%</span>');
   });
 
   it('bound labels never overlap: the left one ends at its tick, the right one starts at it; too close = numbers only; no room = none', () => {
@@ -235,9 +236,10 @@ describe('benchmark: the ruler explains itself', () => {
 
   it('the previous window is a number too, next to the signed change', () => {
     const lead = row(render(), 'lead_rate');
-    expect(lead).toMatch(/class="lab-bench-delta-text">\+5%<\/span>/);
-    expect(lead).toContain('Previous 35%');
-    expect(lead).toContain('title="+5% vs previous window"');
+    // A rate's change is in points, never a percent of a percent.
+    expect(lead).toMatch(/class="lab-bench-delta-text">\+5\.0 pp<\/span>/);
+    expect(lead).toContain('Previous 35.0%');
+    expect(lead).toContain('title="+5.0 pp vs previous window"');
   });
 
   it('the status is a word in a tinted pill, never a bare coloured dot', () => {
@@ -281,7 +283,7 @@ describe('benchmark: the ruler explains itself', () => {
 describe('benchmark: change, status word, sources', () => {
   it('prints the delta vs the previous window and the status and trend words', () => {
     const lead = row(render(), 'lead_rate');
-    expect(lead).toContain('title="+5% vs previous window"');
+    expect(lead).toContain('title="+5.0 pp vs previous window"');
     expect(lead).toContain('data-status="between"');
     expect(lead).toContain('Between floor and target');
     expect(lead).toContain('Improving');

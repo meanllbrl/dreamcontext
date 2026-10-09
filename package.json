@@ -72,6 +72,7 @@
     "verify:delegate-modes": "node scripts/verify/delegate-modes.mjs",
     "verify:hypotheses": "node scripts/verify/hypotheses-ui.mjs",
     "verify:lab-boards": "node scripts/verify/lab-boards.mjs",
+    "verify:funnel-explorer": "node scripts/verify/funnel-explorer.mjs",
     "verify:whiteboard": "node scripts/verify/whiteboard.mjs",
     "verify:whiteboard-agent": "node scripts/verify/whiteboard-agent.mjs",
     "verify:whiteboard-agent-panel": "node scripts/verify/whiteboard-agent-panel.mjs",

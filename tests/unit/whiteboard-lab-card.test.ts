@@ -103,11 +103,28 @@ describe('the funnel explorer as a one-card board', () => {
     expect(buildExplorerResponse(root, 'nope', 'en')).toBeNull();
   });
 
-  it('opens on the Steps tab (the funnel bars), found by content', () => {
+  it('opens on the Compare tab (the pinned lanes), found by content', () => {
     const blocks = funnelExplorerBlocks('acme-funnel', [{ key: 'channel', label: 'Channel' }], 'en');
-    expect(lanesTab({ blocks })).toEqual({ path: '1', tab: 3 });
-    expect(blocks[1].tabs![3].label).toBe('Steps');
+    // Steps (compare off) comes before Compare: the lanes tab is the one with compare: 'lanes'.
+    expect(lanesTab({ blocks })).toEqual({ path: '1', tab: 5 });
+    expect(blocks[1].tabs![5].label).toBe('Compare');
     expect(lanesTab({ blocks: [{ type: 'breakdown', options: {} }] })).toBeNull();
+  });
+
+  it('falls back to the first bars funnel on a card without a Compare tab (an older preset)', () => {
+    const old = [
+      { type: 'breakdown', options: {} },
+      {
+        type: 'tabs',
+        options: {},
+        tabs: [
+          { blocks: [{ type: 'trend', options: {} }] },
+          { blocks: [{ type: 'funnel', options: { layout: 'flow', markWorst: true } }] },
+          { blocks: [{ type: 'funnel', options: { layout: 'bars', markWorst: true } }] },
+        ],
+      },
+    ];
+    expect(lanesTab({ blocks: old })).toEqual({ path: '1', tab: 2 });
   });
 });
 

@@ -1595,7 +1595,8 @@
         "<slug>"
       ],
       "valueFlags": [
-        "--select"
+        "--select",
+        "--funnel"
       ]
     },
     {
@@ -1635,7 +1636,9 @@
         "--adapter",
         "--unit",
         "--ttl",
-        "--board"
+        "--board",
+        "--preset",
+        "--locale"
       ]
     },
     {
@@ -1657,6 +1660,32 @@
       ],
       "valueFlags": [
         "--value"
+      ]
+    },
+    {
+      "path": "lab data",
+      "desc": "The snapshot a snapshot-fed insight reads (lab/data/<slug>.json): check it, or validate and write it",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "lab data check",
+      "desc": "Validate a snapshot without writing anything: the one on disk, or --file",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--file"
+      ]
+    },
+    {
+      "path": "lab data write",
+      "desc": "Validate a snapshot ({source, data}) and replace lab/data/<slug>.json with it, then hard-sync the insight (a refused snapshot writes nothing)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--file"
       ]
     },
     {

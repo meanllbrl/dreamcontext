@@ -2,6 +2,21 @@
   {
     "date": "2026-10-09",
     "type": "feat",
+    "scope": "lab",
+    "description": "Lab ships a first-class funnel explorer. lab create <slug> --preset funnel-explorer [--locale tr|en] scaffolds a manifest, a Meaning skeleton and a script that reads only lab/data/<slug>.json, so the insight never goes to the network and carries no keys; the agent fills the snapshot through KB MCP and writes it with lab data write, which validates it first and never touches the file on refusal (lab data check prints the same summary). funnel-set/v1 grows additively: platform, country and language axes with declared intersections in lookup mode, a weekly-history ladder that derives hybrid bands (floor = max(book, own p25), target = max(book, own p75)) with the winning source on every row, step provenance (derived vs measured, not-measured reasons), payment attempts and decline reasons by cohort, an optional access ladder, reading-trap notes, hints that tell the reader how to fill an empty part, window and provenance. The preset card (12x18, its own locale) has a funnel picker and pages Daily, Benchmark, Ranking, Flow, Steps, Compare (up to 4 pinned lanes), Payment, Access (hidden without data) and one table per dimension; selection, lanes, funnel and tab live in the URL. Unmeasured values never draw as zero, small denominators show k/n, derived counts are labelled, rates are never summed. lab board show --select/--funnel prints the same numbers the card draws. An automation whose result starts with RUN FAILED: ends failed and publishes nothing. Existing funnel-set and app/v1 insights render unchanged.",
+    "breaking": false,
+    "summary": "A built-in funnel explorer: lab create --preset funnel-explorer, fed by one KB-filled snapshot, honest on screen, TR and EN",
+    "references": [
+      "feature:lab-analytics-insights",
+      "task:a-built-in-funnel-explorer-insight-reads-a-kb-filled-snapshot-and-reads-better-than-a-hand-built-app-explorer"
+    ],
+    "authors": [
+      "mehmet-nuraydin"
+    ]
+  },
+  {
+    "date": "2026-10-09",
+    "type": "feat",
     "scope": "cli",
     "description": "Make dreamcontext setup the single first-run entry (uncommitted), aligned with doctor, install.sh, the CLI path shim and Claude path detection.",
     "breaking": false,

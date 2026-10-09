@@ -209,6 +209,8 @@ The dashboard's **Insights** page (Beta) is a set of **boards** (§ Boards below
 
 ```bash
 dreamcontext lab create <slug> --title "Weekly Active Users" [--render <render>] [--size s|m|l] [--adapter http|script] [--category <board title>] [--group <section>] [--unit users] [--ttl 1440] [--board <slug>|--no-board]
+dreamcontext lab create <slug> --title "…" --preset funnel-explorer [--locale en|tr]   # a snapshot-fed funnel explorer (§ Funnel explorer)
+dreamcontext lab data check|write <slug> --file <path>   # validate / validate + write + hard-sync its snapshot lab/data/<slug>.json
 dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped; --force skips the TTL, the freshness probe still decides)
 dreamcontext lab sync --all [--force]       # every insight; exits non-zero if any fail
 dreamcontext lab sync --all --dry-run       # what would be fetched / probed / skipped, ZERO upstream requests
@@ -282,7 +284,7 @@ For funnel analysis (comparative across funnels + sequential across steps), an i
 }
 ```
 
-The engine validates + caps the payload (max 40 funnels, 64 steps — over-cap keeps first 63 + the final step, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either.
+The engine validates + caps the payload (max 40 funnels, 64 steps — over-cap keeps first 63 + the final step, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either. For a ready-made explorer over a funnel set fed from the KB MCP (one card with Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access and axis tables), use `lab create <slug> --preset funnel-explorer`: § Funnel explorer below.
 
 ### App insights (`render: app` — a script builds its own multi-page, interactive, full-screen body)
 
@@ -480,6 +482,8 @@ A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` k
 |  | `funnel` | Funnel | one name (pick: funnels) | unset |
 |  | `layout` | Layout | `bars`, `flow` | `bars` |
 |  | `markWorst` | Mark the biggest drop | `true`, `false` | `false` |
+|  | `compare` | Lanes | `auto`, `lanes`, `off` | `auto` |
+|  | `table` | Table | `true`, `false` | `false` |
 | `pivot`: One dimension down, another across. | `rows` | Rows | text | unset |
 |  | `cols` | Columns | text | unset |
 |  | `where` | Only rows where | `{dim: [values]}` | unset |
@@ -497,6 +501,8 @@ A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` k
 |  | `dims` | Breakdowns | list of names (pick: dims) | unset |
 |  | `counts` | User counts | `true`, `false` | `false` |
 |  | `lanes` | Compare lanes | `true`, `false` | `true` |
+|  | `picker` | Funnel picker | `true`, `false` | `false` |
+|  | `locale` | Language | `en`, `tr` | `en` |
 | `trend`: The selected path's metrics day by day. | `funnel` | Funnel | one name (pick: funnels) | unset |
 |  | `metrics` | Metrics | list of names (pick: metrics) | unset |
 |  | `chart` | Chart | `line`, `bar` | `line` |
@@ -505,6 +511,7 @@ A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` k
 |  | `axes` | Axes | `both`, `x`, `y`, `none` | `both` |
 |  | `grid` | Gridlines | `true`, `false` | `true` |
 |  | `format` | Format | `auto`, `number`, `compact`, `percent`, `currency` | `auto` |
+|  | `table` | Table | `true`, `false` | `false` |
 | `benchmark`: Each metric against its floor and target on one ruler. | `funnel` | Funnel | one name (pick: funnels) | unset |
 |  | `metrics` | Metrics | list of names (pick: metrics) | unset |
 |  | `comparePrev` | Compare with previous period | `true`, `false` | `true` |
@@ -516,6 +523,11 @@ A binding is `data: "<insight>"` or `"<insight>/<datasetKey>"` (a `dataset/v1` k
 |  | `sort` | Sort by | `desc`, `asc` (by value), `none` (source order), a column key (`-key` descending) or `{by, dir}` | unset |
 |  | `limit` | Row limit | number 1 to 400 | unset |
 |  | `density` | Density | `compact`, `comfortable` | `compact` |
+| `ranking`: Each funnel's best breakdown on one metric. | `metrics` | Metrics | list of names (pick: metrics) | unset |
+|  | `density` | Density | `compact`, `comfortable` | `compact` |
+| `payment`: Payment attempts, decline rate and decline reasons for the selected path. | `funnel` | Funnel | one name (pick: funnels) | unset |
+|  | `density` | Density | `compact`, `comfortable` | `compact` |
+| `access`: Whether payers reached the product, stage by stage. Hidden when there is no data. | `density` | Density | `compact`, `comfortable` | `compact` |
 <!-- block-catalog:end -->
 
 How the chart options read. `format`: `auto` groups digits below 10,000 and turns compact above (12.4K), `percent` expects a fraction (0.25 shows 25%), `currency` uses the unit when it is a 3-letter code. `color` is the first palette slot (1 to 8); colours follow the entity, never its rank, so a filter, a legend toggle or a series pick never repaints a survivor, and a 9th series or an Other bucket is grey. `topN` keeps the N largest and folds the rest into one Other row (grey, always last); `normalize` shows each x as 100%; `sort`, `topN` and `normalize` change the VALUES, so `lab board show` prints them too. `legend` places the series legend (a single series never gets one); clicking a legend item hides that series. `axes` and `grid` only change chrome. A pie with 7 or more slices kept draws as bars. `filter` narrows every sibling block bound to the same dataset, client-side, with zero sync requests; `tabs` never nest; `text` and `callout` markdown is sanitized with remote images stripped; `insight` is the whole insight exactly as its render draws it (the migration path; html/v1 and app/v1 bodies keep the `lk-` kit there).
@@ -532,46 +544,129 @@ Static options run in ONE fixed order, `where` → interactive filter → `sort`
 
 **Brain sync.** Board files merge semantically (`lab-board` class): cards union by `id`, a card changed on both sides keeps ours, a card deleted on one side and changed on the other is kept and reported, overlaps are resolved on the grid. A board file left with conflict markers opens as an error board (read-only, "Open file") until fixed. Library blocks (`lab/blocks/*.md`) merge as prose. Per-machine state stays local: `state/.lab-prefs.json` (active board, legacy tab order, funnel columns) and `state/.lab-freshness.json` are never synced.
 
-### Funnel explorer (board blocks over a funnel set)
+### Funnel explorer (a snapshot-fed insight drawn as one interactive card)
 
-A funnel explorer is ONE synced insight whose pages are board blocks: each page can sit on its own card, or the whole explorer can be one interactive card. Pick-type options (`funnel`, `dims`, `metrics`, `by`, `page`) take names from the synced data; the inspector lists them, and a name that is not in the data renders a visible note, never a silent fallback.
+A funnel explorer is ONE insight whose pages are board blocks over one synced `funnel-set/v1`. The ready-made form is one 12x18 card with a funnel picker and tabs: **Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access**, then one table per axis (Platform, Country, Language, ...). Every page reads the same synced payload, so a chip click, a funnel pick or a pinned lane changes every tab at once and sends zero sync requests. Pick-type options (`funnel`, `dims`, `metrics`, `by`, `page`) take names from the synced data; a name that is not in the data renders a visible note, never a silent fallback.
 
-**Contract.** The script returns `{data, app?}` where `data` is a `dataset/v1` bundle that may carry ONE extra member, `funnel: funnel-set/v1`. The sync writes both: the bundle to `cache.datasets` (tables for stat/bar/filter blocks) and the funnel set to `cache.funnel` plus its history. A malformed `funnel` member fails the sync loudly and keeps the prior cache. `funnel-set/v1` gains optional fields (old payloads stay valid):
+**Where the numbers come from.** The data never comes from the network inside dreamcontext. The agent pulls it through the KB MCP (`kb_charts` → `kb_chart_schema` → `kb_chart_query`), writes ONE snapshot file `lab/data/<slug>.json` shaped `{source, data}`, and the insight's script only reads that file: no fetch, no key, no `lab credentials`. `source` carries what was asked (charts, applied filters, freshness, `pulled_at`); `data` is the `funnel-set/v1` below.
 
-- `segment_mode`: `cells` (default: disjoint cells the engine may sum) or `lookup` (each segment is its own measured path for an exact selection, one axis or an intersection; looked up, never summed, never folded into Other, no per-dim value cap; 64 segments max, the tail dropped with a notice).
-- Per segment `measured` (default true) and `reason` (up to 200 chars). **Not measured is not zero**: an unmeasured path has no steps, its chip is disabled with the reason on hover and focus, its metrics read "Not measured: reason" and no 0 or 0% is ever drawn. An unmeasured cell never adds to a `cells` sum.
-- Per segment `metrics`, `benchmarks` (absent = the set's band, shown as inherited) and `daily`; per funnel `daily: [{t: 'YYYY-MM-DD', m: {metricKey: number|null}}]` (keys must exist in `metrics`, 92 days max, a null day is a gap).
-- Per metric `measured` / `reason` (a broken denominator). Per benchmark `floor_source`, `target_source` (up to 64 chars, printed under the ruler) and `better: higher|lower` (`lower` flips below/above and improving/worsening).
-- Over 400 KB the engine trims segment daily, then funnel daily, then segments.
+**Agent flow, end to end:**
 
-In `cells` mode a selection sums the matching measured cells, so it has step users but no rates (rates cannot be summed); the benchmark says so.
+```bash
+dreamcontext lab create acme-storefront-funnels --preset funnel-explorer --title "Acme storefront funnels" --category "Acme Funnel" [--locale tr]
+# pull the queries below through the KB MCP, build the snapshot file, then:
+dreamcontext lab data check acme-storefront-funnels --file /tmp/acme-snapshot.json   # validate, writes nothing
+dreamcontext lab data write acme-storefront-funnels --file /tmp/acme-snapshot.json   # validate again, replace atomically, hard-sync
+dreamcontext lab board show acme-funnel --select "country=TR" [--funnel <id>]        # the numbers the card draws
+```
 
-**Blocks.** All bind `data: <insight>` and share the card's selection:
+- `--preset funnel-explorer` makes a `render: funnel`, `adapter: script` insight with `preset: funnel-explorer` in the manifest, NO `range` tweak (the window comes from the snapshot, never from a range control), a Meaning skeleton (Source and filters, Window, Steps, Reading traps, Refresh) and `lab/scripts/<slug>.mjs` that reads only the snapshot. It never writes `lab/data/<slug>.json`. `--render <other>` or `--adapter http` with it is refused.
+- `--locale en|tr` writes `locale` into the manifest. The explorer card speaks that language whatever the dashboard's own language is: the picker `breakdown` carries `options.locale`, the card renders inside its own language scope, and the tab labels and every explorer string follow it. `lab board add-card --preset` defaults to the manifest locale.
+- Before the snapshot exists, a sync fails loudly ("No snapshot yet at lab/data/<slug>.json ...") and keeps the prior cache.
+- **Placement.** On a vault whose boards are still derived from categories, a preset insight derives as a 12x18 explorer card on its category board (its axis tabs come from the cached dims, so they appear after the first sync). On a materialized vault `lab create` places nothing and prints the `lab board add-card <board> --insight <slug> --preset funnel-explorer` command to run after the first sync.
+- Fill the Meaning: charts and filters, the window and the previous window, which steps are derived, and the reading traps (the same lines go into the snapshot's `notes`).
 
-| page | block | what it draws |
+**The snapshot gate.** `lab data write` is the ONLY write path. It validates first and leaves the file byte-identical (or absent) when it refuses; on success it replaces the file atomically and runs a hard sync. `lab data check` runs the same validation without writing and prints the summary (funnels, axes with value counts, paths and intersections, daily coverage, payment and access presence, ladder stages, window, `pulled_at`, stored bytes against the 400,000-byte cap, every parse notice). A snapshot is refused when:
+
+- `source.pulled_at` is missing or not a time;
+- no applied filters are recorded (`source.applied_filters`, or `source.queries[].applied_filters`);
+- no filter is an explicit date window (`op: "between"` with two `YYYY-MM-DD` days);
+- `data.window` matches no query's date filter;
+- `data` fails its parser, or (for a funnel explorer) is not a funnel set (a `dataset/v1` bundle with a `funnel` member also passes);
+- the file is over 2,000,000 bytes.
+
+A missing product filter is a notice, not a refusal. Aim for zero byte-cap notices: a stored set over 400 KB loses segment daily, then funnel daily, then segments (largest funnel first), so budget the snapshot below the cap instead of letting the trim choose.
+
+**Contract (`funnel-set/v1`, every field below optional; old payloads parse unchanged).** The base contract is § Funnel insights. The explorer adds:
+
+| field | where | what it carries |
 |---|---|---|
-| chips | `breakdown` | one chip row per dim, intersections, disabled unmeasured combos with their reason, pin up to 4 selections as compare lanes |
-| daily | `trend` | the selected path's daily metrics as a line or bar chart, a metric switch (one series at a time) |
-| benchmark | `benchmark` | floor, current and target on one ruler, delta vs the previous window, status word, each bound's source |
-| flow / steps | `funnel` with `layout: flow` or `bars`, `markWorst` | the selected path (never summed in lookup mode), drop badges, the worst drop marked, pinned lanes side by side on one step spine (a missing step is a dash) |
-| per dim | `segments` with `by: <dim>` | one row per value of that dim under the selection on the other axes, band tone washes, faded low-sample rows, sortable |
+| `window: {from, to, prev_from?, prev_to?}` | set | The window the numbers describe (shown in the header). With a window the cached range is the window, and Δ uses only the payload's own `prev` (never an older sync of the same window). |
+| `provenance: {source, pulled_at?, freshness?, filters?[]}` | set | The header's source line; the template script derives it from `source` when absent. |
+| `notes: [{text, code?, level?: trap\|info, keys?[]}]` | set, funnel | Reading traps, one line each (8 per level, 200 chars). `keys` (step, metric or `dim:<key>`) put a marker on those cells. |
+| `hints: {<part>: "how to fill it"}` | set | Shown in that part's empty state. Part keys: `daily`, `weekly`, `segments`, `intersections`, `payment`, `access`, `dim:<key>`, `metric:<key>`. |
+| `unmeasured: {<part>: "why this funnel lacks it"}` | funnel | Replaces the generic "not measured" text for that funnel. |
+| `steps[].basis: measured\|derived`, `steps[].measured`, `steps[].reason` | funnel | A derived count (rate × first-step users) is labelled; an unmeasured step reads "not measured: reason", never 0, and drop math skips it. |
+| `rates: {<metric>: {num, den}}` | set | Two step keys per rate metric: with a denominator under 100 the page shows `k/n` instead of a rate. |
+| `intersections: [{dims[], min_users?}]` | set | Which axis combinations were pulled and at what floor: a missing path then says "not pulled" or "under N users, or not pulled". |
+| `ladder: {stages: [{metric, book_floor?, book_target?, book_source?}], min_weeks?, min_week_users?, max_weeks?}` | set | Benchmark inputs (below). |
+| `weekly: [{t, users, m}]` | set, funnel | Full weeks before the window: the "own" history. INPUT ONLY: consumed at sync, never stored. |
+| `benchmarks` | funnel | Per-funnel bands (the ladder writes them; an explicit one wins with a notice). |
+| `payment: {cells: [{dims, cohort?: first\|renewal\|all, attempts, declines, reasons?}], measured?, reason?}` | set, funnel | Attempts and declines per cell; `dims: {}` is the total. The set-level one stands for every funnel. |
+| `payment_reasons: [{key, label, note?}]` | set | Labels for the reason keys. |
+| `access: {stages: [{key, label}], rows: [{funnel?, dims?, counts}], as_of?}` | set | Did payers reach the product, stage by stage (`stages[0]` is the base). |
 
-A funnel block with default options draws exactly as before. Loss reasons (payment declines and the like) need no page type: a `stat` and a `bar` on a dataset of the same bundle plus a `filter` on a cohort dim. A second funnel in the set (say "Activation ladder") is drawn by `funnel: <id>`.
+Kept from before: `segment_mode` (`cells`, the default, sums disjoint cells and carries no rates; `lookup` makes each segment its own measured path for an exact selection, one axis or an intersection, looked up and never summed), per-segment `measured`/`reason`/`metrics`/`benchmarks`/`daily`, per-metric `measured`/`reason`, per-benchmark `floor_source`/`target_source`/`better`. Caps: notes 8 × 200 chars, hints 24, filters 8, intersections 16, rates 32, ladder stages 16, weeks 52 per level, payment cells 64 and reasons 12, access 8 stages and 64 rows; every cap is a notice.
 
-**One interactive card (app mode).** `dreamcontext lab board add-card <board> --preset funnel-explorer --insight <slug> [--locale en|tr]` writes a 12x12 card: a `breakdown` block above a `tabs` block with Daily, Benchmark, Flow, Steps and one Segments tab per client dim (first 4). The insight must be synced first (the tabs come from its dims; otherwise the command exits 1 with "sync <slug> first"). `--preset` and `--block` are mutually exclusive. The dashboard's Add card menu offers the same preset for an insight whose cache holds a funnel, and writes the same blocks. Any card opens full screen from its menu (`?card=<id>`, Esc or Back closes) and keeps its selection and active tab.
+**The benchmark band (hybrid ladder).** For each ladder stage the engine computes `floor = max(book, own p25)` and `target = max(book, own p75)`. "Own" percentiles come from the level's own `weekly`: weeks before `window.from` with at least `min_week_users` (300) users and a value, the last `max_weeks` (12), at least `min_weeks` (4) of them; linear interpolation, 4 decimals. Each bound records which source won (`book` or `own`) and the week count, and the page says so ("floor: book · target: own p75 · 8 weeks"). A funnel without enough own weeks inherits the set's band, and the row says "band from the total"; a path inherits its funnel's band, then the set's. The ladder is higher-is-better only: a lower-is-better metric uses an explicit `benchmarks` entry with `better: lower`. With a ladder and no `metrics` option, the Benchmark page rows are the ladder stages in ladder order (CLI and dashboard alike).
 
-**Selection is card-scoped.** A chip click narrows every funnel-frame block in the same card (tabs included) and filters same-insight tables by the dims they carry (the total follows); a table without a selected dim says "Not split by X". Chip and tab clicks send zero sync requests. Cards do not share a selection.
+**Pages.** The preset card is a `breakdown` block (`picker: true`, `counts: true`, `locale`) above a `tabs` block:
 
-**CLI parity.** `dreamcontext lab board show <board> --select "platform=Web,language=EN" [--json]` adds an `explorer` field to every explorer block (and to a funnel block in explorer mode): `{selection, slice, axes | series | rows | drops}`, computed by the same frameOps functions the dashboard blocks call, so the CLI prints the same benchmark rows, step users, worst step and segment rows as the card. Human output prints "Not measured: reason" and marks the biggest drop.
+| tab | block | what it draws |
+|---|---|---|
+| header | `breakdown` with `picker` | in a board cell: one row with the funnel picker, the window and the source line, ONE strip of headline figures, and only the current funnel's own traps (at most 2) with everything else behind a "Reading traps (N)" disclosure; fullscreen shows the full header (equal-height headline cards, all notes in order funnel traps, then set traps, then info, the first 4 visible, the rest behind "+N"); then the chips and the compare lanes |
+| Daily | `trend` (`chart: bar`, `table: true`) | the selected path's metrics day by day, with a day table |
+| Benchmark | `benchmark` | floor, current and target on one ruler, Δ vs the previous window, which source won each bound |
+| Ranking | `ranking` | each funnel's best breakdown on one metric, a 30/100/300 user floor, duplicates (an intersection that is its one-axis parent) removed, funnels without a path listed; a row opens that funnel and path |
+| Flow | `funnel` (`layout: flow`, `compare: off`) | the path as a flow; runs over 16 steps collapse |
+| Steps | `funnel` (`table: true`, `markWorst`) | step table: users, share of the first and the previous step (or k/n), drop, the worst drop marked, derived and unmeasured marks |
+| Compare | `funnel` (`compare: lanes`) | up to 4 pinned breakdowns side by side on one step spine, each with its own rates |
+| Payment | `payment` | decline rate (k/n under 100 attempts), reason shares with an "other" residual, cohorts one at a time, a per-axis table; the total row is the `{}` cell only |
+| Access | `access` | share of the base per stage; the tab is HIDDEN when the set carries no access data |
+| one per axis | `segments` with `by: <dim>` | one row per value under the selection on the other axes, a tone dot per band (never a tinted cell), k/n cells, faded low-sample rows |
 
-**A v1 app insight on a board.** The `insight` block takes `page` (pin any app page) and `nav: true` (page pills in the card; a pill click and an in-frame `lab.navigate` both switch pages with a fresh frame). `nav: false` keeps the plain card preview.
+**Reading it.** The explorer card draws its own source line (where and when the numbers were pulled, and how old the data was), so it hides the card's usual freshness subtitle. Every number follows ONE formatter in the card's language: Turkish writes `%21,8` and `1.234`, English `21.8%` and `1,234`; a change in a rate is shown in points (`puan` in Turkish, `pp` in English), never as a percent of a percent; a money figure of 0 means no spend was attributed and reads as a dash, never `$0`. The tab labels follow the card's language (the Benchmark tab is "Benchmark" in both languages).
 
-**Converting a v1 app explorer.** A hand-built `app/v1` funnel explorer (pages that compute their own breakdowns from datasets) has no funnel member, so `--preset funnel-explorer` refuses it ("an app insight with no funnel data") and the Add card menu shows the preset disabled. Convert it in the SCRIPT, never by hand-writing a card:
-1. Read what each page shows and from which rows: `lab body <slug> --page <id>`, `lab query <slug>`.
-2. In the script, build a `funnel-set/v1` from the same rows the pages already read (one funnel per path; `dimensions` for the breakdown axes; `segments`, with `segment_mode: lookup` when intersections are measured exactly; `metrics`, `benchmarks`, `daily`) and return it as `data.funnel` next to the existing datasets. Keep `app` untouched: the old pages keep working.
-3. `lab sync <slug>`, then `lab show <slug>` must print the step tables.
-4. `lab board add-card <board> --preset funnel-explorer --insight <slug>` (or one card per page with `--block`), and check the numbers with `lab board show <board> --select "dim=value"` against the old pages.
-5. A page that is not a funnel view (payment declines, access) becomes `stat`/`bar`/`filter` blocks on the bundle's datasets. Remove the old card only after the owner compared; drop `app` from the script only when nothing links its pages.
+Lanes are selections, so switching the funnel re-applies them to the new funnel. The funnel pick, the selection, the lanes and the open tab live in the URL (`v.<cardId>`), so a copied link, a reload and a reload in fullscreen (`?card=<id>`) restore the same view. They are not re-applied on browser Back/Forward, so closing fullscreen goes Back without undoing what you changed inside it. A card without a funnel picker behaves as before: one-funnel blocks draw their `funnel` option, else the first funnel.
+
+**Honesty rules (all on screen, CLI included).**
+
+- Not measured is not zero: an unmeasured metric, step, path or payment reads "not measured: reason" and no 0 or 0% is drawn.
+- Rows under `low_sample_threshold` users are faded.
+- A rate whose denominator is under 100 shows `k/n` instead.
+- Rates are never summed across cells (`cells` mode carries step users only; payment totals come only from the `{}` cell).
+- Derived step counts are labelled.
+- Every empty state names what is missing and how to fill it (the snapshot's `hints`): no daily series, daily for the funnel level only, no payment, a column no row carries, no ranking path over the floor, no pinned lane.
+- An axis whose every chip is unmeasured collapses into one line with the reason.
+
+**The KB recipe: which query fills which field.** Always send the product filter AND an explicit `between` date filter on every query; read values by `columns[].key` (a requested name may come back prefixed, e.g. `total_spend_usd` → `sum_total_spend_usd`); never write 0 for a missing value (omit it, or mark it `measured: false` with a reason); save each response to a file by piping, not by hand-copying; copy each response's header (applied filters, freshness) into `source.queries[]`. Field names are what the chart schema says: confirm them with `kb_chart_schema` before the first query.
+
+| contract field | chart | dims | notes |
+|---|---|---|---|
+| `metrics` + `prev` | Funnel Analysis | `funnel_id_calc` | once for the window, once for the previous window |
+| `steps` | Funnel Analysis | same rows | count metrics are counted steps; a rate × users is `basis: derived` (Funnel Steps gives event-level counts when needed) |
+| one-axis paths | Funnel Analysis | `funnel_id_calc` + `country_name`, `language_upper` or `campaign_source` | `campaign_source` is the platform; keep its null as a named value (e.g. "Atfedilmemiş"), never drop it; repeat for the previous window for Δ |
+| intersections | Funnel Analysis | `funnel_id_calc, campaign_source, country_name` / `..., language_upper` | keep rows with at least 300 users, at most 14 per funnel; declare them in `intersections` |
+| `daily` | Funnel Analysis | `event_date_parsed, funnel_id_calc` | granularity `day`, the window |
+| `weekly` + `ladder` | Funnel Analysis | `event_date_parsed` (set) and `event_date_parsed, funnel_id_calc` | granularity `week`, the 12 full weeks before the window |
+| `payment` | Acceptance Report | `funnel_id` (+ `country`, ISO-2) | attempts = `total_transaction_attempt_count`; declines = the same with `failure_message is_not_null`; one reason = `failure_message contains "<text>"`; `is_renewal` works only as a filter, so renewal attempts = `total_transaction_attempt_count` − `d0_transaction_count` |
+| `access` | the product's own source | | not a NeonBI chart |
+
+A metric that returns the same value for two different windows ignores the date filter: leave it out.
+
+**Refresh.** `lab sync` alone brings no new data (the script reads a file). Refresh = pull the queries again → build the snapshot → `lab data check` → `lab data write`. A scheduled refresh is an automation (`dreamcontext automations create`) whose prompt follows this contract:
+
+1. Record the current `pulled_at` (`dreamcontext lab data check <slug> --json`).
+2. If `kb_chart_query` is not among your tools, make the FIRST line of your final message `RUN FAILED: KB tools missing (kb_chart_query)` and write nothing.
+3. Pull every query with the product and `between` date filters, build the snapshot, write it only with `dreamcontext lab data write <slug> --file <path>` (never edit `lab/data/<slug>.json` by hand). A refused write: `RUN FAILED: snapshot refused: <first problem>`.
+4. End with `dreamcontext lab data check <slug>`; if `pulled_at` did not advance, `RUN FAILED: snapshot not refreshed`.
+
+The runner marks a run whose final message carries a `RUN FAILED: <why>` line among its first five lines as **failed** with that reason, publishes nothing and notifies like any failed run. "Never touch the snapshot" is guaranteed by `lab data write` validating before it writes; "fail loudly" depends on the prompt following this contract, and step 4 catches a run that silently did nothing.
+
+**Gates before you call it done:** `lab data check` shows no problem and no byte-cap notice; `lab board show <board> --select "<dim>=<value>" [--funnel <id>]` prints the numbers you expect from the snapshot (the same numbers the card draws); the Meaning names the source, window and traps.
+
+**Building your own layout.** Every page is a catalog block (table above), so a board can hold one card per page instead of the preset: `lab board add-card <board> --block '{"ranking": {"data": "<slug>"}}'`. The explorer blocks share a card's selection: a chip click narrows every funnel-frame block in the same card (tabs included) and filters same-insight tables by the dims they carry ("Not split by X" when they lack one). Cards do not share a selection.
+
+**CLI parity.** `dreamcontext lab board show <board> --select "platform=Web,language=EN" [--funnel <id>] [--json]` adds an `explorer` field to every explorer block (breakdown, trend, benchmark, ranking, segments, payment, access, and a funnel block in explorer mode), computed by the same functions the dashboard blocks call: header (window, source, notes in on-screen order), series, benchmark rows with band sources, ranking rows, step drops with derived and not-measured marks and the worst drop, payment rows and reasons, access or `hidden (no data)`, segment rows with k/n.
+
+**A v1 app insight on a board.** The `insight` block takes `page` (pin any app page) and `nav: true` (page pills in the card; a pill click and an in-frame `lab.navigate` both switch pages with a fresh frame). `nav: false` keeps the plain card preview. `app/v1` explorers keep working unchanged.
+
+**Migrating a hand-built v1 app explorer.** A hand-built `app/v1` funnel explorer has no funnel member, so `--preset funnel-explorer` refuses it ("an app insight with no funnel data"). Migrate in steps, never by hand-writing a card, and keep the old pages until the owner compared:
+
+1. Map its payload onto the contract: per-funnel rows → `funnels[].metrics` and `steps` (derived counts → `basis: derived`); per-axis step tables → one-axis `segments` (`segment_mode: lookup`); axis combinations → intersection segments plus `intersections`; band history → `weekly` plus `ladder.stages` with the book values; day cuts → `daily`; decline cells and reasons → `payment` plus `payment_reasons`; access counts → `access`; long notes → one-line `notes`. Ranking and cross-axis tables need no field: the engine computes them.
+2. Return that set as `data.funnel` next to the existing datasets (the app pages keep working), `lab sync`, then `lab board add-card <board> --preset funnel-explorer --insight <slug>` and compare with `lab board show --select`.
+3. If the script calls an analytics API with a token, move to the snapshot flow: the agent pulls through the KB MCP, `lab data write` stores it, and the script becomes the template reader (`lab create --preset funnel-explorer` in a scratch vault shows it). Add `preset: funnel-explorer` (and `locale`) to the manifest.
+4. Drop `app` from the script and the old card only after the owner approves.
 
 **Synthetic names only.** Fixtures, presets, docs and screenshots use a fictional vocabulary (e.g. "Acme Storefront", "Quiz checkout (v2)", "Activation ladder"), never a registered vault or real product name.
 

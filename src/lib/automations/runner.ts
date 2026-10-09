@@ -761,6 +761,28 @@ const UNPARSEABLE: Omit<ClaudeResult, 'raw'> = {
   limit: null,
 };
 
+/** The first line a run writes to end itself as failed (see `declaredRunFailure`). */
+export const RUN_FAILED_PREFIX = 'RUN FAILED:';
+const DECLARED_FAILURE_LINES = 5;
+const DECLARED_FAILURE_MAX_CHARS = 300;
+
+/**
+ * A run that cannot do its job says so in its own words: a line starting with
+ * `RUN FAILED:` among the first five non-empty lines of its final message (e.g.
+ * `RUN FAILED: KB tools missing (kb_chart_query)`). A headless run cannot set
+ * `is_error` itself, so without this an honest "I could not" would publish as
+ * a success. Returns the reason (<= 300 chars), or null when the run declared
+ * nothing. PURE.
+ */
+export function declaredRunFailure(result: string): string | null {
+  if (typeof result !== 'string' || result === '') return null;
+  const lines = result.split('\n').map((l) => l.trim()).filter((l) => l !== '').slice(0, DECLARED_FAILURE_LINES);
+  const hit = lines.find((l) => l.startsWith(RUN_FAILED_PREFIX));
+  if (hit === undefined) return null;
+  const reason = hit.slice(RUN_FAILED_PREFIX.length).trim().slice(0, DECLARED_FAILURE_MAX_CHARS);
+  return reason || 'the run declared itself failed';
+}
+
 /** PURE — never throws. Unparseable JSON or a missing/non-string `result`
  *  both degrade to the same "not parsed" shape; the caller writes the RAW
  *  stdout tail to the output file in that case so nothing is silently lost. */
@@ -2273,6 +2295,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           // `finalOutputPath` stays null, so nothing publishes, nothing reaches Telegram,
           // and the feed offers no file card for a document that was never written.
           logFn(`automation "${slug}": ${error}`);
+        } else if (status === 'ok' && declaredRunFailure(claudeResult.result ?? '') !== null) {
+          // The run ended itself as failed (`RUN FAILED: <why>`, e.g. its KB tools were
+          // missing). Like the limit gate: nothing publishes, the failed-run notification fires.
+          status = 'failed';
+          error = declaredRunFailure(claudeResult.result ?? '');
+          logFn(`automation "${slug}": the run declared itself failed: ${error}`);
         } else if (status === 'ok' && flow.needsHitl && !documentSignOff && !proposedThisRun && !conversational) {
           const document = claudeResult.result ?? '';
           try {

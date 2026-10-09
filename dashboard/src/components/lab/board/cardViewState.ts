@@ -14,6 +14,10 @@ import type { ActiveFilter } from '../blocks/frameShape';
  * - `lanes`: selections pinned side by side per insight slug, at most MAX_LANES.
  * - `tabs`: the open tab per tabs block, keyed by the block path (`0`, `1.2.0`).
  * - `appPage`: the open v1 app page per insight block, keyed by the block path.
+ * - `funnel`: the funnel the reader picked per insight slug (a funnel-picker card only).
+ *
+ * The funnel, selection, lanes and open tabs also travel in the URL (`cardViewUrl.ts`),
+ * so a reload or a shared link restores them.
  *
  * Every reducer is pure and returns a new view; a no-op returns the SAME view,
  * so React skips the render.
@@ -25,6 +29,7 @@ export interface CardView {
   lanes: Record<string, Selection[]>;
   tabs: Record<string, number>;
   appPage: Record<string, string>;
+  funnel: Record<string, string>;
 }
 
 /** Views by card id. */
@@ -36,6 +41,7 @@ export const EMPTY_VIEW: CardView = Object.freeze({
   lanes: {},
   tabs: {},
   appPage: {},
+  funnel: {},
 }) as CardView;
 
 /** The most selections a card compares side by side. */
@@ -116,6 +122,19 @@ export function setTab(view: CardView, blockPath: string, index: number): CardVi
 export function setAppPage(view: CardView, blockPath: string, pageId: string): CardView {
   if (view.appPage[blockPath] === pageId) return view;
   return { ...view, appPage: { ...view.appPage, [blockPath]: pageId } };
+}
+
+/** The funnel picked for one insight; null or '' clears it (the card falls back to the first funnel). */
+export function setFunnel(view: CardView, insight: string, id: string | null): CardView {
+  const current = (view.funnel ?? {})[insight];
+  if (id === null || id === '') {
+    if (current === undefined) return view;
+    const rest = { ...view.funnel };
+    delete rest[insight];
+    return { ...view, funnel: rest };
+  }
+  if (current === id) return view;
+  return { ...view, funnel: { ...(view.funnel ?? {}), [insight]: id } };
 }
 
 /** Keep only the views of cards still on the board (a key dies with its card). Same object when nothing died. */

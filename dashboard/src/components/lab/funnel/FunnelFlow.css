@@ -205,13 +205,10 @@
   color: var(--color-text-tertiary);
 }
 
+/* The worst word sits in the badge (the wide track column), so it is never cut at the card's edge. */
 .funnel-flow-worst {
-  grid-column: 3;
-  grid-row: 1;
-  justify-self: end;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  padding-left: var(--space-1);
+  border-left: 1px solid color-mix(in srgb, var(--color-error) 45%, var(--color-border));
   white-space: nowrap;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
@@ -275,6 +272,8 @@
   display: none;
 }
 
+/* The compact row's tint and outlined badge mark the worst drop; the word stays in the DOM for the title and the hooks. */
+
 .funnel-flow-stage[data-worst] {
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
@@ -302,4 +301,41 @@
 @container flow (min-width: 420px) {
   .funnel-flow[data-flow-mode='compact'] .funnel-flow-pct { display: inline; }
   .funnel-flow-link--inline .funnel-flow-worst { display: inline; }
+}
+
+/* An unmeasured step: no shape, the word in the value column (its reason in the title), never a 0. */
+.funnel-flow-stage[data-measured='false'] .funnel-flow-track {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.funnel-flow-unmeasured {
+  color: var(--color-text-secondary);
+}
+
+/* The collapsed middle of a long flow: one quiet row that opens the hidden steps. */
+.funnel-flow-more {
+  grid-column: 1 / -1;
+  justify-self: center;
+  align-self: center;
+  height: var(--space-6);
+  padding: 0 var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.funnel-flow-more:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.funnel-flow-more:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
 }
