@@ -6,12 +6,18 @@ import {
   MAX_FUNNEL_BYTES,
   MAX_NOTES,
   computeFunnelPrev,
+  computeStepRows,
   funnelLatest,
   funnelSetRange,
   funnelToSeries,
   makeFunnelSnapshot,
   parseFunnelSet,
+  worstDropIndex,
 } from '../../src/lib/lab/funnel.js';
+import {
+  computeStepRows as dashboardStepRows,
+  worstDropIndex as dashboardWorstDrop,
+} from '../../dashboard/src/components/lab/funnel/funnelModel';
 import { createInsight, readCache } from '../../src/lib/lab/store.js';
 import { syncInsight } from '../../src/lib/lab/sync.js';
 import { readFrontmatter, writeFrontmatter } from '../../src/lib/frontmatter.js';
@@ -269,6 +275,52 @@ describe('an unmeasured step never becomes a 0 downstream', () => {
     // And a step unmeasured NOW has no previous value either.
     const nowUnmeasured: FunnelCacheEntry = { ...entry, set: set };
     expect(computeFunnelPrev(nowUnmeasured, [makeFunnelSnapshot(next, range, '2026-09-07T00:00:00Z')]).steps.quiz.visit).toBeNull();
+  });
+});
+
+describe('step rows: an unmeasured step has no rates and is never the worst drop', () => {
+  // visit 1000 -> lead 900 -> buy (NOT measured, stored as 0) -> upsell 300
+  const steps = [
+    { key: 'visit', label: 'Visit', users: 1000 },
+    { key: 'lead', label: 'Lead', users: 900 },
+    { key: 'buy', label: 'Buy', users: 0, measured: false as const, reason: 'not recorded' },
+    { key: 'upsell', label: 'Upsell', users: 300 },
+  ];
+  const expected = [
+    { key: 'visit', label: 'Visit', users: 1000, ofTop: 100, ofPrev: null, drop: null },
+    { key: 'lead', label: 'Lead', users: 900, ofTop: 90, ofPrev: 90, drop: 100 },
+    { key: 'buy', label: 'Buy', users: 0, ofTop: null, ofPrev: null, drop: null, measured: false },
+    // Compared with the last MEASURED step (lead), not with the unmeasured 0.
+    { key: 'upsell', label: 'Upsell', users: 300, ofTop: 30, ofPrev: (300 / 900) * 100, drop: 600 },
+  ];
+
+  it('engine computeStepRows + worstDropIndex (the CLI summary)', () => {
+    const rows = computeStepRows(steps);
+    expect(rows).toEqual(expected);
+    expect(worstDropIndex(rows)).toBe(3);
+  });
+
+  it('dashboard computeStepRows + worstDropIndex give the same answer', () => {
+    const rows = dashboardStepRows(steps);
+    expect(rows).toEqual(expected);
+    expect(dashboardWorstDrop(rows)).toBe(3);
+  });
+
+  it('an unmeasured first step: top is the first measured step', () => {
+    const first = [{ key: 'visit', label: 'Visit', users: 0, measured: false as const }, { key: 'lead', label: 'Lead', users: 400 }, { key: 'buy', label: 'Buy', users: 40 }];
+    for (const rows of [computeStepRows(first), dashboardStepRows(first)]) {
+      expect(rows.map((r) => [r.ofTop, r.ofPrev])).toEqual([[null, null], [100, null], [10, 10]]);
+      expect(worstDropIndex(rows)).toBe(2);
+    }
+  });
+
+  it('measured steps compute exactly as before', () => {
+    const plain = [{ key: 'a', label: 'A', users: 100 }, { key: 'b', label: 'B', users: 0 }, { key: 'c', label: 'C', users: 10 }];
+    expect(computeStepRows(plain)).toEqual([
+      { key: 'a', label: 'A', users: 100, ofTop: 100, ofPrev: null, drop: null },
+      { key: 'b', label: 'B', users: 0, ofTop: 0, ofPrev: 0, drop: 100 },
+      { key: 'c', label: 'C', users: 10, ofTop: 10, ofPrev: null, drop: -10 },
+    ]);
   });
 });
 
