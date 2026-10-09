@@ -1,5 +1,25 @@
 [
   {
+    "id": "rel_YMCfP2fG",
+    "version": "0.30.4",
+    "date": "2026-10-10",
+    "summary": "Patch on 0.30.3 (36988d38..HEAD). ONBOARDING: the first run becomes a full-window onboarding (219b937b): a Welcome screen (the gem converges, 'Run your whole project through your agents.', Get started), This Mac with one Set everything up (Git first in the background, the CLI, Claude and its sign-in, GitHub), Project asking only name and location, and Start with Claude opening the initializer chat that offers skill packs; no Node.js installs a private checksum-pinned Node behind the splash, install.sh does the same without Homebrew, dreamcontext setup checks the machine first (doctor --machine). LAB: a built-in funnel explorer fed by one KB-filled snapshot (PR #434, d916e0f7 + cbd85242). CHAT: the agent's Playwright browser runs headless and plays live inside its step (56c9c7b3); notice cards fit every width (fb0d786c); a wave map has as few waves as the dependencies allow (a7810b86). NOTCH/DESKTOP: the notch notifies with no assistant created (137fb781), is never closed, and the update relaunch quits instead of closing windows (50072494). ACCOUNTS: a new chat opens on an account with room (eb7759ce), a chat moved off a usage limit continues (7ec62568). HANDS-FREE (still unannounced, hidden by b40bf1ab): a phone-started session comes home, an unlandable transcript never stops a Return, Android Wake guidance (730875ae). RECALL: hybrid + EmbeddingGemma default was merged then reverted (a5b723de); it stays PR #433. No What's New story of its own: folded into the 0.30.0 story's covers.",
+    "breaking": false,
+    "status": "planning",
+    "features": [
+      "first-run-onboarding",
+      "lab-analytics-insights",
+      "agent-browser-live-view",
+      "dreamcontext-assistant",
+      "hands-free-cloud-mode"
+    ],
+    "tasks": [
+      "first-run-onboarding-detects-every-missing-piece-on-this-machine-and-installs-it-step-by-step-in-the-app-and-in-the-cli",
+      "the-agent-s-playwright-browser-runs-headless-and-shows-live-above-the-chat-composer-never-taking-the-screen"
+    ],
+    "changelog": []
+  },
+  {
     "id": "rel_PJSnoLce",
     "version": "0.30.3",
     "date": "2026-10-08",
