@@ -85,8 +85,7 @@ function printReceipt(r: Receipt): void {
 
 export function registerHandsfreeCommand(program: Command): void {
   const hf = program
-    // 0.30.0 ships hands-free unannounced: the commands work, but stay out of --help.
-    .command('handsfree', { hidden: true })
+    .command('handsfree')
     .description('Hands-free mode: move the project to your own cloud machine and drive it from the phone');
 
   hf.command('setup')

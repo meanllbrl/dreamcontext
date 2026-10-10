@@ -5,7 +5,6 @@ import { RunCard } from '../sleepy/chat/RunCard';
 import { startHandsfreeJob } from './handsfreeActions';
 import { openHandsfreeReceipt, useHandsfree } from './handsfreeStore';
 import { coreHours, fill, InlineConfirm } from './HandsfreeParts';
-import { HANDSFREE_PUBLIC, handsfreeVisible } from './handsfreeReveal';
 import '../sleepy/chat/ChatViews.css';
 import './handsfree.css';
 
@@ -27,8 +26,7 @@ export function HandsfreeSettingsCard() {
   const { status, unavailable, job } = useHandsfree();
   const [error, setError] = useState<string | null>(null);
   if (!isDesktop() || unavailable) return null;
-  if (!status) return HANDSFREE_PUBLIC ? <p className="hf-quiet" role="status">{t('handsfree.settings.loading')}</p> : null;
-  if (!handsfreeVisible(status)) return null;
+  if (!status) return <p className="hf-quiet" role="status">{t('handsfree.settings.loading')}</p>;
 
   const cores = status.codespace?.machine && /^standard/i.test(status.codespace.machine) ? 4 : 2;
   const revoking = job?.kind === 'revoke-all' && job.status === 'running';
