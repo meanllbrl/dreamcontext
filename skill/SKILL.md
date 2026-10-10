@@ -448,6 +448,5 @@ Open these with `Read` when the task needs depth:
 - **[whiteboards.md](references/whiteboards.md)**: widgets, board agents, format, recipes.
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync (one cloud backend at a time), dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.
-- **[hands-free.md](references/hands-free.md)**: phone trips.
 - **[troubleshooting.md](references/troubleshooting.md)**: symptom, cause and careful fix for broken-brain states: duplicate tasks, sync ledger refusals, a stuck brain sync, structure and version drift.
 - **[improving-dreamcontext.md](references/improving-dreamcontext.md)**: the feedback loop, when and how to file.
