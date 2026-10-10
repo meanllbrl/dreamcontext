@@ -188,5 +188,7 @@ describe('laptop: unchanged', () => {
     await sleep(1500);
     expect(log()).not.toContain('end auth alpha');
     expect(isClaudeAccountDirBusy(dir)).toBe(false);
-  });
+    // Waits ~2 s on purpose and spawns a real child: under a loaded machine (a full suite beside
+    // other sessions' builds) the 5 s default ran out before any assertion could fail.
+  }, 15_000);
 });
