@@ -5,7 +5,7 @@
     "date": "2026-10-10",
     "summary": "Patch on 0.30.4 (f311cc0c..HEAD). HANDS-FREE (still unannounced, hidden by 0b47c814): the cloud never kills a Claude sign-in mid-refresh, so the first phone turn after a long stop does not fail (52474d77): auth and usage probes are never killed while they run, one child per account dir, a chat waits up to 60 s for an in-flight probe on its own account, boot warm-up refreshes accounts one at a time, go says the sign-in could not be confirmed instead of 'signed out'. Cut so the cloud, which installs only from the registry, gets the fix. No What's New story of its own: folded into the 0.30.0 story's covers.",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [
       "hands-free-cloud-mode"
     ],
