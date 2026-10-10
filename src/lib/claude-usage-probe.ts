@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { ensureSandbox } from './claude-account-sandbox.js';
-import { claudeAuthStatus, PROBE_TIMEOUT_MS, resetClaudeAuthCache } from './claude-auth.js';
+import { awaitClaudeAccountIdle, claudeAuthStatus, CLOUD_REFRESH_HARD_LIMIT_MS, holdClaudeAccountDir, killGroup, PROBE_TIMEOUT_MS, resetClaudeAuthCache } from './claude-auth.js';
 import { readUsageLimits, usageReadingIsCurrent, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
 import { parseUsageReport, withLockedReasons } from './claude-usage-report.js';
 
@@ -149,8 +149,18 @@ function reportText(stdout: string | undefined): string {
   return text;
 }
 
-/** Spawn `claude -p "/usage" --output-format json` in `configDir` and capture its report. */
-function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
+/** Spawn `claude -p "/usage" --output-format json` in `configDir` and capture its report.
+ *  The cloud first waits (inside the budget) for any sign-in check or refresh on that dir. */
+async function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
+  if (!isCloud()) return spawnUsageProbe(configDir, timeoutMs);
+  const startedAt = Date.now();
+  await awaitClaudeAccountIdle(configDir, timeoutMs);
+  const left = timeoutMs - (Date.now() - startedAt);
+  if (left <= 0) return { timedOut: true };
+  return spawnUsageProbe(configDir, left);
+}
+
+function spawnUsageProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
   return new Promise((resolveOut) => {
     const bin = findClaudeBin();
     const shell = process.env.SHELL || '/bin/zsh';
@@ -181,6 +191,20 @@ function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
       return;
     }
 
+    // The cloud (AC17): this `claude` may be refreshing the account's token. It is never killed
+    // mid-run (that left the CLI's refresh lock held for the next chat turn); the dir counts as
+    // busy until it exits, and only the hard limit kills its group.
+    const cloud = isCloud();
+    let hardTimer: ReturnType<typeof setTimeout> | null = null;
+    if (cloud) {
+      holdClaudeAccountDir(configDir, new Promise<void>((exited) => {
+        child.once('close', () => exited());
+        child.once('error', () => exited());
+        hardTimer = setTimeout(() => { killGroup(child); exited(); }, CLOUD_REFRESH_HARD_LIMIT_MS);
+        hardTimer.unref?.();
+      }).finally(() => { if (hardTimer) clearTimeout(hardTimer); }));
+    }
+
     let stdout = '';
     child.stdout?.on('data', (chunk: Buffer) => {
       // Drained on every chunk (a full pipe buffer would deadlock the child) but bounded:
@@ -196,7 +220,7 @@ function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
       resolveOut(v);
     };
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* already gone */ }
+      if (!cloud) { try { child.kill(); } catch { /* already gone */ } }
       done({ timedOut: true });
     }, timeoutMs);
 

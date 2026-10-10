@@ -122,6 +122,11 @@ async function serve(opts: ServeOpts): Promise<void> {
     process.exit(2);
   }
   const port = Number(opts.port ?? '8080');
+  // AC17: refresh each account's sign-in at boot, one at a time, so the phone's first turn after
+  // a long stop does not race an expired-token refresh. Fire-and-forget on the next turn of the
+  // loop (startDashboardServer's promise stays pending while it serves): never delays health.
+  const { warmCloudAccountLogins } = await import('../../lib/claude-auth.js');
+  setImmediate(() => { void warmCloudAccountLogins(); });
   await startDashboardServer({
     port,
     contextRoot: null,

@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isCloud, spawnAsWorker } from '../server/cloud-mode.js';
 import { resolve as resolvePath } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
-import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, resolveConfigDir } from './claude-accounts.js';
+import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir, sandboxDirFor } from './claude-accounts.js';
 
 /**
  * Is Claude Code actually signed in?
@@ -67,6 +68,19 @@ const CACHE_MS = 5_000;
 /** The CLI answers in well under a second; anything past this is a hung spawn. Exported so a
  *  caller that escalates TO this probe can subtract it from its own budget instead of stacking. */
 export const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * The cloud (AC17, SMOKE #7/#8): after the codespace slept for hours the access token is expired,
+ * so the first `claude` against an account dir has to REFRESH it, and on a cold container that
+ * takes longer than {@link PROBE_TIMEOUT_MS}. Killing it there left the CLI's refresh lock held,
+ * and the next chat turns on that dir failed with "another Claude Code process is refreshing it".
+ * So in the cloud a `claude` we start against an account dir is never killed mid-run: a caller
+ * stops WAITING at its budget (the answer is unknown), the child finishes on its own, and only
+ * this bound kills its process group as a last resort.
+ */
+export const CLOUD_REFRESH_HARD_LIMIT_MS = 120_000;
+/** The cloud: the most a caller (a chat spawn, go's account list) waits for a dir to go idle. */
+export const CLOUD_AUTH_MAX_WAIT_MS = 60_000;
 
 /**
  * Turn one `claude auth status --json` run into a status. Pure + exported so the
@@ -137,6 +151,39 @@ function extractJson(out: string): Record<string, unknown> | null {
  */
 const cached = new Map<string, { at: number; value: ClaudeAuthStatus }>();
 const inFlight = new Map<string, Promise<ClaudeAuthStatus>>();
+/** The cloud: one probe per dir, kept until its child EXITS (not until a caller gave up on it).
+ *  Never dropped by {@link resetClaudeAuthCache}, so a reset cannot start a second refresher. */
+const cloudRuns = new Map<string, Promise<ClaudeAuthStatus>>();
+/** The cloud: per dir, settles once every `claude` we started against it has exited. */
+const busy = new Map<string, Promise<void>>();
+
+/** The cloud: count `done` as a `claude` running against `configDir` until it settles. The usage
+ *  probe registers its child here too, so chats and probes on one account never overlap. */
+export function holdClaudeAccountDir(configDir: string, done: Promise<unknown>): void {
+  const key = resolvePath(configDir);
+  const next = Promise.all([busy.get(key), done.catch(() => undefined)]).then(() => undefined);
+  busy.set(key, next);
+  void next.then(() => { if (busy.get(key) === next) busy.delete(key); });
+}
+
+/** Whether a `claude` we started is still running against `configDir` (cloud bookkeeping only). */
+export function isClaudeAccountDirBusy(configDir: string): boolean {
+  return busy.has(resolvePath(configDir));
+}
+
+/**
+ * Wait (at most `maxWaitMs`) until no probe or refresh we started is running against
+ * `configDir`. Resolves at once for an idle dir; other dirs never delay it. Never rejects.
+ */
+export function awaitClaudeAccountIdle(configDir: string, maxWaitMs: number = CLOUD_AUTH_MAX_WAIT_MS): Promise<void> {
+  const pending = busy.get(resolvePath(configDir));
+  if (!pending) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, Math.max(0, maxWaitMs));
+    timer.unref?.();
+    void pending.then(() => { clearTimeout(timer); resolve(); });
+  });
+}
 
 /** Drop the memoized results (after a sign-in run, or for a test). One dir, or all of them. */
 export function resetClaudeAuthCache(configDir?: string): void {
@@ -173,6 +220,7 @@ export function claudeAuthStatus(configDir?: string, timeoutMs?: number): Promis
   const key = resolvePath(dir);
   const hit = cached.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.value);
+  if (isCloud()) return cloudProbe(dir, key, timeoutMs);
   const running = inFlight.get(key);
   if (running) return running;
   const promise = runProbe(dir, timeoutMs).then((value) => {
@@ -182,6 +230,102 @@ export function claudeAuthStatus(configDir?: string, timeoutMs?: number): Promis
   });
   inFlight.set(key, promise);
   return promise;
+}
+
+/**
+ * The cloud's probe: joins the dir's running probe or starts one AFTER whatever else we run
+ * against the dir has exited, and gives the caller its budget (capped at
+ * {@link CLOUD_AUTH_MAX_WAIT_MS} instead of {@link PROBE_TIMEOUT_MS}: a refresh on a cold
+ * container is slow, and waiting longer for it costs nothing once it is no longer killed). Past
+ * the budget the caller gets unknown while the child runs on; its real answer is cached when it
+ * lands.
+ */
+function cloudProbe(dir: string, key: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
+  let run = cloudRuns.get(key);
+  if (!run) {
+    const idle = awaitClaudeAccountIdle(dir, CLOUD_REFRESH_HARD_LIMIT_MS);
+    run = idle.then(() => runCloudProbe(dir)).then((value) => {
+      cached.set(key, { at: Date.now(), value });
+      cloudRuns.delete(key);
+      return value;
+    });
+    cloudRuns.set(key, run);
+    holdClaudeAccountDir(dir, run);
+  }
+  const budget = Math.min(
+    CLOUD_AUTH_MAX_WAIT_MS,
+    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : PROBE_TIMEOUT_MS,
+  );
+  const answer = run;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(failed('The sign-in check is still running (the CLI may be refreshing its sign-in).')), budget);
+    timer.unref?.();
+    void answer.then((v) => { clearTimeout(timer); resolve(v); });
+  });
+}
+
+/** One `claude auth status` as dcuser, resolved only when it exits (or at the hard limit). */
+function runCloudProbe(dir: string): Promise<ClaudeAuthStatus> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawnAsWorker('/bin/bash', ['-lc', 'claude auth status --json'], {
+        cwd: tmpdir(),
+        ...(isRealHomeConfigDir(dir) ? {} : { account: { configDir: dir } }),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      resolve(failed((err as Error)?.message ?? String(err)));
+      return;
+    }
+    let out = '';
+    let err = '';
+    let settled = false;
+    const done = (v: ClaudeAuthStatus) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    // Last resort only: the whole group (bash and the claude under it), never just the leader.
+    const timer = setTimeout(() => {
+      killGroup(child);
+      done(failed('The sign-in check did not finish.'));
+    }, CLOUD_REFRESH_HARD_LIMIT_MS);
+    timer.unref?.();
+    child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
+    child.stderr?.on('data', (c: Buffer) => { err += c.toString('utf-8'); });
+    child.on('error', (e) => done(failed(e.message)));
+    child.on('close', (code) => done(parseAuthStatus(out, err, code)));
+  });
+}
+
+/** SIGKILL a detached child's process group (falls back to the child alone). */
+export function killGroup(child: { pid?: number; kill: (sig?: NodeJS.Signals) => boolean }): void {
+  try {
+    if (child.pid) { process.kill(-child.pid, 'SIGKILL'); return; }
+  } catch { /* no group: the child alone below */ }
+  try { child.kill('SIGKILL'); } catch { /* already gone */ }
+}
+
+/**
+ * The cloud's boot warm-up (AC17): sign-in check each registered account that has a sandbox,
+ * ONE AT A TIME, waiting for each child to exit, so an expired token is refreshed before the
+ * phone's first turn needs it. Fire-and-forget from the cloud server's boot; a no-op anywhere
+ * else. Never throws.
+ */
+export async function warmCloudAccountLogins(home: string = homedir()): Promise<void> {
+  if (!isCloud()) return;
+  let ids: string[];
+  try { ids = listClaudeAccounts(home).map((a) => a.id); } catch { return; }
+  for (const id of ids) {
+    try {
+      const dir = sandboxDirFor(id, home);
+      if (!existsSync(dir)) continue;
+      await claudeAuthStatus(dir, CLOUD_AUTH_MAX_WAIT_MS);
+      await awaitClaudeAccountIdle(dir, CLOUD_REFRESH_HARD_LIMIT_MS);
+    } catch { /* the next account still warms */ }
+  }
 }
 
 /**
@@ -211,17 +355,11 @@ function runProbe(dir: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
     const env = { ...process.env, PATH: claudeAwarePath(), ...accountEnvFor(dir) } as NodeJS.ProcessEnv;
     let child: ReturnType<typeof spawn>;
     try {
-      child = isCloud()
-        // The cloud: as dcuser through the one worker chokepoint, pointed at this dir only.
-        ? spawnAsWorker('/bin/bash', ['-lc', 'claude auth status --json'], {
-          cwd: tmpdir(),
-          ...(isRealHomeConfigDir(dir) ? {} : { account: { configDir: dir } }),
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-        // The laptop: a cwd outside every hands-free locked root (never the server's own cwd).
-        : bin
-          ? spawn(bin, ['auth', 'status', '--json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'], env })
-          : spawn(shell, ['-ilc', 'claude auth status --json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'], env });
+      // The laptop (the cloud runs `runCloudProbe`): a cwd outside every hands-free locked root
+      // (never the server's own cwd).
+      child = bin
+        ? spawn(bin, ['auth', 'status', '--json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'], env })
+        : spawn(shell, ['-ilc', 'claude auth status --json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'], env });
     } catch (err) {
       resolve(failed((err as Error)?.message ?? String(err)));
       return;

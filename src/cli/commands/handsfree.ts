@@ -155,7 +155,7 @@ export function registerHandsfreeCommand(program: Command): void {
             if (r.recreated) warn('the codespace was re-created (new URL): re-add the app on the phone');
             for (const s of r.staysHome) console.log(chalk.dim(`  stays on the laptop: ${s.path} (${s.reason})`));
             for (const s of r.cloudRefused) console.log(chalk.yellow(`  the cloud refused ${s.path} (${s.reason})`));
-            for (const a of r.signedOutAccounts) warn(`Claude account ${a} is signed out in the cloud: dreamcontext handsfree account-login ${a}`);
+            for (const a of r.signedOutAccounts) warn(`Claude account ${a} could not be confirmed signed in on the cloud (signed out, or its sign-in is still being checked or refreshed). If its first chat turn fails: dreamcontext handsfree account-login ${a}`);
             if (r.recovery) info(`recovered the abandoned trip ${r.recovery.oldTrip} into refs/handsfree/${r.recovery.oldTrip}/* and trips/${r.recovery.oldTrip}/orphaned/`);
             for (const w of r.warnings) warn(w);
             return;

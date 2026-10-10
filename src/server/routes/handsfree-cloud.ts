@@ -862,15 +862,21 @@ const postSeal: Handler = async (req, res) => {
   sendJson(res, 200, { ok: true, phase: 'sealed' });
 };
 
+/** go's account list waits this long per account (in parallel, under the client's 30 s): after a
+ *  long stop the check refreshes an expired token, which takes more than the usual 10 s. */
+export const ACCOUNTS_PROBE_BUDGET_MS = 20_000;
+
 const getAccounts: Handler = async (_req, res) => {
-  const out: Array<{ id: string; label: string; signedIn: boolean }> = [];
-  for (const acc of listClaudeAccounts()) {
+  // Each account has its own config dir, so their checks never contend: run them side by side.
+  // `signedIn` stays a strict true; an unknown answer is reported as not-confirmed, and go's
+  // warning says "could not confirm", never "signed out" (AC17).
+  const out = await Promise.all(listClaudeAccounts().map(async (acc) => {
     let signedIn = false;
     try {
-      signedIn = (await claudeAuthStatus(sandboxDirFor(acc.id))).loggedIn === true;
-    } catch { /* unknown = not signed in */ }
-    out.push({ id: acc.id, label: acc.email || acc.id, signedIn });
-  }
+      signedIn = (await claudeAuthStatus(sandboxDirFor(acc.id), ACCOUNTS_PROBE_BUDGET_MS)).loggedIn === true;
+    } catch { /* unknown = not confirmed */ }
+    return { id: acc.id, label: acc.email || acc.id, signedIn };
+  }));
   sendJson(res, 200, out);
 };
 

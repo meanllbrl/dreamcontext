@@ -45,6 +45,7 @@ import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js
 import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
+import { awaitClaudeAccountIdle, CLOUD_AUTH_MAX_WAIT_MS } from '../../lib/claude-auth.js';
 import {
   accountEnvFor, autoSwitchEnabled, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir,
   switchStrategyFor, switchWeightsFor,
@@ -765,6 +766,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // target, or the conversation reads as still-held and the spawn silently starts a new,
       // unpinned one. No-op unless a resume was asked for and is genuinely still held.
       if (!adoptable) await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
+      // Cloud (AC17): a sign-in check may be refreshing this account's token right now; a chat
+      // started under it hits the CLI's refresh lock on its first turn. Wait for it (bounded);
+      // other accounts never wait.
+      if (isCloud() && !adoptable) {
+        await awaitCloudChatAccount(account);
+        if (socket.destroyed) return;
+      }
 
       const wss = new WebSocketServer({ noServer: true });
       // Cloud: the device this socket proved (its id's hash) owns whatever it opens or adopts.
@@ -793,6 +801,17 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       });
     })();
   });
+}
+
+/**
+ * Cloud (AC17): resolve until no sign-in check or token refresh we started is running against
+ * the account this chat will spawn on (at most {@link CLOUD_AUTH_MAX_WAIT_MS}). An account that
+ * does not resolve waits for nothing: `startChatSession` reports that refusal itself.
+ */
+export async function awaitCloudChatAccount(account: string, maxWaitMs: number = CLOUD_AUTH_MAX_WAIT_MS): Promise<void> {
+  let dir: string;
+  try { dir = resolveConfigDir(account || null); } catch { return; }
+  await awaitClaudeAccountIdle(dir, maxWaitMs);
 }
 
 // ─── Chat session (child_process ↔ WebSocket bridge) ──────────────────────────────────
