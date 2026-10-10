@@ -18,6 +18,10 @@
   background: var(--color-bg);
 }
 
+.window-chrome-banners {
+  flex: none;
+}
+
 .window-chrome-bar {
   position: relative;
   /* Above every project surface (agent overlay 20, its dock 25) so bar-anchored popovers —
@@ -27,7 +31,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: var(--header-height);
+  height: var(--titlebar-height);
   padding: 0 var(--space-3);
   background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);

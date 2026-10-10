@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { useI18n } from '../../context/I18nContext';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
@@ -401,6 +401,28 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
   useEffect(() => {
     applyZoom(zoom);
   }, [zoom]);
+
+  /*
+   * The banners stack ABOVE the title bar, but every fixed surface below it (the Agent
+   * overlay, full-page task and fullscreen views, the boards) is placed at `--header-height`
+   * from the top of the viewport. Without this they kept starting 42px down while a banner
+   * pushed the bar further, so the bar covered their first row: the chat's session tabs and
+   * its new-chat button vanished whenever an update or stale-server banner was up.
+   */
+  const bannersRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = bannersRef.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty('--chrome-banners-height', `${el.offsetHeight}px`);
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty('--chrome-banners-height');
+    };
+  }, []);
 
   /**
    * Teach the ask alarm which project is on screen.
@@ -924,9 +946,11 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     <ChromeContext.Provider value={chrome}>
       <ChromeSlotsProvider value={chromeSlots}>
       <div className="window-chrome">
-        <UpgradeRelaunchBanner />
-        <HandsfreeBanner />
-        <StaleServerBanner />
+        <div className="window-chrome-banners" ref={bannersRef}>
+          <UpgradeRelaunchBanner />
+          <HandsfreeBanner />
+          <StaleServerBanner />
+        </div>
 
         {/*
           This bar IS the title bar now. Drag and double-click-maximize are handled in JS

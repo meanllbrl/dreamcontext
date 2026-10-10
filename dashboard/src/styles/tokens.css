@@ -333,7 +333,13 @@
   /* ─── Layout (compact density) ─── */
   --sidebar-width: 220px;
   --sidebar-width-collapsed: 56px;
-  --header-height: 42px;
+  /* The title bar itself. `--header-height` is everything ABOVE the page content: the bar
+     plus whatever banners the window stacks over it (update, hands-free, stale server).
+     WindowChrome measures that stack into `--chrome-banners-height`; every fixed surface that
+     starts "below the title bar" reads `--header-height`, so a banner pushes them down too
+     instead of letting the bar cover their top row. */
+  --titlebar-height: 42px;
+  --header-height: calc(var(--titlebar-height) + var(--chrome-banners-height, 0px));
   --page-max-width: 1200px;
   --card-padding: 12px;
   /* Left edge of the page content area with the rail EXPANDED — what a surface mounted
