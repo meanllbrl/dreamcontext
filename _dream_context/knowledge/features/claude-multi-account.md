@@ -240,6 +240,12 @@ and moving before the limit lands did not exist at all.
       headline, accounts as avatars, usage meters, actions as buttons, the full sentence on hover;
       `Notice.tsx` + `notices.css`). Making the cards responsive in a narrow pane is open (PR #432,
       not merged at 2026-10-08).
+- [x] The account-switch card and the handoff receipt sit in the transcript WHERE THEY HAPPENED
+      (2026-10-10, owner): each carries `at` (`items.length` on arrival, kept on re-announcement),
+      ChatPane cuts the live slice there (`noticeCut` in `chatEntities.ts`), and later turns flow
+      in below the card instead of the card riding the tail. The same rule covers the branch
+      notice (heads its session) and the stream-error card (`lastErrorAt`; Retry hides once a
+      user turn has gone out after it).
 - [x] When no candidate exists the message is neither blocked nor swallowed: it is sent on the
       current account and the honest limit error surfaces with the earliest reset time.
 - [x] One switch per conversation at a time — a second trigger while a restart is pending is a
