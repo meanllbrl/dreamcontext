@@ -2029,6 +2029,25 @@ export function splitWindow(historyLen: number, itemsLen: number, firstShown: nu
   };
 }
 
+/**
+ * Where a notice drawn IN the transcript (the handoff receipt, the account move) sits in the
+ * mounted live slice: the index of the first item that came AFTER it, so everything that
+ * followed flows in below the card instead of the card riding the tail (owner, 2026-10-10:
+ * "altta sabit olmasın, kaysın ilgili yerinde"). `at` is `items.length` when the notice
+ * arrived; absent, it falls back to the tail, which is where these cards used to live.
+ *
+ * Above the window, a finished notice waits for the reveal that mounts its place (`null`),
+ * exactly as a finished party card does; a running one is drawn at the window's top edge,
+ * because something still in progress must never vanish.
+ */
+export function noticeCut(at: number | undefined, itemsFrom: number, itemsLen: number, running: boolean): number | null {
+  const len = Math.max(0, itemsLen);
+  const from = Math.min(Math.max(0, itemsFrom), len);
+  const place = at === undefined ? len : Math.min(Math.max(0, at), len);
+  if (place < from) return running ? 0 : null;
+  return place - from;
+}
+
 // ─── Decorating the rendered markdown (copy bars, media, path chips) ──────────────
 //
 // The three hooks below all do the same kind of work: walk the HTML `MarkdownPreview` just

@@ -17,7 +17,7 @@ import {
   nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
-  countCards, headForCards, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
+  countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
   isAgentRun, isHeadlessAgentShell, isTeammateRun,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
@@ -1725,7 +1725,81 @@ export function ChatPane({
   const historySlice = conv.history.slice(historyFrom);
   const liveSlice = conv.items.slice(itemsFrom);
   const historySegments = segmentToolRuns(historySlice, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
-  const liveSegments = segmentToolRuns(liveSlice, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
+  // The handoff receipt and the account move are drawn WHERE THEY HAPPENED, not docked under
+  // the newest message: the turns that followed belong below them (owner, 2026-10-10). The
+  // live slice is cut at each one's place and segmented piece by piece, so a tool run never
+  // straddles a card, the same way it never straddles the history divider.
+  const notices: Array<{ key: string; cut: number; node: React.ReactNode }> = [];
+  // What the branch guard did as this session started: it heads that session.
+  if (conv.branchNotice) {
+    const cut = noticeCut(conv.branchNotice.at, itemsFrom, conv.items.length, false);
+    if (cut !== null) {
+      notices.push({
+        key: 'branch',
+        cut,
+        node: (
+          <BranchStartBanner
+            key="notice-branch"
+            tone={conv.branchNotice.tone}
+            message={conv.branchNotice.message}
+            onDismiss={session.dismissBranchNotice}
+          />
+        ),
+      });
+    }
+  }
+  if (conv.handoff && !conv.handoff.dismissed) {
+    const running = conv.handoff.stage === 'clearing' || conv.handoff.stage === 'resuming';
+    const cut = noticeCut(conv.handoff.at, itemsFrom, conv.items.length, running);
+    if (cut !== null) {
+      notices.push({
+        key: 'handoff',
+        cut,
+        node: <HandoffCard key="notice-handoff" run={conv.handoff} onDismiss={session.dismissHandoff} onOpenTask={openHandoffTask} />,
+      });
+    }
+  }
+  // The guarantee that the billed account never changes silently: shown where the
+  // conversation moved, and it scrolls away with the turns before it like any other entry.
+  if (conv.accountSwitch && !conv.accountSwitch.dismissed) {
+    const cut = noticeCut(conv.accountSwitch.at, itemsFrom, conv.items.length, false);
+    if (cut !== null) {
+      notices.push({
+        key: 'account-switch',
+        cut,
+        node: <AccountSwitchBanner key="notice-account-switch" move={conv.accountSwitch} onDismiss={session.dismissAccountSwitch} />,
+      });
+    }
+  }
+  // The error stays as the record of what broke; once a turn has gone out after it (the retry
+  // itself, or anything typed since), Retry would resend into a conversation that moved on.
+  if (conv.lastError) {
+    const errorAt = conv.lastErrorAt ?? conv.items.length;
+    const cut = noticeCut(errorAt, itemsFrom, conv.items.length, false);
+    if (cut !== null) {
+      const movedOn = conv.items.slice(errorAt).some((it) => it.kind === 'user');
+      // Wrapped, not passed: `retryLastMessage` is declared further down this render, and the
+      // wrapper only reads it on click.
+      notices.push({
+        key: 'error',
+        cut,
+        node: <StreamErrorBanner key="notice-error" message={conv.lastError} onRetry={movedOn ? undefined : () => retryLastMessage()} />,
+      });
+    }
+  }
+  notices.sort((a, b) => a.cut - b.cut);
+  /** Notices drawn before the live segment at this index; `liveSegments.length` is the tail. */
+  const noticesAt = new Map<number, typeof notices>();
+  const liveSegments: RunSegment<ChatItem>[] = [];
+  let pieceFrom = 0;
+  for (const n of notices) {
+    liveSegments.push(...segmentToolRuns(liveSlice.slice(pieceFrom, n.cut), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+    pieceFrom = Math.max(pieceFrom, n.cut);
+    noticesAt.set(liveSegments.length, [...(noticesAt.get(liveSegments.length) ?? []), n]);
+  }
+  liveSegments.push(...segmentToolRuns(liveSlice.slice(pieceFrom), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+  const noticeProbes = (i: number): StretchProbe[] => (noticesAt.get(i) ?? [])
+    .map((n) => ({ key: `notice:${n.key}`, step: false, invisible: false, actor: 'lead', running: false }));
   // The accruing tail is the last segment that SHOWS something, not the last segment. An
   // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
   // and by array position alone that invisible single would demote the live run from tail to
@@ -1745,10 +1819,15 @@ export function ChatPane({
   const stretches = stepStretches([
     ...historySegments.flatMap((seg) => probesOf(seg, false)),
     { key: 'history-divider', step: false, invisible: !showsHistory, actor: 'lead', running: false },
-    ...liveSegments.flatMap((seg, i) => probesOf(seg, accruingAt(i))),
+    ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...probesOf(seg, accruingAt(i))]),
+    ...noticeProbes(liveSegments.length),
   ]);
   const historyNodes = historySegments.map((seg) => renderSegment(seg, false, stretches));
-  const liveNodes = liveSegments.map((seg, i) => renderSegment(seg, accruingAt(i), stretches));
+  const noticeNodes = (i: number) => (noticesAt.get(i) ?? []).map((n) => n.node);
+  const liveNodes = [
+    ...liveSegments.flatMap((seg, i) => [...noticeNodes(i), renderSegment(seg, accruingAt(i), stretches)]),
+    ...noticeNodes(liveSegments.length),
+  ];
   // Only a party still AT WORK trails the transcript: one whose first call is older than the
   // window, or that no call here placed. A running team must never vanish with the call that
   // sent it. A FINISHED party never trails (owner 09-27: a cleared build card docked under the
@@ -1998,32 +2077,6 @@ export function ChatPane({
                 is this conversation waiting on right now", and a question the run itself
                 raised belongs in the same spot as one the CLI's own turn raised. */}
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
-            {/* The context handoff, live while it runs and a receipt once it has — the
-                pane's biggest self-driven operation must look like one. */}
-            {conv.handoff && !conv.handoff.dismissed && (
-              <HandoffCard
-                run={conv.handoff}
-                onDismiss={session.dismissHandoff}
-                onOpenTask={openHandoffTask}
-              />
-            )}
-            {conv.branchNotice && (
-              <BranchStartBanner
-                tone={conv.branchNotice.tone}
-                message={conv.branchNotice.message}
-                onDismiss={session.dismissBranchNotice}
-              />
-            )}
-            {/* The account move, shown where the conversation is — this is the guarantee that
-                the billed account never changes silently. Sits beside the branch notice for
-                the same reason: both answer "something about this conversation changed". */}
-            {conv.accountSwitch && !conv.accountSwitch.dismissed && (
-              <AccountSwitchBanner
-                move={conv.accountSwitch}
-                onDismiss={session.dismissAccountSwitch}
-              />
-            )}
-            {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
             {working && (
               <WorkingIndicator
                 label={session.opened ? 'Working…' : 'Starting Claude…'}

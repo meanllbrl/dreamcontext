@@ -228,19 +228,26 @@ export interface ConversationModel {
    *  they typed is thrown away. Cleared by any deliberate send or an explicit resume. */
   queuePaused?: boolean;
   lastResult?: ChatResultInfo;
-  /** Set by a `_meta/error` relay frame (e.g. the child failed to spawn). Not cleared
-   *  automatically — a fresh `send()` naturally supersedes it once real output arrives. */
+  /** Set by a `_meta/error` relay frame (e.g. the child failed to spawn), a failed model switch
+   *  or a failed rewind. Not cleared by later output: the card stays where it happened
+   *  (`lastErrorAt`) and the turns after it flow in below, which is what retires it. */
   lastError?: string;
+  /** `items.length` when `lastError` was set — where its card sits in the transcript. */
+  lastErrorAt?: number;
   /** What the server's fresh-session branch guard did to the working tree, when it did
    *  something or refused to (src/lib/session-start-branch.ts). Held on the conversation rather
    *  than appended as an item because it is a property of how this session STARTED, not a turn
    *  in it — and because a `git checkout` the user did not ask for is not something to let
-   *  scroll away. Dismissable: `dismissBranchNotice` clears it. */
-  branchNotice?: { tone: 'info' | 'warn'; message: string };
+   *  scroll away. Dismissable: `dismissBranchNotice` clears it. `at` is `items.length` on
+   *  arrival — 0 on a fresh session — so the card heads the session it describes and the
+   *  turns flow in below it rather than under it. */
+  branchNotice?: { tone: 'info' | 'warn'; message: string; at?: number };
   /** The context handoff this pane is going through (or just went through), drawn live as a
    *  staged card. `dismissed` survives a replay of the SAME run (same `id`), so a reattach
-   *  does not reopen a receipt the reader closed. */
-  handoff?: HandoffProgress & { dismissed?: boolean };
+   *  does not reopen a receipt the reader closed. `at` is where it happened: `items.length`
+   *  when the run's first frame landed, kept across its later stages, so the card stays in
+   *  the transcript at that point and the resumed session's turns flow in BELOW it. */
+  handoff?: HandoffProgress & { dismissed?: boolean; at?: number };
   /** This pane's context-handoff toggle, as the SERVER has it on disk. Arrives on connect
    *  (the augmented init) and again after every toggle, so the switch is always showing
    *  server truth rather than an optimistic click — unlike `effort`, this one IS queryable,
@@ -345,6 +352,10 @@ export interface ConversationModel {
      *  same field and a dismissal must never cancel a switch or strand the held turn — but
      *  the banner is not drawn. */
     dismissed?: boolean;
+    /** Where the move happened: `items.length` when this notice (by `accountSwitchKey`)
+     *  first arrived. A re-announcement of the same notice keeps it, so the card stays where
+     *  the switch happened and scrolls away with the turns before it. */
+    at?: number;
   };
   /**
    * The notice the reader has already closed, as an identity rather than a flag.
@@ -1179,9 +1190,12 @@ export function createChatSession(
     // resubmitted, so keeping them would invite a second send.
     const { pendingText: _drop, pendingTexts: _dropAll, ...rest } = move;
     const closed = dismissed ?? conv.accountSwitchDismissed;
+    // The carried `at` counted the OLD session's items; on this one the switch happened
+    // before anything it holds, which is wherever its own transcript stands now.
+    const anchored = { ...rest, at: conv.items.length };
     conv = {
       ...conv,
-      accountSwitch: closed === accountSwitchKey(rest) ? { ...rest, dismissed: true } : rest,
+      accountSwitch: closed === accountSwitchKey(rest) ? { ...anchored, dismissed: true } : anchored,
       ...(closed === undefined ? {} : { accountSwitchDismissed: closed }),
     };
     renderFlush.flush();
@@ -1399,6 +1413,11 @@ export function createChatSession(
           ...(ev.fromAccountId ? { fromAccountId: ev.fromAccountId } : {}),
         };
         const reclosed = conv.accountSwitchDismissed === accountSwitchKey(arrived);
+        // The same notice announced again keeps its place; a new one lands where we are now.
+        const prior = conv.accountSwitch;
+        const at = prior && prior.at !== undefined && accountSwitchKey(prior) === accountSwitchKey(arrived)
+          ? prior.at
+          : conv.items.length;
         conv = {
           ...conv,
           accountSwitch: {
@@ -1417,6 +1436,7 @@ export function createChatSession(
             ...(ev.pendingText ? { pendingText: ev.pendingText } : {}),
             ...(ev.pendingTexts ? { pendingTexts: ev.pendingTexts } : {}),
             ...(ev.turnInFlight === undefined ? {} : { turnInFlight: ev.turnInFlight }),
+            at,
           },
         };
         return;
@@ -1706,21 +1726,24 @@ export function createChatSession(
       case 'handoff-progress': {
         // Never touches `busy`: the server opened the rotation's turns itself and the stream's
         // own frames report them. A replay of the run the reader already closed stays closed.
-        const keep = conv.handoff?.id === ev.run.id && conv.handoff.dismissed;
-        conv = { ...conv, handoff: { ...ev.run, ...(keep ? { dismissed: true } : {}) } };
+        // Every stage of one run keeps the place its first frame landed at.
+        const same = conv.handoff?.id === ev.run.id ? conv.handoff : undefined;
+        const keep = same?.dismissed;
+        const at = same?.at ?? conv.items.length;
+        conv = { ...conv, handoff: { ...ev.run, ...(keep ? { dismissed: true } : {}), at } };
         return;
       }
       case 'branch-start': {
         // Never touches `busy`: this frame is sent at connect time, alongside the slash-command
         // replay, and says nothing about whether a turn is running.
-        conv = { ...conv, branchNotice: { tone: ev.tone, message: ev.message } };
+        conv = { ...conv, branchNotice: { tone: ev.tone, message: ev.message, at: conv.items.length } };
         return;
       }
       case 'meta-error': {
         // Also clears busy (beyond the literal "result/meta-exit" wording) — leaving busy
         // stuck true on a spawn/relay error would strand the composer disabled forever.
         session.busy = false;
-        conv = { ...conv, lastError: ev.message };
+        conv = { ...conv, lastError: ev.message, lastErrorAt: conv.items.length };
         return;
       }
       case 'compact-start': {
@@ -2273,7 +2296,7 @@ export function createChatSession(
     if (modelReq !== undefined) {
       pendingModels.delete(ev.requestId);
       if (ev.ok) session.model = modelReq; // the re-emitted system:init confirms/normalizes it
-      else conv = { ...conv, lastError: `Model switch failed: ${ev.error ?? 'rejected by the CLI'}` };
+      else conv = { ...conv, lastError: `Model switch failed: ${ev.error ?? 'rejected by the CLI'}`, lastErrorAt: conv.items.length };
       return;
     }
     const itemId = pendingRewinds.get(ev.requestId);
@@ -2285,7 +2308,7 @@ export function createChatSession(
     if (!rewound) {
       const reason = ev.error
         ?? (typeof ev.payload?.error === 'string' ? ev.payload.error : 'the CLI rejected it');
-      conv = { ...conv, lastError: `Rewind failed: ${reason}` };
+      conv = { ...conv, lastError: `Rewind failed: ${reason}`, lastErrorAt: conv.items.length };
       return;
     }
     const prefillRaw = ev.payload?.prefillText;
@@ -2315,11 +2338,11 @@ export function createChatSession(
       // `draft` on an epoch bump) must never show this prefill. `send()` resends it
       // immediately instead, which sets `draft` back to '' itself (a no-op, since we never
       // wrote it here) and appends the fresh user item — so the composer stays empty.
-      conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined };
+      conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined, lastErrorAt: undefined };
       send(prefill);
       return;
     }
-    conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined, draft: prefill, draftEpoch: conv.draftEpoch + 1 };
+    conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined, lastErrorAt: undefined, draft: prefill, draftEpoch: conv.draftEpoch + 1 };
   }
 
   /**
@@ -2341,7 +2364,7 @@ export function createChatSession(
     }
     if (!target?.uuid) {
       applyAndNotify(() => {
-        conv = { ...conv, lastError: 'Rewind unavailable: this message has not reached the transcript yet — try again in a moment.' };
+        conv = { ...conv, lastError: 'Rewind unavailable: this message has not reached the transcript yet — try again in a moment.', lastErrorAt: conv.items.length };
       });
       return;
     }

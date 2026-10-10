@@ -17,7 +17,7 @@ import {
   bashCommandFor, runDurationMs, formatModelName, runMetaChips,
   runReportText, reportFromHistory, reportStandfirst, reportableRuns,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote, startSubAgentRun,
-  nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
+  nextFirstShown, splitWindow, noticeCut, anchorHoldCorrection, WINDOW_TAIL, WINDOW_STEP, clampLines,
   rememberMediaBox, knownMediaBox, shouldAutoReveal, WINDOW_REVEAL_PX, TRIM_SLACK,
   remainingSettleMs, SCROLL_SETTLE_MS,
   countCards, headForCards, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
@@ -2536,5 +2536,27 @@ describe('nextFirstShown — the card step (revealHead)', () => {
       steps += 1;
     }
     expect(head).toBe(0);
+  });
+});
+
+describe('noticeCut — a transcript notice stays where it happened', () => {
+  it('cuts the live slice at the anchor, so later turns render below the card', () => {
+    // Handoff landed after item 5 of 9, nothing hidden: the card sits before item 5.
+    expect(noticeCut(5, 0, 9, false)).toBe(5);
+    // Same place, window starting at item 3: index 2 of the mounted slice.
+    expect(noticeCut(5, 3, 9, false)).toBe(2);
+  });
+
+  it('falls back to the tail when the notice carries no anchor', () => {
+    expect(noticeCut(undefined, 2, 9, false)).toBe(7);
+  });
+
+  it('clamps an anchor past the end (a rewind trimmed the items) to the tail', () => {
+    expect(noticeCut(12, 0, 4, false)).toBe(4);
+  });
+
+  it('waits for the reveal when a finished notice is above the window, but keeps a running one on screen', () => {
+    expect(noticeCut(1, 3, 9, false)).toBeNull();
+    expect(noticeCut(1, 3, 9, true)).toBe(0);
   });
 });

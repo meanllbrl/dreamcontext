@@ -83,7 +83,9 @@ function untilText(at: number): string {
   return m < 60 ? `in ${m}m` : `in ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 }
 
-export function StreamErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+/** `onRetry` absent: a turn has already gone out after this error, so retrying would resend a
+ *  message the conversation has moved past. The card stays as the record; the button goes. */
+export function StreamErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
   const reason = reasonSentence(message);
   return (
     <Notice
@@ -94,7 +96,7 @@ export function StreamErrorBanner({ message, onRetry }: { message: string; onRet
       title="Stream interrupted"
       detail={`${reason} Your message is safe.`}
       meta={<NoticeChip tone="good"><Glyph.check />message safe</NoticeChip>}
-      actions={<NoticeButton primary onClick={onRetry}>Retry</NoticeButton>}
+      actions={onRetry ? <NoticeButton primary onClick={onRetry}>Retry</NoticeButton> : undefined}
     >
       <NoticeRow><span className="chat-notice-meta chat-notice-reason">{reason}</span></NoticeRow>
     </Notice>
@@ -105,9 +107,10 @@ export function StreamErrorBanner({ message, onRetry }: { message: string; onRet
  * What the fresh-session branch guard did to the working tree, or declined to do
  * (src/lib/session-start-branch.ts).
  *
- * A banner rather than a transcript item because it is a property of how the session STARTED,
- * not a turn in it — and a `git checkout` nobody asked for in this turn must not be something
- * the user only discovers by scrolling. `warn` is the refusal ("staying on feat/x, the tree is
+ * A notice rather than a transcript item because it is a property of how the session STARTED,
+ * not a turn in it. It heads that session in the transcript (ChatPane anchors it at the item
+ * count it arrived at, 0 on a fresh session), so it is the first thing read there and the turns
+ * flow in below it instead of it riding the tail. `warn` is the refusal ("staying on feat/x, the tree is
  * dirty"), which is the arm that leaves the session somewhere the user was told new sessions
  * would not start; `info` is a move that was made. Dismissable, because it reports a one-time
  * event: once read, it is history.
