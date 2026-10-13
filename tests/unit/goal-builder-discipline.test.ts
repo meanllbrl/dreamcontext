@@ -6,6 +6,7 @@ import { FAN_OUT_RECIPE, GOAL_LIVE_RECIPES } from '../../src/lib/develop-recipe.
 import { BUILDER_BRIEF, NO_CHECK_BUILDER_RULES } from '../../src/lib/builder-brief.js';
 import { BUILDER_NO_BACKGROUND_ENV } from '../../src/lib/builder-tools.js';
 import { modeBriefing } from '../../src/server/chat-modes.js';
+import { PLANNER_BRIEF, USER_FACING_PLAN_RULES } from '../../src/lib/planner-brief.js';
 
 /**
  * How a `claude -p` builder runs its checks, how it ends, and who runs the heavy steps.
@@ -389,5 +390,67 @@ describe('goal-skill and its agents: the plan decides, severity bounds the revie
     expect(SKILL).toMatch(/chat's lead builds each wave itself/);
     expect(SKILL).toMatch(/ONE\s+clean reviewer judges the whole change at the end/);
     expect(SKILL).toContain('dreamcontext goal-live recipe develop|fan-out|builder-brief');
+  });
+});
+
+/**
+ * 2026-10-13: a goal-skill run turned a mobile app into a web app; every judge passed it and
+ * the owner opened it to console errors and a PWA that was not responsive. No criterion asked
+ * for either: the goal sentence did not say it, the critic checked the stated criteria for
+ * testability rather than looking for what was missing, and the planner, a `claude -p`
+ * session, had never loaded the goal-planner agent file at all, since the orchestrator retyped
+ * its brief. The rule now lives once (USER_FACING_PLAN_RULES) and reaches the planner through a
+ * printed brief, the same way the builder rules reach builders.
+ */
+describe('the plan writes down what the owner will see', () => {
+  it('the planner brief is a goal-live recipe and carries the rule', () => {
+    expect(GOAL_LIVE_RECIPES['planner-brief']).toBe(PLANNER_BRIEF);
+    expect(PLANNER_BRIEF).toContain(USER_FACING_PLAN_RULES);
+    expect(PLANNER_BRIEF).toMatch(/never loads the\s+goal-planner agent file: this brief is all it sees/);
+  });
+
+  it('the rule: the first 30 seconds, the goal type expectations, an observed last criterion, design for UI', () => {
+    expect(USER_FACING_PLAN_RULES).toMatch(/what will the owner notice in the first 30 seconds of opening the result\?/);
+    expect(USER_FACING_PLAN_RULES).toMatch(/responsive at a phone \(390 px\) and a desktop \(1440 px\)/);
+    expect(USER_FACING_PLAN_RULES).toMatch(/a PWA installs and launches/);
+    expect(USER_FACING_PLAN_RULES).toMatch(/ends on an OBSERVED criterion/);
+    expect(USER_FACING_PLAN_RULES).toMatch(/Green unit tests on an app that does not open are not\s+evidence/);
+    expect(USER_FACING_PLAN_RULES).toMatch(/A goal with UI loads the `design` skill/);
+  });
+
+  it('the goal-planner agent file holds the same rule word for word (it cannot import it)', () => {
+    expect(PLANNER).toContain(USER_FACING_PLAN_RULES);
+  });
+
+  it('goal-skill spawns the planner from the printed brief, never a retyped one', () => {
+    const spawns = claudeCommands(SKILL).filter((l) => /--session-id <plannerId>/.test(l));
+    expect(spawns.length).toBeGreaterThanOrEqual(2);
+    for (const l of spawns) expect(l).toContain('"$(cat "$RUN/planner-brief.md")"');
+    expect(SKILL).not.toContain('<goal + context>');
+    expect(section(SKILL, '### Phase 1')).toMatch(/dreamcontext goal-live\s+recipe planner-brief/);
+  });
+
+  it('the critic looks for what is missing; the pragmatist never cuts it as YAGNI', () => {
+    expect(PLAN_REVIEWER).toMatch(/\*\*what will the owner notice in the first 30 seconds of\s+opening the result, and which criterion covers it\?\*\*/);
+    expect(PLAN_REVIEWER).toMatch(/Judge what is MISSING, not only\s+whether the stated criteria are testable/);
+    expect(PLAN_REVIEWER).toMatch(/is an essential, never YAGNI: do not cut it/);
+    const major = PLAN_REVIEWER.slice(PLAN_REVIEWER.indexOf('- **Major**'), PLAN_REVIEWER.indexOf('- **Minor**'));
+    expect(major).toMatch(/something the owner will notice on first opening the result that no\s+criterion covers/);
+    expect(major).toMatch(/a goal the\s+owner opens with no observed criterion/);
+    expect(section(SKILL, '### Phase 2')).toMatch(/does a goal the\s+owner opens end on an observed one\?/);
+  });
+
+  it('goal-skill opens the result once, at the final gate, and Phase 6 cites it whatever the method', () => {
+    const heavy = section(SKILL, '### Phase 4').slice(section(SKILL, '### Phase 4').indexOf('**Heavy steps run once'));
+    expect(heavy).toMatch(/the \*\*observed check\*\* whenever a\s+criterion is about what the owner sees/);
+    expect(heavy).toMatch(/phone \(390 px\) and a desktop \(1440 px\) width/);
+    expect(heavy).toMatch(/a screenshot of each that you READ/);
+    const phase6 = section(SKILL, '### Phase 6');
+    expect(phase6).toMatch(/Whatever the method, an OBSERVED criterion/);
+    expect(phase6).toMatch(/ticked from the final gate's observed check/);
+    expect(phase6).toMatch(/you never open the app a second time on the same tree/);
+    expect(phase6).toMatch(/adds its screenshots to that evidence, never replaces it/);
+    expect(phase6).toMatch(/Green tests never tick it/);
+    expect(section(SKILL, '## Hard rules')).toMatch(/\*\*No tick without evidence\.\*\*/);
   });
 });

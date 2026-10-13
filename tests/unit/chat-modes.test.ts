@@ -367,7 +367,7 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/names what it consumes from\s+an earlier one, or it merges back/);
     expect(brief).toMatch(/Criteria sharing a file share a lane, never a new wave/);
     expect(brief).toMatch(/never a closing wave of their own/);
-    expect(brief).toMatch(/\*\*critic\*\* \(premise, correctness, scope, a wave that could merge\)/);
+    expect(brief).toMatch(/\*\*critic\*\* \(premise, correctness, scope, a wave that could merge,\s+what the owner sees on\s+first open\)/);
     expect(brief.indexOf('As few waves')).toBeLessThan(brief.indexOf('4. **Then have it attacked'));
   });
 
@@ -376,6 +376,27 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/Mark each contract or hot-path wave REVIEWED/);
     expect(brief).toMatch(/tests that read changed files by path as "also run"/);
     expect(brief.indexOf('REVIEWED')).toBeLessThan(brief.indexOf('4. **Then have it attacked'));
+  });
+
+  // 2026-10-13 (owner): a mobile-to-web run shipped a PWA that was not responsive and opened
+  // with errors; no criterion asked for either, so no judge looked. The plan now writes down
+  // what the owner will see, and the critic is told to look for what is missing.
+  it('plan writes down the owner\'s first 30 seconds and ends a user-facing goal on an observed criterion', () => {
+    const brief = modeBriefing('plan', { worktreeAllowed: false });
+    expect(brief).toMatch(/what will they notice in the first\s+30\s+seconds of opening the result\?/);
+    expect(brief).toMatch(/responsive at 390\s+and 1440 px/);
+    expect(brief).toMatch(/ends\s+on an OBSERVED criterion/);
+    expect(brief).toMatch(/UI: load `design` first/);
+    expect(brief.indexOf('expects unsaid')).toBeLessThan(brief.indexOf('4. **Then have it attacked'));
+  });
+
+  it('develop ticks nothing without evidence, and what the owner sees only from an observed check', () => {
+    const brief = modeBriefing('develop', { worktreeAllowed: false });
+    expect(brief).toMatch(/\*\*No tick without evidence\*\* in its `dreamcontext tasks log/);
+    expect(brief).toMatch(/screenshots you READ/);
+    expect(brief).toMatch(/Green tests on an app that does not open are not evidence/);
+    expect(brief).toMatch(/No\s+observed criterion on a task the owner opens: add one first/);
+    expect(brief).toMatch(/UI: load `design` first/);
   });
 
   it('develop writes its own map with as few waves as the dependencies allow', () => {
@@ -560,7 +581,8 @@ describe('modeBriefing', () => {
   // `plan` went 2900 → 3100 (2026-10-11) for the REVIEWED-wave marks and the "also run" list
   // in step 3 (Develop's recipe reads both) and the two-round cap in step 5.
   // plan +300 (2026-10-11 evening): the EXECUTION line and the severity-bounded review loop.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 3400, develop: 3200, train: 2150, assistant: 5800 };  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list
+  const BRIEFING_CEILING: Record<string, number> = { plan: 3850, develop: 3400, train: 2150, assistant: 5800 };  // plan +450, develop +200 (2026-10-13): what the owner sees on first open, and no tick without evidence (a mobile-to-web run shipped unresponsive and erroring with every judge green)
+  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list
   const DEFAULT_CEILING = 1600;
 
   it('assistant: speaks before delegating, single-quotes --prompt, takes meeting notes through a tool, and stays 150 under its ceiling', () => {

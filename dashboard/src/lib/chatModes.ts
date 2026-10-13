@@ -68,8 +68,8 @@ export const CHAT_MODE_ROWS: readonly ChatModeRow[] = [
   // dreamcontext MCP lets a chat change its own mode, this row becomes Pilot 2.0: a name that
   // promises the capability only once it exists.
   { id: 'basic', name: 'Basic', version: '1.0', insight: 'Plain Claude. No mode enabled.' },
-  { id: 'plan', name: 'Planner', version: '1.0', insight: 'Asks, drafts, gets reviewed, ends with a task.' },
-  { id: 'develop', name: 'Developer', version: '1.0', insight: 'Builds in waves, checks each one, then a clean review.' },
+  { id: 'plan', name: 'Planner', version: '1.1', insight: 'Asks, drafts, gets reviewed, ends with a task.' },
+  { id: 'develop', name: 'Developer', version: '1.1', insight: 'Builds in waves, checks each one, then a clean review.' },
   { id: 'train', name: 'Train Me', version: '0.1', insight: 'Learns your taste from swipes and picks, then writes a pattern.', maturity: 'ALPHA' },
 ];
 

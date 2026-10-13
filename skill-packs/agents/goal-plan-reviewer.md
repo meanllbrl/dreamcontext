@@ -51,9 +51,17 @@ The orchestrator passes you ONE lens in the dispatch prompt. Review primarily th
 
 - **pragmatist** — Scope & YAGNI. Is anything over-built? Is anything required-for-the-goal
   missing? Could a step be cut or simplified? Guard leanness without gutting essentials.
+  What the goal's type carries without saying it (a web port is responsive, a new screen
+  opens without errors, an observed last criterion) is an essential, never YAGNI: do not cut it.
 - **critic** — Correctness & assumptions. Are integration claims verified against the
   real code? Are acceptance criteria concrete and testable? Are there unstated assumptions
   or ungrounded steps? Read the files the plan cites and confirm they say what it claims.
+  Then the owner's first look: **what will the owner notice in the first 30 seconds of
+  opening the result, and which criterion covers it?** Judge what is MISSING, not only
+  whether the stated criteria are testable. A web port with no responsive criterion, a new
+  screen with no "opens without console errors" criterion, or a goal the owner opens whose
+  last criterion is not OBSERVED (opened in the real app or a headless browser at a phone
+  and a desktop width, screenshots) is a Major.
 - **security** — Auth, secrets, money, injection, data exposure, outbound messages, unsafe
   defaults (dispatched when the plan touches those surfaces).
 - **edge-cases** — Empty/null inputs, concurrency, partial failure, retries, rollback: what
@@ -73,7 +81,9 @@ what happens if the plan ships as written, never by how sure or how thorough you
   wrong thing.
 - **Major**: the plan will not work as written: an integration claim the real code
   contradicts, a criterion that cannot be met or cannot be tested, a piece the goal needs
-  that no step builds, an unsafe wave map (one file in two lanes of a wave, a contract left
+  that no step builds, something the owner will notice on first opening the result that no
+  criterion covers (the goal's sentence not naming it does not make it optional), a goal the
+  owner opens with no observed criterion, an unsafe wave map (one file in two lanes of a wave, a contract left
   unpinned), or an `EXECUTION:` line that does not fit the work (fan-out for work one
   session can build, lead for work it cannot).
 - **Minor**: the plan works, but a step could be clearer, cheaper or more robust.

@@ -412,3 +412,44 @@ describe('reopen and the wave map (R8, R10)', () => {
     expect(R).toMatch(/A topic split \(server, then client, then docs\) is not a dependency/);
   });
 });
+
+/**
+ * 2026-10-13: a mobile-to-web run closed green with a reviewer PASS, and the owner opened an
+ * app full of errors that was not responsive. A criterion about what the owner sees had been
+ * ticked from unit tests. Both recipes now tick nothing without evidence, open the result at
+ * the end, and their reviewers fail a tick that only inferred what the owner sees.
+ */
+describe('no tick without evidence, in both recipes', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    const at = (from: string, to: string) => recipe.slice(recipe.indexOf(from), recipe.indexOf(to));
+
+    it(`${name}: a tick carries its evidence, and a run with an unticked criterion does not close`, () => {
+      const waves = at('## 2.', '## 3.');
+      expect(waves).toMatch(/A tick needs its evidence in the same log line/);
+      expect(waves).toMatch(/No evidence = no tick, and a run with an unticked criterion\s+does not close/);
+    });
+
+    it(`${name}: the final check opens the result at a phone and a desktop width and reads the screenshots`, () => {
+      const end = at('## 3.', '## 4.');
+      expect(end).toMatch(/The observed check/);
+      expect(end).toMatch(/phone \(390 px\) and a desktop \(1440 px\) width/);
+      expect(end).toMatch(/READ the screenshots\s+yourself/);
+      expect(end).toMatch(/tick those criteria here, with that\s+evidence, never earlier/);
+      // It sits with the final check, before the verdict is recorded and the run closes.
+      expect(end.indexOf('The observed check')).toBeLessThan(end.indexOf('Close by the task'));
+    });
+
+    if (name === 'fan-out') {
+      it('fan-out: an all-REVIEWED run still gets the end reviewer when the owner sees the result', () => {
+        const end = at('## 3.', '## 4.');
+        expect(end).toMatch(/A run whose every wave was REVIEWED skips it, unless a criterion\s+is about what the owner sees: then this reviewer still runs/);
+      });
+    }
+
+    it(`${name}: the reviewer says whether each tick observed or inferred`, () => {
+      const brief = recipe.slice(recipe.indexOf('REVIEWER: "'), recipe.indexOf('VALIDATOR: "'));
+      expect(brief).toMatch(/OBSERVED it or inferred it/);
+      expect(brief).toMatch(/ticked with no screenshot, is FAIL/);
+    });
+  }
+});

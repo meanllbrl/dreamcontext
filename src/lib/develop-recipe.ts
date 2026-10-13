@@ -1,5 +1,28 @@
 import { BUILDER_BRIEF, NO_CHECK_BUILDER_RULES } from './builder-brief.js';
 import { BUILDER_NO_BACKGROUND_ENV } from './builder-tools.js';
+import { PLANNER_BRIEF } from './planner-brief.js';
+
+/**
+ * No tick without evidence (2026-10-13). tests/unit/develop-recipe.test.ts pins these. A mobile-to-web run closed with every check green and
+ * a reviewer PASS, and the owner opened an app full of errors that was not responsive: a
+ * criterion about what the owner SEES had been ticked from unit tests, by inference. The
+ * 2026-10-10 validator experiment had promised to fold "was each criterion OBSERVED, not
+ * inferred" into the reviewer's brief when the validator went; it was cancelled before it did.
+ * These three lines are that promise, shared by both recipes.
+ */
+const EVIDENCE_TICK_RULE = `A tick needs its evidence in the same log line: the check's summary line, or, for a
+   criterion about what the owner sees, the screenshot paths and the console output from the
+   observed check (section 3). No evidence = no tick, and a run with an unticked criterion
+   does not close.`;
+
+const OBSERVED_CHECK = `- The observed check, when a criterion is about what the owner sees: open the result in the
+  real app or a headless browser at a phone (390 px) and a desktop (1440 px) width, record the
+  console errors and failed requests, take a screenshot of each, and READ the screenshots
+  yourself. Log their paths and the console output, and tick those criteria here, with that
+  evidence, never earlier. Errors, overflow or a broken layout = red.`;
+
+const REVIEWER_EVIDENCE = `For each ticked criterion say whether its evidence OBSERVED it or inferred it; a criterion about
+what the owner sees, ticked with no screenshot, is FAIL.`;
 
 /**
  * The Develop-mode run recipes, printed by `dreamcontext goal-live recipe develop|fan-out`.
@@ -107,6 +130,8 @@ docs checks), which a related-tests run cannot find.
 
   dreamcontext tasks log "$S" "wN green: <what landed>; <the check's summary line>"
 
+   ${EVIDENCE_TICK_RULE}
+
 ## 3. After the last wave: one end review, the final check, then close
 
 Take the snapshot again as NOW (the same three commands, into the same $IDX), then list the
@@ -129,6 +154,7 @@ at the same time, dispatched in ONE message:
   the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
   method when it is a command, and the builds and generator scripts the change needs. The
   full suite runs only when the Validation method names it.
+${OBSERVED_CHECK}
 
 Record the verdict BEFORE anything else: \`dreamcontext goal-live state end-reviewer=PASS || true\`
 (or FAIL). A reviewer FAIL or a red final check takes the same path: fix exactly the findings
@@ -169,7 +195,7 @@ completed "<what shipped + the evidence>"\`.
 
 REVIEWER: "Review the run of <slug> against criteria <list>. Start tree <START>, current tree
 <NOW>. Scope (read these yourself with git diff <START> <NOW> -- <path>): <files>. Files with
-status A are new: read them whole. First line PASS or FAIL."
+status A are new: read them whole. ${REVIEWER_EVIDENCE} First line PASS or FAIL."
 
 VALIDATOR: "Validate task <slug> by its 'Validation method:' criterion, in the real app.
 Prove it with screenshots and a video of the flow (give their paths). Report PASS or FAIL with
@@ -416,7 +442,9 @@ wall time.
 ### 2g. Close the wave
 
 Only when its check is GREEN and its reviewer (if any) passed: tick that wave's criteria
-(only what is demonstrably true) and log it. Before the next wave, update the base with what
+(only what is demonstrably true) and log it.
+   ${EVIDENCE_TICK_RULE}
+Before the next wave, update the base with what
 landed: write $ROOT/tmp/develop/$S/base-delta-wN.md (the files each lane changed, the
 contracts they export, the decisions taken), then
 
@@ -434,12 +462,15 @@ The end review and the final check run at the same time, dispatched in ONE messa
 
 - ONE \`reviewer\` (model opus, not in the background) over the union of every wave's scope
   no wave reviewer read, enumerated by name, with the wave-1 START tree: never a bare
-  \`git diff\` against a ref. A run whose every wave was REVIEWED skips it.
+  \`git diff\` against a ref. A run whose every wave was REVIEWED skips it, unless a criterion
+  is about what the owner sees: then this reviewer still runs, over the task's ticks and their
+  evidence alone, since no wave reviewer saw a tick.
 - The final check: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
   ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
   the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
   method when it is a command, and the builds and generator scripts the change needs. The
   full suite runs only when the Validation method names it.
+${OBSERVED_CHECK}
 
 Record \`dreamcontext goal-live state end-reviewer=PASS || true\`. A finding or a red resumes
 the owning lane (2e step 4, re-checked with \`--wave final\`), then a fresh end reviewer
@@ -499,7 +530,8 @@ found broken or missing elsewhere, or none), then your assumptions."
 REVIEWER: "Review <wave N | the run> of <slug> against criteria <list>. Start tree <START>,
 current tree <NOW>. Scope (read these yourself with git diff <START> <NOW> -- <path>):
 <files>. Files with status A are new: read them whole. Changed during this wave, unclaimed:
-<paths or none>; say for each whether it belongs to it. First line PASS or FAIL."
+<paths or none>; say for each whether it belongs to it. ${REVIEWER_EVIDENCE} First line PASS or
+FAIL."
 
 VALIDATOR: "Validate task <slug> by its 'Validation method:' criterion, in the real app.
 Prove it with screenshots and a video of the flow (give their paths). Report PASS or FAIL with
@@ -521,4 +553,5 @@ export const GOAL_LIVE_RECIPES: Readonly<Record<string, string>> = {
   develop: DEVELOP_RECIPE,
   'fan-out': FAN_OUT_RECIPE,
   'builder-brief': BUILDER_BRIEF,
+  'planner-brief': PLANNER_BRIEF,
 };

@@ -47,7 +47,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, 'assistant'>, string> = {
-  basic: '1.0', plan: '1.0', develop: '1.0', train: '0.1',
+  basic: '1.0', plan: '1.1', develop: '1.1', train: '0.1',
 };
 
 /**
@@ -88,6 +88,12 @@ export const MODE_VERSIONS: Record<Exclude<ChatMode, 'assistant'>, string> = {
  * Lanes are the disjoint file groups, no fixed count: the old cap of 3 protected a machine
  * on which every builder ran its own tests, and builders no longer do.
  *
+ * 2026-10-13 (owner): a mobile-to-web run shipped an app that opened with errors and was not
+ * responsive, and no judge had looked for it because no criterion asked for it. Step 3 now
+ * writes down what the owner will notice in the first 30 seconds of opening the result, and
+ * the critic checks it. The full rule is USER_FACING_PLAN_RULES (src/lib/planner-brief.ts),
+ * condensed here because this briefing rides every turn.
+ *
  * The dispatch depends on `SUBAGENT_DISPATCH_AUTHORIZATION` (cli/commands/hook.ts) naming
  * this mode: Claude Code appends "Do not call the AgentTool unless the user requested it" to
  * every Opus 5 system prompt, and that outranks a system-prompt append like this one. Without
@@ -112,10 +118,15 @@ You are planning, not building. Do not edit code in this session.
    Tests ride in their code's lane; verify scripts and docs join the earliest wave that fits,
    never a closing wave of their own. Mark each contract or hot-path wave REVIEWED, and list
    tests that read changed files by path as "also run".
+   **Write down what the owner expects unsaid:** what will they notice in the first 30
+   seconds of opening the result? Each answer is a criterion (a web port: responsive at 390
+   and 1440 px, a PWA installs). A goal the owner opens ends on an OBSERVED criterion: opened
+   at a phone and a desktop width, no console errors, screenshots. UI: load \`design\` first.
 4. **Then have it attacked. Every plan, no exceptions — never review your own.** Dispatch
    TWO \`goal-plan-reviewer\` sub-agents IN PARALLEL in ONE message, each fed only the plan text
    (from round 2, plus its own previous findings verbatim):
-   **critic** (premise, correctness, scope, a wave that could merge) and **security** when the
+   **critic** (premise, correctness, scope, a wave that could merge, what the owner sees on
+   first open) and **security** when the
    goal touches auth, money, secrets, migrations or outbound messages, else **edge-cases**
    (empty/null, concurrency, partial failure, retries, rollback). Name each dispatch
    after its lens (\`critic lens\`, …). Show the user every verdict and its blocking findings.
@@ -195,6 +206,13 @@ slug you just created:
  * the opt-in `goal-live recipe fan-out` for work that cannot fit one lead session. The
  * lead-edit guard (`developLeadWriteDenied`, DREAMCONTEXT_DEVELOP_LEAD) is retired with it.
  *
+ * ── 2026-10-13: no tick without evidence ─────────────────────────────────────────────
+ * With the validator on request and builders running no checks, nobody opened the result: a
+ * mobile-to-web run closed green and the owner found errors and no responsive layout. The
+ * speed stays; a criterion about what the owner sees is ticked only from an observed check
+ * (screenshots at a phone and a desktop width, console output), and the end reviewer fails a
+ * tick that has none (develop-recipe.ts EVIDENCE_TICK_RULE, OBSERVED_CHECK).
+ *
  * Only the CONTRACT lives here. The procedure (snapshot, checks, review, close, reopen) is
  * `dreamcontext goal-live recipe develop` (src/lib/develop-recipe.ts): it would not fit a
  * briefing that rides every turn, and printing it from the CLI keeps it in step with this
@@ -238,8 +256,11 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
   over every path you changed, in parallel with the final check. It runs \`git diff\` on its
   scope ITSELF; never paste a diff into its prompt. Record its verdict before the next phase.
   FAIL → fix exactly the findings, then re-review. The SAME finding twice → STOP and put it to
-  the owner; never merge past it. You do not sign off on your own work. Tick criteria only
-  when demonstrably true, and log \`dreamcontext tasks log <slug> "…"\`.
+  the owner; never merge past it. You do not sign off on your own work.
+- **No tick without evidence** in its \`dreamcontext tasks log <slug> "…"\` line: the check's
+  output, or, for what the owner sees, screenshots you READ at a phone and a desktop width
+  plus the console output. Green tests on an app that does not open are not evidence. No
+  observed criterion on a task the owner opens: add one first. UI: load \`design\` first.
 - **Don't expand scope.** If the plan turns out to be wrong, STOP and say so.
 - **Close by the task's \`Validation method:\`.** A command: run it once and show its output,
   then \`dreamcontext tasks status <slug> completed "<what shipped + the evidence>"\`; flaky,

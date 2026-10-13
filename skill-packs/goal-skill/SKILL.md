@@ -69,9 +69,9 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
    executable (`nohup claude -p … &` is fine); never wrap it in a script file, which
    hides the command from the app's own recognition of a headless run.
 
-1. **Spawn the planner** (once, at Phase 1):
+1. **Spawn the planner** (once, at Phase 1), from the printed planner brief (Phase 1):
    ```
-   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "<goal + context>" --session-id <plannerId> --output-format json --model opus --effort high < /dev/null
+   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "$(cat "$RUN/planner-brief.md")" --session-id <plannerId> --output-format json --model opus --effort high < /dev/null
    ```
    `< /dev/null` matters: a headless `-p` invocation with no stdin redirect can hang
    waiting for input. Always redirect stdin explicitly. The id you minted IS the
@@ -300,8 +300,18 @@ record that you chose it, and surface it for confirmation.
 
 Do any messy pre-fork exploration in throwaway `Explore` agents first — keep the
 planner's base lean. Then spawn **one** `goal-planner` CLI session per the mechanics
-above, with the lineage's one identity (opus, effort high). Give it the confirmed goal + the
-relevant skills to load. Record its `session_id` in the Session registry.
+above, with the lineage's one identity (opus, effort high). Record its `session_id` in the
+Session registry.
+
+**Planner brief — printed, filled, passed as a file.** Print it with `dreamcontext goal-live
+recipe planner-brief`, fill its `<placeholders>` (the confirmed goal, the owner's decisions,
+the Validation method, the skills and patterns to load: `design` for any goal with UI), write
+it to `$RUN/planner-brief.md` and spawn with `"$(cat "$RUN/planner-brief.md")"`. Never retype
+it: a `claude -p` planner never loads the goal-planner agent file, so the brief is its whole
+mandate. It carries the rule a hand-typed brief lost on 2026-10-13, when a mobile-to-web run
+shipped a PWA that was not responsive and opened with errors: the plan writes down what the
+owner will notice in the first 30 seconds of opening the result, and a goal the owner opens
+ends on an OBSERVED criterion (opened at a phone and a desktop width, screenshots).
 
 It returns a **file-by-file plan**; it does NOT write code or the task doc. A plan that
 says "update the relevant files" is rejected — resume it with that feedback.
@@ -335,7 +345,9 @@ Dispatch `goal-plan-reviewer` Agent-tool subagents in parallel, in a single mess
 lens count per tier (S: skip this phase entirely; M: 1 lens; L: 2 lenses):
 - **critic** — correctness/assumptions and scope, and (when a dep map exists) whether the
   map itself is safe: contracts pinned, no same-file tasks in the same wave, waves acyclic,
-  a wave that could merge, an `EXECUTION:` line that fits the work. Every reviewed tier.
+  a wave that could merge, an `EXECUTION:` line that fits the work. And what the owner will
+  notice on first opening the result: is each of those a criterion, and does a goal the
+  owner opens end on an observed one? Every reviewed tier.
 - **security** — L tier on a hot path (auth, crypto, secrets, money, migrations, outbound
   messages).
 - **edge-cases** — L tier otherwise: empty/null, concurrency, partial failure, retries,
@@ -460,8 +472,12 @@ Wave execution rules (mirrors the dependency map exactly):
   `FAILED 2x` after a second fix → escalate.
 - **Heavy steps run once, at the final gate**, after the last wave and before Phase 5:
   the full unit suite, `build` / `build:cli`, the integration suite, `gen:*` scripts
-  (e.g. `gen:cli-manifest`) and browser verification. A later wave works from source, so
-  a wave gate does not need them. The one exception: a task whose `depends on` cell the
+  (e.g. `gen:cli-manifest`), browser verification, and the **observed check** whenever a
+  criterion is about what the owner sees: you open the result in the real app or a headless
+  browser at a phone (390 px) and a desktop (1440 px) width, record console errors and failed
+  requests, take a screenshot of each that you READ, and log the paths and the output.
+  Errors, overflow or a broken layout = a red gate, routed like any other. A later wave
+  works from source, so a wave gate does not need them. The one exception: a task whose `depends on` cell the
   planner marked with a compiled artifact (`+ build:cli`) gets that build pulled forward
   into the gate of the wave before it.
 - **Never twice.** The final gate runs every heavy step the change needs, in dependency
@@ -519,6 +535,10 @@ the **user-chosen validation method** recorded in the task decides who validates
 - **Manual, or Browser (jev-verify)**: dispatch **one** `goal-validator` (opus, clean
   context). It drives the real app, proves the result with screenshots and a video of the
   flow, and returns `PASS | FAIL` with evidence.
+- **Whatever the method, an OBSERVED criterion** (what the owner sees on opening the result)
+  is ticked from the final gate's observed check: cite its logged screenshots, which you READ,
+  and its console output; you never open the app a second time on the same tree. A validator
+  run adds its screenshots to that evidence, never replaces it. Green tests never tick it.
 
 A FAIL that is a timeout under a `busy` load line is re-run on a quiet machine before it is
 routed to anyone.
@@ -560,7 +580,7 @@ standalone goal-live step is bookkeeping the user has to read past in the team l
 
 ```bash
 # Run start (right after the goal is confirmed): the file, the plan phase, the planner, in one step
-dreamcontext goal-live start --goal <slug> && dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind spawn --session <plannerId> && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "<goal + context>" --session-id <plannerId> --output-format json --model opus --effort high < /dev/null
+dreamcontext goal-live start --goal <slug> && dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind spawn --session <plannerId> && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "$(cat "$RUN/planner-brief.md")" --session-id <plannerId> --output-format json --model opus --effort high < /dev/null
 ```
 
 ```bash
@@ -630,7 +650,7 @@ dreamcontext goal-live start --goal <slug> [--mode goal|develop]
 dreamcontext goal-live phase <plan|review|task|impl|codereview|validate|done> [--wave N] [--waves N]
 dreamcontext goal-live actor <id[=name],…> --kind <spawn|fork|resume|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>] [--session <uuid>] [--wave N]
 dreamcontext goal-live state <id=word> [<id=word> …] [--wave N]
-dreamcontext goal-live recipe develop|fan-out|builder-brief
+dreamcontext goal-live recipe develop|fan-out|builder-brief|planner-brief
 dreamcontext builder load [--reap] | heavy [--max-wait <s>] -- <cmd> | report <file> <TaskId>
 dreamcontext builder test <slug> --wave N|final [--related <paths>] [--also <tests>] [--failed]
 dreamcontext goal-live clear
@@ -647,6 +667,7 @@ dreamcontext goal-live clear
 - `--session <uuid>`: the actor's own `claude -p --session-id` (a UUID). One id per call,
   since a run belongs to one actor. For a `resume` it is the resumed run's existing id.
 - `clear` is for escalation and abort only, never for the success path.
+- `recipe planner-brief` prints the brief the planner is spawned with (Phase 1).
 - `recipe builder-brief` prints the brief every implementer is forked with (Phase 4). `builder`
   is not telemetry: `heavy` and `report` exit non-zero on purpose (see Phase 4 and mechanics rule 6).
 - `--mode develop`, `--wave` and `recipe develop|fan-out` belong to **Develop mode chats**,
@@ -731,6 +752,7 @@ Standalone viewer and demo:
 | "I'll fork a judge so it doesn't have to re-read the diff." | Never fork a judge — inherited framing produces a rubber stamp, not a verdict. |
 | "Two implementers can both touch the task doc, I'll sort it out after." | You are the single writer. Implementers report to you; they never write the map/registry. |
 | "I'll mark it complete because I *think* it's done." | Done is defined by Phase 6 validation passing with evidence — not by your hunch. |
+| "Tests are green, so the screen works." | Green tests on an app that does not open are not evidence. Open it at a phone and a desktop width and read the screenshots. |
 | "The implementer's report says it built everything — on to review." | Reports lie when forks stall (permission gate) or drift (role-binding). `git status` its owned files first; empty diff = nothing happened. |
 | "The builder exited with `success`, so it's done." / "It's been 30 minutes, it must be hung." | `success` only means the turn ended. Ask `dreamcontext builder report`: `unfinished` = it ended with a check in flight or without its report. Resume it once, with the fork's permission flags. |
 | "Let each builder run its own tests, more coverage is safer." | Builder check loops were 40% of builder time, and three suites at once turned green tests red on timeouts. Builders write tests and run none; you run ONE `builder test` per wave and the heavy steps once, at the final gate. |
@@ -759,6 +781,10 @@ Standalone viewer and demo:
 - **Never skip Phase 0's validation-method question.**
 - **`complete` only after Phase 6 PASS** — validation passing with evidence is the
   definition of done; never complete on a hunch, and never before validation.
+- **No tick without evidence.** Each ticked criterion has its evidence in the task log: a
+  check's output, or for what the owner sees, the screenshots and console output of the
+  observed check. The planner is spawned from `goal-live recipe planner-brief`, which makes
+  the plan write those criteria down.
 - **Tell `reviewer` to run `git diff` itself**; don't paste diffs into prompts.
 - **Convergence is by signal, not a fixed round count**, and only Critical/Major findings
   block. New findings → resume;
