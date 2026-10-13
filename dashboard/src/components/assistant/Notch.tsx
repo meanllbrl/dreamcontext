@@ -20,6 +20,7 @@ import {
   EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
   readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
+  startsFresh,
 } from './notchModel';
 import { readingTimeMs } from '../../lib/notchCue';
 import { playNotchTick } from '../../lib/chime';
@@ -122,6 +123,8 @@ interface AssistantStatus {
     autonomy?: Autonomy;
   } | null;
   avatar: string | null;
+  /** When the remembered conversation last wrote its transcript (ms), or null if unknown. */
+  lastActiveAt?: number | null;
 }
 
 /** The Assistant's own model and effort when the server has not said (src/lib/assistant/home.ts). */
@@ -486,6 +489,8 @@ export function Notch() {
   const motionGen = useRef(0);
   const islandAnims = useRef<Animation[]>([]);
   const sessionRef = useRef<ChatSession | null>(null);
+  /** When the live conversation last had a turn (ms): decides a fresh one after a long idle. */
+  const lastActiveRef = useRef<number | null>(null);
   const expandedRef = useRef(false);
   expandedRef.current = expanded;
   const seatRef = useRef<Seat>('notch');
@@ -533,7 +538,13 @@ export function Notch() {
       model: st.config?.model || ASSISTANT_MODEL,
       effort: st.config?.effort || ASSISTANT_EFFORT,
     };
-    if (st.exists && st.config && !sessionRef.current) startSession(st.config.conversationId);
+    if (st.exists && st.config && !sessionRef.current) {
+      // A conversation idle for hours is not resumed: the launch opens a fresh one (notchModel
+      // `FRESH_AFTER_IDLE_MS`); the old one stays in the Conversations menu.
+      const fresh = startsFresh(st.lastActiveAt, Date.now());
+      lastActiveRef.current = fresh ? Date.now() : (st.lastActiveAt ?? Date.now());
+      startSession(fresh ? null : st.config.conversationId);
+    }
   }, [startSession]);
 
   // Boot.
@@ -1372,7 +1383,8 @@ export function Notch() {
     };
   }, []);
 
-  const newConversation = useCallback(() => {
+  /** Close the live conversation (its transcript stays in the menu) and start a new one. */
+  const rotateConversation = useCallback(() => {
     const old = sessionRef.current;
     const id = crypto.randomUUID();
     void saveConversationId(id);
@@ -1385,9 +1397,30 @@ export function Notch() {
     cs.setCommandHandler(executeAssistantCommand);
     sessionRef.current = cs;
     setSession(cs);
+    lastActiveRef.current = Date.now();
+  }, []);
+
+  const newConversation = useCallback(() => {
+    rotateConversation();
     setConvosOpen(false);
     setTab('chat');
-  }, []);
+  }, [rotateConversation]);
+
+  // A conversation that sat idle for hours is replaced in the BACKGROUND, folded and between
+  // turns — never at the hotkey press, where swapping the session under the composer could
+  // cost the take it is about to receive. A turn in flight, a question waiting or an open
+  // notch all wait for the next check.
+  useEffect(() => {
+    if (session?.busy) lastActiveRef.current = Date.now();
+  });
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const cs = sessionRef.current;
+      if (!cs || cs.busy || cs.asking || expandedRef.current || !hasAssistantRef.current) return;
+      if (startsFresh(lastActiveRef.current, Date.now())) rotateConversation();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [rotateConversation]);
 
   // Back to an earlier conversation: the live one is closed (its transcript stays, listed in the
   // menu), the picked one is resumed in its place and becomes the one every launch resumes.

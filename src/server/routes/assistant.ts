@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, writeFileSync, createReadStream, statSync } from 'node:fs';
+import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
@@ -541,7 +542,24 @@ export async function handleAssistantStatus(req: IncomingMessage, res: ServerRes
     // The notch is on screen (`notch_wanted` in desktop/src-tauri/src/assistant.rs): with an
     // assistant this is its on/off switch, without one it is the notifications-only notch's.
     notch: readAssistantConfig()?.enabled !== false,
+    lastActiveAt: exists ? conversationLastActiveAt(readAssistantConfig()?.conversationId ?? null) : null,
   });
+}
+
+/**
+ * When the Assistant's remembered conversation last wrote its transcript, in ms — the notch
+ * opens a fresh conversation instead of resuming one idle for hours (notchModel
+ * `FRESH_AFTER_IDLE_MS`). Null when there is no conversation or its transcript is not found:
+ * unknown activity never forces a fresh start.
+ */
+export function conversationLastActiveAt(conversationId: string | null, home?: string): number | null {
+  if (!conversationId) return null;
+  try {
+    const path = findTranscriptBySessionId([conversationId], home);
+    return path ? statSync(path).mtimeMs : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

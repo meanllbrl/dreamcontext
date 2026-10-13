@@ -432,3 +432,17 @@ export function assistantActivityLine(items: ActivityItem[], progress: string | 
   if (progress && progress.trim()) return firstSentence(progress);
   return 'Thinking…';
 }
+
+/**
+ * After this long without a turn, the Assistant's next conversation starts FRESH (owner,
+ * 2026-10-14). One conversation resumed forever grew every turn's context to a median 61k and
+ * a p90 145k tokens, and a turn after a long gap paid all of it uncached. What the Assistant
+ * must remember lives in its brain, not in the transcript; the old conversation stays in the
+ * Conversations menu and can be picked back up.
+ */
+export const FRESH_AFTER_IDLE_MS = 2 * 60 * 60 * 1000;
+
+/** Has the conversation been idle long enough to start a new one? Unknown activity: no. */
+export function startsFresh(lastActiveAt: number | null | undefined, now: number): boolean {
+  return typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && now - lastActiveAt >= FRESH_AFTER_IDLE_MS;
+}

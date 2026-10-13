@@ -16,7 +16,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -185,6 +185,13 @@ async function main() {
   try {
     const r = await fetch(`${base}/api/assistant/create`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Nova', character: 'Terse.' }) });
     ok('the assistant is created', r.status === 200);
+    // A remembered conversation with a transcript written just now: the launch resumes it.
+    const OLD = '0b1c2d3e-4f50-4617-8899-aabbccddeeff';
+    const transcript = join(HOME, '.claude', 'projects', '-verify-assistant', `${OLD}.jsonl`);
+    mkdirSync(dirname(transcript), { recursive: true });
+    writeFileSync(transcript, '{}\n');
+    await fetch(`${base}/api/assistant/profile`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ conversationId: OLD }) });
+    const convo = async () => (await (await fetch(`${base}/api/assistant/status`)).json()).config?.conversationId;
 
     const page = await browser.newPage({ viewport: { width: 600, height: 720 } });
     await page.addInitScript(notchTauri, samples);
@@ -203,6 +210,8 @@ async function main() {
     await page.waitForSelector('.dc-notch__pill', { timeout: 20_000 });
     await page.waitForFunction(() => document.querySelector('.dc-notch__chat .agent-pane-chat textarea'), null, { timeout: 20_000 });
     await page.waitForTimeout(1200);
+    console.log('\n── a conversation active minutes ago is resumed at launch');
+    ok('the remembered conversation is kept', await convo() === OLD, String(await convo()));
     const calls = () => page.evaluate(() => window.__mic.calls.map((c) => `${c.cmd.replace('mic_take_', '')}${c.id == null ? '' : ':' + c.id}`));
     const reset = () => page.evaluate(() => { window.__mic.calls = []; });
     const fold = async () => {
@@ -297,6 +306,22 @@ async function main() {
     ok('…and the first API call\'s footprint and the configured effort', t?.cacheRead === 60000 && t?.cacheCreation === 2000
       && t?.input === 3 && t?.model === 'claude-sonnet-5-5' && typeof t?.effort === 'string' && t?.toolsBeforeText === 0, JSON.stringify(t));
     ok('…and no stream delta came, so firstToken is absent rather than 0', t && !('firstTokenMs' in t), JSON.stringify(t));
+    await page.close();
+
+    console.log('\n── a conversation idle for hours is not resumed: the launch opens a fresh one');
+    const hoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    await fetch(`${base}/api/assistant/profile`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ conversationId: OLD }) });
+    utimesSync(transcript, hoursAgo, hoursAgo);
+    const status = await (await fetch(`${base}/api/assistant/status`)).json();
+    ok('status reports the transcript\'s last write', Math.abs((status.lastActiveAt ?? 0) - hoursAgo.getTime()) < 2000, String(status.lastActiveAt));
+    const page2 = await browser.newPage({ viewport: { width: 600, height: 720 } });
+    await page2.addInitScript(notchTauri, samples);
+    await page2.goto(`${base}/?assistant=1`);
+    await page2.waitForSelector('.dc-notch__pill', { timeout: 20_000 });
+    let fresh = OLD;
+    for (let i = 0; i < 40 && fresh === OLD; i++) { await page2.waitForTimeout(250); fresh = await convo(); }
+    ok('a new conversation replaces it', fresh !== OLD && /^[0-9a-f-]{36}$/.test(fresh ?? ''), String(fresh));
+    ok('…and the old transcript is left where it was', existsSync(transcript));
   } finally {
     await browser.close();
     srv.kill();
