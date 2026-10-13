@@ -459,6 +459,17 @@ export class SpeechQueue {
   private spoken: SpokenChunk | null = null;
   /** Tagged onto every chunk the current `push` produces — see {@link push}. */
   private pushItemId: string | undefined;
+  /**
+   * Text items the owner talked over. The rest of such an item is never spoken.
+   *
+   * ── WHY, MEASURED AGAINST WHAT THE OWNER HEARD ──────────────────────────────────────────
+   * A barge-in (`stop()` then `resume()`) used to clear only what was QUEUED. The reply kept
+   * streaming, so the very next delta of the same paragraph was spoken again — starting
+   * mid-sentence, with the sentences that were in flight at the press gone for good. Heard as
+   * "sentences are skipped while I talk" (owner, 2026-10-13). A paragraph you talked over now
+   * stays silent; the NEXT text block, a fresh thought, is read whole.
+   */
+  private readonly silencedItems = new Set<string>();
 
   /**
    * @param sessionId  Identifies this pane to the server's focus ledger. Two assistant panes
@@ -536,6 +547,7 @@ export class SpeechQueue {
    */
   push(text: string, itemId?: string): void {
     if (this.stopped) return;
+    if (itemId !== undefined && this.silencedItems.has(itemId)) return;
     const speak = voicePrefs().speech;
     this.pushItemId = itemId;
     for (const chunk of this.chunker.push(text)) if (speak) this.enqueue(chunk);
@@ -543,6 +555,19 @@ export class SpeechQueue {
 
   /** End of turn — speak the trailing partial chunk (`result`, chatSession.ts). */
   flushTurn(): void {
+    this.endBlock();
+  }
+
+  /**
+   * End of ONE text block — speak what the chunker is still holding.
+   *
+   * The chunker only cuts at a terminator FOLLOWED by whitespace, so the last sentence of a
+   * block ("Tamam, bakıyorum.") has nothing after it and stays held. Before this existed it
+   * waited for the next block's text or the end of the whole turn: heard minutes late after a
+   * tool run, glued to the next block's first word, or — when the owner spoke in between and
+   * the barge-in reset the chunker — never heard at all. A block's end is a sentence's end.
+   */
+  endBlock(): void {
     if (this.stopped) return;
     const speak = voicePrefs().speech;
     for (const chunk of this.chunker.flush()) if (speak) this.enqueue(chunk);
@@ -559,6 +584,8 @@ export class SpeechQueue {
   stop(): void {
     this.stopped = true;
     this.generation += 1;
+    // The paragraph being spoken stays silent from here on — see `silencedItems`.
+    if (this.pushItemId !== undefined) this.silencedItems.add(this.pushItemId);
     // IMMEDIATELY, not after the grace window. This is the barge-in path: the owner pressed
     // the mic (or Stop, or steered) and is about to speak, so the music has to be back now —
     // a release that waited 800 ms would put the music under the start of their sentence.

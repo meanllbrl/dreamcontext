@@ -362,13 +362,20 @@ export function primerFrom(lexicon: string, limit = 700): string {
 /**
  * Tidy whisper.cpp's output.
  *
- * It pads with a leading space and wraps at its own segment length, so a two-line answer
- * arrives with a newline in the middle of a sentence. Its silence markers ([BLANK_AUDIO],
- * (music), *sighs*) are removed too: they are a description of the audio, and the composer
- * would submit one to a tool-enabled agent as if it had been spoken.
+ * It pads with a leading space and joins its segments with a newline. Its silence markers
+ * ([BLANK_AUDIO], (music), *sighs*) are removed too: they are a description of the audio, and
+ * the composer would submit one to a tool-enabled agent as if it had been spoken.
+ *
+ * ── THE NEWLINE IS DROPPED, NOT TURNED INTO A SPACE ─────────────────────────────────────
+ * A segment can end in the MIDDLE of a word. Measured 2026-10-13 on the owner's own Handy
+ * recording, same server and model: `' …ayarlardan yapab'` + `'iliyoruz.'`. A segment that
+ * starts a new word carries its own leading space (whisper's tokens do), so the newline is
+ * pure joinery. Turning it into a space wrote "yapab iliyoruz", "hızlı ca", "aksiy onları" into
+ * the composer: on long Turkish words, several broken words per take.
  */
 export function cleanWhisperText(raw: string): string {
   return raw
+    .replace(/\r?\n/g, '')
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/\((?:music|laughter|applause|silence|sighs?|inaudible)[^)]*\)/gi, ' ')
     .replace(/\*[^*]*\*/g, ' ')

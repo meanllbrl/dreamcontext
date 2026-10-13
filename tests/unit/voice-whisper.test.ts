@@ -112,6 +112,13 @@ describe('cleaning what whisper returns', () => {
     expect(cleanWhisperText(' Dremontext taskını güncelle\n et.\n')).toBe('Dremontext taskını güncelle et.');
   });
 
+  it('joins a segment that ends MID-WORD without a space (measured on a real take)', () => {
+    // whisper-server, large-v3-turbo, the owner's own recording, 2026-10-13: the segment
+    // boundary fell inside "yapabiliyoruz". A new word's segment starts with its own space.
+    const raw = ' Bir de bunun faturalandırma zamanlarında ayarlardan yapab\niliyoruz.\n Bunu anlatalım kendisine.\n';
+    expect(cleanWhisperText(raw)).toBe('Bir de bunun faturalandırma zamanlarında ayarlardan yapabiliyoruz. Bunu anlatalım kendisine.');
+  });
+
   it('removes the audio DESCRIPTIONS — they are not something anybody said', () => {
     // A tool-enabled agent would receive "[BLANK_AUDIO]" as an instruction typed by the owner.
     expect(cleanWhisperText('[BLANK_AUDIO]')).toBe('');

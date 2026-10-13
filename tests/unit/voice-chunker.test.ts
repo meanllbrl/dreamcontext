@@ -378,6 +378,37 @@ describe('the speech queue', () => {
     expect(FakeAudio.played).toEqual(['Tamam.']);
   });
 
+  it('endBlock() speaks a block\'s LAST sentence now, not when the next block or the turn end arrives', async () => {
+    // The chunker cuts only at a terminator FOLLOWED by whitespace, and a block's last
+    // sentence has nothing after it. It used to wait for the next block (glued onto it) or the
+    // end of the whole turn — minutes later after a tool run, or never after a barge-in.
+    const q = makeQueue(fetcherThat());
+    q.push('İlk cümle burada. Bakıyorum şimdi.', 'item-a');
+    await settle();
+    expect(FakeAudio.played).toEqual(['İlk cümle burada.']);
+    q.endBlock();
+    await settle();
+    expect(FakeAudio.played).toEqual(['İlk cümle burada.', 'Bakıyorum şimdi.']);
+  });
+
+  it('a block the owner TALKED OVER stays silent; the next block is read whole', async () => {
+    // Owner, 2026-10-13: "sentences are skipped while I talk". The barge-in cleared the queue,
+    // then the same paragraph's next delta was spoken from mid-sentence, the in-flight
+    // sentences gone. Now the talked-over paragraph is silent and the next one is intact.
+    const q = makeQueue(fetcherThat());
+    q.push('Birinci paragraf başlıyor. ', 'item-a');
+    await midPlay();
+    q.stop();
+    q.resume();
+    FakeAudio.played = [];
+    q.push('ve ortasından devam ediyor. Bir cümle daha. ', 'item-a');
+    q.endBlock();
+    q.push('İkinci blok tam okunur. ', 'item-b');
+    q.endBlock();
+    await settle();
+    expect(FakeAudio.played).toEqual(['İkinci blok tam okunur.']);
+  });
+
   it('flushTurn() speaks the trailing partial chunk', async () => {
     const q = makeQueue(fetcherThat());
     q.push('no terminator');

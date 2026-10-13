@@ -1305,6 +1305,8 @@ export function createChatSession(
         if (cur && (cur.kind === 'text' || cur.kind === 'thinking')) {
           items[pos] = { ...cur, done: true };
           conv = { ...conv, items };
+          // A block's end is a sentence's end: speak what the chunker held (`endBlock`).
+          if (cur.kind === 'text') speech?.endBlock();
         }
         return;
       }
@@ -1370,7 +1372,7 @@ export function createChatSession(
           conv = { ...conv, items };
           // The echo is the AUTHORITATIVE full block. Only the tail beyond what this item
           // already contributed is spoken, so a reply that DID stream is not read twice.
-          if (kind === 'text') { speakTail(cur.id, body); presentBlock(cur.id, body); }
+          if (kind === 'text') { speakTail(cur.id, body); speech?.endBlock(); presentBlock(cur.id, body); }
         } else {
           const last = [...conv.items].reverse().find((it) => it.kind === kind);
           const echoed = kind === 'text' && mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
@@ -1382,7 +1384,7 @@ export function createChatSession(
           conv = { ...conv, items: [...conv.items, item] };
           // AC8's case: a short reply the CLI sent with NO deltas at all. This is a fresh
           // item that has contributed nothing, so it is spoken in full — once.
-          if (kind === 'text') { speakTail(item.id, item.text); presentBlock(item.id, item.text); }
+          if (kind === 'text') { speakTail(item.id, item.text); speech?.endBlock(); presentBlock(item.id, item.text); }
         }
         return;
       }
