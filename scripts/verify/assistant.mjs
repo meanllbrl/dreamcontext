@@ -555,6 +555,9 @@ try {
             return args.handler;
           }
           if (cmd === 'plugin:event|unlisten') { drop(args.event, args.eventId); return null; }
+          // An OLDER shell, with no native microphone: the composer falls back to WebKit capture,
+          // which is what the W3 leg drives (the native path: scripts/verify/assistant-native-mic.mjs).
+          if (cmd.startsWith('mic_take_')) throw new Error(`Command ${cmd} not found`);
           window.__calls.push({ cmd, args: JSON.parse(JSON.stringify(args ?? {})) });
           // A frame without monitor geometry keeps the window where it is (Notch.tsx frameItem),
           // which reads the window's own position: answer it as the native side would.

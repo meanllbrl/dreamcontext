@@ -390,6 +390,10 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
   const nativeLevelOffRef = useRef<(() => void) | null>(null);
   /** When `start()` ran, for the WebKit take's first-sample latency. */
   const pressedAtRef = useRef(0);
+  /** This take is on the native path (decided in `start()`). */
+  const nativeTakeRef = useRef(false);
+  /** Released while the native take was still being claimed: end it the moment it is. */
+  const stopPendingRef = useRef(false);
 
   // Learn now whether the shell records natively, so the first press already knows its path.
   useEffect(() => { void probeNativeMic(); }, []);
@@ -613,6 +617,13 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
       nativeIdRef.current = begun.id;
       startedAtRef.current = Date.now() - begun.sinceMs;
       phaseRef.current = 'recording';
+      if (stopPendingRef.current) {
+        // Released before the claim landed. The shell has been recording since the press, so
+        // this is a whole take, not a cancelled one: end it now.
+        stopPendingRef.current = false;
+        finishNativeTake();
+        return;
+      }
       setState('recording');
       tickRef.current = window.setInterval(() => {
         setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
@@ -621,7 +632,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
       if (cancelled() || nativeIdRef.current !== begun.id) { off(); return; }
       nativeLevelOffRef.current = off;
     })();
-  }, []);
+  }, [finishNativeTake]);
 
 
   const start = useCallback(() => {
@@ -640,12 +651,14 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     chunksRef.current = [];
     pressedAtRef.current = Date.now();
     startedAtRef.current = 0;
+    stopPendingRef.current = false;
+    nativeTakeRef.current = nativeMicReady();
 
     // ── THE DESKTOP RECORDS NATIVELY ─────────────────────────────────────────────────────
     // No AudioContext, no getUserMedia: the shell's take (`nativeMic.ts`) — already running
     // since the hotkey press, when there was one. Only once the shell has PROVEN it can (the
     // mount-time probe); until then, and in a browser, the WebKit path below.
-    if (nativeMicReady()) {
+    if (nativeTakeRef.current) {
       startNativeTake(take);
       return;
     }
@@ -792,6 +805,12 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
   const stop = useCallback(() => {
     const verdict = stopVerdict(phaseRef.current);
     if (verdict === 'ignore') return;
+    if (verdict === 'cancel' && nativeTakeRef.current) {
+      // Native: the shell is already recording (since the hotkey press, for a hotkey take), so a
+      // release while the claim is in flight ENDS the take rather than throwing the words away.
+      stopPendingRef.current = true;
+      return;
+    }
     if (verdict === 'cancel') {
       // Released before the device finished opening. CANCEL the take rather than merely
       // freeing the guard: bumping the token makes the coroutine unwind at its next check and

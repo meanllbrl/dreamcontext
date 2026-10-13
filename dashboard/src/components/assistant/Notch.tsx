@@ -24,7 +24,7 @@ import {
 import { readingTimeMs } from '../../lib/notchCue';
 import { playNotchTick } from '../../lib/chime';
 import { emitExternalPushToTalk, summonTakeDue } from '../../lib/voice/externalPushToTalk';
-import { cancelNativeTake } from '../../lib/voice/nativeMic';
+import { cancelNativeTake, nativeMicReady } from '../../lib/voice/nativeMic';
 import { initAgentSettingsFromServer } from '../../lib/agentSettings';
 // The pill's right ear draws the tab strip's own status bubbles (`project-tab-bubble*`); the
 // rules are global class selectors, so they are shared, not copied.
@@ -84,6 +84,9 @@ const WINDOW_H = 640;
 const FOLD_AFTER_SPOKEN_MS = 2200;
 /** A voice take was sent: this long for the owner to see it land, then the notch folds. */
 const FOLD_AFTER_SEND_MS = 450;
+/** A hotkey hold at least this long is speech, even when it ended before the panel opened; a
+ *  shorter one was a tap that only opens the panel (Handy draws the same line at 300 ms). */
+const HOLD_TAKE_MS = 350;
 /** An event peek (a chat finished, an automation posted, an account notice) stays this long:
  *  long enough to catch from the corner of an eye (owner, 2026-10-04: 6.5 s was too short). */
 const EVENT_PEEK_MS = 20_000;
@@ -1155,6 +1158,9 @@ export function Notch() {
   // land (`summonTakeDue`): opening the mic in the same tick froze the resize for seconds.
   const heldRef = useRef(false);
   const pressRef = useRef(0);
+  /** When the current press went down and, once it has, came up: how long the key was held. */
+  const pressedAtRef = useRef(0);
+  const releasedAtRef = useRef(0);
   useEffect(() => {
     if (!isDesktop()) return;
     let unlisten: (() => void) | null = null;
@@ -1167,11 +1173,14 @@ export function Notch() {
           const edge = e.payload?.state;
           if (edge === 'released') {
             heldRef.current = false;
+            releasedAtRef.current = Date.now();
             emitExternalPushToTalk({ edge, mode, summon: false });
             return;
           }
           if (edge !== 'pressed') return;
           heldRef.current = true;
+          pressedAtRef.current = Date.now();
+          releasedAtRef.current = 0;
           const press = ++pressRef.current;
           if (!expandedRef.current) {
             // The island as drawn before the flushSync below takes the peek away: the grow starts there.
@@ -1182,8 +1191,16 @@ export function Notch() {
             engagedRef.current = false;
             void expand('chat', from).then(() => {
               if (!summonTakeDue(mode, heldRef.current, expandedRef.current, press === pressRef.current)) {
-                // The shell opened the microphone at the press (src/mic.rs); a tap that only
-                // opened the panel releases it now rather than at the shell's grace timeout.
+                // Released before the panel landed. The shell has been recording since the press
+                // (src/mic.rs), so a real HOLD is still a take: claim it and end it at once. A tap
+                // only opened the panel, and releases the microphone now.
+                const heldMs = releasedAtRef.current - pressedAtRef.current;
+                if (mode === 'hold' && press === pressRef.current && expandedRef.current
+                  && nativeMicReady() && heldMs >= HOLD_TAKE_MS) {
+                  emitExternalPushToTalk({ edge: 'pressed', mode, summon: true });
+                  emitExternalPushToTalk({ edge: 'released', mode, summon: false });
+                  return;
+                }
                 if (press === pressRef.current) void cancelNativeTake();
                 return;
               }
