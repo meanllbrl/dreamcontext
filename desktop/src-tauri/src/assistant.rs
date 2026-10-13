@@ -270,6 +270,13 @@ pub fn shortcut_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 ShortcutState::Released => "released",
             };
             log_edge(state);
+            // The microphone FIRST, before anything the owner can see: the take starts at the
+            // press, not when the panel has finished opening (src/mic.rs).
+            if state == "pressed" && assistant_enabled() {
+                crate::mic::start_for_hotkey(app);
+            } else if state == "released" {
+                crate::mic::hotkey_released();
+            }
             // Idempotent: a summon shows the notch if hidden; the webview ignores a Pressed
             // that arrives while it is already recording.
             if state == "pressed" && assistant_enabled() {

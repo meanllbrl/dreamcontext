@@ -27,6 +27,7 @@
 mod app_link;
 mod assistant;
 mod frames;
+mod mic;
 mod node_runtime;
 mod node_setup;
 mod page_focus;
@@ -78,6 +79,9 @@ pub fn run() {
             quit_app,
             assistant::assistant_geometry,
             assistant::assistant_haptic,
+            mic::mic_take_begin,
+            mic::mic_take_end,
+            mic::mic_take_cancel,
             assistant::assistant_apply_hotkey,
             assistant::assistant_set_autostart,
             assistant::assistant_wake,

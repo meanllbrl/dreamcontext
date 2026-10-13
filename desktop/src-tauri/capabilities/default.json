@@ -21,6 +21,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-pick-paths",
+    "allow-mic-take",
     "allow-confirm-dialog",
     "allow-take-app-link",
     "allow-quit-app",

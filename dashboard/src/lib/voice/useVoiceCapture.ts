@@ -70,6 +70,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { wavFromTake, TARGET_SAMPLE_RATE } from './wavEncoder';
+import {
+  beginNativeTake, endNativeTake, cancelNativeTake, onNativeLevel, probeNativeMic, nativeMicReady,
+} from './nativeMic';
 
 /**
  * The constraint object: the voice-processing chain ON, one channel.
@@ -231,6 +234,42 @@ export function judgeTake(durationMs: number, peakRms: number, noiseRms = Infini
   return 'ok';
 }
 
+/**
+ * The silence gate's two numbers for a take that arrived as ONE buffer (the native path), measured
+ * exactly as the WebKit path measures its frames: per ~85 ms frame, the loudest and the quietest.
+ * A trailing partial frame is ignored, as the graph never delivers one. Pure, so the gate can be
+ * checked against real recordings without a microphone.
+ */
+export function measureTake(samples: Float32Array, rate: number): { peak: number; floor: number; frames: number } {
+  const size = frameSizeFor(rate);
+  let peak = 0;
+  let floor = Infinity;
+  let frames = 0;
+  for (let at = 0; at + size <= samples.length; at += size) {
+    const level = rmsOf(samples.subarray(at, at + size));
+    peak = Math.max(peak, level);
+    floor = Math.min(floor, level);
+    frames += 1;
+  }
+  return { peak, floor, frames };
+}
+
+/**
+ * What the server is told about how a take was captured, logged next to its transcript
+ * (`~/.dreamcontext/logs/voice.jsonl`). The numbers that answer "were my first words lost" and
+ * "did the page drop audio mid-take": how long after the press the first sample landed, and how
+ * much audio was captured against how long the take lasted.
+ */
+export interface TakeMeta {
+  source: 'native' | 'webkit';
+  rate: number;
+  /** ms from the take opening (the press) to the first captured sample. */
+  firstSampleMs: number | null;
+  /** ms of audio actually captured, and ms the take lasted on the wall clock. */
+  capturedMs: number;
+  wallMs: number;
+}
+
 /** Every state the mic button can be in. `awaiting-confirmation` belongs to the Composer,
  *  which owns the pending text; capture itself is done by then. */
 export type CaptureState =
@@ -345,11 +384,27 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
    * during `uploading`.
    */
   const phaseRef = useRef<TakePhase>('idle');
+  /** The native take this hook holds (`nativeMic.ts`), or null on the WebKit path. */
+  const nativeIdRef = useRef<number | null>(null);
+  /** Unsubscribes the native level stream. */
+  const nativeLevelOffRef = useRef<(() => void) | null>(null);
+  /** When `start()` ran, for the WebKit take's first-sample latency. */
+  const pressedAtRef = useRef(0);
+
+  // Learn now whether the shell records natively, so the first press already knows its path.
+  useEffect(() => { void probeNativeMic(); }, []);
 
   /** Release the device and every meter attached to it. Idempotent. */
   const teardown = useCallback(() => {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = 0; }
     capturingRef.current = false;
+    nativeLevelOffRef.current?.();
+    nativeLevelOffRef.current = null;
+    if (nativeIdRef.current !== null) {
+      // Dropped, not ended: whoever still wanted the samples has already taken the id.
+      void cancelNativeTake(nativeIdRef.current);
+      nativeIdRef.current = null;
+    }
     if (tapRef.current) {
       tapRef.current.onaudioprocess = null;
       try { tapRef.current.disconnect(); } catch { /* already gone */ }
@@ -375,7 +430,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     teardown();
   }, [teardown]);
 
-  const upload = useCallback(async (blob: Blob) => {
+  const upload = useCallback(async (blob: Blob, meta?: TakeMeta) => {
     const take = takeRef.current;
     try {
       const bytes = await blob.arrayBuffer();
@@ -392,6 +447,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
             headers: {
               'Content-Type': 'audio/wav',
               ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
+              ...(meta ? { 'X-Dreamcontext-Take': JSON.stringify({ ...meta, attempt: n }) } : {}),
             },
             body: bytes,
           });
@@ -462,8 +518,110 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     }
     phaseRef.current = 'uploading';
     setState('transcribing');
-    void upload(new Blob([wav as unknown as BlobPart], { type: 'audio/wav' }));
+    let captured = 0;
+    for (const f of frames) captured += f.length;
+    const meta: TakeMeta = {
+      source: 'webkit',
+      rate: deviceRate,
+      firstSampleMs: startedAtRef.current ? startedAtRef.current - pressedAtRef.current : null,
+      capturedMs: Math.round((captured / deviceRate) * 1000),
+      wallMs: durationMs,
+    };
+    void upload(new Blob([wav as unknown as BlobPart], { type: 'audio/wav' }), meta);
   }, [teardown, upload]);
+
+  /**
+   * End a NATIVE take: fetch its samples from the shell, gate them exactly as the WebKit path
+   * gates its frames, and upload. The phase moves to `uploading` at once, so a second release
+   * while the samples are on their way is ignored rather than ending the take twice.
+   */
+  const finishNativeTake = useCallback(() => {
+    const id = nativeIdRef.current;
+    nativeIdRef.current = null;
+    nativeLevelOffRef.current?.();
+    nativeLevelOffRef.current = null;
+    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = 0; }
+    phaseRef.current = 'uploading';
+    const take = takeRef.current;
+    void (async () => {
+      const fail = (message: string) => {
+        if (takeRef.current !== take) return;
+        inFlightRef.current = false;
+        phaseRef.current = 'idle';
+        setState('error');
+        setError(message);
+      };
+      if (id === null) { fail('That take did not go through. Try again.'); return; }
+      let got;
+      try {
+        got = await endNativeTake(id);
+      } catch {
+        fail('The microphone is not available. Check the permission in System Settings.');
+        return;
+      }
+      if (takeRef.current !== take) return;
+      const { peak, floor, frames } = measureTake(got.samples, got.rate);
+      const durationMs = got.rate > 0 ? (got.samples.length / got.rate) * 1000 : 0;
+      const verdict = frames === 0 ? 'too-short' : judgeTake(durationMs, peak, frames > 1 ? floor : Infinity);
+      if (verdict !== 'ok') {
+        inFlightRef.current = false;
+        phaseRef.current = 'idle';
+        setState(verdict === 'too-short' ? 'too-short' : 'silent');
+        return;
+      }
+      const wav = wavFromTake([got.samples], got.rate);
+      setState('transcribing');
+      const meta: TakeMeta = {
+        source: 'native',
+        rate: got.rate,
+        firstSampleMs: got.firstSampleMs,
+        capturedMs: Math.round(durationMs),
+        wallMs: got.wallMs,
+      };
+      void upload(new Blob([wav as unknown as BlobPart], { type: 'audio/wav' }), meta);
+    })();
+  }, [upload]);
+
+  /**
+   * Open (or claim) a NATIVE take. The hotkey's take has been listening since the press; the
+   * elapsed clock starts there too, so the readout tells the truth about what is on tape.
+   */
+  const startNativeTake = useCallback((take: number) => {
+    void (async () => {
+      const cancelled = () => takeRef.current !== take;
+      let begun: { id: number; sinceMs: number } | null;
+      try {
+        begun = await beginNativeTake();
+      } catch {
+        begun = null;
+        if (cancelled()) return;
+        inFlightRef.current = false;
+        phaseRef.current = 'idle';
+        setState('error');
+        setError('The microphone is not available. Check the permission in System Settings.');
+        return;
+      }
+      if (!begun) {
+        if (cancelled()) return;
+        inFlightRef.current = false;
+        phaseRef.current = 'idle';
+        setState('error');
+        setError('This system cannot record audio.');
+        return;
+      }
+      if (cancelled()) { void cancelNativeTake(begun.id); return; }
+      nativeIdRef.current = begun.id;
+      startedAtRef.current = Date.now() - begun.sinceMs;
+      phaseRef.current = 'recording';
+      setState('recording');
+      tickRef.current = window.setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
+      }, 250);
+      const off = await onNativeLevel((level) => onLevelRef.current?.(level));
+      if (cancelled() || nativeIdRef.current !== begun.id) { off(); return; }
+      nativeLevelOffRef.current = off;
+    })();
+  }, []);
 
 
   const start = useCallback(() => {
@@ -480,6 +638,17 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     floorRef.current = Infinity;
     meteredFramesRef.current = 0;
     chunksRef.current = [];
+    pressedAtRef.current = Date.now();
+    startedAtRef.current = 0;
+
+    // ── THE DESKTOP RECORDS NATIVELY ─────────────────────────────────────────────────────
+    // No AudioContext, no getUserMedia: the shell's take (`nativeMic.ts`) — already running
+    // since the hotkey press, when there was one. Only once the shell has PROVEN it can (the
+    // mount-time probe); until then, and in a browser, the WebKit path below.
+    if (nativeMicReady()) {
+      startNativeTake(take);
+      return;
+    }
 
     // ── THE METER'S CONTEXT IS BUILT HERE, INSIDE THE GESTURE ────────────────────────────
     // Synchronously, in the same tick as the pointerdown — exactly like `SpeechQueue.unlock`
@@ -618,7 +787,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
         setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
       }, 250);
     })();
-  }, [teardown, finishTake]);
+  }, [teardown, finishTake, startNativeTake]);
 
   const stop = useCallback(() => {
     const verdict = stopVerdict(phaseRef.current);
@@ -635,8 +804,9 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
       setState('idle');
       return;
     }
-    finishTake();
-  }, [teardown, finishTake]);
+    if (nativeIdRef.current !== null) finishNativeTake();
+    else finishTake();
+  }, [teardown, finishTake, finishNativeTake]);
 
   return {
     state,

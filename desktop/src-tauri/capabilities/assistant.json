@@ -29,6 +29,7 @@
     "allow-assistant-haptic",
     "allow-assistant-wake",
     "allow-pick-paths",
+    "allow-mic-take",
     "allow-set-frames"
   ]
 }

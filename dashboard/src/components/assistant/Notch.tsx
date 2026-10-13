@@ -24,6 +24,7 @@ import {
 import { readingTimeMs } from '../../lib/notchCue';
 import { playNotchTick } from '../../lib/chime';
 import { emitExternalPushToTalk, summonTakeDue } from '../../lib/voice/externalPushToTalk';
+import { cancelNativeTake } from '../../lib/voice/nativeMic';
 import { initAgentSettingsFromServer } from '../../lib/agentSettings';
 // The pill's right ear draws the tab strip's own status bubbles (`project-tab-bubble*`); the
 // rules are global class selectors, so they are shared, not copied.
@@ -1163,7 +1164,12 @@ export function Notch() {
             voiceSummonRef.current = true;
             engagedRef.current = false;
             void expand('chat', from).then(() => {
-              if (!summonTakeDue(mode, heldRef.current, expandedRef.current, press === pressRef.current)) return;
+              if (!summonTakeDue(mode, heldRef.current, expandedRef.current, press === pressRef.current)) {
+                // The shell opened the microphone at the press (src/mic.rs); a tap that only
+                // opened the panel releases it now rather than at the shell's grace timeout.
+                if (press === pressRef.current) void cancelNativeTake();
+                return;
+              }
               emitExternalPushToTalk({ edge, mode, summon: true });
             });
             return;
@@ -1175,6 +1181,7 @@ export function Notch() {
             voiceSummonRef.current = true;
             autoOpenRef.current = null;
           }
+          if (!acted) void cancelNativeTake();
           if (!acted && mode === 'toggle') collapse();
         });
         if (cancelled) fn(); else unlisten = fn;

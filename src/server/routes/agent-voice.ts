@@ -52,6 +52,7 @@ import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
 import { dictationState, startDictationInstall } from '../../lib/voice/dictationInstall.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
 import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
+import { logVoiceEvent, parseTakeMeta, keepTake } from '../../lib/voice/voiceLog.js';
 
 /**
  * The system prompt that turns a CHAT model into a text-to-speech engine, and the reason it
@@ -231,11 +232,16 @@ export async function handleVoiceStt(
       // actually uses. Vault-scoped, which is why `/stt` is classified vault-SCOPED.
       lexicon: buildVoiceLexicon(contextRoot),
     });
+    const meta = parseTakeMeta(req.headers['x-dreamcontext-take']);
     if (local) {
       console.info(`[voice:stt] local ${local.model} ${local.ms}ms`);
+      const record = { kind: 'stt', ...meta, bytes: audioEarly.length, engine: `local:${local.model}`, ms: local.ms, chars: local.text.length };
+      logVoiceEvent(record);
+      keepTake(audioEarly, { ...record, language: cfgEarly.sttLanguage || 'auto', text: local.text });
       sendJson(res, 200, { text: local.text, ms: local.ms, engine: `local:${local.model}` });
       return;
     }
+    logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: findWhisper() ? 'stt_failed' : 'stt_unconfigured' });
     // Installed but silent is a TRANSIENT failure (a cold or busy whisper server): the composer
     // retries it. Only a missing install is `stt_unconfigured`, which the mode reads as permanent.
     if (findWhisper()) {
@@ -349,10 +355,14 @@ export async function handleVoiceTts(
     // dash. Applied AFTER the character cap, so a hostile direct POST cannot pad its way
     // under the limit with markup that strips away.
     const spoken = speakable(text);
+    // One line per chunk in voice.jsonl: which were spoken, rescued, or dropped, and why.
+    const chunkLog = (outcome: string, extra: Record<string, unknown> = {}) =>
+      logVoiceEvent({ kind: 'tts', outcome, chars: text.length, spokenChars: spoken.length, ...extra });
     if (!spoken) {
       // Nothing speakable survived — a chunk that was only a link, or only a fence. This is
       // not a failure, so it is not `tts_failed`: the queue treats 204 as "skip this one and
       // keep going", the same as it treats a failed chunk (AC10), but without logging noise.
+      chunkLog('nothing-speakable');
       res.writeHead(204).end();
       return;
     }
@@ -458,9 +468,11 @@ export async function handleVoiceTts(
     // the failure is STOCHASTIC: the same sentence that was answered in one round is read
     // correctly in the next, so a second attempt usually lands.
     let speech: StreamedSpeech;
+    let retried = false;
     try {
       speech = await generate();
       if (!readVerbatim(spoken, speech.transcript)) {
+        retried = true;
         console.warn(
           `[voice:tts] the model answered the line instead of reading it `
           + `(match ${verbatimRatio(spoken, speech.transcript).toFixed(2)}) — retrying`,
@@ -469,6 +481,7 @@ export async function handleVoiceTts(
       }
     } catch (err) {
       console.error('[voice:tts] request failed', err);
+      chunkLog('failed', { retried });
       sendJson(res, 502, { error: 'tts_failed', message: 'Speech failed for this chunk.' });
       return;
     }
@@ -484,11 +497,13 @@ export async function handleVoiceTts(
       console.warn('[voice:tts] the chat model would not read the line — using the TTS model');
       const rescued = await speakWithRealTts();
       if (!rescued || rescued.length === 0) {
+        chunkLog('dropped-not-read', { ratio: Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) });
         res.writeHead(204).end();
         return;
       }
       const wav = wavFromPcm16(normalizeSpeech(rescued), PCM16_SAMPLE_RATE);
       console.info(`[voice:tts] ${pcmSeconds(rescued).toFixed(1)}s spoken by the fallback`);
+      chunkLog('spoken-by-fallback', { seconds: Number(pcmSeconds(rescued).toFixed(1)) });
       res.writeHead(200, {
         'Content-Type': 'audio/wav',
         'Content-Length': wav.length,
@@ -502,6 +517,7 @@ export async function handleVoiceTts(
     if (pcm.length === 0) {
       // The model answered in text only — a refusal, or a chunk it decided was nothing to
       // say. Treated exactly like an unspeakable chunk: skip it and keep the queue moving.
+      chunkLog('dropped-no-audio', { retried });
       res.writeHead(204).end();
       return;
     }
@@ -511,6 +527,12 @@ export async function handleVoiceTts(
     // app does not own. See `normalizeSpeech` for why the client's gain node cannot do it.
     const audio = wavFromPcm16(normalizeSpeech(pcm), PCM16_SAMPLE_RATE);
     console.info(`[voice:tts] ${pcmSeconds(pcm).toFixed(1)}s spoken`);
+    chunkLog('spoken', {
+      retried,
+      seconds: Number(pcmSeconds(pcm).toFixed(1)),
+      // Below 1 means the voice left words out (a full read scores 1.00, measured 2026-10-13).
+      ratio: speech.transcript ? Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) : null,
+    });
     res.writeHead(200, {
       'Content-Type': 'audio/wav',
       'Content-Length': audio.length,

@@ -42,3 +42,11 @@ commands.allow = ["assistant_set_enabled"]
 identifier = "allow-set-frames"
 description = "Move and resize windows by label as one atomic frame or one eased animation (src/frames.rs). Min size only as a preset (window-seat / clear / keep), never caller-chosen dimensions."
 commands.allow = ["set_frames"]
+
+# The native microphone (src/mic.rs). The same reach `getUserMedia` already had in these
+# windows, moved to Rust so a hotkey take starts at the press and samples arrive off the page's
+# main thread. Granted to the notch and to the project windows (their composers record too).
+[[permission]]
+identifier = "allow-mic-take"
+description = "Claim or open a microphone take, end it (returning its samples) or cancel it."
+commands.allow = ["mic_take_begin", "mic_take_end", "mic_take_cancel"]
