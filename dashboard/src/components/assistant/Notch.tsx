@@ -249,6 +249,20 @@ let switchedOff = false;
  * (synchronously, at the click) — it is dropped if a newer one came since. The notch seat never
  * has a min size, so it always clears one a popped-out window left behind.
  */
+/**
+ * One line in ~/.dreamcontext/logs/voice.jsonl for what the notch did with a reply — the
+ * evidence for "the notch never opens" that the server alone cannot give. Once per decision,
+ * never per streamed delta (an already-open notch is not reported). Fire and forget.
+ */
+function logNotch(action: string, detail: { cue: string; stay: boolean; seat: string; chars: number }): void {
+  if (!isDesktop()) return;
+  void fetch('/api/agent/voice/log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...detail }),
+  }).catch(() => { /* best-effort */ });
+}
+
 async function seat(expanded: boolean, geo: Geometry | null, ms: number = frameMotionMs(), claimed?: number, focus = expanded): Promise<void> {
   if (!isDesktop() || switchedOff) return;
   const f = notchFrame(expanded, geo);
@@ -1024,8 +1038,9 @@ export function Notch() {
   }, []);
 
   // A presentation opens the notch WITHOUT taking focus: the owner may be typing elsewhere.
-  const openForPresentation = useCallback((stay: boolean) => {
-    if (switchedOff) return;
+  const openForPresentation = useCallback((stay: boolean, chars = 0) => {
+    const report = (action: string) => logNotch(action, { cue: 'present', stay, seat: seatRef.current, chars });
+    if (switchedOff) { report('switched-off'); return; }
     if (foldTimer.current && expandedRef.current) {
       // The answer beat the fold-after-send: stay open, as if the answer had opened it.
       window.clearTimeout(foldTimer.current);
@@ -1033,6 +1048,7 @@ export function Notch() {
       autoOpenRef.current = { stay };
       engagedRef.current = false;
       spokeRef.current = false;
+      report('kept-open');
       return;
     }
     if (expandedRef.current) {
@@ -1040,6 +1056,7 @@ export function Notch() {
       if (autoOpenRef.current) autoOpenRef.current = { stay: autoOpenRef.current.stay || stay };
       return;
     }
+    report('opened');
     autoOpenRef.current = { stay };
     engagedRef.current = false;
     spokeRef.current = false;
@@ -1062,7 +1079,7 @@ export function Notch() {
     }
     presentTextRef.current = p.text;
     setPeek((r) => (r === 'progress' ? null : r));
-    openForPresentation(p.stay);
+    openForPresentation(p.stay, p.text.length);
   }), [session, openForPresentation, status]);
 
   // A new turn starts: its progress line is new too.

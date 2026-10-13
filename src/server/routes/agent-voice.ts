@@ -571,6 +571,39 @@ export async function handleVoiceWarm(
   sendJson(res, 200, { warming: warmed ? warmed.model : null });
 }
 
+// ─── POST /api/agent/voice/log ────────────────────────────────────────────────────────
+
+/** What the notch may report about a presentation (Notch.tsx `openForPresentation`). */
+const NOTCH_ACTIONS = new Set(['opened', 'kept-open', 'already-open', 'switched-off', 'peeked', 'folded']);
+
+/**
+ * One line from the page into voice.jsonl: what the notch DID with a reply it was asked to show.
+ * The server sees the take and the chunk; only the notch knows whether it opened for an answer,
+ * and "the window never opens" (owner, 2026-10-13) cannot be checked against nothing. A fixed
+ * vocabulary of known fields — the page's own claim, only ever logged.
+ */
+export async function handleVoiceLog(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isDesktop()) {
+    sendError(res, 403, 'desktop_only', 'Voice is only available in the desktop app.');
+    return;
+  }
+  const body = await parseJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  const action = typeof body?.action === 'string' && NOTCH_ACTIONS.has(body.action) ? body.action : null;
+  if (!action) {
+    sendError(res, 400, 'bad_request', 'Unknown notch action.');
+    return;
+  }
+  logVoiceEvent({
+    kind: 'notch',
+    action,
+    cue: body?.cue === 'progress' || body?.cue === 'present' ? body.cue : null,
+    stay: body?.stay === true,
+    seat: body?.seat === 'window' || body?.seat === 'notch' ? body.seat : null,
+    chars: typeof body?.chars === 'number' && Number.isFinite(body.chars) ? Math.max(0, Math.round(body.chars)) : null,
+  });
+  sendJson(res, 200, { ok: true });
+}
+
 // ─── POST /api/agent/voice/focus ──────────────────────────────────────────────────────
 
 /**

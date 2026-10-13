@@ -1,7 +1,7 @@
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk } from '../../lib/voice/speechQueue';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
-import { splitNotchCue, stripNotchCue, type NotchCue } from '../../lib/notchCue';
+import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../../lib/notchCue';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
@@ -958,8 +958,9 @@ export function createChatSession(
   }
   function presentBlock(itemId: string, body: string): void {
     if (mode !== 'assistant' || !body.trim() || !cues.has(itemId)) return;
-    const cue = cues.get(itemId) ?? null;
-    const p: NotchPresentation = { itemId, kind: cue?.kind ?? 'present', stay: cue?.stay ?? false, text: body };
+    // The cue, with the owner's open-and-stay rule enforced on top of it (`presentationOf`).
+    const shown = presentationOf(cues.get(itemId) ?? null, body);
+    const p: NotchPresentation = { itemId, kind: shown.kind, stay: shown.stay, text: body };
     for (const fn of [...presentListeners]) {
       try { fn(p); } catch { /* a listener's failure is its own */ }
     }

@@ -53,6 +53,27 @@ export function splitNotchCue(raw: string): SplitCue {
   return { cue: null, body: text, pending: false };
 }
 
+/**
+ * How the notch shows one block: the Assistant's cue, made safe against the cases the owner named
+ * (2026-10-13). The notch must OPEN, and STAY until the owner closes it, when there is a decision
+ * to make, something to click, or a long or structured answer. The cue says so most of the time;
+ * this keeps the rule when it does not: a block carrying buttons, an HTML view, a table, a list
+ * or a long answer stays, and a "progress" line that carries something to click is presented,
+ * because a silent peek that folds by itself would take the buttons away before they are used.
+ */
+export function presentationOf(cue: NotchCue | null, body: string): NotchCue {
+  const text = body ?? '';
+  const clickable = /```\s*dream-(actions|html|view)\b/.test(text);
+  const table = /^\s*\|.+\|\s*$/m.test(text) && /^\s*\|[\s:|-]+\|\s*$/m.test(text);
+  const list = (text.match(/^\s*(?:[-*]|\d+[.)])\s+\S/gm) ?? []).length >= 3;
+  const long = text.replace(/\s+/g, ' ').trim().length > LONG_ANSWER_CHARS;
+  if (cue?.kind === 'progress') return clickable ? { kind: 'present', stay: true } : cue;
+  return { kind: 'present', stay: !!cue?.stay || clickable || table || list || long };
+}
+
+/** Past this an answer is long: read on screen, not glanced at — it stays open. */
+export const LONG_ANSWER_CHARS = 420;
+
 /** The text with any leading cue removed — for surfaces that only draw (a replayed transcript). */
 export function stripNotchCue(raw: string): string {
   const m = CUE_RE.exec(raw ?? '');

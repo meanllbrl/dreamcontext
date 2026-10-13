@@ -207,7 +207,7 @@ import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
 import {
-  handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus,
+  handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus, handleVoiceLog,
   handleDictationStatus, handleDictationInstall,
 } from './routes/agent-voice.js';
 import { handleAgentDownload } from './routes/agent-download.js';
@@ -626,6 +626,9 @@ export function buildRouter(): Router {
   router.post('/api/agent/voice/stt', handleVoiceStt);
   router.post('/api/agent/voice/tts', handleVoiceTts);
   router.post('/api/agent/voice/warm', handleVoiceWarm);
+  // What the notch did with a reply (opened, peeked, folded): one line in voice.jsonl.
+  // Vault-agnostic: it writes the machine's own log, no project's brain.
+  router.post('/api/agent/voice/log', handleVoiceLog);
   // Who owns the speaker, and what was paused or ducked to give it to them. Vault-agnostic:
   // it reads the machine's audio state and no project's brain.
   router.post('/api/agent/voice/focus', handleVoiceFocus);
@@ -897,7 +900,7 @@ export function buildRouter(): Router {
  * chat's socket (lib/window-control.ts). The CLI sends no vault header and the desktop server
  * pins none, so gating it on a vault refused every `dreamcontext window …` with `no_vault`.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
