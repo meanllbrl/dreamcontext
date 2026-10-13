@@ -125,7 +125,7 @@ vi.mock('../../src/cli/commands/sleep.js', async (importOriginal) => {
 });
 
 const {
-  startChatSession, assistantAllowedTools, recallEnvFor, spawnEffortFor, notifyAssistantAutonomy,
+  startChatSession, assistantAllowedTools, assistantSettingArgs, sharesUserMcp, recallEnvFor, spawnEffortFor, notifyAssistantAutonomy,
 } = await import('../../src/server/routes/agent-chat.js');
 const { registerChat, isDelegatedConversation, GONE_TTL_MS, _resetChatRegistry } = await import(
   '../../src/lib/assistant/chat-registry.js'
@@ -238,6 +238,38 @@ describe('assistantAllowedTools', () => {
           expect(argvOf(child)).not.toContain('--allowedTools');
         }
       }
+    }
+  });
+});
+
+describe('the Assistant carries its own settings, not the owner\'s global ones', () => {
+  it('reads project and local settings only; no other spawn narrows its sources', () => {
+    expect(assistantSettingArgs(true)).toEqual(['--setting-sources', 'project,local']);
+    expect(assistantSettingArgs(false)).toEqual([]);
+    makeAssistantVault('bypass');
+    expect(flagValue(spawnChat({ mode: 'assistant' }).child, '--setting-sources')).toBe('project,local');
+    for (const mode of ['basic', 'plan', 'develop'] as const) {
+      expect(argvOf(spawnChat({ mode }).child)).not.toContain('--setting-sources');
+    }
+  });
+
+  it('keeps the owner\'s MCP servers by reference, which only a sandbox needed before', () => {
+    expect(sharesUserMcp({ isAssistant: true, isRealHomeAccount: true, cloud: false })).toBe(true);
+    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: true, cloud: false })).toBe(false);
+    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: false, cloud: false })).toBe(true);
+    expect(sharesUserMcp({ isAssistant: true, isRealHomeAccount: true, cloud: true })).toBe(false);
+  });
+
+  it('the real-account Assistant spawn points --mcp-config at the shared copy of ~/.claude.json\'s servers', () => {
+    writeFileSync(join(fakeHome, '.claude.json'), JSON.stringify({ mcpServers: { 'apple-mail': { command: 'mail-mcp' } } }));
+    try {
+      makeAssistantVault('bypass');
+      const a = argvOf(spawnChat({ mode: 'assistant' }).child);
+      const shared = join(fakeHome, '.dreamcontext', 'claude-accounts', 'mcp-config.json');
+      expect(a.slice(a.indexOf('--mcp-config') + 1)).toContain(shared);
+      expect(argvOf(spawnChat({ mode: 'basic' }).child)).not.toContain(shared);
+    } finally {
+      rmSync(join(fakeHome, '.claude.json'), { force: true });
     }
   });
 });

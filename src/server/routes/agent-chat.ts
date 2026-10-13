@@ -305,6 +305,29 @@ export function assistantAllowedTools(autonomy: Autonomy): string[] {
 }
 
 /**
+ * The Assistant reads its OWN settings (the hidden vault's hooks, skills and agents) and not the
+ * owner's global ones. Owner, 2026-10-14: every notch turn carried the global plugins and user
+ * settings — measured ~9.6k tokens of a ~42k context, for a two-sentence answer — and none of
+ * them is something the Assistant uses. Dropping the `user` source also drops the user-scope MCP
+ * servers, which the owner KEEPS, so those ride by reference instead ({@link sharesUserMcp}).
+ * The model and effort are argv already, so the global `model`/`effortLevel` never applied here.
+ */
+export function assistantSettingArgs(isAssistant: boolean): string[] {
+  return isAssistant ? ['--setting-sources', 'project,local'] : [];
+}
+
+/**
+ * Does this spawn get the user's MCP servers through the shared `--mcp-config` file? A sandboxed
+ * account always does (its own config has none). So does the Assistant on the real account,
+ * because {@link assistantSettingArgs} cut it off from `~/.claude.json`'s user scope. Never in
+ * the cloud.
+ */
+export function sharesUserMcp(o: { isAssistant: boolean; isRealHomeAccount: boolean; cloud: boolean }): boolean {
+  if (o.cloud) return false;
+  return !o.isRealHomeAccount || o.isAssistant;
+}
+
+/**
  * `--mcp-config` is variadic (`<configs...>`): every file rides in ONE flag, and the flag must
  * stay the LAST argv element or it swallows whatever follows. Null entries drop out.
  */
@@ -1044,7 +1067,7 @@ export function startChatSession(
   }
   const accountEnv = accountEnvFor(accountConfigDir);
   const isRealHomeAccount = isRealHomeConfigDir(accountConfigDir);
-  const mcpConfigPath = isRealHomeAccount || isCloud() ? null : ensureSharedMcpConfig();
+  const mcpConfigPath = sharesUserMcp({ isAssistant, isRealHomeAccount, cloud: isCloud() }) ? ensureSharedMcpConfig() : null;
   // The Assistant's hands (mouse, keyboard, screen — computer-mcp.ts): its spawn ONLY, macOS
   // only. Each call is an MCP tool call, so under `ask` the owner approves it in the notch.
   const computerMcpPath = isAssistant && process.platform === 'darwin' && !isCloud() ? ensureComputerMcpConfig() : null;
@@ -1378,6 +1401,7 @@ export function startChatSession(
     ...(spawnModel ? ['--model', spawnModel] : []),
     ...(spawnEffort ? ['--effort', spawnEffort] : []),
     ...(assistantConfig ? assistantAllowedTools(assistantConfig.autonomy) : []),
+    ...assistantSettingArgs(isAssistant),
     // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
     // seeded with no MCP keys at any depth, so without this flag it would silently lose every
     // server the user has; copying them per account would multiply the secrets instead.
