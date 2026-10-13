@@ -70,6 +70,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { wavFromTake, TARGET_SAMPLE_RATE } from './wavEncoder';
+import { turnTrace } from './turnTrace';
 import {
   beginNativeTake, endNativeTake, cancelNativeTake, onNativeLevel, probeNativeMic, nativeMicReady,
 } from './nativeMic';
@@ -461,9 +462,12 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
             const text = (body.text || '').trim();
             if (!text) {
               // A blank transcript is a silence the gate did not catch. Never submitted.
+              turnTrace.drop(vault, 'silent');
               setState('silent');
               return;
             }
+            turnTrace.mark(vault, 'stt');
+            turnTrace.sttAttempts(vault, n + 1);
             setState('idle');
             onTranscript(text);
             return;
@@ -478,6 +482,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
         // `*_unconfigured` is PERMANENT until Settings changes — the mode degrades to text
         // and says what is missing. Everything else is this take only.
         const permanent = body.error === 'stt_unconfigured';
+        turnTrace.drop(vault, 'stt_failed');
         setState(permanent ? 'unconfigured' : 'error');
         setError(body.message || (n > 0
           ? `That take did not go through after ${n + 1} tries. Try again.`
@@ -518,6 +523,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
       inFlightRef.current = false;
       phaseRef.current = 'idle';
       setState(verdict === 'too-short' ? 'too-short' : 'silent');
+      turnTrace.drop(vault, 'silent');
       return;
     }
     phaseRef.current = 'uploading';
@@ -532,7 +538,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
       wallMs: durationMs,
     };
     void upload(new Blob([wav as unknown as BlobPart], { type: 'audio/wav' }), meta);
-  }, [teardown, upload]);
+  }, [vault, teardown, upload]);
 
   /**
    * End a NATIVE take: fetch its samples from the shell, gate them exactly as the WebKit path
@@ -571,6 +577,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
         inFlightRef.current = false;
         phaseRef.current = 'idle';
         setState(verdict === 'too-short' ? 'too-short' : 'silent');
+        turnTrace.drop(vault, 'silent');
         return;
       }
       const wav = wavFromTake([got.samples], got.rate);
@@ -584,7 +591,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
       };
       void upload(new Blob([wav as unknown as BlobPart], { type: 'audio/wav' }), meta);
     })();
-  }, [upload]);
+  }, [vault, upload]);
 
   /**
    * Open (or claim) a NATIVE take. The hotkey's take has been listening since the press; the
@@ -805,6 +812,8 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
   const stop = useCallback(() => {
     const verdict = stopVerdict(phaseRef.current);
     if (verdict === 'ignore') return;
+    // The release: a voice turn of the notch starts its clock here (lib/voice/turnTrace.ts).
+    if (verdict !== 'cancel' || nativeTakeRef.current) turnTrace.arm(vault);
     if (verdict === 'cancel' && nativeTakeRef.current) {
       // Native: the shell is already recording (since the hotkey press, for a hotkey take), so a
       // release while the claim is in flight ENDS the take rather than throwing the words away.
@@ -825,7 +834,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     }
     if (nativeIdRef.current !== null) finishNativeTake();
     else finishTake();
-  }, [teardown, finishTake, finishNativeTake]);
+  }, [vault, teardown, finishTake, finishNativeTake]);
 
   return {
     state,

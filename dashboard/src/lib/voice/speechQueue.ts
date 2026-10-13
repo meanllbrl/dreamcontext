@@ -25,6 +25,7 @@
 
 import { voicePrefs } from './voicePrefs';
 import { timeStretch } from './timeStretch';
+import { turnTrace } from './turnTrace';
 import {
   createFocusClient, announceSpeechMuted, OPEN_GRANT,
   type FocusClient, type FocusGrant,
@@ -265,6 +266,7 @@ export type SpeakFetcher = (text: string, signal: AbortSignal) => Promise<Blob |
  *  speakable survived the stripper) or a failure, which the queue treats identically. */
 export function createSpeakFetcher(): SpeakFetcher {
   return async (text, signal) => {
+    turnTrace.markSpeech('ttsAsked');
     try {
       const res = await fetch('/api/agent/voice/tts', {
         method: 'POST',
@@ -278,7 +280,9 @@ export function createSpeakFetcher(): SpeakFetcher {
         console.warn('[voice] chunk not spoken', res.status);
         return null;
       }
-      return await res.blob();
+      const blob = await res.blob();
+      turnTrace.markSpeech('ttsReady');
+      return blob;
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return null;
       console.warn('[voice] chunk request failed', err);
@@ -958,6 +962,8 @@ export class SpeechQueue {
     const duration = buffer.duration;
     try {
       src.start(start);
+      // Audible at `start`, not now: the seam may hold it behind the previous chunk.
+      turnTrace.markSpeech('audio', Date.now() + Math.max(0, start - now) * 1000);
     } catch {
       this.fallback = true;
       try { src.disconnect(); } catch { /* never connected */ }
@@ -1077,7 +1083,7 @@ export class SpeechQueue {
       el.src = url;
       el.playbackRate = rate;
       this.setSpoken({ text: job.text, itemId: job.itemId });
-      void el.play().catch(() => done());
+      void el.play().then(() => turnTrace.markSpeech('audio')).catch(() => done());
     });
   }
 }

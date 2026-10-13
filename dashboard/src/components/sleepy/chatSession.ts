@@ -1,5 +1,6 @@
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk } from '../../lib/voice/speechQueue';
+import { turnTrace } from '../../lib/voice/turnTrace';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../../lib/notchCue';
 import { contextLimitFor } from '../../lib/agentComposer';
@@ -1217,6 +1218,7 @@ export function createChatSession(
     // so all three assistant event kinds feed the meter without repeating themselves.
     const usage = 'turnUsage' in ev ? ev.turnUsage : undefined;
     if (usage) {
+      turnTrace.usage(vault, { input: usage.input, cacheRead: usage.cacheRead, cacheCreation: usage.cacheCreation, model: usage.model });
       const limit = contextLimitFor(usage.total, usage.model ?? session.model);
       conv = { ...conv, context: { used: usage.total, limit, pct: Math.min(100, Math.round((usage.total / limit) * 100)) } };
     }
@@ -1283,6 +1285,8 @@ export function createChatSession(
       }
       case 'text-delta':
       case 'thinking-delta': {
+        turnTrace.mark(vault, 'firstToken');
+        if (ev.kind === 'text-delta') turnTrace.mark(vault, 'firstText');
         const pos = openBlocksByIndex.get(ev.index);
         if (pos === undefined) return; // delta for a block we never saw start — drop safely
         const items = conv.items.slice();
@@ -1313,6 +1317,7 @@ export function createChatSession(
       }
       case 'assistant-tool-use': {
         session.busy = true;
+        if (!ev.parentToolUseId) turnTrace.toolUse(vault);
         // A SUB-AGENT's own tool call. The CLI streams these to the parent (spike-verified),
         // but they are the sub-agent's work, not this conversation's: the run is already
         // represented by ONE `SubAgentCard` row whose live `activity` says what it is doing,
@@ -1340,6 +1345,8 @@ export function createChatSession(
       }
       case 'assistant-text':
       case 'assistant-thinking': {
+        // A short block can arrive with no deltas at all; its full echo is then the first text.
+        if (ev.kind === 'assistant-text' && !ev.synthetic && !ev.parentToolUseId) turnTrace.mark(vault, 'firstText');
         // The authoritative full-block echo (see chatProtocol.ts's fromAssistant note): the
         // CLI can emit NO deltas at all for a short block, so the still-streaming item is
         // upgraded to the complete text here. If no item of this kind is open (a synthetic
@@ -1693,6 +1700,7 @@ export function createChatSession(
         return;
       }
       case 'result': {
+        turnTrace.mark(vault, 'end');
         conv = {
           ...conv,
           lastResult: { success: ev.success, text: ev.text, costUsd: ev.costUsd, usage: ev.usage, numTurns: ev.numTurns, permissionDenials: ev.permissionDenials },
@@ -1968,6 +1976,7 @@ export function createChatSession(
     if (!clean || ws.readyState !== WebSocket.OPEN) return false;
     const frame: ClientControl = { type: 'user', text: clean };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
+    turnTrace.mark(vault, 'sent');
     applyAndNotify(() => {
       const item: ChatUserItem = {
         kind: 'user', id: nextItemId(), text: clean, ts: Date.now(),

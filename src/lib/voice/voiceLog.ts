@@ -83,3 +83,43 @@ export function keepTake(wav: Buffer, record: Record<string, unknown>, home?: st
     return null;
   }
 }
+
+const TURN_STAGES = ['stt', 'sent', 'firstToken', 'firstText', 'ttsAsked', 'ttsReady', 'audio', 'end'] as const;
+const TURN_OUTCOMES = new Set(['answered', 'silent', 'stt_failed', 'no_audio', 'abandoned', 'superseded']);
+/** A stage later than this is not a stage of one turn (the page's tracer gives up at 180 s). */
+const MAX_STAGE_MS = 600_000;
+
+function count(v: unknown, max: number): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max ? Math.round(v) : undefined;
+}
+
+/**
+ * A voice turn's timing from the page (`dashboard/src/lib/voice/turnTrace.ts`), reduced to the
+ * known fields. Like {@link parseTakeMeta} it is the page's own claim and only ever logged, so
+ * it is rebuilt field by field: an unknown outcome is no record, an absent or out-of-range
+ * stage stays absent, and the model is kept only when it looks like a model id.
+ */
+export function parseTurnTrace(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+  if (b.kind !== 'turn' || typeof b.outcome !== 'string' || !TURN_OUTCOMES.has(b.outcome)) return null;
+  const out: Record<string, unknown> = { kind: 'turn', outcome: b.outcome };
+  const stages = b.stages && typeof b.stages === 'object' ? b.stages as Record<string, unknown> : {};
+  for (const k of TURN_STAGES) {
+    const v = count(stages[k], MAX_STAGE_MS);
+    if (v !== undefined) out[`${k}Ms`] = v;
+  }
+  const u = b.usage && typeof b.usage === 'object' ? b.usage as Record<string, unknown> : null;
+  if (u) {
+    for (const k of ['input', 'cacheRead', 'cacheCreation'] as const) {
+      const v = count(u[k], 10_000_000);
+      if (v !== undefined) out[k] = v;
+    }
+    if (typeof u.model === 'string' && /^[\w.\-[\]]{1,64}$/.test(u.model)) out.model = u.model;
+  }
+  const tools = count(b.toolsBeforeText, 1000);
+  if (tools !== undefined) out.toolsBeforeText = tools;
+  const attempts = count(b.sttAttempts, 10);
+  if (attempts !== undefined) out.sttAttempts = attempts;
+  return out;
+}

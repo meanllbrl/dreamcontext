@@ -25,6 +25,7 @@ import { readingTimeMs } from '../../lib/notchCue';
 import { playNotchTick } from '../../lib/chime';
 import { emitExternalPushToTalk, summonTakeDue } from '../../lib/voice/externalPushToTalk';
 import { cancelNativeTake, nativeMicReady } from '../../lib/voice/nativeMic';
+import { turnTrace } from '../../lib/voice/turnTrace';
 import { initAgentSettingsFromServer } from '../../lib/agentSettings';
 // The pill's right ear draws the tab strip's own status bubbles (`project-tab-bubble*`); the
 // rules are global class selectors, so they are shared, not copied.
@@ -1174,6 +1175,7 @@ export function Notch() {
           if (edge === 'released') {
             heldRef.current = false;
             releasedAtRef.current = Date.now();
+            turnTrace.noteRelease(releasedAtRef.current);
             emitExternalPushToTalk({ edge, mode, summon: false });
             return;
           }

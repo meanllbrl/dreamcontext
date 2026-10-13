@@ -52,7 +52,8 @@ import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
 import { dictationState, startDictationInstall } from '../../lib/voice/dictationInstall.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
 import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
-import { logVoiceEvent, parseTakeMeta, keepTake } from '../../lib/voice/voiceLog.js';
+import { logVoiceEvent, parseTakeMeta, parseTurnTrace, keepTake } from '../../lib/voice/voiceLog.js';
+import { readAssistantConfig, DEFAULT_ASSISTANT_CONFIG } from '../../lib/assistant/home.js';
 
 /**
  * The system prompt that turns a CHAT model into a text-to-speech engine, and the reason it
@@ -581,6 +582,9 @@ const NOTCH_ACTIONS = new Set(['opened', 'kept-open', 'already-open', 'switched-
  * The server sees the take and the chunk; only the notch knows whether it opened for an answer,
  * and "the window never opens" (owner, 2026-10-13) cannot be checked against nothing. A fixed
  * vocabulary of known fields — the page's own claim, only ever logged.
+ *
+ * `{kind:"turn"}` is the other record: one voice turn timed from the hotkey's release to the
+ * first audible chunk (`parseTurnTrace`), the measurement the 2026-10-13 speed work starts from.
  */
 export async function handleVoiceLog(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!isDesktop()) {
@@ -588,6 +592,19 @@ export async function handleVoiceLog(req: IncomingMessage, res: ServerResponse):
     return;
   }
   const body = await parseJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  if (body?.kind === 'turn') {
+    // A voice turn's timing (dashboard/src/lib/voice/turnTrace.ts), plus what the page cannot
+    // know: the model and effort the Assistant is configured to run.
+    const turn = parseTurnTrace(body);
+    if (!turn) {
+      sendError(res, 400, 'bad_request', 'Unknown turn record.');
+      return;
+    }
+    const config = readAssistantConfig() ?? DEFAULT_ASSISTANT_CONFIG;
+    logVoiceEvent({ ...turn, configModel: config.model ?? null, effort: config.effort ?? null });
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   const action = typeof body?.action === 'string' && NOTCH_ACTIONS.has(body.action) ? body.action : null;
   if (!action) {
     sendError(res, 400, 'bad_request', 'Unknown notch action.');

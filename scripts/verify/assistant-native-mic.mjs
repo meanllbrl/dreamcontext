@@ -16,7 +16,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,7 +43,7 @@ process.stdin.on('data', (c) => {
     if (o.type !== 'user') continue;
     const text = ((o.message && o.message.content) || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
     if (!initDone) { initDone = true; out({ type: 'system', subtype: 'init', session_id: flag('--session-id') ?? flag('--resume') ?? 'c', model: 'x', cwd: process.cwd(), slash_commands: [] }); }
-    out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '<!-- notch:present -->\\nHEARD:' + text }] } });
+    out({ type: 'assistant', message: { role: 'assistant', model: 'claude-sonnet-5-5', usage: { input_tokens: 3, cache_read_input_tokens: 60000, cache_creation_input_tokens: 2000, output_tokens: 9 }, content: [{ type: 'text', text: '<!-- notch:present -->\\nHEARD:' + text }] } });
     out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   }
 });
@@ -147,6 +147,19 @@ const notchTauri = (samples) => {
   };
 };
 
+/** 0.3 s of a quiet 440 Hz tone, 24 kHz mono PCM16: something the speech queue can play. */
+function toneWav() {
+  const rate = 24_000;
+  const n = Math.round(rate * 0.3);
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * 2, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(rate, 24); buf.writeUInt32LE(rate * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(3000 * Math.sin((2 * Math.PI * 440 * i) / rate)), 44 + i * 2);
+  return buf;
+}
+
 async function main() {
   if (!existsSync(join(REPO, 'dist', 'dashboard', 'index.html'))) throw new Error('run npm run build first');
   rmSync(SCRATCH, { recursive: true, force: true });
@@ -168,7 +181,7 @@ async function main() {
     ? (Math.sin(i * 12.9898) * 43758.5453 % 1) * 0.0003
     : 0.03 * Math.sin((2 * Math.PI * 220 * i) / rate)));
   const { chromium } = await import('playwright');
-  const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+  const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
   try {
     const r = await fetch(`${base}/api/assistant/create`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Nova', character: 'Terse.' }) });
     ok('the assistant is created', r.status === 200);
@@ -181,7 +194,10 @@ async function main() {
       stt.push({ meta: JSON.parse(req.headers()['x-dreamcontext-take'] ?? '{}'), bytes: req.postDataBuffer()?.length ?? 0 });
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ text: `take ${stt.length}` }) });
     });
-    await page.route('**/api/agent/voice/tts', (route) => route.fulfill({ status: 204, body: '' }));
+    let speak = false;
+    await page.route('**/api/agent/voice/tts', (route) => (speak
+      ? route.fulfill({ status: 200, contentType: 'audio/wav', body: toneWav() })
+      : route.fulfill({ status: 204, body: '' })));
     await page.route('**/api/agent/voice/focus', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ granted: true, holder: null, ducked: false, gain: 1, paused: [] }) }));
     await page.goto(`${base}/?assistant=1`);
     await page.waitForSelector('.dc-notch__pill', { timeout: 20_000 });
@@ -246,6 +262,41 @@ async function main() {
     const d = await calls();
     ok('claimed and ended after the panel landed', /^begin,end:\d+$/.test(d.join(',')), d.join(','));
     ok('…and the words reach the Assistant', await page.evaluate(() => document.body.innerText.includes('HEARD:take 3')));
+    await page.evaluate(() => { window.__mic.seatDelayMs = 0; });
+    await fold();
+
+    console.log('\n── a spoken turn is timed end to end in voice.jsonl (lib/voice/turnTrace.ts)');
+    speak = true;
+    const turns = () => {
+      try {
+        return readFileSync(join(HOME, '.dreamcontext', 'logs', 'voice.jsonl'), 'utf-8')
+          .split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.kind === 'turn');
+      } catch { return []; }
+    };
+    // Read-aloud starts OFF (assistant.mjs W3): open the panel with a tap and switch it on.
+    await page.evaluate(() => window.__hotkey('pressed'));
+    await page.waitForTimeout(90);
+    await page.evaluate(() => window.__hotkey('released'));
+    await page.waitForTimeout(1200);
+    const readAloud = () => page.evaluate(() => document.querySelector('.dc-notch__chat .chat-cmp-readaloud')?.getAttribute('aria-pressed') ?? 'missing');
+    if (await readAloud() === 'false') await page.click('.dc-notch__chat .chat-cmp-readaloud');
+    ok('read-aloud is switched on for this turn', await readAloud() === 'true', await readAloud());
+    await page.waitForTimeout(400);
+    const had = turns().length;
+    await page.evaluate(() => window.__hotkey('pressed'));
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => window.__hotkey('released'));
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && !turns().slice(had).some((t) => t.outcome === 'answered')) await page.waitForTimeout(250);
+    const t = turns().slice(had).find((x) => x.outcome === 'answered');
+    ok('one answered turn is logged', !!t, JSON.stringify(turns().slice(had)));
+    const order = t ? [t.sttMs, t.sentMs, t.firstTextMs, t.ttsAskedMs, t.ttsReadyMs, t.audioMs] : [];
+    ok('…with every stage from whisper to the first audible chunk, in order', order.length === 6
+      && order.every((v) => Number.isInteger(v) && v >= 0) && order.every((v, i) => i === 0 || v >= order[i - 1]), JSON.stringify(t));
+    ok('…timed from the release, so whisper is not 0', t?.sttMs > 0, String(t?.sttMs));
+    ok('…and the first API call\'s footprint and the configured effort', t?.cacheRead === 60000 && t?.cacheCreation === 2000
+      && t?.input === 3 && t?.model === 'claude-sonnet-5-5' && typeof t?.effort === 'string' && t?.toolsBeforeText === 0, JSON.stringify(t));
+    ok('…and no stream delta came, so firstToken is absent rather than 0', t && !('firstTokenMs' in t), JSON.stringify(t));
   } finally {
     await browser.close();
     srv.kill();
