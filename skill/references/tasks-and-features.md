@@ -215,6 +215,18 @@ An **insight** is a named, curated **metric backed by an external source** — "
 - NOT an **objective** — an objective is an outcome with a target date; an insight is the *measurement*. (The two connect: an insight can *feed* an objective's Key Result via binding, below.)
 - NOT a raw data dump — rollup structurally caps every series at 62 points (daily→weekly→monthly coarsening by span). Insights are curated metrics, by design.
 
+**NeonBI numbers pull live (company skill `neonbi-data-api` v2.3).** An insight over NeonBI charts is a `script` insight whose script calls the KB MCP tool `kb_chart_query` ITSELF on every sync, through the shared helper `lab/scripts/lib-kb-mcp.mjs`, signed with the member's own KB **script key** stored once as the Lab credential `KB_MCP_KEY` (the agent installs it itself: it calls the KB MCP tool `kb_script_key` and runs the ONE command it returns, which writes the key into lab credentials as `KB_MCP_KEY` without the key ever appearing in the chat; never send the person to a panel to make one; the script reads it as `ctx.credentials.KB_MCP_KEY`). No snapshot file, no NeonBI token. TTL: default 1440 min (NeonBI updates daily); funnel charts 60-240 min. A 401 means the script key died: call `kb_script_key` again. `lab create --preset funnel-explorer` scaffolds this script and the helper (§ Funnel explorer).
+
+> ⛔ **ESKİ YOLLA MI KURULU? DUR.** Script'in lab/data/*.json'dan okuyorsa (snapshot) ya da NEONBI_API_TOKEN / lib-neonbi.mjs / nbi_ kullanıyorsa, yeni insight eklemeden ve eskisini yenilemeden ÖNCE vault'taki TÜM NeonBI insight'larını yeni yola taşı:
+>
+> ```bash
+> grep -lE 'NEONBI_API_TOKEN|lib-neonbi|nbi_|\.\./data/|lab/data/' lab/scripts/*.mjs
+> ```
+>
+> Taşıma bitince NEONBI_API_TOKEN'ı credentials'tan sil ve Mehmet Can'a token'ın iptali için haber ver.
+>
+> neonbi-data-api v2.0 (2026-10-14): insight script'leri kb_chart_query'yi KB_MCP_KEY ile kendisi çağırır; snapshot ve nbi_ token yolu kaldırıldı.
+
 **Where it lives:** manifest at `_dream_context/lab/insights/<slug>.md` (frontmatter config + a `## Meaning` prose section that makes it recallable), cached series at `lab/cache/<slug>.json`, custom scripts at `lab/scripts/<slug>.mjs`, secrets in gitignored `lab/credentials.json`. Manifests + caches sync in the brain repo; only credentials stay local.
 
 **How agents READ it — the ladder, before reaching anywhere else:**
@@ -231,8 +243,9 @@ The dashboard's **Insights** page (Beta) is a set of **boards** (§ Boards below
 
 ```bash
 dreamcontext lab create <slug> --title "Weekly Active Users" [--render <render>] [--size s|m|l] [--adapter http|script] [--category <board title>] [--group <section>] [--unit users] [--ttl 1440] [--board <slug>|--no-board]
-dreamcontext lab create <slug> --title "…" --preset funnel-explorer [--locale en|tr]   # a snapshot-fed funnel explorer (§ Funnel explorer)
-dreamcontext lab data check|write <slug> --file <path>   # validate / validate + write + hard-sync its snapshot lab/data/<slug>.json
+dreamcontext lab create <slug> --title "…" --preset funnel-explorer [--locale en|tr]   # a funnel explorer that pulls live through the KB MCP (§ Funnel explorer)
+# KB_MCP_KEY: the agent installs it once per vault via the KB MCP tool kb_script_key (runs the one command it returns)
+dreamcontext lab data check|write <slug> --file <path>   # DEPRECATED fallback: an old snapshot-fed insight's lab/data/<slug>.json (offline / no script key yet only)
 dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped; --force skips the TTL, the freshness probe still decides)
 dreamcontext lab sync --all [--force]       # every insight; exits non-zero if any fail
 dreamcontext lab sync --all --dry-run       # what would be fetched / probed / skipped, ZERO upstream requests
@@ -306,7 +319,7 @@ For funnel analysis (comparative across funnels + sequential across steps), an i
 }
 ```
 
-The engine validates + caps the payload (max 40 funnels, 64 steps — over-cap keeps first 63 + the final step, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either. For a ready-made explorer over a funnel set fed from the KB MCP (one card with Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access, axis tables and the comparison Table), use `lab create <slug> --preset funnel-explorer`: § Funnel explorer below. A preset insight's `/lab/<slug>` is that explorer card, not this table page.
+The engine validates + caps the payload (max 40 funnels, 64 steps — over-cap keeps first 63 + the final step, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either. For a ready-made explorer over a funnel set pulled live from the KB MCP (one card with Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access, axis tables and the comparison Table), use `lab create <slug> --preset funnel-explorer`: § Funnel explorer below. A preset insight's `/lab/<slug>` is that explorer card, not this table page.
 
 ### App insights (`render: app` — a script builds its own multi-page, interactive, full-screen body)
 
@@ -566,31 +579,42 @@ Static options run in ONE fixed order, `where` → interactive filter → `sort`
 
 **Brain sync.** Board files merge semantically (`lab-board` class): cards union by `id`, a card changed on both sides keeps ours, a card deleted on one side and changed on the other is kept and reported, overlaps are resolved on the grid. A board file left with conflict markers opens as an error board (read-only, "Open file") until fixed. Library blocks (`lab/blocks/*.md`) merge as prose. Per-machine state stays local: `state/.lab-prefs.json` (active board, legacy tab order, funnel columns) and `state/.lab-freshness.json` are never synced.
 
-### Funnel explorer (a snapshot-fed insight drawn as one interactive card)
+### Funnel explorer (a live KB MCP insight drawn as one interactive card)
 
 A funnel explorer is ONE insight whose pages are board blocks over one synced `funnel-set/v1`. The ready-made form is one 12x18 card with a funnel picker and tabs: **Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access**, then one table per axis (Platform, Country, Language, ...), then **Table** (every funnel as one row: the comparison table with column choice, search and Copy MD; a row click picks that funnel; a funnel block's `layout: table`). Every page reads the same synced payload, so a chip click, a funnel pick or a pinned lane changes every tab at once and sends zero sync requests. Pick-type options (`funnel`, `dims`, `metrics`, `by`, `page`) take names from the synced data; a name that is not in the data renders a visible note, never a silent fallback.
 
-The insight's detail page (`/lab/<slug>`, and `/lab/<slug>/f/<funnelId>` with that funnel picked) draws the same card full page, from the same preset blocks (`GET /api/lab/explorer/:slug`), in the insight's `locale`, and keeps its view in the same `v.<cardId>` URL param as the board, so a link moves between the two. It has **no range control**: the window is the snapshot's, named in the card header. A `render: funnel` insight without the preset keeps the comparison table page and its range control.
+The insight's detail page (`/lab/<slug>`, and `/lab/<slug>/f/<funnelId>` with that funnel picked) draws the same card full page, from the same preset blocks (`GET /api/lab/explorer/:slug`), in the insight's `locale`, and keeps its view in the same `v.<cardId>` URL param as the board, so a link moves between the two. It has **no range control**: the window is the one the script pulled (`window` in the set), named in the card header. A `render: funnel` insight without the preset keeps the comparison table page and its range control.
 
-**Where the numbers come from.** The data never comes from the network inside dreamcontext. The agent pulls it through the KB MCP (`kb_charts` → `kb_chart_schema` → `kb_chart_query`), writes ONE snapshot file `lab/data/<slug>.json` shaped `{source, data}`, and the insight's script only reads that file: no fetch, no key, no `lab credentials`. `source` carries what was asked (charts, applied filters, freshness, `pulled_at`); `data` is the `funnel-set/v1` below.
+**Where the numbers come from.** The insight's script pulls them LIVE on every sync: each query is one `kb_chart_query` through `lab/scripts/lib-kb-mcp.mjs`, signed with the member's own KB script key `KB_MCP_KEY`, and the script builds the `funnel-set/v1` below itself. The helper refuses a query without a product filter or an explicit date window and throws on every failure, so a failed pull keeps the previous numbers and shows the error, never zeros. No snapshot file, no NeonBI token.
+
+> ⛔ **ESKİ YOLLA MI KURULU? DUR.** Script'in lab/data/*.json'dan okuyorsa (snapshot) ya da NEONBI_API_TOKEN / lib-neonbi.mjs / nbi_ kullanıyorsa, yeni insight eklemeden ve eskisini yenilemeden ÖNCE vault'taki TÜM NeonBI insight'larını yeni yola taşı:
+>
+> ```bash
+> grep -lE 'NEONBI_API_TOKEN|lib-neonbi|nbi_|\.\./data/|lab/data/' lab/scripts/*.mjs
+> ```
+>
+> Taşıma bitince NEONBI_API_TOKEN'ı credentials'tan sil ve Mehmet Can'a token'ın iptali için haber ver.
+>
+> neonbi-data-api v2.0 (2026-10-14): insight script'leri kb_chart_query'yi KB_MCP_KEY ile kendisi çağırır; snapshot ve nbi_ token yolu kaldırıldı.
 
 **Agent flow, end to end:**
 
 ```bash
 dreamcontext lab create acme-storefront-funnels --preset funnel-explorer --title "Acme storefront funnels" --category "Acme Funnel" [--locale tr]
-# pull the queries below through the KB MCP, build the snapshot file, then:
-dreamcontext lab data check acme-storefront-funnels --file /tmp/acme-snapshot.json   # validate, writes nothing
-dreamcontext lab data write acme-storefront-funnels --file /tmp/acme-snapshot.json   # validate again, replace atomically, hard-sync
-dreamcontext lab board show acme-funnel --select "country=TR" [--funnel <id>]        # the numbers the card draws
+# once per vault: the agent calls kb_script_key and runs the one command it returns (installs KB_MCP_KEY)
+# fill VAULT, PRODUCTS, QUERIES and build() in lab/scripts/acme-storefront-funnels.mjs (the KB recipe below), then:
+dreamcontext lab sync acme-storefront-funnels --force                              # pulls live, validates, caches
+dreamcontext lab board show acme-funnel --select "country=TR" [--funnel <id>]      # the numbers the card draws
 ```
 
-- `--preset funnel-explorer` makes a `render: funnel`, `adapter: script` insight with `preset: funnel-explorer` in the manifest, NO `range` tweak (the window comes from the snapshot, never from a range control), a Meaning skeleton (Source and filters, Window, Steps, Reading traps, Refresh) and `lab/scripts/<slug>.mjs` that reads only the snapshot. It never writes `lab/data/<slug>.json`. `--render <other>` or `--adapter http` with it is refused.
+- `--preset funnel-explorer` makes a `render: funnel`, `adapter: script` insight with `preset: funnel-explorer` in the manifest, `credentials_used: [KB_MCP_KEY]`, `refresh.ttl_minutes: 240` (NeonBI updates daily; funnel charts 60-240 min, other NeonBI insights the 1440 default; `--ttl` overrides), NO `range` tweak (the script sets the window, never a range control), a Meaning skeleton (Source and filters, Window, Steps, Reading traps, Refresh) and `lab/scripts/<slug>.mjs`, a live script that imports `./lib-kb-mcp.mjs`. It also writes `lab/scripts/lib-kb-mcp.mjs` (the company skill's helper, byte-identical) when the file is absent; an existing one is never overwritten, and a differing one gets a notice. It never writes `lab/data/`. `--render <other>` or `--adapter http` with it is refused.
+- **The script to fill:** `VAULT` (the KB vault slug), `PRODUCTS` (the product filter values), `WINDOW_DAYS = 30` (full days, yesterday inclusive, via `lastFullDays`; the previous window is as long, right before it, for the change), `QUERIES` (by name: `{chart, dateField, dimensions, metrics, granularity?, filters?, prev?}`; the product filter and the `between` window are added to every query, `prev: true` also pulls the previous window as `<name>:prev`) and `build(results, window)`, which returns the `funnel-set/v1`. The script adds `window: {from, to, prev_from, prev_to}` and `provenance: {source: "KB MCP · kb_chart_query", pulled_at, freshness, filters}` (from the results' `applied_filters` and `data_age`) unless `build()` sets them, and returns `{data, freshness}` so the card shows how old NeonBI's table is. Queries run one at a time: the helper paces them, add no parallelism.
 - `--locale en|tr` writes `locale` into the manifest. The explorer card speaks that language whatever the dashboard's own language is: the picker `breakdown` carries `options.locale`, the card renders inside its own language scope, and the tab labels and every explorer string follow it. `lab board add-card --preset` defaults to the manifest locale.
-- Before the snapshot exists, a sync fails loudly ("No snapshot yet at lab/data/<slug>.json ...") and keeps the prior cache.
+- Until it is filled, a sync fails loudly ("fill QUERIES/build() first") and caches nothing: the script never returns an empty set that would draw as zeros. Without a key the helper says so and the agent installs one with `kb_script_key`; a 401 means the script key died (install a new one the same way).
 - **Placement.** On a vault whose boards are still derived from categories, a preset insight derives as a 12x18 explorer card on its category board (its axis tabs come from the cached dims, so they appear after the first sync). On a materialized vault `lab create` places nothing and prints the `lab board add-card <board> --insight <slug> --preset funnel-explorer` command to run after the first sync.
-- Fill the Meaning: charts and filters, the window and the previous window, which steps are derived, and the reading traps (the same lines go into the snapshot's `notes`).
+- Fill the Meaning: charts and filters, the window and the previous window, which steps are derived, and the reading traps (the same lines go into the set's `notes`).
 
-**The snapshot gate.** `lab data write` is the ONLY write path. It validates first and leaves the file byte-identical (or absent) when it refuses; on success it replaces the file atomically and runs a hard sync. `lab data check` runs the same validation without writing and prints the summary (funnels, axes with value counts, paths and intersections, daily coverage, payment and access presence, ladder stages, window, `pulled_at`, stored bytes against the 400,000-byte cap, every parse notice). A snapshot is refused when:
+**DEPRECATED fallback: the snapshot (`lab data write|check`, `lab/data/<slug>.json`).** Only for offline work or while no script key exists yet, and only for an insight whose script still reads a snapshot (one scaffolded before neonbi-data-api v2.0); **never for a new insight**. Both commands print a deprecation notice on stderr. The snapshot is shaped `{source, data}` (`source`: charts, applied filters, freshness, `pulled_at`; `data`: the `funnel-set/v1`). `lab data write` validates first and leaves the file byte-identical (or absent) when it refuses; on success it replaces the file atomically and runs a hard sync. `lab data check` runs the same validation without writing and prints the summary (funnels, axes with value counts, paths and intersections, daily coverage, payment and access presence, ladder stages, window, `pulled_at`, stored bytes against the 400,000-byte cap, every parse notice). A snapshot is refused when:
 
 - `source.pulled_at` is missing or not a time;
 - no applied filters are recorded (`source.applied_filters`, or `source.queries[].applied_filters`);
@@ -599,7 +623,9 @@ dreamcontext lab board show acme-funnel --select "country=TR" [--funnel <id>]   
 - `data` fails its parser, or (for a funnel explorer) is not a funnel set (a `dataset/v1` bundle with a `funnel` member also passes);
 - the file is over 2,000,000 bytes.
 
-A missing product filter is a notice, not a refusal. Aim for zero byte-cap notices: a stored set over 400 KB loses segment daily, then funnel daily, then segments (largest funnel first), so budget the snapshot below the cap instead of letting the trim choose.
+A missing product filter is a notice, not a refusal. Before a snapshot exists, an old snapshot-reading script fails its sync loudly ("No snapshot yet at lab/data/<slug>.json ...") and keeps the prior cache. Move such an insight to the live path (the ⛔ box above) as soon as a script key exists.
+
+**Byte budget (live or snapshot).** Aim for zero byte-cap notices: a stored set over 400 KB loses segment daily, then funnel daily, then segments (largest funnel first), so budget the set below the cap instead of letting the trim choose.
 
 **Contract (`funnel-set/v1`, every field below optional; old payloads parse unchanged).** The base contract is § Funnel insights. The explorer adds:
 
@@ -650,10 +676,10 @@ Lanes are selections, so switching the funnel re-applies them to the new funnel.
 - A rate whose denominator is under 100 shows `k/n` instead.
 - Rates are never summed across cells (`cells` mode carries step users only; payment totals come only from the `{}` cell).
 - Derived step counts are labelled.
-- Every empty state names what is missing and how to fill it (the snapshot's `hints`): no daily series, daily for the funnel level only, no payment, a column no row carries, no ranking path over the floor, no pinned lane.
+- Every empty state names what is missing and how to fill it (the set's `hints`): no daily series, daily for the funnel level only, no payment, a column no row carries, no ranking path over the floor, no pinned lane.
 - An axis whose every chip is unmeasured collapses into one line with the reason.
 
-**The KB recipe: which query fills which field.** Always send the product filter AND an explicit `between` date filter on every query; read values by `columns[].key` (a requested name may come back prefixed, e.g. `total_spend_usd` → `sum_total_spend_usd`); never write 0 for a missing value (omit it, or mark it `measured: false` with a reason); save each response to a file by piping, not by hand-copying; copy each response's header (applied filters, freshness) into `source.queries[]`. Field names are what the chart schema says: confirm them with `kb_chart_schema` before the first query.
+**The KB recipe: which query fills which field.** Each row is one `QUERIES` entry in the script. Every query carries the product filter AND an explicit `between` date filter (the script adds both; `chartQuery` refuses a query without them); read values with `valueOf(result, row, name)`, which follows `key_map` (a requested name may come back prefixed, e.g. `total_spend_usd` → `sum_total_spend_usd`) and returns `null`, never 0, for a missing value (omit it, or mark it `measured: false` with a reason). Field names are what the chart schema says: confirm them with `kb_chart_schema` before the first sync.
 
 | contract field | chart | dims | notes |
 |---|---|---|---|
@@ -668,16 +694,9 @@ Lanes are selections, so switching the funnel re-applies them to the new funnel.
 
 A metric that returns the same value for two different windows ignores the date filter: leave it out.
 
-**Refresh.** `lab sync` alone brings no new data (the script reads a file). Refresh = pull the queries again → build the snapshot → `lab data check` → `lab data write`. A scheduled refresh is an automation (`dreamcontext automations create`) whose prompt follows this contract:
+**Refresh.** Live: `dreamcontext lab sync <slug>` pulls again once the cache is past its TTL (240 min by default for the preset; `--force` pulls now), and an open board auto-syncs it the same way. A scheduled refresh is an automation (`dreamcontext automations create`) that runs `dreamcontext lab sync <slug> --force`: a failed pull exits non-zero, keeps the prior numbers, and the run should report it as `RUN FAILED: <why>` on one of the first five lines of its final message (the runner then marks the run failed, publishes nothing and notifies). No agent pulls by hand and nothing is written to `lab/data/`.
 
-1. Record the current `pulled_at` (`dreamcontext lab data check <slug> --json`).
-2. If `kb_chart_query` is not among your tools, make the FIRST line of your final message `RUN FAILED: KB tools missing (kb_chart_query)` and write nothing.
-3. Pull every query with the product and `between` date filters, build the snapshot, write it only with `dreamcontext lab data write <slug> --file <path>` (never edit `lab/data/<slug>.json` by hand). A refused write: `RUN FAILED: snapshot refused: <first problem>`.
-4. End with `dreamcontext lab data check <slug>`; if `pulled_at` did not advance, `RUN FAILED: snapshot not refreshed`.
-
-The runner marks a run whose final message carries a `RUN FAILED: <why>` line among its first five lines as **failed** with that reason, publishes nothing and notifies like any failed run. "Never touch the snapshot" is guaranteed by `lab data write` validating before it writes; "fail loudly" depends on the prompt following this contract, and step 4 catches a run that silently did nothing.
-
-**Gates before you call it done:** `lab data check` shows no problem and no byte-cap notice; `lab board show <board> --select "<dim>=<value>" [--funnel <id>]` prints the numbers you expect from the snapshot (the same numbers the card draws); the Meaning names the source, window and traps.
+**Gates before you call it done:** `lab sync <slug> --force` ends ok with no byte-cap notice; `lab board show <board> --select "<dim>=<value>" [--funnel <id>]` prints the numbers you expect (the same numbers the card draws); the Meaning names the source, window and traps.
 
 **Building your own layout.** Every page is a catalog block (table above), so a board can hold one card per page instead of the preset: `lab board add-card <board> --block '{"ranking": {"data": "<slug>"}}'`. The explorer blocks share a card's selection: a chip click narrows every funnel-frame block in the same card (tabs included) and filters same-insight tables by the dims they carry ("Not split by X" when they lack one). Cards do not share a selection.
 
@@ -689,7 +708,7 @@ The runner marks a run whose final message carries a `RUN FAILED: <why>` line am
 
 1. Map its payload onto the contract: per-funnel rows → `funnels[].metrics` and `steps` (derived counts → `basis: derived`); per-axis step tables → one-axis `segments` (`segment_mode: lookup`); axis combinations → intersection segments plus `intersections`; band history → `weekly` plus `ladder.stages` with the book values; day cuts → `daily`; decline cells and reasons → `payment` plus `payment_reasons`; access counts → `access`; long notes → one-line `notes`. Ranking and cross-axis tables need no field: the engine computes them.
 2. Return that set as `data.funnel` next to the existing datasets (the app pages keep working), `lab sync`, then `lab board add-card <board> --preset funnel-explorer --insight <slug>` and compare with `lab board show --select`.
-3. If the script calls an analytics API with a token, move to the snapshot flow: the agent pulls through the KB MCP, `lab data write` stores it, and the script becomes the template reader (`lab create --preset funnel-explorer` in a scratch vault shows it). Add `preset: funnel-explorer` (and `locale`) to the manifest.
+3. If the script calls an analytics API with a token (`NEONBI_API_TOKEN`, `lib-neonbi.mjs`, an `nbi_` key) or reads a `lab/data/` snapshot, move it to the live path: its queries go through `lab/scripts/lib-kb-mcp.mjs` with `KB_MCP_KEY` (`lab create --preset funnel-explorer` in a scratch vault shows the script; follow the ⛔ box above). Add `preset: funnel-explorer` (and `locale`) to the manifest.
 4. Drop `app` from the script and the old card only after the owner approves.
 
 **Synthetic names only.** Fixtures, presets, docs and screenshots use a fictional vocabulary (e.g. "Acme Storefront", "Quiz checkout (v2)", "Activation ladder"), never a registered vault or real product name.

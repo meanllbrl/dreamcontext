@@ -6,13 +6,15 @@ import { createProgram } from '../../src/cli/program.js';
 import { getInsight, readCache } from '../../src/lib/lab/store.js';
 import { getBoard, listBoards } from '../../src/lib/lab/boards.js';
 import { explorerSet } from '../fixtures/lab/explorer-set.js';
+import { legacySnapshotScript } from '../../scripts/verify/fixtures/legacy-snapshot-script.mjs';
 
 /**
- * The funnel explorer's CLI (T4): `lab create --preset`, the snapshot gate
- * `lab data write|check`, and `lab board show --select/--funnel` over the
- * derived explorer card, including the three new explorer blocks (ranking,
- * payment, access). The sync after a write runs the real template script.
- * Every name here is synthetic.
+ * The funnel explorer's CLI (T4): `lab create --preset` (a live KB MCP script),
+ * the DEPRECATED snapshot fallback `lab data write|check`, and
+ * `lab board show --select/--funnel` over the derived explorer card, including
+ * the three explorer blocks (ranking, payment, access). The snapshot-fed
+ * cases run an old vault's explorer: the pre-v2.0 snapshot-reading script,
+ * installed over the fresh preset script. Every name here is synthetic.
  */
 
 const SLUG = 'acme-storefront-funnels';
@@ -70,6 +72,13 @@ async function createExplorer(): Promise<{ code: number; out: string }> {
   return run(['lab', 'create', SLUG, '--preset', 'funnel-explorer', '--title', 'Acme storefront funnels', '--category', 'Acme Funnel']);
 }
 
+/** An old vault's explorer: the preset insight with its pre-v2.0 snapshot-reading script. */
+async function createLegacyExplorer(): Promise<{ code: number; out: string }> {
+  const created = await createExplorer();
+  writeFileSync(join(root, 'lab', 'scripts', `${SLUG}.mjs`), legacySnapshotScript(SLUG), 'utf-8');
+  return created;
+}
+
 beforeEach(() => {
   cwd = process.cwd();
   projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dc-lab-data-cli-')));
@@ -93,7 +102,11 @@ describe('lab create --preset funnel-explorer', () => {
     expect(m.source?.adapter).toBe('script');
     expect(existsSync(dataPath())).toBe(false);
     expect(out).toContain('funnel explorer card on the board for its category');
-    expect(out).toContain(`lab data write ${SLUG} --file <path>`);
+    // The next step is the live path: fill the script, store the script key, sync.
+    expect(out).toContain('lab credentials set KB_MCP_KEY');
+    expect(out).toContain(`lab sync ${SLUG} --force`);
+    expect(out).not.toContain('lab data write');
+    expect(existsSync(join(root, 'lab', 'scripts', 'lib-kb-mcp.mjs'))).toBe(true);
   });
 
   it('a materialized vault is not written: the add-card command to run after the first sync is printed', async () => {
@@ -114,15 +127,45 @@ describe('lab create --preset funnel-explorer', () => {
   });
 });
 
-describe('lab data write | check', () => {
+describe('lab data write | check (deprecated fallback)', () => {
   beforeEach(async () => {
-    expect((await createExplorer()).code).toBe(0);
+    expect((await createLegacyExplorer()).code).toBe(0);
   });
 
-  it('check without a snapshot exits 1 and names the write command', async () => {
+  it('check without a snapshot exits 1, names the live path and the write command', async () => {
     const { code, out } = await run(['lab', 'data', 'check', SLUG]);
     expect(code).toBe(1);
     expect(out).toContain(`No snapshot yet at lab/data/${SLUG}.json`);
+    expect(out).toContain('pulls live through the KB MCP with KB_MCP_KEY');
+    expect(out).toContain(`lab data write ${SLUG} --file <path>`);
+  });
+
+  it('write and check print a one-line deprecation notice on stderr, and keep stdout JSON clean', async () => {
+    const errLines: string[] = [];
+    const errSpy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errLines.push(a.map(String).join(' ')); });
+    const outLines: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { outLines.push(a.map(String).join(' ')); });
+    process.exitCode = undefined;
+    try {
+      await createProgram().parseAsync(['lab', 'data', 'check', SLUG, '--file', file('good.json', snapshot()), '--json'], { from: 'user' });
+      await createProgram().parseAsync(['lab', 'data', 'write', SLUG, '--file', file('good.json', snapshot()), '--json'], { from: 'user' });
+    } finally {
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+      process.exitCode = undefined;
+    }
+    const notices = errLines.filter((l) => l.includes('lab data is DEPRECATED'));
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain('KB_MCP_KEY');
+    expect(notices[0]).not.toContain('\n');
+    expect(JSON.parse(outLines[0]).ok).toBe(true);
+    expect(outLines.join('\n')).not.toContain('DEPRECATED');
+  });
+
+  it('the commander descriptions mark lab data, write and check deprecated', () => {
+    const data = createProgram().commands.find((c) => c.name() === 'lab')!.commands.find((c) => c.name() === 'data')!;
+    expect(data.description()).toMatch(/^DEPRECATED fallback/);
+    for (const sub of data.commands) expect(sub.description()).toMatch(/^DEPRECATED fallback/);
   });
 
   it('a refused snapshot writes nothing (absent stays absent, a written one stays byte-identical)', async () => {
@@ -172,7 +215,8 @@ describe('lab data write | check', () => {
   it('check --json summarizes what the snapshot carries, read from the parsed set', async () => {
     const { code, out } = await run(['lab', 'data', 'check', SLUG, '--file', file('good.json', snapshot()), '--json']);
     expect(code, out).toBe(0);
-    const check = JSON.parse(out);
+    // `run` merges stderr in: skip the deprecation notice line (stderr) before the JSON (stdout).
+    const check = JSON.parse(out.slice(out.indexOf('{')));
     expect(check.ok).toBe(true);
     expect(check.kind).toBe('funnel-set/v1');
     expect(check.summary).toMatchObject({
@@ -194,7 +238,7 @@ describe('lab data write | check', () => {
 
 describe('lab board show over the derived explorer card', () => {
   beforeEach(async () => {
-    expect((await createExplorer()).code).toBe(0);
+    expect((await createLegacyExplorer()).code).toBe(0);
     expect((await run(['lab', 'data', 'write', SLUG, '--file', file('good.json', snapshot())])).code).toBe(0);
   });
 

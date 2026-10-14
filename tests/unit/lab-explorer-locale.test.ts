@@ -21,6 +21,7 @@ import { BLOCK_CATALOG } from '../../src/lib/lab/blocks.js';
 import { funnelExplorerBlocks } from '../../src/lib/lab/presets.js';
 import { LabError } from '../../src/lib/lab/types.js';
 import { explorerSet } from '../fixtures/lab/explorer-set.js';
+import { legacySnapshotScript } from '../../scripts/verify/fixtures/legacy-snapshot-script.mjs';
 import type { Block, BlockProps, Card } from '../../dashboard/src/components/lab/board/boardTypes.js';
 import type { FunnelFrame } from '../../dashboard/src/generated/frameOps.js';
 
@@ -122,6 +123,8 @@ describe('lab create --locale and add-card --preset', () => {
 
   it('add-card --preset without --locale writes the card in the manifest locale', async () => {
     expect((await run(['lab', 'create', SLUG, '--preset', 'funnel-explorer', '--locale', 'tr', '--title', 'Acme funnels', '--no-board'])).code).toBe(0);
+    // Fed through the deprecated snapshot fallback (an old vault's snapshot-reading script): no KB here.
+    writeFileSync(join(root, 'lab', 'scripts', `${SLUG}.mjs`), legacySnapshotScript(SLUG), 'utf-8');
     const snap = join(projectRoot, 'snap.json');
     writeFileSync(snap, JSON.stringify({
       source: {

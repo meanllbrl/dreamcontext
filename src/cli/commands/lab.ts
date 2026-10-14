@@ -276,6 +276,11 @@ function printSyncResult(r: SyncResult): void {
 
 // ─── Snapshots (lab data) ───────────────────────────────────────────────────
 
+/** `lab data` is a deprecated fallback: one line on stderr (stdout stays clean for --json). */
+function warnLabDataDeprecated(): void {
+  console.error(chalk.yellow('⚠ lab data is DEPRECATED: a NeonBI insight pulls live through the KB MCP with KB_MCP_KEY (lab/scripts/lib-kb-mcp.mjs; `lab create --preset funnel-explorer` scaffolds it). Use snapshots only offline or until a script key exists, never for a new insight.'));
+}
+
 /** A snapshot file as JSON (an unreadable or invalid file is a LabError, nothing written). */
 function readSnapshotFile(file: string): unknown {
   let text: string;
@@ -1350,10 +1355,10 @@ export function registerLabCommand(program: Command): void {
     .option('--height <h>', `${INSIGHT_HEIGHTS.join('|')} — card body height ceiling (default m)`)
     .option('--adapter <adapter>', 'http|script (default http)')
     .option('--unit <unit>', 'Display unit (e.g. "users")')
-    .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440)')
+    .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440; 240 with --preset funnel-explorer)')
     .option('--board <slug>', 'Board to place the card on (default: the board titled like --category, else the first)')
     .option('--no-board', 'Create the insight without placing it on a board')
-    .option('--preset <id>', `A ready-made insight: ${PRESET_IDS.join(', ')} (render funnel + a snapshot-reading script; not with --render <other> or --adapter http)`)
+    .option('--preset <id>', `A ready-made insight: ${PRESET_IDS.join(', ')} (render funnel + a script that pulls live through the KB MCP with KB_MCP_KEY, plus lab/scripts/lib-kb-mcp.mjs; not with --render <other> or --adapter http)`)
     .option('--locale <en|tr>', 'Language the preset card speaks (written to the manifest; default: none, English)')
     .action(async (slug: string, opts: { title: string; category?: string; group?: string; render?: string; size?: string; width?: string; height?: string; adapter?: string; unit?: string; ttl?: string; board?: string | false; preset?: string; locale?: string }) => {
       const root = ensureContextRoot();
@@ -1386,7 +1391,7 @@ export function registerLabCommand(program: Command): void {
         success(`Insight created: lab/insights/${m.slug}.md`);
         if (preset) {
           placeNewExplorer(root, m.slug, m.category, opts.board, preset);
-          console.log(chalk.dim(`  Next: fill the snapshot with the KB queries in the skill (tasks-and-features.md, Funnel explorer), check it with \`dreamcontext lab data check ${m.slug} --file <path>\`, then write it with \`dreamcontext lab data write ${m.slug} --file <path>\`.`));
+          console.log(chalk.dim(`  Next: fill VAULT, PRODUCTS, QUERIES and build() in lab/scripts/${m.slug}.mjs (recipe: the skill, tasks-and-features.md, Funnel explorer), store your KB script key once with \`dreamcontext lab credentials set KB_MCP_KEY\`, then \`dreamcontext lab sync ${m.slug} --force\`. Every sync pulls live through lab/scripts/lib-kb-mcp.mjs.`));
           return;
         }
         await placeNewInsight(root, m.slug, m.category, opts.board);
@@ -1398,16 +1403,17 @@ export function registerLabCommand(program: Command): void {
 
   const dataCmd = lab
     .command('data')
-    .description('The snapshot a snapshot-fed insight reads (lab/data/<slug>.json): check it, or validate and write it');
+    .description('DEPRECATED fallback: the snapshot an old snapshot-fed insight reads (lab/data/<slug>.json). New insights pull live through the KB MCP (KB_MCP_KEY); use this only offline or until a script key exists');
 
   dataCmd
     .command('write')
     .argument('<slug>', 'Insight slug')
-    .description('Validate a snapshot ({source, data}) and replace lab/data/<slug>.json with it, then hard-sync the insight (a refused snapshot writes nothing)')
+    .description('DEPRECATED fallback (offline / no script key yet): validate a snapshot ({source, data}) and replace lab/data/<slug>.json with it, then hard-sync the insight (a refused snapshot writes nothing)')
     .requiredOption('--file <path>', 'The snapshot JSON file to write')
     .option('--json', 'Emit the check and the sync result as JSON')
     .action(async (slug: string, opts: { file: string; json?: boolean }) => {
       const root = ensureContextRoot();
+      warnLabDataDeprecated();
       try {
         const manifest = getInsight(root, slug);
         if (!manifest) throw new LabError(`Insight not found: ${slug}`);
@@ -1432,16 +1438,17 @@ export function registerLabCommand(program: Command): void {
   dataCmd
     .command('check')
     .argument('<slug>', 'Insight slug')
-    .description('Validate a snapshot without writing anything: the one on disk, or --file')
+    .description('DEPRECATED fallback (offline / no script key yet): validate a snapshot without writing anything: the one on disk, or --file')
     .option('--file <path>', 'Check this file instead of lab/data/<slug>.json')
     .option('--json', 'Emit the check as JSON')
     .action((slug: string, opts: { file?: string; json?: boolean }) => {
       const root = ensureContextRoot();
+      warnLabDataDeprecated();
       try {
         const manifest = getInsight(root, slug);
         if (!manifest) throw new LabError(`Insight not found: ${slug}`);
         const raw = opts.file !== undefined ? readSnapshotFile(opts.file) : readLabSnapshot(root, slug);
-        if (raw === null) throw new LabError(`No snapshot yet at lab/data/${slug}.json: check a file with --file <path>, or write one with \`dreamcontext lab data write ${slug} --file <path>\`.`);
+        if (raw === null) throw new LabError(`No snapshot yet at lab/data/${slug}.json. Snapshots are a deprecated fallback: a NeonBI insight pulls live through the KB MCP with KB_MCP_KEY (lab/scripts/lib-kb-mcp.mjs; skill: tasks-and-features.md, Funnel explorer). Offline only: check a file with --file <path>, or write one with \`dreamcontext lab data write ${slug} --file <path>\`.`);
         const check = checkLabSnapshot(raw, { requireFunnel: manifest.preset === 'funnel-explorer' });
         if (opts.json) console.log(JSON.stringify(check, null, 2));
         else printSnapshotCheck(check);

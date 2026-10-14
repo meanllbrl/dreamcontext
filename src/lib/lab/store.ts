@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import fg from 'fast-glob';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
 import { today } from '../id.js';
@@ -36,6 +37,8 @@ import {
  */
 
 const DEFAULT_TTL_MINUTES = 1440;
+/** A live funnel explorer's default TTL: NeonBI updates daily, funnel charts within hours. */
+export const FUNNEL_EXPLORER_TTL_MINUTES = 240;
 
 export function labDir(contextRoot: string): string {
   return join(contextRoot, 'lab');
@@ -574,71 +577,111 @@ export default async function fetchApp(ctx) {
 
 /**
  * The funnel explorer's script scaffold (`lab create --preset funnel-explorer`).
- * The generated script reads ONLY the snapshot `lab/data/<slug>.json`: no
- * network call, no credential, no range tweak. The agent fills the snapshot
- * through the KB MCP and writes it with `lab data write`, which validates it
- * before it replaces the old one.
+ * The generated script pulls LIVE on every sync: each query is one
+ * `kb_chart_query` through `lab/scripts/lib-kb-mcp.mjs` (written beside it,
+ * `writeKbMcpLib`), signed with the member's own KB script key `KB_MCP_KEY`.
+ * It never reads a `lab/data/` snapshot (that path is a deprecated fallback)
+ * and it throws until its queries and `build()` are filled, so an unfilled
+ * scaffold can never cache an empty set that draws as zeros.
  */
 export function funnelExplorerScriptTemplate(slug: string): string {
   return `/**
- * Funnel explorer adapter for the "${slug}" insight.
+ * Funnel explorer adapter for the "${slug}" insight. It pulls LIVE from the KB
+ * MCP on every sync: no snapshot file, no NeonBI token.
  *
- * Reads ONLY the snapshot lab/data/${slug}.json, shaped { source, data }: no
- * network, no keys. \`data\` is a funnel-set/v1; \`source\` carries the applied
- * filters and the freshness of the pull. The agent fills the snapshot with the
- * KB MCP queries in the dreamcontext skill (tasks-and-features.md § Funnel
- * explorer) and writes it with:
+ * Each query is one kb_chart_query through ./lib-kb-mcp.mjs, signed with YOUR
+ * KB script key (KB_MCP_KEY). The agent installs it once: it calls the KB MCP
+ * tool kb_script_key and runs the one command that returns, which writes it
+ * into lab/credentials.json without the key ever appearing in the chat.
  *
- *   dreamcontext lab data write ${slug} --file <path>
+ * The key reaches this script as ctx.credentials.KB_MCP_KEY. A failed call
+ * throws, so the card shows the error and keeps its previous numbers. A 401
+ * means the script key died: install a new one the same way.
  *
- * which validates the snapshot before it replaces the old one. The window the
- * explorer shows comes from the snapshot, never from a range control.
+ * Fill VAULT, PRODUCTS and QUERIES, then build(). The field recipe is in the
+ * dreamcontext skill (tasks-and-features.md, Funnel explorer). Until then a
+ * sync fails with "fill QUERIES/build() first": an empty set would draw as
+ * zeros, so this script never returns one.
  */
-import { lstat, readFile, realpath } from 'node:fs/promises';
-import { sep } from 'node:path';
+import { chartQuery, F, freshnessOf, lastFullDays, valueOf } from './lib-kb-mcp.mjs';
 
-const FILE = new URL('../data/${slug}.json', import.meta.url);
-const DIR = new URL('../data/', import.meta.url);
-const NAME = 'lab/data/${slug}.json';
-const MISSING = 'No snapshot yet at ' + NAME + '. Fill it (skill: tasks-and-features.md § Funnel explorer), then run dreamcontext lab data write ${slug} --file <path>.';
+/** The KB vault slug the charts live in (kb_charts lists them). */
+const VAULT = '';
+/** The product value(s) every query is filtered to, spelled as the chart's product field has them. */
+const PRODUCTS = [];
+/** Full days in the window, yesterday inclusive. The previous window (for the change) is as long, right before it. */
+const WINDOW_DAYS = 30;
 
-/** Read the snapshot: never through a link, never outside lab/data, never echoing its content in an error. */
-async function load() {
-  let st;
-  try {
-    st = await lstat(FILE);
-  } catch {
-    throw new Error(MISSING);
-  }
-  if (st.isSymbolicLink() || !st.isFile()) {
-    throw new Error(NAME + ' is a symlink or not a regular file: refusing to read it.');
-  }
-  const dir = await realpath(DIR);
-  if (!dir.endsWith(sep + 'lab' + sep + 'data')) {
-    throw new Error('lab/data/ resolves outside the vault: refusing to read ' + NAME + '.');
-  }
-  let text;
-  try {
-    text = await readFile(FILE, 'utf8');
-  } catch {
-    throw new Error(MISSING);
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(NAME + ' is not valid JSON. Write it again with dreamcontext lab data write ${slug} --file <path>.');
-  }
+/**
+ * The chart queries, by name. Each: { chart, dateField, dimensions, metrics,
+ * granularity?, filters?, sort?, limit?, productField? (default 'product'),
+ * prev? }. Every query gets the product filter and a between filter on
+ * dateField; prev: true also pulls the previous window, as '<name>:prev'.
+ * Confirm the field names with kb_chart_schema before the first sync.
+ */
+const QUERIES = {
+  // funnels: { chart: 'cht_...', dateField: 'event_date_parsed', dimensions: ['funnel_id_calc'], metrics: ['users'], prev: true },
+  // daily: { chart: 'cht_...', dateField: 'event_date_parsed', dimensions: ['event_date_parsed', 'funnel_id_calc'], metrics: ['users'], granularity: 'day' },
+};
+
+const NOT_FILLED = 'lab/scripts/${slug}.mjs is not filled yet: fill QUERIES/build() first (VAULT, PRODUCTS, QUERIES, then build(); recipe: dreamcontext skill, tasks-and-features.md, Funnel explorer).';
+
+/**
+ * Turn the results into ONE funnel-set/v1. results[name] is the kb_chart_query
+ * answer for the window ({ rows, columns, key_map, applied_filters, data_age,
+ * ... }), results[name + ':prev'] the previous window's. Read a value with
+ * valueOf(result, row, 'metric'): a missing value is null, never 0, so omit it
+ * or mark it measured: false with a reason. Put the previous window's value in
+ * each metric's prev: with a window, the change shown is only that prev.
+ * window and provenance are added for you when you leave them out.
+ */
+function build(results, window) {
+  void results; void window; void valueOf;
+  throw new Error(NOT_FILLED);
+  // return {
+  //   kind: 'funnel-set/v1',
+  //   dimensions: [],
+  //   funnels: results.funnels.rows.map((row) => ({
+  //     id: String(valueOf(results.funnels, row, 'funnel_id_calc')),
+  //     name: String(valueOf(results.funnels, row, 'funnel_id_calc')),
+  //     metrics: { users: { v: valueOf(results.funnels, row, 'users'), format: 'count' } },
+  //     steps: [],
+  //   })),
+  // };
 }
 
-/** The applied filters as display strings ("field op value"), deduplicated, at most 8. */
-function filtersOf(source) {
-  const lists = [source.applied_filters].concat(
-    Array.isArray(source.queries) ? source.queries.map((q) => q && q.applied_filters) : [],
-  );
+const DAY_MS = 86400000;
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+/** The last WINDOW_DAYS full days, and the previous window of the same length right before it. */
+function windows() {
+  const now = lastFullDays(WINDOW_DAYS);
+  const start = Date.parse(now.from + 'T00:00:00Z');
+  return { from: now.from, to: now.to, prev_from: isoDay(start - WINDOW_DAYS * DAY_MS), prev_to: isoDay(start - DAY_MS) };
+}
+
+/** One query over [from, to], always with the product filter and the explicit date window. */
+function pull(ctx, q, from, to) {
+  const productField = q.productField || 'product';
+  const product = PRODUCTS.length === 1 ? F.eq(productField, PRODUCTS[0]) : F.in(productField, PRODUCTS);
+  return chartQuery(ctx, {
+    vault: VAULT,
+    chart: q.chart,
+    dimensions: q.dimensions,
+    metrics: q.metrics,
+    granularity: q.granularity,
+    sort: q.sort,
+    limit: q.limit,
+    productField,
+    filters: [product, F.between(q.dateField, from, to)].concat(q.filters || []),
+  });
+}
+
+/** The applied filters of every result as display strings ("field op value"), deduplicated, at most 8. */
+function filtersOf(results) {
   const out = [];
-  for (const list of lists) {
-    if (!Array.isArray(list)) continue;
-    for (const f of list) {
+  for (const r of results) {
+    for (const f of Array.isArray(r.applied_filters) ? r.applied_filters : []) {
       if (!f || typeof f.field !== 'string') continue;
       const value = Array.isArray(f.values)
         ? f.values.join(f.op === 'between' ? '..' : ', ')
@@ -650,40 +693,61 @@ function filtersOf(source) {
   return out.slice(0, 8);
 }
 
-/** Where the numbers came from, for the explorer header (when the data names none). */
-function provenanceOf(source) {
-  if (!source || typeof source !== 'object') return undefined;
-  const names = [source.chart_name]
-    .concat(Array.isArray(source.queries) ? source.queries.map((q) => q && q.chart_name) : [])
-    .filter((n, i, all) => typeof n === 'string' && n !== '' && all.indexOf(n) === i);
-  const via = typeof source.via === 'string' && source.via ? source.via : 'snapshot';
-  const out = { source: ((names.length > 0 ? names.join(' + ') : 'snapshot') + ' via ' + via).slice(0, 120) };
-  if (typeof source.pulled_at === 'string') out.pulled_at = source.pulled_at;
-  if (typeof source.freshness === 'string') out.freshness = source.freshness.slice(0, 64);
-  const filters = filtersOf(source);
-  if (filters.length > 0) out.filters = filters;
-  return out;
-}
-
-export default async function readExplorer() {
-  const snapshot = await load();
-  const data = snapshot.data;
-  if (!data || data.kind !== 'funnel-set/v1') {
-    throw new Error(NAME + ': \`data\` must be a funnel-set/v1.');
+export default async function fetchExplorer(ctx) {
+  const names = Object.keys(QUERIES);
+  if (!VAULT || PRODUCTS.length === 0 || names.length === 0) throw new Error(NOT_FILLED);
+  const window = windows();
+  const results = {};
+  // One query at a time: lib-kb-mcp.mjs paces the calls, so add no parallelism on top.
+  for (const name of names) {
+    const q = QUERIES[name];
+    if (!q || !q.chart || !q.dateField) throw new Error('QUERIES.' + name + ' needs a chart and a dateField.');
+    results[name] = await pull(ctx, q, window.from, window.to);
+    if (q.prev) results[name + ':prev'] = await pull(ctx, q, window.prev_from, window.prev_to);
   }
-  return data.provenance ? data : Object.assign({}, data, { provenance: provenanceOf(snapshot.source) });
-}
-
-export async function freshness() {
-  const { source } = await load();
-  const names = provenanceOf(source);
-  return {
-    marker: source.pulled_at,
-    asOf: source.pulled_at,
-    note: names ? names.source + (source.freshness ? ' · ' + source.freshness : '') : null,
+  const set = build(results, window);
+  if (!set || set.kind !== 'funnel-set/v1' || !Array.isArray(set.funnels) || set.funnels.length === 0) {
+    throw new Error('build() must return a funnel-set/v1 with at least one funnel: an empty set would draw as zeros.');
+  }
+  // The first query's source table dates the data: keep the main chart first in QUERIES.
+  const freshness = freshnessOf(results[names[0]], 'NeonBI');
+  const provenance = {
+    source: 'KB MCP · kb_chart_query',
+    pulled_at: new Date().toISOString(),
+    freshness: freshness.note.slice(0, 64),
+    filters: filtersOf(Object.values(results)),
   };
+  return { data: Object.assign({ window, provenance }, set), freshness };
 }
 `;
+}
+
+/** The KB MCP client every live NeonBI insight script imports (`lab/scripts/lib-kb-mcp.mjs`),
+ *  shipped byte-identical to the company skill's copy: dist/templates/lab when bundled,
+ *  src/templates/lab from source. */
+function kbMcpLibTemplate(): string {
+  for (const rel of ['./templates/lab/lib-kb-mcp.mjs', '../../templates/lab/lib-kb-mcp.mjs']) {
+    const path = fileURLToPath(new URL(rel, import.meta.url));
+    if (existsSync(path)) return readFileSync(path, 'utf-8');
+  }
+  throw new LabError('lib-kb-mcp.mjs template not found in this dreamcontext install.');
+}
+
+/**
+ * Write `lab/scripts/lib-kb-mcp.mjs` when it is absent. An existing one is never
+ * overwritten (other scripts import it); when it differs from the shipped copy,
+ * say so, so the author can compare instead of finding out at sync.
+ */
+export function writeKbMcpLib(contextRoot: string): void {
+  const path = join(labDir(contextRoot), 'scripts', 'lib-kb-mcp.mjs');
+  const shipped = kbMcpLibTemplate();
+  if (!existsSync(path)) {
+    writeFileSync(path, shipped, 'utf-8');
+    return;
+  }
+  if (readFileSync(path, 'utf-8') !== shipped) {
+    console.warn('[lab] lab/scripts/lib-kb-mcp.mjs differs from the copy this dreamcontext ships: kept yours. Compare them before you rely on it (company skill neonbi-data-api).');
+  }
 }
 
 /** The `## Meaning` skeleton a funnel explorer insight starts with (the author fills each section). */
@@ -696,11 +760,11 @@ export function funnelExplorerMeaning(title: string, description: string | null,
     '',
     '### Source and filters',
     '',
-    "(The charts the snapshot was pulled from, the product filter, the date window and the previous window, the row-level scope. Copy them from the snapshot's `source`.)",
+    '(The charts the script queries, the product filter, the date window and the previous window, the row-level scope. The card header lists the filters the KB applied on the last sync.)',
     '',
     '### Window',
     '',
-    '(The window the numbers describe and the previous window the change compares with. The explorer reads both from the snapshot, never from a range control.)',
+    "(The window the numbers describe and the previous window the change compares with. The script sets both (`WINDOW_DAYS` full days, yesterday inclusive); the explorer has no range control.)",
     '',
     '### Steps',
     '',
@@ -708,11 +772,11 @@ export function funnelExplorerMeaning(title: string, description: string | null,
     '',
     '### Reading traps',
     '',
-    "(One line per trap. The same lines go into the snapshot's `notes`, so the explorer shows them on screen.)",
+    "(One line per trap. The same lines go into the set's `notes` (the script's `build()`), so the explorer shows them on screen.)",
     '',
     '### Refresh',
     '',
-    `Data comes only from the KB MCP into \`lab/data/${slug}.json\`; the script never touches the network. To refresh, pull the queries in the dreamcontext skill (tasks-and-features.md § Funnel explorer), then run \`dreamcontext lab data write ${slug} --file <path>\`, which validates the snapshot before it replaces the old one.`,
+    `Live: every sync runs the queries in \`lab/scripts/${slug}.mjs\` through the KB MCP (\`kb_chart_query\` via \`lab/scripts/lib-kb-mcp.mjs\`), signed with your own KB script key \`KB_MCP_KEY\` (installed by the agent through the KB MCP tool \`kb_script_key\`). No snapshot file, no NeonBI token. The default TTL is ${FUNNEL_EXPLORER_TTL_MINUTES} minutes (NeonBI updates daily; funnel charts 60 to 240 minutes, other NeonBI insights 1440): \`dreamcontext lab sync ${slug}\` refreshes a stale cache, \`--force\` refreshes now. A failed pull keeps the previous numbers and shows the error. A 401 means the script key died: ask Claude to install a new one (\`kb_script_key\`).`,
     '',
   ].join('\n');
 }
@@ -735,7 +799,7 @@ export interface CreateInsightInput {
   unit?: string | null;
   ttl_minutes?: number;
   /** A ready-made card this insight derives as. `funnel-explorer` forces render
-   *  funnel + a script adapter that reads the `lab/data/<slug>.json` snapshot. */
+   *  funnel + a script adapter that pulls live through the KB MCP (`KB_MCP_KEY`). */
   preset?: PresetId;
   /** The language the preset card speaks (`en` | `tr`). Omit for none (English). */
   locale?: 'en' | 'tr';
@@ -778,7 +842,7 @@ export function validateManifestForWrite(input: CreateInsightInput): void {
       throw new LabError(`--preset ${input.preset} is a funnel insight: drop --render or pass --render funnel (got "${input.render}").`);
     }
     if (input.adapter === 'http') {
-      throw new LabError(`--preset ${input.preset} reads a local snapshot through a script: drop --adapter http.`);
+      throw new LabError(`--preset ${input.preset} pulls its data through a script (KB MCP): drop --adapter http.`);
     }
   }
   if (input.locale !== undefined && !(INSIGHT_LOCALES as readonly string[]).includes(input.locale)) {
@@ -823,7 +887,7 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
   // Funnel/breakdown/app insights ship with the overview date-range control
   // pre-declared — the presets the dashboard's range picker offers (custom =
   // from/to tweaks).
-  // A preset explorer gets none: its window comes from the snapshot, so a range picker would change nothing.
+  // A preset explorer gets none: its script sets the window, so a range picker would change nothing.
   const tweaks: TweakDecl[] = preset === null && (render === 'funnel' || render === 'breakdown' || render === 'app')
     ? [{
         key: 'range',
@@ -847,10 +911,11 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
     ...(preset ? { preset } : {}),
     ...(input.locale ? { locale: input.locale } : {}),
     source,
-    refresh: { ttl_minutes: input.ttl_minutes ?? DEFAULT_TTL_MINUTES },
+    refresh: { ttl_minutes: input.ttl_minutes ?? (preset === 'funnel-explorer' ? FUNNEL_EXPLORER_TTL_MINUTES : DEFAULT_TTL_MINUTES) },
     tweaks,
     binding: null,
-    credentials_used: [],
+    // The explorer signs every KB call with the member's script key, so the vault lists it as needed.
+    credentials_used: preset === 'funnel-explorer' ? ['KB_MCP_KEY'] : [],
     created_at: today(),
     updated_at: today(),
   };
@@ -881,6 +946,7 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
         : render === 'funnel' ? funnelScriptTemplate(slug) : appScriptTemplate(slug);
       writeFileSync(scriptPath, template, 'utf-8');
     }
+    if (preset === 'funnel-explorer') writeKbMcpLib(contextRoot);
   }
   // Keep the tracked lab/credentials.example.json current with the new
   // manifest's required keys (best-effort — the insight itself is written).

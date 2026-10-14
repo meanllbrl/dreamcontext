@@ -1828,13 +1828,13 @@
     },
     {
       "path": "lab data",
-      "desc": "The snapshot a snapshot-fed insight reads (lab/data/<slug>.json): check it, or validate and write it",
+      "desc": "DEPRECATED fallback: the snapshot an old snapshot-fed insight reads (lab/data/<slug>.json). New insights pull live through the KB MCP (KB_MCP_KEY); use this only offline or until a script key exists",
       "args": [],
       "group": true
     },
     {
       "path": "lab data check",
-      "desc": "Validate a snapshot without writing anything: the one on disk, or --file",
+      "desc": "DEPRECATED fallback (offline / no script key yet): validate a snapshot without writing anything: the one on disk, or --file",
       "args": [
         "<slug>"
       ],
@@ -1844,7 +1844,7 @@
     },
     {
       "path": "lab data write",
-      "desc": "Validate a snapshot ({source, data}) and replace lab/data/<slug>.json with it, then hard-sync the insight (a refused snapshot writes nothing)",
+      "desc": "DEPRECATED fallback (offline / no script key yet): validate a snapshot ({source, data}) and replace lab/data/<slug>.json with it, then hard-sync the insight (a refused snapshot writes nothing)",
       "args": [
         "<slug>"
       ],

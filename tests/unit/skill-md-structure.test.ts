@@ -14,8 +14,9 @@ const repoRoot = join(import.meta.dirname, '..', '..');
 const read = (rel: string): string => readFileSync(join(repoRoot, rel), 'utf-8');
 const SKILL = read('skill/SKILL.md');
 
-/** 45 KiB. The skill was 73,517 B before the slimming wave. */
-const SKILL_MAX_BYTES = 46_080;
+/** 45.5 KiB. The skill was 73,517 B before the slimming wave; +512 B (2026-10-14) for the verbatim
+ *  ⛔ NeonBI old-path box under Rule 13, after Rule 13 itself was trimmed to make room. */
+const SKILL_MAX_BYTES = 46_592;
 /** A capability row is one line of summary plus a link; its detail lives in a reference. */
 const CAPABILITY_ROW_MAX_CHARS = 700;
 

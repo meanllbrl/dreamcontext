@@ -4,6 +4,35 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### Lab NeonBI insights pull live through the KB MCP; the snapshot path is deprecated (2026-10-14)
+
+A NeonBI insight used to be fed one of two wrong ways: a snapshot `lab/data/<slug>.json` the agent
+wrote by hand (stale as soon as nobody refreshed it), or a raw NeonBI token inside a script. With
+the company skill `neonbi-data-api` v2.0 there is one path: the insight's script calls the KB MCP
+tool `kb_chart_query` itself on every sync, signed with the member's own KB script key.
+
+- **The key is a Lab credential the agent installs.** The KB MCP tool `kb_script_key` returns one
+  command that writes the member's KB script key into lab credentials as `KB_MCP_KEY` (nobody copies
+  it by hand); scripts read it as `ctx.credentials.KB_MCP_KEY`. Every call
+  is audited under that member and can read only what they can read.
+- **`lab create --preset funnel-explorer` scaffolds a live script.** `lab/scripts/<slug>.mjs`
+  imports `./lib-kb-mcp.mjs`, takes `VAULT`, `PRODUCTS`, `WINDOW_DAYS = 30` and a `QUERIES`
+  object, pulls the window and the previous window of equal length, and builds the
+  `funnel-set/v1` itself in `build()`, with `window` and `provenance` (applied filters, data age)
+  from the query results. Until it is filled a sync fails with "fill QUERIES/build() first": an
+  empty set that would draw as zeros is never returned. The manifest gets TTL 240 and
+  `credentials_used: [KB_MCP_KEY]`; `preset`, render and the explorer card are unchanged, so
+  existing boards keep working.
+- **`lib-kb-mcp.mjs` ships with dreamcontext.** The preset writes `lab/scripts/lib-kb-mcp.mjs`
+  (byte-identical to the company skill's helper) when it is absent, never overwrites an existing
+  one, and says so when yours differs.
+- **`lab data write|check` are deprecated.** They keep working for an insight whose script still
+  reads a snapshot (offline work, or no script key yet), print a one-line notice on stderr, and
+  are marked deprecated in their help. "No snapshot yet" now names the live path.
+- **The skill says stop first.** `SKILL.md` (under Rule 13) and `tasks-and-features.md` carry a
+  ⛔ box: a vault whose scripts still read `lab/data/` or use a NeonBI token moves every NeonBI
+  insight to the live path before adding or refreshing one, with the grep that finds them.
+
 ### A funnel explorer's own page is the explorer, not the old table (2026-10-12)
 
 An insight made with `lab create --preset funnel-explorer` had two faces that disagreed. Its board
