@@ -49,6 +49,9 @@ describe('sub-agent dispatch authorization', () => {
         // Drop these and plan mode reviews its own plan inline while develop mode signs
         // off on its own diff (server/chat-modes.ts).
         'goal-plan-reviewer', 'goal-validator',
+        // 2026-10-14: the end review the diff picks can be the multi-review team; without
+        // these the lead runs the router and the specialists inline, reviewing itself.
+        'review-router', 'review-* specialists',
       ]) {
         expect(SUBAGENT_DISPATCH_AUTHORIZATION).toContain(flow);
       }

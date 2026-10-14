@@ -31,6 +31,8 @@ const SKILL = read('skill-packs', 'goal-skill', 'SKILL.md');
 const IMPL = read('skill-packs', 'agents', 'goal-implementer.md');
 const PLANNER = read('skill-packs', 'agents', 'goal-planner.md');
 const PLAN_REVIEWER = read('skill-packs', 'agents', 'goal-plan-reviewer.md');
+const ROUTER = read('skill-packs', 'agents', 'review-router.md');
+const MULTI_REVIEW = read('skill-packs', 'multi-review', 'SKILL.md');
 
 /**
  * A section of a markdown file, from its heading to the next heading of the same level. A
@@ -452,5 +454,58 @@ describe('the plan writes down what the owner will see', () => {
     expect(phase6).toMatch(/adds its screenshots to that evidence, never replaces it/);
     expect(phase6).toMatch(/Green tests never tick it/);
     expect(section(SKILL, '## Hard rules')).toMatch(/\*\*No tick without evidence\.\*\*/);
+  });
+});
+
+/**
+ * 2026-10-14 (owner): goal-skill's Phase 5 is picked by the diff, the same rule as Develop:
+ * the router classifies, `builder review-pick` decides one reviewer or the multi-review team
+ * (a Full tier, a hot path, or UI plus another area), and the same convergence loop follows.
+ */
+describe('Phase 5: the review the diff picks', () => {
+  const phase5 = section(SKILL, '### Phase 5');
+
+  it('runs the router, then review-pick, and never overrides it', () => {
+    expect(phase5).toMatch(/\*\*The diff picks the review, not you\.\*\*/);
+    expect(phase5).toContain('dreamcontext builder review-pick "$RUN/route.md"');
+    expect(phase5).toMatch(/never override it/);
+    expect(phase5.indexOf('review-router')).toBeLessThan(phase5.indexOf('**Convergence by signal:**'));
+  });
+
+  it('one reviewer for a small or one-area diff, the team for Full, hot path or UI plus another area', () => {
+    expect(phase5).toMatch(/\*\*`reviewer`\*\* \(a small or one-area diff\)/);
+    expect(phase5).toMatch(/\*\*`multi-review`\*\* \(a Full tier, a hot path, UI plus another area, or areas it cannot read\)/);
+    expect(phase5).toMatch(/exactly the team the line names \(`review-edge-cases` always/);
+    expect(phase5).toMatch(/exit 2\s+again = the team without a plan/);
+    expect(phase5).toMatch(/never drop or downgrade a\s+Critical or Major/);
+  });
+
+  it('the same loop for both, and a team re-check without a new router', () => {
+    expect(phase5).toMatch(/The loop below is the same for both/);
+    expect(phase5).toMatch(/the router does not run again/);
+    expect(phase5).toMatch(/\(mechanics rule 3b\)/);
+    expect(section(SKILL, '## Hard rules')).toMatch(/\*\*The diff picks the Phase 5 review\*\*/);
+  });
+
+  it('the router names the areas review-pick reads, from a fixed vocabulary', () => {
+    expect(ROUTER).toMatch(/### 4b\. Name every area the diff touches/);
+    for (const area of ['`frontend`', '`backend`', '`cloud-functions`', '`data`', '`infra`']) expect(ROUTER).toContain(`| ${area} |`);
+    expect(ROUTER).toMatch(/Tests and docs are not areas/);
+    expect(ROUTER).toContain('"domains": ["frontend", "backend"]');
+  });
+
+  it('the goal-skill pack installs the agents its Phase 5 may dispatch', () => {
+    const catalog = JSON.parse(read('skill-packs', 'catalog.json')) as { packs: { name: string; relatedAgents?: string[] }[] };
+    const pack = catalog.packs.find((p) => p.name === 'goal-skill')!;
+    for (const a of ['reviewer', 'review-router', 'review-security', 'review-cloud-functions', 'review-frontend', 'review-edge-cases']) {
+      expect(pack.relatedAgents).toContain(a);
+    }
+  });
+
+  it('the multi-review skill says how a run uses it', () => {
+    const inRun = section(MULTI_REVIEW, '## Inside a Develop or goal-skill run');
+    expect(inRun).toMatch(/dreamcontext builder review-pick <file>/);
+    expect(inRun).toMatch(/never drops or downgrades a Critical or\s+Major/);
+    expect(inRun).toMatch(/the router\s+does not run again/);
   });
 });

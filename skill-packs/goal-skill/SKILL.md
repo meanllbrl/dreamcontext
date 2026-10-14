@@ -258,7 +258,7 @@ flowchart TD
     GATE -->|pass, more waves| P4
     GATE -->|pass, last wave done| FG{final gate, once, load below cores: full suite, build, integration, generators, browser}
     FG -->|FAIL| R2
-    FG -->|PASS| P5{Phase 5 — reviewer, clean, once: PASS?}
+    FG -->|PASS| P5{Phase 5 — the review the diff picks, reviewer or multi-review team, clean: PASS?}
     P5 -->|FAIL, new findings| R3[RESUME the owning implementer]
     R3 --> P4
     P5 -->|FAIL, same findings repeat| RF2[re-fork the implementer fresh]
@@ -508,9 +508,35 @@ Log a phase timestamp at the start and end of each wave.
 ### Phase 5 — CODE REVIEW (judge, clean, once)
 
 **Full code review runs once, after the last wave and its final gate** — per-wave gates
-are type-checks + the wave's tests only, not a full review. Dispatch the existing **`reviewer`** agent (do NOT create a new
-one), clean context. Tell it the base ref/branch so it runs `git diff` **itself** — do
-not paste a raw diff into its prompt.
+are type-checks + the wave's tests only, not a full review.
+
+**The diff picks the review, not you.** First dispatch ONE `review-router` (Agent tool) with
+the base ref and the run's paths, write its reply to `$RUN/route.md`, and run:
+
+```bash
+dreamcontext builder review-pick "$RUN/route.md"
+```
+
+It prints `reviewer: <why>`, or `multi-review: <why>; team: <agents>`. Log the line to the
+task; never override it. Exit 2 = no plan in the reply: run the router once more; exit 2
+again = the team without a plan: `review-edge-cases` and the `reviewer` on every path, plus
+`review-frontend` on the UI files and `review-security` on any auth, secret, env or endpoint
+file. No `review-*` agents in this project? General-purpose agents with the same mandates.
+
+- **`reviewer`** (a small or one-area diff): the existing **`reviewer`** agent (do NOT create a
+  new one), clean context. Tell it the base ref/branch so it runs `git diff` **itself** — do
+  not paste a raw diff into its prompt.
+- **`multi-review`** (a Full tier, a hot path, UI plus another area, or areas it cannot read):
+  exactly the team the line names (`review-edge-cases` always, then each named specialist, and
+  the `reviewer` when no specialist is named; model opus), in parallel in ONE message, each
+  given its scope from the plan (every path when it names none), the base ref and the task's
+  criteria. You merge their reports into one verdict
+  per the multi-review skill, with one change: you may dedupe, but never drop or downgrade a
+  Critical or Major. Any Critical or Major = FAIL.
+
+The loop below is the same for both. After a team FAIL, the fresh re-check is one specialist
+for each that raised a blocking finding, fed only its previous findings word for word and the
+files the fix changed; the router does not run again.
 
 **Convergence by signal:**
 - `PASS` → proceed to Phase 6.
@@ -651,7 +677,7 @@ dreamcontext goal-live phase <plan|review|task|impl|codereview|validate|done> [-
 dreamcontext goal-live actor <id[=name],…> --kind <spawn|fork|resume|fresh> [--role <role>] [--from <id>] [--round N] [--context-of <sessionId>] [--session <uuid>] [--wave N]
 dreamcontext goal-live state <id=word> [<id=word> …] [--wave N]
 dreamcontext goal-live recipe develop|fan-out|builder-brief|planner-brief
-dreamcontext builder load [--reap] | heavy [--max-wait <s>] -- <cmd> | report <file> <TaskId>
+dreamcontext builder load [--reap] | heavy [--max-wait <s>] -- <cmd> | report <file> <TaskId> | review-pick <file>
 dreamcontext builder test <slug> --wave N|final [--related <paths>] [--also <tests>] [--failed]
 dreamcontext goal-live clear
 ```
@@ -793,6 +819,10 @@ Standalone viewer and demo:
 - **Same file → same lane.** Wave-parallel implementers never share a file.
 - **Full code review runs once**, after the last wave — per-wave gates are the
   type-checks + the wave's tests, run once by the orchestrator, never by each builder.
+- **The diff picks the Phase 5 review**: `review-router`, then `dreamcontext builder
+  review-pick`; one `reviewer`, or the multi-review team for a Full tier, a hot path, or UI
+  plus another area. You merge a team's reports but never drop or downgrade a Critical or
+  Major.
 - **Heavy steps run once, at the final gate** (full suite, `build` / `build:cli`,
   integration, `gen:*`, browser), on a quiet machine (`dreamcontext builder load`, bounded
   wait), the build before anything that needs compiled output, and never a second time:
@@ -815,8 +845,8 @@ Standalone viewer and demo:
 |---|---|---|
 | `goal-skill` (this) | End-to-end build of a goal | Owns the full plan→implement→validate lifecycle. |
 | `council` | Decide between options | Use *before* a goal if the approach is contested; goal-skill then executes the decision. |
-| `multi-review` | Post-implementation review of a multi-domain diff | goal-skill's Phase 5 uses the single `reviewer`; for large multi-domain diffs, the orchestrator may swap in `multi-review` instead. Its router thresholds also back the tier router above. |
-| `reviewer` agent | Final code gate | Reused directly as Phase 5. |
+| `multi-review` | Post-implementation review of a multi-domain diff | Phase 5 runs its team when `builder review-pick` says so (a Full tier, a hot path, or UI plus another area). Its router thresholds also back the tier router above. |
+| `reviewer` agent | Final code gate | Phase 5 for a small or one-area diff. |
 
 ## Slash command wiring
 

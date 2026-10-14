@@ -681,6 +681,13 @@
       ]
     },
     {
+      "path": "builder review-pick",
+      "desc": "Which end review the run gets: one reviewer, or multi-review for a Full tier, a hot path, or UI plus another area (exit 2 = no plan in the file)",
+      "args": [
+        "<file>"
+      ]
+    },
+    {
       "path": "builder spawn",
       "desc": "Start a fresh builder for one lane (detached; returns at once)",
       "args": [

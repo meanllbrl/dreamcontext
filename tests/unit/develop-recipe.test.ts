@@ -453,3 +453,46 @@ describe('no tick without evidence, in both recipes', () => {
     });
   }
 });
+
+/**
+ * 2026-10-14 (owner): the end review is picked by the diff. The review-router classifies,
+ * `builder review-pick` decides one reviewer or the multi-review team, and the same
+ * FAIL -> fix -> fresh re-review loop runs either way. The lead merges a team's reports but,
+ * being the author, never drops or downgrades a blocking finding.
+ */
+describe('the end review the diff picks, in both recipes', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    const end = recipe.slice(recipe.indexOf('## 3.'), recipe.indexOf('## 4.'));
+
+    it(`${name}: the router runs and review-pick decides, before the review is dispatched`, () => {
+      expect(end).toMatch(/ONE `review-router` sub-agent/);
+      expect(end).toContain('dreamcontext builder review-pick "$ROOT/tmp/develop/$S/route.md"');
+      expect(end).toMatch(/Exit 2 = no plan in the reply:\s+run the router once more; exit 2 again = the team without a plan/);
+      expect(end).toMatch(/No `review-\*` agents in this project\? Use\s+general-purpose agents/);
+      expect(end).toMatch(/you never override it/);
+      expect(end.indexOf('builder review-pick')).toBeLessThan(end.indexOf('goal-live phase codereview'));
+    });
+
+    it(`${name}: the team is the router's specialists, each on its own scope`, () => {
+      expect(end).toMatch(/For `multi-review`, instead of that one reviewer: exactly the team the line names/);
+      expect(end).toMatch(/every changed path when the plan names none for it/);
+      expect(end).toMatch(/`review-edge-cases` is always on it and also gets the REVIEWER brief's sentence on ticked\s+criteria/);
+    });
+
+    if (name === 'fan-out') {
+      it('fan-out: a skipped end review skips the pick too', () => {
+        expect(end).toMatch(/a run whose end review is skipped skips the pick too/);
+      });
+    }
+
+    it(`${name}: the author merges but never lowers a blocking finding`, () => {
+      expect(end).toMatch(/never drop or downgrade a Critical or Major, since you are the author/);
+      expect(end).toMatch(/Any Critical or Major = FAIL/);
+    });
+
+    it(`${name}: a team FAIL is re-checked by the specialists that raised it, no new router`, () => {
+      expect(end).toMatch(/one specialist for each that raised a blocking\s+finding, fed only its previous findings word for word/);
+      expect(end).toMatch(/the\s+router does not run again/);
+    });
+  }
+});

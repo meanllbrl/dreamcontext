@@ -242,10 +242,16 @@
         "goal-plan-reviewer",
         "goal-implementer",
         "goal-validator",
-        "reviewer"
+        "reviewer",
+        "review-router",
+        "review-security",
+        "review-cloud-functions",
+        "review-frontend",
+        "review-edge-cases"
       ],
       "crossPackDeps": [
-        "engineering (planner/implementer/reviewer load engineering standards)"
+        "engineering (planner/implementer/reviewer load engineering standards)",
+        "multi-review (Phase 5 and Develop run the review-router and review-* specialists when builder review-pick names the team)"
       ],
       "assets": [
         {

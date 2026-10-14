@@ -67,6 +67,7 @@ a dispatch plan (JSON) with:
 {
   "tier": "trivial | lite | full",
   "specialists": ["security", "cloud-functions", "frontend", "edge-cases"],
+  "domains": ["frontend", "backend", "cloud-functions"],
   "scope": {
     "security": ["functions/auth/login.ts", "..."],
     "cloud-functions": ["functions/triggers/onUserCreate.ts"],
@@ -152,6 +153,22 @@ Report ≤2000 words total.
 
 If the user wants to act on findings, follow up by editing the relevant files
 (do not auto-fix without confirmation on Critical findings).
+
+## Inside a Develop or goal-skill run
+
+A Develop run's end review and goal-skill's Phase 5 do not choose this skill by feel. They
+run the router, save its reply, and let `dreamcontext builder review-pick <file>` decide:
+one `reviewer` for a small or one-area diff; this team for a Full tier, a hot path, UI plus
+another area (the router's `domains`), or an area outside the router's vocabulary. The pick
+names the team: `review-edge-cases` always, then each specialist the plan names, and the
+`reviewer` when it names none. Two things change there:
+
+- **The author synthesizes, so it cannot lower a verdict.** The lead or orchestrator merges
+  the reports and dedupes, but never drops or downgrades a Critical or Major. Any Critical or
+  Major = FAIL.
+- **The loop.** FAIL → fix exactly the findings → a fresh specialist for each one that raised
+  a blocking finding re-checks its previous findings word for word and the fix; the router
+  does not run again. The same finding twice → stop and put it to the owner.
 
 ## Hard rules
 

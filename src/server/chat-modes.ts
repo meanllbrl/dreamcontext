@@ -47,7 +47,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, 'assistant'>, string> = {
-  basic: '1.0', plan: '1.1', develop: '1.1', train: '0.1',
+  basic: '1.0', plan: '1.1', develop: '1.2', train: '0.1',
 };
 
 /**
@@ -252,10 +252,11 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
   at the end). Fix a failure, then re-run only what failed.
 - **Never stop between waves to ask whether to go on, and never end your turn while a judge
   you started runs.** The owner is not your scheduler.
-- **A judge you do not control:** after the last wave, ONE clean \`reviewer\` (model opus)
-  over every path you changed, in parallel with the final check. It runs \`git diff\` on its
-  scope ITSELF; never paste a diff into its prompt. Record its verdict before the next phase.
-  FAIL → fix exactly the findings, then re-review. The SAME finding twice → STOP and put it to
+- **Judges you do not control:** after the last wave, the end review the diff picks
+  (\`builder review-pick\`: one clean \`reviewer\`, or the multi-review team for a Full tier,
+  a hot path, or UI plus another area), in parallel with the final check. It runs \`git diff\`
+  ITSELF; never paste a diff. Record its verdict first. FAIL → fix exactly the findings, then
+  re-review. The SAME finding twice → STOP and put it to
   the owner; never merge past it. You do not sign off on your own work.
 - **No tick without evidence** in its \`dreamcontext tasks log <slug> "…"\` line: the check's
   output, or, for what the owner sees, screenshots you READ at a phone and a desktop width

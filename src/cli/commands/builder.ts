@@ -17,6 +17,7 @@ import {
   type OrphanCheck,
 } from '../../lib/builder-tools.js';
 import { acquireFileLockWithin, releaseFileLock } from '../../lib/file-lock.js';
+import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
 /**
@@ -32,6 +33,8 @@ import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps 
  *                   stayed busy past --max-wait and nothing ran.
  *   report <file> <TaskId>  did that builder finish? reported (exit 0) | unfinished | stopped |
  *                   missing (exit 3), with the line that decided it.
+ *   review-pick <file>  which end review a run gets, from the review-router's plan: one
+ *                   reviewer or multi-review (exit 2 = no plan in the file).
  *   base | spawn | fork | resume | wait | test | status   start and track builder sessions,
  *                   and the lead's wave-end check (./builder-sessions.ts).
  */
@@ -90,6 +93,31 @@ export function builderReport(deps: BuilderDeps, file: string, taskId: string): 
   const r = classifyBuilderResult(text, taskId);
   deps.print(`${taskId} ${r.verdict}: ${r.detail}`);
   return r.verdict === 'reported' ? 0 : BUILDER_REPORT_NOT_DONE_EXIT;
+}
+
+/** `review-pick`'s exit code when the file holds no readable dispatch plan: re-run the router. */
+export const REVIEW_PICK_UNREADABLE_EXIT = 2;
+
+/**
+ * Which end review the run gets: prints `reviewer: <why>`, or `multi-review: <why>; team: <agents>`
+ * (review-edge-cases first, then each named specialist), and exits 0,
+ * or exits {@link REVIEW_PICK_UNREADABLE_EXIT} when the router's output holds no plan.
+ */
+export function builderReviewPick(deps: BuilderDeps, file: string): number {
+  const text = existsSync(file) ? readFileSync(file, 'utf-8') : null;
+  if (text === null) {
+    deps.printErr(`builder review-pick: no file "${file}"; write the review-router's output there first`);
+    return REVIEW_PICK_UNREADABLE_EXIT;
+  }
+  try {
+    const pick = pickEndReview(parseRouterPlan(text));
+    deps.print(`${pick.kind}: ${pick.reason}${pick.team.length > 0 ? `; team: ${pick.team.join(', ')}` : ''}`);
+    return 0;
+  } catch (err) {
+    if (!(err instanceof RouterPlanError)) throw err;
+    deps.printErr(`builder review-pick: ${err.message}; re-run the review-router`);
+    return REVIEW_PICK_UNREADABLE_EXIT;
+  }
 }
 
 function holderOf(lockPath: string, ps: () => string): string {
@@ -174,6 +202,14 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .description(`Did the builder finish? reported (exit 0) | unfinished | stopped | missing (exit ${BUILDER_REPORT_NOT_DONE_EXIT})`)
     .action((file: string, taskId: string) => {
       process.exitCode = builderReport(deps, file, taskId);
+    });
+
+  cmd
+    .command('review-pick')
+    .argument('<file>', 'The review-router\'s output (its ```json dispatch plan)')
+    .description(`Which end review the run gets: one reviewer, or multi-review for a Full tier, a hot path, or UI plus another area (exit ${REVIEW_PICK_UNREADABLE_EXIT} = no plan in the file)`)
+    .action((file: string) => {
+      process.exitCode = builderReviewPick(deps, file);
     });
 
   registerBuilderSessionCommands(cmd, sessionDeps);

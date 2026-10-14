@@ -109,6 +109,23 @@ Map files to specialists by path and content:
 A file can be scoped to multiple specialists (e.g. a Cloud Function file handling
 auth tokens goes to both `cloud-functions` and `security`).
 
+### 4b. Name every area the diff touches
+
+Separately from the specialists, list in `domains` every product area with a changed
+source file, from this fixed vocabulary:
+
+| Area | Files |
+|---|---|
+| `frontend` | UI: components, pages, screens, styles, the client app (the `frontend` specialist's paths). |
+| `backend` | Server, API routes, CLI commands, library code that is not UI and not a Cloud Function. |
+| `cloud-functions` | Cloud Functions and other serverless handlers. |
+| `data` | Schemas, migrations, database rules, indexes. |
+| `infra` | Build, CI, deploy and runtime configuration. |
+
+Tests and docs are not areas. `dreamcontext builder review-pick` reads this list: a Develop
+or goal-skill run whose diff is UI plus any other area gets the full multi-review team
+instead of one reviewer, so name an area only when a changed source file belongs to it.
+
 ### 5. Emit the dispatch plan
 
 Output **exactly one JSON code block** as your final response. No prose around
@@ -125,6 +142,7 @@ it. The main agent parses this.
     "head_ref": "<e.g. HEAD or PR#123>"
   },
   "specialists": ["security", "cloud-functions", "frontend", "edge-cases"],
+  "domains": ["frontend", "backend"],
   "scope": {
     "security": ["path/to/file1.ts", "..."],
     "cloud-functions": ["..."],

@@ -289,11 +289,13 @@ describe('modeBriefing', () => {
   // last wave; 2026-09-26 put one after EVERY wave; v2 (2026-10-11 morning) reviewed only
   // contract and hot-path waves plus one end review. Measured the same day, the lead building
   // alone matched fan-out on quality for less: the lead builds, and ONE clean reviewer on
-  // Opus reads every path it changed, at the end. The author still never judges its own work.
-  it('develop: ONE clean Opus reviewer after the last wave, over every changed path — it does not self-approve', () => {
+  // Opus reads every path it changed, at the end. 2026-10-14 (owner): the diff picks that end
+  // review, one reviewer or the multi-review team (builder review-pick, review-route.ts). The
+  // author still never judges its own work.
+  it('develop: the end review the diff picks, after the last wave — it does not self-approve', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
     expect(brief).toMatch(/you\s+do not sign off on your own work/i);
-    expect(brief).toMatch(/after the last wave, ONE clean `reviewer` \(model opus\)\s+over every path you changed, in parallel with the final check/);
+    expect(brief).toMatch(/after the last wave, the end review the diff picks\s+\(`builder review-pick`: one clean `reviewer`, or the multi-review team for a Full tier,\s+a hot path, or UI plus another area\), in parallel with the final check/);
     // Neither the 2026-09-26 per-wave review nor v2's contract-wave review creeps back.
     expect(brief).not.toMatch(/reviewer\s+on that wave's files and criteria/);
     expect(brief).not.toMatch(/contract or hot-path wave/);
@@ -301,7 +303,7 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/git diff[^\n]*\n?[^\n]*ITSELF/);
     expect(brief).toMatch(/never paste a diff/i);
     // The verdict lands before the run moves on, or the map loses it.
-    expect(brief).toMatch(/verdict before the next phase/);
+    expect(brief).toMatch(/Record its verdict first/);
   });
 
   it('develop closes every wave with ONE check run whose real output is shown', () => {

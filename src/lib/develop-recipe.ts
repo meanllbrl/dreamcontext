@@ -21,6 +21,43 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
   yourself. Log their paths and the console output, and tick those criteria here, with that
   evidence, never earlier. Errors, overflow or a broken layout = red.`;
 
+/**
+ * The end review is picked by the diff, not by the lead (owner, 2026-10-14). One generalist
+ * reviewer passed the mobile-to-web port; the multi-review team is what found 2 Critical + 6
+ * Major on the Jarvis change. It costs 2-4x one reviewer's tokens (in parallel, so about the
+ * same wall time), so it runs where the diff calls for it: the review-router classifies, and
+ * `dreamcontext builder review-pick` (src/lib/review-route.ts) decides. The lead synthesizes
+ * the team's reports, so it may dedupe but never drop or downgrade a blocking finding: in
+ * plain multi-review the synthesizer is a neutral party; here it is the author.
+ */
+const END_REVIEW_PICK = `Pick the end review first, in its own step: ONE \`review-router\` sub-agent (Agent tool) told
+to classify \`git diff <START> <NOW> -- <the review's paths, by name>\`. Write its reply to
+$ROOT/tmp/develop/$S/route.md, then:
+
+  dreamcontext builder review-pick "$ROOT/tmp/develop/$S/route.md"
+
+It prints \`reviewer: <why>\`, or \`multi-review: <why>; team: <agents>\`: one reviewer for a
+small or one-area diff; the team for a Full tier, a hot path, UI plus another area, or areas it
+cannot read. Log the line to the task; you never override it. Exit 2 = no plan in the reply:
+run the router once more; exit 2 again = the team without a plan: \`review-edge-cases\` and the
+\`reviewer\` on every path, plus \`review-frontend\` on the UI files and \`review-security\` on
+any auth, secret, env or endpoint file. No \`review-*\` agents in this project? Use
+general-purpose agents with the router's and each specialist's mandate.`;
+
+const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: exactly the team the line names, one
+  sub-agent each (model opus, not in the background), each given its scope from the plan
+  (every changed path when the plan names none for it), START, NOW and the task's criteria.
+  \`review-edge-cases\` is always on it and also gets the REVIEWER brief's sentence on ticked
+  criteria; a \`reviewer\` on it gets the whole REVIEWER brief. Merge their reports into ONE
+  verdict: dedupe,
+  but never drop or downgrade a Critical or Major, since you are the author and their
+  severity is theirs. Any Critical or Major = FAIL. The map keeps one seat for the team:
+  \`goal-live actor end-reviewer=multi-review\`, with the merged verdict.`;
+
+const END_REVIEW_REROUND = `After a team FAIL, the fresh re-check is one specialist for each that raised a blocking
+finding, fed only its previous findings word for word and the files the fix changed; the
+router does not run again.`;
+
 const REVIEWER_EVIDENCE = `For each ticked criterion say whether its evidence OBSERVED it or inferred it; a criterion about
 what the owner sees, ticked with no screenshot, is FAIL.`;
 
@@ -140,8 +177,11 @@ run's paths:
   git -c core.quotePath=false diff-tree -r -z --name-status "$START" "$NOW"
 
 Parse it NUL-separated. A path you did not change is another session's work in this
-checkout: leave it out of the review and log it once. The end review and the final check run
-at the same time, dispatched in ONE message:
+checkout: leave it out of the review and log it once.
+
+${END_REVIEW_PICK}
+
+The end review and the final check run at the same time, dispatched in ONE message:
 
   dreamcontext goal-live phase codereview || true
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer || true
@@ -149,6 +189,7 @@ at the same time, dispatched in ONE message:
 - ONE \`reviewer\` sub-agent (Agent tool, model opus, not in the background) with the reviewer
   brief (section 4): every path you changed, enumerated by name, with START and NOW, never a
   bare \`git diff\` against a ref. It fetches its own changes; never paste a diff.
+${END_REVIEW_TEAM}
 - The final check: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
   ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
   the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
@@ -163,6 +204,8 @@ or the failure and nothing else, check the fix with \`builder test "$S" --wave f
 fix, and the final check runs again. Nothing closes on a fix no reviewer has read:
 
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true
+
+${END_REVIEW_REROUND}
 
 The SAME finding twice = STOP and put it to the owner. You never sign off on your own work.
 
@@ -455,6 +498,10 @@ fresh base from the task doc with \`--remint --prompt-file\`. No update after th
 
 ## 3. After the last wave: one end review, the final check, then close
 
+${END_REVIEW_PICK}
+The review's paths are the scope below: a run whose end review is skipped skips the pick too,
+and a review of the ticks alone is always one reviewer.
+
 The end review and the final check run at the same time, dispatched in ONE message:
 
   dreamcontext goal-live phase codereview || true
@@ -465,6 +512,7 @@ The end review and the final check run at the same time, dispatched in ONE messa
   \`git diff\` against a ref. A run whose every wave was REVIEWED skips it, unless a criterion
   is about what the owner sees: then this reviewer still runs, over the task's ticks and their
   evidence alone, since no wave reviewer saw a tick.
+${END_REVIEW_TEAM}
 - The final check: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
   ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
   the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
@@ -477,6 +525,8 @@ the owning lane (2e step 4, re-checked with \`--wave final\`), then a fresh end 
 re-checks only the previous findings and the fix:
 
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true
+
+${END_REVIEW_REROUND}
 
 Close by the task's Validation method:
 - A command that passed: \`dreamcontext goal-live phase done || true\`, then \`dreamcontext
