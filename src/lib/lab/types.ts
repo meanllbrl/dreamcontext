@@ -674,10 +674,13 @@ export interface MatrixCacheEntry {
 // --dataset`) its own dimensional dataset. Each dataset carries the SAME
 // grammar as a matrix/v1 set (dims/rows/total) — dataset.ts delegates each
 // one to `parseMatrixSet` (matrix.ts) rather than re-implementing the
-// dimensional contract, so there is one grammar and one cap set for both the
-// singular (matrix/v1, grandfathered) and plural (dataset/v1) shapes.
+// dimensional contract, so there is one grammar for both the singular
+// (matrix/v1, grandfathered) and plural (dataset/v1) shapes. A dataset's caps
+// are looser (up to 8 dims, no per-dim value collapse — see dataset.ts).
 
-/** One named table in a dataset bundle — identical grammar to `MatrixSet`. */
+/** One named table in a dataset bundle — identical grammar to `MatrixSet`,
+ *  but up to 8 dims: dims past the third are summed by the pivot and sliced
+ *  by `lab query --where/--group-by`. */
 export interface Dataset {
   key: string;
   /** Display label (else the key is prettified, same as MatrixDim). */

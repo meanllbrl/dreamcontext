@@ -166,19 +166,33 @@ describe('checkLab — app cache shape', () => {
     expect(results.some((r) => r.status === 'warn' && r.message.includes('empty-bundle') && r.message.includes('not a valid dataset/v1 bundle'))).toBe(true);
   });
 
-  it('WARNS with a cap-violation notice when a dataset dimension re-collapses top-8 + Other', () => {
+  it('WARNS with a cap-violation notice when a stored dataset declares more dims than the cap', () => {
     writeAppInsight('overcap-bundle');
-    // 9 distinct `plan` values — one over MAX_MATRIX_DIM_VALUES (8), so
-    // re-parsing collapses the tail into "Other" and reports the notice.
-    const rows = Array.from({ length: 9 }, (_, i) => ({ d: { plan: `plan-${i}` }, v: i }));
-    const bundle: DatasetBundle = { kind: 'dataset/v1', datasets: [{ key: 'usage', dims: [{ key: 'plan' }], rows }] };
+    // 9 dims — one over MAX_DATASET_DIMS (8), so re-parsing drops the last
+    // and reports the notice.
+    const keys = Array.from({ length: 9 }, (_, i) => `k${i}`);
+    const rows = [{ d: Object.fromEntries(keys.map((k) => [k, 'a'])), v: 1 }];
+    const bundle: DatasetBundle = { kind: 'dataset/v1', datasets: [{ key: 'usage', dims: keys.map((key) => ({ key })), rows }] };
     writeCache(root, 'overcap-bundle', {
       slug: 'overcap-bundle', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: 'daily',
       unit: null, series: [], latest: null, error: null, errorAt: null, scriptHash: null,
       datasets: { bundle, notices: [], range: { fromISO: '2026-02-01', toISO: '2026-02-08' } },
     });
     const results = checkLab(root);
-    expect(results.some((r) => r.status === 'warn' && r.message.includes('dataset cache violates a cap') && r.message.includes('collapsed'))).toBe(true);
+    expect(results.some((r) => r.status === 'warn' && r.message.includes('dataset cache violates a cap') && r.message.includes('kept the first 8'))).toBe(true);
+  });
+
+  it('does not warn on a dataset dim with many values (datasets keep every value)', () => {
+    writeAppInsight('many-values');
+    const rows = Array.from({ length: 28 }, (_, i) => ({ d: { day: `2026-02-${String(i + 1).padStart(2, '0')}` }, v: i }));
+    const bundle: DatasetBundle = { kind: 'dataset/v1', datasets: [{ key: 'daily', dims: [{ key: 'day' }], rows }] };
+    writeCache(root, 'many-values', {
+      slug: 'many-values', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: 'daily',
+      unit: null, series: [], latest: null, error: null, errorAt: null, scriptHash: null,
+      datasets: { bundle, notices: [], range: { fromISO: '2026-02-01', toISO: '2026-02-28' } },
+    });
+    const results = checkLab(root);
+    expect(results.some((r) => r.message.includes('many-values') && r.message.includes('violates a cap'))).toBe(false);
   });
 
   it('does not warn when the stored dataset bundle re-parses cleanly', () => {

@@ -484,8 +484,10 @@ export default async function fetchApp(ctx) {
       datasets: [
         {
           key: 'breakdown',
-          // 1-3 dimensions, same grammar as matrix/v1: dims[0] = pivot rows,
-          // dims[1] = columns, dims[2] = filter chips.
+          // 1-8 dimensions, same grammar as matrix/v1: dims[0] = pivot rows,
+          // dims[1] = columns, dims[2] = filter chips; any further dims are
+          // summed in the pivot and sliced with lab query --where/--group-by.
+          // Every value is kept (a 28-day day dim stays 28 days).
           dims: [
             { key: 'funnel', label: 'Funnel' },
             { key: 'language', label: 'Language' },

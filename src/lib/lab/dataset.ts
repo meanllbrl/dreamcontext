@@ -7,7 +7,7 @@ import {
   type MatrixRow,
   type Series,
 } from './types.js';
-import { MATRIX_OTHER_VALUE, MATRIX_SET_KIND, MAX_MATRIX_BYTES, matrixLatest, matrixToSeries, parseMatrixSet } from './matrix.js';
+import { MATRIX_OTHER_VALUE, MATRIX_SET_KIND, matrixLatest, matrixToSeries, parseMatrixSet, type MatrixCaps } from './matrix.js';
 import { parseFunnelSet, type ParsedFunnelSet } from './funnel.js';
 
 /**
@@ -19,16 +19,18 @@ import { parseFunnelSet, type ParsedFunnelSet } from './funnel.js';
  * Each dataset carries the SAME grammar as a matrix/v1 set (dims/rows/total)
  * — `parseDataset` DELEGATES each one to `parseMatrixSet` (matrix.ts) rather
  * than re-implementing the dimensional contract, so there is exactly one
- * dimensional grammar and one cap set behind both the singular
- * (matrix/v1, grandfathered) and plural (dataset/v1) authoring shapes.
+ * dimensional grammar behind both the singular (matrix/v1, grandfathered)
+ * and plural (dataset/v1) authoring shapes. Only the caps differ.
  *
- * BYTE BUDGET (deliberate, not a copy-paste bug): the whole bundle reuses
- * `MAX_MATRIX_BYTES` (200_000) as its OWN cap, on top of each dataset being
- * separately capped at that same figure inside `parseMatrixSet`. The
- * per-dataset cap stops one runaway dataset; the bundle cap is the TOTAL
- * response budget — reusing the single-set figure means an app of
- * `MAX_DATASETS` datasets costs a reader no more bytes than one old
- * matrix/v1 insight did, instead of multiplying the budget by 12.
+ * CAPS (deliberately looser than matrix/v1's, owner 2026-10-15): a dataset
+ * is the QUERYABLE numbers (`lab query`, `lab.data()`), so it is stored
+ * honestly and folded at DRAW time (a block's `topN`, the pivot's sums), not
+ * at write time. matrix/v1's ≤3 dims and top-8 values per dim made a daily
+ * table impossible: a 28-day `day` dim kept 8 days + "Other". So a dataset
+ * takes up to 8 dims (the funnel contract's figure), no per-dim value
+ * collapse, and a row count bounded by bytes. The byte cap is ONE total
+ * budget for the whole bundle (each dataset is also capped at it alone, which
+ * only stops one runaway table).
  *
  * Everything here is pure — no fs, no fetch, no DOM — so the CLI, the sync
  * engine, the routes, and tests all share one implementation. Mirrors
@@ -38,6 +40,21 @@ import { parseFunnelSet, type ParsedFunnelSet } from './funnel.js';
 export const DATASET_BUNDLE_KIND = 'dataset/v1';
 
 export const MAX_DATASETS = 12;
+/** Dims per dataset — same figure as the funnel contract's MAX_DIMENSIONS. */
+export const MAX_DATASET_DIMS = 8;
+/** Row safety cap per dataset; the byte cap below is what binds in practice
+ *  (~3,000 six-dim rows fit in 400 KB). The tail merges into one all-Other row. */
+export const MAX_DATASET_ROWS = 10_000;
+/** Byte cap on the whole stored bundle (the funnel snapshot's figure). */
+export const MAX_DATASET_BYTES = 400_000;
+
+const DATASET_CAPS: MatrixCaps = {
+  maxDims: MAX_DATASET_DIMS,
+  maxDimValues: null,
+  maxRows: MAX_DATASET_ROWS,
+  maxBytes: MAX_DATASET_BYTES,
+};
+
 /** Bounded per-sync snapshot trail — count cap AND byte cap enforced TOGETHER
  *  (the same 2026-07-06 lesson matrixHistory carries: a count cap alone is
  *  not a size cap). */
@@ -78,7 +95,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * The ingestion caps (parseMatrixSet: top values per dim, then the row tail)
+ * The ingestion cap (parseMatrixSet's row tail — datasets keep every dim value)
  * fold source rows into `Other` rows but keep no count. Recount them from the
  * raw rows and stamp each folding row with `other: <distinct source rows it
  * holds>`, the same marker frameOps' `topN` sets, so every consumer reads an
@@ -137,7 +154,7 @@ function parseDataset(raw: unknown, index: number, notices: string[]): Dataset {
       rows: raw.rows,
       total: raw.total,
       unit: raw.unit,
-    });
+    }, DATASET_CAPS);
   } catch (err) {
     const msg = err instanceof LabError ? err.message : String(err);
     throw new LabError(`Dataset bundle datasets[${index}] ("${key}"): ${msg}`);
@@ -189,8 +206,8 @@ export function parseDatasetBundle(raw: unknown): ParsedDatasetBundle {
     bundle.primary = primary;
   }
 
-  if (JSON.stringify(bundle).length > MAX_MATRIX_BYTES) {
-    throw new LabError(`Dataset payload exceeds the ${MAX_MATRIX_BYTES}-byte cap even after per-dataset collapse — return fewer datasets/rows.`);
+  if (JSON.stringify(bundle).length > MAX_DATASET_BYTES) {
+    throw new LabError(`Dataset payload exceeds the ${MAX_DATASET_BYTES}-byte cap — return fewer datasets/rows (pre-aggregate, or drop a dim the pages never read).`);
   }
 
   if (raw.funnel !== undefined) {

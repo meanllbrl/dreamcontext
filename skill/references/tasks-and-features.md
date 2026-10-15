@@ -332,7 +332,7 @@ This scaffolds `lab/insights/<slug>.md` (with the `range` tweak pre-declared, sa
   "primary": "breakdown",                // the key lab.data()/lab query resolve to with no key given
   "datasets": [{
     "key": "breakdown",
-    "dims": [                            // 1-3 dims — SAME grammar as matrix/v1: [0]=rows, [1]=cols, [2]=filter chips
+    "dims": [                            // 1-8 dims — SAME grammar as matrix/v1: [0]=rows, [1]=cols, [2]=filter chips, the rest summed/queryable
       { "key": "funnel", "label": "Funnel" },
       { "key": "language" }
     ],
@@ -342,7 +342,7 @@ This scaffolds `lab/insights/<slug>.md` (with the `range` tweak pre-declared, sa
 }
 ```
 
-An app can carry several named datasets (≤12), one per page or shared — each validated by the exact same dimensional grammar and caps `matrix/v1` uses (per-dim values beyond top-8 collapse to "Other", ≤400 rows per dataset, notices are loud never silent). **Never bake dimension values into series names** — the anti-pattern this whole lineage (matrix/v1 → dataset/v1) exists to kill.
+An app can carry several named datasets (≤12), one per page or shared — each validated by the same dimensional grammar `matrix/v1` uses, with looser caps because `data` is the queryable numbers: **up to 8 dims per dataset, every dim value kept** (a 28-day `day` dim stays 28 days; fold at draw time with a block's `topN`), ≤10,000 rows per dataset, and a **400 KB** byte cap on the whole bundle (about 3,000 six-dim rows) — over it the sync is a loud reject, so pre-aggregate or drop a dim no page reads. One table with all the dims a question needs (`day, product, source, country, campaign, plan`) beats several 3-dim tables: `lab query --where/--group-by` slices any combination, separate tables cannot be joined. Notices are loud, never silent. **Never bake dimension values into series names** — the anti-pattern this whole lineage (matrix/v1 → dataset/v1) exists to kill.
 
 **Interactivity already works — it always has.** Every `app/v1` (and `html/v1`) page is drawn in a network-less sandboxed iframe (`sandbox="allow-scripts"`, no `allow-same-origin`, srcdoc CSP `default-src 'none'`), and an inline `<script>` tag inside that html **runs**. This has been true since the very first `html/v1` card shipped; it was never written down, so nobody built on it. Write real `<script>` — buttons, `fetch`-free client-side computation, DOM updates — against the page's own data. What the sandbox forbids is reaching the network (fetch/XHR/beacon/remote image all die silently) or the parent page; it does not forbid the page from being alive.
 

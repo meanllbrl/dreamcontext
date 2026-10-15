@@ -29,6 +29,9 @@ import {
 import {
   DATASET_BUNDLE_KIND,
   MAX_DATASETS,
+  MAX_DATASET_BYTES,
+  MAX_DATASET_DIMS,
+  MAX_DATASET_ROWS,
   appendDatasetHistory,
   datasetLatest,
   datasetToSeries,
@@ -38,7 +41,6 @@ import {
   seriesToDatasetBundle,
   type ParsedDatasetBundle,
 } from '../../src/lib/lab/dataset.js';
-import { MAX_MATRIX_BYTES } from '../../src/lib/lab/matrix.js';
 import { createInsight, readCache } from '../../src/lib/lab/store.js';
 import { syncInsight } from '../../src/lib/lab/sync.js';
 
@@ -223,52 +225,46 @@ describe('parseDatasetBundle', () => {
     expect(bundle.datasets[1].key).toBe('countries');
   });
 
-  it('propagates parseMatrixSet caps as dataset-prefixed notices', () => {
-    const { notices } = parseDatasetBundle({
+  it('keeps every dim value: a 28-day day dim over six dims is stored whole, no notice', () => {
+    const days = Array.from({ length: 28 }, (_, i) => `2026-09-${String(i + 1).padStart(2, '0')}`);
+    const campaigns = Array.from({ length: 12 }, (_, i) => `cmp-${i}`);
+    const rows = days.flatMap((day) => campaigns.map((campaign, i) => ({
+      d: { day, product: i % 2 ? 'iq' : 'kitup', source: i % 3 ? 'meta' : 'tiktok', country: i % 4 ? 'TR' : 'US', campaign, plan: i % 2 ? 'yearly' : 'weekly' },
+      v: i + 1,
+    })));
+    const dims = ['day', 'product', 'source', 'country', 'campaign', 'plan'].map((key) => ({ key }));
+    const { bundle, notices } = parseDatasetBundle({ kind: 'dataset/v1', datasets: [{ key: 'cube', dims, rows }] });
+    expect(notices).toEqual([]);
+    const ds = bundle.datasets[0];
+    expect(ds.dims.map((d) => d.key)).toEqual(dims.map((d) => d.key));
+    expect(ds.rows).toHaveLength(28 * 12);
+    expect(new Set(ds.rows.map((r) => r.d.day)).size).toBe(28);
+    expect(new Set(ds.rows.map((r) => r.d.campaign)).size).toBe(12);
+    expect(ds.rows.some((r) => Object.values(r.d).includes('Other'))).toBe(false);
+  });
+
+  it(`keeps the first ${MAX_DATASET_DIMS} dims and says so`, () => {
+    const keys = Array.from({ length: MAX_DATASET_DIMS + 1 }, (_, i) => `k${i}`);
+    const { bundle, notices } = parseDatasetBundle({
       kind: 'dataset/v1',
-      datasets: [{
-        key: 'wide',
-        dims: [{ key: 'x' }],
-        rows: [
-          { d: { x: 'a' }, v: 9 }, { d: { x: 'b' }, v: 8 }, { d: { x: 'c' }, v: 7 },
-          { d: { x: 'd' }, v: 6 }, { d: { x: 'e' }, v: 5 }, { d: { x: 'f' }, v: 4 },
-          { d: { x: 'g' }, v: 3 }, { d: { x: 'h' }, v: 2 }, { d: { x: 'i' }, v: 1 },
-        ],
-      }],
+      datasets: [{ key: 'wide', dims: keys, rows: [{ d: Object.fromEntries(keys.map((k) => [k, 'a'])), v: 1 }] }],
     });
+    expect(bundle.datasets[0].dims).toHaveLength(MAX_DATASET_DIMS);
+    expect(notices).toEqual([`dataset "wide": ${MAX_DATASET_DIMS + 1} dimensions declared — kept the first ${MAX_DATASET_DIMS}.`]);
+  });
+
+  it('the row cap folds the tail into an Other row stamped with how many source rows it holds', () => {
+    const rows = Array.from({ length: MAX_DATASET_ROWS + 1 }, (_, i) => ({ d: { x: `r${i}` }, v: MAX_DATASET_ROWS + 1 - i }));
+    const { bundle, notices } = parseDatasetBundle({ kind: 'dataset/v1', datasets: [{ key: 'long', dims: [{ key: 'x' }], rows }] });
     expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatch(/^dataset "wide": dimension "x" had 9 values/);
+    expect(notices[0]).toMatch(new RegExp(`^dataset "long": ${MAX_DATASET_ROWS + 1} rows — kept top ${MAX_DATASET_ROWS - 1}`));
+    const out = bundle.datasets[0].rows as Array<{ d: Record<string, string>; v: number | null; other?: number }>;
+    expect(out).toHaveLength(MAX_DATASET_ROWS);
+    expect(out.find((r) => r.d.x === 'Other')).toMatchObject({ v: 3, other: 2 });
+    expect(out.filter((r) => r.other !== undefined)).toHaveLength(1);
   });
 
-  it('an ingestion cap stamps its Other row with how many source rows it folds (the topN `other` marker)', () => {
-    const letters = 'abcdefghij'.split('');
-    const { bundle } = parseDatasetBundle({
-      kind: 'dataset/v1',
-      datasets: [{ key: 'wide', dims: [{ key: 'x' }], rows: letters.map((x, i) => ({ d: { x }, v: 10 - i })) }],
-    });
-    const rows = bundle.datasets[0].rows as Array<{ d: Record<string, string>; v: number | null; other?: number }>;
-    expect(rows).toHaveLength(9);
-    const other = rows.find((r) => r.d.x === 'Other');
-    expect(other).toMatchObject({ v: 3, other: 2 });
-    expect(rows.filter((r) => r.other !== undefined)).toHaveLength(1);
-  });
-
-  it('a source row named Other is not a fold; per-dim collapse counts the coordinates each Other row holds', () => {
-    const { bundle } = parseDatasetBundle({
-      kind: 'dataset/v1',
-      datasets: [{
-        key: 'two',
-        dims: [{ key: 'x' }, { key: 'plan' }],
-        rows: [
-          ...'abcdefghi'.split('').map((x, i) => ({ d: { x, plan: 'pro' }, v: 20 - i })),
-          { d: { x: 'i', plan: 'free' }, v: 1 },
-        ],
-      }],
-    });
-    const rows = bundle.datasets[0].rows as Array<{ d: Record<string, string>; other?: number }>;
-    expect(rows.find((r) => r.d.x === 'Other' && r.d.plan === 'pro')?.other).toBe(1);
-    expect(rows.find((r) => r.d.x === 'Other' && r.d.plan === 'free')?.other).toBe(1);
-
+  it('a source row named Other is not a fold', () => {
     const named = parseDatasetBundle({
       kind: 'dataset/v1',
       datasets: [{ key: 'n', dims: [{ key: 'x' }], rows: [{ d: { x: 'a' }, v: 2 }, { d: { x: 'Other' }, v: 1 }] }],
@@ -280,7 +276,7 @@ describe('parseDatasetBundle', () => {
     expect(() => parseDatasetBundle({
       kind: 'dataset/v1',
       datasets: [{ key: 'bad', dims: [], rows: [] }],
-    })).toThrow(/datasets\[0\] \("bad"\): .*1-3/);
+    })).toThrow(new RegExp(`datasets\\[0\\] \\("bad"\\): .*1-${MAX_DATASET_DIMS}`));
   });
 
   it('rejects a payload without the dataset kind', () => {
@@ -325,20 +321,20 @@ describe('parseDatasetBundle', () => {
     })).toThrow(/`primary` \("nope"\) is not one of/);
   });
 
-  it('rejects a bundle over MAX_MATRIX_BYTES even when every individual dataset is under its own cap', () => {
-    // Each dataset alone: 8 distinct rows of one ~19,000-char dim value each
-    // (~152KB) — comfortably under the per-dataset MAX_MATRIX_BYTES (200,000,
+  it('rejects a bundle over MAX_DATASET_BYTES even when every individual dataset is under its own cap', () => {
+    // Each dataset alone: 8 distinct rows of one ~30,000-char dim value each
+    // (~240KB) — comfortably under the per-dataset MAX_DATASET_BYTES (400,000,
     // enforced inside parseMatrixSet). Two of them together exceed the SAME
     // figure reused as the whole-bundle cap.
     const bigDataset = (key: string) => ({
       key,
       dims: [{ key: 'x' }],
-      rows: Array.from({ length: 8 }, (_, i) => ({ d: { x: `${key}-${i}-${'a'.repeat(19000)}` }, v: i })),
+      rows: Array.from({ length: 8 }, (_, i) => ({ d: { x: `${key}-${i}-${'a'.repeat(30000)}` }, v: i })),
     });
     expect(() => parseDatasetBundle({
       kind: 'dataset/v1',
       datasets: [bigDataset('a'), bigDataset('b')],
-    })).toThrow(new RegExp(`exceeds the ${MAX_MATRIX_BYTES}-byte cap`));
+    })).toThrow(new RegExp(`exceeds the ${MAX_DATASET_BYTES}-byte cap`));
   });
 });
 

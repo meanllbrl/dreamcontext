@@ -44,6 +44,25 @@ export const MATRIX_OTHER_VALUE = 'Other';
 /** Rows with n below this render de-emphasized ("low sample") — funnel F4 idiom. */
 export const MATRIX_LOW_SAMPLE_THRESHOLD = 30;
 
+/** The caps one parse applies. `matrix/v1` uses {@link MATRIX_CAPS}; a
+ *  `dataset/v1` table passes its own (dataset.ts) — same grammar, looser caps,
+ *  because a dataset is the QUERYABLE numbers and folds at draw time, not here. */
+export interface MatrixCaps {
+  maxDims: number;
+  /** Per dimension: values beyond the top-N collapse into "Other". null = no
+   *  write-time collapse (the renderer folds, e.g. a block's `topN`). */
+  maxDimValues: number | null;
+  maxRows: number;
+  maxBytes: number;
+}
+
+export const MATRIX_CAPS: MatrixCaps = {
+  maxDims: MAX_MATRIX_DIMS,
+  maxDimValues: MAX_MATRIX_DIM_VALUES,
+  maxRows: MAX_MATRIX_ROWS,
+  maxBytes: MAX_MATRIX_BYTES,
+};
+
 export interface ParsedMatrixSet {
   set: MatrixSet;
   /** Human-readable cap/coercion notices — surface them, never swallow. */
@@ -135,33 +154,35 @@ function mergeRows(rows: MatrixRow[]): MatrixRow[] {
 
 /** Collapse over-cap dimension values to "Other", then the over-cap row tail
  *  into one all-Other row — same shape capSegments has in funnel.ts. */
-function capRows(rows: MatrixRow[], dims: MatrixDim[], notices: string[]): MatrixRow[] {
+function capRows(rows: MatrixRow[], dims: MatrixDim[], notices: string[], caps: MatrixCaps): MatrixRow[] {
   let out = rows;
+  const maxValues = caps.maxDimValues;
 
   for (const dim of dims) {
+    if (maxValues === null) break;
     const valueWeight = new Map<string, number>();
     for (const row of out) {
       const v = row.d[dim.key];
       valueWeight.set(v, (valueWeight.get(v) ?? 0) + (row.v ?? 0));
     }
-    if (valueWeight.size <= MAX_MATRIX_DIM_VALUES) continue;
+    if (valueWeight.size <= maxValues) continue;
     const kept = new Set(
-      [...valueWeight.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_MATRIX_DIM_VALUES).map(([v]) => v),
+      [...valueWeight.entries()].sort((a, b) => b[1] - a[1]).slice(0, maxValues).map(([v]) => v),
     );
     const collapsed = valueWeight.size - kept.size;
     out = mergeRows(out.map((row) =>
       kept.has(row.d[dim.key]) ? row : { ...row, d: { ...row.d, [dim.key]: MATRIX_OTHER_VALUE } },
     ));
-    notices.push(`dimension "${dim.key}" had ${valueWeight.size} values — kept top ${MAX_MATRIX_DIM_VALUES}, collapsed ${collapsed} into "${MATRIX_OTHER_VALUE}".`);
+    notices.push(`dimension "${dim.key}" had ${valueWeight.size} values — kept top ${maxValues}, collapsed ${collapsed} into "${MATRIX_OTHER_VALUE}".`);
   }
 
-  if (out.length > MAX_MATRIX_ROWS) {
+  if (out.length > caps.maxRows) {
     const sorted = [...out].sort((a, b) => (b.v ?? 0) - (a.v ?? 0));
-    const kept = sorted.slice(0, MAX_MATRIX_ROWS - 1);
-    const tail = sorted.slice(MAX_MATRIX_ROWS - 1);
+    const kept = sorted.slice(0, caps.maxRows - 1);
+    const tail = sorted.slice(caps.maxRows - 1);
     const otherDims: Record<string, string> = {};
     for (const dim of dims) otherDims[dim.key] = MATRIX_OTHER_VALUE;
-    notices.push(`${out.length} rows — kept top ${MAX_MATRIX_ROWS - 1}, merged ${tail.length} into "${MATRIX_OTHER_VALUE}".`);
+    notices.push(`${out.length} rows — kept top ${caps.maxRows - 1}, merged ${tail.length} into "${MATRIX_OTHER_VALUE}".`);
     // One final merge so a kept all-Other row and the merged tail can't coexist.
     out = mergeRows([...kept, ...tail.map((row) => ({ ...row, d: otherDims }))]);
   }
@@ -175,7 +196,7 @@ function capRows(rows: MatrixRow[], dims: MatrixDim[], notices: string[]): Matri
  * or irrecoverably over the byte cap); individual malformed rows degrade to
  * notices, mirroring the store's lenient-read philosophy.
  */
-export function parseMatrixSet(raw: unknown): ParsedMatrixSet {
+export function parseMatrixSet(raw: unknown, caps: MatrixCaps = MATRIX_CAPS): ParsedMatrixSet {
   if (!isRecord(raw) || raw.kind !== MATRIX_SET_KIND) {
     throw new LabError(`Matrix payload must be an object with kind "${MATRIX_SET_KIND}".`);
   }
@@ -196,11 +217,11 @@ export function parseMatrixSet(raw: unknown): ParsedMatrixSet {
     }
   }
   if (dims.length === 0) {
-    throw new LabError('Matrix payload must declare 1-3 `dims` (e.g. [{ key: "funnel" }, { key: "language" }]).');
+    throw new LabError(`Matrix payload must declare 1-${caps.maxDims} \`dims\` (e.g. [{ key: "funnel" }, { key: "language" }]).`);
   }
-  if (dims.length > MAX_MATRIX_DIMS) {
-    notices.push(`${dims.length} dimensions declared — kept the first ${MAX_MATRIX_DIMS}.`);
-    dims.length = MAX_MATRIX_DIMS;
+  if (dims.length > caps.maxDims) {
+    notices.push(`${dims.length} dimensions declared — kept the first ${caps.maxDims}.`);
+    dims.length = caps.maxDims;
   }
 
   const rows: MatrixRow[] = [];
@@ -213,13 +234,13 @@ export function parseMatrixSet(raw: unknown): ParsedMatrixSet {
     notices.push(`${rows.length - merged.length} row(s) shared identical dim coordinates — merged (values summed).`);
   }
 
-  const set: MatrixSet = { kind: MATRIX_SET_KIND, dims, rows: capRows(merged, dims, notices) };
+  const set: MatrixSet = { kind: MATRIX_SET_KIND, dims, rows: capRows(merged, dims, notices, caps) };
   const total = parseTotal(raw.total);
   if (total) set.total = total;
   if (typeof raw.unit === 'string' && raw.unit.trim()) set.unit = raw.unit.trim();
 
-  if (JSON.stringify(set).length > MAX_MATRIX_BYTES) {
-    throw new LabError(`Matrix payload exceeds the ${MAX_MATRIX_BYTES}-byte cap even after value collapse — return fewer rows/dims (Lab stores insights, not raw dumps).`);
+  if (JSON.stringify(set).length > caps.maxBytes) {
+    throw new LabError(`Matrix payload exceeds the ${caps.maxBytes}-byte cap even after value collapse — return fewer rows/dims (Lab stores insights, not raw dumps).`);
   }
 
   return { set, notices };
