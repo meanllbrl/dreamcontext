@@ -1,0 +1,64 @@
+{
+  "hero": {
+    "eyebrow": "v0.32.0  ·  15 October 2026",
+    "headline": "Install once, and macOS remembers",
+    "sub": "The desktop app is now signed with an Apple Developer ID and notarized by Apple. It installs from one DMG, opens without a warning, keeps the permissions you gave it, and updates itself.",
+    "shot": {
+      "src": "shots/v0-32-0/dmg.png",
+      "alt": "The dreamcontext-beta disk image open in Finder: the dreamcontext-beta.app icon on the left and the Applications folder on the right, ready to drag across.",
+      "caption": "One DMG. Drag the app into Applications.",
+      "frame": "plain"
+    }
+  },
+  "blocks": [
+    {
+      "kind": "points",
+      "title": "What changes on your Mac",
+      "items": [
+        { "title": "Permissions stay given", "text": "The microphone, Photos or automation access you allow once survives every update. The app no longer asks again each day." },
+        { "title": "No Gatekeeper warning", "text": "Apple has checked the app, so a copy downloaded in the browser opens like any other Mac app." },
+        { "title": "One link, always current", "text": "releases/latest/download/dreamcontext-beta_aarch64.dmg always points at the newest release. Send it to a teammate and they are set up." }
+      ]
+    },
+    {
+      "kind": "points",
+      "title": "The app updates itself",
+      "items": [
+        { "title": "It checks on its own", "text": "A minute after launch, then every six hours." },
+        { "title": "It never interrupts you", "text": "The new version downloads and installs in the background. The app does not restart on its own; a notification tells you a restart picks it up." },
+        { "title": "The CLI stays out of the way", "text": "The CLI's background update skips a release that updates itself, and dreamcontext app update never re-signs it." }
+      ]
+    },
+    {
+      "kind": "terminal",
+      "title": "Check it yourself",
+      "lines": [
+        "$ spctl -a -vv /Applications/dreamcontext-beta.app",
+        "/Applications/dreamcontext-beta.app: accepted",
+        "source=Notarized Developer ID",
+        "origin=Developer ID Application: VANGO YAZILIM TEKNOLOJI TICARET VE SANAYI LIMITED SIRKETI (PP8PX5BB5P)",
+        "$ dreamcontext app status",
+        "  signing:   Developer ID (PP8PX5BB5P) — notarized release, updates itself"
+      ]
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Every funnel in one table",
+      "body": "The funnel explorer gains a Table tab: each funnel is one row with its spend, users, purchases and rates, the change against the previous window, and low-sample and benchmark marks. Click a row and the whole card switches to that funnel.",
+      "shot": {
+        "src": "shots/v0-32-0/funnel-table.png",
+        "alt": "The funnel explorer's Table tab in a demo project: three funnels, Quiz checkout v3, Trial start and Gift card, one per row, with spend, users, purchases, revenue, second page rate, lead rate, finish rate and lead to purchase, each with a green or red change chip. A Search funnels box, a Columns 10 button and Copy MD sit above the table.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "note",
+      "text": "The switch from the old signature happens once. Install 0.32.0 from the DMG (or let the CLI update you to it) and macOS asks for each permission one last time, because to macOS the new signature is a new app. After that it stops asking."
+    }
+  ],
+  "closer": {
+    "title": "Get the app",
+    "body": "Download dreamcontext-beta_aarch64.dmg from the latest GitHub release, drag it into Applications, and it keeps itself current from there."
+  }
+}
