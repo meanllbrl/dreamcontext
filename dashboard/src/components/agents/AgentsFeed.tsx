@@ -1,5 +1,6 @@
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type AnimationEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { AgentAvatar } from './AgentAvatar';
 import { agentFaceOf } from './AgentMemberCard';
@@ -8,6 +9,9 @@ import { AgentThreadPanel } from './AgentThreadPanel';
 import { AgentsFeedFilters, type FeedChip, type FeedFilter } from './AgentsFeedFilters';
 import { agentMention, useAgentsChannelHost } from './agentsChannelHost';
 import { Composer } from '../sleepy/chat/Composer';
+import {
+  isAtBottom, keyIntent, nextStickToBottom, touchIntent, wheelIntent, type ScrollIntent,
+} from '../sleepy/chat/chatEntities';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { readAgentSettings } from '../../lib/agentSettings';
@@ -84,10 +88,9 @@ function dayKey(iso: string): string {
 /** The id the open thread panel wears, and the one its thread line points at (`aria-controls`). */
 const THREAD_PANEL_ID = 'agents-thread-panel';
 
-/** How close to the bottom (px) still counts as "at the bottom": a reader this near the newest
- *  message is following the channel, so what arrives is scrolled into view rather than counted
- *  on the new-messages pill. */
-const NEAR_BOTTOM_PX = 48;
+/** How long an UPWARD gesture keeps the right to unpin the channel: the frame or two between the
+ *  gesture and the scroll it produces, plus the gaps inside trackpad momentum. ChatPane's window. */
+const GESTURE_MS = 500;
 /** The channel's width (px) below which a thread OVERLAYS it, as Chat's SlideOver does,
  *  instead of splitting the row with it: under this, a 360px thread leaves the feed too
  *  narrow to read. Measured on the `.agents-feed` row, not the window. */
@@ -168,25 +171,90 @@ export function AgentsFeed({
    * and counted on the "N new messages" pill otherwise. It used to scroll to the bottom on every
    * poll while any agent ran, which yanked a reader out of scrollback every two seconds.
    *
-   * `atBottomRef` is a ref, not state: it is read inside layout effects and written on every
+   * ONLY THE READER UNPINS IT, by moving UP (`nextStickToBottom`, the rule ChatPane follows). A
+   * scroll event alone cannot say who moved the view, and this channel moves under the reader
+   * all the time: every posted board is a lazy `<img>` with no reserved height, and when one
+   * loads above the fold, WebKit's own scroll anchoring shifts `scrollTop` to hold the row in
+   * view, so the event arrives with the bottom 300px away. Reading position off that event
+   * unpinned the channel on open; it landed a board short of its newest message and stayed
+   * there, and a downward scroll that reached the bottom flapped between pinned and not until
+   * the boards above it stopped loading (owner recording 10-15, reproduced in WebKit: a gap of
+   * 78, then 409, then 740px, with no input at all).
+   *
+   * `stickRef` is a ref, not state: it is read inside layout effects and written on every
    * scroll event, and nothing renders from it directly (the pill renders from `unseen`).
    */
-  const atBottomRef = useRef(true);
+  const stickRef = useRef(true);
+  /** `scrollTop` at the last scroll event, and when the reader last asked to go UP: together the
+   *  direction signal `nextStickToBottom` reads. */
+  const prevTopRef = useRef(0);
+  const upIntentAtRef = useRef(-Infinity);
+  /** A scrollbar drag holds the gesture open for the whole press. */
+  const draggingRef = useRef(false);
+  const touchYRef = useRef(0);
+  const repinFrameRef = useRef(0);
   const [unseen, setUnseen] = useState(0);
+
+  /** Pin to the newest end, and look again a frame later: "scrollTop = scrollHeight" is only true
+   *  the instant it is written, and the composer growing a line or the floater clearance landing
+   *  in the padding moves the maximum without a scroll event to notice it by. */
+  const pin = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || el.clientHeight === 0) return;
+    el.scrollTop = el.scrollHeight;
+    prevTopRef.current = el.scrollTop;
+    if (repinFrameRef.current) return;
+    repinFrameRef.current = requestAnimationFrame(() => {
+      repinFrameRef.current = 0;
+      const now = scrollRef.current;
+      if (!now || !stickRef.current || now.clientHeight === 0 || isAtBottom(now)) return;
+      now.scrollTop = now.scrollHeight;
+      prevTopRef.current = now.scrollTop;
+    });
+  }, []);
+  useEffect(() => () => cancelAnimationFrame(repinFrameRef.current), []);
+
   const toBottom = useCallback((smooth: boolean) => {
     const el = scrollRef.current;
-    atBottomRef.current = true;
+    stickRef.current = true;
+    upIntentAtRef.current = -Infinity;
     setUnseen(0);
     if (!el) return;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduce ? 'smooth' : 'auto' });
+    if (smooth && !reduce) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    else pin();
+  }, [pin]);
+
+  const markIntent = useCallback((intent: ScrollIntent) => {
+    if (intent === 'up') upIntentAtRef.current = performance.now();
+    else if (intent === 'down') upIntentAtRef.current = -Infinity;
   }, []);
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const at = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
-    atBottomRef.current = at;
-    if (at) setUnseen(0);
+    const next = nextStickToBottom(stickRef.current, {
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      prevScrollTop: prevTopRef.current,
+      userDriven: draggingRef.current || performance.now() - upIntentAtRef.current < GESTURE_MS,
+    });
+    prevTopRef.current = el.scrollTop;
+    stickRef.current = next;
+    if (next) setUnseen(0);
+  }, []);
+  /** Pressing the scrollbar gutter is a scroll gesture; pressing a card is not. */
+  const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (e.clientX - el.getBoundingClientRect().left <= el.clientWidth) return;
+    draggingRef.current = true;
+    const release = () => {
+      draggingRef.current = false;
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+    };
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
   }, []);
 
   // Land at the bottom on the first load and on a filter change: a channel is read from its
@@ -198,9 +266,8 @@ export function AgentsFeed({
   // Before paint, so a row that arrives or grows while the reader is at the bottom never shows
   // for a frame below the fold.
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [visible]);
+    if (stickRef.current) pin();
+  }, [visible, pin]);
 
   // ...and when a row grows AFTER it rendered: a picture decoding, a card or a rendered block
   // settling, the floater clearance landing in the scroller's padding. None of those changes
@@ -211,12 +278,12 @@ export function AgentsFeed({
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+      if (stickRef.current) pin();
     });
     ro.observe(el);
     for (const row of el.children) ro.observe(row);
     return () => ro.disconnect();
-  }, [visible]);
+  }, [visible, pin]);
 
   /**
    * WHICH ROWS ARRIVED. The first read is the channel as it was when the page opened, so none of
@@ -238,7 +305,7 @@ export function AgentsFeed({
     for (const m of fresh) seen.add(m.key);
     const shown = fresh.filter((m) => matchesFilter(m, filter)).map((m) => m.key);
     setArrived((prev) => (shown.length > 0 ? new Set(shown) : prev.size > 0 ? NO_ARRIVALS : prev));
-    if (shown.length > 0 && !atBottomRef.current) setUnseen((n) => n + shown.length);
+    if (shown.length > 0 && !stickRef.current) setUnseen((n) => n + shown.length);
     // `filter` is read for the answer it gives at the moment a poll lands, not a trigger: a
     // filter change is not an arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -495,7 +562,20 @@ export function AgentsFeed({
           <AgentsFeedFilters chips={chips} filter={filter} onSelect={setFilter} />
         )}
 
-        <div className="agents-feed-scroll" ref={scrollRef} onScroll={onScroll}>
+        <div
+          className="agents-feed-scroll"
+          ref={scrollRef}
+          onScroll={onScroll}
+          onWheel={(e) => markIntent(wheelIntent(e.deltaY))}
+          onTouchStart={(e) => { touchYRef.current = e.touches[0]?.clientY ?? 0; }}
+          onTouchMove={(e) => {
+            const y = e.touches[0]?.clientY ?? touchYRef.current;
+            markIntent(touchIntent(y - touchYRef.current));
+            touchYRef.current = y;
+          }}
+          onKeyDown={(e) => markIntent(keyIntent(e.key))}
+          onPointerDown={onPointerDown}
+        >
           {isLoading && messages.length === 0 && <p className="agents-feed-note">Reading the channel…</p>}
 
           {!isLoading && messages.length === 0 && (
