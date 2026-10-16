@@ -56,3 +56,6 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* Phone: the off-state explainer starts at the top instead of floating mid-screen. */
+body[data-phone] .hyp-off { justify-content: flex-start; min-height: 0; padding: var(--space-4) var(--space-3); }

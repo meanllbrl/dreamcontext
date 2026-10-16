@@ -62,7 +62,8 @@ export class Router {
     return this.routes.map((r) => ({ method: r.method, path: r.path }));
   }
 
-  match(method: string, url: string): { handler: RouteHandler; params: Record<string, string> } | null {
+  /** The first route matching `method url` (first match wins), with its registered pattern. */
+  match(method: string, url: string): { handler: RouteHandler; params: Record<string, string>; method: string; path: string } | null {
     for (const route of this.routes) {
       if (route.method !== method.toUpperCase()) continue;
       const match = url.match(route.pattern);
@@ -71,7 +72,7 @@ export class Router {
         route.paramNames.forEach((name, i) => {
           params[name] = decodeURIComponent(match[i + 1]);
         });
-        return { handler: route.handler, params };
+        return { handler: route.handler, params, method: route.method, path: route.path };
       }
     }
     return null;

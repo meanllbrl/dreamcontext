@@ -304,3 +304,9 @@
   color: var(--color-text-secondary);
   padding: var(--space-1) 0;
 }
+
+/* Phone: one column that never grows past the screen (a grid item keeps its content's
+   width otherwise, and one long line pushed a card to 509px). */
+body[data-phone] .packs-grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+body[data-phone] .packs-card { min-width: 0; overflow-wrap: anywhere; }
+body[data-phone] .packs-section-title { margin-bottom: var(--space-2); }

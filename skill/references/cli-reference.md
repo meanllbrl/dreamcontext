@@ -523,7 +523,7 @@ Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `
 
 ## Window control — a chat drives its own window
 
-`dreamcontext window …` lets the agent in a **dreamcontext Chat tab** drive the chat surface it is drawn in: one project, one window, the one showing that chat. Every project chat spawn carries `DREAMCONTEXT_WINDOW_URL` + `DREAMCONTEXT_WINDOW_TOKEN`; the token names that chat's own socket, so a verb can only reach its window. From a terminal, `claude -p`, a whiteboard card or the Assistant it refuses (`not_a_chat`); with no window showing the chat it answers `no_window`. Desktop app and local dashboard only (the hands-free cloud does not serve it). Tabs are addressed by the `tab` id `window state` lists (the chat's conversation id); no `--tab` means the calling chat. Act on the user's request, never unprompted.
+`dreamcontext window …` lets the agent in a **dreamcontext Chat tab** drive the chat surface it is drawn in: one project, one window, the one showing that chat. Every project chat spawn carries `DREAMCONTEXT_WINDOW_URL` + `DREAMCONTEXT_WINDOW_TOKEN`; the token names that chat's own socket, so a verb can only reach its window. From a terminal, `claude -p`, a whiteboard card or the Assistant it refuses (`not_a_chat`); with no window showing the chat it answers `no_window`. Desktop app and local dashboard only (the hands-free phone does not serve it). Tabs are addressed by the `tab` id `window state` lists (the chat's conversation id); no `--tab` means the calling chat. Act on the user's request, never unprompted.
 
 | Command | What it does |
 |---|---|

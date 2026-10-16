@@ -5,13 +5,12 @@ import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isDesktop } from '../desktop.js';
-import { isCloud } from '../cloud-mode.js';
 import { listVaults } from '../../lib/vaults.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { CHAT_MODES, DEFAULT_CHAT_MODE, type ChatMode } from '../chat-modes.js';
 import { assistantExists, assistantProjectRoot, isAssistantVault } from '../../lib/assistant/home.js';
-import { isPhoneSocket } from '../phone-origin.js';
+import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
 
 /**
  * Shared trust-boundary primitives for the two loopback `claude`-spawning surfaces —
@@ -54,11 +53,11 @@ export function isLoopbackHostHeader(req: Pick<IncomingMessage, 'headers'>): boo
 /**
  * Gate for every route that installs software, edits the user's shell profile or signs an
  * account in (`/api/onboarding/fix`, `/fix/cancel`, `/api/agent/install` and its status):
- * never in the hands-free cloud, only in the desktop app, only from this machine, and only
+ * only in the desktop app, only from this machine, and only
  * under a loopback `Host`. Sends the 403 itself; the caller just returns on `false`.
  */
 export function requireLocalDesktop(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!isCloud() && isDesktop() && isLoopback(req) && isLoopbackHostHeader(req)) return true;
+  if (isDesktop() && isLoopback(req) && isLoopbackHostHeader(req)) return true;
   sendError(res, 403, 'forbidden', 'This is only available in the desktop app on this computer.');
   return false;
 }
@@ -74,7 +73,7 @@ export function requireLocalRead(req: IncomingMessage, res: ServerResponse): boo
   const origin = req.headers.origin;
   const crossSite = typeof site === 'string' && site.trim().toLowerCase() === 'cross-site';
   const foreignOrigin = typeof origin === 'string' && origin !== '' && !LOOPBACK_ORIGIN_RE.test(origin.trim());
-  if (!isCloud() && isLoopback(req) && isLoopbackHostHeader(req) && !crossSite && !foreignOrigin) return true;
+  if (isLoopback(req) && isLoopbackHostHeader(req) && !crossSite && !foreignOrigin) return true;
   sendError(res, 403, 'forbidden', 'This is only available on this computer.');
   return false;
 }
@@ -314,7 +313,7 @@ export async function handleAgentPromptToken(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  // The cloud gate already demanded a device session for this route; the desktop keeps its
+  // The phone gate already demanded a device session for this route; the desktop keeps its
   // own posture (loopback, or a token-bearing tailnet peer when remote access is on).
   if (!isAgentHost()) {
     sendError(res, 403, 'desktop_only', 'The embedded agent terminal is only available in the desktop app.');
@@ -341,6 +340,11 @@ export async function handleAgentPromptToken(
   const { vault, prompt } = body;
   if (typeof vault !== 'string' || !vault) {
     sendError(res, 400, 'bad_vault', 'Body must name a vault.');
+    return;
+  }
+  // AC16: the phone opens chats in the chosen projects only.
+  if (isPhoneSocket(req) && !isMacExposed(vault)) {
+    sendError(res, 403, 'phone_unavailable', 'Hands-free does not serve that project.');
     return;
   }
   // Resolve the vault HERE, at mint time, with the same strict resolver the upgrade uses —

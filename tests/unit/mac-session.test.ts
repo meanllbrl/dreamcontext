@@ -50,7 +50,6 @@ function deps(over: Partial<MacSessionDeps> = {}): MacSessionDeps {
     setProbeNonce: () => {},
     setPhoneSource: () => {},
     releasePhoneSessions: () => { events.push('release'); return 1; },
-    cloudTripActive: () => false,
     notify: (t, b) => { notes.push([t, b]); },
     powerRun: powerRun(),
     ensureBinary: async () => join(home, '.dreamcontext', 'bin', 'cloudflared-2026.10.1'),
@@ -105,7 +104,7 @@ describe('start (AC3) and Return (AC10)', () => {
 
   it('start: listener → tunnel → probe → state → power; URL + QR; prior LPM recorded per source', async () => {
     const s = new MacSession(deps());
-    const st = await s.start();
+    const st = await s.start({ vaults: ['proj'] });
     expect(st.phase).toBe('on');
     expect(st.url).toBe('https://quiet-lake-1234.trycloudflare.com');
     expect(origin).toBe('https://quiet-lake-1234.trycloudflare.com');
@@ -120,9 +119,23 @@ describe('start (AC3) and Return (AC10)', () => {
     await s.stop();
   });
 
+  it('AC16: start exposes the chosen projects (status + state for reporting), stop clears them; none chosen is mac_no_project', async () => {
+    let exposed: readonly string[] = [];
+    const s = new MacSession(deps({ setExposedVaults: (n) => { exposed = n; } }));
+    await expect(s.start({ vaults: [] })).rejects.toMatchObject({ code: 'mac_no_project' });
+    expect(s.isOn()).toBe(false);
+    const st = await s.start({ vaults: ['proj', 'other', 'proj'] });
+    expect(st.exposedVaults).toEqual(['proj', 'other']);
+    expect(exposed).toEqual(['proj', 'other']);
+    expect(readMacState(home)!.exposedVaults).toEqual(['proj', 'other']);
+    await s.stop();
+    expect(exposed).toEqual([]);
+    expect(s.status().exposedVaults).toEqual([]);
+  });
+
   it('Return: phone sessions let go BEFORE devices are revoked, tunnel + listener stop, sleep and LPM restored per source, state cleared', async () => {
     const s = new MacSession(deps());
-    await s.start();
+    await s.start({ vaults: ['proj'] });
     const id = auth.store.createDevice('iPhone');
     events = [];
     await s.stop();
@@ -140,7 +153,7 @@ describe('start (AC3) and Return (AC10)', () => {
 
   it('a failed probe rolls everything back: no power change, nothing left running, no state', async () => {
     const s = new MacSession(deps({ probe: async () => false }));
-    await expect(s.start()).rejects.toMatchObject({ code: 'mac_probe_failed' });
+    await expect(s.start({ vaults: ['proj'] })).rejects.toMatchObject({ code: 'mac_probe_failed' });
     expect(events.some((e) => e.includes('disablesleep 1') && !e.includes(' -l '))).toBe(false);
     expect(events).toEqual(expect.arrayContaining(['tunnel:stop', 'listener:stop']));
     expect(existsSync(statePathOf(home))).toBe(false);
@@ -149,24 +162,16 @@ describe('start (AC3) and Return (AC10)', () => {
 
   it('preflight: not set up / sudo missing are refused before anything starts', async () => {
     const fresh = new HandsfreeAuth({ dir: mkdtempSync(join(tmpdir(), 'mac-fresh-')) });
-    await expect(new MacSession(deps({ auth: () => fresh as never })).start()).rejects.toMatchObject({ code: 'mac_not_setup' });
+    await expect(new MacSession(deps({ auth: () => fresh as never })).start({ vaults: ['proj'] })).rejects.toMatchObject({ code: 'mac_not_setup' });
     const noSudo: PowerRunner = async (file) => ({ code: file === '/usr/bin/sudo' ? 1 : 0, stdout: '', stderr: '' });
-    await expect(new MacSession(deps({ powerRun: noSudo })).start()).rejects.toMatchObject({ code: 'mac_sudo_missing' });
-    expect(events).not.toContain('listener:start');
-  });
-
-  it('AC15: a cloud trip that is not home refuses Mac start with a reason code', async () => {
-    const s = new MacSession(deps({ cloudTripActive: () => true }));
-    const err = await s.start().catch((e) => e);
-    expect(err).toBeInstanceOf(MacModeError);
-    expect(err.code).toBe('mac_cloud_trip_active');
+    await expect(new MacSession(deps({ powerRun: noSudo })).start({ vaults: ['proj'] })).rejects.toMatchObject({ code: 'mac_sudo_missing' });
     expect(events).not.toContain('listener:start');
   });
 
   it('AC13: discharging at <=15% → sleep allowed again, the phone chip says so, a notification; no re-arm', async () => {
     battText = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t12%; discharging;";
     const s = new MacSession(deps());
-    await s.start();
+    await s.start({ vaults: ['proj'] });
     await new Promise((r) => setTimeout(r, 20));
     expect(s.status().sleepAllowed).toBe(true);
     expect(notes.some(([t]) => /battery low/i.test(t))).toBe(true);
@@ -178,7 +183,7 @@ describe('start (AC3) and Return (AC10)', () => {
   it('a tunnel restart with a new quick URL updates the origin and posts a notification', async () => {
     let ev: Parameters<NonNullable<MacSessionDeps['makeSupervisor']>>[1] | null = null;
     const s = new MacSession(deps({ makeSupervisor: (_o, e) => { ev = e; const f = fakeSupervisor()(); const st = f.start; f.start = vi.fn(async () => { const r = await st(); e.onUrl(r.url, false); return r; }); return f; } }));
-    await s.start();
+    await s.start({ vaults: ['proj'] });
     ev!.onUrl('https://new-name-9.trycloudflare.com', true);
     expect(origin).toBe('https://new-name-9.trycloudflare.com');
     expect(s.status().url).toBe('https://new-name-9.trycloudflare.com');

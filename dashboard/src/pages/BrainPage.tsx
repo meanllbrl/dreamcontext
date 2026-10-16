@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { readIsMobile } from '../hooks/useIsMobile';
 import ForceGraph2D from 'react-force-graph-2d';
 import { lazyWithReload } from '../lib/lazyWithReload';
 
@@ -128,7 +129,8 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
   const [dims, setDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(true);
+  // Open beside the graph on a laptop; on a phone it would cover the whole graph, so it waits for the gear.
+  const [settingsOpen, setSettingsOpen] = useState(() => !readIsMobile());
   const hasFittedRef = useRef(false);
 
   // Resize observer

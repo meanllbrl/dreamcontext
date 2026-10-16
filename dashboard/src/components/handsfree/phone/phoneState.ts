@@ -1,28 +1,19 @@
 import { useEffect, useState } from 'react';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 
 /**
- * The phone's view of the hands-free cloud: `GET /api/handsfree/phone`, which only the cloud
- * answers (404 on the laptop, so everything here stays invisible there). One shared poller for
- * CloudChip and QuiesceOverlay. Polling is NOT an owner action on the cloud (D14): it never
- * keeps the machine awake.
+ * The phone's view of Mac mode: `GET /api/handsfree/phone` (the laptop's battery and whether it
+ * may sleep again), polled only on the phone surface. Mounting the chip also registers the
+ * hands-free service worker there (offline page, notifications).
  */
 
-export type PhonePhase = 'going' | 'active' | 'quiescing' | 'sealed';
-
 export interface PhoneState {
-  phase: PhonePhase;
-  /** ISO time the cloud plans to put itself to sleep, or null. */
-  stopAt: string | null;
-  /** Mac mode (the phone reaching the laptop itself): its battery and whether it may sleep
-   *  again. Absent on the cloud. A Mac has no trip phases: `phase` is always `active`. */
-  mac?: { battery: { percent: number | null; charging: boolean }; sleepAllowed: boolean };
+  battery: { percent: number | null; charging: boolean };
+  sleepAllowed: boolean;
 }
 
 const ROUTE = '/api/handsfree/phone';
-const SKIP = { 'X-Tunnel-Skip-AntiPhishing-Page': 'true' };
-const SLOW_MS = 30_000;
-const FAST_MS = 5_000;
-const PHASES: readonly PhonePhase[] = ['going', 'active', 'quiescing', 'sealed'];
+const POLL_MS = 30_000;
 
 let state: PhoneState | null = null;
 const listeners = new Set<(s: PhoneState | null) => void>();
@@ -35,96 +26,53 @@ function emit(next: PhoneState | null): void {
   for (const l of listeners) l(next);
 }
 
-/** Register the offline worker once the cloud has answered 200 (never on the laptop). The
- *  forwarder drops requests at times (W0), so registration retries with backoff. */
-async function registerServiceWorker(): Promise<void> {
-  if (swRegistered || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+/** Register the hands-free service worker once (the phone surface only); retries with backoff
+ *  because a tunnel can drop a request. */
+export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  if (swRegistered || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
   swRegistered = true;
   for (let i = 0; i < 4; i++) {
     try {
-      await navigator.serviceWorker.register('/handsfree-sw.js', { scope: '/' });
-      return;
+      return await navigator.serviceWorker.register('/handsfree-sw.js', { scope: '/' });
     } catch {
       await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
     }
   }
   swRegistered = false;
-}
-
-let watching = false;
-/**
- * Cloud only (installed after the phone route answered 200): any API answer of 423
- * cloud_quiescing or 503 cloud_sealed, from whichever caller, re-checks the phase at once
- * instead of waiting for the next poll. The response itself is handed back untouched.
- */
-function watchApiAnswers(): void {
-  if (watching || typeof window === 'undefined') return;
-  watching = true;
-  const original = window.fetch.bind(window);
-  window.fetch = async (...args: Parameters<typeof fetch>) => {
-    const res = await original(...args);
-    if ((res.status === 423 || res.status === 503) && res.headers.get('X-Dreamcontext-Cloud')) {
-      const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : args[0].url;
-      if (!url.includes(ROUTE)) setTimeout(recheckPhoneState, 0);
-    }
-    return res;
-  };
+  return null;
 }
 
 async function poll(): Promise<void> {
   if (inFlight) return;
   inFlight = true;
   try {
-    const res = await fetch(ROUTE, { cache: 'no-store', credentials: 'same-origin', headers: SKIP });
+    const res = await fetch(ROUTE, { cache: 'no-store', credentials: 'same-origin' });
     if (res.status === 200 && res.headers.get('X-Dreamcontext-Surface') === 'mac') {
-      // Mac mode: no trip, no offline worker (a Mac that is off answers nothing to wake).
       const body = await res.json() as { mode?: string; battery?: { percent?: unknown; charging?: unknown }; sleepAllowed?: unknown };
       if (body?.mode === 'mac') {
         const percent = typeof body.battery?.percent === 'number' ? body.battery.percent : null;
-        emit({ phase: 'active', stopAt: null, mac: { battery: { percent, charging: body.battery?.charging !== false }, sleepAllowed: body.sleepAllowed === true } });
+        emit({ battery: { percent, charging: body.battery?.charging !== false }, sleepAllowed: body.sleepAllowed === true });
       }
-    } else if (res.status === 200) {
-      const body = await res.json() as Partial<PhoneState>;
-      if (body && PHASES.includes(body.phase as PhonePhase)) {
-        emit({ phase: body.phase as PhonePhase, stopAt: typeof body.stopAt === 'string' ? body.stopAt : null });
-        void registerServiceWorker();
-        watchApiAnswers();
-      }
-    } else if (res.status === 503 && res.headers.get('X-Dreamcontext-Cloud')) {
-      // The cloud gate answers 503 cloud_sealed to every API call once sealed.
-      const body = await res.json().catch(() => null) as { error?: string } | null;
-      if (body?.error === 'cloud_sealed') emit({ phase: 'sealed', stopAt: null });
-    } else if (res.status === 404 || (!res.headers.get('X-Dreamcontext-Cloud') && !res.headers.get('X-Dreamcontext-Surface'))) {
-      // The laptop (no such route), or not our server answering: nothing to show.
-      if (state === null) stopPolling();
     }
     // A 401 (signed out) or a transient failure keeps the last known state.
   } catch {
-    /* the forwarder dropped it; the next poll retries */
+    /* the tunnel dropped it; the next poll retries */
   } finally {
     inFlight = false;
   }
 }
 
 function schedule(): void {
-  if (stopped || timer || listeners.size === 0) return;
-  const delay = state?.phase === 'quiescing' || state?.phase === 'going' ? FAST_MS : SLOW_MS;
+  if (timer || listeners.size === 0) return;
   timer = setTimeout(async () => {
     timer = null;
     await poll();
     schedule();
-  }, delay);
-}
-
-let stopped = false;
-function stopPolling(): void {
-  stopped = true;
-  if (timer) clearTimeout(timer);
-  timer = null;
+  }, POLL_MS);
 }
 
 function onVisible(): void {
-  if (stopped || document.visibilityState !== 'visible') return;
+  if (document.visibilityState !== 'visible') return;
   void poll().then(() => {
     if (timer) clearTimeout(timer);
     timer = null;
@@ -132,13 +80,8 @@ function onVisible(): void {
   });
 }
 
-/** Ask the cloud again now (e.g. after a 423/503 answer was seen elsewhere). */
-export function recheckPhoneState(): void {
-  if (!stopped) onVisible();
-}
-
 function start(): void {
-  if (stopped) return;
+  void registerServiceWorker();
   document.addEventListener('visibilitychange', onVisible);
   void poll().then(schedule);
 }
@@ -149,9 +92,11 @@ function stop(): void {
   timer = null;
 }
 
+/** The phone's chip state; always null off the phone surface (nothing is polled there). */
 export function usePhoneState(): PhoneState | null {
   const [s, setS] = useState<PhoneState | null>(state);
   useEffect(() => {
+    if (!isMacPhoneSurface()) return undefined;
     listeners.add(setS);
     if (listeners.size === 1) start();
     else setS(state);

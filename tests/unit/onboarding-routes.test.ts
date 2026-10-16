@@ -71,7 +71,6 @@ function pendingFix() {
 
 beforeEach(() => {
   vi.stubEnv('DREAMCONTEXT_DESKTOP', '1');
-  vi.stubEnv('DREAMCONTEXT_CLOUD', '');
   resetInstallRunsForTests();
   resetReadinessForTests();
   getReadiness.mockReset();

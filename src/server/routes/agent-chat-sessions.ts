@@ -1,8 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../middleware.js';
 import { isAgentHost } from '../desktop.js';
-import { isCloud } from '../cloud-mode.js';
-import { runWorkerOp } from '../cloud-worker.js';
 import { projectRootOf } from './agent-spawn-shared.js';
 import { listPastSessions, DEFAULT_LIMIT, MAX_LIMIT } from '../../lib/transcript-sessions.js';
 import { readSessionTitles } from '../../lib/session-titles.js';
@@ -39,10 +37,7 @@ export async function handleAgentChatSessions(
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const query = Object.fromEntries(url.searchParams);
   try {
-    // In the cloud the transcripts are dcuser's 0600 files: the same computation runs as dcuser.
-    sendJson(res, 200, isCloud()
-      ? await runWorkerOp({ op: 'read', params: { kind: 'past-sessions', contextRoot, query }, timeoutMs: 60_000 })
-      : computeChatSessions(contextRoot, query));
+    sendJson(res, 200, computeChatSessions(contextRoot, query));
   } catch {
     // A history list is a convenience surface: an unreadable projects dir degrades to
     // "no past chats", never to a broken popup.
@@ -50,7 +45,7 @@ export async function handleAgentChatSessions(
   }
 }
 
-/** The list itself (also run inside the cloud's dcuser worker). Throws on an unreadable dir. */
+/** The list itself. Throws on an unreadable dir. */
 export function computeChatSessions(contextRoot: string, q: Record<string, string>): unknown {
   const query = (q.q || '').slice(0, MAX_QUERY_CHARS);
   const rawLimit = Number.parseInt(q.limit || '', 10);

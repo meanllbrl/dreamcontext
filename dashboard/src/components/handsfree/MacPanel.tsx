@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
+import { useApi } from '../../context/VaultContext';
 import { CopyButton, fill, HandsfreeQr } from './HandsfreeParts';
 import { macAction, macDevices, refreshMacStatus, useMacStatus } from './macStore';
 import type { MacDevice, MacStatus } from './macContract';
@@ -10,9 +12,21 @@ import type { MacDevice, MacStatus } from './macContract';
  * phones with "Hepsini çıkar", the risk line, and Return. Everything it shows comes from
  * `/api/handsfree/mac/*`; nothing here holds a secret past the moment it is shown.
  */
-export function MacPanel({ onClose }: { onClose: () => void }) {
+/** `vault`: the project this window shows, pre-checked in the start checklist (AC16): the phone
+ *  sees only the projects checked at start; changing them = Return + start again. */
+export function MacPanel({ vault, onClose }: { vault: string; onClose: () => void }) {
   const { t } = useI18n();
+  const api = useApi();
   const status = useMacStatus();
+  const { data: registered } = useQuery({
+    queryKey: ['mac-start-vaults'],
+    queryFn: () => api.get<{ vaults: Array<{ name: string; exists: boolean }> }>('/vaults'),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const projects = (registered?.vaults ?? []).filter((v) => v.exists).map((v) => v.name);
+  const [chosen, setChosen] = useState<string[]>([vault]);
+  const toggle = (name: string) => setChosen((c) => (c.includes(name) ? c.filter((n) => n !== name) : [...c, name]));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** The passphrase, held only until the sheet closes (shown once). */
@@ -55,7 +69,8 @@ export function MacPanel({ onClose }: { onClose: () => void }) {
     const r = await act<{ passphrase: string }>('password', 'post', 'password');
     if (r?.passphrase) setPassphrase(r.passphrase);
   };
-  const start = async () => { await act<MacStatus>('start', 'post', 'start'); };
+  const startVaults = chosen.filter((n) => projects.includes(n));
+  const start = async () => { await act<MacStatus>('start', 'post', 'start', { vaults: startVaults }); };
   const showQr = async () => {
     const r = await act<{ url: string }>('qr', 'post', 'qr');
     if (!r) return;
@@ -93,9 +108,18 @@ export function MacPanel({ onClose }: { onClose: () => void }) {
         <>
           <p className="hf-lead">{t('handsfree.mac.modeMacSub')}</p>
           <p className="hf-quiet">{status?.mode === 'fixed' && status.fixedHostname ? fill(t('handsfree.mac.fixedCurrent'), { host: status.fixedHostname }) : t('handsfree.mac.fixedLead')}</p>
+          <fieldset className="hf-mac-projects" data-testid="hf-mac-projects">
+            <legend className="hf-quiet">{t('handsfree.mac.projects')}</legend>
+            {projects.map((name) => (
+              <label key={name} className="hf-mac-project">
+                <input type="checkbox" checked={chosen.includes(name)} onChange={() => toggle(name)} disabled={!!busy} />
+                <span>{name}</span>
+              </label>
+            ))}
+          </fieldset>
           <div className="hf-actions hf-actions--end">
             <button type="button" className="hf-btn" disabled={!!busy} onClick={() => void newPassword()}>{t('handsfree.mac.newPassword')}</button>
-            <button type="button" className="hf-btn hf-btn--primary" data-testid="hf-mac-start" disabled={!!busy} onClick={() => void start()}>
+            <button type="button" className="hf-btn hf-btn--primary" data-testid="hf-mac-start" disabled={!!busy || startVaults.length === 0} onClick={() => void start()}>
               {busy === 'start' ? t('handsfree.mac.starting') : t('handsfree.mac.start')}
             </button>
           </div>
@@ -120,6 +144,10 @@ export function MacPanel({ onClose }: { onClose: () => void }) {
               </div>
             )}
             <p className="hf-quiet">{t('handsfree.mac.passHint')}</p>
+            {status.exposedVaults.length > 0 && (
+              <p className="hf-quiet" data-testid="hf-mac-exposed">{fill(t('handsfree.mac.exposed'), { list: status.exposedVaults.join(', ') })}</p>
+            )}
+            {status.mode === 'quick' && <p className="hf-quiet" data-testid="hf-mac-push-needs-fixed">{t('handsfree.mac.pushNeedsFixed')}</p>}
           </div>
 
           <div className="hf-mac-power" data-testid="hf-mac-power">

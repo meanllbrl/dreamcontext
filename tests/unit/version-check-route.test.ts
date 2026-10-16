@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleVersionCheckGet } from '../../src/server/routes/version-check.js';
-import { beginGoing, setPhase } from '../../src/lib/handsfree/trip-state.js';
 import type { VersionCache } from '../../src/lib/version-check.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -257,18 +256,3 @@ describe('GET /api/version-check', () => {
   });
 });
 
-describe('GET /api/version-check while hands-free is away (AC18)', () => {
-  it('offers no upgrade: no CLI nudge, cliOutdated false, upgradeBlocked names the trip', async () => {
-    writeCacheFile(tmpDir, { checkedAt: Date.now() - 60 * 60 * 1000, latestCli: '99.99.99', availablePacks: [], ttlHours: 24 });
-    await beginGoing('t-20261009-0a0b0c0d', [], tmpDir);
-    await setPhase('away', 't-20261009-0a0b0c0d', tmpDir);
-    const { res, status, body } = makeRes();
-    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot, tmpDir);
-    expect(status()).toBe(200);
-    const payload = body() as { nudge: string | null; cliOutdated: boolean; upgradeBlocked?: string; latestCli: string | null };
-    expect(payload.latestCli).toBe('99.99.99');
-    expect(payload.cliOutdated).toBe(false);
-    expect(payload.nudge ?? '').not.toContain('99.99.99');
-    expect(payload.upgradeBlocked).toMatch(/Hands-free mode is away \(trip t-20261009-0a0b0c0d\)/);
-  });
-});

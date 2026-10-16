@@ -37,13 +37,17 @@ export interface MacStatus {
   sleepAllowed: boolean;
   deviceCount: number;
   lastError: string | null;
+  /** The projects this run exposes (chosen at start); empty while off. */
+  exposedVaults: string[];
 }
 
 export interface MacDevice { id: string; label: string; createdAt: string }
 
 export interface MacPhonePayload { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean }
 
-export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean }
+export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle' }
+
+export interface LiveChatsWire { chats: LiveChatWire[]; draining: string[] }
 
 export const MAC_ROUTES = {
   status: 'GET /api/handsfree/mac/status',

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -9,15 +9,7 @@ import { mapLoginToPerson } from '../../src/lib/task-backend/identity.js';
 import * as git from '../../src/lib/git-sync/git.js';
 import { runBrainSync as runBrainSyncReal, type SyncEngineDeps } from '../../src/lib/git-sync/sync-engine.js';
 
-/**
- * Test isolation: runBrainSync first asks the hands-free lock (`handsfreeLockFor(projectRoot,
- * deps.home)`). Without a home it reads the developer's REAL ~/.dreamcontext/handsfree: an
- * unreadable trip state there locks every path and fails these tests. Every call gets an empty
- * temp home unless it passes its own.
- */
-const HANDSFREE_HOME = mkdtempSync(join(tmpdir(), 'brain-sync-hf-home-'));
-afterAll(() => rmSync(HANDSFREE_HOME, { recursive: true, force: true }));
-const runBrainSync = (opts: Parameters<typeof runBrainSyncReal>[0], deps: Partial<SyncEngineDeps> = {}) => runBrainSyncReal(opts, { home: HANDSFREE_HOME, ...deps });
+const runBrainSync = runBrainSyncReal;
 
 
 /**

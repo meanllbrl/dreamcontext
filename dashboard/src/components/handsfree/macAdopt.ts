@@ -20,6 +20,6 @@ export function takePendingMacAdopt(vault: string): LiveChatWire | null {
     if (p.vault !== vault) return null;
     sessionStorage.removeItem(KEY);
     if (typeof p.at === 'number' && Date.now() - p.at > 60_000) return null;
-    return { conversationId: p.conversationId, vault: p.vault, title: p.title, busy: p.busy };
+    return { conversationId: p.conversationId, vault: p.vault, title: p.title, busy: p.busy, state: p.state ?? (p.busy ? 'working' : 'idle') };
   } catch { return null; }
 }

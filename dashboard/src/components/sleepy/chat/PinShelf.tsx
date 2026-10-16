@@ -109,7 +109,7 @@ export function PinShelf({
 
   return (
     <div className="pin-shelf" ref={rootRef}>
-      <div className={`pin-shell${hasRows ? ' has-rows' : ''}`}>
+      <div className={`pin-shell${hasRows ? ' has-rows' : ''}${openId !== null ? ' is-open' : ''}`}>
         {/* The progress DETAIL floats over the conversation rather than expanding the shelf:
             it costs the shelf no height, so the tag line and the composer cannot move when it
             opens (owner, after live testing). The ROW stays pinned exactly as it was. A long

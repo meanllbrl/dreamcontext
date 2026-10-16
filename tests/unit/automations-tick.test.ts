@@ -11,10 +11,8 @@ import { LOG_ROTATE_BYTES, type AutomationCache, type RunOutcome } from '../../s
 import type { runAutomation } from '../../src/lib/automations/runner.js';
 
 /**
- * Test isolation: tickProject first asks the hands-free lock (`handsfreeLockFor(projectRoot,
- * opts.home)`). Without a home it reads the developer's REAL ~/.dreamcontext/handsfree: an
- * unreadable trip state there locks every project and fails these tests. Every call gets an
- * empty temp home unless it passes its own (tickAll calls all pass one, or pin $HOME).
+ * Test isolation: every tickProject call gets an empty temp home unless it passes its own
+ * (tickAll calls all pass one, or pin $HOME), so nothing reads the developer's real HOME.
  */
 const HANDSFREE_HOME = mkdtempSync(join(tmpdir(), 'tick-hf-home-'));
 afterAll(() => rmSync(HANDSFREE_HOME, { recursive: true, force: true }));

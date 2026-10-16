@@ -27,15 +27,20 @@ import https from 'node:https';
 import dns from 'node:dns';
 import net from 'node:net';
 import { createServer } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import crypto from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SCRATCH = join(tmpdir(), 'dreamcontext-verify-handsfree-mac');
+// The REAL temp path: macOS's /var is a symlink to /private/var, and the stand-in claude records its
+// realpath cwd, so a /var project root would never find its own transcripts (no past chats).
+const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-handsfree-mac');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
+/** A second registered project the owner does NOT choose: the phone must never see it (AC16). */
+const OTHER_PROJ = join(SCRATCH, 'other');
 const SPAWN_LOG = join(SCRATCH, 'spawns.log');
 const POWER_LOG = join(SCRATCH, 'power.log');
 const SHOTS = join(REPO, 'tmp', 'verify-handsfree-mac');
@@ -59,7 +64,8 @@ const enc = process.cwd().replace(/[^a-zA-Z0-9]/g, '-');
 const dir = path.join(process.env.HOME, '.claude', 'projects', enc);
 fs.mkdirSync(dir, { recursive: true });
 const transcript = path.join(dir, sid + '.jsonl');
-const row = (o) => fs.appendFileSync(transcript, JSON.stringify({ ...o, uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), sessionId: sid }) + '\\n');
+// Like the real CLI, every row records the launch dir (hands-free reads it to tell whose chat it is).
+const row = (o) => fs.appendFileSync(transcript, JSON.stringify({ ...o, cwd: process.cwd(), uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), sessionId: sid }) + '\\n');
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const say = (text) => {
@@ -137,6 +143,10 @@ function setupScratch() {
   mkdirSync(join(HOME, '.dreamcontext'), { recursive: true });
   mkdirSync(join(HOME, '.local', 'bin'), { recursive: true });
   mkdirSync(join(PROJ, '_dream_context', 'state'), { recursive: true });
+  mkdirSync(join(OTHER_PROJ, '_dream_context', 'state'), { recursive: true });
+  // The project's transcript folder exists before the server first lists past chats (it remembers a
+  // project with no folder as having none until it restarts).
+  mkdirSync(join(HOME, '.claude', 'projects', PROJ.replace(/[^a-zA-Z0-9]/g, '-')), { recursive: true });
   mkdirSync(SHOTS, { recursive: true });
   spawnSync('git', ['init', '-q'], { cwd: PROJ });
   const bin = join(HOME, '.local', 'bin', 'claude');
@@ -145,13 +155,58 @@ function setupScratch() {
   const add = spawnSync(process.execPath, [join(REPO, 'dist', 'index.js'), 'vaults', 'add', 'proj', PROJ],
     { env: { ...process.env, HOME }, encoding: 'utf-8' });
   if (add.status !== 0) throw new Error(`vaults add failed: ${add.stderr || add.stdout}`);
+  const add2 = spawnSync(process.execPath, [join(REPO, 'dist', 'index.js'), 'vaults', 'add', 'other', OTHER_PROJ],
+    { env: { ...process.env, HOME }, encoding: 'utf-8' });
+  if (add2.status !== 0) throw new Error(`vaults add failed: ${add2.stderr || add2.stdout}`);
 }
 
-async function startServer(port) {
+// ─── a fake push service (AC6-AC8 live): records every push; the phone's keys decrypt it ──
+
+function startFakePush() {
+  const got = [];
+  const srv = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => { got.push({ path: req.url, headers: req.headers, body: Buffer.concat(chunks) }); res.writeHead(201); res.end(); });
+  });
+  return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve({ origin: `http://127.0.0.1:${srv.address().port}`, got, close: () => srv.close() })));
+}
+
+/** A browser-side subscription's keys (P-256 + a 16-byte auth secret). */
+function phoneKeys() {
+  const ecdh = crypto.createECDH('prime256v1');
+  ecdh.generateKeys();
+  return { ecdh, auth: crypto.randomBytes(16) };
+}
+
+/** RFC 8291 decryption, as the phone's browser does it: the payload object, or null. */
+function decryptPush(keys, body) {
+  try {
+    const salt = body.subarray(0, 16);
+    const idlen = body[20];
+    const asPublic = body.subarray(21, 21 + idlen);
+    const ct = body.subarray(21 + idlen);
+    const shared = keys.ecdh.computeSecret(asPublic);
+    const uaPublic = keys.ecdh.getPublicKey();
+    const ikm = Buffer.from(crypto.hkdfSync('sha256', shared, keys.auth, Buffer.concat([Buffer.from('WebPush: info\0'), uaPublic, asPublic]), 32));
+    const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+    const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+    const d = crypto.createDecipheriv('aes-128-gcm', cek, nonce);
+    d.setAuthTag(ct.subarray(ct.length - 16));
+    let plain = Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()]);
+    let end = plain.length - 1;
+    while (end >= 0 && plain[end] === 0) end--;
+    if (plain[end] !== 2) return null;
+    plain = plain.subarray(0, end);
+    return JSON.parse(plain.toString('utf8'));
+  } catch { return null; }
+}
+
+async function startServer(port, pushOrigin) {
   const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
   const srv = spawn(process.execPath, [join(REPO, 'dist', 'index.js'), 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ,
-    env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_MAC_VERIFY_POWER_LOG: POWER_LOG, ...(process.env.DREAMCONTEXT_MAC_DEBUG ? { DREAMCONTEXT_MAC_DEBUG: '1' } : {}) },
+    env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_MAC_VERIFY_POWER_LOG: POWER_LOG, ...(pushOrigin ? { DREAMCONTEXT_MAC_VERIFY_PUSH_ORIGIN: pushOrigin } : {}), ...(process.env.DREAMCONTEXT_MAC_DEBUG ? { DREAMCONTEXT_MAC_DEBUG: '1' } : {}) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   srv.stderr.on('data', (d) => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`[server] ${s}`); });
@@ -207,6 +262,23 @@ function tget(url, timeoutMs = 8000) {
     });
     req.on('timeout', () => req.destroy(new Error('timeout')));
     req.on('error', () => resolve({ status: 0, headers: {}, body: '' }));
+    req.end();
+  });
+}
+
+/** Any request through the tunnel, as the phone's browser would send it (cookie, Origin). */
+function treq(method, url, headers = {}, body) {
+  return new Promise((resolve) => {
+    const u = new URL(url);
+    const req = https.request({ method, host: u.hostname, servername: u.hostname, path: u.pathname + u.search, lookup: freshLookup, timeout: 10_000,
+      headers: { ...headers, ...(body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {}) } }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', () => resolve({ status: 0, headers: {}, body: '' }));
+    if (body) req.write(body);
     req.end();
   });
 }
@@ -286,6 +358,7 @@ async function noOverflow(page) {
 }
 
 let server = null;
+let fakePush = null;
 let browser = null;
 let phoneBrowser = null;
 let proxy = null;
@@ -297,7 +370,8 @@ try {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   console.log(`· the real dashboard server on ${port} (power runner LOGS only: ${POWER_LOG})…`);
-  server = await startServer(port);
+  fakePush = await startFakePush();
+  server = await startServer(port, fakePush.origin);
   proxy = await startPhoneProxy();
   browser = await chromium.launch();
   // The phone's own browser: every connection goes through the proxy that can drop it.
@@ -338,7 +412,8 @@ try {
   // A SECOND live chat in the same project (AC9: "a project whose desktop has 2 live chats"),
   // opened the way any desktop client opens one: a loopback chat socket.
   const { WebSocket: NodeWs } = await import('ws');
-  const second = new NodeWs(`ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&sessionId=${crypto.randomUUID()}`);
+  const SECOND_ID = crypto.randomUUID();
+  let second = new NodeWs(`ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&sessionId=${SECOND_ID}`);
   const secondGot = [];
   second.on('message', (d) => secondGot.push(String(d)));
   await new Promise((r) => second.on('open', r));
@@ -356,12 +431,12 @@ try {
     && (spawnSync('stat', ['-f', '%Lp', authFile], { encoding: 'utf8' }).stdout.trim() === '600'));
   // AC1: the sheet's first step offers both modes, "From this Mac" selected.
   await dvis('[data-testid="hf-button"]').first().click();
-  report.check('the sheet offers "From this Mac" (selected) and "From the cloud"', await until(async () => (await desk.locator('[data-testid="hf-mode-mac"][aria-selected="true"]').count()) === 1
-    && (await desk.locator('[data-testid="hf-mode-cloud"]').count()) === 1 && (await desk.locator('[data-testid="hf-mac-start"]').count()) === 1, 10000));
+  report.check('the sheet opens on Mac mode only (no cloud option)', await until(async () => (await desk.locator('[data-testid="hf-mac-start"]').count()) === 1
+    && (await desk.locator('[data-testid="hf-mode-cloud"]').count()) === 0, 10000));
   await desk.screenshot({ path: join(SHOTS, 'desktop-1440-sheet-modes.png') });
   await desk.locator('.hf-sheet-head .hf-icon-btn').first().click();
   const t0 = Date.now();
-  const started = await mac(port, 'POST', 'start');
+  const started = await mac(port, 'POST', 'start', { vaults: ['proj'] });
   const url = started.json.url;
   report.check('start: URL known within 30 s (+ download)', started.status === 200 && /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(url ?? ''), `${started.status} ${JSON.stringify(started.json).slice(0, 300)} after ${Date.now() - t0} ms`);
   report.note(`(start took ${Date.now() - t0} ms incl. first download; ${url})`);
@@ -422,9 +497,21 @@ try {
   const spawnsBefore = spawnLog().spawns.length;
   await pvis('.mchat-head-btn').first().click();
   report.check('the drawer lists BOTH live desktop chats under "Mac\'te açık"', await until(async () => (await phone.locator('[data-testid="mac-live-row"]').count()) >= 2, 15000));
-  await phone.locator('.mchat-project').first().click();
-  report.check('the drawer lists the registered projects by name', await until(async () => (await phone.locator('.mchat-project-row').filter({ hasText: 'proj' }).count()) > 0, 10000));
-  await phone.locator('.mchat-project').first().click();
+  report.check('AC16: one chosen project: its name, no project list', await until(async () => (await phone.locator('[data-testid="mchat-project-fixed"]').filter({ hasText: 'proj' }).count()) > 0, 10000)
+    && (await phone.locator('.mchat-project-row').count()) === 0);
+  const states = await phone.locator('[data-testid="mac-live-state"]').allInnerTexts();
+  report.check('AC18: each live row reads its state (Working / Waiting for you / Idle)', states.length >= 2 && states.every((t) => /^(Working|Waiting for you|Idle)$/.test(t.trim())), JSON.stringify(states));
+  await phone.waitForTimeout(1500); // the past list has loaded (its transcripts hold the live chats too)
+  const liveIds = await phone.locator('[data-testid="mac-live-row"]').evaluateAll((els) => els.map((e) => e.dataset.id));
+  const pastIds = await phone.locator('[data-testid="past-row"]').evaluateAll((els) => els.map((e) => e.dataset.id));
+  // Not vacuous: the server's past-chats list DOES hold the running chats (their transcripts exist);
+  // the drawer is what keeps them out of "Past chats".
+  const rawPast = await phone.evaluate(async () => {
+    const r = await fetch('/api/agent/chat-sessions?limit=50', { headers: { accept: 'application/json', 'x-dreamcontext-vault': 'proj' } });
+    return r.ok ? (await r.json()).sessions.map((x) => x.id) : [`HTTP ${r.status}`];
+  });
+  report.check('AC18: a chat running on the Mac is listed once (under "Open on Mac", not under past chats, though the past list holds it)',
+    liveIds.length >= 2 && liveIds.some((id) => rawPast.includes(id)) && !pastIds.some((id) => liveIds.includes(id)), JSON.stringify({ liveIds, pastIds, rawPast }));
   report.check('zero refusal banners and zero spawns on opening the project', (await pvis('.chat-banner-ended').count()) === 0 && spawnLog().spawns.length === spawnsBefore);
   await phone.screenshot({ path: join(SHOTS, 'phone-390-drawer.png') });
   report.check('the drawer fits a phone', await noOverflow(phone));
@@ -525,11 +612,75 @@ try {
   report.check('a chat turn from the phone runs on the Mac (same pid)', await until(async () => (await phoneText()).includes(`ECHO FROM PHONE pid=${pid}`), 20000), `${(await phoneText()).slice(-160)} || transcript has FROM PHONE: ${spawnSync('/bin/sh', ['-c', `grep -l 'FROM PHONE' ${HOME}/.claude/projects/*/*.jsonl 2>/dev/null | head -1`], { encoding: 'utf8' }).stdout.trim() || 'no'} || sockets: ${JSON.stringify(await phone.evaluate(() => window.__chatSockets.map((x) => ({ u: x.url.replace(/^.*reattach=/, 'r=').slice(0, 12), st: x.ws.readyState, sent: x.sent.filter((f) => f.includes('user')), got: x.got, msgs: x.msgs }))))} queued-rows: ${await phone.evaluate(() => document.querySelectorAll('[class*="queue"]').length)}`);
   report.check('still exactly one chat process', spawnLog().spawns.length === spawnsBefore);
 
+  // ── M8b: the gate, the chosen projects, and a real push round trip (W2) ─────────
+  console.log('\n── M8b: route policy + chosen projects through the tunnel; push to a fake push service');
+  const ck = (await phoneCtx.cookies()).filter((c) => url.includes(c.domain.replace(/^\./, ''))).map((c) => `${c.name}=${c.value}`).join('; ');
+  const ph = (extra = {}) => ({ cookie: ck, origin: url, accept: 'application/json', 'x-dreamcontext-vault': 'proj', ...extra });
+  const vaultsSeen = await treq('GET', `${url}/api/vaults`, ph());
+  report.check('the phone lists only the chosen project', vaultsSeen.status === 200 && JSON.stringify(JSON.parse(vaultsSeen.body).vaults) === JSON.stringify([{ name: 'proj', exists: true }]), vaultsSeen.body);
+  report.check('dashboard reads pass (tasks, lab, whiteboards, knowledge)', (await Promise.all(['/api/tasks', '/api/lab', '/api/whiteboards', '/api/knowledge'].map((p) => treq('GET', `${url}${p}`, ph())))).every((r) => r.status === 200));
+  report.check('the unchosen project is refused (header, ?vault=)', (await treq('GET', `${url}/api/tasks`, ph({ 'x-dreamcontext-vault': 'other' }))).status === 403
+    && (await treq('GET', `${url}/api/tasks?vault=other`, ph())).status === 403);
+  const denied = await treq('POST', `${url}/api/window/focus`, ph(), '{}');
+  report.check('a laptop-only route is refused phone_unavailable, with nosniff', denied.status === 403 && /phone_unavailable/.test(denied.body) && denied.headers['x-content-type-options'] === 'nosniff', `${denied.status} ${denied.body}`);
+  report.check('a cross-site API request is refused', (await treq('GET', `${url}/api/tasks`, ph({ 'sec-fetch-site': 'cross-site' }))).status === 403);
+  const keys = phoneKeys();
+  const sub = { endpoint: `${fakePush.origin}/push/phone-1`, keys: { p256dh: keys.ecdh.getPublicKey().toString('base64url'), auth: keys.auth.toString('base64url') } };
+  report.check('the VAPID key is served to a signed-in phone', /"publicKey":"[A-Za-z0-9_-]{80,}"/.test((await treq('GET', `${url}/api/handsfree/push/key`, ph())).body));
+  report.check('a non-push-service endpoint is refused', (await treq('PUT', `${url}/api/handsfree/push/subscription`, ph(), JSON.stringify({ ...sub, endpoint: 'https://evilnotify.windows.com/x' }))).status === 400);
+  const put = await treq('PUT', `${url}/api/handsfree/push/subscription`, ph(), JSON.stringify(sub));
+  report.check('the phone subscribes (PUT 200)', put.status === 200, `${put.status} ${put.body}`);
+  const pushFile = join(HOME, '.dreamcontext', 'handsfree-mac', 'push.json');
+  report.check('push.json is 0600 and holds one subscription', existsSync(pushFile) && spawnSync('stat', ['-f', '%Lp', pushFile], { encoding: 'utf8' }).stdout.trim() === '600'
+    && Object.keys(JSON.parse(readFileSync(pushFile, 'utf8'))).length === 1);
+  const pushesBefore = fakePush.got.length;
+  second.send(JSON.stringify({ type: 'user', text: 'PUSHME' }));
+  const turnPush = async () => fakePush.got.slice(pushesBefore).map((g) => ({ g, p: decryptPush(keys, g.body) })).find((x) => x.p?.kind === 'turn' && x.p?.conversationId === SECOND_ID);
+  report.check('a finished turn on the Mac pushes "turn finished" to the phone', await until(async () => !!(await turnPush()), 20000), JSON.stringify(fakePush.got.slice(pushesBefore).map((g) => decryptPush(keys, g.body))));
+  const tp = await turnPush();
+  if (tp) {
+    report.check('the push is RFC 8291 aes128gcm with a VAPID header, high urgency, a TTL', tp.g.headers['content-encoding'] === 'aes128gcm' && /^vapid t=[^,]+, k=/.test(tp.g.headers.authorization ?? '') && tp.g.headers.urgency === 'high' && Number(tp.g.headers.ttl) > 0, JSON.stringify(tp.g.headers));
+    report.check('its tap target opens that chat (D10 deep link)', tp.p.url === `/?vault=proj&open=${encodeURIComponent(`dreamcontext://project/proj/session/${SECOND_ID}`)}`, tp.p.url);
+  }
+  // AC9: the push's link, loaded on the phone, opens THAT conversation there — adopted from the
+  // Mac (the same process), never resumed beside it.
+  if (tp) {
+    const spawnsAtLink = spawnLog().spawns.length;
+    await phone.goto(`${url}${tp.p.url}`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await phone.waitForTimeout(2500);
+    await dismiss(phone);
+    report.check('the push link opens that chat on the phone (its turn is on screen)', await until(async () => (await phoneText()).includes('ECHO PUSHME'), 30000), (await phoneText()).slice(-200));
+    report.check('…adopted: no new chat process', spawnLog().spawns.length === spawnsAtLink, JSON.stringify(spawnLog()));
+    await phone.screenshot({ path: join(SHOTS, 'phone-390-push-link.png') });
+    // The desktop takes the second chat back (an explicit reattach), for the sections below.
+    second = new NodeWs(`ws://127.0.0.1:${port}/api/agent/chat?vault=proj&bypass=0&resume=${SECOND_ID}&reattach=1`);
+    second.on('message', (d) => secondGot.push(String(d)));
+    await new Promise((r) => second.on('open', r));
+    await sleep(1500);
+    // Back to the chat the phone held before (chat 1), so the suppression check below is on it.
+    await pvis('.mchat-head-btn').first().click();
+    await phone.locator('.mchat-row').filter({ hasText: 'Chat 1' }).first().locator('.mchat-row-main').click().catch(() => {});
+    await phone.waitForTimeout(1500);
+  }
+  // Suppression (D2): the chat the phone shows on screen does not buzz the phone.
+  const quietFrom = fakePush.got.length;
+  await pc.click(); await pc.fill('QUIET'); await phone.keyboard.press('Enter');
+  report.check('the phone runs a turn in the chat it shows (chat 1)', await until(async () => (await phoneText()).includes(`ECHO QUIET pid=${pid}`), 20000), (await phoneText()).slice(-160));
+  await sleep(3000);
+  report.check('a turn in the chat open on the phone\'s screen sends no push', fakePush.got.slice(quietFrom).map((g) => decryptPush(keys, g.body)).filter((x) => x?.kind === 'turn').length === 0,
+    JSON.stringify(fakePush.got.slice(quietFrom).map((g) => decryptPush(keys, g.body))));
+
   // ── M9: revoke-all ──────────────────────────────────────────────────────────────
   console.log('\n── M9: "Hepsini çıkar" — the phone is signed out at once');
   const closesBeforeRevoke = phoneCloses.length;
   const rv = await mac(port, 'POST', 'devices/revoke-all');
   report.check('revoke-all signed the phones out', rv.status === 200 && rv.json.revoked >= 1, JSON.stringify(rv.json));
+  report.check('revoke-all removed the phone\'s push subscription', Object.keys(JSON.parse(readFileSync(pushFile, 'utf8') || '{}')).length === 0, readFileSync(pushFile, 'utf8'));
+  const afterRevoke = fakePush.got.length;
+  second.send(JSON.stringify({ type: 'user', text: 'AFTER' }));
+  await until(async () => secondGot.some((x) => x.includes('ECHO AFTER')), 15000);
+  await sleep(2000);
+  report.check('no push after the phone was signed out', fakePush.got.length === afterRevoke);
   report.check('the phone socket got 4401 and the phone went to the login page', await until(async () => phoneCloses.slice(closesBeforeRevoke).includes(4401) && phone.url().includes('/login?revoked=1'), 10000), `${phone.url()} ${JSON.stringify(phoneCloses.slice(closesBeforeRevoke))}`);
 
   // ── M10: the desktop sheet (1440) and Return ────────────────────────────────────
@@ -539,6 +690,15 @@ try {
   report.check('a new QR signs the phone in again', await until(async () => phone.url().includes('vault=proj'), 20000));
   await phone.waitForTimeout(2500);
   await dismiss(phone);
+  // Signed in again = a NEW device id, and revoke-all dropped the old subscription: the app's start
+  // hands the browser's subscription to the Mac again (PushOptIn resyncPush), and pushes come back.
+  const ck2 = (await phoneCtx.cookies()).filter((c) => url.includes(c.domain.replace(/^\./, ''))).map((c) => `${c.name}=${c.value}`).join('; ');
+  const reput = await treq('PUT', `${url}/api/handsfree/push/subscription`, { ...ph(), cookie: ck2 }, JSON.stringify(sub));
+  report.check('after signing in again the phone hands its subscription back (PUT 200)', reput.status === 200, `${reput.status} ${reput.body}`);
+  const againFrom = fakePush.got.length;
+  second.send(JSON.stringify({ type: 'user', text: 'AGAIN' }));
+  report.check('…and a finished turn pushes to the phone again', await until(async () => fakePush.got.slice(againFrom).map((g) => decryptPush(keys, g.body)).some((x) => x?.kind === 'turn' && x?.conversationId === SECOND_ID), 20000),
+    JSON.stringify(fakePush.got.slice(againFrom).map((g) => decryptPush(keys, g.body))));
   await dvis('[data-testid="hf-button"]').first().click();
   report.check('the desktop chip reads "On phone"', (await desk.locator('[data-testid="hf-button"]').first().innerText()).includes('On phone'));
   report.check('the sheet shows the Mac panel (address, devices, risk, Return)', await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="on"]').count()) > 0
@@ -568,7 +728,7 @@ try {
   // ── M11: a graceful shutdown is a Return (AC12) ─────────────────────────────────
   console.log('\n── M11: graceful shutdown while Mac mode is on runs stop');
   second.close();
-  const again = await mac(port, 'POST', 'start');
+  const again = await mac(port, 'POST', 'start', { vaults: ['proj'] });
   report.check('Mac mode starts again', again.status === 200 && !!again.json.url, JSON.stringify(again.json).slice(0, 200));
   const armsBefore = readFileSync(POWER_LOG, 'utf8').split('\n').filter((l) => l.endsWith('disablesleep 1') && !l.includes(' -l ')).length;
   server.kill('SIGTERM');
@@ -599,6 +759,7 @@ try {
   try { await browser?.close(); } catch { /* gone */ }
   try { await phoneBrowser?.close(); } catch { /* gone */ }
   try { proxy?.close(); } catch { /* gone */ }
+  try { fakePush?.close(); } catch { /* gone */ }
   try { await fetch(`http://127.0.0.1:${server?.spawnargs?.[server.spawnargs.indexOf('-p') + 1]}/api/handsfree/mac/stop`, { method: 'POST' }); } catch { /* gone */ }
   try { server?.kill('SIGTERM'); } catch { /* gone */ }
 }

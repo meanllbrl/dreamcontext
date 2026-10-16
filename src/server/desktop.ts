@@ -1,5 +1,4 @@
 import type { IncomingMessage } from 'node:http';
-import { isCloud } from './cloud-mode.js';
 import { hasValidDeviceSession } from './handsfree-auth.js';
 import { isLoopbackPeer } from './network-auth.js';
 import { isPhoneSocket } from './phone-origin.js';
@@ -19,18 +18,16 @@ export function isDesktop(): boolean {
   return process.env.DREAMCONTEXT_DESKTOP === '1';
 }
 
-/** A server that hosts agents: the desktop app, or the hands-free cloud (`cloud-mode.ts`). */
+/** A server that hosts agents: the desktop app. */
 export function isAgentHost(): boolean {
-  return isDesktop() || isCloud();
+  return isDesktop();
 }
 
 /**
- * May this request drive an agent surface? On the desktop: a loopback peer. In the cloud,
- * where GitHub's forwarder makes EVERY request loopback, only a live device session counts —
- * and the same on a Mac-mode phone socket, where cloudflared does (a MAC device session; the
- * store is picked per request by `authFor`).
+ * May this request drive an agent surface? On the desktop: a loopback peer. On a Mac-mode phone
+ * socket, where cloudflared makes every request loopback, only a live Mac device session counts.
  */
 export function isAgentRequest(req: IncomingMessage): boolean {
   if (isPhoneSocket(req)) return hasValidDeviceSession(req);
-  return isCloud() ? hasValidDeviceSession(req) : isDesktop() && isLoopbackPeer(req);
+  return isDesktop() && isLoopbackPeer(req);
 }

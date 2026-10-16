@@ -5,7 +5,6 @@ import { LauncherPage } from './pages/LauncherPage';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner';
-import { HandsfreeBanner } from './components/handsfree/HandsfreeBanner';
 import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { WindowChrome } from './components/layout/WindowChrome';
 import { ChecklistWindow } from './components/checklist/ChecklistWindow';
@@ -14,6 +13,7 @@ import { VaultProvider } from './context/VaultContext';
 import { ViewerWindow } from './components/appLink/ViewerWindow';
 import { InboxWindow } from './components/appLink/InboxWindow';
 import type { StartIntent } from './lib/desktop';
+import { isMacPhoneSurface } from './lib/phoneSurface';
 import './styles/global.css';
 
 /**
@@ -88,8 +88,10 @@ if (initialLink !== null) {
  * `&start=initializer`: the onboarding hand-off asked this NEW window to start a chat (only
  * `openVaultWindow` writes it). Read once, taken off the URL like `open` so a reload starts
  * nothing, and narrowed to the closed set: any other value is dropped.
+ * On the phone (Mac mode) the intent is ignored: a link someone else sent must never start work on
+ * the Mac (D9b). `open=` stays: it only navigates.
  */
-const initialStart: StartIntent | null = params.get('start') === 'initializer' ? 'initializer' : null;
+const initialStart: StartIntent | null = params.get('start') === 'initializer' && !isMacPhoneSurface() ? 'initializer' : null;
 if (params.has('start')) {
   try {
     const url = new URL(window.location.href);
@@ -190,7 +192,6 @@ export function App() {
           <ThemeProvider>
             <I18nProvider>
               <UpgradeRelaunchBanner />
-              <HandsfreeBanner />
               <LauncherPage />
               <ProjectSwitcher />
             </I18nProvider>

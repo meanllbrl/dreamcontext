@@ -9,9 +9,11 @@ import { useChrome } from '../layout/WindowChrome';
 import { useLauncherStatus } from '../../hooks/useLauncher';
 import { VaultDot } from '../layout/VaultDot';
 import { useI18n } from '../../context/I18nContext';
-import { isMacPhoneSurface } from '../../lib/cloudSurface';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { setPendingMacAdopt } from '../handsfree/macAdopt';
-import type { LiveChatWire } from '../handsfree/macContract';
+import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
+import { activeStateKey, drawerRows, liveStateKey, pastTap } from './drawerRows';
+import { PushOptIn } from '../handsfree/phone/PushOptIn';
 
 /**
  * The phone's navigator — a LEFT DRAWER holding the three things the desktop spends its
@@ -105,15 +107,16 @@ export function MobileSessionDrawer({
   const vaults: Array<{ name: string; exists: boolean; needsUpdate?: boolean }> = mac
     ? (macVaults?.vaults ?? []).filter((v) => v.exists)
     : (launcher?.vaults ?? []).filter((v) => v.exists);
-  // "Mac'te açık": every chat the Mac runs right now, across projects (names, never paths).
+  // AC16: the phone lists projects only when the owner chose several at start.
+  const macMulti = mac && vaults.length > 1;
+  // "Mac'te açık": every chat the Mac runs right now in the chosen projects (names, never paths).
   const { data: live } = useQuery({
     queryKey: ['mac-live-chats'],
-    queryFn: () => api.get<{ chats: LiveChatWire[] }>('/agent/live-chats'),
+    queryFn: () => api.get<LiveChatsWire>('/agent/live-chats'),
     enabled: open && mac,
     staleTime: 5_000,
     retry: false,
   });
-  const liveRows = (live?.chats ?? []).filter((c) => c.vault && !openClaudeIds.includes(c.conversationId));
   const adopt = (chat: LiveChatWire) => {
     if (chat.vault && chat.vault !== chrome.activeVault) {
       setPendingMacAdopt(chat);
@@ -133,7 +136,22 @@ export function MobileSessionDrawer({
     staleTime: 10_000,
     retry: false,
   });
-  const pastRows = (past?.sessions ?? []).filter((s) => !openClaudeIds.includes(s.id));
+  // AC18: a conversation is listed once — never under Past while it runs (or drains) on the Mac.
+  const { liveRows, pastRows } = drawerRows({
+    live: live?.chats ?? [], draining: live?.draining ?? [], past: past?.sessions ?? [], openClaudeIds,
+  });
+  const tapPast = async (s: PastSession) => {
+    if (mac) {
+      // The lists may have raced: ask the Mac again, and adopt a running chat instead of resuming it.
+      try {
+        const fresh = await api.get<LiveChatsWire>('/agent/live-chats');
+        const d = pastTap(s.id, fresh.chats);
+        if ('adopt' in d) { adopt(d.adopt); return; }
+      } catch { /* unreachable: resume as before */ }
+    }
+    onResumePast(s);
+    onClose();
+  };
 
   // Collapse the project list whenever the drawer closes, so reopening always starts on the
   // sessions — the thing it is for — rather than on whatever was expanded last time.
@@ -195,6 +213,12 @@ export function MobileSessionDrawer({
             the list below it did not, and which project you are in is the one fact the phone
             has nowhere else to show (the desktop's chip strip is hidden here). */}
         <div className="mchat-panel-head">
+          {mac && !macMulti ? (
+            // One chosen project (AC16): its name, no project list.
+            <span className="mchat-project" title={chrome.activeVault} data-testid="mchat-project-fixed">
+              <span className="mchat-project-name">{chrome.activeVault || 'Project'}</span>
+            </span>
+          ) : (
           <button
             className="mchat-project"
             onClick={() => setProjectsOpen((v) => !v)}
@@ -208,6 +232,7 @@ export function MobileSessionDrawer({
               </svg>
             </span>
           </button>
+          )}
           <button className="mchat-icon-btn" onClick={onClose} aria-label="Close sessions">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
               <path d="M4 4 12 12M12 4 4 12" />
@@ -215,7 +240,7 @@ export function MobileSessionDrawer({
           </button>
         </div>
 
-        {projectsOpen && (
+        {projectsOpen && (!mac || macMulti) && (
           <div className="mchat-projects" role="listbox" aria-label="Projects">
             {vaults.length === 0 && <p className="mchat-empty">Loading projects…</p>}
             {vaults.map((v) => {
@@ -260,7 +285,7 @@ export function MobileSessionDrawer({
                   <span className="mchat-row-title">{s.title}</span>
                   <span className="mchat-row-sub">
                     <span className="mchat-kind" aria-hidden>{kindGlyph(s.sessionKind)}</span>
-                    {s.info.label}
+                    {activeStateKey(s.info) ? t(activeStateKey(s.info)!) : s.info.label}
                     {s.bypass && <span className="mchat-bypass" title="Bypass permissions is ON"> ⚡</span>}
                   </span>
                 </span>
@@ -282,12 +307,12 @@ export function MobileSessionDrawer({
             <>
               <p className="mchat-section">{t('handsfree.mac.liveSection')}</p>
               {liveRows.map((c) => (
-                <div key={c.conversationId} className="mchat-row" data-testid="mac-live-row">
+                <div key={c.conversationId} className="mchat-row" data-testid="mac-live-row" data-id={c.conversationId}>
                   <button className="mchat-row-main" onClick={() => adopt(c)} title={c.title || ''}>
-                    <span className="mchat-dot" data-kind={c.busy ? 'working' : 'idle'} aria-hidden />
+                    <span className="mchat-dot" data-kind={c.state === 'asking' ? 'asking' : c.state === 'working' ? 'working' : 'idle'} aria-hidden />
                     <span className="mchat-row-text">
                       <span className="mchat-row-title">{c.title || t('handsfree.mac.untitled')}</span>
-                      <span className="mchat-row-sub">{c.vault}{c.busy ? ` · ${t('handsfree.mac.working')}` : ''}</span>
+                      <span className="mchat-row-sub" data-testid="mac-live-state">{macMulti ? `${c.vault} · ` : ''}{t(liveStateKey(c.state))}</span>
                     </span>
                   </button>
                 </div>
@@ -305,10 +330,10 @@ export function MobileSessionDrawer({
             <p className="mchat-empty">No past conversations in this project yet.</p>
           )}
           {pastRows.map((s) => (
-            <div key={s.id} className="mchat-row">
+            <div key={s.id} className="mchat-row" data-testid="past-row" data-id={s.id}>
               <button
                 className="mchat-row-main"
-                onClick={() => { onResumePast(s); onClose(); }}
+                onClick={() => { void tapPast(s); }}
                 title={s.preview || s.title}
               >
                 <span className="mchat-past-glyph" aria-hidden>◷</span>
@@ -320,6 +345,8 @@ export function MobileSessionDrawer({
             </div>
           ))}
         </div>
+
+        <PushOptIn />
 
         <div className="mchat-panel-foot">
           <button className="mchat-new" onClick={() => { onNewChat(); onClose(); }}>

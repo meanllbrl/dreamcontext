@@ -1,0 +1,41 @@
+/* The phone's single top bar: 44px tall plus the notch, two 44px touch targets and the page
+   name between them. Nothing else rides above a phone page. */
+.phone-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: calc(var(--m-bar) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) var(--space-1) 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.phone-bar-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-11);
+  height: var(--space-11);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.phone-bar-btn:active { background: var(--color-bg-tertiary); color: var(--color-text); }
+.phone-bar-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+.phone-bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -345,6 +345,31 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 
 .mchat-row-close { flex: 0 0 auto; align-self: center; }
 
+/* The notification opt-in (Mac mode): one quiet row above the foot. */
+.mchat-push {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.mchat-push-note {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.mchat-push-btn {
+  min-height: 44px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.mchat-push-btn:disabled { opacity: 0.6; cursor: default; }
+
 .mchat-panel-foot {
   flex: 0 0 auto;
   display: flex;
@@ -448,3 +473,29 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 .agent-surface[data-mobile] .chat-cmp-input {
   font-size: 16px;
 }
+
+/* ── Height economy (hands-free W3): the transcript gets the screen ─────────────────────
+   At rest the composer is ONE row: the input beside Attach and Send, the mode and model
+   controls folded away; it opens to the full composer while the input has focus or holds a
+   draft (a draft keeps it open, so a tap on Send never lands on a button that just moved).
+   The drag handle is a mouse affordance; a phone resizes by typing. */
+.agent-surface[data-mobile] .chat-cmp { padding-top: var(--space-2); }
+.agent-surface[data-mobile] .chat-cmp-handle { display: none; }
+.agent-surface[data-mobile] .chat-cmp:not(:has(.chat-cmp-input:focus)):has(.chat-cmp-input:placeholder-shown) {
+  & .chat-cmp-card { flex-direction: row; align-items: center; }
+  & .chat-cmp-body { flex: 1 1 auto; height: var(--space-11); padding: 0 var(--space-1) 0 var(--space-3); justify-content: center; }
+  & .chat-cmp-input { height: var(--space-11); padding-top: 11px; padding-bottom: 11px; line-height: 22px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  & .chat-cmp-toolbar { border-top: 0; padding: 0 var(--space-1) 0 0; gap: 0; }
+  & :is(.chat-cmp-perm-wrap, .chat-cmp-spacer, .chat-cmp-usagebtn, .chat-cmp-compact-btn, .chat-cmp-model-wrap, .chat-cmp-readaloud, .chat-cmp-speaking) { display: none; }
+}
+/* Open, the composer may grow to 40% of the screen and no further. */
+.agent-surface[data-mobile] .chat-cmp-body { max-height: 40dvh; }
+
+/* The pin shelf collapses to ONE row of at most 32px: facts scroll sideways instead of
+   wrapping, and with a row on the shelf its tags wait until the row is tapped open. */
+.agent-surface[data-mobile] .pin-tags { flex-wrap: nowrap; overflow-x: auto; padding-top: var(--space-1); padding-bottom: var(--space-1); scrollbar-width: none; }
+.agent-surface[data-mobile] .pin-row { padding-top: var(--space-1); padding-bottom: var(--space-1); }
+.agent-surface[data-mobile] .pin-shell.has-rows:not(.is-open) > .pin-tags { display: none; }
+
+/* On a phone page the top bar carries Chat; the corner dock would only sit on the content. */
+body[data-phone] .agent-dock { display: none; }

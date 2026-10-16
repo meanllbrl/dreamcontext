@@ -1,7 +1,5 @@
-import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isCloud, workerRunner } from '../server/cloud-mode.js';
-import { workerWriteAtomic } from './session-titles.js';
 import { dirname, join, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
@@ -293,21 +291,6 @@ export function writeClaudeAccounts(
     switchWeights: keepPolicy.weights,
   };
   const text = JSON.stringify(registry, null, 2) + '\n';
-  if (isCloud()) {
-    // The cloud: ~/.dreamcontext is dcuser's tree, so dcserver never writes into it; the
-    // worker does (temp + rename as dcuser), in order. Reads see the newest queued text at
-    // once, so read-modify-write calls stay serial; the returned promise is THIS write (a
-    // failure rejects it) and the disk stays the truth.
-    pendingText.set(filePath, text);
-    const write = writeChain.then(() => workerWriteAtomic(workerRunner, filePath, text));
-    writeChain = write.catch(() => { /* reported through this call's own promise */ });
-    const done = write.finally(() => {
-      if (pendingText.get(filePath) === text) pendingText.delete(filePath);
-    });
-    done.catch((err) => { console.warn(`[claude-accounts] cloud registry write failed: ${(err as Error).message}`); });
-    lastWrite = done;
-    return done;
-  }
   mkdirSync(dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmp, text, 'utf-8');
@@ -315,51 +298,16 @@ export function writeClaudeAccounts(
   return Promise.resolve();
 }
 
-let writeChain: Promise<void> = Promise.resolve();
-let lastWrite: Promise<void> = Promise.resolve();
-/** Cloud: registry text queued for the worker and not yet confirmed on disk. */
-const pendingText = new Map<string, string>();
-
-/** The latest queued registry write (any caller's). A caller that needs ITS change saved
- *  awaits the promise its own mutation returned instead. */
+/** The latest registry write (any caller's). Writes are synchronous, so it is always settled;
+ *  kept so callers that await a save stay correct. */
 export function claudeAccountsWritten(): Promise<void> {
-  return lastWrite;
+  return Promise.resolve();
 }
 
-const REGISTRY_MAX_BYTES = 1024 * 1024;
-
-/**
- * The registry file's text, or null when absent. In the cloud it lives in dcuser's tree: the
- * newest queued write wins, else the file is opened O_NOFOLLOW|O_NONBLOCK and must be a
- * regular file on that fd (a planted link or FIFO can neither redirect nor block the server).
- */
+/** The registry file's text, or null when absent. */
 function readRegistryText(filePath: string): string | null {
-  if (!isCloud()) {
-    if (!existsSync(filePath)) return null;
-    return readFileSync(filePath, 'utf-8');
-  }
-  const queued = pendingText.get(filePath);
-  if (queued !== undefined) return queued;
-  let fd: number;
-  try {
-    fd = openSync(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
-  } catch {
-    return null;
-  }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || st.size > REGISTRY_MAX_BYTES) return null;
-    const buf = Buffer.alloc(st.size);
-    let got = 0;
-    while (got < st.size) {
-      const n = readSync(fd, buf, got, st.size - got, got);
-      if (n === 0) break;
-      got += n;
-    }
-    return buf.subarray(0, got).toString('utf-8');
-  } finally {
-    closeSync(fd);
-  }
+  if (!existsSync(filePath)) return null;
+  return readFileSync(filePath, 'utf-8');
 }
 
 /** Add or replace an account. `preferred: true` clears the flag on every sibling. */
@@ -506,7 +454,6 @@ export function removeClaudeAccount(id: string, home: string = homedir()): void 
 export function resolveConfigDir(id: string | null | undefined, home: string = homedir()): string {
   if (id === null || id === undefined || id === '') {
     const preferred = preferredClaudeAccount(home);
-    if (isCloud()) return preferred ? sandboxDirFor(preferred.id, home) : (listClaudeAccounts(home)[0] ? sandboxDirFor(listClaudeAccounts(home)[0].id, home) : home);
     return preferred?.configDir ?? home;
   }
   if (!isSafeAccountId(id)) {
@@ -514,9 +461,6 @@ export function resolveConfigDir(id: string | null | undefined, home: string = h
   }
   const account = getClaudeAccount(id, home);
   if (!account) throw new ClaudeAccountError(`No such account: ${id}`);
-  // Hands-free cloud (D13): EVERY account, the laptop's account #0 included, signed in with its
-  // own `claude auth login` into its sandbox there; the real ~/.claude holds no login.
-  if (isCloud()) return assertConfinedConfigDir(sandboxDirFor(account.id, home), home);
   return assertConfinedConfigDir(account.configDir ?? home, home);
 }
 
@@ -561,9 +505,6 @@ export function accountEnvFor(
   configDir: string,
   home: string = homedir(),
 ): Record<string, string | undefined> {
-  // The cloud: always the chosen account's own sandbox (resolveConfigDir never answers the
-  // real HOME there while an account exists), so a child is pointed at exactly one login.
-  if (isCloud() && !isRealHomeConfigDir(configDir, home)) return { CLAUDE_CONFIG_DIR: assertConfinedConfigDir(configDir, home) };
   return isRealHomeConfigDir(configDir, home)
     ? { CLAUDE_CONFIG_DIR: undefined }
     : { CLAUDE_CONFIG_DIR: configDir };

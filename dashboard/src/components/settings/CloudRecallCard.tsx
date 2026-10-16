@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { RequestError } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
 import { confirmAction } from '../../lib/desktop';
-import { isPhoneSurface } from '../../lib/cloudSurface';
+import { isPhoneSurface } from '../../lib/phoneSurface';
 import {
   CLOUD_RECALL_QUERY_KEYS,
   useBuildCloudIndex,

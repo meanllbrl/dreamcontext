@@ -451,3 +451,10 @@ select {
   border-radius: 4px;
   padding: 1px 6px;
 }
+
+/* ─── Phone (body[data-phone], hands-free W3) ─── */
+/* The page title steps down to the phone title size: the bar above already names the page. */
+body[data-phone] .page-title {
+  font-size: var(--m-title);
+  margin-bottom: var(--space-2);
+}

@@ -5,13 +5,19 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writ
 import type { PowerRunner } from '../../lib/handsfree/mac/power.js';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import type { Router } from '../router.js';
-import { laptopRouteRefusal } from './handsfree.js';
-import { isAway } from '../../lib/handsfree/trip-state.js';
+import { isDesktop } from '../desktop.js';
+import { isLoopback } from './agent-spawn-shared.js';
+import { AUTH_COOKIE } from '../network-auth.js';
 import { notifyViaBundle } from '../../lib/automations/notifier.js';
-import { generatePassphrase, hashPassphrase, macHandsfreeAuth, onMacSignIn } from '../handsfree-auth.js';
-import { setMacProbeNonce, setMacPublicOrigin } from '../phone-origin.js';
+import { listVaults } from '../../lib/vaults.js';
+import { deviceIdHash, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase, macHandsfreeAuth, onDeviceSessionsChanged, onMacSignIn } from '../handsfree-auth.js';
+import { isPhoneSocket, macExposedVaults, macPublicOrigin, setMacExposedVaults, setMacProbeNonce, setMacPublicOrigin } from '../phone-origin.js';
 import { setMacPhoneSource } from '../handsfree-login.js';
-import { releasePhoneSessions } from './agent-chat.js';
+import { phoneDeviceShowing, releasePhoneSessions } from './agent-chat.js';
+import { onChatChange } from '../../lib/assistant/chat-registry.js';
+import { loadOrCreateVapid, sendPush, type VapidKeys } from '../../lib/handsfree/mac/push.js';
+import { PushStore, setVerifyPushOrigin, subscriptionRefusal } from '../../lib/handsfree/mac/push-store.js';
+import { PushNotifier, type PushNotifierDeps } from '../../lib/handsfree/mac/push-notifier.js';
 import { MacModeError, MacSession, type MacSessionDeps } from '../../lib/handsfree/mac/session.js';
 import { isValidHostname } from '../../lib/handsfree/mac/tunnel.js';
 import type { MacErrorCode } from '../../lib/handsfree/mac/contract.js';
@@ -23,6 +29,44 @@ import type { MacErrorCode } from '../../lib/handsfree/mac/contract.js';
  * header, no credential). Secrets: the passphrase is returned ONCE (setup, password) and the QR
  * URL on demand; the tunnel credentials are never returned at all.
  */
+
+// ─── The laptop gate ────────────────────────────────────────────────────────
+
+const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+
+function carriesNetworkToken(req: IncomingMessage): boolean {
+  const cookie = req.headers.cookie ?? '';
+  if (cookie.split(';').some((p) => p.split('=')[0].trim() === AUTH_COOKIE)) return true;
+  try {
+    return new URL(req.url || '/', 'http://localhost').searchParams.has('token');
+  } catch {
+    return true;
+  }
+}
+
+/** Why a laptop hands-free request is refused, or null when it may pass. */
+export function laptopRouteRefusal(req: IncomingMessage): { status: number; code: string; message: string } | null {
+  if (!isDesktop()) return { status: 403, code: 'desktop_only', message: 'Hands-free mode is driven from the desktop app.' };
+  if (!isLoopback(req)) return { status: 403, code: 'loopback_only', message: 'Hands-free mode is only reachable from this machine.' };
+  if (carriesNetworkToken(req)) return { status: 403, code: 'loopback_only', message: 'Hands-free routes refuse network-token requests.' };
+  if (req.headers['x-forwarded-for'] || req.headers.forwarded || req.headers['x-real-ip']) {
+    return { status: 403, code: 'loopback_only', message: 'Hands-free routes refuse forwarded (tailnet or proxy) requests.' };
+  }
+  if (typeof req.headers.authorization === 'string' && req.headers.authorization.trim()) {
+    return { status: 403, code: 'loopback_only', message: 'Hands-free routes take no credential.' };
+  }
+  const host = req.headers.host ?? '';
+  if (!LOCAL_HOST_RE.test(host)) return { status: 403, code: 'loopback_only', message: 'Hands-free routes answer only on a loopback host name.' };
+  const method = (req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    const origin = req.headers.origin;
+    if (origin && !LOCAL_ORIGIN_RE.test(origin)) return { status: 403, code: 'forbidden', message: 'Cross-site request blocked.' };
+    const site = req.headers['sec-fetch-site'];
+    if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return { status: 403, code: 'forbidden', message: 'Cross-site request blocked.' };
+  }
+  return null;
+}
 
 let listener: { start: () => Promise<{ port: number }>; stop: () => Promise<void> } | null = null;
 
@@ -44,12 +88,25 @@ function notify(title: string, body: string): void {
  * the verify can drain it below the floor (AC13). Honoured only when HOME is inside the OS temp dir, i.e. a scratch vault — never
  * on the owner's real machine state.
  */
+function homeInTmp(): boolean {
+  try { return resolve(realpathSync(homedir())).startsWith(resolve(realpathSync(tmpdir())) + '/'); } catch { return false; }
+}
+
+/**
+ * VERIFY SEAM: `DREAMCONTEXT_MAC_VERIFY_PUSH_ORIGIN=http://127.0.0.1:<port>` lets the verify's
+ * local fake push service be subscribed (the store accepts only real push services otherwise).
+ * Honoured only for a scratch HOME under the temp dir, like the power seam.
+ */
+function verifyPushSeam(): void {
+  const origin = process.env.DREAMCONTEXT_MAC_VERIFY_PUSH_ORIGIN;
+  if (!origin || !homeInTmp()) return;
+  try { if (/^http:\/\/127\.0\.0\.1:\d+$/.test(new URL(origin).origin)) setVerifyPushOrigin(new URL(origin).origin); } catch { /* not a URL */ }
+}
+
 function verifyPowerSeam(): Partial<MacSessionDeps> {
   const log = process.env.DREAMCONTEXT_MAC_VERIFY_POWER_LOG;
   if (!log) return {};
-  let inTmp = false;
-  try { inTmp = resolve(realpathSync(homedir())).startsWith(resolve(realpathSync(tmpdir())) + '/'); } catch { inTmp = false; }
-  if (!inTmp) return {};
+  if (!homeInTmp()) return {};
   const state = { sleep: 0, b: 0, c: 1 };
   const run: PowerRunner = async (file, args) => {
     const line = [file, ...args].join(' ');
@@ -83,8 +140,8 @@ export function macSession(): MacSession {
       setPublicOrigin: setMacPublicOrigin,
       setProbeNonce: setMacProbeNonce,
       setPhoneSource: setMacPhoneSource,
+      setExposedVaults: setMacExposedVaults,
       releasePhoneSessions,
-      cloudTripActive: () => isAway(),
       notify,
       ...verifyPowerSeam(),
     };
@@ -100,7 +157,7 @@ export function setMacSessionForTests(next: MacSession | null): void {
   session = next;
 }
 
-/** Is Mac mode on in this process? (the cloud's go refuses while it is). */
+/** Is Mac mode on in this process? */
 export function macModeOn(): boolean {
   return session?.isOn() ?? false;
 }
@@ -118,9 +175,9 @@ export function writeMacServerHint(port: number, home: string = homedir()): void
 }
 
 const STATUS: Record<MacErrorCode, number> = {
-  mac_not_setup: 409, mac_sudo_missing: 409, mac_cloud_trip_active: 409, mac_already_on: 409, mac_not_on: 409,
+  mac_not_setup: 409, mac_sudo_missing: 409, mac_already_on: 409, mac_not_on: 409,
   mac_tunnel_failed: 502, mac_probe_failed: 502, mac_binary_failed: 502, mac_admin_cancelled: 409,
-  mac_fixed_not_setup: 409, mac_unsupported_platform: 400, mac_hostname_in_use: 409,
+  mac_fixed_not_setup: 409, mac_unsupported_platform: 400, mac_hostname_in_use: 409, mac_no_project: 400, mac_unknown_project: 400,
 };
 
 function fail(res: ServerResponse, err: unknown): void {
@@ -152,7 +209,23 @@ export const handsfreeMacRoutes = {
     const out = await macSession().setup({ newPassphrase: b?.newPassphrase === true });
     sendJson(res, 200, { ...macSession().status(), passphrase: out.passphrase });
   }, 5 * 60_000),
-  start: guarded(async (_req, res) => { sendJson(res, 200, await macSession().start()); }, 5 * 60_000),
+  start: guarded(async (req, res) => {
+    // The start names the projects it exposes (registered vault names whose folder exists).
+    const b = await parseJsonBody(req);
+    const raw: unknown[] = Array.isArray(b?.vaults) ? b.vaults : [];
+    const vaults = [...new Set(raw.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter(Boolean))];
+    if (!vaults.length) {
+      sendError(res, 400, 'mac_no_project', 'Choose at least one project (body: { vaults: [name, ...] }).');
+      return;
+    }
+    const registered = new Map(listVaults().map((v) => [v.name, v.path]));
+    const unknown = vaults.filter((v) => !registered.has(v) || !existsSync(registered.get(v)!));
+    if (unknown.length) {
+      sendError(res, 400, 'mac_unknown_project', `Not a registered project: ${unknown.join(', ')}.`);
+      return;
+    }
+    sendJson(res, 200, await macSession().start({ vaults }));
+  }, 5 * 60_000),
   stop: guarded(async (_req, res) => { await macSession().stop(); sendJson(res, 200, macSession().status()); }),
   qr: guarded(async (_req, res) => { sendJson(res, 200, { url: macSession().mintQr() }); }),
   password: guarded(async (_req, res) => { sendJson(res, 200, { passphrase: await macSession().setPassword() }); }),
@@ -170,10 +243,104 @@ export const handsfreeMacRoutes = {
     sendJson(res, 200, { hostname: rec.hostname, loginUrl });
   }, 15 * 60_000),
   fixedRemove: guarded(async (_req, res) => { macSession().removeFixed(); sendJson(res, 200, macSession().status()); }),
-  uninstall: guarded(async (_req, res) => { await macSession().uninstall(); sendJson(res, 200, { ok: true }); }, 5 * 60_000),
+  uninstall: guarded(async (_req, res) => {
+    await macSession().uninstall();
+    // The Mac dir is gone with vapid.json and push.json: the next setup makes a new pair, never the cached one.
+    pushStore = null;
+    vapid = null;
+    sendJson(res, 200, { ok: true });
+  }, 5 * 60_000),
+};
+
+// ─── Push (the phone's notifications) ───────────────────────────────────────
+
+let pushStore: PushStore | null = null;
+let vapid: VapidKeys | null = null;
+let pushSendOverride: PushNotifierDeps['send'] | null = null;
+
+/** The phones' subscriptions (`~/.dreamcontext/handsfree-mac/push.json`, 0600). */
+export function macPushStore(): PushStore {
+  if (!pushStore) pushStore = new PushStore({ dir: ensureMacHandsfreeDir() });
+  return pushStore;
+}
+
+function macVapid(): VapidKeys {
+  if (!vapid) vapid = loadOrCreateVapid(ensureMacHandsfreeDir());
+  return vapid;
+}
+
+/** Tests only: a store over a scratch dir, and a fake push service. */
+export function setPushForTests(next: { store?: PushStore | null; vapid?: VapidKeys | null; send?: PushNotifierDeps['send'] | null }): void {
+  if (next.store !== undefined) pushStore = next.store;
+  if (next.vapid !== undefined) vapid = next.vapid;
+  if (next.send !== undefined) pushSendOverride = next.send;
+}
+
+let notifier: PushNotifier | null = null;
+
+/** The three pushes, fed by the chat registry. Armed once per process; inert while Mac mode is off. */
+export function armPushNotifier(): PushNotifier {
+  if (notifier) return notifier;
+  verifyPushSeam();
+  notifier = new PushNotifier({
+    exposed: () => (session?.isOn() ? macExposedVaults() : []),
+    store: () => macPushStore(),
+    deviceValid: (h) => macHandsfreeAuth().store.isValidDeviceHash(h),
+    showingDevice: (sid) => phoneDeviceShowing(sid),
+    send: (sub, payload) => (pushSendOverride ?? ((x, p) => sendPush(x, p, { vapid: macVapid(), contact: macPublicOrigin() ?? 'mailto:handsfree@dreamcontext.ai' })))(sub, payload),
+  });
+  const n = notifier;
+  onChatChange((c) => { void n.onChange(c).catch((err) => { console.warn('[handsfree-push] notifier failed:', (err as Error)?.message ?? err); }); });
+  // A signed-out device loses its subscription with it (logout, revoke, revoke-all, a password).
+  onDeviceSessionsChanged(() => { try { macPushStore().prune((h) => macHandsfreeAuth().store.isValidDeviceHash(h)); } catch (err) { console.warn('[handsfree-push] prune failed:', (err as Error)?.message ?? err); } });
+  return n;
+}
+
+/** Read a JSON body of at most `max` bytes, or null (too big, not JSON). */
+function readSmallJson(req: IncomingMessage, max: number): Promise<unknown> {
+  return new Promise((resolveBody) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    const finish = (v: unknown) => { if (!done) { done = true; resolveBody(v); } };
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > max) { finish(null); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => { try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { finish(null); } });
+    req.on('error', () => finish(null));
+  });
+}
+
+/** The phone's own push routes: a Mac-mode phone socket only (the gate demanded a device session);
+ *  the device is the cookie's, never anything in the body. */
+function phoneOnly(fn: (req: IncomingMessage, res: ServerResponse, device: string) => Promise<void>): Handler {
+  return async (req, res) => {
+    const device = isPhoneSocket(req) ? deviceIdHash(req) : null;
+    if (!device || !macHandsfreeAuth().store.isValidDeviceHash(device)) { sendError(res, 404, 'not_found', 'Only a signed-in phone has push routes.'); return; }
+    res.setHeader('Cache-Control', 'no-store');
+    try { await fn(req, res, device); } catch (err) { fail(res, err); }
+  };
+}
+
+export const handsfreePushRoutes = {
+  key: phoneOnly(async (_req, res) => { sendJson(res, 200, { publicKey: macVapid().publicKey }); }),
+  subscribe: phoneOnly(async (req, res, device) => {
+    const body = await readSmallJson(req, 4096);
+    const refusal = body === null ? 'The body must be a JSON push subscription of at most 4 KB.' : subscriptionRefusal(body);
+    if (refusal) { sendError(res, 400, 'invalid_subscription', refusal); return; }
+    macPushStore().put(device, body as { endpoint: string; keys: { p256dh: string; auth: string } });
+    sendJson(res, 200, { ok: true });
+  }),
+  unsubscribe: phoneOnly(async (_req, res, device) => { sendJson(res, 200, { ok: true, removed: macPushStore().remove(device) }); }),
 };
 
 export function registerHandsfreeMacRoutes(router: Router): void {
+  armPushNotifier();
+  router.get('/api/handsfree/push/key', handsfreePushRoutes.key);
+  router.put('/api/handsfree/push/subscription', handsfreePushRoutes.subscribe);
+  router.delete('/api/handsfree/push/subscription', handsfreePushRoutes.unsubscribe);
   router.get('/api/handsfree/mac/status', handsfreeMacRoutes.status);
   router.post('/api/handsfree/mac/setup', handsfreeMacRoutes.setup);
   router.post('/api/handsfree/mac/start', handsfreeMacRoutes.start);

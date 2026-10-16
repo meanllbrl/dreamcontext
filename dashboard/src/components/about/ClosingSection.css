@@ -74,3 +74,7 @@
   margin: 0 auto;
   line-height: 1.55;
 }
+
+/* Phone: the command card fits the screen; a long command scrolls inside it (a wrapped
+   command would be a lie about what to type). */
+body[data-phone] .closing-cmds { display: flex; max-width: 100%; padding: var(--space-4); overflow-x: auto; box-sizing: border-box; }

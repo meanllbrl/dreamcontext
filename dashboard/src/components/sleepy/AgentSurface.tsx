@@ -72,13 +72,11 @@ import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
 import { runWindowVerb, type WindowVerbDeps } from './windowVerbs';
 import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
-import { useHandsfree } from '../handsfree/handsfreeStore';
-import { generationOf, mergeStoredRoster, putOutcome, rehydrateOnPhase, withBaseGeneration } from '../handsfree/rosterRehydrate';
-import { CloudChip } from '../handsfree/phone/CloudChip';
+import { generationOf, mergeStoredRoster, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
+import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
-import type { LiveChatWire } from '../handsfree/macContract';
-import { isMacPhoneSurface } from '../../lib/cloudSurface';
-import { QuiesceOverlay } from '../handsfree/phone/QuiesceOverlay';
+import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -605,25 +603,15 @@ export function AgentSurface() {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
-  // The roster generation the last GET answered (`baseGeneration` of every PUT). A hands-free
-  // Return merges the phone's sessions in and bumps it, so a PUT from before that is refused
-  // (409 `roster_stale`) and this surface re-hydrates instead of overwriting the merge.
+  // The roster generation the last GET answered (`baseGeneration` of every PUT). A PUT based on
+  // an older one is refused (409 `roster_stale`) and this surface re-hydrates instead.
   const rosterGenRef = useRef<number | undefined>(undefined);
-  // Bumped to pull the roster again (a stale PUT, or the laptop coming home from a trip).
+  // Bumped to pull the roster again (a stale PUT).
   const [rehydrateNonce, setRehydrateNonce] = useState(0);
   const rehydrateRoster = useCallback(() => {
     hydratedRef.current = false;
     setRehydrateNonce((n) => n + 1);
   }, []);
-  // Home again after a trip (away/returning -> home): sessions started on the phone appear, and
-  // whatever this tab did while its PUTs were refused (the lock) gives way to the merged roster.
-  const handsfreePhase = useHandsfree().status?.phase ?? null;
-  const handsfreePhaseRef = useRef(handsfreePhase);
-  useEffect(() => {
-    const prev = handsfreePhaseRef.current;
-    handsfreePhaseRef.current = handsfreePhase;
-    if (rehydrateOnPhase(prev, handsfreePhase)) rehydrateRoster();
-  }, [handsfreePhase, rehydrateRoster]);
   // ── The Claude account changed underneath us ───────────────────────────────────────
   //
   // `claude` reads its credentials once, at startup, so signing into a different account
@@ -2308,9 +2296,19 @@ export function AgentSurface() {
       console.warn('[app-link] cannot open chat', claudeId, 'here: the agent surface is unavailable');
       return undefined;
     }
-    resumePastSession({ id: claudeId, title: '', preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' });
+    const past = { id: claudeId, title: '', preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' };
+    // A hands-free phone (a notification tap): a chat still running on the Mac is ADOPTED, as
+    // the drawer's "Open on Mac" does; a plain resume would displace the running process.
+    if (isMacPhoneSurface() && !existing) {
+      void api.get<LiveChatsWire>('/agent/live-chats')
+        .then((r) => r.chats.find((c) => c.conversationId === claudeId))
+        .catch(() => undefined)
+        .then((live) => { if (live) adoptLiveChat(live); else resumePastSession(past); });
+      return undefined;
+    }
+    resumePastSession(past);
     return undefined;
-  }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession]);
+  }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession, adoptLiveChat, api]);
 
   // ── Start the initializer chat from the onboarding hand-off ("Start with Claude") ──
   //
@@ -3365,6 +3363,8 @@ export function AgentSurface() {
   // and expanding a surface that renders nothing would leave an invisible overlay eating clicks.
   useInstanceEvent(OPEN_AGENT_SURFACE_EVENT, () => {
     if (caps?.desktop && agentSettings.enabled) setExpanded(true);
+    // The phone's way back from "Show full dashboard": chat owns the screen again.
+    setMobileEscaped(false);
   });
   // …and tell the rail whether the overlay is up, so Chat reads as the current place (not the
   // page hidden underneath it).
@@ -3602,6 +3602,15 @@ export function AgentSurface() {
   // can activate that pane too.
   const mobileTabs = paneVMs.flatMap((pane) => pane.tabs.map((t) => ({ ...t, paneId: pane.id })));
   const mobileActive = mobileTabs.find((t) => t.id === activePane?.active) ?? mobileTabs[0];
+  // Phone (Mac mode): tell each chat whether it is the one on screen, so the server does not
+  // push a question or a finished turn for the chat the owner is looking at (D2).
+  const onScreenChatId = isMobile && expanded && !mobileEscaped && isMacPhoneSurface() ? (mobileActive?.id ?? '') : '';
+  useEffect(() => {
+    if (!isMacPhoneSurface()) return;
+    for (const [id, s] of sessions.current) {
+      if (s.kind === 'chat') (s as ChatSession).setOnScreen(id === onScreenChatId);
+    }
+  }, [onScreenChatId, sessionList]);
   // Collapsed dock rows — one chip per session, in roster order.
   const dockRows: SessionRow[] = sessionList.map((meta) => {
     const s = sessions.current.get(meta.id);
@@ -3870,7 +3879,6 @@ export function AgentSurface() {
         {/* Overlay chrome — ONE row: collapse, the session TABS themselves (one group per
             pane; the header IS the tab strip, so there's no separate title row and no
             second 38px bar), and the "New" split action. */}
-        <QuiesceOverlay />
         <div className="agent-overlay-head">
           {/* The phone header: [☰ sessions] [active session name] [＋ new chat]. It REPLACES
               the desktop trio rather than restyling it — the tab strip's per-tab ✕/minimize
@@ -3893,7 +3901,7 @@ export function AgentSurface() {
                 {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
                 {mobileActive?.title ?? 'Chat'}
               </span>
-              <CloudChip />
+              <PhoneChip />
               <button
                 className="mchat-head-btn"
                 onClick={() => addSession(claudeKind)}

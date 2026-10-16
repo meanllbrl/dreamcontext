@@ -14,7 +14,6 @@ import {
 import { recentUserPrompts } from '../../lib/recent-prompts.js';
 import { sendError, sendJson } from '../middleware.js';
 import { requireLocalDashboardRead } from './recall-cloud.js';
-import { isCloud } from '../cloud-mode.js';
 
 /**
  * `GET /api/recall/options` — what Settings → Recall shows besides the choice itself: the measured
@@ -49,8 +48,7 @@ export function createRecallOptionsRoutes(overrides: Partial<RecallOptionsRouteD
 
   const options: RecallOptionsRoutes['options'] = async (req, res, _params, root) => {
     if (!requireLocalDashboardRead(req)) {
-      if (isCloud()) sendError(res, 403, 'cloud_unavailable', 'This is not available on the cloud machine.');
-      else sendError(res, 403, 'forbidden', 'Recall options can only be read from the dashboard on this computer.');
+      sendError(res, 403, 'forbidden', 'Recall options can only be read from the dashboard on this computer.');
       return;
     }
     if (!root) { sendError(res, 400, 'no_vault', 'No vault selected.'); return; }

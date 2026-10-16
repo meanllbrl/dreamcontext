@@ -10,6 +10,10 @@
  */
 
 :root {
+  /* Phone (body[data-phone]): the one top bar, the page gutter, the page title. */
+  --m-bar: 44px;
+  --m-pad: 12px;
+  --m-title: 20px;
   /* ─── Spacing (4px grid; ClickUp: 4/8/12/16/20/24/32/40/48/52/56/60/80/100/128) ─── */
   --space-1: 4px;
   --space-2: 8px;

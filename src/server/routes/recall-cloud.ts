@@ -28,7 +28,6 @@ import {
   readVectorMeta,
 } from '../../lib/embeddings/vector-store.js';
 import { voiceStatus } from '../../lib/voice/config.js';
-import { isCloud } from '../cloud-mode.js';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isLoopback } from './agent-spawn-shared.js';
 
@@ -63,7 +62,6 @@ function hostRuleHolds(req: Pick<IncomingMessage, 'headers'>): string | null {
 
 /**
  * The guard of every route that CHANGES something. All of these must hold:
- *  - not the hands-free cloud (its forwarder makes every request loopback);
  *  - `Host` is a loopback name with a port (a DNS-rebound page arrives under its own name);
  *  - `Origin` is present and is exactly `http://<Host>` — a rebound page sends `Origin == Host ==
  *    evil.example:port`, which passes a "same origin" check but fails the loopback one above, and a
@@ -71,7 +69,6 @@ function hostRuleHolds(req: Pick<IncomingMessage, 'headers'>): string | null {
  *  - the socket's peer is loopback.
  */
 export function requireLocalDashboardWrite(req: IncomingMessage): boolean {
-  if (isCloud()) return false;
   const host = hostRuleHolds(req);
   if (host === null) return false;
   if (lowerHeader(req, 'origin') !== `http://${host}`) return false;
@@ -79,11 +76,10 @@ export function requireLocalDashboardWrite(req: IncomingMessage): boolean {
 }
 
 /**
- * The guard of the read-only routes: the same Host rule and the same cloud refusal. A same-origin
+ * The guard of the read-only routes: the same Host rule. A same-origin
  * GET carries no `Origin`, so it is not demanded — but one that does carry a foreign `Origin` is refused.
  */
 export function requireLocalDashboardRead(req: IncomingMessage): boolean {
-  if (isCloud()) return false;
   const host = hostRuleHolds(req);
   if (host === null) return false;
   const origin = lowerHeader(req, 'origin');
@@ -91,10 +87,6 @@ export function requireLocalDashboardRead(req: IncomingMessage): boolean {
 }
 
 function refuse(res: ServerResponse): void {
-  if (isCloud()) {
-    sendError(res, 403, 'cloud_unavailable', 'This is not available on the cloud machine.');
-    return;
-  }
   sendError(res, 403, 'forbidden', 'Cloud recall settings can only be changed from the dashboard on this computer.');
 }
 

@@ -14,7 +14,7 @@ import type { CorpusDoc } from '../../src/lib/recall.js';
 const HOST = '127.0.0.1:4173';
 const KEY = 'sk-or-v1-PLANTED-RECALL-KEY-0123456789';
 const GIB = 1024 ** 3;
-const ENV = ['DREAMCONTEXT_CLOUD', 'DREAMCONTEXT_RECALL_OPENROUTER_KEY', 'OPENROUTER_API_KEY'];
+const ENV = ['DREAMCONTEXT_RECALL_OPENROUTER_KEY', 'OPENROUTER_API_KEY'];
 
 interface Opts { host?: string; origin?: string | null; remote?: string }
 
@@ -64,12 +64,6 @@ describe('the guard', () => {
   it('refuses DNS rebinding and a Host without a port', async () => {
     expect((await call(routesWith([]).options, get({ host: 'evil.example:4173', origin: 'http://evil.example:4173' }), root)).status).toBe(403);
     expect((await call(routesWith([]).options, get({ host: '127.0.0.1' }), root)).status).toBe(403);
-  });
-  it('refuses the hands-free cloud', async () => {
-    vi.stubEnv('DREAMCONTEXT_CLOUD', '1');
-    const r = await call(routesWith([]).options, get(), root);
-    expect(r.status).toBe(403);
-    expect(r.json.error).toBe('cloud_unavailable');
   });
   it('allows a same-origin read (no Origin) and a matching Origin', async () => {
     expect((await call(routesWith([]).options, get(), root)).status).toBe(200);

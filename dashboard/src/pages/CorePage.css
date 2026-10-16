@@ -261,3 +261,8 @@
     width: 100%;
   }
 }
+/* Phone: the file list on top, full width, and the file under it (side by side, a 240px list
+   left the viewer ~120px). */
+body[data-phone] .core-layout { flex-direction: column; gap: var(--space-3); }
+body[data-phone] .core-list { width: auto; }
+body[data-phone] .core-list-item:hover { transform: none; }

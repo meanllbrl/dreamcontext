@@ -27,7 +27,21 @@ interface SidebarProps {
   onNavigate: (page: Page, id?: string) => void;
   /** Collapsed state, owned by the Shell and toggled from the title bar. */
   collapsed: boolean;
+  /** Phone: the rail is an off-canvas drawer (Shell owns open/close). Settings is laptop-only
+   *  there (hands-free denies its writes), "What is this?" gets a row, sync controls stay home. */
+  phone?: { open: boolean; onClose: () => void };
 }
+
+/** The i18n key of each page's name (the phone's top bar shows it). */
+export const PAGE_LABEL_KEY: Record<Page, string> = {
+  tasks: 'nav.tasks', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
+  agents: 'nav.agents', core: 'nav.core', knowledge: 'nav.knowledge', sleep: 'nav.sleep', brain: 'nav.brain', council: 'nav.council',
+  settings: 'nav.settings', packs: 'nav.packs', about: 'nav.about', taxonomy: 'nav.taxonomy', announcements: 'nav.announcements',
+  whiteboards: 'nav.whiteboard',
+};
+
+/** Pages the phone never shows (laptop administration). */
+export const PHONE_HIDDEN_PAGES: readonly Page[] = ['settings'];
 
 /**
  * How finished a surface is — ONE field replacing the `lab`/`beta` booleans, and the same
@@ -154,7 +168,10 @@ function writeFlag(key: string): void {
   }
 }
 
-export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collapsedProp, phone }: SidebarProps) {
+  // On a phone every pick also closes the drawer, and the rail is never collapsed to icons.
+  const onNavigate = (page: Page, id?: string) => { navigateTo(page, id); phone?.onClose(); };
+  const collapsed = phone ? false : collapsedProp;
   const { t } = useI18n();
   // Which project this rail belongs to. Read from the instance, NOT from `?vault=`: the
   // window's URL names the first chip, and several projects render their own rail here.
@@ -250,7 +267,16 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
     : { title: hint };
 
   return (
-    <nav ref={railRef} className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} aria-label="Primary">
+    <>
+    {phone && <div className="sidebar-scrim" data-open={phone.open ? 'true' : undefined} onClick={phone.onClose} aria-hidden="true" />}
+    <nav
+      ref={railRef}
+      className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}${phone ? ' sidebar--phone' : ''}`}
+      aria-label="Primary"
+      data-open={phone?.open ? 'true' : undefined}
+      aria-hidden={phone && !phone.open ? true : undefined}
+      inert={phone && !phone.open ? true : undefined}
+    >
       <RailTip railRef={railRef} enabled={collapsed} />
       {/* Brand lockup — the dream gem + wordmark + active vault. */}
       <div className="sidebar-brand" title="dreamcontext">
@@ -272,7 +298,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         >
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {group.items.map((item) => {
+            {[...group.items, ...(phone && group.labelKey === 'nav.group.system' ? [{ page: 'about' as Page, labelKey: 'nav.about' }] : [])].map((item) => {
               if ('launch' in item) {
                 if (!showChat) return null;
                 staggerIndex += 1;
@@ -283,7 +309,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                     <button
                       className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
                       aria-current={chatOpen ? 'page' : undefined}
-                      onClick={() => openAgentSurface(bus)}
+                      onClick={() => { openAgentSurface(bus); phone?.onClose(); }}
                       {...named(live > 0 ? `${label} (${live} open)` : label)}
                     >
                       <span className="sidebar-icon"><ChatIcon /></span>
@@ -299,7 +325,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                   </li>
                 );
               }
-              const { page, labelKey, maturity, hero } = item;
+              const { page, labelKey, maturity, hero } = item as NavItem;
+              if (phone && PHONE_HIDDEN_PAGES.includes(page)) return null;
               staggerIndex += 1;
               const label = t(labelKey);
               // An off layer replaces its maturity tag rather than adding a second
@@ -315,7 +342,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
-                    className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
+                    className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}${isAbout && nudgeAbout && !phone ? ' sidebar-item--nudge' : ''}${off ? ' sidebar-item--off' : ''}`}
                     onClick={isAbout ? openAbout : () => onNavigate(page)}
                     {...named(tag ? `${label} (${tag})` : label)}
                     aria-current={current === page ? 'page' : undefined}
@@ -359,7 +386,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
           {unread.length > 0 && <span className="sidebar-badge">{unread.length}</span>}
         </button>
 
-        {signedIn && hasRemote ? (
+        {phone ? null : signedIn && hasRemote ? (
           <BrainSyncControl onOpenSettings={openGithubSync} />
         ) : (
           <button
@@ -373,5 +400,6 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         )}
       </div>
     </nav>
+    </>
   );
 }

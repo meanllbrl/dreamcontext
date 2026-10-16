@@ -6,7 +6,8 @@ import net from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { callMac, registerHandsfreeMacCommand, serverHint, showSecret } from '../../src/cli/commands/handsfree-mac.js';
+import { callMac, registerHandsfreeMacCommand, serverHint, showSecret, startVaults } from '../../src/cli/commands/handsfree-mac.js';
+import { addVault } from '../../src/lib/vaults.js';
 
 let home = '';
 afterEach(() => { if (home) rmSync(home, { recursive: true, force: true }); home = ''; });
@@ -19,6 +20,25 @@ describe('handsfree mac CLI', () => {
     expect(mac.commands.map((c) => c.name()).sort()).toEqual(['devices', 'password', 'setup', 'start', 'status', 'stop', 'tunnel', 'uninstall']);
     expect(mac.commands.find((c) => c.name() === 'devices')!.commands.map((c) => c.name())).toEqual(['revoke-all']);
     expect(mac.commands.find((c) => c.name() === 'tunnel')!.commands.map((c) => c.name()).sort()).toEqual(['fixed', 'quick']);
+  });
+
+  it('AC16: start exposes every --project (registered names), else the project it runs in; otherwise a listed error', () => {
+    home = mkdtempSync(join(tmpdir(), 'mac-cli-'));
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      for (const n of ['alpha', 'beta']) { mkdirSync(join(home, n, '_dream_context'), { recursive: true }); addVault(n, join(home, n)); }
+      expect(startVaults(['alpha', 'beta', 'alpha'], home)).toEqual(['alpha', 'beta']);
+      expect(() => startVaults(['alpha', 'nope'], home)).toThrow(/Not a registered project: nope\. Registered projects: alpha, beta/);
+      expect(startVaults([], join(home, 'beta'))).toEqual(['beta']);
+      expect(() => startVaults([], home)).toThrow(/--project <name>.*Registered projects: alpha, beta/);
+      const hf = new Command('handsfree');
+      registerHandsfreeMacCommand(hf);
+      const start = hf.commands.find((c) => c.name() === 'mac')!.commands.find((c) => c.name() === 'start')!;
+      expect(start.options.map((o) => o.long)).toContain('--project');
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+    }
   });
 
   it('prints a secret to a terminal only; a pipe gets a pointer to the app', () => {

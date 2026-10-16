@@ -8,16 +8,23 @@ import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { makeRequestHandler } from '../../src/server/index.js';
 import { Router } from '../../src/server/router.js';
-import { markPhoneSocket } from '../../src/server/phone-origin.js';
+import { markPhoneSocket, setMacExposedVaults } from '../../src/server/phone-origin.js';
+import { addVault } from '../../src/lib/vaults.js';
 import { startTunnel } from '../../src/lib/handsfree/mac/tunnel.js';
 import { MacSession } from '../../src/lib/handsfree/mac/session.js';
 import { HandsfreeAuth, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase } from '../../src/server/handsfree-auth.js';
 
 describe('AC4: the phone listener never logs a query string', () => {
   it('an unhandled error on a phone socket logs the path only — the one-time token never reaches the log', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'mac-extra-'));
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    mkdirSync(join(home, 'proj', '_dream_context'), { recursive: true });
+    addVault('proj', join(home, 'proj'));
+    setMacExposedVaults(['proj']);
     const router = new Router();
     router.get('/api/health', async () => { throw new Error('boom'); });
-    const handler = makeRequestHandler({ gate: () => true, router, dashboardDir: tmpdir(), contextRoot: null, cloud: false });
+    const handler = makeRequestHandler({ gate: () => true, router, dashboardDir: tmpdir(), contextRoot: null });
     const sock = { remoteAddress: '127.0.0.1' };
     markPhoneSocket(sock);
     const logged: string[] = [];
@@ -26,7 +33,12 @@ describe('AC4: the phone listener never logs a query string', () => {
     const res = { setHeader() {}, writeHead(c: number) { status = c; return res; }, end() {} } as unknown as ServerResponse;
     try {
       await handler({ method: 'GET', url: '/api/health?t=SECRET-ONE-TIME-TOKEN', headers: { host: 'a.trycloudflare.com' }, socket: sock } as unknown as IncomingMessage, res);
-    } finally { spy.mockRestore(); }
+    } finally {
+      spy.mockRestore();
+      setMacExposedVaults([]);
+      if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+      rmSync(home, { recursive: true, force: true });
+    }
     expect(status).toBeGreaterThanOrEqual(400);
     expect(logged.join('\n')).not.toContain('SECRET-ONE-TIME-TOKEN');
     expect(logged.join('\n')).toContain('GET /api/health');
@@ -73,7 +85,7 @@ describe('AC19: uninstall removes the sudoers drop-in and the Mac dir', () => {
       const s = new MacSession({
         home, platform: 'darwin', auth: () => auth as never, hashPassphrase: (p) => hashPassphrase(p), generatePassphrase,
         startListener: async () => ({ port: 1 }), stopListener: async () => {}, setPublicOrigin: () => {}, setProbeNonce: () => {}, setPhoneSource: () => {},
-        releasePhoneSessions: () => 0, cloudTripActive: () => false, notify: () => {},
+        releasePhoneSessions: () => 0, notify: () => {},
         sudoersInstalled: () => installed, removeSudoers,
       });
       await s.uninstall();

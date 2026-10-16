@@ -215,3 +215,7 @@
     padding: 0 var(--space-3) var(--space-4);
   }
 }
+
+/* Phone: a compact header, the version list right under it. */
+body[data-phone] .announcements-header { margin-bottom: var(--space-3); }
+body[data-phone] .announcements-subtitle { display: none; } /* the bar and the title already say it */

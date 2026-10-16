@@ -1,7 +1,7 @@
 /**
  * Mac mode's orchestrator: one per desktop server process.
  *
- *   start  = preflight (setup done, no cloud trip off home, `sudo -n` works)
+ *   start  = preflight (setup done, `sudo -n` works)
  *            → phone listener → cloudflared (pinned) → reachability probe → power → state
  *   stop   = (Return) phone sessions let go (4401, children detach) → every Mac device revoked
  *            → tunnel + watchdog stop → phone listener stop → power restored → state cleared
@@ -36,6 +36,8 @@ export interface MacState {
   sleepDisabledByUs: boolean;
   url: string | null;
   mode: 'quick' | 'fixed';
+  /** The chosen projects, for REPORTING only (`status`). Never restored: a crash ends Mac mode. */
+  exposedVaults?: string[];
 }
 
 /** The auth store's surface the session needs (the Mac HandsfreeAuth). */
@@ -63,10 +65,10 @@ export interface MacSessionDeps {
   setPublicOrigin: (origin: string | null) => void;
   setProbeNonce: (nonce: string | null) => void;
   setPhoneSource: (src: (() => { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean }) | null) => void;
+  /** The project the phone may see and reach (phone-origin.ts); null when Mac mode is off. */
+  setExposedVaults?: (names: readonly string[]) => void;
   /** Return semantics on the chat registry: phone-held sessions let go, nothing cut. */
   releasePhoneSessions: () => number;
-  /** A cloud trip is not `home` (going, away, returning). */
-  cloudTripActive: () => boolean;
   notify: (title: string, body: string) => void;
   powerRun?: power.PowerRunner;
   /** Battery poll interval; defaults to MAC_BATTERY_POLL_MS (the verify seam shortens it). */
@@ -118,6 +120,8 @@ export class MacSession {
   private battery: power.BatteryWatch | null = null;
   private state: MacState | null = null;
   private lastError: MacErrorCode | null = null;
+  /** The projects this run exposes (chosen at start). */
+  private vaults: string[] = [];
   private readonly home: string;
 
   constructor(private readonly d: MacSessionDeps) {
@@ -145,6 +149,7 @@ export class MacSession {
       sleepAllowed: this.battery?.sleepAllowed ?? false,
       deviceCount: this.d.auth().store.deviceCount(),
       lastError: this.lastError,
+      exposedVaults: [...this.vaults],
     };
   }
 
@@ -190,11 +195,14 @@ export class MacSession {
     return this.d.auth().store.revokeAllLocal();
   }
 
-  async start(): Promise<MacStatus> {
+  /** Start Mac mode for the chosen projects (`vaults`, registered names): the phone sees only
+   *  those. The route validates the names against the registry; changing the set = stop + start. */
+  async start(opts: { vaults: string[] }): Promise<MacStatus> {
     if (this.phase !== 'off') throw new MacModeError('mac_already_on', 'Mac mode is already on.');
+    const vaults = [...new Set((opts?.vaults ?? []).filter((v) => typeof v === 'string' && v))];
+    if (!vaults.length) throw new MacModeError('mac_no_project', 'Choose at least one project.');
     if ((this.d.platform ?? process.platform) !== 'darwin') throw new MacModeError('mac_unsupported_platform', 'Mac mode runs on macOS only.');
     if (!this.d.auth().store.passphraseVerifier || !this.sudoersInstalled()) throw new MacModeError('mac_not_setup', 'Set Mac mode up first.');
-    if (this.d.cloudTripActive()) throw new MacModeError('mac_cloud_trip_active', 'A project is on the cloud machine; bring it back before Mac mode.');
     const run = this.d.powerRun;
     if (!(await power.sudoWorks(run))) throw new MacModeError('mac_sudo_missing', 'The sleep permission is missing; run setup again.');
     this.phase = 'starting';
@@ -203,6 +211,8 @@ export class MacSession {
     let armed: power.LpmBySource | null = null;
     let sleepDisabled = false;
     try {
+      this.vaults = vaults;
+      this.d.setExposedVaults?.(vaults);
       this.d.setProbeNonce(nonce);
       const { port } = await this.d.startListener();
       let bin: string;
@@ -237,6 +247,7 @@ export class MacSession {
       this.state = {
         on: true, serverPid: this.d.serverPid ?? process.pid, tunnelPid: this.supervisor.pid, tunnelBin: bin,
         startedAt: new Date().toISOString(), priorLpm: null, sleepDisabledByUs: true, url, mode: fixed ? 'fixed' : 'quick',
+        exposedVaults: [...vaults],
       };
       writeState(this.home, this.state);
       sleepDisabled = true;
@@ -280,6 +291,8 @@ export class MacSession {
     try { await this.d.stopListener(); } catch { /* gone */ }
     this.d.setPublicOrigin(null);
     this.d.setProbeNonce(null);
+    this.d.setExposedVaults?.([]);
+    this.vaults = [];
     if (sleepDisabled || prior) {
       try { await power.restorePower(prior, this.d.powerRun); } catch { this.lastError = this.lastError ?? 'mac_sudo_missing'; }
     }

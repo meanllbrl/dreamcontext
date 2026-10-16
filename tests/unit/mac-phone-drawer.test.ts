@@ -29,6 +29,20 @@ describe('phone drawer (AC9)', () => {
     expect(surface).toMatch(/createChatSession\(vault \?\? '', [\s\S]{0,200}origin, null, reattach\)/);
   });
 
+  it('AC16: one chosen project shows its name only; several show the project list (only the chosen ones, from /vaults)', () => {
+    expect(drawer).toMatch(/const macMulti = mac && vaults\.length > 1/);
+    expect(drawer).toMatch(/\{mac && !macMulti \? \(/);
+    expect(drawer).toMatch(/projectsOpen && \(!mac \|\| macMulti\)/);
+  });
+
+  it('AC18: rows come from drawerRows (live + draining excluded from past), a past tap re-asks the Mac and adopts a live one, rows show the state label', () => {
+    expect(drawer).toMatch(/drawerRows\(\{\s*live: live\?\.chats \?\? \[\], draining: live\?\.draining \?\? \[\]/);
+    expect(drawer).toMatch(/const fresh = await api\.get<LiveChatsWire>\('\/agent\/live-chats'\);\s*const d = pastTap\(s\.id, fresh\.chats\);\s*if \('adopt' in d\) \{ adopt\(d\.adopt\); return; \}/);
+    expect(drawer).toContain('onClick={() => { void tapPast(s); }}');
+    expect(drawer).toContain('t(liveStateKey(c.state))');
+    expect(drawer).toContain('activeStateKey(s.info)');
+  });
+
   it('the roster restore (hydrate) opens every restored chat PASSIVELY', () => {
     expect(surface).toMatch(/const s = spawn\(m\.bypass, m\.sessionId, true, kind, '', '', true, '', false, '', true, savedMode, '', '', 'passive'\)/);
   });
@@ -43,9 +57,9 @@ describe('parked adoption (macAdopt.ts)', () => {
 
   it('is taken once, by the named project only', async () => {
     const { setPendingMacAdopt, takePendingMacAdopt } = await import('../../dashboard/src/components/handsfree/macAdopt');
-    setPendingMacAdopt({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true });
+    setPendingMacAdopt({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true, state: 'asking' });
     expect(takePendingMacAdopt('beta')).toBeNull();
-    expect(takePendingMacAdopt('alpha')).toEqual({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true });
+    expect(takePendingMacAdopt('alpha')).toEqual({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true, state: 'asking' });
     expect(takePendingMacAdopt('alpha')).toBeNull();
   });
 });

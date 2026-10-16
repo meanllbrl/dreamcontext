@@ -74,3 +74,6 @@
   0%, 100% { opacity: 0.28; transform: scale(1); }
   50% { opacity: 0.44; transform: scale(1.06); }
 }
+
+/* Phone: bleed exactly the phone gutter (the desktop's 16px poked 4px past the screen). */
+body[data-phone] .about { margin: calc(var(--m-pad) * -1); }

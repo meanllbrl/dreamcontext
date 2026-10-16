@@ -3,9 +3,11 @@ import chalk from 'chalk';
 import { request } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { error, info, success, warn } from '../../lib/format.js';
 import type { MacDevice, MacStatus } from '../../lib/handsfree/mac/contract.js';
+import { resolveContextRoot } from '../../lib/context-path.js';
+import { listVaults } from '../../lib/vaults.js';
 
 /**
  * `dreamcontext handsfree mac …` — Mac mode from the terminal. Mac mode lives INSIDE the desktop
@@ -61,6 +63,31 @@ export function callMac<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body
   });
 }
 
+/** The registered name of the project the CLI runs in, or null. */
+export function projectVaultName(cwd: string = process.cwd()): string | null {
+  const root = resolveContextRoot(cwd);
+  if (!root) return null;
+  const project = resolve(dirname(root));
+  return listVaults().find((v) => resolve(v.path) === project)?.name ?? null;
+}
+
+/**
+ * The projects `start` exposes: every `--project` given (each must be a registered name), else
+ * the project the CLI runs in. Throws a listed error when neither names one.
+ */
+export function startVaults(projects: readonly string[], cwd: string = process.cwd()): string[] {
+  const registered = listVaults().map((v) => v.name);
+  const list = `Registered projects: ${registered.length ? registered.join(', ') : '(none)'}.`;
+  if (projects.length) {
+    const unknown = projects.filter((p) => !registered.includes(p));
+    if (unknown.length) throw new MacCliError('mac_unknown_project', `Not a registered project: ${unknown.join(', ')}. ${list}`);
+    return [...new Set(projects)];
+  }
+  const here = projectVaultName(cwd);
+  if (!here) throw new MacCliError('mac_no_project', `Name a project with --project <name> (repeatable), or run this inside a registered project. ${list}`);
+  return [here];
+}
+
 /** Print a secret only to a terminal. Returns whether it was shown. */
 export function showSecret(io: MacCliIo, label: string, value: string | null | undefined): boolean {
   if (!value) return false;
@@ -73,6 +100,7 @@ export function printStatus(s: MacStatus, io: MacCliIo): void {
   io.out(`  Mac mode: ${s.phase}${s.url ? `  ${s.url}` : ''}`);
   io.out(`  setup: sleep permission ${s.setup.sudoers ? 'installed' : 'missing'}, passphrase ${s.setup.passphrase ? 'set' : 'not set'}`);
   io.out(`  address: ${s.mode === 'fixed' && s.fixedHostname ? `fixed (${s.fixedHostname})` : 'quick (a new address every start)'}`);
+  if (s.exposedVaults?.length) io.out(`  projects on the phone: ${s.exposedVaults.join(', ')}`);
   if (s.phase === 'on') {
     io.out(`  battery: ${s.battery.percent ?? '?'}%${s.battery.charging ? ' (charging)' : ''}${s.sleepAllowed ? ' — sleep allowed again (battery low)' : ''}`);
     io.out(`  signed-in phones: ${s.deviceCount}`);
@@ -86,7 +114,7 @@ function failCli(err: unknown): never {
 }
 
 export function registerHandsfreeMacCommand(hf: Command, io: () => MacCliIo = realIo): void {
-  const mac = hf.command('mac').description('Mac mode: drive this laptop from your phone through a tunnel link (no cloud machine)');
+  const mac = hf.command('mac').description('Mac mode: drive this laptop from your phone through a tunnel link');
 
   mac.command('setup')
     .description('Install the sleep permission (one admin prompt) and create the phone passphrase')
@@ -101,9 +129,11 @@ export function registerHandsfreeMacCommand(hf: Command, io: () => MacCliIo = re
 
   mac.command('start')
     .description('Start Mac mode: tunnel link, phone listener, keep awake + Low Power Mode')
-    .action(async () => {
+    .option('--project <name>', 'a registered project the phone may open (repeatable; default: this project)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+    .action(async (o: { project: string[] }) => {
       try {
-        const s = await callMac<MacStatus>('POST', 'start');
+        const vaults = startVaults(o.project ?? []);
+        const s = await callMac<MacStatus>('POST', 'start', { vaults });
         success(`Mac mode is on: ${s.url}`);
         const qr = await callMac<{ url: string }>('POST', 'qr');
         showSecret(io(), '  one-time sign-in link (5 min)', qr.url);

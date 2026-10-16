@@ -5,10 +5,12 @@ import { CommandPalette } from '../search/CommandPalette';
 import { useVault, emitInstance } from '../../context/VaultContext';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { PhoneBar } from './PhoneBar';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
-const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards'];
+const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards'];
 
 /**
  * Which page a project was last on — per-project navigation, so it goes through the
@@ -75,6 +77,22 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const [nonce, setNonce] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  // The phone (a narrow viewport AND a finger): one top bar, the rail as a drawer, no window
+  // chrome. `body[data-phone]` lets every page's CSS key off ONE attribute.
+  const phone = useIsMobile();
+  const [phoneNavOpen, setPhoneNavOpen] = useState(false);
+  useLayoutEffect(() => {
+    if (!phone) { setPhoneNavOpen(false); return undefined; }
+    document.body.dataset.phone = 'true';
+    return () => { delete document.body.dataset.phone; };
+  }, [phone]);
+  useEffect(() => {
+    if (!phoneNavOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPhoneNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [phoneNavOpen]);
+  const closePhoneNav = useCallback(() => setPhoneNavOpen(false), []);
 
   // ⌘K / Ctrl-K toggles the global command palette from anywhere (including over the
   // expanded agent overlay — the agent host only grabs ⌘D/⌘T/⌘W, never ⌘K). Gated on
@@ -147,15 +165,16 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 
   return (
-    <div className="shell" ref={shellRef}>
-      <Header
+    <div className="shell" ref={shellRef} data-phone={phone ? 'true' : undefined}>
+      {phone && isActive && <PhoneBar page={activePage} menuOpen={phoneNavOpen} onMenu={() => setPhoneNavOpen((o) => !o)} />}
+      {!phone && <Header
         onNavigate={handleSidebarNavigate}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={onToggleSidebar}
         onOpenSearch={() => setPaletteOpen(true)}
-      />
+      />}
       <div className="shell-body">
-        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} />
+        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} phone={phone ? { open: phoneNavOpen, onClose: closePhoneNav } : undefined} />
         <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
         <main className="shell-main">
           {children({ page: activePage, focusId, nonce, navigate, clearFocus })}

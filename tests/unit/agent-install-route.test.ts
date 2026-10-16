@@ -42,7 +42,6 @@ function setPlatform(p: NodeJS.Platform) { Object.defineProperty(process, 'platf
 
 beforeEach(() => {
   vi.stubEnv('DREAMCONTEXT_DESKTOP', '1');
-  vi.stubEnv('DREAMCONTEXT_CLOUD', '');
   resetInstallRunsForTests();
   runFix.mockReset().mockResolvedValue({ ok: true });
   gitAvailable.mockReset().mockReturnValue(false);
