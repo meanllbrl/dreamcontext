@@ -140,10 +140,12 @@ export function automationAccountWithoutProbe(deps: PickDeps = {}): AutomationAc
  * No probe on purpose: this runs inside the socket upgrade, and a probe can take seconds (its
  * ceiling is 20s). The per-turn check (`maybeSwitchAccount`) is still the safety net, so a
  * cache that is wrong here costs the same restart as before, never worse. Same rules as the
- * turn path otherwise: OFF / one account / `sequential` without a refusal keep the preferred
- * account; only a refusal, a CURRENT reading past the switch threshold, or an older one whose
- * window has not reset yet and already shows it past (`provenPastThreshold`) moves it; and a blind
- * pick (`unmeasured`) is refused, since staying put lets the turn path probe properly.
+ * turn path otherwise: OFF / one account keep the preferred account; only a refusal, a CURRENT
+ * reading past the switch threshold, or an older one whose window has not reset yet and already
+ * shows it past (`provenPastThreshold`) moves it — under `sequential` too since 2026-10-16, which
+ * used to open every new chat on the top account however full (a chat opened at 98% and was
+ * refused seven minutes later). A blind pick (`unmeasured`) is refused under `score`, since
+ * staying put lets the turn path probe properly; under `sequential` it is the mode's own rule.
  */
 export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
   /** Injectable so a test reads its own fixture, not a `.claude.json` under the real HOME. */
@@ -155,8 +157,8 @@ export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
     if (accounts.length < 2 || !autoSwitchEnabled(home) || !preferred) return fallback;
     const dirOf = (a: ClaudeAccount): string => a.configDir ?? home;
     const read = deps.readUsage ?? cachedUsage;
+    const sequential = switchStrategyFor(home) === 'sequential';
     if (!rejectedUntil[preferred.id]) {
-      if (switchStrategyFor(home) === 'sequential') return fallback;
       const cached = read(dirOf(preferred));
       // A current reading decides as usual. An OLD one still decides when it proves the
       // account full (`provenPastThreshold`): usage cannot fall before the reset, so "too old
@@ -168,6 +170,9 @@ export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
     }
     const readings = accounts.map((a): AccountReading => {
       const cached = read(dirOf(a));
+      // `sequential` weighs no percentage, so an old reading is not a problem to it; what it
+      // needs is the reading itself, to pass over an account it PROVES full (`skipProvenFull`).
+      if (sequential) return cached.limits.length > 0 ? { id: a.id, limits: cached } : { id: a.id, problem: 'stale' };
       return usageReadingIsCurrent(cached, now) ? { id: a.id, limits: cached } : { id: a.id, problem: 'stale' };
     });
     const choice = chooseAccount(readings, {
@@ -179,8 +184,12 @@ export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
       strategy: switchStrategyFor(home),
       weights: switchWeightsFor(home),
       now,
+      // A NEW chat should open where it can live, not where it will be refused in minutes.
+      skipProvenFull: true,
     });
-    const winner = choice.accountId === null || choice.unmeasured
+    // `unmeasured` is a blind pick under `score`; under `sequential` it is the mode's own rule
+    // (no percentage is consulted), so it stands.
+    const winner = choice.accountId === null || (choice.unmeasured && !sequential)
       ? null
       : accounts.find((a) => a.id === choice.accountId);
     return winner ? toAccount(winner, home) : fallback;

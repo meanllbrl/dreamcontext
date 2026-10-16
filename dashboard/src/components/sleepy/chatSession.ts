@@ -334,7 +334,7 @@ export interface ConversationModel {
    */
   accountSwitch?: {
     switched: boolean;
-    reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
+    reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted' | 'come_home'
       | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
     accountId: string;
     fromAccountId?: string;
@@ -742,11 +742,13 @@ export const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000] as const;
  *  abandoned and retried on the backoff — the cloud's port forwarder can hang a request. */
 export const CONNECT_TIMEOUT_MS = 15000;
 
-/** The server's `_meta/reattached` frame (agent-chat.ts), or null for anything else. */
+/** The server's `_meta/reattached` frame (agent-chat.ts), or null for anything else. Its
+ *  `_meta/turn_state` frame reads the same way: the server's word that nothing is running,
+ *  sent when a Stop was acked and no `result` followed (an idle CLI sends none). */
 export function readReattachedFrame(raw: string): { adopted: boolean; busy: boolean } | null {
   try {
     const o = JSON.parse(raw) as { type?: unknown; subtype?: unknown; adopted?: unknown; busy?: unknown };
-    if (o?.type !== '_meta' || o.subtype !== 'reattached') return null;
+    if (o?.type !== '_meta' || (o.subtype !== 'reattached' && o.subtype !== 'turn_state')) return null;
     return { adopted: o.adopted === true, busy: o.busy === true };
   } catch { return null; }
 }
@@ -1984,7 +1986,7 @@ export function createChatSession(
     const raw = typeof e.data === 'string' ? e.data : '';
     if (!raw) return;
     // The server's answer to a reattach — not a protocol event, so it never reaches the parser.
-    if (raw.includes('"reattached"')) {
+    if (raw.includes('"reattached"') || raw.includes('"turn_state"')) {
       const frame = readReattachedFrame(raw);
       if (frame) { applyReattached(frame.busy); return; }
     }

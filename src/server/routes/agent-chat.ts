@@ -52,10 +52,11 @@ import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-s
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
 import { readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse } from '../../lib/claude-usage.js';
 import {
-  SWITCH_THRESHOLD_PERCENT, chooseAccount, shouldProbe, shouldSwitchAway, type AccountReading,
+  SWITCH_THRESHOLD_PERCENT, chooseAccount, provenPastThreshold, shouldProbe, shouldSwitchAway, type AccountReading, type ChooseResult,
 } from '../../lib/claude-account-switch.js';
 import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
-import { readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
+import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
+import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
@@ -1094,6 +1095,94 @@ const INTERRUPT_KILL_GRACE_MS = 1500;
 const BLIND_PROBE_COOLDOWN_MS = 60_000;
 
 /**
+ * Below this much context, a conversation may change account WITHOUT being forced to — the
+ * point where a move costs little, which in practice is a fresh session or the first turns
+ * after a handoff or a compaction (this machine's sessions open at ~40-65k: system prompt,
+ * tools and the SessionStart snapshot).
+ *
+ * The prompt cache belongs to the ORGANIZATION. A conversation moved to an account of another
+ * organization re-reads its whole context uncached on the first request there, and that read
+ * is billed to the very quota the move was meant to spare. Owner, 2026-10-16: a switch should
+ * not be made with a full session, it should happen after a handoff or in a new session. So
+ * two rules hang off this number:
+ *   • coming HOME (a move nothing forces) happens only under it;
+ *   • a FORCED move above it stays inside the conversation's organization when it can
+ *     (`keepOrg` in `chooseAccount`), where the cache survives the move.
+ */
+export const CHEAP_MOVE_MAX_CONTEXT_TOKENS = 80_000;
+
+/**
+ * Why a pane is being moved. `come_home` is the one move nothing forces: the account above
+ * this one in the owner's list can serve again and the conversation is small enough to move
+ * cheaply. The client draws it as its own notice (chatProtocol's `account_switch`).
+ */
+type SwitchCause = 'limit_near' | 'needs_relogin' | 'limit_hit' | 'limit_known' | 'come_home';
+
+/**
+ * Panes whose account the SYSTEM chose, keyed by pinned conversation id → that account.
+ *
+ * A respawn always names its account on the URL, so the URL alone cannot tell "the owner
+ * picked this" from "auto-switch moved us here" — and treating every move as a hand pick is
+ * how a session never came home. A pane counts as auto-placed when it opened with no account
+ * (the default chose) or reopened on exactly the account the system last moved it to;
+ * anything else is a hand pick and stays put.
+ *
+ * Bounded (oldest dropped past {@link AUTO_PLACED_MAX}): an entry outlives its process on
+ * purpose, because the respawn that reads it is a new process. Lost on a server restart,
+ * which is harmless — restored tabs open with no account and are auto-placed again.
+ */
+const autoPlacedAccounts = new Map<string, string>();
+
+/**
+ * The account each pane was last FORCED off (by pinned conversation id), and until when it may
+ * not come home to it.
+ *
+ * Coming home decides from DISK (`chatSpawnAccount`); a forced move decides from a live probe
+ * whose number is never written down. The two disagree exactly at the threshold — disk 89%,
+ * probe 90% — so without this a small chat was forced off, came home on the next message, was
+ * forced off again, every message. Kept until the binding window resets (30 min when that is
+ * unknown, e.g. a sign-out), or until that account serves a turn somewhere after the move, which
+ * puts a fresh reading on disk that the two paths then share.
+ */
+const forcedOffAccounts = new Map<string, { accountId: string; at: number; until: number }>();
+const FORCED_OFF_DEFAULT_MS = 30 * 60_000;
+/**
+ * How far under the switch threshold an account just forced off must read before a pane goes
+ * back to it early (`meterShowsRoomSince`). Two points covers the disk/probe disagreement at the
+ * threshold (the meter rounds to a tenth) without waiting for a reset that has plainly come.
+ */
+const COME_HOME_MARGIN_PERCENT = 2;
+
+/**
+ * The account the OWNER picked for each pane, by pinned conversation id.
+ *
+ * A hand-picked account stays put, and when a limit forces the pane off it, that account is
+ * where the pane goes home to — not the top of the list, which the owner chose not to use here.
+ * Set when a pane opens on an account the system did not place; cleared when a pane opens with
+ * no account at all (a restored tab, where the pick is already gone).
+ */
+const handPickedAccounts = new Map<string, string>();
+
+const AUTO_PLACED_MAX = 500;
+/** Set one pane's entry, newest last, dropping the oldest past {@link AUTO_PLACED_MAX}. */
+function notePane<V>(map: Map<string, V>, conversationId: string, value: V): void {
+  if (!conversationId) return;
+  map.delete(conversationId);
+  map.set(conversationId, value);
+  while (map.size > AUTO_PLACED_MAX) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+function noteForcedOff(conversationId: string, entry: { accountId: string; at: number; until: number }): void {
+  if (entry.accountId) notePane(forcedOffAccounts, conversationId, entry);
+}
+function noteAutoPlaced(conversationId: string, accountId: string): void {
+  if (accountId) notePane(autoPlacedAccounts, conversationId, accountId);
+}
+
+/**
  * How long an announced account switch may stay unperformed, counted from the turn boundary
  * with a socket attached, before the held messages are sent on the current account instead.
  * The client restarts the instant it reads `turnInFlight: false`, so a minute only elapses when
@@ -1216,6 +1305,12 @@ export function startChatSession(
     (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
   ) ?? '';
   const pinId = resumeId || sessionId;
+  // Who chose this pane's account — see `autoPlacedAccounts`. Only an auto-placed pane comes home.
+  const accountAutoPlaced = !account || autoPlacedAccounts.get(pinId) === account;
+  if (accountAutoPlaced) noteAutoPlaced(pinId, activeAccountId);
+  else autoPlacedAccounts.delete(pinId);
+  if (!account) handPickedAccounts.delete(pinId);
+  else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
   const freshPin = !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
     ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
@@ -1640,8 +1735,25 @@ export function startChatSession(
    *     client's own flag, i.e. the behaviour that shipped before this feature. The dangerous
    *     direction is a count that is too LOW while a turn runs, and every stdin write of a
    *     user frame increments.
+   *
+   * A MAIN `result` NOW SETS IT TO ZERO, NOT ONE LESS (measured on claude 2.1.301, 2026-10-16).
+   * A user frame written mid-turn (a steer) is FOLDED into the running turn: two frames, one
+   * `result`. Counting down left one turn owed forever after every steer, and a count that
+   * never reaches zero is not the safe direction after all: the switch gate waits on it with the
+   * held message keeping the client busy, the stall release only arms at zero, and an idle
+   * interrupt answers with a bare `control_response` — so the pane read "Working…" for 69
+   * minutes with Stop doing nothing (owner video, 2026-10-14). A frame the CLI did NOT fold
+   * (a slash command, a frame raced against the `result`) runs as its own turn afterwards, and
+   * every turn opens with `system:init` — which re-opens the count (see the frame reader). An
+   * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
+  /** The request id of the interrupt last written, so ITS `control_response` can be told apart
+   *  from a model or mode switch's. */
+  let interruptRequestId: string | null = null;
+  /** Armed when the CLI acked an interrupt: if no `result` follows, nothing was running and the
+   *  turn is closed here (`settleAfterInterrupt`). */
+  let interruptSettleTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * The last text WE handed to the CLI, kept so the post-hoc switch can resubmit the exact
    * turn the API refused. Without it a limit landing mid-turn can only be announced, and the
@@ -1784,15 +1896,27 @@ export function startChatSession(
     if (live) markTurnStarted(live);
     armDetachReap();
   };
+  /** A main `result`: the CLI has answered every user frame written before it, folded steers
+   *  included (see `turnsInFlight`). */
   const closeTurn = (): void => {
-    turnsInFlight = Math.max(0, turnsInFlight - 1);
-    if (turnsInFlight === 0) {
-      outstandingAsks.clear();
-      if (live) markTurnEnded(live);
-      // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
-      reannounceSwitch();
-    }
+    turnsInFlight = 0;
+    outstandingAsks.clear();
+    if (live) markTurnEnded(live);
+    // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
+    reannounceSwitch();
     armDetachReap();
+  };
+  /**
+   * The CLI acked an interrupt and no `result` followed: nothing was running, or what was
+   * running ended without saying so. Stop must still stop, so the turn is closed HERE and the
+   * client is told it is idle — without this an idle ack left a pane "Working…" with a Stop
+   * that could no longer reach anything.
+   */
+  const settleAfterInterrupt = (): void => {
+    interruptSettleTimer = null;
+    if (!alive) return;
+    if (turnsInFlight > 0) closeTurn();
+    sendMeta({ subtype: 'turn_state', busy: false });
   };
 
   // Auto-submit the (non-deferred) initial prompt as the first stdin frame — see the
@@ -1949,6 +2073,7 @@ export function startChatSession(
     // stale count here would be a lie about the one thing only this side can report.
     turnsInFlight = 0;
     clearInterruptTimers();
+    if (interruptSettleTimer) { clearTimeout(interruptSettleTimer); interruptSettleTimer = null; }
     clearLingerTimers();
     clearDetachTimers();
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
@@ -2209,6 +2334,24 @@ export function startChatSession(
       if (interruptWatchdog && (obj.type === 'result' || obj.type === 'control_response')) {
         clearInterruptTimers();
       }
+      // …but an ack is not a turn end: an IDLE CLI acks an interrupt and sends no `result` at
+      // all (measured on 2.1.301). Give a real abort the same window to land its `result`.
+      if (obj.type === 'control_response' && interruptRequestId
+        && (obj.response as { request_id?: unknown } | undefined)?.request_id === interruptRequestId) {
+        interruptRequestId = null;
+        if (interruptSettleTimer) clearTimeout(interruptSettleTimer);
+        interruptSettleTimer = setTimeout(settleAfterInterrupt, INTERRUPT_WATCHDOG_MS);
+      }
+      if (obj.type === 'result' && obj.parent_tool_use_id === undefined && interruptSettleTimer) {
+        clearTimeout(interruptSettleTimer); interruptSettleTimer = null;
+      }
+      // Every turn opens with `system:init`, ours or not: a frame the CLI queued behind the turn
+      // that just closed, or a turn it started itself (a background task finishing). Counted so
+      // a switch never restarts over it — an idle child emits no `init`, so this never opens a
+      // turn that is not running.
+      if (obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && turnsInFlight === 0) {
+        openTurn();
+      }
 
       // The turn is over. Tracked HERE, from the CLI's own frame, because the client's `busy`
       // is set OPTIMISTICALLY the moment a user frame is written (chatSession.ts's `writeUser`)
@@ -2306,6 +2449,9 @@ export function startChatSession(
       // A SUB-AGENT's rejection counts too, and deliberately so: it drew on the same account
       // quota, and the main turn it belongs to is about to fail for the same reason.
       const limit = readLimitSignal(obj);
+      // Every turn states this account's usage exactly; kept, so the panel and the chooser read
+      // what the account said a moment ago rather than a cache up to an hour old.
+      if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
       if (limit) onLimitRejected(limit);
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
@@ -2493,6 +2639,73 @@ export function startChatSession(
   let lastBlindProbeAt = 0;
 
   /**
+   * Is this conversation small enough that moving it to ANY account costs little? See
+   * `CHEAP_MOVE_MAX_CONTEXT_TOKENS`. Before the first answer the size is unknown: a fresh session
+   * is small, but a resumed one carries its whole transcript and is not.
+   */
+  const contextIsCheapToMove = (): boolean => (lastMainContext > 0
+    ? lastMainContext < CHEAP_MOVE_MAX_CONTEXT_TOKENS
+    : !resumeTarget);
+
+  /** One `rate_limit_event`: record the reading, and end a refusal the API has just outlived. */
+  const noteTurnUsage = (frame: unknown): void => {
+    const reading = readUsageMeterFrame(frame);
+    if (reading) recordUsageMeter(accountConfigDir, reading);
+    // The API just SERVED a turn here with room in the window it once refused, so that refusal
+    // is over — an estimated 20-minute exile, or a window that reopened early. Narrow on purpose
+    // (`meterEndsRefusal`): a weekly or per-model refusal, or one a few seconds old, stands.
+    const refusal = activeAccountId ? readAccountRejections()[activeAccountId] : undefined;
+    if (refusal && meterEndsRefusal(frame, refusal)) clearAccountRejection(activeAccountId);
+  };
+
+  /**
+   * Where this pane should go home to, or null. Home is the account a new chat would open on
+   * now (`chatSpawnAccount` — disk only, no probe), and the move is taken only when ALL hold:
+   *   • nothing forces it — this is the unforced path, so it is never worth an expensive move;
+   *   • it is cheap: the context is small (`contextIsCheapToMove` — a new session, or just
+   *     after a handoff or compaction), so the uncached re-read on the new account is small;
+   *   • the system placed this pane (`autoPlacedAccounts`): a hand-picked account stays put;
+   *   • home is HIGHER in the owner's list than where the pane is. Only ever up, so two
+   *     accounts can never trade a pane back and forth.
+   * A pane the owner put on an account by hand (`handPickedAccounts`) and a limit later forced
+   * off goes home to THAT account, once it has room, wherever it sits in the list.
+   */
+  const comeHomeTarget = (): string | null => {
+    if (isAssistant || !contextIsCheapToMove()) return null;
+    if (autoPlacedAccounts.get(pinId) !== activeAccountId) return null;
+    const accounts = listClaudeAccounts();
+    const picked = handPickedAccounts.get(pinId);
+    const pickedAccount = picked ? accounts.find((a) => a.id === picked) : undefined;
+    if (picked && !pickedAccount) handPickedAccounts.delete(pinId);   // removed from the register
+    let home: string;
+    if (pickedAccount) {
+      if (pickedAccount.id === activeAccountId || readAccountRejections()[pickedAccount.id]) return null;
+      let reading: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
+      try { reading = readUsageLimits(accountDecisionDir(pickedAccount)); } catch { /* unread: no proof it is full */ }
+      if (provenPastThreshold(reading)) return null;
+      home = pickedAccount.id;
+    } else {
+      const next = chatSpawnAccount().id;
+      if (!next || next === activeAccountId) return null;
+      home = next;
+    }
+    // Never straight back onto the account this pane was just forced off (`forcedOffAccounts`),
+    // until its window resets or it has served a turn since with clear room.
+    const forced = forcedOffAccounts.get(pinId);
+    if (forced && Date.now() >= forced.until) forcedOffAccounts.delete(pinId);
+    else if (forced && forced.accountId === home) {
+      const target = accounts.find((a) => a.id === home);
+      const served = target ? readUsageMeter(accountDecisionDir(target)) : null;
+      if (!meterShowsRoomSince(served, forced.at, SWITCH_THRESHOLD_PERCENT, COME_HOME_MARGIN_PERCENT)) return null;
+    }
+    if (pickedAccount) return home;
+    const order = accounts.map((a) => a.id);
+    const here = order.indexOf(activeAccountId);
+    const there = order.indexOf(home);
+    return there >= 0 && (here < 0 || there < here) ? home : null;
+  };
+
+  /**
    * Ask every account where the next turn should go, and announce the answer.
    *
    * Extracted so the PRE-EMPTIVE path (percent nearing the threshold) and the POST-HOC path
@@ -2504,7 +2717,7 @@ export function startChatSession(
    */
   const decideAndAnnounce = async (
     text: string,
-    cause: 'limit_near' | 'needs_relogin' | 'limit_hit' | 'limit_known',
+    cause: SwitchCause,
     activeReading: AccountReading,
     /** When the account we are LEAVING comes back, when a recorded refusal says so. Carried
      *  so `limit_known` can name the time instead of only the fact. */
@@ -2537,6 +2750,13 @@ export function startChatSession(
       // the next turn of every open pane, without a restart.
       strategy: switchStrategyFor(),
       weights: switchWeightsFor(),
+      // A conversation carrying a large context moves inside its organization when it can: the
+      // prompt cache is the organization's, so there the move costs no re-read
+      // (`CHEAP_MOVE_MAX_CONTEXT_TOKENS`).
+      ...(contextIsCheapToMove() ? {} : {
+        keepOrg: accounts.find((a) => a.id === activeAccountId)?.organizationUuid || null,
+        orgOf: Object.fromEntries(accounts.map((a) => [a.id, a.organizationUuid])),
+      }),
     });
 
     // Nothing eligible, or the winner is the account we are already on.
@@ -2571,7 +2791,31 @@ export function startChatSession(
     // never touches `~/.claude.json`, so that fingerprint could not move even in principle.
     // The client restarts the conversation on the named account at the TURN BOUNDARY and
     // resubmits the held text.
-    const target = accounts.find((a) => a.id === choice.accountId)!;
+    // When the window that forces this move reopens, for `forcedOffAccounts`: the latest reset
+    // among the active account's windows at or past the threshold.
+    const now = Date.now();
+    const binding = (activeReading.limits?.limits ?? [])
+      .filter((l) => l.resetsAt > now && (l.percent >= SWITCH_THRESHOLD_PERCENT || l.lockedReason))
+      .map((l) => l.resetsAt);
+    return announceMove(choice, cause, text, resubmit, previousResetAt, binding.length > 0 ? Math.max(...binding) : undefined);
+  };
+
+  /**
+   * Announce a move to `choice.accountId`: hold the turn, tell the client where it goes, and let
+   * the turn boundary perform it. Shared by the chooser's decision above and by coming home,
+   * which needs no chooser round (its target is the account a new chat would open on).
+   */
+  const announceMove = (
+    choice: Pick<ChooseResult, 'accountId' | 'sessionPercent' | 'weeklyPercent' | 'unmeasured' | 'rejected'>,
+    cause: SwitchCause,
+    text: string,
+    resubmit: boolean,
+    previousResetAt?: number,
+    /** When the window forcing this move reopens, if known (see `forcedOffAccounts`). */
+    forcedOffResetAt?: number,
+  ): boolean => {
+    const target = listClaudeAccounts().find((a) => a.id === choice.accountId);
+    if (!target) return false;
     switchPending = true;
     recordAccountSwitch({
       fromAccountId: activeAccountId, toAccountId: target.id,
@@ -2580,6 +2824,15 @@ export function startChatSession(
       until: previousResetAt ?? null,
     });
     heldTexts = resubmit && text ? [text] : [];
+    // The system chose this account, so the reopened pane is still free to come home later.
+    noteAutoPlaced(pinId, target.id);
+    if (cause !== 'come_home' && activeAccountId) {
+      // Until the window that forced it reopens; unknown (a sign-out, an unread window) → 30 min.
+      const now = Date.now();
+      const until = previousResetAt && previousResetAt > now ? previousResetAt : forcedOffResetAt ?? now + FORCED_OFF_DEFAULT_MS;
+      noteForcedOff(pinId, { accountId: activeAccountId, at: now, until });
+    }
+    if (observedConversation) noteAutoPlaced(observedConversation, target.id);
     // `turnInFlight` and the held texts are added per send by `reannounceSwitch`:
     //
     // `turnInFlight` is whether a turn is REALLY running in the CLI right now. The client's
@@ -2736,6 +2989,32 @@ export function startChatSession(
     // account it is on is itself refused, and then the chooser picks the top eligible one, so
     // it walks back rather than snapping back. Closing that is the `auto-switch brings the
     // session home` task, which is where it belongs for BOTH strategies.
+    // ── Coming home, where it is cheap ──────────────────────────────────────────────
+    // Both modes, before either one's forecast: a pane that was moved down the list goes back
+    // up when the account above it can serve again AND the conversation is still small enough
+    // that the move costs little (`comeHomeTarget`). A long conversation is not moved for this;
+    // its next cheap point is a handoff or a new session. Never while a turn is running: this
+    // message would be a steer, and a move nothing forces must not hold it back from that turn
+    // and replay it on another account after a restart.
+    if (resubmit && turnsInFlight === 0) {
+      const home = comeHomeTarget();
+      if (home) {
+        const target = accounts.find((a) => a.id === home);
+        let reading: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
+        try { if (target) reading = readUsageLimits(accountDecisionDir(target)); } catch { /* no numbers, still a move */ }
+        // Only a window still open is reported; a rolled-over one says nothing about the new one.
+        const pct = (key: 'session' | 'weekly') => reading.limits.find((l) => l.key === key && l.resetsAt > Date.now())?.percent;
+        const sessionPercent = pct('session');
+        const weeklyPercent = pct('weekly');
+        return announceMove({
+          accountId: home,
+          ...(sessionPercent === undefined ? {} : { sessionPercent }),
+          ...(weeklyPercent === undefined ? {} : { weeklyPercent }),
+          rejected: [],
+        }, 'come_home', text, resubmit);
+      }
+    }
+
     if (switchStrategyFor() === 'sequential') return false;
 
     // A reading we cannot TRUST is not a reason to skip the check — it is the reason to make
@@ -3105,7 +3384,8 @@ export function startChatSession(
       // interrupted by user for tool use]", then a `result` frame with
       // terminal_reason:"aborted_tools", all within ~4.1s API duration. `system:init`
       // advertises this as the `interrupt_receipt_v1` capability.
-      writeStdin({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
+      interruptRequestId = randomUUID();
+      writeStdin({ type: 'control_request', request_id: interruptRequestId, request: { subtype: 'interrupt' } });
       registry?.interrupted();
       clearInterruptTimers();
       interruptWatchdog = setTimeout(() => {

@@ -244,6 +244,76 @@ describe('an owed account switch', () => {
     expect(switchMetas(ws).filter((m) => m.switched)).toHaveLength(announced);
   });
 
+  // ── Owner video, 2026-10-14: "Working… 4139s", Stop does nothing, only a new session helps ──
+  // A steer is FOLDED into the running turn (two user frames, one `result`, measured on claude
+  // 2.1.301), so counting down left a turn owed forever. The switch then waited on a turn that
+  // did not exist, the stall release never armed, and an idle CLI acks a Stop with a bare
+  // `control_response` — nothing on the screen could move again.
+  it('a steer folded into the running turn leaves no turn owed, so a later switch can go', async () => {
+    const { ws, child } = start();
+    say(ws, 'go');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['go']));
+    say(ws, 'also this');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['go', 'also this']));
+    emit(child, result);
+    accountsState.rejections = { main: { until: Date.now() + 3_600_000, window: 'weekly' } };
+    say(ws, 'yolla mesajı');
+    await vi.waitFor(() => expect(switchMetas(ws)).toHaveLength(1));
+    expect(switchMetas(ws)[0]).toMatchObject({ switched: true, accountId: 'spare', turnInFlight: false, pendingTexts: ['yolla mesajı'] });
+  });
+
+  it('a turn the CLI starts on its own is counted from its init until its result', async () => {
+    const { ws, child } = start();
+    say(ws, 'go');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['go']));
+    emit(child, result);
+    // A background task finishing: the CLI opens a turn no frame of ours asked for.
+    emit(child, { type: 'system', subtype: 'init', session_id: 'conv-1' });
+    emit(child, refusal);
+    await vi.waitFor(() => expect(switchMetas(ws)).toHaveLength(1));
+    expect(switchMetas(ws)[0]).toMatchObject({ switched: true, turnInFlight: true });
+    emit(child, result);
+    await vi.waitFor(() => expect(switchMetas(ws).at(-1)).toMatchObject({ turnInFlight: false }));
+  });
+
+  it('Stop on a CLI that acks without a result still ends the turn and tells the client', async () => {
+    const { ws, child } = start();
+    say(ws, 'go');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['go']));
+    ws.emit('message', JSON.stringify({ type: 'interrupt' }));
+    const req = child.stdin.write.mock.calls
+      .map(([chunk]) => { try { return JSON.parse(String(chunk)); } catch { return null; } })
+      .find((f) => f?.type === 'control_request' && f.request?.subtype === 'interrupt');
+    expect(req).toBeTruthy();
+    emit(child, { type: 'control_response', response: { subtype: 'success', request_id: req.request_id } });
+    const turnStates = () => ws.send.mock.calls.map(([raw]) => JSON.parse(String(raw)))
+      .filter((f) => f.type === '_meta' && f.subtype === 'turn_state');
+    await vi.waitFor(() => expect(turnStates()).toEqual([{ type: '_meta', subtype: 'turn_state', busy: false }]), { timeout: 7_000 });
+    // The ack disarmed the escalation: nothing was killed to get here.
+    expect(child.kill).not.toHaveBeenCalled();
+    // …and the count is really zero: a switch owed now goes at once.
+    accountsState.rejections = { main: { until: Date.now() + 3_600_000, window: 'weekly' } };
+    say(ws, 'devam');
+    await vi.waitFor(() => expect(switchMetas(ws)).toHaveLength(1));
+    expect(switchMetas(ws)[0]).toMatchObject({ turnInFlight: false });
+  }, 10_000);
+
+  it('Stop mid-turn whose abort lands a result sends no extra idle frame', async () => {
+    const { ws, child } = start();
+    say(ws, 'go');
+    await vi.waitFor(() => expect(userFrames(child)).toEqual(['go']));
+    ws.emit('message', JSON.stringify({ type: 'interrupt' }));
+    const req = child.stdin.write.mock.calls
+      .map(([chunk]) => { try { return JSON.parse(String(chunk)); } catch { return null; } })
+      .find((f) => f?.type === 'control_request' && f.request?.subtype === 'interrupt');
+    emit(child, { type: 'control_response', response: { subtype: 'success', request_id: req.request_id } });
+    emit(child, { ...result, subtype: 'error_during_execution', is_error: true });
+    await new Promise((r) => setTimeout(r, 5_500));
+    const turnStates = ws.send.mock.calls.map(([raw]) => JSON.parse(String(raw)))
+      .filter((f) => f.type === '_meta' && f.subtype === 'turn_state');
+    expect(turnStates).toEqual([]);
+  }, 10_000);
+
   it('a pane that restarts in time never releases anything — even while the old child lingers', async () => {
     accountsState.rejections = { main: { until: Date.now() + 3_600_000, window: 'weekly' } };
     const { ws, child } = start();
