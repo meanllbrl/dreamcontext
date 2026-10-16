@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type StdioOptions } from 'node:child_process';
 import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { MAC_PUBLIC_ROUTES } from '../lib/handsfree/mac/contract.js';
 
 /**
  * Cloud server mode: the hands-free trip's server inside a GitHub codespace.
@@ -423,6 +424,31 @@ export function classifyCloudRoute(method: string, pathname: string): CloudRoute
   if (PUBLIC_SET.has(key)) return 'public';
   if (DEVICE_SET.has(key)) return 'device';
   if (pathname.startsWith(CLOUD_TRANSFER_PREFIX)) return 'transfer';
+  if (pathname === '/api' || pathname.startsWith('/api/')) return 'unavailable';
+  return 'device';
+}
+
+// ─── Mac mode's phone listener (hands-free from the laptop itself) ──────────
+
+/**
+ * The Mac phone listener's device API: the cloud's device list plus the drawer's live-chat
+ * list. STATIC (a unit test pins it). There is NO transfer class on the Mac: every other
+ * `/api/handsfree/*` is refused like any other route off the list.
+ */
+export const MAC_DEVICE_API_ROUTES: readonly string[] = [
+  ...CLOUD_DEVICE_API_ROUTES,
+  'GET /api/agent/live-chats',
+];
+
+const MAC_PUBLIC_SET = new Set(MAC_PUBLIC_ROUTES);
+const MAC_DEVICE_SET = new Set(MAC_DEVICE_API_ROUTES);
+
+/** Classify one phone-listener request: never `transfer`. */
+export function classifyMacRoute(method: string, pathname: string): CloudRouteClass {
+  const m = method.toUpperCase() === 'HEAD' ? 'GET' : method.toUpperCase();
+  const key = `${m} ${pathname}`;
+  if (MAC_PUBLIC_SET.has(key)) return 'public';
+  if (MAC_DEVICE_SET.has(key)) return 'device';
   if (pathname === '/api' || pathname.startsWith('/api/')) return 'unavailable';
   return 'device';
 }

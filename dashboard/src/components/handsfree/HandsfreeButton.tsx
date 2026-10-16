@@ -7,6 +7,7 @@ import { focusHandsfreeBanner, onHandsfreeEvent, OPEN_SHEET, openHandsfreeSheet,
 import { AbandonConfirm, fill, InlineConfirm, JobProgress } from './HandsfreeParts';
 import { HandsfreeSheet } from './HandsfreeSheet';
 import type { HandsfreeJob, HandsfreeStatus } from './handsfreeTypes';
+import { useMacStatus } from './macStore';
 import './handsfree.css';
 
 /**
@@ -30,6 +31,8 @@ export function chipAction(view: HandsfreeView, phase: HandsfreeStatus['phase'],
 export function HandsfreeButton({ vault }: { vault: string }) {
   const { t } = useI18n();
   const { status, unavailable, job, view } = useHandsfreeFor(vault);
+  const mac = useMacStatus();
+  const macOn = mac?.phase === 'on' || mac?.phase === 'starting' || mac?.phase === 'stopping';
   const [open, setOpen] = useState(false);
   const [elsewhereOpen, setElsewhereOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -43,7 +46,9 @@ export function HandsfreeButton({ vault }: { vault: string }) {
   const action = chipAction(view, phase, goRunning);
   const elsewhere = action === 'elsewhere';
   const name = status?.away?.name ?? t('handsfree.banner.other.unnamed');
-  const label = action === 'sheet' && phase === 'home' && !goRunning
+  const label = macOn
+    ? t('handsfree.mac.onPhone')
+    : action === 'sheet' && phase === 'home' && !goRunning
     ? t('handsfree.button')
     : elsewhere && phase === 'away'
       ? fill(t('handsfree.button.elsewhere'), { name })
@@ -54,7 +59,7 @@ export function HandsfreeButton({ vault }: { vault: string }) {
       <button
         type="button"
         className="hf-chrome-btn"
-        data-phase={elsewhere ? 'elsewhere' : phase}
+        data-phase={macOn ? 'mac' : elsewhere ? 'elsewhere' : phase}
         data-testid="hf-button"
         aria-haspopup="dialog"
         title={label}
@@ -66,7 +71,7 @@ export function HandsfreeButton({ vault }: { vault: string }) {
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M4.5 12.5h7a3 3 0 0 0 .4-5.97A4 4 0 0 0 4.2 7.6 2.5 2.5 0 0 0 4.5 12.5z" />
-          {phase !== 'home' && <circle cx="12.5" cy="3.5" r="1.6" fill="currentColor" stroke="none" />}
+          {(phase !== 'home' || macOn) && <circle cx="12.5" cy="3.5" r="1.6" fill="currentColor" stroke="none" />}
         </svg>
         <span className="hf-chrome-label">{label}</span>
       </button>

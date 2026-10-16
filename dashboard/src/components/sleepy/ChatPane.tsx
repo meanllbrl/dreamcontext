@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
+import { isMacPhoneSurface } from '../../lib/cloudSurface';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
@@ -57,7 +58,7 @@ import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
   AccountSwitchBanner, HandoffCard,
-  BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner,
+  BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, TakenOverBanner,
   SignInBanner, WorkingIndicator,
 } from './chat/Banners';
 import { Composer } from './chat/Composer';
@@ -2168,6 +2169,8 @@ export function ChatPane({
           onSignIn={onSignIn}
           onRetry={onResume}
         />
+      ) : session.takenOver ? (
+        <TakenOverBanner onPhone={isMacPhoneSurface()} onTakeBack={() => session.takeBack()} />
       ) : ended ? (
         <SessionEndedBanner onResume={onResume} />
       ) : hitlPending ? (

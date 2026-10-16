@@ -78,10 +78,15 @@ export function tabWantsAgentTitle(env: NodeJS.ProcessEnv, contextRoot: string |
   if (ui && (ui.enabled === false || (ui.titleMigrated === true && ui.autoTitle === false))) return false;
   const tabId = env.DREAMCONTEXT_TAB_SESSION;
   if (!contextRoot || !tabId) return true;
-  const roster = readJson(join(contextRoot, 'state', '.agent-sessions.json'));
-  const entry = Array.isArray(roster?.sessions)
-    ? (roster!.sessions as Array<Record<string, unknown>>).find((m) => m && m.sessionId === tabId)
-    : undefined;
+  // The desktop's roster, then a Mac-mode phone's (its own file, same shape).
+  let entry: Record<string, unknown> | undefined;
+  for (const file of ['.agent-sessions.json', '.agent-sessions.phone.json']) {
+    const roster = readJson(join(contextRoot, 'state', file));
+    entry = Array.isArray(roster?.sessions)
+      ? (roster!.sessions as Array<Record<string, unknown>>).find((m) => m && m.sessionId === tabId)
+      : undefined;
+    if (entry) break;
+  }
   if (!entry) return true;
   if (entry.titleByAgent === true) return false;
   return typeof entry.title !== 'string' || DEFAULT_TAB_TITLE_RE.test(entry.title.trim());

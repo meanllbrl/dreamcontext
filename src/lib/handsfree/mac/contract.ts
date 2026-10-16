@@ -1,0 +1,168 @@
+/**
+ * Hands-free MAC MODE — the pinned contract (W1).
+ *
+ * The work stays on the laptop. While Mac mode is on, the same server process runs a second
+ * HTTP listener (the "phone listener", 127.0.0.1 only) and a Cloudflare tunnel points at it.
+ * Every socket that listener accepts is a PHONE socket: never loopback, never trusted for
+ * being local, served only the allow-list below with a Mac device session (a separate store
+ * from the cloud's, `~/.dreamcontext/handsfree-mac/`).
+ *
+ * Mirrored for the dashboard in `dashboard/src/components/handsfree/macContract.ts`; a drift
+ * test (tests/unit/mac-contract-mirror.test.ts) keeps the two equal.
+ */
+
+// ─── WebSocket close codes ──────────────────────────────────────────────────
+
+/** "Your device was signed out" (revoke-all, logout, password change) or "Mac mode ended"
+ *  (Return): the phone stops reconnecting and goes to the login page. */
+export const MAC_CLOSE_SIGNED_OUT = 4401;
+/** "Another screen took this chat": the loser stops its reconnect loop and offers "Buraya al". */
+export const MAC_CLOSE_TAKEN_OVER = 4409;
+
+// ─── Reattach values (the chat upgrade's `reattach=` query value) ───────────
+
+/** An explicit tap ("Mac'te açık", "Buraya al"): adopt the live child even when another live
+ *  screen holds it; the holder is closed with {@link MAC_CLOSE_TAKEN_OVER}. */
+export const REATTACH_EVICT = '1';
+/** Every AUTOMATIC open (a backoff reconnect, a page reload's roster restore): adopt a detached
+ *  child at once; when a socket still looks open, ping it and wait up to
+ *  {@link HOLDER_PROBE_MS} — no pong = half-open → adopt; a pong = a live holder → the NEW
+ *  socket is closed with {@link MAC_CLOSE_TAKEN_OVER} and nothing is evicted. */
+export const REATTACH_PASSIVE = 'passive';
+export type ReattachValue = typeof REATTACH_EVICT | typeof REATTACH_PASSIVE;
+
+/**
+ * How long a passive upgrade may wait on the holder's pong. The upgrade can therefore take up
+ * to this long to be decided, which must stay well under the client's CONNECT_TIMEOUT_MS
+ * (15 000 ms, dashboard/src/components/sleepy/chatSession.ts).
+ */
+export const HOLDER_PROBE_MS = 3000;
+
+// ─── Status ─────────────────────────────────────────────────────────────────
+
+export type MacTunnelMode = 'quick' | 'fixed';
+export type MacPhase = 'off' | 'starting' | 'on' | 'stopping';
+
+export interface MacBattery {
+  /** 0-100, null when the machine reports no battery (a desktop Mac). */
+  percent: number | null;
+  charging: boolean;
+}
+
+/** GET /api/handsfree/mac/status. Never carries a secret (no passphrase, no token, no
+ *  tunnel credentials); `url` is the public tunnel address, which is not a credential. */
+export interface MacStatus {
+  phase: MacPhase;
+  /** Setup done: the sudoers drop-in is installed and a passphrase verifier exists. */
+  setup: { sudoers: boolean; passphrase: boolean };
+  mode: MacTunnelMode;
+  /** The fixed address's hostname when one is set up, else null. */
+  fixedHostname: string | null;
+  url: string | null;
+  startedAt: string | null;
+  battery: MacBattery;
+  /** Sleep is allowed again (the battery threshold fired). */
+  sleepAllowed: boolean;
+  deviceCount: number;
+  /** The last start/stop failure, a {@link MacErrorCode}. */
+  lastError: MacErrorCode | null;
+}
+
+/** One signed-in phone as the sheet lists it (never the session id). */
+export interface MacDevice {
+  /** A short, stable label of the device record (first 8 hex of its id hash). */
+  id: string;
+  label: string;
+  createdAt: string;
+}
+
+/** The phone's own chip: GET /api/handsfree/phone on a phone socket. */
+export interface MacPhonePayload {
+  mode: 'mac';
+  battery: MacBattery;
+  sleepAllowed: boolean;
+}
+
+/** GET /api/agent/live-chats — names, never paths. */
+export interface LiveChatWire {
+  conversationId: string;
+  /** The registered vault name the child runs in (null when its folder is not registered). */
+  vault: string | null;
+  title: string | null;
+  busy: boolean;
+}
+
+// ─── Error codes ────────────────────────────────────────────────────────────
+
+export const MAC_ERROR_CODES = [
+  'mac_not_setup',
+  'mac_sudo_missing',
+  'mac_cloud_trip_active',
+  'mac_already_on',
+  'mac_not_on',
+  'mac_tunnel_failed',
+  'mac_probe_failed',
+  'mac_binary_failed',
+  'mac_admin_cancelled',
+  'mac_fixed_not_setup',
+  'mac_unsupported_platform',
+  /** The fixed hostname already has a DNS record; setup again with `overwrite: true` to replace it. */
+  'mac_hostname_in_use',
+] as const;
+export type MacErrorCode = typeof MAC_ERROR_CODES[number];
+
+/** The cloud refusing to go while Mac mode is on (POST /api/handsfree/go). */
+export const CLOUD_REFUSED_MAC_ON = 'handsfree_mac_on';
+
+// ─── Battery ────────────────────────────────────────────────────────────────
+
+/** Discharging and at or below this → sleep is allowed again (disablesleep 0), no re-arm. */
+export const MAC_BATTERY_FLOOR_PERCENT = 15;
+export const MAC_BATTERY_POLL_MS = 60_000;
+
+// ─── The reachability probe ─────────────────────────────────────────────────
+
+/**
+ * The phone listener stamps this header (a per-start random value) on `/api/health`. Start
+ * fetches `https://<url>/api/health` and requires it, which proves the tunnel reaches THIS
+ * listener. It proves routing only: the value is public (any visitor sees it) and is never
+ * used as a credential.
+ */
+export const MAC_PROBE_HEADER = 'X-Dreamcontext-Mac-Probe';
+/** Marks every phone-listener response (the login page reads it to tell "refused" from a
+ *  network error, the way the cloud's pages read X-Dreamcontext-Cloud). */
+export const MAC_SURFACE_HEADER = 'X-Dreamcontext-Surface';
+
+// ─── Login token (the QR) ───────────────────────────────────────────────────
+
+export const MAC_LOGIN_TOKEN_TTL_MS = 5 * 60_000;
+/** The QR carries `https://<url>/login?t=<token>`. */
+export const MAC_LOGIN_TOKEN_PARAM = 't';
+
+// ─── The phone listener's allow-list ────────────────────────────────────────
+
+/** Reachable with no credential at all. */
+export const MAC_PUBLIC_ROUTES: readonly string[] = [
+  'GET /login',
+  'POST /api/handsfree/login',
+  'GET /api/health',
+  'GET /manifest.webmanifest',
+];
+
+/** The only WebSocket the phone opens. PTY, Assistant and browser-mirror are refused. */
+export const MAC_WS_PATHS: readonly string[] = ['/api/agent/chat'];
+
+/** The routes the main listener's Mac panel calls (desktop + loopback + same-site only). */
+export const MAC_ROUTES = {
+  status: 'GET /api/handsfree/mac/status',
+  setup: 'POST /api/handsfree/mac/setup',
+  start: 'POST /api/handsfree/mac/start',
+  stop: 'POST /api/handsfree/mac/stop',
+  qr: 'POST /api/handsfree/mac/qr',
+  password: 'POST /api/handsfree/mac/password',
+  devices: 'GET /api/handsfree/mac/devices',
+  revokeAll: 'POST /api/handsfree/mac/devices/revoke-all',
+  fixedSetup: 'POST /api/handsfree/mac/tunnel/fixed',
+  fixedRemove: 'DELETE /api/handsfree/mac/tunnel/fixed',
+  uninstall: 'POST /api/handsfree/mac/uninstall',
+} as const;

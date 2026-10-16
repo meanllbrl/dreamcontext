@@ -4,7 +4,13 @@ import { resolve } from 'node:path';
 import { isCloud, cloudLocalPath, cloudPhase } from './cloud-mode.js';
 import { listVaults } from '../lib/vaults.js';
 import { cloudIdle } from './cloud-idle.js';
-import { clearDeviceCookieHeader, deviceCookieValue, hasValidDeviceSession } from './handsfree-auth.js';
+import {
+  clearDeviceCookieHeader, deviceCookieHeader, deviceCookieValue, deviceLabel, hasValidDeviceSession,
+  loginClientKey, macHandsfreeAuth, notifyMacSignIn,
+} from './handsfree-auth.js';
+import { isPhoneSocket } from './phone-origin.js';
+import { liveChatsSnapshot } from './routes/agent-chat-live.js';
+import { MAC_LOGIN_TOKEN_PARAM, type MacPhonePayload } from '../lib/handsfree/mac/contract.js';
 import { cloudServices } from './routes/handsfree-cloud.js';
 import { sendError } from './middleware.js';
 import { OFFLINE_PATH, SW_PATH, serviceWorkerSource, shortHash } from './handsfree-sw.js';
@@ -244,6 +250,180 @@ export function renderLoginPage(lang: Lang, opts: { revoked: boolean }): { html:
 </form>
 <p class="small">${esc(s.asleep)}</p>`;
   return page(lang, s.title, body, LOGIN_JS, jsonData({ s, forget: opts.revoked }));
+}
+
+// ─── Mac mode's login page (the phone listener) ─────────────────────────────
+
+const MAC_LOGIN_STRINGS = {
+  en: {
+    title: 'Sign in · dreamcontext',
+    heading: 'Sign in to your Mac',
+    lead: 'Type the six-word password your Mac showed you, or scan the QR code on its screen.',
+    label: 'Password',
+    show: 'Show',
+    hide: 'Hide',
+    submit: 'Sign in',
+    checking: 'Checking…',
+    wrong: 'That password is not right. Check the six words and try again.',
+    wait: 'Too many tries. You can try again in {s} s.',
+    busy: 'Your Mac is busy. Try again in {s} s.',
+    notConfigured: 'Your Mac has no hands-free password yet. On the Mac, open Hands-free and set it up.',
+    network: 'Could not reach your Mac. Check your connection and try again.',
+    refused: 'This sign-in was refused. Open the link your Mac gave you and try again.',
+    revoked: 'This device was signed out. Sign in again with the current password.',
+    qr: 'That QR code was already used or has expired. Show a new one on your Mac, or type the password.',
+  },
+  tr: {
+    title: 'Giriş · dreamcontext',
+    heading: 'Mac\'ine giriş yap',
+    lead: 'Mac\'inin gösterdiği altı kelimelik şifreyi yaz ya da ekrandaki QR kodu okut.',
+    label: 'Şifre',
+    show: 'Göster',
+    hide: 'Gizle',
+    submit: 'Giriş yap',
+    checking: 'Kontrol ediliyor…',
+    wrong: 'Şifre yanlış. Altı kelimeyi kontrol edip tekrar dene.',
+    wait: 'Çok fazla deneme. {s} sn sonra tekrar deneyebilirsin.',
+    busy: 'Mac\'in meşgul. {s} sn sonra tekrar dene.',
+    notConfigured: 'Mac\'inin henüz eller serbest şifresi yok. Mac\'te Eller serbest\'i açıp kur.',
+    network: 'Mac\'ine ulaşılamadı. Bağlantını kontrol edip tekrar dene.',
+    refused: 'Bu giriş reddedildi. Mac\'inin verdiği bağlantıyı açıp tekrar dene.',
+    revoked: 'Bu cihazın oturumu kapatıldı. Güncel şifreyle tekrar giriş yap.',
+    qr: 'Bu QR kod kullanılmış ya da süresi dolmuş. Mac\'inde yenisini göster ya da şifreyi yaz.',
+  },
+} as const;
+
+/** The Mac page has no offline worker to register or forget: a Mac that is off answers nothing. */
+const MAC_LOGIN_JS = `(function(){
+  var d=JSON.parse(document.getElementById('dc-data').textContent);
+  var s=d.s;
+  var form=document.getElementById('f'),input=document.getElementById('p'),btn=document.getElementById('go'),msg=document.getElementById('m'),tog=document.getElementById('t');
+  var timer=null;
+  function say(t,err){msg.textContent=t;msg.className='msg'+(err?' err':'');}
+  if(d.qr){say(s.qr,true);}
+  tog.addEventListener('click',function(){var shown=input.type==='text';input.type=shown?'password':'text';tog.textContent=shown?s.show:s.hide;input.focus();});
+  function countdown(key,ms){
+    var until=Date.now()+Math.max(1000,ms||1000);btn.disabled=true;
+    if(timer)clearInterval(timer);
+    function tick(){var left=Math.ceil((until-Date.now())/1000);if(left<=0){clearInterval(timer);timer=null;btn.disabled=false;say('');return;}say(s[key].replace('{s}',String(left)),true);}
+    tick();timer=setInterval(tick,1000);
+  }
+  form.addEventListener('submit',function(ev){
+    ev.preventDefault();
+    if(btn.disabled)return;
+    var pass=input.value;if(!pass.trim()){input.focus();return;}
+    btn.disabled=true;say(s.checking,false);
+    var ctl=window.AbortController?new AbortController():null,hang=ctl?setTimeout(function(){ctl.abort();},30000):null;
+    fetch('/api/handsfree/login',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({passphrase:pass}),signal:ctl?ctl.signal:undefined})
+      .then(function(r){return r.json().catch(function(){return {};}).then(function(b){return {status:r.status,body:b,mac:r.headers.get('X-Dreamcontext-Surface')==='mac'};});})
+      .then(function(o){
+        if(hang)clearTimeout(hang);
+        if(o.status===200&&o.body&&o.body.ok){input.value='';say(s.checking,false);location.replace('/');return;}
+        var e=o.body&&o.body.error;
+        if(o.status===429){countdown(e==='busy'?'busy':'wait',o.body.retryAfterMs);return;}
+        btn.disabled=false;
+        if(o.status===401&&e==='invalid_passphrase'){say(s.wrong,true);input.select();return;}
+        if(o.status===503&&e==='not_configured'){say(s.notConfigured,true);return;}
+        if(!o.mac){say(s.network,true);return;}
+        say(s.refused,true);
+      })
+      .catch(function(){if(hang)clearTimeout(hang);btn.disabled=false;say(s.network,true);});
+  });
+})();`;
+
+export function renderMacLoginPage(lang: Lang, opts: { revoked: boolean; qrFailed: boolean }): { html: string; csp: string } {
+  const s = MAC_LOGIN_STRINGS[lang];
+  const body = `<h1>${esc(s.heading)}</h1>
+<p>${esc(opts.revoked ? s.revoked : s.lead)}</p>
+<form id="f" method="post" action="/login" novalidate>
+<label for="p">${esc(s.label)}</label>
+<div class="row">
+<input id="p" name="passphrase" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" required>
+<button class="ghost" id="t" type="button">${esc(s.show)}</button>
+</div>
+<button id="go" type="submit">${esc(s.submit)}</button>
+<div class="msg" id="m" role="status" aria-live="polite"></div>
+</form>`;
+  return page(lang, s.title, body, MAC_LOGIN_JS, jsonData({ s, qr: opts.qrFailed }));
+}
+
+/** Headers every Mac `/login` response carries: the token in the URL must never leak through
+ *  a Referer, and nothing about it may be cached. */
+const MAC_LOGIN_HEADERS = { 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' } as const;
+
+/**
+ * GET /login on the phone listener. `?t=<token>` is the QR's one-time login: consumed
+ * synchronously (single use), it mints a Mac device session and lands in `/`. A used, expired
+ * or wrong token gets the login page and counts as a failure in the limiter. The query string
+ * is never logged.
+ */
+function handleMacLogin(req: IncomingMessage, res: ServerResponse, url: URL): void {
+  const lang = pickLang(req.headers['accept-language']);
+  const auth = macHandsfreeAuth();
+  const token = url.searchParams.get(MAC_LOGIN_TOKEN_PARAM);
+  const clientKey = loginClientKey(req);
+  if (token !== null) {
+    const verdict = auth.limiter.check(clientKey);
+    const outcome = verdict.allowed ? auth.consumeLoginToken(token) : 'invalid';
+    if (outcome === 'ok') {
+      auth.limiter.recordSuccess(clientKey);
+      const label = deviceLabel(req);
+      const id = auth.store.createDevice(label);
+      notifyMacSignIn(label);
+      res.writeHead(302, { Location: '/', 'Set-Cookie': deviceCookieHeader(id), ...MAC_LOGIN_HEADERS });
+      res.end();
+      return;
+    }
+    if (verdict.allowed) auth.limiter.recordFailure(clientKey);
+    sendPage(res, 200, renderMacLoginPage(lang, { revoked: false, qrFailed: true }), { ...MAC_LOGIN_HEADERS });
+    return;
+  }
+  const cookie = deviceCookieValue(req);
+  if (cookie !== null && hasValidDeviceSession(req)) {
+    res.writeHead(302, { Location: '/', ...MAC_LOGIN_HEADERS });
+    res.end();
+    return;
+  }
+  const revoked = url.searchParams.get('revoked') === '1' || cookie !== null;
+  const extra: Record<string, string> = { ...MAC_LOGIN_HEADERS, ...(cookie !== null ? { 'Set-Cookie': clearDeviceCookieHeader() } : {}) };
+  sendPage(res, 200, renderMacLoginPage(lang, { revoked, qrFailed: false }), extra);
+}
+
+/**
+ * Where a signed-in phone lands on `/`: the project of the chat that ran most recently (a
+ * running one first), else the project opened last, else the first registered one. Null when
+ * nothing is registered (the SPA then decides).
+ */
+export function macLandingVault(): string | null {
+  const vaults = listVaults();
+  const byPath = new Map(vaults.map((v) => [resolve(v.path), v.name]));
+  const live = [...liveChatsSnapshot()]
+    .filter((e) => byPath.has(resolve(e.projectRoot)))
+    .sort((a, b) => Number(b.busy) - Number(a.busy) || (b.turnStartedAt ?? b.lastTurnEndedAt ?? 0) - (a.turnStartedAt ?? a.lastTurnEndedAt ?? 0));
+  if (live.length) return byPath.get(resolve(live[0].projectRoot)) ?? null;
+  const recent = [...vaults].sort((a, b) => (b.lastOpenedAt ?? '').localeCompare(a.lastOpenedAt ?? ''));
+  return recent[0]?.name ?? null;
+}
+
+/** The Mac gate's landing: `/` (no vault) opens a chat, never the launcher (AC4). */
+export function redirectToMacChat(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!isGetLike(req) || !/text\/html/.test(String(req.headers.accept || ''))) return false;
+  let url: URL;
+  try { url = new URL(req.url || '/', 'http://localhost'); } catch { return false; }
+  if (url.pathname !== '/' || url.searchParams.has('vault')) return false;
+  const name = macLandingVault();
+  if (!name) return false;
+  url.searchParams.set('vault', name);
+  res.writeHead(302, { Location: `/${url.search}`, 'Cache-Control': 'no-store' });
+  res.end();
+  return true;
+}
+
+let macPhoneSource: () => MacPhonePayload = () => ({ mode: 'mac', battery: { percent: null, charging: true }, sleepAllowed: false });
+
+/** The Mac session registers the reader of its battery/sleep state for the phone's chip. */
+export function setMacPhoneSource(source: (() => MacPhonePayload) | null): void {
+  macPhoneSource = source ?? (() => ({ mode: 'mac', battery: { percent: null, charging: true }, sleepAllowed: false }));
 }
 
 // ─── Sealed (and still-going) page ──────────────────────────────────────────
@@ -505,6 +685,20 @@ function handleLogin(req: IncomingMessage, res: ServerResponse, url: URL): void 
 export function handlePhonePages(req: IncomingMessage, res: ServerResponse, url: URL): boolean {
   const p = url.pathname;
   if (p !== '/login' && p !== SW_PATH && p !== OFFLINE_PATH) return false;
+  if (isPhoneSocket(req)) {
+    // Mac mode: the login page only. No offline worker: a Mac that is off answers nothing.
+    if (p !== '/login') {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found');
+      return true;
+    }
+    if (!isGetLike(req)) {
+      sendError(res, 405, 'method_not_allowed', 'Method not allowed.');
+      return true;
+    }
+    handleMacLogin(req, res, url);
+    return true;
+  }
   if (!isCloud()) {
     if (p === '/login') return false;
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -539,6 +733,13 @@ export function handlePhonePages(req: IncomingMessage, res: ServerResponse, url:
  * never records an owner action, so polling it never keeps the machine awake (D14).
  */
 export async function handleHandsfreePhone(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (isPhoneSocket(_req)) {
+    // Mac mode: the phone's chip (battery, whether sleep is allowed again). A pure read.
+    const body = JSON.stringify(macPhoneSource());
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store' });
+    res.end(body);
+    return;
+  }
   if (!isCloud()) {
     sendError(res, 404, 'not_found', 'No route: GET /api/handsfree/phone');
     return;

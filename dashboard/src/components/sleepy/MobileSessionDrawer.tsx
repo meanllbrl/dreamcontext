@@ -8,6 +8,10 @@ import { useApi } from '../../context/VaultContext';
 import { useChrome } from '../layout/WindowChrome';
 import { useLauncherStatus } from '../../hooks/useLauncher';
 import { VaultDot } from '../layout/VaultDot';
+import { useI18n } from '../../context/I18nContext';
+import { isMacPhoneSurface } from '../../lib/cloudSurface';
+import { setPendingMacAdopt } from '../handsfree/macAdopt';
+import type { LiveChatWire } from '../handsfree/macContract';
 
 /**
  * The phone's navigator — a LEFT DRAWER holding the three things the desktop spends its
@@ -61,7 +65,7 @@ interface ChatSessionsResponse {
 
 export function MobileSessionDrawer({
   open, sessions, activeId, openClaudeIds,
-  onClose, onSelect, onCloseSession, onNewChat, onResumePast, onExitToDashboard,
+  onClose, onSelect, onCloseSession, onNewChat, onResumePast, onAdoptLive, onExitToDashboard,
 }: {
   open: boolean;
   sessions: MobileSessionVM[];
@@ -73,6 +77,8 @@ export function MobileSessionDrawer({
   onCloseSession: (sid: string) => void;
   onNewChat: () => void;
   onResumePast: (past: PastSession) => void;
+  /** Mac mode: open a chat the Mac runs right now, taking it from the desktop window. */
+  onAdoptLive?: (chat: LiveChatWire) => void;
   /** The escape hatch — leave chat-only mode and show the full dashboard. Without it the
    *  phone can never reach Settings, which is where a missing prerequisite is fixed. */
   onExitToDashboard: () => void;
@@ -84,8 +90,39 @@ export function MobileSessionDrawer({
 
   // Only while the project list is expanded — this is the launcher's whole-registry poll and
   // the drawer is mounted for the life of the surface.
-  const { data: launcher } = useLauncherStatus(open && projectsOpen);
-  const vaults = (launcher?.vaults ?? []).filter((v) => v.exists);
+  const { t } = useI18n();
+  // Mac mode's phone: the launcher poll is the desktop's (refused on the phone listener), so
+  // the project list comes from /api/vaults, which a phone socket answers with names only.
+  const mac = isMacPhoneSurface();
+  const { data: launcher } = useLauncherStatus(open && projectsOpen && !mac);
+  const { data: macVaults } = useQuery({
+    queryKey: ['mac-phone-vaults'],
+    queryFn: () => api.get<{ vaults: Array<{ name: string; exists: boolean }> }>('/vaults'),
+    enabled: open && mac,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const vaults: Array<{ name: string; exists: boolean; needsUpdate?: boolean }> = mac
+    ? (macVaults?.vaults ?? []).filter((v) => v.exists)
+    : (launcher?.vaults ?? []).filter((v) => v.exists);
+  // "Mac'te açık": every chat the Mac runs right now, across projects (names, never paths).
+  const { data: live } = useQuery({
+    queryKey: ['mac-live-chats'],
+    queryFn: () => api.get<{ chats: LiveChatWire[] }>('/agent/live-chats'),
+    enabled: open && mac,
+    staleTime: 5_000,
+    retry: false,
+  });
+  const liveRows = (live?.chats ?? []).filter((c) => c.vault && !openClaudeIds.includes(c.conversationId));
+  const adopt = (chat: LiveChatWire) => {
+    if (chat.vault && chat.vault !== chrome.activeVault) {
+      setPendingMacAdopt(chat);
+      void chrome.addTab(chat.vault);
+    } else {
+      onAdoptLive?.(chat);
+    }
+    onClose();
+  };
 
   const { data: past, isLoading: pastLoading } = useQuery({
     queryKey: ['mobile-past-chats'],
@@ -191,7 +228,7 @@ export function MobileSessionDrawer({
                   aria-selected={v.name === chrome.activeVault}
                   onClick={() => pickProject(v.name)}
                 >
-                  <VaultDot exists={v.exists} needsUpdate={v.needsUpdate} />
+                  <VaultDot exists={v.exists} needsUpdate={v.needsUpdate ?? false} />
                   <span className="mchat-project-row-name">{v.name}</span>
                   {isOpen && v.name !== chrome.activeVault && <span className="mchat-tagword">open</span>}
                 </button>
@@ -240,6 +277,23 @@ export function MobileSessionDrawer({
               </button>
             </div>
           ))}
+
+          {mac && liveRows.length > 0 && (
+            <>
+              <p className="mchat-section">{t('handsfree.mac.liveSection')}</p>
+              {liveRows.map((c) => (
+                <div key={c.conversationId} className="mchat-row" data-testid="mac-live-row">
+                  <button className="mchat-row-main" onClick={() => adopt(c)} title={c.title || ''}>
+                    <span className="mchat-dot" data-kind={c.busy ? 'working' : 'idle'} aria-hidden />
+                    <span className="mchat-row-text">
+                      <span className="mchat-row-title">{c.title || t('handsfree.mac.untitled')}</span>
+                      <span className="mchat-row-sub">{c.vault}{c.busy ? ` · ${t('handsfree.mac.working')}` : ''}</span>
+                    </span>
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
 
           {/* Past chats — the same resume path the desktop picker uses, minus its search.
               A row that already holds a tab is filtered out rather than shown as "open": it

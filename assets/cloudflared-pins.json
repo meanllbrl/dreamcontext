@@ -1,0 +1,20 @@
+{
+  "cloudflared": {
+    "version": "2026.10.1",
+    "base": "https://github.com/cloudflare/cloudflared/releases/download/2026.10.1/",
+    "files": {
+      "darwin-arm64": {
+        "asset": "cloudflared-darwin-arm64.tgz",
+        "sha256": "647615df99d49cd179ea5e13ef760b9bbfb33630f6ae62f87e33dfadda60adcc",
+        "binarySha256": "35b7e34c9a3f214d80d859c4223450c69e583c7668d228c45771026fe376cab9",
+        "size": 19807806
+      },
+      "darwin-x64": {
+        "asset": "cloudflared-darwin-amd64.tgz",
+        "sha256": "3b0dbaf378337e9d7fb6cd235a76d1d6a7dee434c2d8edf9281164fb6a3837ab",
+        "binarySha256": "8ccc6383aef109c8d88965937649a796febbb166dab4b73345e820623aee1ede",
+        "size": 21768449
+      }
+    }
+  }
+}

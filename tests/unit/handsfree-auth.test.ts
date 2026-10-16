@@ -318,3 +318,115 @@ describe('transfer proof', () => {
     expect(b.verifyTransferProof(transferAuthorization(key, a.issueNonce(), 'GET', '/x'), 'GET', '/x')).toBe(false);
   });
 });
+
+// ─── Mac mode (AC2/AC4/AC5/AC11) ────────────────────────────────────────────
+
+describe('Mac mode: QR login token (AC4)', () => {
+  it('is 256-bit, single-use, kept only as a hash, and a newer mint invalidates the older', async () => {
+    const auth = new HandsfreeAuth({ dir, now });
+    const t1 = auth.issueLoginToken();
+    expect(Buffer.from(t1, 'base64url').length).toBe(32);
+    // Only the hash is held: the raw token appears nowhere in the service's state.
+    expect(JSON.stringify(auth)).not.toContain(t1);
+    const t2 = auth.issueLoginToken();
+    expect(auth.consumeLoginToken(t1)).toBe('invalid');
+    expect(auth.consumeLoginToken(t2)).toBe('ok');
+    expect(auth.consumeLoginToken(t2)).toBe('invalid');
+  });
+
+  it('expires after 5 minutes', () => {
+    const auth = new HandsfreeAuth({ dir, now });
+    const t = auth.issueLoginToken();
+    clock += 5 * 60_000;
+    expect(auth.consumeLoginToken(t)).toBe('expired');
+    expect(auth.consumeLoginToken(t)).toBe('invalid');
+  });
+
+  it('a concurrent double-consume yields exactly one ok (lookup and delete are synchronous)', async () => {
+    const auth = new HandsfreeAuth({ dir, now });
+    const t = auth.issueLoginToken();
+    const results = await Promise.all([0, 1, 2, 3].map(() => Promise.resolve().then(() => auth.consumeLoginToken(t))));
+    expect(results.filter((r) => r === 'ok')).toHaveLength(1);
+  });
+});
+
+describe('Mac mode: passphrase, devices and the limiter (AC2/AC5/AC11)', () => {
+  it('setPassphrase stores only the scrypt verifier and signs every device out', async () => {
+    const auth = new HandsfreeAuth({ dir, now });
+    auth.store.setPassphrase(verifier);
+    const id = auth.store.createDevice('iPhone · Safari');
+    expect(auth.store.isValidDevice(id)).toBe(true);
+    const onDisk = readFileSync(join(dir, 'auth.json'), 'utf8');
+    expect(onDisk).not.toContain(PASS);
+    expect(onDisk).not.toContain(id);
+    auth.store.setPassphrase(await hashPassphrase('another six word pass phrase here'));
+    expect(auth.store.isValidDevice(id)).toBe(false);
+    expect(auth.store.listDevices()).toEqual([]);
+  });
+
+  it('lists devices by label, never by id; revokeAllLocal clears them', () => {
+    const auth = new HandsfreeAuth({ dir, now });
+    auth.store.setPassphrase(verifier);
+    const id = auth.store.createDevice('Android · Chrome');
+    const list = auth.store.listDevices();
+    expect(list).toHaveLength(1);
+    expect(list[0].label).toBe('Android · Chrome');
+    expect(JSON.stringify(list)).not.toContain(id);
+    expect(auth.store.revokeAllLocal()).toBe(1);
+    expect(auth.store.isValidDevice(id)).toBe(false);
+  });
+
+  it('a phone socket keys the limiter on cf-connecting-ip and ignores X-Forwarded-For', async () => {
+    const { markPhoneSocket } = await import('../../src/server/phone-origin.js');
+    const sock = { remoteAddress: '127.0.0.1' };
+    markPhoneSocket(sock);
+    const r = (h: Record<string, string>) => ({ socket: sock, headers: h }) as unknown as IncomingMessage;
+    expect(loginClientKey(r({ 'cf-connecting-ip': '198.51.100.7', 'x-forwarded-for': '1.2.3.4' }))).toBe('cf:198.51.100.7');
+    expect(loginClientKey(r({ 'x-forwarded-for': '1.2.3.4' }))).toBe('cf:unknown');
+    // Off the phone listener nothing changes.
+    expect(loginClientKey({ socket: { remoteAddress: '127.0.0.1' }, headers: { 'x-forwarded-for': '1.2.3.4' } } as unknown as IncomingMessage)).toBe('xff:1.2.3.4');
+  });
+
+  it('scrypt never runs more than MAX_SCRYPT at once, however many logins arrive', async () => {
+    const { MAX_SCRYPT } = await import('../../src/server/handsfree-auth.js');
+    let active = 0;
+    let peak = 0;
+    const auth = new HandsfreeAuth({
+      dir, now, sleep: async () => {},
+      verify: async () => { active++; peak = Math.max(peak, active); await new Promise((r) => setTimeout(r, 15)); active--; return false; },
+    });
+    auth.store.setPassphrase(verifier);
+    const outcomes = await Promise.all(Array.from({ length: 12 }, (_, i) => auth.attemptLogin('x', `cf:10.0.0.${i}`)));
+    expect(peak).toBeLessThanOrEqual(MAX_SCRYPT);
+    expect(peak).toBe(MAX_SCRYPT);
+    expect(outcomes.every((o) => !o.ok)).toBe(true);
+  });
+
+  it('a Mac logout revokes the Mac device only, never a cloud one', async () => {
+    const { handleHandsfreeLogout, setMacHandsfreeAuthForTests } = await import('../../src/server/handsfree-auth.js');
+    const { markPhoneSocket } = await import('../../src/server/phone-origin.js');
+    const macDir = mkdtempSync(join(tmpdir(), 'hf-mac-'));
+    const mac = new HandsfreeAuth({ dir: macDir, now });
+    const cloud = new HandsfreeAuth({ dir, now });
+    mac.store.setPassphrase(verifier);
+    cloud.store.setPassphrase(verifier);
+    setMacHandsfreeAuthForTests(mac);
+    setHandsfreeAuthForTests(cloud);
+    try {
+      const macId = mac.store.createDevice();
+      const cloudId = cloud.store.createDevice();
+      const sock = {};
+      markPhoneSocket(sock);
+      const res = { setHeader() {}, writeHead() { return res; }, end() {} } as never;
+      // A phone presenting the cloud's id on the Mac listener: nothing in the cloud store moves.
+      handleHandsfreeLogout({ socket: sock, headers: { cookie: `${DEVICE_COOKIE}=${cloudId}` } } as unknown as IncomingMessage, res);
+      expect(cloud.store.isValidDevice(cloudId)).toBe(true);
+      handleHandsfreeLogout({ socket: sock, headers: { cookie: `${DEVICE_COOKIE}=${macId}` } } as unknown as IncomingMessage, res);
+      expect(mac.store.isValidDevice(macId)).toBe(false);
+      expect(cloud.store.isValidDevice(cloudId)).toBe(true);
+    } finally {
+      setMacHandsfreeAuthForTests(null);
+      rmSync(macDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -108,3 +108,41 @@ describe('the server flag', () => {
     expect(cloud).toBe(`<!doctype html><html><head>${CLOUD_SURFACE_META}\n<meta charset="UTF-8" /></head><body></body></html>`);
   });
 });
+
+// ─── Mac mode: the phone reaching this laptop through a tunnel ──────────────
+
+describe('Mac phone surface (mirror + allow-list)', () => {
+  it('the dashboard mirror equals the server lists', async () => {
+    const { MAC_PUBLIC_ROUTES: SERVER_MAC_PUBLIC } = await import('../../src/lib/handsfree/mac/contract.js');
+    const { MAC_DEVICE_API_ROUTES: SERVER_MAC_DEVICE } = await import('../../src/server/cloud-mode.js');
+    const { MAC_PUBLIC_ROUTES, MAC_EXTRA_DEVICE_API_ROUTES } = await import('../../dashboard/src/lib/cloudSurface.js');
+    expect([...MAC_PUBLIC_ROUTES]).toEqual([...SERVER_MAC_PUBLIC]);
+    expect([...CLOUD_DEVICE_API_ROUTES, ...MAC_EXTRA_DEVICE_API_ROUTES]).toEqual([...SERVER_MAC_DEVICE]);
+    expect(arrayLiteral('dashboard/src/lib/cloudSurface.ts', 'MAC_PUBLIC_ROUTES')).toEqual(arrayLiteral('src/lib/handsfree/mac/contract.ts', 'MAC_PUBLIC_ROUTES'));
+  });
+
+  it('on the mac surface cloudAllows agrees with the Mac classifier (no transfer class, live-chats allowed)', async () => {
+    const { classifyMacRoute, MAC_DEVICE_API_ROUTES: SERVER_MAC_DEVICE } = await import('../../src/server/cloud-mode.js');
+    const { isMacPhoneSurface, isPhoneSurface } = await import('../../dashboard/src/lib/cloudSurface.js');
+    setCloudSurfaceForTests('mac');
+    expect(isMacPhoneSurface()).toBe(true);
+    expect(isCloudSurface()).toBe(false);
+    expect(isPhoneSurface()).toBe(true);
+    const probe = [...SERVER_MAC_DEVICE, ...LAPTOP_ONLY, 'GET /handsfree-sw.js', 'GET /api/handsfree/status', 'POST /api/handsfree/mac/start', 'GET /api/agent/live-chats'];
+    for (const r of probe) {
+      const [m, p] = r.split(' ');
+      const cls = classifyMacRoute(m, p);
+      expect(cloudAllows(m, p), r).toBe(cls === 'public' || cls === 'device');
+    }
+    expect(cloudAllows('GET', '/api/agent/live-chats')).toBe(true);
+    expect(cloudAllows('POST', '/api/handsfree/mac/start')).toBe(false);
+  });
+
+  it('index.html carries content="mac" for a phone socket only', async () => {
+    const { MAC_SURFACE_META } = await import('../../src/server/static.js');
+    const html = Buffer.from('<html><head><title>x</title></head></html>');
+    expect(indexHtmlFor(html, 'mac').toString()).toContain(MAC_SURFACE_META);
+    expect(indexHtmlFor(html, null).toString()).not.toContain('dreamcontext-surface');
+    expect(indexHtmlFor(html, true).toString()).toContain(CLOUD_SURFACE_META);
+  });
+});

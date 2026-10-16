@@ -5,6 +5,7 @@ import { RunCard } from '../sleepy/chat/RunCard';
 import { startHandsfreeJob } from './handsfreeActions';
 import { openHandsfreeReceipt, useHandsfree } from './handsfreeStore';
 import { coreHours, fill, InlineConfirm } from './HandsfreeParts';
+import { MacFixedAddress } from './MacFixedAddress';
 import '../sleepy/chat/ChatViews.css';
 import './handsfree.css';
 
@@ -82,6 +83,8 @@ export function HandsfreeSettingsCard() {
           {error && <div className="hf-error" role="alert">{error}</div>}
         </div>
       )}
+
+      <MacFixedAddress />
 
       <div className="hf-settings-runs">
         {RUNS.filter((r) => status.setUp || r.id === 'hf-run-setup').map((r) => (

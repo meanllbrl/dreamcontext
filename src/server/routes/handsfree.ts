@@ -38,6 +38,8 @@ import { computeScope, dirBytes, estimateRepoBytes, ScopeError } from '../../lib
 import { readConfig, RETURN_RESERVE_MINUTES, usedCoreMinutes } from '../../lib/handsfree/local-store.js';
 import { coresFor } from '../../lib/handsfree/provider.js';
 import { readTripState } from '../../lib/handsfree/trip-state.js';
+import { macModeOn } from './handsfree-mac.js';
+import { CLOUD_REFUSED_MAC_ON } from '../../lib/handsfree/mac/contract.js';
 
 // ---------------------------------------------------------------- the gate (AC4, laptop part)
 
@@ -398,6 +400,9 @@ export async function handleHandsfreeReceipt(req: IncomingMessage, res: ServerRe
 /** POST /api/handsfree/go {cutRunning?, takeOver?, confirmTakeOverLive?} → 202 {job}. */
 export async function handleHandsfreeGo(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
   if (!gate(req, res)) return;
+  // AC15: Mac mode and a cloud trip never run together (the Mac refuses to start while a trip
+  // is off home; this is the other direction).
+  if (macModeOn()) { sendError(res, 409, CLOUD_REFUSED_MAC_ON, 'Mac mode is on: press Return in Hands-free before taking a project to the cloud.'); return; }
   if (!contextRoot) { sendError(res, 400, 'no_vault', 'Pick the project to take hands-free first.'); return; }
   const b = await parseJsonBody(req);
   const env = envFactory();

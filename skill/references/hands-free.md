@@ -6,6 +6,8 @@ Load this reference when the owner wants to work from the phone, "go hands-free"
 
 Every subcommand and flag below is read from `src/cli/commands/handsfree.ts` (`registerHandsfreeCommand`). The logic behind them is in `src/lib/handsfree/orchestrator.ts`, and the desktop app calls the same functions through `src/server/routes/handsfree.ts`.
 
+**Two modes.** The sheet's first step offers **Bu Mac'ten** (Mac mode, the default: the work stays on this laptop, see [Mac mode](#mac-mode--the-phone-drives-this-laptop-through-a-tunnel) below) and **Buluttan** (the cloud trip this reference mostly describes). They never run together.
+
 **Not to be confused with:**
 - the **tailnet phone path** (`src/server/remote-access.ts`). That path reaches the laptop's own server, so it dies when the laptop sleeps. Hands-free mode runs on a separate machine.
 - **brain sync** (`references/brain-sync.md`), which shares `_dream_context/` through git at `sleep done`. Hands-free mode never pushes to GitHub from the cloud (out of scope v1).
@@ -164,3 +166,28 @@ From `returnTrip()` → `runReturnPasses()`:
 | Passphrase leaked | Anyone with it has the cloud. | `handsfree password` (new passphrase, every device signed out), or `handsfree devices revoke --all`. Both stay pending until the cloud confirms. |
 
 Security model, the gate chain and the full recovery procedure: `_dream_context/knowledge/dashboard-server-security.md` § Cloud mode (hands-free). Design record and residuals: `_dream_context/knowledge/features/hands-free-cloud-mode.md`.
+
+---
+
+## Mac mode — the phone drives this laptop through a tunnel
+
+The work never leaves the laptop. While Mac mode is on, the desktop app's own server runs a second listener (the **phone listener**, 127.0.0.1 only) and a pinned `cloudflared` tunnels a public `https://` address to it. The phone opens that address, signs in (scan the one-time QR, or type the 6-word passphrase) and drives the SAME chats the desktop window runs: no copy, no lock, no merge. The Mac stays awake with the lid closed (`pmset disablesleep 1`) in Low Power Mode; **Return** restores both. Use it when the owner wants to "manage sessions from the phone on a walk" and does not want a cloud machine or a VPN on the phone.
+
+| Command | What it does | Source |
+|---|---|---|
+| `dreamcontext handsfree mac setup [--new-passphrase]` | Installs the sleep permission with ONE admin prompt (a sudoers drop-in granting exactly six `pmset` argv lines) and creates the phone passphrase, printed once and only on a TTY. | `session.ts` `setup()`, `power.ts` |
+| `dreamcontext handsfree mac start` | Phone listener → cloudflared (sha256-pinned in `assets/cloudflared-pins.json`) → reachability probe → keep-awake + LPM. Prints the address and a one-time sign-in link (TTY only). | `start()` |
+| `dreamcontext handsfree mac stop` | **Return**: phone sockets close 4401 and their chats detach (still running; the desktop reattaches), every Mac device is signed out, the tunnel and listener stop, sleep and LPM are restored. | `stop()` |
+| `dreamcontext handsfree mac status` | Phase, address, battery, signed-in phone count. | `status()` |
+| `dreamcontext handsfree mac password` | New passphrase (TTY only); signs every phone out. | `setPassword()` |
+| `dreamcontext handsfree mac devices [revoke-all]` | Lists signed-in phones; `revoke-all` signs them out now and CUTS a turn a phone is running (a desktop-held chat is never touched). | `revokeAll()` |
+| `dreamcontext handsfree mac tunnel fixed <hostname> [--overwrite-dns]` / `tunnel quick` | A fixed address on the owner's Cloudflare domain (a locally-managed named tunnel; `login` runs with a private HOME so nothing lands in `~/.cloudflared`, and the zone cert is deleted after setup), or back to a new quick address per start. A hostname that already has a DNS record is refused (`mac_hostname_in_use`) before the login; `--overwrite-dns` replaces it only when the owner says so. | `tunnel.ts` `setupFixedTunnel()` |
+| `dreamcontext handsfree mac uninstall` | Removes the drop-in (one admin prompt) and `~/.dreamcontext/handsfree-mac`. | `uninstall()` |
+
+The CLI calls the running desktop app (`~/.dreamcontext/handsfree-mac/server.json`); with the app closed it says so. In the app: the sheet's Mac panel (setup, Start, "QR'ı göster", battery, devices + "Hepsini çıkar", Dönüş), the chrome chip **Telefonda**, and Settings → Hands-free → fixed address.
+
+**Trust model (what to tell the owner).** A phone socket is NEVER loopback, although cloudflared dials it from 127.0.0.1 (`src/server/phone-origin.ts`). The phone listener is default-deny: only `MAC_PUBLIC_ROUTES` and `MAC_DEVICE_API_ROUTES` (`cloud-mode.ts`), only the chat WebSocket, only the tunnel's own Origin, only a MAC device session (`~/.dreamcontext/handsfree-mac`, separate from the cloud's). The main listener refuses any request or upgrade carrying a Cloudflare header, so a tunnel pointed at the wrong port reaches nothing. Residual risks: a leaked passphrase or QR is control of the whole Mac while on (bypass-mode chats included); Cloudflare terminates TLS; a quick-tunnel restart changes the address.
+
+**One chat, two screens.** Only one screen drives a chat. An explicit tap (drawer "Mac'te açık", "Buraya al") takes it and the other screen gets close code 4409 and shows "Buraya al"; automatic reconnects and reload restores are passive (`reattach=passive`) and never take a chat from a live screen. A phone whose network dropped silently is detected by a ping probe (`HOLDER_PROBE_MS`).
+
+**Refusals.** `mac_cloud_trip_active` (a project is on the cloud machine: return it first), `handsfree_mac_on` (the cloud go while Mac mode is on), `mac_not_setup`, `mac_sudo_missing` (run setup again), `mac_tunnel_failed` / `mac_probe_failed` (nothing was left running), `mac_admin_cancelled`. At ≤15% battery and discharging the Mac is allowed to sleep again (no re-arm). A crash leaves nothing open: the next app start kills the orphan cloudflared (only if it is ours), signs phones out and restores power; a watchdog also ends cloudflared within seconds of the server dying.

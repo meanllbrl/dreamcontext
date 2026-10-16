@@ -74,6 +74,8 @@ export interface SessionStatusInput {
   /** Whether agents this conversation started (sub-agents, headless teammates) are still
    *  running after its own turn ended. The work is not done while they are. */
   agentsWorking?: boolean;
+  /** Hands-free Mac mode: another screen holds this live chat (closed 4409). It did not end. */
+  takenOver?: boolean;
 }
 
 /**
@@ -84,8 +86,10 @@ export interface SessionStatusInput {
  * dribble in (dialog redraws, keystroke echo). `agentsWorking` keeps an idle turn `working`
  * while the agents it started are still running.
  */
-export function deriveSessionStatus({ dormant, status, busy, asking, agentsWorking }: SessionStatusInput): SessionStatusInfo {
+export function deriveSessionStatus({ dormant, status, busy, asking, agentsWorking, takenOver }: SessionStatusInput): SessionStatusInfo {
   if (dormant) return { kind: 'saved', label: 'saved', mood: 'sleeps' };
+  // Running on the other screen: calm, never "ended" (the process is alive there).
+  if (takenOver) return { kind: 'saved', label: 'on another screen', mood: 'sleeps' };
   switch (status) {
     case 'open':
       if (asking) return { kind: 'asking', label: 'needs you', mood: 'asking' };

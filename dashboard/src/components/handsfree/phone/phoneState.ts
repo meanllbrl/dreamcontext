@@ -13,6 +13,9 @@ export interface PhoneState {
   phase: PhonePhase;
   /** ISO time the cloud plans to put itself to sleep, or null. */
   stopAt: string | null;
+  /** Mac mode (the phone reaching the laptop itself): its battery and whether it may sleep
+   *  again. Absent on the cloud. A Mac has no trip phases: `phase` is always `active`. */
+  mac?: { battery: { percent: number | null; charging: boolean }; sleepAllowed: boolean };
 }
 
 const ROUTE = '/api/handsfree/phone';
@@ -73,7 +76,14 @@ async function poll(): Promise<void> {
   inFlight = true;
   try {
     const res = await fetch(ROUTE, { cache: 'no-store', credentials: 'same-origin', headers: SKIP });
-    if (res.status === 200) {
+    if (res.status === 200 && res.headers.get('X-Dreamcontext-Surface') === 'mac') {
+      // Mac mode: no trip, no offline worker (a Mac that is off answers nothing to wake).
+      const body = await res.json() as { mode?: string; battery?: { percent?: unknown; charging?: unknown }; sleepAllowed?: unknown };
+      if (body?.mode === 'mac') {
+        const percent = typeof body.battery?.percent === 'number' ? body.battery.percent : null;
+        emit({ phase: 'active', stopAt: null, mac: { battery: { percent, charging: body.battery?.charging !== false }, sleepAllowed: body.sleepAllowed === true } });
+      }
+    } else if (res.status === 200) {
       const body = await res.json() as Partial<PhoneState>;
       if (body && PHASES.includes(body.phase as PhonePhase)) {
         emit({ phase: body.phase as PhonePhase, stopAt: typeof body.stopAt === 'string' ? body.stopAt : null });
@@ -84,7 +94,7 @@ async function poll(): Promise<void> {
       // The cloud gate answers 503 cloud_sealed to every API call once sealed.
       const body = await res.json().catch(() => null) as { error?: string } | null;
       if (body?.error === 'cloud_sealed') emit({ phase: 'sealed', stopAt: null });
-    } else if (res.status === 404 || !res.headers.get('X-Dreamcontext-Cloud')) {
+    } else if (res.status === 404 || (!res.headers.get('X-Dreamcontext-Cloud') && !res.headers.get('X-Dreamcontext-Surface'))) {
       // The laptop (no such route), or not our server answering: nothing to show.
       if (state === null) stopPolling();
     }

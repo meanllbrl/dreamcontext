@@ -1,10 +1,12 @@
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { networkInterfaces } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { cloudGate, cloudUpgradeRefusal, handleCors, rejectCloudUpgrade, isCrossSiteWrite, sendError } from './middleware.js';
+import { cloudGate, cloudUpgradeRefusal, handleCors, rejectCloudUpgrade, isCrossSiteWrite, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
+import { carriesCloudflareHeaders, isPhoneSocket, markPhoneSocket } from './phone-origin.js';
 import { isCloud } from './cloud-mode.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
@@ -201,7 +203,7 @@ import {
 } from './routes/agent-mcp-project.js';
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
-import { attachAgentChat, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
@@ -254,7 +256,8 @@ import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, 
 import { startOrphanSweep } from './orphan-sweep.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { registerHandsfreeCloudRoutes } from './routes/handsfree-cloud.js';
-import { handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
+import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
+import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
 import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
 import {
   handleHandsfreeStatus, handleHandsfreeJob, handleHandsfreeReceipt, handleHandsfreeGo, handleHandsfreeReturn, handleHandsfreeResume,
@@ -296,12 +299,14 @@ export function buildRouter(): Router {
   // Hands-free. The cloud's transfer routes (`/api/handsfree/cloud/*`, 404 off the cloud) and
   // its phone login; the laptop's own routes (desktop + loopback + same-site only).
   registerHandsfreeCloudRoutes(router);
+  // The phone's sign-in/out: the cloud's store, or the Mac store on a Mac-mode phone socket
+  // (`authFor`); the desktop has no device store, so 404 there.
   router.post('/api/handsfree/login', async (req, res) => {
-    if (!isCloud()) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/login'); return; }
+    if (!authFor(req)) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/login'); return; }
     await handleHandsfreeLogin(req, res);
   });
   router.post('/api/handsfree/logout', async (req, res) => {
-    if (!isCloud()) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/logout'); return; }
+    if (!authFor(req)) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/logout'); return; }
     handleHandsfreeLogout(req, res);
   });
   router.get('/api/handsfree/phone', handleHandsfreePhone);
@@ -316,6 +321,8 @@ export function buildRouter(): Router {
   router.post('/api/handsfree/rollback', handleHandsfreeRollback);
   router.post('/api/handsfree/abandon', handleHandsfreeAbandon);
   router.post('/api/handsfree/devices/revoke-all', handleHandsfreeRevokeAll);
+  // Mac mode (hands-free from this laptop through a tunnel): the main listener's panel routes.
+  registerHandsfreeMacRoutes(router);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
   router.post('/api/admin/shutdown', handleAdminShutdown);
 
@@ -559,6 +566,9 @@ export function buildRouter(): Router {
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
+  // Every chat child running in this process (names, never paths): the phone drawer's
+  // "Mac'te açık" section. Gated by isAgentRequest like its neighbours.
+  router.get('/api/agent/live-chats', handleAgentLiveChats);
   // The project's cached `/` list, for composers with no chat process (the #agents channel).
   router.get('/api/agent/slash-commands', handleAgentSlashCommands);
   // Every past conversation of THIS project, for the surface's "Past chats" picker —
@@ -1019,6 +1029,208 @@ function listNetworkHosts(host: string): string[] {
   return hosts.length > 0 ? hosts : [host];
 }
 
+// ─── The request handler both listeners share ───────────────────────────────
+
+export interface RequestHandlerCtx {
+  /** Runs first; true = the request may proceed, false = the gate has answered. */
+  gate: (req: IncomingMessage, res: ServerResponse) => boolean;
+  router: Router;
+  dashboardDir: string;
+  contextRoot: string | null;
+  /** The hands-free cloud (process-global environment, never per request). */
+  cloud: boolean;
+}
+
+/**
+ * The HTTP handler: gate → API router (vault gate, hands-free lock) → phone pages → static SPA.
+ * The main listener and Mac mode's phone listener share everything but the gate.
+ */
+export function makeRequestHandler(ctx: RequestHandlerCtx): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  const { gate, router, dashboardDir, contextRoot, cloud } = ctx;
+  return async (req, res) => {
+    try {
+      if (!gate(req, res)) return;
+
+      const url = new URL(req.url || '/', `http://${req.headers.host}`);
+      const method = req.method || 'GET';
+
+      // API routes
+      if (url.pathname.startsWith('/api/')) {
+        const match = router.match(method, url.pathname);
+        if (match) {
+          // Resolve the per-request vault from the strict header resolver.
+          const vaultGate = apiVaultGate(req, url.pathname, contextRoot);
+          if (!vaultGate.ok) {
+            sendError(res, vaultGate.status, vaultGate.error, vaultGate.message);
+            return;
+          }
+          const effRoot = vaultGate.root;
+          // Hands-free (D3/AC6): the ONE lock middleware. A mutating request scoped to a
+          // project that is on the cloud machine is refused; /api/handsfree/* is exempt.
+          const away = cloud ? null : handsfreeLockRefusal(method, url.pathname, effRoot);
+          if (away) {
+            sendHandsfreeAway(res, away);
+            return;
+          }
+          // ...and a vault-agnostic route that names its vault in the body or query.
+          let handlerReq = req;
+          if (!cloud && isBodySelectorRoute(method, url.pathname) && isAway()) {
+            const screened = await screenBodySelectedVault(req, url);
+            if ('lock' in screened) {
+              sendHandsfreeAway(res, screened.lock);
+              return;
+            }
+            handlerReq = screened.req;
+          }
+          // Vault-agnostic routes ignore the context root; cast keeps the
+          // handler signature satisfied while the null is harmless there.
+          await match.handler(handlerReq, res, match.params, effRoot as string);
+        } else {
+          sendError(res, 404, 'not_found', `No route: ${method} ${url.pathname}`);
+        }
+        return;
+      }
+
+      // The phone's login, service worker and offline page (cloud), the Mac login page (a
+      // phone socket); the SW and the offline page are 404 elsewhere.
+      if (handlePhonePages(req, res, url)) return;
+
+      // Static files (dashboard SPA)
+      serveStatic(req, res, dashboardDir);
+    } catch (err) {
+      // Log the real error server-side; return a generic body so internal
+      // paths / exception details never leak to the browser (defense in depth).
+      // The cloud and the phone listener never log a query string (it can carry a session, a
+      // resume id or a one-time login token).
+      const shown = cloud || isPhoneSocket(req) ? (req.url ?? '/').split('?')[0] : (req.url ?? '/');
+      console.error(`[server] unhandled error: ${req.method ?? 'GET'} ${shown}`, err);
+      sendError(res, 500, 'internal_error', 'Internal server error');
+    }
+  };
+}
+
+/**
+ * The laptop's own gate (main listener, not the cloud): Mac mode's backstop first — a request
+ * carrying a Cloudflare edge header came through a tunnel and reaches nothing here — then the
+ * network token (non-loopback binds), CORS and the cross-site write guard, as before.
+ */
+export function mainLaptopGate(req: IncomingMessage, res: ServerResponse, networkToken: string | null): boolean {
+  if (carriesCloudflareHeaders(req)) {
+    sendError(res, 403, 'forbidden', 'This address is not reachable through a tunnel.');
+    return false;
+  }
+  if (networkToken && !checkNetworkAuth(req, res, networkToken)) return false;
+  // Handle CORS preflight
+  if (handleCors(req, res)) return false;
+  // CSRF defense: reject state-changing requests from a cross-site origin.
+  if (isCrossSiteWrite(req)) {
+    sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
+    return false;
+  }
+  return true;
+}
+
+/** Refuse an upgrade before ANY upgrade listener sees it: wraps `server.emit`. */
+function guardUpgrades(server: Server, refusal: (req: IncomingMessage) => number | null, reject: (socket: Duplex, code: number) => void): void {
+  const emit = server.emit.bind(server) as (event: string | symbol, ...args: unknown[]) => boolean;
+  server.emit = ((event: string | symbol, ...args: unknown[]) => {
+    if (event === 'upgrade') {
+      const code = refusal(args[0] as IncomingMessage);
+      if (code !== null) {
+        reject(args[1] as Duplex, code);
+        return true;
+      }
+    }
+    return emit(event, ...args);
+  }) as typeof server.emit;
+}
+
+/**
+ * Mac mode's backstop on the MAIN listener: a tunnel accidentally pointed at this port reaches
+ * nothing. Every upgrade carrying a Cloudflare edge header is refused before any upgrade
+ * listener (the PTY's has no Origin check) can see it — the HTTP half is in `mainLaptopGate`.
+ */
+export function attachMainListenerBackstop(server: Server): void {
+  guardUpgrades(server, (req) => (carriesCloudflareHeaders(req) ? 403 : null), rejectUpgradePlain);
+}
+
+function rejectUpgradePlain(socket: Duplex, code: number): void {
+  socket.write(`HTTP/1.1 ${code} ${code === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  socket.destroy();
+}
+
+// ─── Mac mode's phone listener ──────────────────────────────────────────────
+
+/** What the phone listener reuses from the running main server. */
+let mainServer: { server: Server; router: Router; dashboardDir: string; contextRoot: string | null } | null = null;
+
+/** Tests only: the pieces a phone listener needs, without a full dashboard boot. */
+export function setMainServerForTests(next: { server: Server; router: Router; dashboardDir: string; contextRoot: string | null } | null): void {
+  mainServer = next;
+}
+
+interface PhoneListener { server: Server; port: number; sockets: Set<Duplex> }
+let phoneListener: PhoneListener | null = null;
+
+/** The phone listener's port while it runs, else null. */
+export function phoneListenerPort(): number | null {
+  return phoneListener?.port ?? null;
+}
+
+/**
+ * Start Mac mode's phone listener: its own http.Server on 127.0.0.1 (`port` 0 = random), in
+ * THIS process so the phone can adopt the claude children the desktop already runs. Every
+ * socket it accepts is marked a phone socket before a byte is read; every request passes
+ * {@link macPhoneGate}; every upgrade passes {@link macUpgradeRefusal} first, and only the chat
+ * upgrade listener is attached (never the PTY, the Assistant or the browser mirror).
+ */
+export async function startPhoneListener(opts: { port?: number } = {}): Promise<{ port: number }> {
+  if (phoneListener) return { port: phoneListener.port };
+  if (!mainServer) throw new Error('startPhoneListener: the dashboard server is not running');
+  const main = mainServer;
+  const sockets = new Set<Duplex>();
+  const server = createServer(makeRequestHandler({
+    gate: (req, res) => macPhoneGate(req, res),
+    router: main.router,
+    dashboardDir: main.dashboardDir,
+    contextRoot: main.contextRoot,
+    cloud: false,
+  }));
+  server.on('connection', (socket) => {
+    markPhoneSocket(socket);
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
+  guardUpgrades(server, (req) => macUpgradeRefusal(req), rejectMacUpgrade);
+  const mainAddress = main.server.address();
+  const mainPort = mainAddress && typeof mainAddress === 'object' ? mainAddress.port : 0;
+  // The window-control base stays the MAIN server's port: that is where the agent's CLI calls.
+  attachAgentChat(server, { networkToken: null, windowControlPort: mainPort });
+  server.setTimeout(30000);
+  const port = await new Promise<number>((resolvePort, reject) => {
+    server.once('error', reject);
+    server.listen(opts.port ?? 0, '127.0.0.1', () => {
+      server.off('error', reject);
+      const a = server.address();
+      resolvePort(a && typeof a === 'object' ? a.port : 0);
+    });
+  });
+  phoneListener = { server, port, sockets };
+  return { port };
+}
+
+/** Stop the phone listener: close it, end every connection — upgraded chat sockets included. */
+export async function stopPhoneListener(): Promise<void> {
+  const pl = phoneListener;
+  if (!pl) return;
+  phoneListener = null;
+  const closed = new Promise<void>((r) => pl.server.close(() => r()));
+  pl.server.closeAllConnections?.();
+  for (const s of pl.sockets) { try { s.destroy(); } catch { /* gone */ } }
+  pl.sockets.clear();
+  await closed;
+}
+
 export function startDashboardServer(options: ServerOptions): Promise<void> {
   // Before anything can spawn a pane: drop any inherited spawn marker (a server launched from a
   // builder or automation must not zero a human pane's sleep debt) and stamp this server's pid
@@ -1050,79 +1262,17 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   const networkToken = loopbackBind || cloud ? null : generateNetworkToken();
 
   return new Promise((resolvePromise, reject) => {
-    const server = createServer(async (req, res) => {
-      try {
-        if (cloud) {
-          // Credential per route class, Origin pinned on writes, the static API allow-list.
-          if (!cloudGate(req, res)) return;
-        } else {
-          if (networkToken && !checkNetworkAuth(req, res, networkToken)) return;
-
-          // Handle CORS preflight
-          if (handleCors(req, res)) return;
-
-          // CSRF defense: reject state-changing requests from a cross-site origin.
-          if (isCrossSiteWrite(req)) {
-            sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
-            return;
-          }
-        }
-
-        const url = new URL(req.url || '/', `http://${req.headers.host}`);
-        const method = req.method || 'GET';
-
-        // API routes
-        if (url.pathname.startsWith('/api/')) {
-          const match = router.match(method, url.pathname);
-          if (match) {
-            // Resolve the per-request vault from the strict header resolver.
-            const gate = apiVaultGate(req, url.pathname, contextRoot);
-            if (!gate.ok) {
-              sendError(res, gate.status, gate.error, gate.message);
-              return;
-            }
-            const effRoot = gate.root;
-            // Hands-free (D3/AC6): the ONE lock middleware. A mutating request scoped to a
-            // project that is on the cloud machine is refused; /api/handsfree/* is exempt.
-            const away = cloud ? null : handsfreeLockRefusal(method, url.pathname, effRoot);
-            if (away) {
-              sendHandsfreeAway(res, away);
-              return;
-            }
-            // ...and a vault-agnostic route that names its vault in the body or query.
-            let handlerReq = req;
-            if (!cloud && isBodySelectorRoute(method, url.pathname) && isAway()) {
-              const screened = await screenBodySelectedVault(req, url);
-              if ('lock' in screened) {
-                sendHandsfreeAway(res, screened.lock);
-                return;
-              }
-              handlerReq = screened.req;
-            }
-            // Vault-agnostic routes ignore the context root; cast keeps the
-            // handler signature satisfied while the null is harmless there.
-            await match.handler(handlerReq, res, match.params, effRoot as string);
-          } else {
-            sendError(res, 404, 'not_found', `No route: ${method} ${url.pathname}`);
-          }
-          return;
-        }
-
-        // The phone's login, service worker and offline page (cloud only; the SW and the
-        // offline page are 404 off the cloud).
-        if (handlePhonePages(req, res, url)) return;
-
-        // Static files (dashboard SPA)
-        serveStatic(req, res, dashboardDir);
-      } catch (err) {
-        // Log the real error server-side; return a generic body so internal
-        // paths / exception details never leak to the browser (defense in depth).
-        // The cloud never logs a query string (it can carry a session or resume id).
-        const shown = cloud ? (req.url ?? '/').split('?')[0] : (req.url ?? '/');
-        console.error(`[server] unhandled error: ${req.method ?? 'GET'} ${shown}`, err);
-        sendError(res, 500, 'internal_error', 'Internal server error');
-      }
-    });
+    const server = createServer(makeRequestHandler({
+      gate: cloud
+        ? (req, res) => cloudGate(req, res)
+        : (req, res) => mainLaptopGate(req, res, networkToken),
+      router,
+      dashboardDir,
+      contextRoot,
+      cloud,
+    }));
+    mainServer = { server, router, dashboardDir, contextRoot };
+    configureMacListener({ start: () => startPhoneListener(), stop: () => stopPhoneListener() });
 
     // Cloud mode: every WebSocket upgrade passes the cloud gate BEFORE any upgrade listener
     // sees it (device session, our Origin, phase active, chat socket only). A refused upgrade
@@ -1139,6 +1289,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         }
         return emit(event, ...args);
       }) as typeof server.emit;
+    } else {
+      attachMainListenerBackstop(server);
     }
 
     // Agent terminal: bridge a WebSocket to a node-pty running real Claude Code.
@@ -1198,13 +1350,18 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         shuttingDown = true;
         console.log('\n  Shutting down...');
         stopClaudeUpdate?.();
-        // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
-        // when this server exits — SIGKILL from the parent would skip this, but a
-        // graceful SIGTERM or the parent-death watchdog both route through here.
-        killTrackedChildren();
-        // Nothing the owner has not approved is sent: pending Assistant proposals are declined.
-        declineAllProposals();
-        server.close(() => process.exit(0));
+        // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
+        // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
+        const macDone = isDesktop() && macSession().isOn() ? macSession().stop().catch(() => undefined) : Promise.resolve();
+        void macDone.finally(() => {
+          // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
+          // when this server exits — SIGKILL from the parent would skip this, but a
+          // graceful SIGTERM or the parent-death watchdog both route through here.
+          killTrackedChildren();
+          // Nothing the owner has not approved is sent: pending Assistant proposals are declined.
+          declineAllProposals();
+          server.close(() => process.exit(0));
+        });
         setTimeout(() => process.exit(1), 5000);
       };
       process.on('SIGINT', shutdown);
@@ -1228,6 +1385,13 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
       startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
       startOrphanSweep();
+      // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state
+      // left `on` by a crashed server is repaired now (orphan tunnel, sleep, LPM, devices).
+      if (isDesktop() && process.platform === 'darwin') {
+        const a = server.address();
+        if (a && typeof a === 'object') writeMacServerHint(a.port);
+        void macSession().recoverOnBoot().catch((err) => console.warn(`[handsfree-mac] boot recovery failed: ${(err as Error).message}`));
+      }
       // Headless claude spawns never run the CLI's TUI-only updater; this does. Self-gates to desktop.
       stopClaudeUpdate = startClaudeUpdateJob();
     };

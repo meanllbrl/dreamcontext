@@ -22,7 +22,8 @@
 }
 
 .dc-hf-chip[data-phase='quiescing'] .dc-hf-chip-dot,
-.dc-hf-chip[data-phase='going'] .dc-hf-chip-dot {
+.dc-hf-chip[data-phase='going'] .dc-hf-chip-dot,
+.dc-hf-chip[data-mac='low'] .dc-hf-chip-dot {
   background: var(--color-warning);
 }
 

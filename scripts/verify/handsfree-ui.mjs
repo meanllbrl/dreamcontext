@@ -184,6 +184,9 @@ try {
   report.check('no trip banner at home', (await p1.getByTestId('hf-banner').count()) === 0);
   const preflightResp = p1.waitForResponse((r) => r.url().includes('/api/handsfree/preflight'), { timeout: 20_000 });
   await btn.click();
+  // Step 1 opens on "Bu Mac'ten" (Mac mode, the default); the cloud flow is one tap away.
+  report.check('the sheet offers both modes, "From this Mac" selected', (await p1.getByTestId('hf-mode-mac').getAttribute('aria-selected')) === 'true' && (await p1.getByTestId('hf-mode-cloud').count()) === 1);
+  await p1.getByTestId('hf-mode-cloud').click();
   const pre = await preflightResp.catch(() => null);
   const preBody = pre ? await pre.json().catch(() => null) : null;
   report.check('the sheet calls GET /api/handsfree/preflight for the active vault (200)', pre?.status() === 200, pre ? `${pre.status()} ${JSON.stringify(preBody)}` : 'no request');
@@ -208,6 +211,7 @@ try {
   seed('not-setup');
   const p2 = await openProject(browser, base);
   await p2.getByTestId('hf-button').click();
+  await p2.getByTestId('hf-mode-cloud').click();
   const refusal = p2.getByTestId('hf-refusal');
   report.check('the sheet names the refusal (not_setup)', await until(p2, async () => (await refusal.count()) > 0) && (await refusal.getAttribute('data-code')) === 'not_setup');
   report.check('Go is disabled', !(await p2.getByTestId('hf-go').isEnabled()));

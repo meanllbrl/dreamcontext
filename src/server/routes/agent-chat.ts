@@ -15,7 +15,10 @@ import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cloudChatRootRefusal, cloudPhase, cloudWorkDir, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
 import { isCloudOriginAllowed } from '../middleware.js';
 import { recordCloudAction } from '../cloud-idle.js';
-import { deviceIdHash, handsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
+import { authFor, deviceIdHash, handsfreeAuth, macHandsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
+import { isMacOriginAllowed, isPhoneRequest, isPhoneSocket } from '../phone-origin.js';
+import { listVaults } from '../../lib/vaults.js';
+import { HOLDER_PROBE_MS, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { runWorkerOp } from '../cloud-worker.js';
 import { handsfreeSpawnRefusal } from '../../lib/peer-delivery.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
@@ -79,7 +82,7 @@ import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import { deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
-  CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
+  CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
   signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
 } from './agent-chat-live.js';
 import {
@@ -637,13 +640,34 @@ export function shouldRejectAutomationResume(
 /** WS close code for "your device was signed out". */
 export const DEVICE_REVOKED_CLOSE = 4401;
 
-/** The sha256 of the device id each cloud chat socket authenticated with (never the cookie). */
-const socketDevice = new WeakMap<object, string>();
-const cloudDeviceSessions = new Set<{ device: () => string | null; revoke: () => void }>();
+/**
+ * The device a phone chat socket authenticated with: which store judged it, and the sha256 of
+ * its id (never the cookie). OWNERSHIP IS PER SOCKET (Mac mode): a session's owner is the
+ * device of the socket bound to it RIGHT NOW (kept across a detach, cleared the moment a
+ * desktop socket adopts it), whoever spawned it.
+ */
+export interface DeviceTag { store: 'mac' | 'cloud'; idHash: string }
+
+const socketDevice = new WeakMap<object, DeviceTag>();
+/** Every live chat session in this process — desktop-spawned ones included, because a phone
+ *  may adopt any of them. */
+const deviceSessions = new Set<{ device: () => DeviceTag | null; revoke: () => void; releasePhone: () => boolean }>();
 let deviceRevocationArmed = false;
 
 export function tagCloudDeviceSocket(ws: object, idSha256: string): void {
-  socketDevice.set(ws, idSha256);
+  socketDevice.set(ws, { store: 'cloud', idHash: idSha256 });
+}
+
+export function tagDeviceSocket(ws: object, tag: DeviceTag): void {
+  socketDevice.set(ws, tag);
+}
+
+function storeOf(tag: DeviceTag) {
+  return tag.store === 'mac' ? macHandsfreeAuth().store : handsfreeAuth().store;
+}
+
+function deviceStillValid(tag: DeviceTag): boolean {
+  return storeOf(tag).isValidDeviceHash(tag.idHash);
 }
 
 function armDeviceRevocation(): void {
@@ -652,15 +676,143 @@ function armDeviceRevocation(): void {
   onDeviceSessionsChanged(() => { revokeStaleDeviceSessions(); });
 }
 
-/** Close and cut every cloud chat session whose device is no longer valid. Returns how many. */
+/** Close (and, per the store's rule, cut) every chat session whose owning device is no longer
+ *  valid in ITS store. Returns how many. */
 export function revokeStaleDeviceSessions(): number {
-  const store = handsfreeAuth().store;
   let n = 0;
-  for (const s of [...cloudDeviceSessions]) {
+  for (const s of [...deviceSessions]) {
     const d = s.device();
-    if (d && !store.isValidDeviceHash(d)) { s.revoke(); n++; }
+    if (d && !deviceStillValid(d)) { s.revoke(); n++; }
   }
   return n;
+}
+
+/**
+ * Mac mode's RETURN (planned, never an incident): every session a phone holds lets go of it —
+ * its socket is closed 4401 and the child DETACHES (keeps running, adoptable by the desktop);
+ * nothing is cut. Run BEFORE the Mac devices are revoked, so the revocation finds no phone-owned
+ * session left to cut. Returns how many sessions a phone held.
+ */
+export function releasePhoneSessions(): number {
+  let n = 0;
+  for (const s of [...deviceSessions]) if (s.releasePhone()) n++;
+  return n;
+}
+
+/** Tests only: how many sessions the device registry tracks. */
+export function deviceSessionCountForTests(): number {
+  return deviceSessions.size;
+}
+
+/**
+ * GET /api/agent/live-chats — every chat child running in this process, for the phone drawer's
+ * "Mac'te açık" section: the conversation, its project's registered NAME, its tab title and
+ * whether a turn runs. Never a path. Gated like its neighbours (`isAgentRequest`): the desktop
+ * on loopback, a phone with its device session.
+ */
+export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only in the desktop app.'); return; }
+  const byPath = new Map(listVaults().map((v) => [v.path.replace(/\/+$/, ''), v.name]));
+  const chats: LiveChatWire[] = liveChatsSnapshot()
+    .filter((e) => !e.draining)
+    .map((e) => {
+      const vault = byPath.get(e.projectRoot.replace(/\/+$/, '')) ?? null;
+      return { conversationId: e.conversationId, vault, title: vault ? liveChatTitle(e.projectRoot, e.conversationId) : null, busy: e.busy };
+    });
+  sendJson(res, 200, { chats });
+}
+
+/** The tab title a live conversation carries in the desktop roster (or the phone's), if any. */
+function liveChatTitle(projectRoot: string, conversationId: string): string | null {
+  for (const file of ['.agent-sessions.json', '.agent-sessions.phone.json']) {
+    try {
+      const roster = JSON.parse(readFileSync(join(projectRoot, '_dream_context', 'state', file), 'utf-8')) as { sessions?: Array<{ sessionId?: unknown; title?: unknown }> };
+      const hit = roster.sessions?.find((m) => m && m.sessionId === conversationId);
+      if (hit && typeof hit.title === 'string' && hit.title.trim()) return hit.title.slice(0, 120);
+    } catch { /* absent or unreadable */ }
+  }
+  return null;
+}
+
+/**
+ * The passive reattach's liveness probe (Mac mode, contract.ts): ping the holder and wait up to
+ * {@link HOLDER_PROBE_MS} for its pong. 'alive' = a live client holds the chat (the new socket
+ * must not evict it); 'dead' = no pong (half-open: a dropped phone, the client's own dead
+ * connection); 'gone' = the holder closed during the probe. ONE probe per holder at a time: a
+ * second passive open shares the first one's result. The pong listener is removed when it ends.
+ */
+const holderProbes = new WeakMap<object, Promise<'alive' | 'dead' | 'gone'>>();
+export function probeHolder(holder: import('ws').WebSocket, ms: number = HOLDER_PROBE_MS): Promise<'alive' | 'dead' | 'gone'> {
+  const running = holderProbes.get(holder);
+  if (running) return running;
+  const p = new Promise<'alive' | 'dead' | 'gone'>((resolveProbe) => {
+    let done = false;
+    const finish = (v: 'alive' | 'dead' | 'gone'): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      holder.off('pong', onPong);
+      holder.off('close', onClose);
+      holderProbes.delete(holder);
+      resolveProbe(v);
+    };
+    const onPong = (): void => finish('alive');
+    const onClose = (): void => finish('gone');
+    const timer = setTimeout(() => finish('dead'), ms);
+    holder.on('pong', onPong);
+    holder.on('close', onClose);
+    if (holder.readyState !== holder.OPEN) { finish('gone'); return; }
+    try { holder.ping(); } catch { finish('gone'); }
+  });
+  holderProbes.set(holder, p);
+  return p;
+}
+
+/**
+ * A passive reattach on an accepted socket: adopt a DETACHED child at once; when a socket still
+ * holds it, probe that holder — no pong → adopt (the half-open holder is terminated, as
+ * before); a pong → close the NEW socket {@link MAC_CLOSE_TAKEN_OVER}, evicting nobody. Before
+ * adopting, the probed socket must still be the holder; else the new holder is probed. Returns
+ * false when the child could not be adopted (exiting) — the caller then resumes it fresh.
+ */
+export async function passiveAdopt(entry: LiveChatEntry, ws: import('ws').WebSocket): Promise<'adopted' | 'taken' | 'aborted' | 'unadoptable'> {
+  // The client sees its socket OPEN the moment the upgrade completes, but the chat binds it only
+  // once the probe has decided (up to HOLDER_PROBE_MS). A frame sent in that window (the owner
+  // typing right after a reconnect) is held here and replayed into the chat after the adopt —
+  // never silently dropped (found by scripts/verify/handsfree-mac.mjs, M8).
+  // Until the chat binds it (and for good on a 4409), nothing else listens for 'error' on this
+  // socket: one malformed frame would be an unhandled 'error' event and exit the server. ws
+  // closes the socket itself on a protocol error, so the probe below ends as 'aborted'.
+  ws.on('error', () => { /* the close that follows is what we act on */ });
+  const held: Array<Buffer | string> = [];
+  const hold = (d: Buffer | string): void => { if (held.length < 64) held.push(d); };
+  ws.on('message', hold);
+  const adoptNow = (): 'adopted' | 'unadoptable' => {
+    ws.off('message', hold);
+    if (!entry.adopt(ws)) return 'unadoptable';
+    for (const d of held.splice(0)) ws.emit('message', d);
+    return 'adopted';
+  };
+  try {
+    for (let round = 0; round < 8; round++) {
+      if (ws.readyState !== ws.OPEN) return 'aborted';
+      const holder = entry.holder ? entry.holder() : null;
+      if (!holder || holder === ws) return adoptNow();
+      const verdict = await probeHolder(holder);
+      if (ws.readyState !== ws.OPEN) return 'aborted';
+      const now = entry.holder ? entry.holder() : null;
+      if (now !== holder) continue;            // someone else adopted meanwhile: probe the new one
+      if (verdict === 'alive') {
+        try { ws.close(MAC_CLOSE_TAKEN_OVER, 'taken_over'); } catch { /* gone */ }
+        return 'taken';
+      }
+      return adoptNow();
+    }
+    try { ws.close(MAC_CLOSE_TAKEN_OVER, 'taken_over'); } catch { /* gone */ }
+    return 'taken';
+  } finally {
+    ws.off('message', hold);
+  }
 }
 
 /**
@@ -672,7 +824,7 @@ export function revokeStaleDeviceSessions(): number {
  * (see `remote-access.ts` for why that gate wants all three facts at once). `networkToken`
  * is the server's per-process credential, null on a loopback bind where none is minted.
  */
-export function attachAgentChat(server: Server, opts: { networkToken?: string | null } = {}): void {
+export function attachAgentChat(server: Server, opts: { networkToken?: string | null; windowControlPort?: number } = {}): void {
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let url: URL;
     try { url = new URL(req.url || '/', `http://${req.headers.host}`); }
@@ -685,7 +837,14 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // branch runs BEFORE the tailnet OR below, so a remote peer holding a valid network token
     // never reaches the assistant — its session carries a credential that drives every project.
     const assistant = isAssistantVault(vault);
-    if (isCloud()) {
+    const phone = isPhoneSocket(req);
+    if (phone) {
+      // Mac mode's phone listener: cloudflared dials from 127.0.0.1, so nothing here is trusted
+      // for being loopback. Only a MAC device session with the tunnel's own Origin opens a chat
+      // (the listener's upgrade gate checked these first; again here so this never relies on
+      // its order). The Assistant never runs for a phone.
+      if (assistant || !isAgentRequest(req) || !isMacOriginAllowed(req)) { rejectUpgrade(socket, 403); return; }
+    } else if (isCloud()) {
       // Hands-free cloud: GitHub's forwarder makes every peer loopback, so only a live device
       // session, our own Origin and phase active open a chat (the cloud gate checked these
       // before the upgrade was emitted; checked again here so this listener never relies on
@@ -761,7 +920,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // The client's own reconnect after a dropped socket (chatSession.ts): adopt the live child
     // for `resume` if one is detached or still bound to a dead socket, never spawn a twin.
     // The Assistant's notch never detaches (its socket is the relay's only channel).
-    const reattach = url.searchParams.get('reattach') === '1' && !!resumeId && !assistant;
+    // `reattach=1` (REATTACH_EVICT) is an explicit tap: it takes the chat even from a live holder,
+    // who is closed 4409. `reattach=passive` is every AUTOMATIC open (backoff reconnect, reload
+    // restore): it never evicts a live holder (see passiveAdopt).
+    const reattachValue = url.searchParams.get('reattach');
+    const reattach = (reattachValue === REATTACH_EVICT || reattachValue === REATTACH_PASSIVE) && !!resumeId && !assistant;
+    const passive = reattach && reattachValue === REATTACH_PASSIVE;
 
     void (async () => {
       let WebSocketServer: typeof import('ws').WebSocketServer;
@@ -799,11 +963,21 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       }
 
       const wss = new WebSocketServer({ noServer: true });
-      // Cloud: the device this socket proved (its id's hash) owns whatever it opens or adopts.
-      const deviceHash = isCloud() ? deviceIdHash(req) : null;
+      // A phone (the cloud, or a Mac-mode phone socket): the device this socket proved (its
+      // store and its id's hash) owns whatever it opens or adopts.
+      const deviceHash = isPhoneRequest(req) && authFor(req) ? deviceIdHash(req) : null;
+      const deviceTag: DeviceTag | null = deviceHash ? { store: phone ? 'mac' : 'cloud', idHash: deviceHash } : null;
       wss.handleUpgrade(req, socket, head, (ws) => {
-        if (deviceHash) tagCloudDeviceSocket(ws, deviceHash);
-        if (adoptable && adoptable.adopt(ws)) return;
+        if (deviceTag) tagDeviceSocket(ws, deviceTag);
+        if (adoptable && passive) {
+          void passiveAdopt(adoptable, ws).then((outcome) => {
+            if (outcome === 'aborted') { settleSupersede(false); return; }
+            if (outcome !== 'unadoptable') return;
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
+          });
+          return;
+        }
+        if (adoptable && adoptable.adopt(ws, 'takeover')) return;
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
@@ -812,8 +986,10 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
         // spawn only, never into any other vault's chat.
+        // Always the MAIN server's port (a phone listener passes it in): that is where the
+        // agent's own CLI calls back, never through the tunnel.
         const address = server.address();
-        const port = address && typeof address === 'object' ? address.port : 0;
+        const port = opts.windowControlPort ?? (address && typeof address === 'object' ? address.port : 0);
         if (port) setWindowControlBase(`http://127.0.0.1:${port}`);
         const assistantEnv = assistant
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
@@ -999,8 +1175,9 @@ export function startChatSession(
   // reattach after a dropped socket); every send below reads it at call time, so output flows
   // to whichever socket currently owns the child.
   let ws = initialWs;
-  /** Cloud: the device whose socket drives this child (updated when another socket adopts it). */
-  let ownerDevice: string | null = isCloud() ? socketDevice.get(initialWs) ?? null : null;
+  /** The device whose socket drives this child — per SOCKET: set by whichever phone socket
+   *  binds it, cleared when a desktop socket adopts it, kept across a detach. */
+  let ownerDevice: DeviceTag | null = socketDevice.get(initialWs) ?? null;
   const { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt } = opts;
 
   // Hands-free cloud: only phase active spawns (quiescing = the laptop is taking the project
@@ -1603,20 +1780,52 @@ export function startChatSession(
     await exited;
   };
 
-  /** The owning device was signed out: close its socket (4401) and end what it started. */
+  /**
+   * The owning device was signed out (an incident: revoke-all, logout, a password change).
+   *  • Cloud: close its socket (4401) and end what it started, as always.
+   *  • Mac: close the phone socket (4401) within the notification; a RUNNING turn is cut (an
+   *    attacker cannot keep a turn going by disconnecting first: a detached child keeps its last
+   *    holder as owner); an idle child just detaches, adoptable by the desktop.
+   */
   let deviceRevoked = false;
   const revokeForDevice = (): void => {
     if (deviceRevoked) return;
+    const tag = ownerDevice;
+    if (tag?.store === 'mac' && turnsInFlight === 0) {
+      ownerDevice = null;
+      dropPhoneSocket('device signed out');
+      return;
+    }
     deviceRevoked = true;
     endOnSocketGone = true;
     try { ws.close(DEVICE_REVOKED_CLOSE, 'device signed out'); } catch { /* gone */ }
     void cutChild().catch(() => { /* already gone */ });
   };
-  const deviceSession = { device: () => ownerDevice, revoke: revokeForDevice };
-  if (ownerDevice) {
-    armDeviceRevocation();
-    cloudDeviceSessions.add(deviceSession);
+  /** Return (planned): a phone-held session lets go — 4401, detach, nothing cut. */
+  const releasePhone = (): boolean => {
+    if (ownerDevice?.store !== 'mac') return false;
+    ownerDevice = null;
+    dropPhoneSocket('mac mode ended');
+    return true;
+  };
+  /**
+   * Let a phone socket go NOW: unbound from this child before the close is even sent, so a
+   * client that never answers the close frame (a script, not a browser) cannot keep driving the
+   * chat through the closing handshake (`ws` delivers frames until its 30 s close timeout).
+   * The child detaches as on any dropped socket; the socket is terminated after 1 s.
+   */
+  function dropPhoneSocket(reason: string): void {
+    const sock = ws;
+    if (socketDevice.get(sock)?.store !== 'mac') return;
+    sock.off('message', onWsMessage);
+    try { sock.close(DEVICE_REVOKED_CLOSE, reason); } catch { /* gone */ }
+    onSocketGone();
+    const t = setTimeout(() => { try { if (typeof sock.terminate === 'function') sock.terminate(); } catch { /* gone */ } }, 1000);
+    t.unref?.();
   }
+  const deviceSession = { device: () => ownerDevice, revoke: revokeForDevice, releasePhone };
+  armDeviceRevocation();
+  deviceSessions.add(deviceSession);
 
   // ── Detach instead of dying with the socket (agent-chat-live.ts) ───────────────────
   // A pinned project chat survives a dropped socket: the child keeps stdin, and a client's
@@ -1628,7 +1837,8 @@ export function startChatSession(
     busy: false,
     turnStartedAt: null,
     lastTurnEndedAt: null,
-    adopt: (next) => adoptSocket(next),
+    adopt: (next, how) => adoptSocket(next, how),
+    holder: () => (alive && !detached && ws.readyState === ws.OPEN ? ws : null),
     supersede: () => supersedeLive(),
     cut: () => cutChild(),
     pid: child.pid,
@@ -1829,7 +2039,7 @@ export function startChatSession(
   const teardown = (): void => {
     if (!alive) return;
     alive = false;
-    cloudDeviceSessions.delete(deviceSession);
+    deviceSessions.delete(deviceSession);
     // A gone child cannot be mid-turn. `armAccountSwitch` checks `exited` too, but leaving a
     // stale count here would be a lie about the one thing only this side can report.
     turnsInFlight = 0;
@@ -1956,7 +2166,7 @@ export function startChatSession(
 
   /** A client's reattach: bind `next` to this very child. False when the child can no longer
    *  be adopted (exiting, draining, or handing off) — the caller then spawns a resume. */
-  function adoptSocket(next: import('ws').WebSocket): boolean {
+  function adoptSocket(next: import('ws').WebSocket, how: 'halfopen' | 'takeover' = 'halfopen'): boolean {
     if (!alive || lingerTimer || lingerKillTimer || handedOff || deviceRevoked) return false;
     const prev = ws;
     prev.off('message', onWsMessage);
@@ -1964,13 +2174,20 @@ export function startChatSession(
     prev.off('error', onSocketGone);
     // A late error on the abandoned socket must not throw for want of a listener.
     prev.on('error', () => { /* abandoned socket */ });
-    // Still "open" means half-open: the client already moved to `next`.
     if (prev !== next && prev.readyState === prev.OPEN) {
-      try { if (typeof prev.terminate === 'function') prev.terminate(); else prev.close(); } catch { /* gone */ }
+      if (how === 'takeover') {
+        // An explicit tap took the chat from a LIVE screen: it is told (4409) and stops its
+        // reconnect loop, offering "Buraya al" — never terminated as if it were dead.
+        try { prev.close(MAC_CLOSE_TAKEN_OVER, 'taken_over'); } catch { /* gone */ }
+      } else {
+        // Still "open" means half-open: the client already moved to `next`.
+        try { if (typeof prev.terminate === 'function') prev.terminate(); else prev.close(); } catch { /* gone */ }
+      }
     }
     stopPing();
     ws = next;
-    ownerDevice = socketDevice.get(next) ?? ownerDevice;
+    // Per socket: a phone socket makes its device the owner, a desktop socket clears it.
+    ownerDevice = socketDevice.get(next) ?? null;
     detached = false;
     clearDetachTimers();
     bindSocket();
@@ -2768,7 +2985,7 @@ export function startChatSession(
   function onWsMessage(raw: Buffer | string): void {
     if (!alive) return;
     // Defence in depth (AC3): a frame from a device that is no longer signed in acts on nothing.
-    if (ownerDevice && !handsfreeAuth().store.isValidDeviceHash(ownerDevice)) { revokeForDevice(); return; }
+    if (ownerDevice && !deviceStillValid(ownerDevice)) { revokeForDevice(); return; }
     const str = typeof raw === 'string' ? raw : raw.toString('utf-8');
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
@@ -3392,7 +3609,9 @@ export async function handleAgentFile(
 
   if (isCloud()) { await serveAgentFileCloud(req, res, rawPath, contextRoot, url.searchParams.get('raw') === '1'); return; }
 
-  const resolved = resolveServablePath(contextRoot, rawPath);
+  // A Mac-mode phone: the project root only, grants ignored — a grant is the desktop owner's
+  // consent for THEIR screen, and the phone is another trust level.
+  const resolved = isPhoneSocket(req) ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
   if ('deny' in resolved) {
     if (resolved.deny === 'needs_grant') {
       // NOT a refusal the UI should render as an error: it is the prompt to ask the user.
@@ -3626,7 +3845,7 @@ export async function handleAgentBoardAssets(
     }
     return;
   }
-  const resolved = resolveServablePath(contextRoot, rawPath);
+  const resolved = isPhoneSocket(req) ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
   if ('deny' in resolved) {
     if (resolved.deny === 'needs_grant') {
       sendError(res, 403, 'needs_grant', 'Outside the project — allow access to view this board.');

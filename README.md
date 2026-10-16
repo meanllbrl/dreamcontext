@@ -387,6 +387,7 @@ dreamcontext handsfree return     # bring everything home
 - **The phone gets a link and a 6-word passphrase.** A device stays signed in for 30 days. `dreamcontext handsfree password` issues a new passphrase and `handsfree devices revoke --all` signs every phone out.
 - **Nothing is deleted when both sides changed.** If you also worked on the laptop while away, that repo is parked under `refs/handsfree/<trip>/*` and conflicting files go to a conflicts folder; your laptop copy wins. Every file Return overwrites is backed up first, so **Roll back** undoes it. A file deleted on the phone is listed, never deleted on the laptop. **Abandon** unlocks the laptop at once, and the next go recovers the cloud work first.
 - Also in the desktop app: a hands-free button in the window bar, a QR code for the phone, a banner while away, and the receipt with Resume / Roll back.
+- **Or keep the work on the Mac.** The sheet's default, *From this Mac*, needs no cloud machine: the desktop app opens a Cloudflare tunnel link to itself, the phone signs in with a one-tap QR or the passphrase and drives the same chats, and the Mac stays awake with the lid closed (Low Power Mode on) until **Return**. One admin prompt at setup; `dreamcontext handsfree mac setup | start | stop` from the terminal.
 
 ## Built for Teams
 

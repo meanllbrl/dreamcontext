@@ -11,6 +11,7 @@ import { UUID_RE } from '../../lib/agent-session-map.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { CHAT_MODES, DEFAULT_CHAT_MODE, type ChatMode } from '../chat-modes.js';
 import { assistantExists, assistantProjectRoot, isAssistantVault } from '../../lib/assistant/home.js';
+import { isPhoneSocket } from '../phone-origin.js';
 
 /**
  * Shared trust-boundary primitives for the two loopback `claude`-spawning surfaces —
@@ -25,8 +26,10 @@ import { assistantExists, assistantProjectRoot, isAssistantVault } from '../../l
 // ─── Gating ─────────────────────────────────────────────────────────────────
 
 /** True when the request arrived over the loopback interface — the hard gate every
- *  `claude`-spawning upgrade/route enforces alongside the desktop check. */
+ *  `claude`-spawning upgrade/route enforces alongside the desktop check. A Mac-mode PHONE
+ *  socket is never loopback, although cloudflared dials it from 127.0.0.1 (phone-origin.ts). */
 export function isLoopback(req: IncomingMessage): boolean {
+  if (isPhoneSocket(req)) return false;
   const remote = req.socket?.remoteAddress || '';
   return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
 }

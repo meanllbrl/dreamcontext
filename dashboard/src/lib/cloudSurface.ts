@@ -65,25 +65,59 @@ export const CLOUD_DEVICE_API_ROUTES: readonly string[] = [
   'GET /api/handsfree/phone',
 ];
 
+/** Mirror of `MAC_PUBLIC_ROUTES` (src/lib/handsfree/mac/contract.ts). Same order, same values. */
+export const MAC_PUBLIC_ROUTES: readonly string[] = [
+  'GET /login',
+  'POST /api/handsfree/login',
+  'GET /api/health',
+  'GET /manifest.webmanifest',
+];
+
+/** Mirror of `MAC_DEVICE_API_ROUTES` (src/server/cloud-mode.ts): the cloud's device list plus
+ *  the drawer's live chats. */
+export const MAC_EXTRA_DEVICE_API_ROUTES: readonly string[] = [
+  'GET /api/agent/live-chats',
+];
+
 const ALLOWED = new Set([...CLOUD_PUBLIC_ROUTES, ...CLOUD_DEVICE_API_ROUTES]);
+const MAC_ALLOWED = new Set([...MAC_PUBLIC_ROUTES, ...CLOUD_DEVICE_API_ROUTES, ...MAC_EXTRA_DEVICE_API_ROUTES]);
 
-let cached: boolean | null = null;
+let cached: string | null | undefined;
 
-/** True on the cloud's page (read once: the document's flag never changes). */
-export function isCloudSurface(): boolean {
-  if (cached !== null) return cached;
+function surfaceFlag(): string | null {
+  if (cached !== undefined) return cached;
   try {
     cached = typeof document !== 'undefined'
-      && document.querySelector(`meta[name="${SURFACE_META_NAME}"]`)?.getAttribute('content') === 'cloud';
+      ? document.querySelector(`meta[name="${SURFACE_META_NAME}"]`)?.getAttribute('content') ?? null
+      : null;
   } catch {
-    cached = false;
+    cached = null;
   }
   return cached;
 }
 
-/** Tests only: pin the answer (null = read the document again). */
-export function setCloudSurfaceForTests(v: boolean | null): void {
-  cached = v;
+/** True on the cloud's page (read once: the document's flag never changes). */
+export function isCloudSurface(): boolean {
+  return surfaceFlag() === 'cloud';
+}
+
+/**
+ * True on a phone reaching THIS laptop through Mac mode's tunnel (`content="mac"`): the phone
+ * surface minus everything about a trip (no phase, no quiesce, no offline worker).
+ */
+export function isMacPhoneSurface(): boolean {
+  return surfaceFlag() === 'mac';
+}
+
+/** Either phone surface: the cloud, or the Mac's phone listener. */
+export function isPhoneSurface(): boolean {
+  const f = surfaceFlag();
+  return f === 'cloud' || f === 'mac';
+}
+
+/** Tests only: pin the answer (`true` = cloud, `'mac'`, `false`/`null` as before). */
+export function setCloudSurfaceForTests(v: boolean | 'mac' | null): void {
+  cached = v === null ? undefined : v === true ? 'cloud' : v === 'mac' ? 'mac' : null;
 }
 
 /**
@@ -92,9 +126,10 @@ export function setCloudSurfaceForTests(v: boolean | null): void {
  * laptop HMAC, never a device cookie); a non-API path (the SPA, assets) always.
  */
 export function cloudAllows(method: string, path: string): boolean {
-  if (!isCloudSurface()) return true;
+  const flag = surfaceFlag();
+  if (flag !== 'cloud' && flag !== 'mac') return true;
   const pathname = path.split('?')[0].split('#')[0];
   if (pathname !== '/api' && !pathname.startsWith('/api/')) return true;
   const m = method.toUpperCase() === 'HEAD' ? 'GET' : method.toUpperCase();
-  return ALLOWED.has(`${m} ${pathname}`);
+  return (flag === 'mac' ? MAC_ALLOWED : ALLOWED).has(`${m} ${pathname}`);
 }

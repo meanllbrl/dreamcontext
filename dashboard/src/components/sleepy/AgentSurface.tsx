@@ -75,6 +75,9 @@ import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { useHandsfree } from '../handsfree/handsfreeStore';
 import { generationOf, mergeStoredRoster, putOutcome, rehydrateOnPhase, withBaseGeneration } from '../handsfree/rosterRehydrate';
 import { CloudChip } from '../handsfree/phone/CloudChip';
+import { takePendingMacAdopt } from '../handsfree/macAdopt';
+import type { LiveChatWire } from '../handsfree/macContract';
+import { isMacPhoneSurface } from '../../lib/cloudSurface';
 import { QuiesceOverlay } from '../handsfree/phone/QuiesceOverlay';
 
 /**
@@ -1057,7 +1060,10 @@ export function AgentSurface() {
               // Bound BEFORE the spawn: `createChatSession` reads the agent from the binding.
               const savedAgent = kind === 'chat' && m.agent ? m.agent : '';
               bindChatAgent(m.sessionId, savedAgent);
-              const s = spawn(m.bypass, m.sessionId, true, kind, '', '', true, '', false, '', true, savedMode);
+              // PASSIVE (hands-free Mac mode): a restore is an automatic open, so it adopts a
+              // chat left detached by the reload but never takes one another screen holds — that
+              // tab comes back showing "Buraya al" instead (4409).
+              const s = spawn(m.bypass, m.sessionId, true, kind, '', '', true, '', false, '', true, savedMode, '', '', 'passive');
               return {
                 id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId,
                 ...(kind === 'chat' ? { mode: savedMode } : {}),
@@ -1229,7 +1235,7 @@ export function AgentSurface() {
   // `origin` is 'assistant' ONLY from the doorbell's openChat (a chat the Assistant started);
   // every other call site passes nothing. A respawn of that chat needs no client change: the
   // server re-derives the marker from the conversation it resumes.
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE, accountId = '', origin: '' | 'assistant' = '') => {
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '', explicitBypass = false, mode: ChatMode = DEFAULT_CHAT_MODE, accountId = '', origin: '' | 'assistant' = '', reattach: '' | '1' | 'passive' = '') => {
     if (kind === 'chat') {
       // Read through the REF, not the state value: `changeChatPermissionMode` below can
       // respawn a conversation in the very same tick it changes the mode, and this closure's
@@ -1251,7 +1257,7 @@ export function AgentSurface() {
       // chatSession.ts's header note).
       // '' = let the server resolve the default (the preferred account, else account #0).
       // The picker and the auto-switch restart are the only callers that name one.
-      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin);
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       // Every chat spawned anywhere in this surface follows the signed-in account, for the
@@ -1950,7 +1956,7 @@ export function AgentSurface() {
   // A conversation that IS already open is brought forward instead of resumed: two live
   // CLIs `--resume`d onto one transcript would interleave their appends, and neither
   // would see the other's turns.
-  const resumePastSession = useCallback((past: PastSession) => {
+  const resumePastSession = useCallback((past: PastSession, reattach: '' | '1' = '') => {
     setHistoryOpen(false);
     setExpanded(true);
     const existing = sessionList.find((m) => m.claudeId === past.id);
@@ -1958,11 +1964,15 @@ export function AgentSurface() {
       if (existing.dormant) resumeSession(existing.id);
       else if (minimizedIds.includes(existing.id)) restoreMinimized(existing.id);
       else focusSession(existing.id);
+      // Mac mode: a tab the other screen took over is taken back by the same tap.
+      const live = sessions.current.get(existing.id) as { takenOver?: boolean; takeBack?: () => void } | undefined;
+      if (reattach === '1' && live?.takenOver) live.takeBack?.();
       return;
     }
     // Resumed in the CURRENTLY chosen Agent screen, like every other resume path — the
-    // transcript is the conversation, not the surface it was originally typed into.
-    const s = spawn(bypass, past.id, true, claudeKind);
+    // transcript is the conversation, not the surface it was originally typed into. `reattach`
+    // '1' (Mac mode's drawer): adopt the live chat even from the screen holding it.
+    const s = reattach ? spawn(bypass, past.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach) : spawn(bypass, past.id, true, claudeKind);
     // Titled with the row's own label rather than "Chat 7": it is the only thing that tells two
     // resumed tabs apart. A remembered tab name (`named`) comes back whole — it was a tab title
     // once, and clipping it would also overwrite the stored name with its stub; a first prompt
@@ -1984,6 +1994,25 @@ export function AgentSurface() {
     sessionList, minimizedIds, resumeSession, restoreMinimized, focusSession,
     spawn, bypass, claudeKind, panes, activePaneId,
   ]);
+
+  // ── Mac mode: adopt a chat the Mac runs (the phone drawer's "Mac'te açık") ───────────
+  const adoptLiveChat = useCallback((chat: LiveChatWire) => {
+    resumePastSession({ id: chat.conversationId, title: chat.title || 'Chat', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, '1');
+  }, [resumePastSession]);
+  // A tap in another project's drawer parked the adoption for THIS project (macAdopt.ts):
+  // taken once the roster has hydrated, so a restored tab of the same chat is reused.
+  useEffect(() => {
+    if (!vault || !isMacPhoneSurface()) return;
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries++;
+      if (!hydratedRef.current && tries < 25) return;
+      clearInterval(timer);
+      const pending = takePendingMacAdopt(vault);
+      if (pending) adoptLiveChat(pending);
+    }, 200);
+    return () => clearInterval(timer);
+  }, [vault, adoptLiveChat]);
 
   // ── Run sleep agent (from the header's Sleep-debt tracker) ────────────────────────
   // Spawn a dedicated "Sleep" agent that auto-runs the project's consolidation flow, and
@@ -3552,7 +3581,7 @@ export function AgentSurface() {
       return {
         id,
         title: meta?.title ?? id,
-        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s) }),
+        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s), takenOver: (s as { takenOver?: boolean } | undefined)?.takenOver }),
         sessionKind: meta?.kind ?? 'agent',
         // WHICH AGENT this tab's run belongs to, so the strip can draw its FACE
         // instead of the generic automation glyph. Read straight off the roster
@@ -3580,7 +3609,7 @@ export function AgentSurface() {
       id: meta.id,
       title: meta.title,
       kind: meta.kind,
-      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s) }),
+      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking, agentsWorking: agentsWorkingOf(s), takenOver: (s as { takenOver?: boolean } | undefined)?.takenOver }),
       attention: !meta.dormant && !!s?.attention,
       claudeId: s?.claudeId,
       // The ROSTER's mode, not the live session's: a mode switch respawns the process and
@@ -4016,6 +4045,7 @@ export function AgentSurface() {
           onNewChat={() => addSession(claudeKind)}
           openClaudeIds={sessionList.map((m) => m.claudeId).filter(Boolean) as string[]}
           onResumePast={resumePastSession}
+          onAdoptLive={adoptLiveChat}
           onExitToDashboard={() => { setMobileEscaped(true); setExpanded(false); }}
         />
       )}

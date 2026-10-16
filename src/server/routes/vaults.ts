@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { sendJson } from '../middleware.js';
 import { listVaults } from '../../lib/vaults.js';
+import { isPhoneSocket } from '../phone-origin.js';
 
 /**
  * GET /api/vaults — list every registered vault and identify the current one
@@ -25,6 +26,11 @@ export async function handleVaultsGet(
   // `exists` flags vaults whose folder is gone (deleted/moved) so the UI can
   // skip or disable them — capturing into a missing path just fails otherwise.
   const vaults = listVaults().map((v) => ({ ...v, exists: existsSync(resolve(v.path)) }));
+  // A Mac-mode phone gets NAMES only (its drawer lists projects): never a path on this disk.
+  if (isPhoneSocket(_req)) {
+    sendJson(res, 200, { vaults: vaults.map((v) => ({ name: v.name, exists: v.exists })), current: null });
+    return;
+  }
   // In launcher mode there is no pinned project, so `current` is null.
   const current = contextRoot
     ? (vaults.find((v) => resolve(v.path) === resolve(dirname(contextRoot)))?.name ?? null)

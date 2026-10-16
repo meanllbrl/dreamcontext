@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
-import { isCloudSurface } from '../../lib/cloudSurface';
+import { isPhoneSurface } from '../../lib/cloudSurface';
 import { useCloudRecallStatus, useDisableCloudRecall, type CloudTier } from '../../hooks/useCloudRecall';
 import {
   useRecallOptions,
@@ -293,7 +293,7 @@ export interface RecallModeCardsProps {
 export function RecallModeCards({ recallMode, saving, onSelectMode }: RecallModeCardsProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const cloudSurface = isCloudSurface();
+  const cloudSurface = isPhoneSurface();
   const { data: options, isError: optionsFailed } = useRecallOptions();
   const { data: cloud, isPending: cloudPending } = useCloudRecallStatus();
   const disable = useDisableCloudRecall();

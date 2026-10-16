@@ -1471,6 +1471,71 @@
       "args": []
     },
     {
+      "path": "handsfree mac",
+      "desc": "Mac mode: drive this laptop from your phone through a tunnel link (no cloud machine)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "handsfree mac devices",
+      "desc": "Phones signed in to this Mac",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "handsfree mac devices revoke-all",
+      "desc": "Sign every phone out now (cuts a turn a phone is running)",
+      "args": []
+    },
+    {
+      "path": "handsfree mac password",
+      "desc": "Set a new phone passphrase (signs every phone out)",
+      "args": []
+    },
+    {
+      "path": "handsfree mac setup",
+      "desc": "Install the sleep permission (one admin prompt) and create the phone passphrase",
+      "args": []
+    },
+    {
+      "path": "handsfree mac start",
+      "desc": "Start Mac mode: tunnel link, phone listener, keep awake + Low Power Mode",
+      "args": []
+    },
+    {
+      "path": "handsfree mac status",
+      "desc": "Show Mac mode",
+      "args": []
+    },
+    {
+      "path": "handsfree mac stop",
+      "desc": "Return: close the tunnel, sign every phone out, allow sleep again",
+      "args": []
+    },
+    {
+      "path": "handsfree mac tunnel",
+      "desc": "The phone address: quick (default) or fixed (your own domain on Cloudflare)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "handsfree mac tunnel fixed",
+      "desc": "Set up a fixed address on your Cloudflare domain (opens Cloudflare in your browser)",
+      "args": [
+        "<hostname>"
+      ]
+    },
+    {
+      "path": "handsfree mac tunnel quick",
+      "desc": "Go back to a quick address (a new one every start)",
+      "args": []
+    },
+    {
+      "path": "handsfree mac uninstall",
+      "desc": "Remove the sleep permission (one admin prompt) and every Mac-mode file",
+      "args": []
+    },
+    {
       "path": "handsfree password",
       "desc": "Generate a new phone passphrase (signs every device out); pending until the cloud confirms",
       "args": []

@@ -6,6 +6,7 @@ import { checkoutCompromised, isCloud } from '../cloud-mode.js';
 import { buildFingerprint } from '../cloud-fingerprint.js';
 import { carriesTransferAuth, handsfreeAuth, hasValidTransferProof } from '../handsfree-auth.js';
 import { cloudServices } from './handsfree-cloud.js';
+import { isPhoneSocket } from '../phone-origin.js';
 
 /**
  * LEGACY capability list, kept only so OLDER dashboard bundles (which compare
@@ -36,6 +37,12 @@ export async function handleHealthGet(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (isPhoneSocket(req)) {
+    // Mac mode's phone listener: public through the tunnel, so the build version only — no
+    // context root, no capabilities, no nonce (the gate stamps the reachability probe value).
+    sendJson(res, 200, { version: dreamcontextVersion() });
+    return;
+  }
   if (isCloud()) {
     // Public on the forwarded port: build identity only. The trip fields need the transfer
     // proof (the cloud gate already put a fresh nonce on this response).

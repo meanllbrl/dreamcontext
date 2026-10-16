@@ -12,6 +12,8 @@ import {
   type ChatEvent, type QuestionSpec, type ClientControl, type HandoffProgress,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
+import { isMacPhoneSurface } from '../../lib/cloudSurface';
+import { MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
 import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
 import * as queue from './chat/chatQueue';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
@@ -395,6 +397,11 @@ export interface ChatSession {
   claudeId: string;
   container: HTMLDivElement;
   status: TermStatus;
+  /** Another screen holds this live chat (the server closed this socket 4409, Mac mode): the
+   *  reconnect loop stopped and the pane offers "Buraya al" ({@link ChatSession.takeBack}). */
+  takenOver: boolean;
+  /** "Buraya al": take the chat back from the other screen (an explicit, evicting reattach). */
+  takeBack: () => void;
   /** True once the `system:init` handshake has been observed (distinct from the terminal's
    *  DOM-mount meaning of `opened` — chat has no DOM-open step; the portal mount IS "open"). */
   opened: boolean;
@@ -842,6 +849,10 @@ export function createChatSession(
   /** A whiteboard agent card's own conversation: the agent and the board it sits on. The
    *  server decides everything else from these two (lib/whiteboards/card-chat.ts). */
   card: { agent: string; board: string } | null = null,
+  /** How a RESUME first opens: '' = as before (a respawn replaces the process); 'passive' = an
+   *  automatic restore (adopt a detached chat, never evict another screen); '1' = an explicit tap
+   *  that takes the chat from whichever screen holds it ("Mac'te açık" in the drawer). */
+  reattach: '' | typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = '',
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -855,7 +866,11 @@ export function createChatSession(
   //    `effort` (chat sets it at spawn via `--effort`; the terminal only ever switches it
   //    live via `/effort`, so it never appears in the terminal's own URL builder). ──
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const idParam = resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`;
+  // Only a caller that asked: the roster restore sends `passive`, the drawer's tap `1`. A respawn
+  // (account, permission mode, Resume) must NOT reattach — it replaces the process on purpose.
+  const firstReattach = resume ? reattach : '';
+  const idParam = (resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`)
+    + (firstReattach ? `&reattach=${firstReattach}` : '');
   const modelParam = model ? `&model=${encodeURIComponent(model)}` : '';
   const effortParam = effort ? `&effort=${encodeURIComponent(effort)}` : '';
   // Omitted for `basic`, not sent as `&mode=basic`: the server's `sanitizeChatMode` already
@@ -888,12 +903,14 @@ export function createChatSession(
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}`;
-  /** The reconnect after a DROPPED socket: the same conversation, `reattach=1` so the server
-   *  adopts the live child instead of spawning a twin. Never carries the opening prompt (it
-   *  already went out) nor `origin` (the server re-derives it). `bypass` is read now, not at
-   *  construction: a live permission switch may have moved it. */
-  const reconnectUrl = (): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=1`
+  /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
+   *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
+   *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
+   *  "Buraya al" sends the evicting `1`. Never carries the opening prompt (it already went
+   *  out) nor `origin` (the server re-derives it). `bypass` is read now, not at construction:
+   *  a live permission switch may have moved it. */
+  const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
+    + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
     + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
@@ -1023,6 +1040,8 @@ export function createChatSession(
   const session: ChatSession = {
     id, bypass, kind: 'chat', claudeId, container,
     status: 'connecting',
+    takenOver: false,
+    takeBack: () => takeBack(),
     opened: false,
     // Busy from the first instant when the SERVER submits the opening prompt: the turn is
     // running before any frame arrives, so the working indicator, the dock chip and the
@@ -1870,12 +1889,24 @@ export function createChatSession(
     ws.onmessage = (e) => { if (isCurrentSocket(ws)) onSocketMessage(e); };
     // Every error is followed by a close; the close decides.
     ws.onerror = () => { /* see onclose */ };
-    ws.onclose = () => { if (isCurrentSocket(ws)) onSocketClosed(); };
+    ws.onclose = (e: CloseEvent) => { if (isCurrentSocket(ws)) onSocketClosed(e?.code ?? 0); };
   }
 
-  function onSocketClosed(): void {
+  function onSocketClosed(code = 0): void {
     clearConnectTimer();
     if (disposed) return;
+    if (code === MAC_CLOSE_TAKEN_OVER) {
+      // Another screen holds this chat. Reconnecting would only take it back and start a
+      // ping-pong, so the loop stops here; "Buraya al" is the owner's explicit choice.
+      applyAndNotify(() => { session.takenOver = true; session.status = 'closed'; });
+      return;
+    }
+    if (code === MAC_CLOSE_SIGNED_OUT && isMacPhoneSurface()) {
+      // The phone was signed out (Return, "Hepsini çıkar", a new password): to the login page.
+      try { location.assign('/login?revoked=1'); } catch { /* not a browser */ }
+      applyAndNotify(() => { session.status = 'closed'; });
+      return;
+    }
     if (conv.exited || sawServerError) {
       applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; });
       return;
@@ -1894,13 +1925,30 @@ export function createChatSession(
     reconnectTimer = setTimeout(() => { reconnectTimer = null; reconnectNow(); }, delay);
   }
 
-  function reconnectNow(): void {
+  function reconnectNow(how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): void {
     if (disposed) return;
     lastAttemptAt = Date.now();
     isReconnect = true;
-    ws = new WebSocket(reconnectUrl());
+    ws = new WebSocket(reconnectUrl(how));
     bindSocket(ws);
   }
+
+  /** "Buraya al": take the chat back — the one open that evicts the other screen (4409). */
+  function takeBack(): void {
+    if (disposed) return;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
+    reconnectNow(REATTACH_EVICT);
+  }
+
+  /** Mac mode ended on this desktop (Return): the phone let go of every chat, so a pane that
+   *  was taken over reattaches on its own — passively, like any automatic open. */
+  function onMacModeEnded(): void {
+    if (disposed || !session.takenOver) return;
+    applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
+    reconnectNow(REATTACH_PASSIVE);
+  }
+  window.addEventListener(MAC_MODE_ENDED_EVENT, onMacModeEnded);
 
   /** Coming back to the page (unlocking the phone) or regaining the network is the moment a
    *  reconnect is most likely to work, so a pending wait is cut short — at most once per
@@ -2563,6 +2611,7 @@ export function createChatSession(
     clearConnectTimer();
     window.removeEventListener('online', onWake);
     document.removeEventListener('visibilitychange', onWake);
+    window.removeEventListener(MAC_MODE_ENDED_EVENT, onMacModeEnded);
     // Goodbye on purpose: the server ends the child as it always did on a closed tab, instead
     // of keeping it detached for a reattach that will never come.
     if (ws.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify({ type: 'end' })); } catch { /* closing */ } }

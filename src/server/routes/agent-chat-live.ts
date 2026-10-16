@@ -72,8 +72,13 @@ export interface LiveChatEntry {
   turnStartedAt: number | null;
   lastTurnEndedAt: number | null;
   /** Bind a new socket to this child. False when the child can no longer be adopted (it is
-   *  exiting or draining) — the caller then spawns as if nothing were live. */
-  adopt: (ws: import('ws').WebSocket) => boolean;
+   *  exiting or draining) — the caller then spawns as if nothing were live. `how`: a
+   *  still-open previous socket is terminated as half-open (default), or — `takeover`, an
+   *  explicit tap — closed 4409 so that live screen stops reconnecting. */
+  adopt: (ws: import('ws').WebSocket, how?: 'halfopen' | 'takeover') => boolean;
+  /** The socket bound to the child right now while it looks open, else null (detached). A
+   *  passive reattach probes it before adopting (agent-chat.ts passiveAdopt). */
+  holder?: () => import('ws').WebSocket | null;
   /** A NON-reattach connection wants this conversation (a respawn: account, mode or Resume).
    *  Returns the settlement the caller runs once that connection is decided (`true` accepted,
    *  `false` refused). The child gives the conversation up only for an accepted open: a

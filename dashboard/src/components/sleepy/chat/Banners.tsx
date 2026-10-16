@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { useI18n } from '../../../context/I18nContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { BotMark } from '../AgentSetup';
 import { useClaudeAccounts, type ClaudeAccountWire } from '../../../hooks/useAgentCapabilities';
@@ -611,6 +612,25 @@ export function SignInBanner({ canSignInInApp, command, accountId, onSignIn, onR
         )}
       </NoticeRow>
     </Notice>
+  );
+}
+
+/**
+ * Hands-free Mac mode: another screen holds this live chat (the server closed this socket 4409).
+ * Nothing ended — the same process keeps running there — so this is not "Session ended": it
+ * offers "Buraya al", the one explicit open that takes the chat back.
+ */
+export function TakenOverBanner({ onPhone, onTakeBack }: { onPhone: boolean; onTakeBack: () => void }) {
+  const { t } = useI18n();
+  return (
+    <Notice
+      slim
+      className="is-dock chat-banner-taken"
+      icon={<Glyph.moon />}
+      title={<span className="chat-banner-taken-title">{t(onPhone ? 'handsfree.mac.takenPhone' : 'handsfree.mac.takenDesktop')}</span>}
+      detail={t('handsfree.mac.takenDetail')}
+      actions={<NoticeButton primary onClick={onTakeBack}>{t('handsfree.mac.takeBack')}</NoticeButton>}
+    />
   );
 }
 

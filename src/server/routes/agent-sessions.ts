@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
+import { isPhoneSocket } from '../phone-origin.js';
 import { isCloud, workerRunner } from '../cloud-mode.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
@@ -130,6 +131,9 @@ const MAX_BYTES = 64 * 1024;
 const MAX_RUN_FIRED_AT = 64;
 
 const ROSTER_REL_PATH = join('state', '.agent-sessions.json');
+/** A Mac-mode phone's own roster, next to the desktop's: the two screens never write each
+ *  other's tab list, and the desktop file stays byte-identical while the phone works. */
+const PHONE_ROSTER_REL_PATH = join('state', '.agent-sessions.phone.json');
 
 /** The names a tab carries before anyone named it — mirrors the client's
  *  `DEFAULT_TAB_TITLE_RE` (AgentSurface.tsx) plus the coerced {@link DEFAULT_TITLE}. */
@@ -157,8 +161,8 @@ export function rosterTitleUpdates(contextRoot: string | null, sessions: readonl
   return out;
 }
 
-function storePath(contextRoot: string): string {
-  return join(contextRoot, ROSTER_REL_PATH);
+function storePath(contextRoot: string, phone = false): string {
+  return join(contextRoot, phone ? PHONE_ROSTER_REL_PATH : ROSTER_REL_PATH);
 }
 
 /**
@@ -313,9 +317,9 @@ function parseSurface(text: string | null): StoredSurface {
   }
 }
 
-function readSurface(contextRoot: string): StoredSurface {
+function readSurface(contextRoot: string, phone = false): StoredSurface {
   let text: string | null = null;
-  try { text = readFileSync(storePath(contextRoot), 'utf-8'); } catch { /* absent → empty */ }
+  try { text = readFileSync(storePath(contextRoot, phone), 'utf-8'); } catch { /* absent → empty */ }
   return parseSurface(text);
 }
 
@@ -327,7 +331,7 @@ function serializeSurface(surface: SavedSurface, generation: number): string {
 }
 
 /** Atomically persist the surface (temp file + rename) so a crash can't leave a half-written blob. */
-function writeSurface(contextRoot: string, surface: SavedSurface, generation: number): void {
+function writeSurface(contextRoot: string, surface: SavedSurface, generation: number, phone = false): void {
   // The roster is PER-MACHINE state (renamed tabs + Claude resume ids), never committed.
   // User projects track `state/*.md` (task PRDs) but do NOT blanket-ignore state dotfiles,
   // so — mirroring the task-backend secrets pattern — ensure the ignore entry BEFORE
@@ -335,13 +339,13 @@ function writeSurface(contextRoot: string, surface: SavedSurface, generation: nu
   // isn't a secret, so a gitignore failure must not block persistence. `contextRoot` is
   // `<projectRoot>/_dream_context`, so its parent is the project root.
   try {
-    ensureGitignoreEntries(dirname(contextRoot), ['_dream_context/state/.agent-sessions.json'], {
+    ensureGitignoreEntries(dirname(contextRoot), ['_dream_context/state/.agent-sessions.json', ...(phone ? ['_dream_context/state/.agent-sessions.phone.json'] : [])], {
       comment: 'dreamcontext: machine-local agent session roster (Claude resume ids)',
     });
   } catch { /* best-effort — roster is machine-state, not a secret */ }
   const dir = join(contextRoot, 'state');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const path = storePath(contextRoot);
+  const path = storePath(contextRoot, phone);
   const tmp = `${path}.${randomUUID()}.tmp`;
   writeFileSync(tmp, serializeSurface(surface, generation), 'utf-8');
   renameSync(tmp, path);
@@ -382,8 +386,8 @@ async function readSurfaceAsWorker(contextRoot: string): Promise<StoredSurface> 
 
 const ROSTER_LOCK_STALE_MS = 10_000;
 
-function rosterLockPath(contextRoot: string): string {
-  return `${storePath(contextRoot)}.lock`;
+function rosterLockPath(contextRoot: string, phone = false): string {
+  return `${storePath(contextRoot, phone)}.lock`;
 }
 
 /**
@@ -440,16 +444,16 @@ function tryAcquireRosterLockAt(lock: string): boolean {
   return acquireFileLock(lock, Date.now(), ROSTER_LOCK_STALE_MS, { verifyPidLiveness: true });
 }
 
-function tryAcquireRosterLock(contextRoot: string): string | null {
-  const lock = rosterLockPath(contextRoot);
+function tryAcquireRosterLock(contextRoot: string, phone = false): string | null {
+  const lock = rosterLockPath(contextRoot, phone);
   return tryAcquireRosterLockAt(lock) ? lock : null;
 }
 
 /** Wait (awaited, never blocking) up to `waitMs` for the roster lock; the lock path, or null. */
-async function acquireRosterLockWithin(contextRoot: string, waitMs: number): Promise<string | null> {
+async function acquireRosterLockWithin(contextRoot: string, waitMs: number, phone = false): Promise<string | null> {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const lock = tryAcquireRosterLock(contextRoot);
+    const lock = tryAcquireRosterLock(contextRoot, phone);
     if (lock) return lock;
     if (Date.now() >= deadline) return null;
     await new Promise((r) => { setTimeout(r, 25); });
@@ -573,7 +577,7 @@ export async function handleAgentSessionsGet(
     return;
   }
   const cloud = isCloud();
-  const saved = cloud ? await serializeCloud(contextRoot, () => readSurfaceAsWorker(contextRoot)) : readSurface(contextRoot);
+  const saved = cloud ? await serializeCloud(contextRoot, () => readSurfaceAsWorker(contextRoot)) : readSurface(contextRoot, isPhoneSocket(_req));
   sendJson(res, 200, surfaceBody(saved, (id) => !cloud && isAutomationBoundSession(id, home) !== null));
 }
 
@@ -655,17 +659,18 @@ export async function handleAgentSessionsPut(
       });
       return;
     }
-    const lock = await acquireRosterLockWithin(contextRoot, 5_000);
+    const phone = isPhoneSocket(req);
+    const lock = await acquireRosterLockWithin(contextRoot, 5_000, phone);
     if (!lock) {
       sendError(res, 503, 'roster_locked', 'The session roster is being written; try again.');
       return;
     }
     let generation: number;
     try {
-      const stored = readSurface(contextRoot);
+      const stored = readSurface(contextRoot, phone);
       if (!rosterBaseAccepted(base, stored.generation)) { stale(stored); return; }
       generation = stored.generation;
-      writeSurface(contextRoot, surface, generation);
+      writeSurface(contextRoot, surface, generation, phone);
     } finally {
       releaseFileLock(lock);
     }

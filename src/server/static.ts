@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { mediaContentType, serveMedia } from './media.js';
 import { isCloud } from './cloud-mode.js';
+import { isPhoneSocket } from './phone-origin.js';
 import { findRetainedAsset, retainBuildAssets } from './retained-assets.js';
 
 const MIME_TYPES: Record<string, string> = {
@@ -43,18 +44,31 @@ export function cacheControlFor(pathname: string, ext: string): string {
 /** The flag the dashboard reads synchronously before its first render (`dashboard/src/lib/cloudSurface.ts`). */
 export const CLOUD_SURFACE_META = '<meta name="dreamcontext-surface" content="cloud" />';
 
+/** The same flag for a Mac-mode phone socket: the phone surface, minus trip/phase/quiesce. */
+export const MAC_SURFACE_META = '<meta name="dreamcontext-surface" content="mac" />';
+
+export type IndexSurface = 'cloud' | 'mac' | null;
+
+/** Which surface marker one request's index.html carries. */
+export function indexSurfaceFor(req: IncomingMessage): IndexSurface {
+  if (isPhoneSocket(req)) return 'mac';
+  return isCloud() ? 'cloud' : null;
+}
+
 /**
- * The SPA's index.html as served: on the hands-free CLOUD only, it carries
- * {@link CLOUD_SURFACE_META} so the page never calls a route the cloud refuses (AC4). The SPA
- * index has no CSP (only the cloud's own login/sealed pages do), so a plain meta tag is safe.
+ * The SPA's index.html as served: on the hands-free CLOUD it carries {@link CLOUD_SURFACE_META},
+ * on a Mac-mode phone socket {@link MAC_SURFACE_META}, so the page never calls a route its
+ * listener refuses (AC4). The SPA index has no CSP (only the phone's own login/sealed pages
+ * do), so a plain meta tag is safe. `true`/`false` keep the cloud-only meaning.
  */
-export function indexHtmlFor(content: Buffer, cloud: boolean = isCloud()): Buffer {
-  if (!cloud) return content;
+export function indexHtmlFor(content: Buffer, surface: boolean | IndexSurface = isCloud()): Buffer {
+  const meta = surface === true || surface === 'cloud' ? CLOUD_SURFACE_META : surface === 'mac' ? MAC_SURFACE_META : null;
+  if (!meta) return content;
   const html = content.toString('utf8');
   const at = html.search(/<head[^>]*>/i);
-  if (at < 0) return Buffer.from(CLOUD_SURFACE_META + html, 'utf8');
+  if (at < 0) return Buffer.from(meta + html, 'utf8');
   const end = html.indexOf('>', at) + 1;
-  return Buffer.from(html.slice(0, end) + CLOUD_SURFACE_META + html.slice(end), 'utf8');
+  return Buffer.from(html.slice(0, end) + meta + html.slice(end), 'utf8');
 }
 
 /**
@@ -104,7 +118,7 @@ export function serveStatic(
     const raw = readFileSync(filePath);
     const isIndex = filePath === join(staticDir, 'index.html');
     if (isIndex) retainBuildAssets(staticDir, raw);
-    const content = isIndex ? indexHtmlFor(raw) : raw;
+    const content = isIndex ? indexHtmlFor(raw, indexSurfaceFor(req)) : raw;
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': content.length,
@@ -130,7 +144,7 @@ export function serveStatic(
     if (existsSync(indexPath)) {
       const raw = readFileSync(indexPath);
       retainBuildAssets(staticDir, raw);
-      const content = indexHtmlFor(raw);
+      const content = indexHtmlFor(raw, indexSurfaceFor(req));
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': content.length,

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { RequestError } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
 import { confirmAction } from '../../lib/desktop';
-import { isCloudSurface } from '../../lib/cloudSurface';
+import { isPhoneSurface } from '../../lib/cloudSurface';
 import {
   CLOUD_RECALL_QUERY_KEYS,
   useBuildCloudIndex,
@@ -77,7 +77,7 @@ export function CloudRecallCard({ tier: onlyTier, onEnabled, onDisabled, onCance
     lastIndexState.current = index?.state;
   }, [index?.state, queryClient]);
 
-  if (isCloudSurface()) return null;
+  if (isPhoneSurface()) return null;
   if (isLoading) {
     return (
       <div className="embed-model-card cloud-recall">

@@ -10,6 +10,8 @@ import {
   AbandonConfirm, CloudLink, coreHours, fill, formatBytes, InlineConfirm, JobErrorBlock, JobProgress, RunningList,
 } from './HandsfreeParts';
 import type { GoResult, HandsfreeJob, PreflightReport } from './handsfreeTypes';
+import { MacPanel } from './MacPanel';
+import { useMacStatus } from './macStore';
 import '../sleepy/chat/ChatViews.css';
 
 /**
@@ -51,7 +53,15 @@ export function HandsfreeSheet({ vault, onClose }: { vault: string; onClose: () 
     }
   }, [client]);
 
-  useEffect(() => { if (view === 'preflight') void loadPreflight(); }, [view, loadPreflight]);
+  // Step 1 offers two modes: "Bu Mac'ten" (default; Mac mode) and "Buluttan" (the cloud flow,
+  // untouched). Mac mode already on keeps the sheet on its panel.
+  const macStatus = useMacStatus();
+  const macOn = !!macStatus && macStatus.phase !== 'off';
+  const [mode, setMode] = useState<'mac' | 'cloud'>('mac');
+  const effectiveMode = macOn ? 'mac' : mode;
+  const showModes = view === 'preflight' && !macOn;
+
+  useEffect(() => { if (view === 'preflight' && effectiveMode === 'cloud') void loadPreflight(); }, [view, effectiveMode, loadPreflight]);
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -102,7 +112,22 @@ export function HandsfreeSheet({ vault, onClose }: { vault: string; onClose: () 
           <button type="button" className="hf-icon-btn" onClick={onClose} aria-label={t('handsfree.close')}>✕</button>
         </header>
 
-        {view === 'preflight' && (
+        {showModes && (
+          <div className="hf-mode" role="tablist" aria-label={t('handsfree.mac.modeTitle')}>
+            <button type="button" role="tab" className="hf-mode-opt" aria-selected={effectiveMode === 'mac'} data-testid="hf-mode-mac" onClick={() => setMode('mac')}>
+              <span className="hf-mode-title">{t('handsfree.mac.modeMac')}</span>
+              <span className="hf-mode-sub">{t('handsfree.mac.modeMacSub')}</span>
+            </button>
+            <button type="button" role="tab" className="hf-mode-opt" aria-selected={effectiveMode === 'cloud'} data-testid="hf-mode-cloud" onClick={() => setMode('cloud')}>
+              <span className="hf-mode-title">{t('handsfree.mac.modeCloud')}</span>
+              <span className="hf-mode-sub">{t('handsfree.mac.modeCloudSub')}</span>
+            </button>
+          </div>
+        )}
+
+        {view === 'preflight' && effectiveMode === 'mac' && <MacPanel onClose={onClose} />}
+
+        {view === 'preflight' && effectiveMode === 'cloud' && (
           <section className="hf-sheet-body" data-testid="hf-step-scope">
             <p className="hf-lead">{fill(t('handsfree.sheet.lead'), { vault })}</p>
             {!preflight && !preflightError && <p className="hf-quiet" role="status">{t('handsfree.sheet.checking')}</p>}

@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { isPhoneSocket } from './phone-origin.js';
 
 /** Cookie that carries the network-access token after the first tokenized visit. */
 export const AUTH_COOKIE = 'dreamcontext_token';
@@ -7,6 +8,13 @@ export const AUTH_COOKIE = 'dreamcontext_token';
 /** True when the TCP peer is the local machine (IPv4, IPv6, or v4-mapped-v6 loopback). */
 export function isLoopbackAddress(remote: string | undefined | null): boolean {
   return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
+/** {@link isLoopbackAddress} for a request: false for a Mac-mode phone socket, whose peer is
+ *  cloudflared on 127.0.0.1 but whose client is the internet (phone-origin.ts). */
+export function isLoopbackPeer(req: Pick<IncomingMessage, 'socket'>): boolean {
+  if (isPhoneSocket(req)) return false;
+  return isLoopbackAddress(req.socket?.remoteAddress);
 }
 
 /** One token per server process; shown only in the startup banner. */
@@ -69,7 +77,7 @@ function queryToken(req: IncomingMessage): string | null {
  * Returns true when the request may proceed; otherwise responds 401 itself.
  */
 export function checkNetworkAuth(req: IncomingMessage, res: ServerResponse, token: string): boolean {
-  if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
+  if (isLoopbackPeer(req)) return true;
   if (tokenMatches(cookieToken(req), token)) return true;
 
   if (tokenMatches(queryToken(req), token)) {

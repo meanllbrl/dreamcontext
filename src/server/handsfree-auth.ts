@@ -1,8 +1,11 @@
 import { createHash, createHmac, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { cloudServerDir } from './cloud-mode.js';
+import { cloudServerDir, isCloud } from './cloud-mode.js';
+import { isPhoneSocket } from './phone-origin.js';
+import { MAC_LOGIN_TOKEN_TTL_MS } from '../lib/handsfree/mac/contract.js';
 import { recordCloudAction } from './cloud-idle.js';
 import { parseJsonBody, sendJson } from './middleware.js';
 
@@ -117,6 +120,8 @@ export interface DeviceRecord {
   idSha256: string;
   createdAt: number;
   expiresAt: number;
+  /** A coarse device label from the signing-in browser ("iPhone · Safari"); Mac store only. */
+  label?: string;
 }
 
 interface AuthState {
@@ -166,7 +171,8 @@ export class HandsfreeAuthStore {
       transferSha256: typeof raw.transferSha256 === 'string' && SHA256_HEX_RE.test(raw.transferSha256) ? raw.transferSha256 : null,
       devices: Array.isArray(raw.devices)
         ? raw.devices.filter((d): d is DeviceRecord => !!d && typeof d.idSha256 === 'string' && SHA256_HEX_RE.test(d.idSha256)
-          && typeof d.createdAt === 'number' && typeof d.expiresAt === 'number')
+          && typeof d.createdAt === 'number' && typeof d.expiresAt === 'number'
+          && (d.label === undefined || (typeof d.label === 'string' && d.label.length <= 64)))
         : [],
     };
   }
@@ -222,12 +228,44 @@ export class HandsfreeAuthStore {
     return { ok: true, generation, changed: true };
   }
 
+  /**
+   * Mac mode: a new passphrase (POST /api/handsfree/mac/password, setup). Bumps the generation
+   * and signs every device out, exactly like a cloud verifier push. No transfer credential:
+   * the Mac store has no laptop channel to prove.
+   */
+  setPassphrase(verifier: ScryptVerifier): { generation: number } {
+    if (!isValidVerifier(verifier)) throw new Error('setPassphrase: invalid verifier');
+    const generation = this.state.generation + 1;
+    this.state = { generation, passphrase: verifier, transferSha256: null, devices: [] };
+    this.save();
+    notifyDeviceSessionsChanged();
+    return { generation };
+  }
+
+  /** Mac mode's revoke-all and Return: every device signed out, the generation bumped. */
+  revokeAllLocal(): number {
+    const n = this.state.devices.length;
+    this.state = { ...this.state, generation: this.state.generation + 1, devices: [] };
+    this.save();
+    notifyDeviceSessionsChanged();
+    return n;
+  }
+
+  /** The live devices, newest first (the sheet's list; never an id). */
+  listDevices(): Array<{ id: string; label: string; createdAt: number }> {
+    const now = this.now();
+    return this.state.devices
+      .filter((d) => d.expiresAt > now)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((d) => ({ id: d.idSha256.slice(0, 8), label: d.label ?? 'device', createdAt: d.createdAt }));
+  }
+
   /** Mint a device session; returns the raw id (cookie value), only its sha256 is kept. */
-  createDevice(): string {
+  createDevice(label?: string): string {
     const id = randomBytes(32).toString('base64url');
     const now = this.now();
     const live = this.state.devices.filter((d) => d.expiresAt > now);
-    live.push({ idSha256: sha256Hex(id), createdAt: now, expiresAt: now + DEVICE_TTL_MS });
+    live.push({ idSha256: sha256Hex(id), createdAt: now, expiresAt: now + DEVICE_TTL_MS, ...(label ? { label: label.slice(0, 64) } : {}) });
     const evicted = live.length > MAX_DEVICES;
     while (live.length > MAX_DEVICES) live.shift();
     this.state = { ...this.state, devices: live };
@@ -376,8 +414,17 @@ export class LoginLimiter {
  * client IP (W0 item 7), so that value keys the limiter. A process inside the codespace that
  * dials 8080 directly can set any XFF; it is treated like the internet and the global
  * limiter still bounds it.
+ *
+ * On a Mac-mode phone socket it is `cf-connecting-ip`, which Cloudflare's edge OVERWRITES with
+ * the real client; X-Forwarded-For is ignored there because Cloudflare APPENDS to it, so its
+ * first entry is whatever the client sent.
  */
 export function loginClientKey(req: IncomingMessage): string {
+  if (isPhoneSocket(req)) {
+    const cf = req.headers['cf-connecting-ip'];
+    const v = (Array.isArray(cf) ? cf[0] : cf ?? '').trim();
+    return v ? `cf:${v.slice(0, 64)}` : 'cf:unknown';
+  }
   const xff = req.headers['x-forwarded-for'];
   const v = (Array.isArray(xff) ? xff[0] : xff ?? '').trim();
   if (v) return `xff:${v.slice(0, 64)}`;
@@ -386,7 +433,7 @@ export function loginClientKey(req: IncomingMessage): string {
 
 // ─── scrypt concurrency ─────────────────────────────────────────────────────
 
-const MAX_SCRYPT = 2;
+export const MAX_SCRYPT = 2;
 const MAX_SCRYPT_QUEUE = 16;
 
 class Semaphore {
@@ -443,7 +490,11 @@ export type LoginOutcome =
 
 export interface HandsfreeAuthOptions extends AuthStoreOptions {
   sleep?: (ms: number) => Promise<void>;
+  /** Tests only: stands in for the scrypt verification (to observe its concurrency). */
+  verify?: (passphrase: string, v: ScryptVerifier) => Promise<boolean>;
 }
+
+export type LoginTokenOutcome = 'ok' | 'invalid' | 'expired';
 
 export class HandsfreeAuth {
   readonly store: HandsfreeAuthStore;
@@ -454,15 +505,53 @@ export class HandsfreeAuth {
   /** Per-process: a restart invalidates outstanding nonces, which only costs one retry. */
   private readonly nonceKey = randomBytes(32);
   private readonly usedNonces = new Map<string, number>();
+  private readonly verify: (passphrase: string, v: ScryptVerifier) => Promise<boolean>;
+  /** The one outstanding QR login token (Mac mode): its sha256 and expiry, never the token. */
+  private loginToken: { sha256: string; expiresAt: number } | null = null;
 
   constructor(opts: HandsfreeAuthOptions) {
     this.store = new HandsfreeAuthStore(opts);
     this.limiter = new LoginLimiter(opts);
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.verify = opts.verify ?? verifyPassphrase;
   }
 
-  async attemptLogin(passphrase: string, clientKey: string): Promise<LoginOutcome> {
+  /**
+   * Mac mode's QR: a 256-bit single-use login token, valid {@link MAC_LOGIN_TOKEN_TTL_MS}.
+   * Only its sha256 is kept, in memory. Minting a new one invalidates every older one.
+   */
+  issueLoginToken(): string {
+    const token = randomBytes(32).toString('base64url');
+    this.loginToken = { sha256: sha256Hex(token), expiresAt: this.now() + MAC_LOGIN_TOKEN_TTL_MS };
+    return token;
+  }
+
+  /** Is a QR token outstanding (not used, not expired)? The sheet hides the QR otherwise. */
+  hasLiveLoginToken(): boolean {
+    return !!this.loginToken && this.loginToken.expiresAt > this.now();
+  }
+
+  /** Forget the outstanding token (Return, revoke-all). */
+  clearLoginToken(): void {
+    this.loginToken = null;
+  }
+
+  /**
+   * Consume a QR token. SYNCHRONOUS on purpose — lookup and delete happen before any await, so
+   * two requests racing with the same token yield exactly one 'ok'.
+   */
+  consumeLoginToken(token: string | null | undefined): LoginTokenOutcome {
+    const cur = this.loginToken;
+    if (!cur || typeof token !== 'string' || token.length < 16 || token.length > 128) return 'invalid';
+    const a = Buffer.from(sha256Hex(token), 'hex');
+    const b = Buffer.from(cur.sha256, 'hex');
+    if (!timingSafeEqual(a, b)) return 'invalid';
+    this.loginToken = null;
+    return cur.expiresAt > this.now() ? 'ok' : 'expired';
+  }
+
+  async attemptLogin(passphrase: string, clientKey: string, label?: string): Promise<LoginOutcome> {
     const verifier = this.store.passphraseVerifier;
     if (!verifier) return { ok: false, status: 503, error: 'not_configured' };
     const verdict = this.limiter.check(clientKey);
@@ -472,7 +561,7 @@ export class HandsfreeAuth {
     if (!release) return { ok: false, status: 429, error: 'busy', retryAfterMs: 1000 };
     let ok: boolean;
     try {
-      ok = typeof passphrase === 'string' && passphrase.length <= 512 && await verifyPassphrase(passphrase, verifier);
+      ok = typeof passphrase === 'string' && passphrase.length <= 512 && await this.verify(passphrase, verifier);
     } finally {
       release();
     }
@@ -481,7 +570,7 @@ export class HandsfreeAuth {
       return { ok: false, status: 401, error: 'invalid_passphrase' };
     }
     this.limiter.recordSuccess(clientKey);
-    return { ok: true, deviceId: this.store.createDevice() };
+    return { ok: true, deviceId: this.store.createDevice(label) };
   }
 
   /** Stateless, self-signed nonce: issuing one stores nothing, so a flood cannot evict the
@@ -539,6 +628,69 @@ export function setHandsfreeAuthForTests(next: HandsfreeAuth | null): void {
   service = next;
 }
 
+// ─── Mac mode: its own store, never the cloud's ─────────────────────────────
+
+/** `~/.dreamcontext/handsfree-mac` — 0700; every file in it 0600. */
+export function macHandsfreeDir(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'handsfree-mac');
+}
+
+/** Create the Mac dir 0700 (and tighten it if it already existed looser). */
+export function ensureMacHandsfreeDir(home: string = homedir()): string {
+  const dir = macHandsfreeDir(home);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { chmodSync(dir, 0o700); } catch { /* best-effort: the files are 0600 regardless */ }
+  return dir;
+}
+
+let macService: HandsfreeAuth | null = null;
+
+/** The process's Mac-mode auth service over `~/.dreamcontext/handsfree-mac` (first use creates
+ *  the dir 0700). Cloud and Mac credentials never interchange: separate stores. */
+export function macHandsfreeAuth(): HandsfreeAuth {
+  if (!macService) macService = new HandsfreeAuth({ dir: ensureMacHandsfreeDir() });
+  return macService;
+}
+
+/** Tests only. */
+export function setMacHandsfreeAuthForTests(next: HandsfreeAuth | null): void {
+  macService = next;
+}
+
+/**
+ * THE auth resolver: which device store a request is judged against. A Mac-mode phone socket
+ * → the Mac store; the hands-free cloud → the cloud store; anything else has no device store
+ * (the desktop is trusted by peer address, never by a device cookie).
+ */
+export function authFor(req: { socket?: object | null } | null | undefined): HandsfreeAuth | null {
+  if (isPhoneSocket(req)) return macHandsfreeAuth();
+  if (isCloud()) return handsfreeAuth();
+  return null;
+}
+
+// ─── Mac sign-ins (AC14: every new phone sign-in posts a notification) ──────
+
+const macSignInListeners = new Set<(label: string) => void>();
+
+export function onMacSignIn(listener: (label: string) => void): () => void {
+  macSignInListeners.add(listener);
+  return () => { macSignInListeners.delete(listener); };
+}
+
+export function notifyMacSignIn(label: string): void {
+  for (const l of macSignInListeners) {
+    try { l(label); } catch (err) { console.warn(`[handsfree-auth] sign-in listener failed: ${(err as Error).message}`); }
+  }
+}
+
+/** A coarse label from the User-Agent, kept with the device so the sheet can list it. */
+export function deviceLabel(req: Pick<IncomingMessage, 'headers'>): string {
+  const ua = String(req.headers['user-agent'] || '');
+  const device = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'device';
+  const browser = /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '';
+  return browser ? `${device} · ${browser}` : device;
+}
+
 // ─── Request helpers ────────────────────────────────────────────────────────
 
 export function deviceCookieValue(req: IncomingMessage): string | null {
@@ -560,9 +712,12 @@ export function clearDeviceCookieHeader(): string {
   return `${DEVICE_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
-/** True when the request carries a live device session cookie. */
+/** True when the request carries a live device session cookie of ITS store: the Mac store on a
+ *  Mac-mode phone socket, the cloud store everywhere else (unchanged: only cloud code and the
+ *  phone listener ask this). */
 export function hasValidDeviceSession(req: IncomingMessage): boolean {
-  return handsfreeAuth().store.isValidDevice(deviceCookieValue(req));
+  const auth = isPhoneSocket(req) ? macHandsfreeAuth() : handsfreeAuth();
+  return auth.store.isValidDevice(deviceCookieValue(req));
 }
 
 /** True when the request carries a transfer-scheme Authorization header (valid or not). */
@@ -590,13 +745,18 @@ export function hasValidTransferProof(req: IncomingMessage): boolean {
 
 /** POST /api/handsfree/login {passphrase}. The body is never logged. */
 export async function handleHandsfreeLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const auth = authFor(req);
+  if (!auth) { sendJson(res, 404, { error: 'not_found', message: 'No route: POST /api/handsfree/login' }); return; }
   const body = await parseJsonBody(req);
   const passphrase = body && typeof body.passphrase === 'string' ? body.passphrase : '';
-  const outcome = await handsfreeAuth().attemptLogin(passphrase, loginClientKey(req));
+  const mac = isPhoneSocket(req);
+  const label = mac ? deviceLabel(req) : undefined;
+  const outcome = await auth.attemptLogin(passphrase, loginClientKey(req), label);
   if (outcome.ok) {
     // AC16: a successful phone login is the owner's real action (a failed one, GET /login, a
     // poll or a health read never is), so the phone gets the full idle window from here.
-    recordCloudAction();
+    if (mac) notifyMacSignIn(label ?? 'device');
+    else recordCloudAction();
     res.setHeader('Set-Cookie', deviceCookieHeader(outcome.deviceId));
     sendJson(res, 200, { ok: true });
     return;
@@ -608,7 +768,9 @@ export async function handleHandsfreeLogin(req: IncomingMessage, res: ServerResp
 /** POST /api/handsfree/logout: forget this device. */
 export function handleHandsfreeLogout(req: IncomingMessage, res: ServerResponse): void {
   const id = deviceCookieValue(req);
-  if (id) handsfreeAuth().store.revokeDevice(id);
+  // The request's OWN store: a phone logout on the Mac listener never touches a cloud device.
+  const auth = authFor(req);
+  if (id && auth) auth.store.revokeDevice(id);
   res.setHeader('Set-Cookie', clearDeviceCookieHeader());
   sendJson(res, 200, { ok: true });
 }

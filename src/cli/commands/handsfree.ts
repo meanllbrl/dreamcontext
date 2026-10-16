@@ -13,6 +13,7 @@ import {
 } from '../../lib/handsfree/orchestrator.js';
 import { processTurnControl } from '../../lib/handsfree/turns.js';
 import { readRosterSurface, writeMergedRosterSurfaceAsync } from '../../server/routes/agent-sessions.js';
+import { registerHandsfreeMacCommand } from './handsfree-mac.js';
 
 /**
  * `dreamcontext handsfree …` — hands-free mode from the terminal. Every subcommand calls the
@@ -260,6 +261,9 @@ export function registerHandsfreeCommand(program: Command): void {
         else warn(`pending: the cloud has not confirmed generation ${r.generation} yet${r.error ? ` (${r.error})` : ''}`);
       } catch (err) { fail(err); }
     });
+
+  // Mac mode: the laptop itself, reached through a tunnel (no cloud machine).
+  registerHandsfreeMacCommand(hf);
 
   hf.command('teardown')
     .description('Delete the cloud machine (recovers abandoned cloud work first)')

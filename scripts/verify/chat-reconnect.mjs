@@ -267,8 +267,10 @@ try {
     })), 40000));
   const urls = await c1.page.evaluate(() => window.__chatSockets.map((s) => s.url));
   const reattachUrl = urls[urls.length - 1];
-  report.check('the reconnect asks to reattach the same conversation (resume=<id>&reattach=1)',
-    /[?&]resume=[0-9a-f-]{36}/.test(reattachUrl) && /[?&]reattach=1/.test(reattachUrl), reattachUrl);
+  // An automatic reconnect is PASSIVE (Mac mode: it never evicts a live holder); an explicit
+  // tap sends the evicting reattach=1. Either asks for the same conversation.
+  report.check('the reconnect asks to reattach the same conversation (resume=<id>&reattach=passive|1)',
+    /[?&]resume=[0-9a-f-]{36}/.test(reattachUrl) && /[?&]reattach=(passive|1)(&|$)/.test(reattachUrl), reattachUrl);
   report.check('the reconnect does not resend an opening prompt', !/[?&](prompt|promptToken)=/.test(reattachUrl));
   report.check('the turn finishes in the pane', await c1.until(async () => (await c1.paneText()).includes(`FINISH pid=${pid}`), 30000));
   await c1.page.waitForTimeout(1500);

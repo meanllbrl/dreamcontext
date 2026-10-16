@@ -9,6 +9,8 @@ export type RouteHandler = (
 
 interface Route {
   method: string;
+  /** The registered pattern, as written (`/api/tasks/:slug`). */
+  path: string;
   pattern: RegExp;
   paramNames: string[];
   handler: RouteHandler;
@@ -28,6 +30,7 @@ export class Router {
     });
     this.routes.push({
       method: method.toUpperCase(),
+      path,
       pattern: new RegExp(`^${pattern}$`),
       paramNames,
       handler,
@@ -52,6 +55,11 @@ export class Router {
 
   delete(path: string, handler: RouteHandler): void {
     this.add('DELETE', path, handler);
+  }
+
+  /** Every registered route, in order (the phone listener's default-deny test walks it). */
+  list(): Array<{ method: string; path: string }> {
+    return this.routes.map((r) => ({ method: r.method, path: r.path }));
   }
 
   match(method: string, url: string): { handler: RouteHandler; params: Record<string, string> } | null {
