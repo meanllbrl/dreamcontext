@@ -1734,8 +1734,25 @@ export function startChatSession(
    *     client's own flag, i.e. the behaviour that shipped before this feature. The dangerous
    *     direction is a count that is too LOW while a turn runs, and every stdin write of a
    *     user frame increments.
+   *
+   * A MAIN `result` NOW SETS IT TO ZERO, NOT ONE LESS (measured on claude 2.1.301, 2026-10-16).
+   * A user frame written mid-turn (a steer) is FOLDED into the running turn: two frames, one
+   * `result`. Counting down left one turn owed forever after every steer, and a count that
+   * never reaches zero is not the safe direction after all: the switch gate waits on it with the
+   * held message keeping the client busy, the stall release only arms at zero, and an idle
+   * interrupt answers with a bare `control_response` — so the pane read "Working…" for 69
+   * minutes with Stop doing nothing (owner video, 2026-10-14). A frame the CLI did NOT fold
+   * (a slash command, a frame raced against the `result`) runs as its own turn afterwards, and
+   * every turn opens with `system:init` — which re-opens the count (see the frame reader). An
+   * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
+  /** The request id of the interrupt last written, so ITS `control_response` can be told apart
+   *  from a model or mode switch's. */
+  let interruptRequestId: string | null = null;
+  /** Armed when the CLI acked an interrupt: if no `result` follows, nothing was running and the
+   *  turn is closed here (`settleAfterInterrupt`). */
+  let interruptSettleTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * The last text WE handed to the CLI, kept so the post-hoc switch can resubmit the exact
    * turn the API refused. Without it a limit landing mid-turn can only be announced, and the
@@ -1879,15 +1896,27 @@ export function startChatSession(
     if (live) markTurnStarted(live);
     armDetachReap();
   };
+  /** A main `result`: the CLI has answered every user frame written before it, folded steers
+   *  included (see `turnsInFlight`). */
   const closeTurn = (): void => {
-    turnsInFlight = Math.max(0, turnsInFlight - 1);
-    if (turnsInFlight === 0) {
-      outstandingAsks.clear();
-      if (live) markTurnEnded(live);
-      // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
-      reannounceSwitch();
-    }
+    turnsInFlight = 0;
+    outstandingAsks.clear();
+    if (live) markTurnEnded(live);
+    // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
+    reannounceSwitch();
     armDetachReap();
+  };
+  /**
+   * The CLI acked an interrupt and no `result` followed: nothing was running, or what was
+   * running ended without saying so. Stop must still stop, so the turn is closed HERE and the
+   * client is told it is idle — without this an idle ack left a pane "Working…" with a Stop
+   * that could no longer reach anything.
+   */
+  const settleAfterInterrupt = (): void => {
+    interruptSettleTimer = null;
+    if (!alive) return;
+    if (turnsInFlight > 0) closeTurn();
+    sendMeta({ subtype: 'turn_state', busy: false });
   };
 
   // Auto-submit the (non-deferred) initial prompt as the first stdin frame — see the
@@ -2044,6 +2073,7 @@ export function startChatSession(
     // stale count here would be a lie about the one thing only this side can report.
     turnsInFlight = 0;
     clearInterruptTimers();
+    if (interruptSettleTimer) { clearTimeout(interruptSettleTimer); interruptSettleTimer = null; }
     clearLingerTimers();
     clearDetachTimers();
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
@@ -2303,6 +2333,24 @@ export function startChatSession(
       // escalation watchdog (the child's own exit is still tracked separately below).
       if (interruptWatchdog && (obj.type === 'result' || obj.type === 'control_response')) {
         clearInterruptTimers();
+      }
+      // …but an ack is not a turn end: an IDLE CLI acks an interrupt and sends no `result` at
+      // all (measured on 2.1.301). Give a real abort the same window to land its `result`.
+      if (obj.type === 'control_response' && interruptRequestId
+        && (obj.response as { request_id?: unknown } | undefined)?.request_id === interruptRequestId) {
+        interruptRequestId = null;
+        if (interruptSettleTimer) clearTimeout(interruptSettleTimer);
+        interruptSettleTimer = setTimeout(settleAfterInterrupt, INTERRUPT_WATCHDOG_MS);
+      }
+      if (obj.type === 'result' && obj.parent_tool_use_id === undefined && interruptSettleTimer) {
+        clearTimeout(interruptSettleTimer); interruptSettleTimer = null;
+      }
+      // Every turn opens with `system:init`, ours or not: a frame the CLI queued behind the turn
+      // that just closed, or a turn it started itself (a background task finishing). Counted so
+      // a switch never restarts over it — an idle child emits no `init`, so this never opens a
+      // turn that is not running.
+      if (obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && turnsInFlight === 0) {
+        openTurn();
       }
 
       // The turn is over. Tracked HERE, from the CLI's own frame, because the client's `busy`
@@ -3204,7 +3252,8 @@ export function startChatSession(
       // interrupted by user for tool use]", then a `result` frame with
       // terminal_reason:"aborted_tools", all within ~4.1s API duration. `system:init`
       // advertises this as the `interrupt_receipt_v1` capability.
-      writeStdin({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
+      interruptRequestId = randomUUID();
+      writeStdin({ type: 'control_request', request_id: interruptRequestId, request: { subtype: 'interrupt' } });
       clearInterruptTimers();
       interruptWatchdog = setTimeout(() => {
         interruptWatchdog = null;

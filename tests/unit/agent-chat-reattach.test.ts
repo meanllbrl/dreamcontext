@@ -386,4 +386,9 @@ describe('chat replay merge (client)', () => {
     expect(readReattachedFrame('{"type":"assistant","text":"reattached"}')).toBeNull();
     expect(readReattachedFrame('not json "reattached"')).toBeNull();
   });
+
+  it('reads the server\'s turn_state frame the same way: a Stop the CLI acked without a result', () => {
+    expect(readReattachedFrame('{"type":"_meta","subtype":"turn_state","busy":false}')).toEqual({ adopted: false, busy: false });
+    expect(readReattachedFrame('{"type":"_meta","subtype":"handoff_progress","busy":false}')).toBeNull();
+  });
 });
