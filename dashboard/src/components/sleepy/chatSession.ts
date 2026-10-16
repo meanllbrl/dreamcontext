@@ -334,7 +334,7 @@ export interface ConversationModel {
    */
   accountSwitch?: {
     switched: boolean;
-    reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
+    reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted' | 'come_home'
       | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
     accountId: string;
     fromAccountId?: string;

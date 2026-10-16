@@ -143,6 +143,9 @@ export interface ClaudeAccountWire {
   state: 'ok' | 'needs-relogin';
   limits: UsageLimitWire[];
   fetchedAtMs: number | null;
+  /** The API refused this account; it stays out until then (epoch ms). */
+  refusedUntil?: number;
+  refusedWindow?: 'session' | 'weekly';
 }
 
 /** How auto-switch picks the next account. Mirrors `SwitchStrategy` on the server. */
@@ -157,6 +160,8 @@ export interface SwitchWeights {
 
 export interface ClaudeAccountsResponse {
   accounts: ClaudeAccountWire[];
+  /** Where a new chat would open now (the server's own spawn decision). Absent on an older server. */
+  nextSessionAccountId?: string | null;
   autoSwitch: boolean;
   switchStrategy: SwitchStrategy;
   switchWeights: SwitchWeights;
@@ -188,8 +193,10 @@ export function useClaudeAccounts(enabled: boolean) {
     queryKey: ['agent-claude-accounts'],
     queryFn: () => api.get<ClaudeAccountsResponse>('/agent/accounts'),
     enabled,
-    refetchInterval: enabled ? 300_000 : false,
-    staleTime: 240_000,
+    // Every chat turn writes its account's usage to disk (claude-usage-meter.ts) and the route
+    // only reads files, so a short interval is what keeps the panel as current as the chats.
+    refetchInterval: enabled ? 30_000 : false,
+    staleTime: 20_000,
     retry: false,
     placeholderData: NO_ACCOUNTS,
   });

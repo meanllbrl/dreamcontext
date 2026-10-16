@@ -33,6 +33,8 @@ import { ensureSandbox, sandboxHasIdentity } from '../../lib/claude-account-sand
 import { claudeAuthStatus, resetClaudeAuthCache } from '../../lib/claude-auth.js';
 import { readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
 import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
+import { readAccountRejections } from '../../lib/claude-limit-rejections.js';
+import { chatSpawnAccount } from '../../lib/automations/account.js';
 
 /**
  * The multi-account surface: list the accounts, add one through the CLI's OWN OAuth flow,
@@ -76,6 +78,13 @@ interface AccountWire {
   limits: UsageLimitWire[];
   /** When the CLI last refreshed that cache, so a stale reading can be labelled. */
   fetchedAtMs: number | null;
+  /**
+   * The API REFUSED this account and it stays out until then (`claude-limit-rejections.ts`).
+   * The percentages can trail a refusal, so the row has to say it in so many words: a 97% bar
+   * reads as "nearly full", not as "no chat will be sent here for another hour".
+   */
+  refusedUntil?: number;
+  refusedWindow?: 'session' | 'weekly';
 }
 
 function guard(req: IncomingMessage, res: ServerResponse): boolean {
@@ -140,8 +149,10 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
     return;
   }
 
+  const refusals = readAccountRejections(home);
   const wire: AccountWire[] = accounts.map((acc) => {
     const dir = acc.configDir ?? home;
+    const refusal = refusals[acc.id];
     const hasIdentity = sandboxHasIdentity(dir, home);
     let limits: UsageLimitWire[] = [];
     let fetchedAtMs: number | null = null;
@@ -160,11 +171,21 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
       state: hasIdentity ? 'ok' : 'needs-relogin',
       limits,
       fetchedAtMs,
+      ...(refusal ? { refusedUntil: refusal.until } : {}),
+      ...(refusal && (refusal.window === 'session' || refusal.window === 'weekly') ? { refusedWindow: refusal.window } : {}),
     };
   });
 
+  // Where a new chat would open RIGHT NOW — the spawn's own decision, not the top row. The top
+  // row is the owner's priority; this is what that priority comes to with the accounts as they
+  // stand. Owner, 2026-10-16: "new sessions start here" sat on an account at 100% that the API
+  // had refused, while new chats were really opening elsewhere.
+  let nextSessionAccountId: string | null = null;
+  try { nextSessionAccountId = chatSpawnAccount({ home }).id; } catch { /* the panel falls back to the top row */ }
+
   sendJson(res, 200, {
     accounts: wire,
+    nextSessionAccountId,
     autoSwitch: autoSwitchEnabled(home),
     switchStrategy: switchStrategyFor(home),
     switchWeights: switchWeightsFor(home),

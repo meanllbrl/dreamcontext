@@ -201,15 +201,39 @@ describe('picking the account a new chat opens on', () => {
     expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('first');
   });
 
-  it('sequential, auto-switch off and one account all keep the preferred account', async () => {
+  it('auto-switch off and one account keep the preferred account', async () => {
     const readUsage = cacheOf({ [home]: { session: 97 }, [sandboxDirFor('second', home)]: { session: 15 } });
     expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBeNull();
     addAccounts();
-    setSwitchPolicy({ strategy: 'sequential' }, home);
-    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('first');
-    setSwitchPolicy({ strategy: 'score' }, home);
     await setAutoSwitchEnabled(false, home);
     expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('first');
+  });
+
+  // Reported 2026-10-16: draining in order opened every new chat on the top account however
+  // full. A chat opened at 18:45 on an account its cache showed at 98% and was refused at 18:52,
+  // then had to move carrying everything it had read. The last points of a window belong to the
+  // chats already on it; a NEW one opens where it can live.
+  it('sequential: a new chat skips an account its reading proves full, in the list order', () => {
+    addAccounts();
+    setSwitchPolicy({ strategy: 'sequential' }, home);
+    const full = cacheOf({ [home]: { session: 97 }, [sandboxDirFor('second', home)]: { session: 60 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage: full }).id).toBe('second');
+    // Old but still proving it: usage cannot fall before the reset.
+    const old = cacheOf({ [home]: { session: 97, ageMs: 2 * 3_600_000 }, [sandboxDirFor('second', home)]: { session: 60 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage: old }).id).toBe('second');
+    // Room on the top account: the order decides, not the percentages.
+    const room = cacheOf({ [home]: { session: 80 }, [sandboxDirFor('second', home)]: { session: 5 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage: room }).id).toBe('first');
+  });
+
+  // Same day: with the top account refused, the next one's cache was older than an hour, so the
+  // pick was "unmeasured" — and an unmeasured pick fell back to the REFUSED top account.
+  it('sequential: a refused top account is passed over even when the next has no current reading', () => {
+    addAccounts();
+    setSwitchPolicy({ strategy: 'sequential' }, home);
+    recordAccountRejection('first', { window: 'session', resetsAtMs: NOW.getTime() + 3_600_000, via: 'apiError' }, home, NOW.getTime());
+    const readUsage = cacheOf({ [home]: { session: 40 }, [sandboxDirFor('second', home)]: { session: 15, ageMs: 2 * 3_600_000 } });
+    expect(chatSpawnAccount({ home, now: NOW.getTime(), readUsage }).id).toBe('second');
   });
 });
 

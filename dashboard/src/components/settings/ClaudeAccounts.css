@@ -30,7 +30,8 @@
   transition: border-color 120ms ease, opacity 120ms ease, background 120ms ease;
 }
 .dc-acct.is-stale { border-color: var(--color-warning); }
-/* The top row is the one new sessions start on — say it in the frame, not only in a chip. */
+/* The row a new chat opens on (the server's decision, not always the top) — said in the frame
+   as well as in its chip, so the two can never point at different rows. */
 .dc-acct.is-top { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
 .dc-acct.is-dragging { opacity: 0.45; }
 .dc-acct:hover { background: var(--color-surface-raised, var(--color-surface)); }
@@ -77,9 +78,17 @@
   white-space: nowrap;
 }
 
-.dc-acct-tag--top {
+.dc-acct-tag.dc-acct-tag--top {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   color: var(--color-accent);
+}
+
+/* The API's refusal, in words — a state of the account, so it reads as a warning, not a label.
+   Both modifiers name the base class too: the base `.dc-acct-tag` rule sits further down this
+   file and would otherwise repaint them grey. */
+.dc-acct-tag.dc-acct-tag--refused {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
 }
 
 .dc-acct-side {

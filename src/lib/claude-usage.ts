@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { assertConfinedConfigDir } from './claude-accounts.js';
+import { mergeUsageReadings, readUsageMeter } from './claude-usage-meter.js';
 
 /**
  * Claude Code's own cached ACCOUNT usage — the 5-hour session cap and the weekly cap —
@@ -208,6 +209,14 @@ function toWire(key: UsageLimitWire['key'], c: Candidate): UsageLimitWire | null
 export function readUsageLimits(home: string = homedir()): UsageLimitsResponse {
   // Repeated here on purpose — see note 2 in the header. A directory that is neither the real
   // HOME nor an account sandbox never gets read, whatever the caller believed.
+  const dir = assertConfinedConfigDir(home);
+  // The CLI's cache is rewritten at most every five minutes and only on demand; every turn this
+  // app runs states the account's usage exactly (claude-usage-meter.ts). Newest window wins.
+  return mergeUsageReadings(readCliUsageCache(dir), readUsageMeter(dir));
+}
+
+/** The CLI's own cache alone — what `readUsageLimits` was before the per-turn meter joined it. */
+export function readCliUsageCache(home: string = homedir()): UsageLimitsResponse {
   const blob = readJsonSafe(join(assertConfinedConfigDir(home), '.claude.json'));
   const cached = asRecord(blob?.cachedUsageUtilization);
   if (!cached) return { limits: [], fetchedAtMs: null };

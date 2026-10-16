@@ -788,3 +788,86 @@ describe('the strategy is opt-in — every caller written before it behaves exac
     expect(explicit.accountId).toBe(bare.accountId);
   });
 });
+
+/**
+ * A NEW chat under `sequential` passes over an account its reading PROVES full. Reported
+ * 2026-10-16: a chat opened at 18:45 on a team account whose cache showed 98% and was refused
+ * at 18:52, then moved carrying everything it had read. Off by default: a RUNNING session still
+ * drains its window to the last turn, which is the mode's whole promise.
+ */
+describe('`skipProvenFull` — where a new chat opens under `sequential`', () => {
+  const S = { ...T, strategy: 'sequential' as const, orderedIds: ['first', 'second', 'third'] };
+
+  it('skips a proven-full account and names why, then follows the list', () => {
+    const r = chooseAccount([reading('first', 98, 40), reading('second', 50, 20), reading('third', 1, 1)], { ...S, skipProvenFull: true });
+    expect(r.accountId).toBe('second');
+    expect(r.rejected).toContainEqual({ id: 'first', why: 'session usage is at 98%' });
+  });
+
+  it('a full WEEK counts too', () => {
+    const r = chooseAccount([reading('first', 10, 95), reading('second', 50, 20)], { ...S, skipProvenFull: true });
+    expect(r.accountId).toBe('second');
+    expect(r.rejected).toContainEqual({ id: 'first', why: 'weekly usage is at 95%' });
+  });
+
+  it('a window that has already reset proves nothing, so the top account serves', () => {
+    const r = chooseAccount(
+      [reading('first', 98, 40, { sessionResetsAt: NOW - HOUR }), reading('second', 50, 20)],
+      { ...S, skipProvenFull: true },
+    );
+    expect(r.accountId).toBe('first');
+  });
+
+  it('without it, `sequential` still reads no percentage at all', () => {
+    expect(chooseAccount([reading('first', 98, 40), reading('second', 50, 20)], S).accountId).toBe('first');
+  });
+});
+
+/**
+ * A conversation moving with a large context stays in its ORGANIZATION when it can. Measured
+ * 2026-10-16: a 120k-token chat moved between two accounts of one organization read all 120k
+ * from cache on its first request there. Across organizations that read is uncached.
+ */
+describe('`keepOrg` — a big conversation moves where its cache is', () => {
+  const orgOf = { personal: 'org-a', teamA: 'org-b', teamB: 'org-b' };
+
+  it('sequential: the same-organization account wins over a higher one in another', () => {
+    const S = { ...T, strategy: 'sequential' as const, orderedIds: ['personal', 'teamA', 'teamB'] };
+    const r = chooseAccount(
+      [reading('personal', 5, 5), { id: 'teamA', problem: 'unknown' }, reading('teamB', 30, 30)],
+      { ...S, currentId: 'teamA', keepOrg: 'org-b', orgOf, rejectedUntil: { teamA: { until: NOW + HOUR } } },
+    );
+    expect(r.accountId).toBe('teamB');
+    // Without it the list order decides, exactly as before.
+    const plain = chooseAccount(
+      [reading('personal', 5, 5), reading('teamB', 30, 30)],
+      { ...S, currentId: 'teamA' },
+    );
+    expect(plain.accountId).toBe('personal');
+  });
+
+  it('score: the same organization outranks a better score', () => {
+    const r = chooseAccount(
+      [reading('personal', 1, 1), reading('teamB', 40, 40)],
+      { ...T, orderedIds: ['personal', 'teamA', 'teamB'], keepOrg: 'org-b', orgOf },
+    );
+    expect(r.accountId).toBe('teamB');
+  });
+
+  it('score: but never a THIN one — an account with no room would only move the chat again', () => {
+    const r = chooseAccount(
+      [reading('personal', 1, 1), reading('teamB', 85, 40)],
+      { ...T, orderedIds: ['personal', 'teamA', 'teamB'], keepOrg: 'org-b', orgOf },
+    );
+    expect(r.accountId).toBe('personal');
+  });
+
+  it('no account in the organization can serve: it moves out rather than staying stuck', () => {
+    const S = { ...T, strategy: 'sequential' as const, orderedIds: ['personal', 'teamA'] };
+    const r = chooseAccount(
+      [reading('personal', 5, 5), { id: 'teamA', problem: 'unknown' }],
+      { ...S, keepOrg: 'org-b', orgOf, rejectedUntil: { teamA: { until: NOW + HOUR } } },
+    );
+    expect(r.accountId).toBe('personal');
+  });
+});

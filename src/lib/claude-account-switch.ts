@@ -145,6 +145,29 @@ export interface ChooseOptions {
   weights?: SwitchWeights;
   /** Clock seam, so an expiring rejection is a unit test rather than a wait. */
   now?: number;
+  /**
+   * `sequential` only: also pass over an account whose reading PROVES it past the threshold
+   * (`provenPastThreshold` — a window still ahead of its reset already at or over it).
+   *
+   * For a NEW session, not a running one. Draining in order means the last points of a window
+   * are spent by the conversation already on it; a fresh chat opened there is refused within
+   * minutes and then has to move carrying everything it has read since. Observed 2026-10-16:
+   * a chat opened at 18:45 on a team account its own cache showed at 98%, refused at 18:52.
+   */
+  skipProvenFull?: boolean;
+  /**
+   * Prefer accounts of this ORGANIZATION (`orgOf` maps id → organization uuid), ahead of the
+   * score or the list order. Set by a conversation that is moving with a large context.
+   *
+   * The prompt cache belongs to the organization, not the account: measured 2026-10-16, a
+   * 120k-token conversation moved between two accounts of the same organization and its first
+   * request on the new one read all 120k from cache. Moved to another organization, the same
+   * request re-reads the whole context uncached — and that costs the new account's quota a
+   * full re-read at the moment it is least able to afford one. Eligibility does not change;
+   * only the order among the eligible does.
+   */
+  keepOrg?: string | null;
+  orgOf?: Record<string, string>;
 }
 
 export interface ChooseResult {
@@ -404,6 +427,14 @@ function chooseSequential(readings: AccountReading[], opts: ChooseOptions): Choo
       rejected.push({ id: reading.id, why: 'a usage window is already locked' });
       continue;
     }
+    if (opts.skipProvenFull && provenPastThreshold(reading.limits, opts.threshold, now)) {
+      const full = w.session !== null && w.session.raw >= opts.threshold ? w.session : w.weekly;
+      rejected.push({
+        id: reading.id,
+        why: `${full === w.session ? 'session' : 'weekly'} usage is at ${Math.round(full?.raw ?? opts.threshold)}%`,
+      });
+      continue;
+    }
     // Only MEASURED numbers reach the banner. This mode consults no percentage anyway, so a
     // window that has rolled over simply has nothing to say about the account it labels.
     eligible.push({
@@ -422,7 +453,10 @@ function chooseSequential(readings: AccountReading[], opts: ChooseOptions): Choo
   // whenever the current account is the highest-priority one still standing; preferring it
   // beyond that would strand the session below the top of the list after a window reopened,
   // which is the opposite of draining in order.
-  eligible.sort((a, b) => (position(a.id) - position(b.id)) || a.id.localeCompare(b.id));
+  // A conversation carrying a large context stays inside its organization when it can (see
+  // `keepOrg`); within that, the order is still the user's.
+  const away = (id: string) => (opts.keepOrg && opts.orgOf?.[id] !== opts.keepOrg ? 1 : 0);
+  eligible.sort((a, b) => (away(a.id) - away(b.id)) || (position(a.id) - position(b.id)) || a.id.localeCompare(b.id));
   const pick = eligible[0]!;
   return {
     accountId: pick.id,
@@ -557,7 +591,8 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
     // Same tie-break as below, minus the percent nobody has: stay put if we can, else the
     // preferred account, else the user's own order. Deterministic, never a coin flip.
     const rank = (id: string) => (id === opts.currentId ? 0 : id === opts.preferredId ? 1 : 2);
-    lastResort.sort((a, b) => (rank(a) - rank(b)) || (position(a) - position(b)) || a.localeCompare(b));
+    const away = (id: string) => (opts.keepOrg && opts.orgOf?.[id] !== opts.keepOrg ? 1 : 0);
+    lastResort.sort((a, b) => (away(a) - away(b)) || (rank(a) - rank(b)) || (position(a) - position(b)) || a.localeCompare(b));
     const pick = lastResort[0]!;
     for (const id of lastResort.slice(1)) {
       rejected.push({ id, why: 'its usage could not be read either' });
@@ -594,8 +629,13 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
   // Then the lowest SCORE wins, and on a tie the account already serving, then the preferred
   // one, then whichever the user put higher in Settings — so a tie never moves a session for
   // nothing, never coin-flips, and never overrules the order the user chose.
+  // `keepOrg` sits after `thin` and before everything else: arriving in the same organization
+  // saves a full uncached re-read of the conversation, which outweighs a better score — but
+  // not an account with no room, which would only move the conversation a second time.
+  const away = (id: string) => (opts.keepOrg && opts.orgOf?.[id] !== opts.keepOrg ? 1 : 0);
   candidates.sort((a, b) => {
     if (a.thin !== b.thin) return a.thin - b.thin;
+    if (away(a.id) !== away(b.id)) return away(a.id) - away(b.id);
     if (a.partial !== b.partial) return a.partial - b.partial;
     if (a.score !== b.score) return a.score - b.score;
     const rank = (id: string) => (id === opts.currentId ? 0 : id === opts.preferredId ? 1 : 2);
