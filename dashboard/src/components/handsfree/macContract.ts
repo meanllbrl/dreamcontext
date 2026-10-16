@@ -26,6 +26,14 @@ export type MacPhase = 'off' | 'starting' | 'on' | 'stopping';
 
 export interface MacBattery { percent: number | null; charging: boolean }
 
+/** macOS thermalState, 0..3. */
+export const MAC_THERMAL_STATES = ['nominal', 'fair', 'serious', 'critical'] as const;
+export type MacThermalState = typeof MAC_THERMAL_STATES[number];
+export const MAC_THERMAL_POLL_MS = 20_000;
+export const MAC_THERMAL_RELEASE_TICKS = 6;
+/** The last reading (null before the first / unreadable) and how many processes are slowed now. */
+export interface MacThermal { state: MacThermalState | null; slowed: number }
+
 export interface MacStatus {
   phase: MacPhase;
   setup: { sudoers: boolean; passphrase: boolean };
@@ -39,11 +47,12 @@ export interface MacStatus {
   lastError: string | null;
   /** The projects this run exposes (chosen at start); empty while off. */
   exposedVaults: string[];
+  thermal: MacThermal;
 }
 
 export interface MacDevice { id: string; label: string; createdAt: string }
 
-export interface MacPhonePayload { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean }
+export interface MacPhonePayload { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean; thermal: MacThermal }
 
 export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle' }
 

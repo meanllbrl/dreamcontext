@@ -61,6 +61,7 @@ function fakeSession() {
     makeSupervisor: (_o, e) => ({ pid: 1, url: 'https://a-b.trycloudflare.com', start: async () => { e.onUrl('https://a-b.trycloudflare.com', false); return { child: new EventEmitter() as never, url: 'https://a-b.trycloudflare.com', mode: 'quick' as const }; }, stop: async () => {} }),
     probe: async () => true,
     sudoersInstalled: () => true, installSudoers: async () => 'ok',
+    readThermal: async () => 'nominal',   // never slow the machine's real processes
   });
 }
 

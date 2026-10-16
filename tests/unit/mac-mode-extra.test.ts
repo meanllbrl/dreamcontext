@@ -86,7 +86,7 @@ describe('AC19: uninstall removes the sudoers drop-in and the Mac dir', () => {
         home, platform: 'darwin', auth: () => auth as never, hashPassphrase: (p) => hashPassphrase(p), generatePassphrase,
         startListener: async () => ({ port: 1 }), stopListener: async () => {}, setPublicOrigin: () => {}, setProbeNonce: () => {}, setPhoneSource: () => {},
         releasePhoneSessions: () => 0, notify: () => {},
-        sudoersInstalled: () => installed, removeSudoers,
+        sudoersInstalled: () => installed, removeSudoers, readThermal: async () => 'nominal',
       });
       await s.uninstall();
       expect(removeSudoers).toHaveBeenCalledTimes(1);

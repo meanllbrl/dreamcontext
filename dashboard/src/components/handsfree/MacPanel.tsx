@@ -155,6 +155,9 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
               {status.sleepAllowed ? t('handsfree.mac.sleepAllowed') : t('handsfree.mac.power')}
               {status.battery.percent !== null && <> · {fill(t('handsfree.mac.battery'), { pct: String(status.battery.percent) })}</>}
             </p>
+            {(status.thermal?.slowed ?? 0) > 0 && (
+              <p className="hf-quiet" data-testid="hf-mac-thermal">{fill(t('handsfree.mac.thermalSlowed'), { n: String(status.thermal.slowed) })}</p>
+            )}
           </div>
 
           <div className="hf-mac-devices" data-testid="hf-mac-devices">

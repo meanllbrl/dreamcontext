@@ -96,6 +96,13 @@ export function showSecret(io: MacCliIo, label: string, value: string | null | u
   return true;
 }
 
+/** `thermal: nominal`, `thermal: serious, 6 slowed`, or `thermal: not read yet`. */
+export function thermalLine(s: Pick<MacStatus, 'thermal'>): string {
+  const th = s.thermal ?? { state: null, slowed: 0 };
+  if (!th.state) return th.slowed > 0 ? `thermal: not read, ${th.slowed} slowed` : 'thermal: not read yet';
+  return th.slowed > 0 ? `thermal: ${th.state}, ${th.slowed} slowed` : `thermal: ${th.state}`;
+}
+
 export function printStatus(s: MacStatus, io: MacCliIo): void {
   io.out(`  Mac mode: ${s.phase}${s.url ? `  ${s.url}` : ''}`);
   io.out(`  setup: sleep permission ${s.setup.sudoers ? 'installed' : 'missing'}, passphrase ${s.setup.passphrase ? 'set' : 'not set'}`);
@@ -104,6 +111,7 @@ export function printStatus(s: MacStatus, io: MacCliIo): void {
   if (s.phase === 'on') {
     io.out(`  battery: ${s.battery.percent ?? '?'}%${s.battery.charging ? ' (charging)' : ''}${s.sleepAllowed ? ' — sleep allowed again (battery low)' : ''}`);
     io.out(`  signed-in phones: ${s.deviceCount}`);
+    io.out(`  ${thermalLine(s)}`);
   }
   if (s.lastError) io.out(`  last error: ${s.lastError}`);
 }

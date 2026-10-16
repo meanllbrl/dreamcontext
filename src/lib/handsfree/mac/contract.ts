@@ -69,6 +69,8 @@ export interface MacStatus {
   /** The projects this run exposes (registered names, chosen at start): the phone sees and
    *  reaches only these. Empty while off. */
   exposedVaults: string[];
+  /** The thermal governor: the last reading and how many processes it slows now. */
+  thermal: MacThermal;
 }
 
 /** One signed-in phone as the sheet lists it (never the session id). */
@@ -84,6 +86,7 @@ export interface MacPhonePayload {
   mode: 'mac';
   battery: MacBattery;
   sleepAllowed: boolean;
+  thermal: MacThermal;
 }
 
 /** GET /api/agent/live-chats — names, never paths. */
@@ -128,6 +131,23 @@ export type MacErrorCode = typeof MAC_ERROR_CODES[number];
 /** Discharging and at or below this → sleep is allowed again (disablesleep 0), no re-arm. */
 export const MAC_BATTERY_FLOOR_PERCENT = 15;
 export const MAC_BATTERY_POLL_MS = 60_000;
+
+// ─── Thermal governor ───────────────────────────────────────────────────────
+
+/** macOS `NSProcessInfo.thermalState`, 0..3. */
+export const MAC_THERMAL_STATES = ['nominal', 'fair', 'serious', 'critical'] as const;
+export type MacThermalState = typeof MAC_THERMAL_STATES[number];
+/** How often the governor reads the thermal state. */
+export const MAC_THERMAL_POLL_MS = 20_000;
+/** Consecutive nominal (or unreadable) readings before every slowed process is released: 2 min. */
+export const MAC_THERMAL_RELEASE_TICKS = 6;
+
+export interface MacThermal {
+  /** The last reading; null before the first one or when it could not be read. */
+  state: MacThermalState | null;
+  /** Processes slowed right now (clamped roots + inherited children). */
+  slowed: number;
+}
 
 // ─── The reachability probe ─────────────────────────────────────────────────
 
