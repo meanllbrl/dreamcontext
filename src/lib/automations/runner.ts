@@ -11,6 +11,7 @@ import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
+import { killPortable } from '../proc.js';
 import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox, ensureSharedMcpConfig } from '../claude-account-sandbox.js';
@@ -1133,7 +1134,7 @@ export async function cutDetachedRunsUnder(roots: string[]): Promise<number> {
 
 function signalAlive(target: number): boolean {
   try {
-    process.kill(target, 0);
+    killPortable(target, 0);
     return true;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'EPERM';
@@ -1210,7 +1211,7 @@ export async function cutProcessGroups(leaders: readonly number[], graceMs = CUT
   ])];
   const signal = (sig: NodeJS.Signals): void => {
     for (const t of targets) {
-      try { process.kill(t, sig); } catch { /* ESRCH: already gone */ }
+      try { killPortable(t, sig); } catch { /* ESRCH: already gone */ }
     }
   };
   const allGone = (): boolean => !targets.some(signalAlive);
@@ -1307,7 +1308,7 @@ export interface ClaudeExecution {
  */
 export async function executeClaudeDetached(args: string[], opts: ClaudeExecOptions): Promise<ClaudeExecution> {
   const spawnFn: SpawnImpl = opts.spawnImpl ?? nodeSpawn;
-  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
+  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const logFn = opts.log ?? (() => {});
   const nowFn = opts.now ?? (() => new Date());
 
@@ -1329,15 +1330,23 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     // was started from the app, whose environment has no login-shell PATH — see cli-path.ts.
     env: { ...process.env, PATH: cliAwarePath(claudeAwarePath()), ...(opts.env ?? {}) },
     stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    // Windows has no process groups to lead, and a DETACHED_PROCESS child has no console: every
+    // hook and tool claude starts would open its own visible one. Not detached, the child gets a
+    // hidden console (windowsHide, src/lib/proc.ts) its tree inherits, and the `-pid` kills below
+    // become `taskkill /T` (killPortable), which reaches that tree.
+    detached: process.platform !== 'win32',
   };
   // `--mcp-config` is variadic: it must stay the LAST argv element or it swallows what follows.
   const mcpConfig = opts.sharedMcpHome && opts.env?.CLAUDE_CONFIG_DIR ? ensureSharedMcpConfig(opts.sharedMcpHome) : null;
   const argv = mcpConfig ? [...args, '--mcp-config', mcpConfig] : args;
   const claudeBin = findClaudeBin();
+  // Windows has no login shell to fall back to: with no resolved binary the bare name is tried and
+  // its ENOENT is reported below, instead of a /bin/zsh that does not exist.
   const child: ChildProcess = claudeBin
     ? spawnFn(claudeBin, argv, spawnOptions)
-    : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...argv], spawnOptions);
+    : process.platform === 'win32'
+      ? spawnFn('claude', argv, spawnOptions)
+      : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...argv], spawnOptions);
   // Async 'error' events (agent-terminal.ts:803) must always have a listener
   // even though spawn-failure detection below is synchronous — an unhandled
   // 'error' event crashes the whole Node process.
@@ -1346,12 +1355,19 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
   const startedAt = nowFn();
 
   if (child.pid == null) {
+    // The async ENOENT has not fired yet, so say why from what is known: on Windows the only
+    // way here is a `claude` that findClaudeBin could not locate. Logged AND returned, so the
+    // run's own error line carries it (runAutomation, step 8), not just a silent failure.
+    const why = process.platform === 'win32' && !claudeBin
+      ? 'claude was not found: install Claude Code (npm i -g @anthropic-ai/claude-code, or winget install Anthropic.ClaudeCode) and try again'
+      : '';
+    if (why) logFn(why);
     return {
       spawned: false,
       timedOut: false,
       exitCode: null,
       stdout: '',
-      stderrTail: '',
+      stderrTail: why,
       startedAt,
       finishedAt: nowFn(),
       result: null,
@@ -1551,22 +1567,17 @@ export const OUTPUT_WRITE_FAILURE_REASON = 'could not write output file — see 
  * (`ok`/`failed`/`timeout`/`blocked`/`deferred`/`orphaned`) is a RESOLVED
  * RunOutcome, so a caller looping over many automations (`tick`) never needs
  * a try/catch around a normal run. It DOES reject (throw, for an async
- * function) on the two precondition violations below — a wrong platform or a
- * broken `host` contract are programmer errors, not run outcomes.
+ * function) on the precondition violation below — a broken `host` contract is
+ * a programmer error, not a run outcome.
  */
 export async function runAutomation(contextRoot: string, slug: string, opts: RunOptions = {}): Promise<RunOutcome> {
-  if (process.platform === 'win32') {
-    throw new AutomationError(
-      'Automations require POSIX process-group signalling (detached spawn + negative-PID kill); Windows is not supported.',
-    );
-  }
   if (opts.host === 'server' && typeof opts.registerChild !== 'function') {
     throw new AutomationError('host:"server" requires registerChild.');
   }
 
   const nowFn = opts.now ?? (() => new Date());
   const spawnFn: SpawnImpl = opts.spawnImpl ?? nodeSpawn;
-  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
+  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const logFn = opts.log ?? (() => {});
   // `opts.home` is threaded through so a test that does NOT inject `notify`
   // still cannot reach into the developer's real ~/.dreamcontext.
@@ -2350,7 +2361,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     if (!execution.spawned) {
       return await finalize({
         status: 'failed',
-        error: 'spawn failed — the claude binary could not be launched',
+        error: 'spawn failed — the claude binary could not be launched' + (execution.stderrTail ? ` (${execution.stderrTail})` : ''),
         outputPath: null,
         exitCode: null,
         sessionId: null,
@@ -2680,7 +2691,7 @@ export function killRunGroup(
   slug: string,
   opts?: { killImpl?: KillImpl; nowMs?: number; force?: boolean; log?: (l: string) => void },
 ): KillRunResult {
-  const killFn: KillImpl = opts?.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
+  const killFn: KillImpl = opts?.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const nowMs = opts?.nowMs ?? Date.now();
   const logFn = opts?.log ?? (() => {});
 

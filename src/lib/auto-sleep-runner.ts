@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { killPortable } from './proc.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import { executeClaudeDetached, sanitizeAutomationPrompt } from './automations/runner.js';
 import { notifyViaBundle } from './automations/notifier.js';
@@ -191,7 +192,7 @@ export async function runAutoSleep(
               const stillOurs = mine?.pid === child.pid && readEpoch(contextRoot) === ownedEpoch;
               if (!stillOurs) {
                 patchAutoSleepSidecar(contextRoot, { status: 'aborted', finishedAt: new Date(tick).toISOString(), error: 'ownership lost across a machine suspend' });
-                try { process.kill(-(child.pid as number), 'SIGKILL'); } catch { /* already gone */ }
+                try { killPortable(-(child.pid as number), 'SIGKILL'); } catch { /* already gone */ }
                 return;
               }
             }
@@ -272,7 +273,7 @@ export function cancelAutoSleep(
   contextRoot: string,
   opts: { killImpl?: (pid: number, sig: NodeJS.Signals | number) => void } = {},
 ): CancelAutoSleepResult {
-  const kill = opts.killImpl ?? ((pid: number, sig: NodeJS.Signals | number) => { process.kill(pid, sig); });
+  const kill = opts.killImpl ?? ((pid: number, sig: NodeJS.Signals | number) => { killPortable(pid, sig as NodeJS.Signals | 0); });
   const sidecar = readAutoSleepSidecar(contextRoot);
   if (!sidecar) return { found: false, killed: false, pgid: null, refusedReason: null };
   if (sidecar.status !== 'running') {

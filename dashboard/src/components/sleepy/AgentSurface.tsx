@@ -59,7 +59,7 @@ import { useI18n } from '../../context/I18nContext';
 import { ReadinessChecklist } from '../../pages/onboarding/ReadinessChecklist';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
-import { dropScratch } from './chat/composerScratch';
+import { dropScratch, stageUpload } from './chat/composerScratch';
 import { postToSession } from './chat/postToSession';
 import { parseChatActions } from './chat/chatActions';
 import { cleanTabTitle } from '../../lib/chatViewSpec';
@@ -3428,8 +3428,20 @@ export function AgentSurface() {
   // hides the OS path. Read the bytes → POST to the loopback server (writes a real file
   // under the vault temp dir) → inject that absolute path into the target PTY so Claude
   // can read the file (image, code, text, PDF, …). Binary can't go through `api.post`
-  // (JSON-only), so use raw fetch.
+  // (JSON-only), so use raw fetch. A CHAT pane takes the drop as composer chips instead (a
+  // thumbnail for an image, exactly like a paste) — raw path text in the draft read as
+  // "the photo didn't attach" (owner report 10-16).
   const deliverDrops = useCallback(async (files: File[], sid: string) => {
+    const s0 = sessions.current.get(sid);
+    if (s0?.kind === 'chat') {
+      const target = s0 as ChatSession;
+      const convId = target.scratchId || target.claudeId;
+      if (convId) {
+        for (const file of files) stageUpload(convId, file, (f) => uploadAgentFile(vault, f, f.name));
+        target.focus();
+        return;
+      }
+    }
     for (const file of files) {
       const path = await uploadAgentFile(vault, file, file.name);
       // Inject the path AND land keyboard focus on this session — a drop is async

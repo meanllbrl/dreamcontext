@@ -56,7 +56,7 @@ import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
-import { autoUpdateHandsfreeBlock, maybeTriggerAppUpdate, readAppManifest } from './app.js';
+import { autoUpdateHandsfreeBlock, desktopAppPresent, maybeTriggerAppUpdate, readAppManifest } from './app.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
@@ -1657,11 +1657,11 @@ function spawnDashboard(port: number): void {
  * hook and the whole session — the same shape as `spawnDashboard` above, for the
  * same reason: the hook must never await the run.
  *
- * Windows is skipped deliberately: the cancel path relies on POSIX process
- * groups, exactly as the automations runner does.
+ * Windows runs it too: this child is our own CLI (its spawns are hidden, see
+ * src/lib/proc.ts), the cycle's claude is hidden and not detached there, and the cancel path
+ * kills the tree through `killPortable` instead of a POSIX process group.
  */
 function spawnAutoSleep(): void {
-  if (process.platform === 'win32') return;
   const cliEntry = process.argv[1];
   if (!cliEntry) return;
   // THE BACKGROUND CYCLE IS TAB-LESS — it must not inherit the identity of the tab
@@ -2999,7 +2999,7 @@ export function registerHookCommand(program: Command): void {
       // If the desktop app is installed, it owns the dashboard/launcher surface —
       // auto-opening a browser tab here would be redundant and confusing. Skip
       // entirely (the user can still run `dreamcontext dashboard` by hand).
-      if (readAppManifest() !== null) process.exit(0);
+      if (desktopAppPresent(readAppManifest())) process.exit(0);
 
       // Only for context-managed projects — nothing to show otherwise.
       const root = resolveContextRoot();

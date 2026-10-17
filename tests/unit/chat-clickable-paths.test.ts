@@ -7,7 +7,7 @@
  * So most of these pin what must NOT become clickable.
  */
 import { describe, it, expect } from 'vitest';
-import { looksLikePath } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
+import { looksLikePath, normalizeDrivePath, splitUserMedia } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 describe('looksLikePath — the way an answer actually names files', () => {
   it('accepts a project-relative source path', () => {
@@ -53,5 +53,43 @@ describe('looksLikePath — what must stay inert', () => {
 
   it('rejects an extension too long to be one', () => {
     expect(looksLikePath('a/b.thisisnotanextension')).toBe(false);
+  });
+});
+
+describe('looksLikePath — Windows absolute paths', () => {
+  it('accepts a drive path to a file or a folder, in either separator', () => {
+    expect(looksLikePath('C:/Users/berda/Downloads/croqi-studios/')).toBe(true);
+    expect(looksLikePath('C:/Users/berda/Downloads/croqi-studios/00-tum-gezinti-video.webm')).toBe(true);
+    expect(looksLikePath(String.raw`C:\Users\berda\Desktop\shot.png`)).toBe(true);
+    expect(looksLikePath(String.raw`d:\out\ `.trim())).toBe(true);
+  });
+
+  it('accepts the spaces and non-ASCII names Windows folders carry', () => {
+    expect(looksLikePath(String.raw`C:\Program Files\dreamcontext\app.log`)).toBe(true);
+    expect(looksLikePath('C:/Users/me/Masaüstü/çizim.svg')).toBe(true);
+  });
+
+  it('still rejects a drive path with no extension and no trailing separator', () => {
+    expect(looksLikePath('C:/Windows/System32/cmd')).toBe(false);
+    expect(looksLikePath('C:')).toBe(false);
+  });
+});
+
+describe('normalizeDrivePath', () => {
+  it('turns backslashes into forward slashes and undoes marked\'s encoding', () => {
+    expect(normalizeDrivePath(String.raw`C:\Users\me\a.png`)).toBe('C:/Users/me/a.png');
+    expect(normalizeDrivePath('C:%5CUsers%5Cme%5Ca.png')).toBe('C:/Users/me/a.png');
+    expect(normalizeDrivePath('C:/Users/me/My%20shot.png')).toBe('C:/Users/me/My shot.png');
+  });
+
+  it('leaves every non-drive reference exactly as written', () => {
+    expect(normalizeDrivePath(String.raw`src/a\b.ts`)).toBe(String.raw`src/a\b.ts`);
+    expect(normalizeDrivePath('/Users/me/a%20b.png')).toBe('/Users/me/a%20b.png');
+  });
+});
+
+describe('splitUserMedia — a Windows attachment path', () => {
+  it('draws a trailing drive-path screenshot instead of leaving it as text', () => {
+    expect(splitUserMedia('look at this C:/Users/me/tmp/shot.png')).toEqual({ text: 'look at this', media: ['C:/Users/me/tmp/shot.png'] });
   });
 });

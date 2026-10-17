@@ -6,6 +6,7 @@ import { emitInstance, useApi, useVault } from '../../context/VaultContext';
 import { useKnowledgeList } from '../../hooks/useKnowledge';
 import { useTasks } from '../../hooks/useTasks';
 import { openExternalUrl } from '../../lib/desktop';
+import { revealLabel } from '../../lib/reveal';
 import { externalHref } from '../../lib/externalLinks';
 import { DocumentReader, readerLinkAction } from '../appLink/DocumentReader';
 import { revealPath } from '../sleepy/chat/chatEntities';
@@ -464,7 +465,7 @@ function menuRowLook(item: PanelMenuItem, tx: (key: string, fallback: string) =>
     case 'open-computer':
       return { icon: <ComputerIcon />, label: tx('whiteboard.panel.openOnComputer', 'Open on computer') };
     case 'reveal':
-      return { icon: <FolderIcon />, label: tx('whiteboard.panel.reveal', 'Reveal in Finder') };
+      return { icon: <FolderIcon />, label: tx('whiteboard.panel.reveal', revealLabel()) };
     case 'copy-path':
       return { icon: <CopyIcon />, label: tx('whiteboard.panel.copyPath', 'Copy path') };
   }

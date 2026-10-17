@@ -2146,9 +2146,38 @@ export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>): void 
  */
 const PATH_LIKE_RE = /^(?:\.\/)?(?:[\w.@+-]+\/)+(?:[\w.@+-]+\.[A-Za-z0-9]{1,8}|)$/;
 
+/**
+ * A Windows absolute path — `C:/Users/me/out/`, `C:\Users\me\shot.png`. The drive prefix is
+ * a signal no command or prose carries, so this one admits what the relative rule cannot:
+ * spaces (`C:\Program Files\…`) and non-ASCII names (`Masaüstü`). The same tail rule holds —
+ * a short extension or a trailing separator.
+ */
+const DRIVE_PATH_RE = /^[A-Za-z]:[\\/](?:[^\\/:*?"<>|]+[\\/])*(?:[^\\/:*?"<>|]+\.[A-Za-z0-9]{1,8}|)$/;
+
+/** `C:/…` or `C:\…`, with nothing checked past the prefix. */
+export function isDrivePath(text: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(text);
+}
+
+/**
+ * A drive path in the one spelling every consumer here splits on: forward slashes. Windows
+ * reads both, and the server resolves either, but basename/extension logic in the chat only
+ * knows `/`. Anything else is returned untouched — a backslash is a legal filename character
+ * on macOS and must not be rewritten there.
+ */
+export function normalizeDrivePath(text: string): string {
+  if (!/^[A-Za-z]:/.test(text)) return text;
+  let out = text;
+  // marked percent-encodes a link destination, so `[x](C:\a\b.png)` arrives as `C:%5Ca%5Cb.png`.
+  try { out = decodeURI(out); } catch { /* a stray `%` is just a character in a file name */ }
+  return isDrivePath(out) ? out.replace(/\\/g, '/') : text;
+}
+
 export function looksLikePath(text: string): boolean {
   const t = text.trim();
-  if (!t || t.length > 200 || /\s/.test(t) || t.includes('://')) return false;
+  if (!t || t.length > 200 || t.includes('://')) return false;
+  if (isDrivePath(t)) return DRIVE_PATH_RE.test(t);
+  if (/\s/.test(t)) return false;
   return PATH_LIKE_RE.test(t);
 }
 
@@ -2177,13 +2206,14 @@ export function useClickablePaths(
       if (code.closest('pre')) return;
       const text = (code.textContent ?? '').trim();
       if (!looksLikePath(text)) return;
+      const target = normalizeDrivePath(text);
       code.classList.add('chat-md-path');
       code.setAttribute('role', 'button');
       code.setAttribute('tabindex', '0');
       code.title = `Open ${text}`;
-      code.addEventListener('click', () => onOpenPath(text));
+      code.addEventListener('click', () => onOpenPath(target));
       code.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenPath(text); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenPath(target); }
       });
     });
   }); // every render — see this section's header
@@ -2386,7 +2416,7 @@ export function splitUserBoardRefs(raw: string): { text: string; refs: number } 
 
 export function splitUserMedia(raw: string): UserMedia {
   const tokens = tokenizeQuoted(raw);
-  const isAttachment = (t: Token) => !!inlineMediaKind(t.value) && (t.quoted || t.value.startsWith('/'));
+  const isAttachment = (t: Token) => !!inlineMediaKind(t.value) && (t.quoted || t.value.startsWith('/') || isDrivePath(t.value));
   let cut = tokens.length;
   while (cut > 0 && isAttachment(tokens[cut - 1])) cut -= 1;
   const trailing = tokens.slice(cut);
@@ -2684,7 +2714,7 @@ export function useInlineMedia(
     // `![x](media)` — an <img> that can never load for video/audio, and needs the endpoint
     // rewrite even for images.
     root.querySelectorAll<HTMLImageElement>('img:not([data-chat-media])').forEach((img) => {
-      const path = img.getAttribute('src') ?? '';
+      const path = normalizeDrivePath(img.getAttribute('src') ?? '');
       if (!isLocalRef(path)) return;
       if (!inlineMediaKind(path)) { img.replaceWith(buildPathChip(path, img.getAttribute('alt') ?? '')); return; }
       img.replaceWith(buildMedia(path));
@@ -2703,7 +2733,7 @@ export function useInlineMedia(
     // be reconsidered, leaving a live `<a href="_dream_context/…">` in the transcript. In a
     // window with no back button, following one of those IS the app closing.
     root.querySelectorAll<HTMLAnchorElement>('a:not([data-chat-media])').forEach((a) => {
-      const href = a.getAttribute('href') ?? '';
+      const href = normalizeDrivePath(a.getAttribute('href') ?? '');
       if (!isLocalRef(href)) return;
       if (inlineMediaKind(href)) { a.replaceWith(buildMedia(href)); return; }
       // Kept in place (rather than swapped for `buildPathChip`) so the author's own link text

@@ -138,6 +138,36 @@ export function settleAttachment(convId: string, id: string, path: string | null
   });
 }
 
+const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+/** Upload jobs still running, per conversation — `submit` awaits these so a chip staged a
+ *  moment before ⏎ (a paste, or a drop routed in by AgentSurface) still rides that send. */
+const inflight = new Map<string, Set<Promise<void>>>();
+
+/**
+ * Stage a `File` whose bytes still have to reach disk: an `uploading` chip now (a thumbnail
+ * for an image), settled with the path `upload` resolves. One door for a pasted screenshot
+ * AND a dropped file, so a drop on a chat pane becomes a chip like a paste does instead of
+ * raw path text in the draft (owner report 10-16, Windows).
+ */
+export function stageUpload(convId: string, file: File, upload: (f: File) => Promise<string | null>): void {
+  const id = nextAttachmentId();
+  const name = file.name || 'Pasted image';
+  const isImage = file.type.startsWith('image/') || IMAGE_NAME_RE.test(name);
+  let url: string | undefined;
+  if (isImage) { try { url = URL.createObjectURL(file); } catch { /* no DOM */ } }
+  addAttachments(convId, [{ id, kind: isImage ? 'image' : 'file', name, url, uploading: true }]);
+  const job = upload(file).catch(() => null).then((path) => { settleAttachment(convId, id, path); });
+  const jobs = inflight.get(convId) ?? new Set();
+  inflight.set(convId, jobs);
+  jobs.add(job);
+  void job.finally(() => { jobs.delete(job); if (jobs.size === 0) inflight.delete(convId); });
+}
+
+/** The uploads still running for this conversation (empty in the common case). */
+export function uploadsInFlight(convId: string): Promise<void>[] {
+  return [...(inflight.get(convId) ?? [])];
+}
+
 /** Drop one chip (its ✕), revoking its preview. */
 export function removeAttachment(convId: string, id: string): void {
   const cur = readScratch(convId);
