@@ -31,6 +31,14 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
+// The cloud is Linux and cuts a chat's process GROUP with process.kill(-pgid); this file asserts
+// exactly that. On win32 lib/proc.ts would run a real taskkill against the fake pids below, so
+// hand killPortable back to process.kill here (the assertions are unchanged).
+vi.mock('../../src/lib/proc.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/lib/proc.js')>();
+  return { ...real, killPortable: (pid: number, signal: NodeJS.Signals | 0) => { process.kill(pid, signal); } };
+});
+
 const { startChatSession, tagCloudDeviceSocket, DEVICE_REVOKED_CLOSE } = await import('../../src/server/routes/agent-chat.js');
 const { writeClaudeAccounts } = await import('../../src/lib/claude-accounts.js');
 const { setCloudPhaseSource, setCloudTripRootsSource } = await import('../../src/server/cloud-mode.js');

@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import {
   buildPreamble,
   composePrompt,
+  executeClaudeDetached,
   killRunGroup,
   outputPathFor,
   OUTPUT_WRITE_FAILURE_REASON,
@@ -259,10 +260,15 @@ describe('outputPathFor', () => {
 // ─── runAutomation — gates and dispositions ─────────────────────────────────
 
 describe('runAutomation — preconditions', () => {
-  it('throws on win32 (POSIX-only process-group signalling)', async () => {
+  it('does not refuse win32 (Task Scheduler backend; killPortable replaces the group kill)', async () => {
     const spy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
-    await expect(runAutomation(contextRoot, 'whatever', {})).rejects.toThrow(/Windows is not supported/);
-    spy.mockRestore();
+    try {
+      // No manifest ⇒ the ordinary step-1 outcome, not a thrown platform refusal.
+      const out = await runAutomation(contextRoot, 'whatever', {});
+      expect(out.status).toBe('failed');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('throws when host:"server" is passed without registerChild', async () => {
@@ -1448,5 +1454,33 @@ describe('flow warnings and report targets are surfaced, never absorbed', () => 
     const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
     expect(outcome.status).toBe('ok');
     expect(outcome.outputPath).toContain(join('automations', 'output', 'digest'));
+  });
+});
+
+describe('executeClaudeDetached — win32', () => {
+  it('is not detached (no console-less child), and a missing claude is reported, not silent', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const saved = { PATH: process.env.PATH, APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, USERPROFILE: process.env.USERPROFILE };
+    const empty = mkdtempSync(join(tmpdir(), 'dc-no-claude-'));
+    // findClaudeBin() must come up empty whatever this machine has installed.
+    Object.assign(process.env, { PATH: '', APPDATA: empty, LOCALAPPDATA: empty, USERPROFILE: empty });
+    const seen: Array<{ file: string; detached: unknown }> = [];
+    const spawnImpl = ((file: string, _args: string[], o: { detached?: boolean }) => {
+      seen.push({ file, detached: o.detached });
+      // What node hands back for a missing executable: no pid (the ENOENT arrives later).
+      return Object.assign(new EventEmitter(), { pid: undefined, stdout: null, stderr: null });
+    }) as unknown as SpawnImpl;
+    const lines: string[] = [];
+    try {
+      const out = await executeClaudeDetached(['-p', 'x'], { cwd: empty, home: empty, timeoutMs: 1_000, spawnImpl, log: (l) => lines.push(l) });
+      expect(seen).toEqual([{ file: 'claude', detached: false }]); // bare name, never /bin/zsh
+      expect(out.spawned).toBe(false);
+      expect(out.stderrTail).toMatch(/claude was not found/);
+      expect(lines.some((l) => /claude was not found/.test(l))).toBe(true);
+    } finally {
+      platform.mockRestore();
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 });

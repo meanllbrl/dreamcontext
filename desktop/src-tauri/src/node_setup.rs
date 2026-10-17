@@ -230,7 +230,11 @@ pub(crate) fn node_setup_open_download_page(window: tauri::WebviewWindow) {
     if !ours(&window) {
         return;
     }
-    if let Err(e) = Command::new("/usr/bin/open").arg(DOWNLOAD_PAGE).spawn() {
+    #[cfg(windows)]
+    let opened = Command::new("explorer").arg(DOWNLOAD_PAGE).spawn();
+    #[cfg(not(windows))]
+    let opened = Command::new("/usr/bin/open").arg(DOWNLOAD_PAGE).spawn();
+    if let Err(e) = opened {
         eprintln!("[node-setup] could not open the download page: {e}");
     }
 }

@@ -102,6 +102,9 @@ export type AncestryProbe = (pid: number) => number[] | null;
  *  cycle in a racing `ps` snapshot must not spin. */
 const ANCESTRY_MAX_HOPS = 64;
 
+/** `pid ppid` per line, like `ps -axo pid=,ppid=`. */
+const WIN_PROCESS_TABLE = "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }";
+
 /**
  * The caller's ancestor pids, nearest first (parent, grandparent, …), stopping
  * before pid 1.
@@ -117,11 +120,21 @@ const ANCESTRY_MAX_HOPS = 64;
 export function defaultAncestryProbe(pid: number): number[] | null {
   let out: string;
   try {
-    out = execFileSync('ps', ['-axo', 'pid=,ppid='], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    // Windows has no `ps`: the same `pid ppid` table comes from CIM. Windows never reparents an
+    // orphan, so a dead parent's pid can be reused; the chain must still contain the run's
+    // recorded child pid, so a false admit needs that exact pid reused as an ancestor.
+    out = process.platform === 'win32'
+      ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_PROCESS_TABLE], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 15_000,
+        maxBuffer: 16 * 1024 * 1024,
+      })
+      : execFileSync('ps', ['-axo', 'pid=,ppid='], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        maxBuffer: 16 * 1024 * 1024,
+      });
   } catch {
     return null;
   }

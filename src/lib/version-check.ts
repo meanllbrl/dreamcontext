@@ -337,12 +337,52 @@ export function shouldSuppressCliNudge(
   return now - marker.at < AUTO_UPGRADE_INFLIGHT_MS;
 }
 
+/**
+ * Windows only: a tiny node program that runs `process.argv[1]` through cmd, hidden, and waits.
+ * `spawnSync` with ignored stdio + `windowsHide` gives cmd a console that is itself hidden, and
+ * npm (and its install scripts) inherit THAT one.
+ */
+export const WIN_HIDDEN_RUNNER =
+  "require('child_process').spawnSync(process.argv[1], { stdio: 'ignore', windowsHide: true, shell: true })";
+
+export interface AutoUpgradeLaunch {
+  file: string;
+  args: string[];
+  options: { detached: true; stdio: 'ignore'; shell: boolean; windowsHide?: true };
+}
+
+/**
+ * How the background `npm install -g` is started.
+ *
+ * Off Windows: the command itself, detached, exactly as before.
+ *
+ * Windows: npm is npm.cmd, and since the CVE-2024-27980 hardening Node throws EINVAL on
+ * spawning .cmd files without a shell — so it needs cmd. But a DETACHED child is created with
+ * DETACHED_PROCESS (no console), and the cmd it started would allocate a NEW visible console on
+ * every SessionStart that triggers an upgrade. So the detached child is our own node running
+ * {@link WIN_HIDDEN_RUNNER}, which starts cmd/npm hidden. Args are fixed literals, so
+ * `shell: true` inside the runner is safe.
+ */
+export function autoUpgradeLaunch(
+  cmd: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+  execPath: string = process.execPath,
+): AutoUpgradeLaunch {
+  if (platform !== 'win32') {
+    return { file: cmd, args, options: { detached: true, stdio: 'ignore', shell: false } };
+  }
+  return {
+    file: execPath,
+    args: ['-e', WIN_HIDDEN_RUNNER, [cmd, ...args].join(' ')],
+    options: { detached: true, stdio: 'ignore', shell: false, windowsHide: true },
+  };
+}
+
 /** Default detached spawner: `npm install -g dreamcontext@latest`, fire-and-forget. */
 function defaultSpawner(cmd: string, args: string[]): void {
-  // Windows: npm is npm.cmd, and since the CVE-2024-27980 hardening Node
-  // throws EINVAL on spawning .cmd files without a shell — auto-upgrade
-  // silently never ran there. Args are fixed literals, so shell:true is safe.
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', shell: process.platform === 'win32' });
+  const launch = autoUpgradeLaunch(cmd, args);
+  const child = spawn(launch.file, launch.args, launch.options);
   child.unref();
 }
 

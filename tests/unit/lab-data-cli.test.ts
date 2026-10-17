@@ -80,7 +80,13 @@ beforeEach(() => {
 
 afterEach(() => {
   process.chdir(cwd);
-  rmSync(projectRoot, { recursive: true, force: true });
+  // Windows refuses to delete a directory something still holds for a moment (EPERM; it happens on
+  // main too, with no child process left behind). Temp-dir cleanup must not fail a test there.
+  try {
+    rmSync(projectRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (err) {
+    if (process.platform !== 'win32') throw err;
+  }
 });
 
 describe('lab create --preset funnel-explorer', () => {

@@ -25,6 +25,11 @@
 // of panicking — a Finder double-click must never silently abort.
 
 mod app_link;
+#[cfg(target_os = "macos")]
+mod assistant;
+// Off macOS the notch's commands answer from a stub (no NSPanel there).
+#[cfg(not(target_os = "macos"))]
+#[path = "assistant_stub.rs"]
 mod assistant;
 mod frames;
 mod node_runtime;
@@ -32,6 +37,8 @@ mod node_setup;
 mod page_focus;
 mod splash;
 mod updater;
+#[cfg(windows)]
+mod win;
 
 use std::net::TcpListener;
 use std::path::Path;
@@ -40,16 +47,23 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{
-    AppHandle, Manager, RunEvent, TitleBarStyle,
+    AppHandle, Manager, RunEvent,
     WebviewUrl, WebviewWindowBuilder,
 };
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
+#[cfg(target_os = "macos")]
 use block2::RcBlock;
+#[cfg(target_os = "macos")]
 use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
 use objc2::{msg_send, ClassType};
+#[cfg(target_os = "macos")]
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSModalResponse, NSModalResponseOK,
     NSOpenPanel, NSWindow,
 };
+#[cfg(target_os = "macos")]
 use objc2_foundation::{NSArray, NSString, NSURL};
 
 // ─── Shared state ────────────────────────────────────────────────────────────
@@ -65,7 +79,12 @@ pub(crate) struct DashboardPort(pub(crate) u16);
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Windows: a second launch focuses the running app instead of booting a second server.
+    // The plugin must be registered first.
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| win::focus_existing(app)));
+    let builder = builder
         .plugin(tauri_plugin_shell::init())
         // The native file/folder picker is OUR command (`pick_paths`), not
         // tauri-plugin-dialog. The plugin's rfd backend aborts the whole app when
@@ -104,10 +123,12 @@ pub fn run() {
         // The opening screen's two-key handoff to the Launcher (src/splash.rs).
         .manage(splash::SplashGate::default())
         // The Node setup screen a first run with no usable Node stops at (src/node_setup.rs).
-        .manage(node_setup::NodeSetupState::default())
-        // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
-        // and the Login Item. See src/assistant.rs.
-        .plugin(tauri_nspanel::init())
+        .manage(node_setup::NodeSetupState::default());
+    // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
+    // and the Login Item. See src/assistant.rs.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+    let app = builder
         .plugin(assistant::shortcut_plugin())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -126,10 +147,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
+            // Windows: tell the CLI the desktop app owns the dashboard (src/win.rs).
+            #[cfg(windows)]
+            if let Some(home) = node_runtime::home_dir() {
+                win::write_app_manifest(&home);
+            }
             updater::start(&handle);
             // The opening screen plays while the server boots. A Login Item launch that
             // only seats the notch opens no Launcher, so it gets no splash either.
-            if !notch_only_launch() {
+            if !notch_only_launch() && !background_launch() {
                 splash::open(&handle);
             }
             // Boot OFF the main thread: returning from setup is what starts the run loop,
@@ -224,9 +250,13 @@ fn reap_server(handle: &ChildHandle) {
         let _ = child.wait(); // reap the zombie
     }
 
-    #[cfg(not(unix))]
+    // Windows: no process groups. The server's tree is in a Job Object (src/win.rs); end
+    // the job, then the child itself in case it never made it in.
+    #[cfg(windows)]
     {
+        win::terminate_tree();
         let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -234,6 +264,7 @@ fn reap_server(handle: &ChildHandle) {
 
 /// Shown when AppKit refuses to hand us an open panel. Deliberately actionable:
 /// the picker is retryable, so the user's next click usually works.
+#[cfg(target_os = "macos")]
 const PANEL_UNAVAILABLE: &str =
     "macOS did not return a file picker. Try again — if it keeps failing, restart dreamcontext.";
 
@@ -247,6 +278,7 @@ const PANEL_UNAVAILABLE: &str =
 /// inside a CFRunLoop observer callback where nothing could catch it anyway,
 /// that nil used to abort the whole app the moment the user picked a file.
 /// Typing the return as `Option` turns it back into an ordinary failure.
+#[cfg(target_os = "macos")]
 fn open_panel() -> Option<Retained<NSOpenPanel>> {
     unsafe { msg_send![NSOpenPanel::class(), openPanel] }
 }
@@ -254,12 +286,14 @@ fn open_panel() -> Option<Retained<NSOpenPanel>> {
 /// A fresh `NSAlert`, typed as `Option` for the same reason `open_panel` is:
 /// AppKit constructors are bound as non-null, and a nil here would abort the
 /// whole app under `panic = "abort"` rather than fail the one dialog.
+#[cfg(target_os = "macos")]
 fn new_alert() -> Option<Retained<NSAlert>> {
     unsafe { msg_send![NSAlert::class(), new] }
 }
 
 /// The panel's selected URLs as absolute paths. `-URLs` carries the same non-null
 /// typing as `openPanel`, so it gets the same guard rather than a second abort.
+#[cfg(target_os = "macos")]
 fn panel_paths(panel: &NSOpenPanel) -> Vec<String> {
     let urls: Option<Retained<NSArray<NSURL>>> = unsafe { msg_send![panel, URLs] };
     let Some(urls) = urls else {
@@ -281,6 +315,7 @@ fn panel_paths(panel: &NSOpenPanel) -> Vec<String> {
 /// several vault windows open, "the main window" is a
 /// guess, whereas the invoking window is not. Sheets keep the rest of the app
 /// live, so this never blocks the main thread the way `runModal` would.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn pick_paths(
     window: tauri::WebviewWindow,
@@ -352,6 +387,7 @@ fn quit_app(app: AppHandle) {
 /// checklist is for — it is left behind with the dreamcontext window. A pinned
 /// window also has to join all Spaces (`CanJoinAllSpaces`) and be allowed next to
 /// a full-screen window (`FullScreenAuxiliary`); unpinning clears both again.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 fn set_pinned(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
     use objc2_app_kit::NSWindowCollectionBehavior as B;
@@ -393,6 +429,7 @@ fn set_pinned(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> 
 /// so `confirm` is added before `cancel`. Cancelling — by button, by Escape, or
 /// because the sheet could not be presented — is `false`: a confirmation that
 /// cannot be shown must never read as consent.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn confirm_dialog(
     window: tauri::WebviewWindow,
@@ -455,6 +492,54 @@ async fn confirm_dialog(
         .unwrap_or_else(|| Err("The confirmation closed without an answer.".to_string()))
 }
 
+// ─── The same three commands off macOS ───────────────────────────────────────
+//
+// Same names and arguments, so `generate_handler!` and the dashboard's calls are unchanged.
+
+/// The native picker (IFileDialog via rfd), parented to the invoking window. Same contract
+/// as the macOS one: cancelling is an empty list.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn pick_paths(
+    window: tauri::WebviewWindow,
+    directory: bool,
+    multiple: bool,
+) -> Result<Vec<String>, String> {
+    let dialog = rfd::AsyncFileDialog::new().set_parent(&window);
+    let picked = match (directory, multiple) {
+        (true, true) => dialog.pick_folders().await,
+        (true, false) => dialog.pick_folder().await.map(|f| vec![f]),
+        (false, true) => dialog.pick_files().await,
+        (false, false) => dialog.pick_file().await.map(|f| vec![f]),
+    };
+    Ok(picked
+        .unwrap_or_default()
+        .iter()
+        .map(|f| f.path().to_string_lossy().into_owned())
+        .collect())
+}
+
+/// No native sheet here: the error makes the dashboard draw its own dialog
+/// (`confirmAction` in dashboard/src/lib/desktop.ts), which fails closed like this one.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn confirm_dialog(
+    _title: String,
+    _body: Option<String>,
+    _confirm_label: Option<String>,
+    _cancel_label: Option<String>,
+    _destructive: Option<bool>,
+) -> Result<bool, String> {
+    Err("Native confirmation is macOS-only; the in-app dialog is used.".into())
+}
+
+/// Off macOS there are no Spaces to join: pinning is plain always-on-top.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn set_pinned(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
+    window.set_always_on_top(pinned).map_err(|e| e.to_string())
+}
+
 // ─── Resolution helpers ────────────────────────────────────────────────────
 
 // `node` itself is resolved, and version-checked, in src/node_runtime.rs.
@@ -470,6 +555,7 @@ async fn confirm_dialog(
 /// does NOT read. With `-lc` an nvm-installed `dreamcontext` is invisible, so the
 /// app silently falls back to its STALE bundled dist (the dashboard never updates).
 /// `-ilc` mirrors a real terminal — same fix the capture/chat pipelines already use.
+#[cfg(not(windows))]
 fn find_global_cli() -> Option<String> {
     // Fast path: the path resolved on a previous launch. The interactive login shell
     // below costs ~1s of a cold zshrc (nvm etc.) BEFORE any window exists, and the
@@ -499,7 +585,15 @@ fn find_global_cli() -> Option<String> {
     managed.exists().then(|| managed.to_string_lossy().into_owned())
 }
 
+/// Windows: no login shell to ask. npm's global prefix is `%APPDATA%\npm`, and the entry is
+/// the package's own `dist\index.js` (the `.cmd` shim is not something node can run).
+#[cfg(windows)]
+fn find_global_cli() -> Option<String> {
+    win::global_cli_entry().map(|p| p.to_string_lossy().into_owned())
+}
+
 /// `~/.dreamcontext/desktop-cli-path` — one line, the last shell-resolved CLI path.
+#[cfg(not(windows))]
 fn cli_path_cache_file() -> Option<std::path::PathBuf> {
     let home = std::env::var("HOME").ok()?;
     if home.is_empty() {
@@ -508,6 +602,7 @@ fn cli_path_cache_file() -> Option<std::path::PathBuf> {
     Some(Path::new(&home).join(".dreamcontext").join("desktop-cli-path"))
 }
 
+#[cfg(not(windows))]
 fn read_cli_path_cache() -> Option<String> {
     let file = cli_path_cache_file()?;
     let raw = std::fs::read_to_string(file).ok()?;
@@ -518,6 +613,7 @@ fn read_cli_path_cache() -> Option<String> {
     Some(line.to_string())
 }
 
+#[cfg(not(windows))]
 fn write_cli_path_cache(path: &str) {
     if let Some(file) = cli_path_cache_file() {
         if let Some(dir) = file.parent() {
@@ -544,6 +640,30 @@ fn resolve_cli(app: &AppHandle) -> Result<String, String> {
             return Ok(p);
         }
     }
+    // Windows: the bundled CLI wins unless the global one is STRICTLY newer. The bundled copy
+    // carries this build's Windows fixes; an older global (an npm install from before them)
+    // would start a server whose chat cannot spawn claude. See src/win.rs `prefer_global`.
+    #[cfg(windows)]
+    {
+        let global = find_global_cli();
+        let bundled = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|d| d.join("dist").join("index.js"))
+            .filter(|p| p.exists());
+        let global_newer = win::prefer_global(
+            global.as_deref().and_then(|g| win::cli_version(Path::new(g))).as_deref(),
+            env!("CARGO_PKG_VERSION"),
+        );
+        if let Some(bundled) = bundled.filter(|_| !global_newer) {
+            return Ok(win::plain_path(&bundled.to_string_lossy()));
+        }
+        if let Some(global) = global {
+            return Ok(win::plain_path(&global));
+        }
+    }
+    #[cfg(not(windows))]
     if let Some(global) = find_global_cli() {
         return Ok(global);
     }
@@ -647,15 +767,33 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    // Windows: no console window for node (the app is a GUI process, so one would be
+    // created), and the server's output goes to a log file instead of nowhere. The hidden
+    // console node gets is also what its own children (git, claude, hooks) inherit.
+    node_runtime::no_console(&mut cmd);
+    #[cfg(windows)]
+    if let Some(log) = node_runtime::home_dir().and_then(|h| win::server_log(&h)) {
+        if let Ok(err) = log.try_clone() {
+            cmd.stdout(log).stderr(err);
+        }
+    }
     let child: Child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start the dashboard server with node:\n  {node}\n\n{e}"))?;
 
+    // Windows: the server's whole tree dies with the app, even on a crash (src/win.rs).
+    #[cfg(windows)]
+    win::contain(&child);
     let child_handle: ChildHandle = Arc::new(Mutex::new(Some(child)));
     // Manage the child so the app-exit hook can kill it (no orphan process).
     app.manage(Arc::clone(&child_handle));
 
     // A just-installed Node starts cold (nothing cached yet), so it gets longer to answer.
+    // Windows gets longer still: the first launch after an install waits on Defender scanning
+    // the whole bundled CLI before node can even load it.
+    #[cfg(windows)]
+    let health_timeout = Duration::from_secs(45);
+    #[cfg(not(windows))]
     let health_timeout = Duration::from_secs(if fresh_install { 30 } else { 15 });
     if let Err(e) = poll_health(port, health_timeout) {
         // Tear down the (possibly half-started) child before surfacing the error.
@@ -700,6 +838,13 @@ fn notch_only_launch() -> bool {
     std::env::args().any(|a| a == "--autostart") && assistant::assistant_enabled()
 }
 
+/// A Login Item launch off macOS (no notch to seat): the Launcher boots straight to the
+/// taskbar, minimized and without the splash, so signing in to Windows starts the app
+/// quietly in the background.
+fn background_launch() -> bool {
+    cfg!(not(target_os = "macos")) && std::env::args().any(|a| a == "--autostart")
+}
+
 /// Build the Launcher window (label `main`, no vault pinned) at the dashboard port.
 ///
 /// Idempotent: a `main` that already exists is left as it is. Startup and a link
@@ -709,9 +854,20 @@ pub(crate) fn open_launcher_window(app: &AppHandle, port: u16) -> Result<(), Str
     if app.get_webview_window("main").is_some() {
         return Ok(());
     }
-    launcher_builder(app, port)?
+    let background = background_launch();
+    let w = launcher_builder(app, port)?
+        .visible(!background)
         .build()
         .map_err(|e| format!("Could not create the window: {e}"))?;
+    if background {
+        // Minimize while still hidden, THEN show: tao re-hides a minimized window that has no
+        // visible flag, and showing first would flash it on screen. `SW_SHOW` keeps the
+        // minimized state (an unfocused builder would use SW_SHOWNOACTIVATE, which restores
+        // it), and the last minimize re-asserts it if anything restored the window anyway.
+        let _ = w.minimize();
+        let _ = w.show();
+        let _ = w.minimize();
+    }
 
     Ok(())
 }
@@ -722,7 +878,7 @@ pub(crate) fn launcher_builder(
     app: &AppHandle,
     port: u16,
 ) -> Result<WebviewWindowBuilder<'_, tauri::Wry, AppHandle>, String> {
-    Ok(WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         "main",
         WebviewUrl::External(
@@ -732,11 +888,13 @@ pub(crate) fn launcher_builder(
         ),
     )
     .title("dreamcontext")
-    .inner_size(1280.0, 800.0)
+    .inner_size(1280.0, 800.0);
     // macOS: transparent title bar so the app's own header IS the title bar and
-    // the traffic-light buttons float over it (no stacked double bar).
-    .title_bar_style(TitleBarStyle::Overlay)
-    .hidden_title(true)
+    // the traffic-light buttons float over it (no stacked double bar). Elsewhere the
+    // native title bar stays (the dashboard drops the traffic-light inset there).
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(TitleBarStyle::Overlay).hidden_title(true);
+    Ok(builder
     // Disable Tauri's OS-level drag/drop handler so the webview's own HTML5
     // drag-and-drop (Kanban / Eisenhower task cards) fires. With this left on
     // (the default), the native handler swallows dragover/drop events.

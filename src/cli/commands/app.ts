@@ -142,6 +142,19 @@ export function writeAppManifest(manifest: AppManifest, home: string = homedir()
   writeFileSync(p, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 }
 
+/**
+ * Is the desktop app installed, for the hooks that defer to it (auto-opening a dashboard)?
+ * macOS: any manifest. Windows: the Tauri shell rewrites the manifest on every launch, so a
+ * manifest whose exe is gone means the app was uninstalled and auto-open may resume.
+ */
+export function desktopAppPresent(
+  manifest: AppManifest | null,
+  platform: NodeJS.Platform = process.platform,
+  exists: (p: string) => boolean = existsSync,
+): boolean {
+  return manifest !== null && (platform !== 'win32' || exists(manifest.path));
+}
+
 // ─── Shell helpers (no shell string — arg arrays only) ─────────────────────────
 
 function run(cmd: string, args: string[]): void {

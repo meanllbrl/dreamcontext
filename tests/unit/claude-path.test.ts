@@ -22,6 +22,9 @@ import {
 
 let home = '';
 let realHome: string | undefined;
+// Windows resolves claude from USERPROFILE/APPDATA/LOCALAPPDATA/PATH, so those are sandboxed too.
+const WIN_ENV = ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH'] as const;
+let realWinEnv: Record<string, string | undefined> = {};
 
 /** Create a fake `claude` executable at `<home>/<rel>/claude`, return its dir. */
 function installFakeClaude(rel = '.local/bin'): string {
@@ -37,11 +40,24 @@ beforeEach(() => {
   realHome = process.env.HOME;
   home = mkdtempSync(join(tmpdir(), 'dc-claude-path-'));
   process.env.HOME = home;
+  if (process.platform === 'win32') {
+    realWinEnv = Object.fromEntries(WIN_ENV.map((k) => [k, process.env[k]]));
+    process.env.USERPROFILE = home;
+    process.env.APPDATA = join(home, 'AppData', 'Roaming');
+    process.env.LOCALAPPDATA = join(home, 'AppData', 'Local');
+    process.env.PATH = '';
+  }
 });
 
 afterEach(() => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (process.platform === 'win32') {
+    for (const k of WIN_ENV) {
+      if (realWinEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = realWinEnv[k];
+    }
+  }
   rmSync(home, { recursive: true, force: true });
 });
 

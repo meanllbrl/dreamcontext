@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { isCloud, spawnAsWorker } from '../server/cloud-mode.js';
 import { resolve as resolvePath } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
+import { treeKillRealChild } from './proc.js';
 import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir, sandboxDirFor } from './claude-accounts.js';
 
 /**
@@ -302,6 +303,8 @@ function runCloudProbe(dir: string): Promise<ClaudeAuthStatus> {
 
 /** SIGKILL a detached child's process group (falls back to the child alone). */
 export function killGroup(child: { pid?: number; kill: (sig?: NodeJS.Signals) => boolean }): void {
+  // win32 has no process groups: tree-kill a real child, else fall through to the old path.
+  if (treeKillRealChild(child, 'SIGKILL')) return;
   try {
     if (child.pid) { process.kill(-child.pid, 'SIGKILL'); return; }
   } catch { /* no group: the child alone below */ }

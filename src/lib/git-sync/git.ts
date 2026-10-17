@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, win32 } from 'node:path';
 
 /**
  * Thin, testable git wrapper over `execFileSync` (pattern from
@@ -91,8 +91,30 @@ export interface GitProbe {
   gitRuns(): boolean;
 }
 
-/** The PATH lookup a shell would do, as a pure filesystem walk (no spawn). */
-function resolveOnPath(cmd: string, pathValue: string = process.env.PATH ?? ''): string | null {
+/**
+ * The PATH lookup a shell would do, as a pure filesystem walk (no spawn).
+ *
+ * Windows has no exec bit and no bare `git`: the shell tries the PATHEXT names, so this does too
+ * (`.exe` first, the only one `execFile` can start without a shell), and only checks it is a file.
+ * `platform`/`isFile` are injectable for tests.
+ */
+export function resolveOnPath(
+  cmd: string,
+  pathValue: string = process.env.PATH ?? process.env.Path ?? '',
+  platform: NodeJS.Platform = process.platform,
+  isFile: (p: string) => boolean = (p) => { try { return statSync(p).isFile(); } catch { return false; } },
+): string | null {
+  if (platform === 'win32') {
+    for (const raw of pathValue.split(win32.delimiter)) {
+      const dir = raw.trim().replace(/^"(.*)"$/, '$1');
+      if (!dir) continue;
+      for (const name of [`${cmd}.exe`, `${cmd}.cmd`, `${cmd}.bat`]) {
+        const candidate = win32.join(dir, name);
+        if (isFile(candidate)) return candidate;
+      }
+    }
+    return null;
+  }
   for (const dir of pathValue.split(delimiter)) {
     if (!dir) continue;
     const candidate = join(dir, cmd);

@@ -158,12 +158,21 @@ export function isSkillInstalled(projectRoot: string, name: string): boolean {
 /**
  * Find a package subdirectory by probing 3 candidate depths.
  * Works whether running from dist/lib/ (depth 3) or dist/ (depth 2) or src/lib/.
+ *
+ * The last candidate is `<dist>/<subdir>` itself: `tsup` copies `agents/` and `skill-packs/`
+ * there. It only matters for a partial layout where the package root's copy is absent (the
+ * desktop app's resources folder once shipped `dist/` without `agents/`), and it can never
+ * shadow the root copy because it is probed after it.
+ *
+ * `base` is the directory the probe starts from (the running module's own folder);
+ * tests pass a scratch layout.
  */
-export function findPackageDir(subdir: string): string | null {
+export function findPackageDir(subdir: string, base: string = __dirname): string | null {
   const candidates = [
-    join(__dirname, '..', '..', '..', subdir),
-    join(__dirname, '..', '..', subdir),
-    join(__dirname, '..', subdir),
+    join(base, '..', '..', '..', subdir),
+    join(base, '..', '..', subdir),
+    join(base, '..', subdir),
+    join(base, subdir),
   ];
 
   for (const path of candidates) {

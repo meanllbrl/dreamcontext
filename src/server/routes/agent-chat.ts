@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, dirname, basename, extname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
@@ -43,7 +43,8 @@ import {
 } from '../checkout-directive.js';
 import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js';
 import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
-import { claudeAwarePath } from '../../lib/claude-path.js';
+import { claudeAwarePath, claudeDirectCommand } from '../../lib/claude-path.js';
+import { killPortable } from '../../lib/proc.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { awaitClaudeAccountIdle, claudeAuthStatus, CLOUD_AUTH_MAX_WAIT_MS } from '../../lib/claude-auth.js';
 import {
@@ -437,6 +438,63 @@ function readAssistantCharacter(): string {
  *  backtick, `\`, `;`, whitespace) can reach the command line. Exported pure for tests. */
 export function isShellSafePath(p: string): boolean {
   return /^[A-Za-z0-9/._-]+$/.test(p);
+}
+
+/** `isShellSafePath` for win32 (`C:\Users\…\Temp\…` never matches the POSIX allowlist, which
+ *  silently dropped every Windows chat's briefing, `--agents` and `--settings` files). On win32
+ *  the chat argv never goes through a shell (see `chatSpawnCommand`); the only shell that sees
+ *  one of these paths is the mode-note hook's `cat "<path>"` (bash), where the double quotes
+ *  cover spaces and `~` (8.3 short names). Still no quote, `$`, backtick, `;`, `|` or `%`.
+ *  Exported pure for tests. */
+export function isWin32SafeTmpPath(p: string): boolean {
+  return /^[A-Za-z]:[\\/][A-Za-z0-9\\/._ ~-]*$/.test(p);
+}
+
+/** The path guard for this platform's tmp files. */
+function tmpPathOk(p: string): boolean {
+  return process.platform === 'win32' ? isWin32SafeTmpPath(p) : isShellSafePath(p);
+}
+
+/**
+ * Stop a chat's claude. Off win32 this is exactly `child.kill()` / `child.kill(signal)`. On win32
+ * the child is not a process-group leader, so a plain kill reaches claude alone and leaves the
+ * hooks and tools under it running: the tree goes first (`taskkill /T`, via `killPortable`), then
+ * the same `child.kill(...)` runs as the backstop (harmless on a dead child).
+ */
+export function reapChild(
+  child: ChildProcessWithoutNullStreams,
+  signal?: NodeJS.Signals,
+  platform: NodeJS.Platform = process.platform,
+  tree: (pid: number, signal: NodeJS.Signals) => void = killPortable,
+): void {
+  // Only a REAL ChildProcess: a test double carrying a made-up pid must never reach taskkill,
+  // which would kill whatever unrelated process owns that pid on the developer's machine.
+  if (platform === 'win32' && child instanceof ChildProcess && child.pid) {
+    try { tree(-child.pid, signal ?? 'SIGTERM'); } catch { /* gone, or the backstop below */ }
+  }
+  if (signal) child.kill(signal);
+  else child.kill();
+}
+
+/**
+ * The process the chat spawns. POSIX: the user's interactive login shell running the quoted
+ * `exec claude …` script (it supplies nvm/brew PATH), in its own process group. win32: there is
+ * no login shell to ask, so `claude` is started directly with the argv array (no quoting layer),
+ * NOT detached. Detaching on Windows means DETACHED_PROCESS (no console), so every console
+ * program claude's hooks start would open a new visible one; a non-detached child with piped
+ * stdio and `windowsHide` gets a hidden console its hooks inherit. libuv's kill-on-close job
+ * then ties it to the server, which is the lifetime a chat wants. Exported pure for tests.
+ */
+export function chatSpawnCommand(o: {
+  argv: string[];
+  script: string;
+  platform?: NodeJS.Platform;
+  shell?: string;
+}): { file: string; args: string[]; detached: boolean; windowsHide: boolean } {
+  if ((o.platform ?? process.platform) === 'win32') {
+    return { ...claudeDirectCommand(o.argv), detached: false, windowsHide: true };
+  }
+  return { file: o.shell ?? (process.env.SHELL || '/bin/zsh'), args: ['-ilc', o.script], detached: true, windowsHide: false };
 }
 
 /** Client-generated control-request id gate (setModel/rewind acks are matched client-side
@@ -1226,7 +1284,7 @@ export function startChatSession(
         inlineArgs.add(json);
       } else {
         const file = join(tmpdir(), `dreamcontext-chat-agents-${randomUUID()}.json`);
-        if (!isShellSafePath(file)) throw new Error('unsafe tmpdir');
+        if (!tmpPathOk(file)) throw new Error('unsafe tmpdir');
         writeFileSync(file, json, { encoding: 'utf-8', mode: 0o600 });
         agentsArg = ['--agents', file];
         cleanupAgents = () => { try { rmSync(file, { force: true }); } catch { /* tmp cleanup */ } };
@@ -1239,7 +1297,7 @@ export function startChatSession(
     // isn't a fixed literal or a whitelist-sanitized token. Hold it to the same standard
     // (see the quoting note on `script`): a tmpdir carrying a shell metacharacter drops the
     // briefing rather than reaching the command line.
-    if (!isShellSafePath(brief)) throw new Error('unsafe tmpdir');
+    if (!tmpPathOk(brief)) throw new Error('unsafe tmpdir');
     // ONE file, two parts: the surface briefing every chat gets, then the selected mode's
     // behaviour brief (empty for `basic`). A second --append-system-prompt-file would be a
     // second argv element and a second cleanup path for no gain — the CLI concatenates
@@ -1302,10 +1360,12 @@ export function startChatSession(
         } else {
           const id = randomUUID();
           const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
-          if (!isShellSafePath(out)) throw new Error('unsafe tmpdir');
+          if (!tmpPathOk(out)) throw new Error('unsafe tmpdir');
           writeFileSync(out, note, { encoding: 'utf-8', mode: 0o600 });
           tmpFiles.push(out);
-          Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${out}"`, sources)));
+          // The hook runs in Git Bash on win32, which reads `C:/…` and not `C:\…`.
+          const hookPath = process.platform === 'win32' ? out.replace(/\\/g, '/') : out;
+          Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${hookPath}"`, sources)));
         }
       }
     } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
@@ -1321,7 +1381,7 @@ export function startChatSession(
       inlineArgs.add(json);
     } else {
       const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
-      if (!isShellSafePath(settings)) throw new Error('unsafe tmpdir');
+      if (!tmpPathOk(settings)) throw new Error('unsafe tmpdir');
       writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
       tmpFiles.push(settings);
       modeNoteArg = ['--settings', settings];
@@ -1443,6 +1503,7 @@ export function startChatSession(
   // env (never the server's own, so no DC_HF_*, transfer secret or GitHub token), only THIS
   // account's CLAUDE_CONFIG_DIR, and bash (the image has no zsh). Its own process group either
   // way, so a hands-free cut can end the whole tree (cutLiveChats).
+  const spawnCmd = chatSpawnCommand({ argv, script });
   const child: ChildProcessWithoutNullStreams = isCloud()
     ? spawnAsWorker('/bin/bash', ['-ilc', script], {
       cwd: projectRoot,
@@ -1451,10 +1512,11 @@ export function startChatSession(
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     }) as ChildProcessWithoutNullStreams
-    : spawn(process.env.SHELL || '/bin/zsh', ['-ilc', script], {
+    : spawn(spawnCmd.file, spawnCmd.args, {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
-    detached: true,
+    detached: spawnCmd.detached,
+    ...(process.platform === 'win32' ? { windowsHide: spawnCmd.windowsHide } : {}),
     // claude-aware PATH: `claude` installs into ~/.local/bin, which no default PATH
     // contains — without this the login shell 127s whenever the install's `export
     // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
@@ -1860,11 +1922,11 @@ export function startChatSession(
     lingerTimer = setTimeout(() => {
       lingerTimer = null;
       if (!alive) return;
-      try { child.kill(); } catch { /* already gone */ }
+      try { reapChild(child); } catch { /* already gone */ }
       lingerKillTimer = setTimeout(() => {
         lingerKillTimer = null;
         if (!alive) return;
-        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        try { reapChild(child, 'SIGKILL'); } catch { /* already gone */ }
       }, CLOSE_KILL_GRACE_MS);
     }, closeLingerMs());
   }
@@ -2716,7 +2778,7 @@ export function startChatSession(
     lingerKillTimer = setTimeout(() => {
       lingerKillTimer = null;
       if (!alive) return;
-      try { child.kill(); } catch { /* already gone */ }
+      try { reapChild(child); } catch { /* already gone */ }
     }, CLOSE_KILL_GRACE_MS);
   }
 
@@ -2972,7 +3034,7 @@ export function startChatSession(
         interruptKillTimer = setTimeout(() => {
           interruptKillTimer = null;
           if (!alive) return;
-          try { child.kill(); } catch { /* already gone */ }
+          try { reapChild(child); } catch { /* already gone */ }
         }, INTERRUPT_KILL_GRACE_MS);
       }, INTERRUPT_WATCHDOG_MS);
       return;
@@ -3753,7 +3815,7 @@ export async function handleAgentReveal(
       ? { cmd: 'explorer', args: openDirectly ? [target] : [`/select,${target}`] }
       : { cmd: 'xdg-open', args: [openDirectly ? target : dirname(target)] };
   try {
-    spawn(opener.cmd, opener.args, { detached: true, stdio: 'ignore' }).unref();
+    spawn(opener.cmd, opener.args, { detached: true, stdio: 'ignore', windowsHide: false }).unref();
   } catch {
     sendError(res, 500, 'open_failed', 'The system opener could not be started.');
     return;

@@ -40,7 +40,7 @@ import {
 } from './chatEntities';
 import {
   addAttachments, dropSentAttachments, nextAttachmentId, readScratch, removeAttachment,
-  settleAttachment, subscribeScratch, type Attachment,
+  stageUpload, subscribeScratch, uploadsInFlight, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
@@ -507,34 +507,25 @@ export function Composer({
   // comes back. This is the same channel a dropped file uses (`POST /api/agent/drop`); the
   // beta shipped without it, which is what made a pasted screenshot a picture the user could
   // see and the agent never received (owner report 07-27).
-  /** Upload jobs still running. `submit` awaits these so ⌘V then ⏎ sends the picture. */
-  const uploadsRef = useRef<Set<Promise<void>>>(new Set());
-
+  // Staged in the store (`stageUpload`), which is both what `submit` reads (so there is no
+  // flush-ordering question — a settle that lands in the same microtask batch as a send is
+  // already visible) and what survives a respawn. The upload's resolution is addressed by
+  // CONVERSATION id, so a mode switch mid-upload still lands the path on the right chip in
+  // the pane that replaced this one. Any clipboard FILE is taken, not only an image MIME: a file
+  // copied in Explorer/Finder pastes as one, and its bytes are what the agent needs.
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
-    let addedImage = false;
+    let addedFile = false;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      if (item.kind !== 'file') continue;
       const file = item.getAsFile();
       if (!file) continue;
-      const id = nextAttachmentId();
-      const name = file.name || 'Pasted image';
-      const url = URL.createObjectURL(file);
-      // Staged in the store, which is both what `submit` reads (so there is no flush-ordering
-      // question — a settle that lands in the same microtask batch as a send is already
-      // visible) and what survives a respawn. The upload's resolution is addressed by
-      // CONVERSATION id, so a mode switch mid-upload still lands the path on the right chip
-      // in the pane that replaced this one.
-      addAttachments(convId, [{ id, kind: 'image', url, name, uploading: true }]);
-      const job = uploadAgentFile(vault, file, name)
-        .then((path) => { settleAttachment(convId, id, path); });
-      uploadsRef.current.add(job);
-      void job.finally(() => uploadsRef.current.delete(job));
-      addedImage = true;
+      stageUpload(convId, file, (f) => uploadAgentFile(vault, f, f.name || 'Pasted image'));
+      addedFile = true;
     }
-    if (addedImage) e.preventDefault(); // don't also paste raw image bytes as garbage text
+    if (addedFile) e.preventDefault(); // don't also paste raw image bytes as garbage text
   };
 
   // ── Slash-command autocomplete ───────────────────────────────────────────────────
@@ -1211,13 +1202,14 @@ export function Composer({
   const submit = (mode: SubmitMode = 'auto') => {
     if (!canCompose || !hasSendableContent || sendingRef.current) return;
     // Nothing in flight — the common case, and it stays synchronous.
-    if (uploadsRef.current.size === 0) { commit(mode); return; }
+    const inFlight = uploadsInFlight(convId);
+    if (inFlight.length === 0) { commit(mode); return; }
     // A screenshot pasted and sent in the same breath: the message can only name the file
     // once the path exists, so hold the submit for the upload rather than sending a message
     // that references nothing. Loopback write of a clipboard image — milliseconds.
     sendingRef.current = true;
     setAwaitingUpload(true);
-    void Promise.allSettled([...uploadsRef.current]).then(() => {
+    void Promise.allSettled(inFlight).then(() => {
       sendingRef.current = false;
       setAwaitingUpload(false);
       commit(mode);

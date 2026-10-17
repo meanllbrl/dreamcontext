@@ -5,7 +5,7 @@ import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
@@ -19,7 +19,7 @@ import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
-import { claudeAwarePath, findClaudeBin } from '../../lib/claude-path.js';
+import { claudeAwarePath, claudeDirectCommand, findClaudeBin, whichOnPathWin32 } from '../../lib/claude-path.js';
 import type { FixOutcome } from '../../lib/onboarding/fixes.js';
 import { detectLinuxPackageManager, manualCommand } from '../../lib/onboarding/platform.js';
 import type { FixId } from '../../lib/onboarding/types.js';
@@ -193,6 +193,10 @@ function detectOnPath(cmd: 'claude' | 'npm', timeoutMs = 8000): Promise<boolean>
 }
 
 function detectOnPathUncached(cmd: 'claude' | 'npm', timeoutMs: number): Promise<boolean> {
+  // Windows has no login shell to ask: look for the binary directly (claude.exe / npm.cmd).
+  if (process.platform === 'win32') {
+    return Promise.resolve(cmd === 'claude' ? findClaudeBin() !== null : whichOnPathWin32(['npm.cmd', 'npm.exe']) !== null);
+  }
   return new Promise((resolve) => {
     const shell = process.env.SHELL || '/bin/zsh';
     let out = '';
@@ -538,7 +542,7 @@ function resolveContainedDir(projectRoot: string, relDir: string): string | null
   try {
     const root = realpathSync(projectRoot);
     const target = realpathSync(join(root, relDir));
-    if (target !== root && !target.startsWith(root + '/')) return null;
+    if (target !== root && !target.startsWith(root + sep)) return null;
     return lstatSync(target).isDirectory() ? target : null;
   } catch {
     return null; // missing, unreadable, or not a directory
@@ -798,7 +802,10 @@ function parseEffortsFromCli(): Promise<string[]> {
     let out = '';
     let settled = false;
     const done = (v: string[]) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
-    const child = spawn(shell, ['-ilc', 'claude --help'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const direct = process.platform === 'win32' ? claudeDirectCommand(['--help']) : null;
+    const child = direct
+      ? spawn(direct.file, direct.args, { stdio: ['ignore', 'pipe', 'ignore'] })
+      : spawn(shell, ['-ilc', 'claude --help'], { stdio: ['ignore', 'pipe', 'ignore'] });
     const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } done([...EFFORT_LEVELS]); }, 8000);
     child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
     child.on('error', () => done([...EFFORT_LEVELS]));

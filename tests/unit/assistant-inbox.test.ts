@@ -13,6 +13,9 @@ vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { tmpdir } = require('node:os') as typeof import('node:os');
   process.env.HOME = mkdtempSync(`${tmpdir()}/assistant-inbox-home-`);
+  // Windows' os.homedir() reads USERPROFILE, not HOME: without this the roster lists the REAL
+  // machine's vaults and taints the Assistant before the test's first assertion.
+  process.env.USERPROFILE = process.env.HOME;
 });
 
 const spawned: FakeChild[] = [];
