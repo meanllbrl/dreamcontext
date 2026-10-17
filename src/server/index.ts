@@ -26,6 +26,7 @@ import { handleWindowCommand } from './routes/window-control.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import {
@@ -338,6 +339,9 @@ export function buildRouter(): Router {
   router.get('/api/sleep/auto', handleSleepAutoGet);
   router.put('/api/sleep/auto', handleSleepAutoPut);
   router.post('/api/sleep/auto/cancel', handleSleepAutoCancel);
+  // The sleep-eval labelling deck on the Tasks screen (tmp/sleep-eval/labels.json).
+  router.get('/api/sleep-eval/labels', handleSleepEvalLabelsGet);
+  router.post('/api/sleep-eval/labels', handleSleepEvalLabelsPost);
   // Embedding-model status + warm-up (backs the Hybrid recall card). The MODEL
   // is vault-agnostic (shared under ~/.dreamcontext/models); the INDEX is
   // per-vault (guarded inside the handler — needs a resolved contextRoot).

@@ -37,8 +37,10 @@ import {
   STATUS_KINDS,
   normalizeStatusKey,
   statusKeys,
+  isDone,
   type StatusKind,
 } from '../../lib/task-status.js';
+import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -1048,6 +1050,14 @@ export async function handleTasksUpdate(
     if (!validStatuses.includes(updates.status as string)) {
       sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
       return;
+    }
+    // The sleep-eval close gate, the same one `tasks status`/`tasks complete` apply.
+    if (isDone(statuses, updates.status)) {
+      const gate = checkCloseGate(contextRoot, slug, existing.parent_task ?? null);
+      if (gate.applies && !gate.ok) {
+        sendError(res, 409, 'sleep_eval_gate', gate.message);
+        return;
+      }
     }
     // Same real-world timing the CLI stamps on a status change, so a task dragged
     // across the board records the same dates as `dreamcontext tasks status`:
