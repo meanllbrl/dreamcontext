@@ -21,6 +21,11 @@ describe('mac contract mirror', () => {
     expect(server.MAC_THERMAL_RELEASE_TICKS).toBe(6);
   });
 
+  it('the Bag mode default agrees (never chosen = on)', () => {
+    expect(dash.MAC_BAG_MODE_DEFAULT).toBe(server.MAC_BAG_MODE_DEFAULT);
+    expect(server.MAC_BAG_MODE_DEFAULT).toBe(true);
+  });
+
   it('the passive probe stays well under the client connect timeout', async () => {
     const { CONNECT_TIMEOUT_MS } = await import('../../dashboard/src/components/sleepy/chatSession.js');
     expect(server.HOLDER_PROBE_MS * 3).toBeLessThanOrEqual(CONNECT_TIMEOUT_MS);

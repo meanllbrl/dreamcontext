@@ -103,11 +103,23 @@ export function thermalLine(s: Pick<MacStatus, 'thermal'>): string {
   return th.slowed > 0 ? `thermal: ${th.state}, ${th.slowed} slowed` : `thermal: ${th.state}`;
 }
 
+/** The start route's body: `bagMode` only when a flag chose it (omitted = the last choice). */
+export function startBody(vaults: string[], bag: boolean | undefined): { vaults: string[]; bagMode?: boolean } {
+  return typeof bag === 'boolean' ? { vaults, bagMode: bag } : { vaults };
+}
+
+/** While on, the run's Bag mode; while off, what the next start uses. */
+export function bagModeLine(s: Pick<MacStatus, 'phase' | 'bagMode'>): string {
+  if (s.phase === 'off') return `bag mode for the next start: ${s.bagMode ? 'on' : 'off'}`;
+  return s.bagMode ? 'bag mode: on (heavy processes slow down while the Mac is hot)' : 'bag mode: off (full performance)';
+}
+
 export function printStatus(s: MacStatus, io: MacCliIo): void {
   io.out(`  Mac mode: ${s.phase}${s.url ? `  ${s.url}` : ''}`);
   io.out(`  setup: sleep permission ${s.setup.sudoers ? 'installed' : 'missing'}, passphrase ${s.setup.passphrase ? 'set' : 'not set'}`);
   io.out(`  address: ${s.mode === 'fixed' && s.fixedHostname ? `fixed (${s.fixedHostname})` : 'quick (a new address every start)'}`);
   if (s.exposedVaults?.length) io.out(`  projects on the phone: ${s.exposedVaults.join(', ')}`);
+  if (typeof s.bagMode === 'boolean') io.out(`  ${bagModeLine(s)}`);
   if (s.phase === 'on') {
     io.out(`  battery: ${s.battery.percent ?? '?'}%${s.battery.charging ? ' (charging)' : ''}${s.sleepAllowed ? ' — sleep allowed again (battery low)' : ''}`);
     io.out(`  signed-in phones: ${s.deviceCount}`);
@@ -138,11 +150,14 @@ export function registerHandsfreeMacCommand(hf: Command, io: () => MacCliIo = re
   mac.command('start')
     .description('Start Mac mode: tunnel link, phone listener, keep awake + Low Power Mode')
     .option('--project <name>', 'a registered project the phone may open (repeatable; default: this project)', (v: string, acc: string[]) => [...acc, v], [] as string[])
-    .action(async (o: { project: string[] }) => {
+    // `--bag` first, then `--no-bag`: neither given leaves `bag` undefined (= the last choice).
+    .option('--bag', 'Bag mode: heavy processes slow down while the Mac is hot (default: your last choice)')
+    .option('--no-bag', 'normal mode: full performance, nothing is slowed')
+    .action(async (o: { project: string[]; bag?: boolean }) => {
       try {
         const vaults = startVaults(o.project ?? []);
-        const s = await callMac<MacStatus>('POST', 'start', { vaults });
-        success(`Mac mode is on: ${s.url}`);
+        const s = await callMac<MacStatus>('POST', 'start', startBody(vaults, o.bag));
+        success(`Mac mode is on (${s.bagMode ? 'bag mode' : 'normal mode'}): ${s.url}`);
         const qr = await callMac<{ url: string }>('POST', 'qr');
         showSecret(io(), '  one-time sign-in link (5 min)', qr.url);
         info('Or open the address on your phone and type the passphrase.');

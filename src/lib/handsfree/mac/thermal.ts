@@ -5,7 +5,8 @@
  * `taskpolicy -b` (no sudo; ~97% → ~30% CPU), and after two minutes of nominal readings they
  * are moved back with `taskpolicy -B`. The phone path is never slowed: claude chats, the
  * dashboard server and the app above it, our cloudflared, and WebKit's XPC services (the
- * desktop window; Safari tabs are spared with them, an accepted risk).
+ * desktop window; Safari tabs are spared with them, an accepted risk). Only in Bag mode
+ * (chosen at start): normal mode reads the heat and slows nothing.
  *
  * A process forked while its parent is clamped is BORN clamped and stays so even after the
  * parent is released (measured), so those children are tracked as `inherited` ledger entries
@@ -401,6 +402,9 @@ export interface GovernorOpts {
   releaseTicks?: number;
   /** Verify seam: only rows it accepts may become roots. */
   filter?: (row: HeavyRow) => boolean;
+  /** Bag mode (default true). false = normal mode: the state is read for the chip, nothing is
+   *  ever slowed (no ps, no `-b`), so the ledger stays empty and nothing is left to release. */
+  clamp?: boolean;
   /** The ledger after every batch of changes (→ state.json). */
   onChange?: (ledger: LedgerEntry[]) => void;
   /** The log file; null = no log. Defaults to `~/.dreamcontext/handsfree-mac/thermal.log`. */
@@ -505,6 +509,9 @@ export class ThermalGovernor {
     if (level === null) { this.nullStreak++; this.nominalStreak = 0; }
     else if (level === 'nominal') { this.nominalStreak++; this.nullStreak = 0; }
     else { this.nominalStreak = 0; this.nullStreak = 0; }
+
+    // Normal mode: the reading above is all; no ps, no clamp.
+    if (this.o.clamp === false) return;
 
     // Cool and nothing slowed: no ps at all.
     if (!this.ledger.size && (level === null || level === 'nominal')) return;

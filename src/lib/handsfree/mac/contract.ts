@@ -71,6 +71,9 @@ export interface MacStatus {
   exposedVaults: string[];
   /** The thermal governor: the last reading and how many processes it slows now. */
   thermal: MacThermal;
+  /** Bag mode: while Mac mode is on, the mode THIS run uses; while off, the remembered choice
+   *  (what the panel's switch is pre-set from and what a start without the field uses). */
+  bagMode: boolean;
 }
 
 /** One signed-in phone as the sheet lists it (never the session id). */
@@ -153,6 +156,13 @@ export interface MacThermal {
   /** Processes slowed right now (clamped roots + inherited children). */
   slowed: number;
 }
+
+/**
+ * Bag mode ("Çanta modu"), chosen at start and remembered: the governor may slow heavy
+ * processes while hot. Normal mode reads the heat and slows nothing (keep-awake and Low Power
+ * Mode stay on in both). A start that never chose one gets this (today's behaviour).
+ */
+export const MAC_BAG_MODE_DEFAULT = true;
 
 // ─── The reachability probe ─────────────────────────────────────────────────
 

@@ -34,6 +34,9 @@ export const MAC_THERMAL_RELEASE_TICKS = 6;
 /** The last reading (null before the first / unreadable) and how many processes are slowed now. */
 export interface MacThermal { state: MacThermalState | null; slowed: number }
 
+/** Bag mode never chosen: on (the governor may slow heavy processes while hot). */
+export const MAC_BAG_MODE_DEFAULT = true;
+
 export interface MacStatus {
   phase: MacPhase;
   setup: { sudoers: boolean; passphrase: boolean };
@@ -48,6 +51,8 @@ export interface MacStatus {
   /** The projects this run exposes (chosen at start); empty while off. */
   exposedVaults: string[];
   thermal: MacThermal;
+  /** While on, this run's Bag mode; while off, the remembered choice the switch pre-sets from. */
+  bagMode: boolean;
 }
 
 export interface MacDevice { id: string; label: string; createdAt: string }

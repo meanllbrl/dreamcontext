@@ -9,6 +9,7 @@ import { HandsfreeAuth, ensureMacHandsfreeDir, generatePassphrase, hashPassphras
 import type { PowerRunner } from '../../src/lib/handsfree/mac/power.js';
 import { ThermalGovernor, thermalPendingPathOf, type LedgerEntry } from '../../src/lib/handsfree/mac/thermal.js';
 import { BG_PRI, NORMAL_PRI, T0, World, lstartOf } from '../helpers/thermal-world.js';
+import { macPrefsPathOf, readMacPrefs } from '../../src/lib/handsfree/mac/prefs.js';
 
 const CUSTOM = 'Battery Power:\n lowpowermode         0\nAC Power:\n lowpowermode         1\n';
 
@@ -260,6 +261,7 @@ describe('the thermal governor in the session (AC6, AC7)', () => {
     const { s, phone } = await hotSession();
     expect(readMacState(home)!.clamped).toEqual([expect.objectContaining({ pid: 10, kind: 'root', state: 'clamped' })]);
     expect(s.status().thermal).toEqual({ state: 'serious', slowed: 1 });
+    expect(s.status().bagMode).toBe(true);   // no choice made: Bag mode (the default) clamps
     expect(phone()!().thermal).toEqual({ state: 'serious', slowed: 1 });
     await s.stop();
   });
@@ -390,6 +392,104 @@ describe('the thermal governor in the session (AC6, AC7)', () => {
     await new MacSession(deps({ removeSudoers: async () => 'ok' })).uninstall();
     expect(world.procs.get(33)!.pri).toBe(NORMAL_PRI);
     expect(existsSync(join(home, '.dreamcontext', 'handsfree-mac'))).toBe(false);
+  });
+});
+
+describe('bag mode', () => {
+  beforeEach(async () => { auth.store.setPassphrase(await hashPassphrase('a b c d e f')); });
+  const taskpolicyCalls = () => world.calls.filter((c) => c.includes('taskpolicy'));
+
+  it('normal mode never slows: hot readings, no ps, no taskpolicy, no ledger; keep-awake and LPM still armed', async () => {
+    world.add({ pid: 10 });
+    world.steady = 'serious';
+    // The real reader through the fake runner, so every reading is an osascript call we can count.
+    const s = new MacSession(deps({ thermalPollMs: 5, readThermal: undefined }));
+    await s.start({ vaults: ['proj'], bagMode: false });
+    await vi.waitFor(() => expect(s.status().thermal.state).toBe('serious'), { timeout: 2000 });
+    await vi.waitFor(() => expect(world.count('/usr/bin/osascript')).toBeGreaterThanOrEqual(3), { timeout: 2000 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(world.count('/bin/ps')).toBe(0);
+    expect(taskpolicyCalls()).toEqual([]);
+    expect(world.procs.get(10)!.pri).toBe(NORMAL_PRI);
+    expect(readMacState(home)!.clamped).toBeUndefined();
+    expect(readMacState(home)!.bagMode).toBe(false);
+    expect(s.status()).toMatchObject({ bagMode: false, thermal: { state: 'serious', slowed: 0 } });
+    expect(events).toEqual(expect.arrayContaining([
+      '/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 1',
+      '/usr/bin/sudo -n /usr/bin/pmset -b lowpowermode 1',
+      '/usr/bin/sudo -n /usr/bin/pmset -c lowpowermode 1',
+    ]));
+    await s.stop();
+    expect(world.count('/bin/ps')).toBe(0);
+    expect(taskpolicyCalls()).toEqual([]);
+    expect(existsSync(thermalPendingPathOf(home))).toBe(false);
+    expect(world.procs.get(10)!.pri).toBe(NORMAL_PRI);
+  });
+
+  it('never chosen: Bag mode on (today\'s behaviour), and it clamps', async () => {
+    world.add({ pid: 10 });
+    world.steady = 'serious';
+    const s = new MacSession(deps({ thermalPollMs: 5 }));
+    expect(s.status().bagMode).toBe(true);
+    await s.start({ vaults: ['proj'] });
+    expect(s.status().bagMode).toBe(true);
+    await vi.waitFor(() => expect(s.status().thermal.slowed).toBe(1), { timeout: 2000 });
+    expect(world.procs.get(10)!.pri).toBe(BG_PRI);
+    await s.stop();
+    expect(world.procs.get(10)!.pri).toBe(NORMAL_PRI);
+  });
+
+  it('the choice is remembered across Return and a restart; a start without it uses the last one', async () => {
+    const s = new MacSession(deps());
+    await s.start({ vaults: ['proj'], bagMode: false });
+    await s.stop();
+    expect(readMacPrefs(home).bagMode).toBe(false);
+    expect(statSync(macPrefsPathOf(home)).mode & 0o777).toBe(0o600);
+    expect(existsSync(statePathOf(home))).toBe(false);
+    expect(s.status()).toMatchObject({ phase: 'off', bagMode: false });
+
+    // A new process (the app restarted): the choice is still there, and a start without it uses it.
+    world.add({ pid: 10 });
+    world.steady = 'serious';
+    const again = new MacSession(deps({ thermalPollMs: 5 }));
+    expect(again.status().bagMode).toBe(false);
+    await again.start({ vaults: ['proj'] });
+    expect(again.status().bagMode).toBe(false);
+    await vi.waitFor(() => expect(again.status().thermal.state).toBe('serious'), { timeout: 2000 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(taskpolicyCalls()).toEqual([]);
+    await again.stop();
+
+    // And back: an explicit true is remembered too.
+    await again.start({ vaults: ['proj'], bagMode: true });
+    expect(again.status().bagMode).toBe(true);
+    await again.stop();
+    expect(readMacPrefs(home).bagMode).toBe(true);
+  });
+
+  it('the choice is remembered even when the tunnel then fails', async () => {
+    const s = new MacSession(deps({ probe: async () => false }));
+    await expect(s.start({ vaults: ['proj'], bagMode: false })).rejects.toMatchObject({ code: 'mac_probe_failed' });
+    expect(readMacPrefs(home).bagMode).toBe(false);
+    expect(s.status()).toMatchObject({ phase: 'off', bagMode: false });
+  });
+
+  it('a start refused before the preflight passes remembers nothing', async () => {
+    const s = new MacSession(deps());
+    await expect(s.start({ vaults: [], bagMode: false })).rejects.toMatchObject({ code: 'mac_no_project' });
+    const noSudo: PowerRunner = async (file) => ({ code: file === '/usr/bin/sudo' ? 1 : 0, stdout: '', stderr: '' });
+    await expect(new MacSession(deps({ powerRun: noSudo })).start({ vaults: ['proj'], bagMode: false })).rejects.toMatchObject({ code: 'mac_sudo_missing' });
+    expect(existsSync(macPrefsPathOf(home))).toBe(false);
+  });
+
+  it('boot recovery releases a crashed run\'s clamps whatever its bag mode says', async () => {
+    world.add({ pid: 30, pri: BG_PRI });
+    mkdirSync(join(home, '.dreamcontext', 'handsfree-mac'), { recursive: true });
+    const entry: LedgerEntry = { pid: 30, lstart: lstartOf(T0), clampedAt: T0 + 1000, kind: 'root', state: 'clamped' };
+    writeFileSync(statePathOf(home), JSON.stringify({ on: true, serverPid: 99999, tunnelPid: null, tunnelBin: null, startedAt: 'x', priorLpm: null, sleepDisabledByUs: true, url: null, mode: 'quick', bagMode: false, clamped: [entry] }));
+    expect(await new MacSession(deps()).recoverOnBoot()).toBe(true);
+    expect(world.procs.get(30)!.pri).toBe(NORMAL_PRI);
+    expect(existsSync(statePathOf(home))).toBe(false);
   });
 });
 

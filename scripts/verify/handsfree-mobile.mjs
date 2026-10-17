@@ -27,8 +27,17 @@
  * HONEST LIMIT — Chromium's phone emulation, not an iPhone: safe-area insets and the keyboard
  * are not exercised (AC15 is the owner's iPhone check).
  *
- * `--local`: the same checks on the MAIN listener (no tunnel, no Mac mode start): the layout
- * keys off the viewport, so this is the fast loop while styling. The evidence run is without it.
+ * BAG MODE (the laptop panel's "Bag mode" switch, under the project checklist): the row, its
+ * hint, on by default, toggling, sizes and a screenshot at 1440 in every run, and at 390 px when
+ * the Hands-free button renders there. Start → running → Return → reload (Start sends the
+ * choice, the running panel and status say Normal mode, the reload shows the remembered choice
+ * and prefs.json holds it) runs only under `--local`: a full run starts no second quick tunnel.
+ *
+ * `--local`: the same checks on the MAIN listener (no tunnel, no Mac mode start from the phone
+ * part): the layout keys off the viewport, so this is the fast loop while styling. The server
+ * also gets DREAMCONTEXT_MAC_VERIFY_FAKE_TUNNEL=1 (scratch HOME only): the panel's own Start
+ * runs over a loopback stand-in for cloudflared, so the running state needs no Cloudflare
+ * tunnel. It is the evidence run for Bag mode; the phone evidence run is without it.
  *
  * FAILURE POLICY — collect, don't fail fast; exit 0 iff every check passed.
  * Screenshots: tmp/verify-handsfree-mobile/<size>-<page>.png
@@ -38,7 +47,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import dns from 'node:dns';
 import net from 'node:net';
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,7 +178,11 @@ async function startServer(port) {
   const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath), join(HOME, '.local', 'bin')].join(':');
   const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ,
-    env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_MAC_VERIFY_POWER_LOG: POWER_LOG },
+    env: {
+      ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_MAC_VERIFY_POWER_LOG: POWER_LOG,
+      // --local: Mac mode's Start runs over a loopback stand-in, never a Cloudflare tunnel.
+      ...(LOCAL ? { DREAMCONTEXT_MAC_VERIFY_FAKE_TUNNEL: '1' } : {}),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   srv.stderr.on('data', (d) => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`[server] ${s}`); });
@@ -788,6 +801,106 @@ try {
   report.check('AC16 Start is disabled with no project checked', await desk.locator('[data-testid="hf-mac-start"]').isDisabled());
   await desk.locator('[data-testid="hf-mac-projects"] label', { hasText: 'proj' }).first().locator('input').check();
   report.check('AC16 …and enabled again with one', !(await desk.locator('[data-testid="hf-mac-start"]').isDisabled()));
+
+  // ── Bag mode: the switch, Start sends it, remembered after a reload ──────────────
+  console.log('\n── desktop 1440x900: Bag mode');
+  const bagRow = desk.locator('[data-testid="hf-mac-bag-row"]');
+  const bagSwitch = bagRow.locator('input[role="switch"]');
+  /** Where the row sits and whether anything spills sideways (the sheet, the page). */
+  const bagGeom = (page) => page.evaluate(() => {
+    const sheet = document.querySelector('[data-testid="hf-sheet"]');
+    const row = document.querySelector('[data-testid="hf-mac-bag-row"]');
+    const sw = row?.querySelector('input[role="switch"]');
+    const r = (el) => (el ? el.getBoundingClientRect() : null);
+    const rs = r(sheet); const rr = r(row); const rw = r(sw);
+    return {
+      afterChecklist: row?.previousElementSibling?.getAttribute('data-testid') === 'hf-mac-projects',
+      sheetOverflow: sheet ? sheet.scrollWidth > sheet.clientWidth + 1 : true,
+      pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+      inSheet: !!(rs && rr && rr.left >= rs.left - 1 && rr.right <= rs.right + 1),
+      rowW: Math.round(rr?.width ?? 0), rowH: Math.round(rr?.height ?? 0),
+      switchW: Math.round(rw?.width ?? 0), switchH: Math.round(rw?.height ?? 0),
+    };
+  });
+  report.check('Bag mode: the row shows before Start', await until(async () => await bagRow.isVisible(), 10000));
+  const bagText = (await bagRow.textContent().catch(() => '')) ?? '';
+  report.check('Bag mode: the row reads "Bag mode" with its one-line hint',
+    bagText.includes('Bag mode') && bagText.includes('Heavy jobs slow down when the Mac gets hot; off means full performance.'), bagText);
+  report.check('Bag mode: the switch is on by default (never chosen, or a start that sent no choice)', await bagSwitch.isChecked().catch(() => false));
+  const g1440 = await bagGeom(desk);
+  report.check('Bag mode: the row sits directly under the project checklist', g1440.afterChecklist, JSON.stringify(g1440));
+
+  // The whole row is the target: its title, the switch itself, then its hint.
+  await bagRow.locator('.hf-mac-bag-title').click();
+  const offByTitle = await until(async () => !(await bagSwitch.isChecked()), 3000);
+  await bagSwitch.click();
+  const onBySwitch = await until(async () => await bagSwitch.isChecked(), 3000);
+  await bagRow.locator('.hf-quiet').click();
+  const offByHint = await until(async () => !(await bagSwitch.isChecked()), 3000);
+  report.check('Bag mode: the switch toggles from the title, the switch and the hint (off → on → off)', offByTitle && onBySwitch && offByHint, JSON.stringify({ offByTitle, onBySwitch, offByHint }));
+  const gOff = await bagGeom(desk);
+  report.check(`Bag mode: no horizontal overflow; the row is a ${gOff.rowW}x${gOff.rowH} target inside the sheet (switch ${gOff.switchW}x${gOff.switchH})`,
+    !gOff.sheetOverflow && !gOff.pageOverflow && gOff.inSheet && gOff.rowH >= 24 && gOff.switchW >= 24 && gOff.switchH > 0, JSON.stringify(gOff));
+  await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-bag-off.png') });
+
+  if (LOCAL) {
+    // Start sends the choice; the run reports it; Return + reload shows it remembered.
+    const startReq = desk.waitForRequest((r) => r.url().endsWith('/api/handsfree/mac/start') && r.method() === 'POST', { timeout: 15000 });
+    await desk.locator('[data-testid="hf-mac-start"]').click();
+    const sent = await startReq.then((r) => r.postDataJSON()).catch(() => null);
+    report.check('Bag mode: Start sends bagMode: false (with the checked project)', sent?.bagMode === false && JSON.stringify(sent?.vaults) === '["proj"]', JSON.stringify(sent));
+    report.check('Bag mode: Mac mode starts (loopback stand-in for the tunnel)',
+      await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="on"]').count()) > 0, 30000),
+      JSON.stringify((await mac(port, 'GET', 'status')).json).slice(0, 240));
+    const bagLine = desk.locator('[data-testid="hf-mac-bag"]');
+    report.check('Bag mode: the running panel says Normal mode (data-bag=off)',
+      await until(async () => (await bagLine.getAttribute('data-bag')) === 'off' && ((await bagLine.textContent()) ?? '').includes('Normal mode'), 10000),
+      await bagLine.textContent().catch(() => '(no line)'));
+    const st = await mac(port, 'GET', 'status');
+    report.check('Bag mode: status reports bagMode false while on', st.json.phase === 'on' && st.json.bagMode === false, JSON.stringify({ phase: st.json.phase, bagMode: st.json.bagMode }));
+    await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-running-normal.png') });
+
+    await desk.locator('[data-testid="hf-mac-return"]').click();
+    report.check('Bag mode: Return goes back to the start screen',
+      await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="off"]').count()) > 0, 20000));
+    await desk.reload({ waitUntil: 'domcontentloaded' });
+    await desk.waitForTimeout(3000);
+    await dismiss(desk);
+    for (let i = 0; i < 3; i++) { await desk.keyboard.press('Escape'); await desk.waitForTimeout(200); }
+    await desk.locator('[data-testid="hf-button"]:visible').first().click();
+    // A fresh page holds no local choice: an unchecked switch can only come from the server.
+    report.check('Bag mode: after a reload the switch shows the remembered choice (off)',
+      await until(async () => (await bagSwitch.count()) === 1 && !(await bagSwitch.isChecked()), 10000));
+    let prefs = null;
+    try { prefs = JSON.parse(readFileSync(join(HOME, '.dreamcontext', 'handsfree-mac', 'prefs.json'), 'utf8')); } catch (e) { prefs = String(e); }
+    report.check('Bag mode: prefs.json holds { bagMode: false }', JSON.stringify(prefs) === '{"bagMode":false}', JSON.stringify(prefs));
+    await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-remembered.png') });
+  } else {
+    report.note('(Bag mode: Start / running / remembered run only under --local: a full run starts no second quick tunnel)');
+  }
+
+  // 390 px: the laptop window made narrow (fine pointer, no touch): the panel, if the button shows.
+  console.log('\n── desktop 390x844: Bag mode');
+  const narrowCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const narrow = await narrowCtx.newPage();
+  watchers.push(watch(narrow, 'desktop-390'));
+  await narrow.addInitScript(() => { Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true }); });
+  await narrow.goto(`${base}/?vault=proj&page=tasks`, { waitUntil: 'domcontentloaded' });
+  await narrow.waitForTimeout(4000);
+  await dismiss(narrow);
+  for (let i = 0; i < 3; i++) { await narrow.keyboard.press('Escape'); await narrow.waitForTimeout(200); }
+  const narrowBtn = narrow.locator('[data-testid="hf-button"]:visible').first();
+  if (await narrowBtn.count()) {
+    await narrowBtn.click();
+    const shown = await until(async () => await narrow.locator('[data-testid="hf-mac-bag-row"]').isVisible(), 10000);
+    const g390 = await bagGeom(narrow);
+    report.check('Bag mode: 390 px: the row shows inside the panel, no horizontal overflow',
+      shown && g390.inSheet && !g390.sheetOverflow && !g390.pageOverflow, JSON.stringify(g390));
+    await narrow.screenshot({ path: join(SHOTS, '390-mac-panel-bag.png') });
+  } else {
+    report.note('Bag mode: the Hands-free button is not shown at 390 px (the window chrome hides it): no 390 panel');
+  }
+  await narrowCtx.close();
 
   const errs = watchers.flatMap((w) => w.errors).filter((e) => !/__TAURI|Failed to load resource: the server responded with a status of 401/.test(e));
   const f403 = watchers.flatMap((w) => w.forbidden);

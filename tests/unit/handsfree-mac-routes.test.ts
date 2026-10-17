@@ -138,6 +138,22 @@ describe('setup, start and secrets', () => {
     expect(ok.body.exposedVaults).toEqual(['proj']);
   });
 
+  it('bag mode: start takes bagMode (a non-boolean is 400 invalid_bag_mode), status reports it, omitted = the last choice', async () => {
+    await call(handsfreeMacRoutes.setup, req('POST', '/x', { body: {} }));
+    expect((await call(handsfreeMacRoutes.status, req('GET', '/x'))).body.bagMode).toBe(true);   // never chosen
+    const bad = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj'], bagMode: 'yes' } }));
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('invalid_bag_mode');
+    expect(macSession().isOn()).toBe(false);
+    const off = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj'], bagMode: false } }));
+    expect(off.status).toBe(200);
+    expect(off.body.bagMode).toBe(false);
+    await call(handsfreeMacRoutes.stop, req('POST', '/x'));
+    expect((await call(handsfreeMacRoutes.status, req('GET', '/x'))).body).toMatchObject({ phase: 'off', bagMode: false });
+    const again = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj'] } }));
+    expect(again.body).toMatchObject({ phase: 'on', bagMode: false });
+  });
+
   it('start → on with the URL; the QR route mints a one-time link', async () => {
     await call(handsfreeMacRoutes.setup, req('POST', '/x', { body: {} }));
     const s = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj'] } }));

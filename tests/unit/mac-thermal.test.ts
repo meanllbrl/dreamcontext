@@ -219,6 +219,22 @@ describe('ThermalGovernor (AC4)', () => {
     expect(g.snapshot()).toEqual({ state: 'nominal', slowed: 0 });
   });
 
+  it('clamp: false (normal mode) reads the state every tick but never runs ps or taskpolicy, however hot', async () => {
+    const w = new World();
+    w.add({ pid: 10 }); w.add({ pid: 11 });
+    w.steady = 'critical';
+    const { g, changes } = governor(w, { clamp: false });
+    for (let i = 0; i < 5; i++) await g.tick();
+    expect(w.count('/usr/bin/osascript')).toBe(5);
+    expect(w.count('/bin/ps')).toBe(0);
+    expect(taskpolicies(w)).toEqual([]);
+    expect(changes).toEqual([]);
+    expect(g.snapshot()).toEqual({ state: 'critical', slowed: 0 });
+    expect(w.procs.get(10)!.pri).toBe(NORMAL_PRI);
+    expect(await g.releaseAll()).toEqual([]);
+    expect(w.count('/bin/ps')).toBe(0);   // nothing slowed: nothing to release, no scan
+  });
+
   it('hot: a heavy process is written pending in ONE batch, clamped only on exit 0, then scanned every tick', async () => {
     const w = new World();
     w.add({ pid: 10 }); w.add({ pid: 11 }); w.add({ pid: 12, pcpu: 5 });
