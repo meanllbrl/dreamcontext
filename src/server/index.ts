@@ -18,6 +18,7 @@ import {
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
   handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
+  handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
 import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
@@ -25,6 +26,7 @@ import { handleWindowCommand } from './routes/window-control.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import {
@@ -338,6 +340,9 @@ export function buildRouter(): Router {
   router.get('/api/sleep/auto', handleSleepAutoGet);
   router.put('/api/sleep/auto', handleSleepAutoPut);
   router.post('/api/sleep/auto/cancel', handleSleepAutoCancel);
+  // The sleep-eval labelling deck on the Tasks screen (tmp/sleep-eval/labels.json).
+  router.get('/api/sleep-eval/labels', handleSleepEvalLabelsGet);
+  router.post('/api/sleep-eval/labels', handleSleepEvalLabelsPost);
   // Embedding-model status + warm-up (backs the Hybrid recall card). The MODEL
   // is vault-agnostic (shared under ~/.dreamcontext/models); the INDEX is
   // per-vault (guarded inside the handler — needs a resolved contextRoot).
@@ -463,6 +468,9 @@ export function buildRouter(): Router {
   router.get('/api/assistant/projects', handleAssistantProjects);
   router.get('/api/assistant/sessions', handleAssistantSessions);
   router.get('/api/assistant/watch', handleAssistantWatch);
+  router.get('/api/assistant/recall', handleAssistantRecall);
+  router.get('/api/assistant/index', handleAssistantIndex);
+  router.get('/api/assistant/read', handleAssistantRead);
   router.post('/api/assistant/broadcast', handleAssistantBroadcast);
   router.post('/api/assistant/ui/:verb', handleAssistantUi);
   // A project chat's agent drives its own window (dreamcontext window …); token-gated per chat.

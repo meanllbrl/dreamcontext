@@ -583,8 +583,8 @@ describe('modeBriefing', () => {
   // `plan` went 2900 → 3100 (2026-10-11) for the REVIEWED-wave marks and the "also run" list
   // in step 3 (Develop's recipe reads both) and the two-round cap in step 5.
   // plan +300 (2026-10-11 evening): the EXECUTION line and the severity-bounded review loop.
-  const BRIEFING_CEILING: Record<string, number> = { plan: 3850, develop: 3400, train: 2150, assistant: 5800 };  // plan +450, develop +200 (2026-10-13): what the owner sees on first open, and no tick without evidence (a mobile-to-web run shipped unresponsive and erroring with every judge green)
-  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list
+  const BRIEFING_CEILING: Record<string, number> = { plan: 3850, develop: 3400, train: 2150, assistant: 6650 };  // plan +450, develop +200 (2026-10-13): what the owner sees on first open, and no tick without evidence (a mobile-to-web run shipped unresponsive and erroring with every judge green)
+  // assistant +500 (2026-09-27): the delegate-don't-do rule; +300 (2026-09-28): the latency rules; +100 (2026-09-28): look; +800 (2026-10-04): notch cues + live context; +150 (2026-10-04): close; +600 (2026-10-04): meetings via whichever notetaker MCP, or notes the owner hands over; +150 (2026-10-04): the `agent` tool line (a board's home agent or any agent by slug) and `agent` in the long-timeout list; +850 (2026-10-17): know it yourself — answer from `assistant recall`/`read`/`index` across every brain, delegate only what no brain holds and every action
   const DEFAULT_CEILING = 1600;
 
   it('assistant: speaks before delegating, single-quotes --prompt, takes meeting notes through a tool, and stays 150 under its ceiling', () => {
@@ -606,7 +606,16 @@ describe('modeBriefing', () => {
     // A board's home agent, or any agent by slug, gated like send (2026-10-04).
     expect(brief).toContain('dreamcontext assistant agent <vault> "…" (--board <b> | --slug <s>)');
     expect(brief).toContain('Run `send`, `agent`, `answer`');
-    expect(brief.length).toBeLessThanOrEqual(5650);
+    // Owner 2026-10-17: a question is answered from the brains, not by asking a project's agent;
+    // actions stay delegated.
+    expect(brief).toContain('## You KNOW it yourself; you DELEGATE the work');
+    expect(brief).toContain("dreamcontext assistant recall '<2-4 keywords>'");
+    expect(brief).toContain('dreamcontext assistant read <vault> (<path> | --session <id>) [--offset <n>]');
+    expect(brief).toContain("`read <vault> --session <id>` (its file name) reads the session's end");
+    expect(brief).toContain('dreamcontext assistant index [--vault <v>]');
+    expect(brief).toContain('Not `memory recall`: it sees only your own vault.');
+    expect(brief).toMatch(/every ACTION in a\s+project \(writing, changing, sending\): THAT project's own agent does it/);
+    expect(brief.length).toBeLessThanOrEqual(6500);
   });
 
   it('keeps every briefing short — it rides in the system prompt of every turn', () => {

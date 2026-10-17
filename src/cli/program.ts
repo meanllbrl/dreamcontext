@@ -14,6 +14,7 @@ import { registerInstallClaudeMdCommand, registerInstallInstructionsCommand } fr
 import { registerUpdateCommand } from './commands/update.js';
 import { registerSnapshotCommand } from './commands/snapshot.js';
 import { registerSleepCommand, registerRecallCommand } from './commands/sleep.js';
+import { registerSleepEvalCommand } from './commands/sleep-eval.js';
 import { registerHookCommand } from './commands/hook.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerDashboardCommand } from './commands/dashboard.js';
@@ -155,6 +156,8 @@ export function createProgram(): Command {
   registerWindowCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);
+  // `sleep eval` hangs off the sleep command without touching sleep.ts.
+  registerSleepEvalCommand(program.commands.find((c) => c.name() === 'sleep')!);
   registerRecallCommand(program);
   registerHookCommand(program);
   registerDoctorCommand(program);

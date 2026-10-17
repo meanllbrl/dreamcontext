@@ -51,6 +51,17 @@ export const FIT_ATTR = 'data-fit';
 export const WRAP_ATTR = 'data-wrap';
 
 /**
+ * A table this many columns wide (or wider) does not fit a PHONE's column: at 320px an 8-column
+ * table broke every word letter by letter, and the phone chat may not scroll a card sideways
+ * (owner, 2026-10-17). Such a table is marked {@link WIDE_ATTR} and each body cell carries its
+ * column's header as {@link LABEL_ATTR}, so the phone stylesheet (MobileChat.css) can draw each
+ * row as a block of "header: value" lines. Nothing reads either mark on a laptop.
+ */
+export const STACK_MIN_COLS = 4;
+export const WIDE_ATTR = 'data-wide';
+export const LABEL_ATTR = 'data-label';
+
+/**
  * Longest cell text still treated as a label rather than as prose. 18 characters is about
  * 130px at the table's font size: comfortably wider than a status, an id, a date, a number or
  * a currency amount, and comfortably narrower than the shortest sentence — which is the
@@ -76,6 +87,12 @@ export function holdsItsWidth(text: string): boolean {
  * created once per table, and the per-cell marks are re-derived because a streamed cell's text
  * grows — a cell that was a label three tokens ago can be a sentence now.
  */
+function setRole(el: Element, role: string | null): void {
+  if (el.getAttribute('role') === role) return;
+  if (role) el.setAttribute('role', role);
+  else el.removeAttribute('role');
+}
+
 export function decorateMarkdownTables(root: HTMLElement): void {
   root.querySelectorAll('table').forEach((table) => {
     const parent = table.parentElement;
@@ -85,6 +102,30 @@ export function decorateMarkdownTables(root: HTMLElement): void {
       table.replaceWith(scroller);
       scroller.appendChild(table);
     }
+    // The phone's row blocks: the header row's labels, written onto every body cell of a wide
+    // table (re-derived each pass, like the marks below, because a streamed table grows rows).
+    const rows = Array.from(table.querySelectorAll('tr'));
+    const labels = rows[0] ? Array.from(rows[0].querySelectorAll('th')).map((c) => (c.textContent ?? '').trim()) : [];
+    const wide = labels.length >= STACK_MIN_COLS;
+    if (wide !== table.hasAttribute(WIDE_ATTR)) {
+      if (wide) table.setAttribute(WIDE_ATTR, '');
+      else table.removeAttribute(WIDE_ATTR);
+    }
+    if (wide) {
+      for (const tr of rows.slice(1)) {
+        Array.from(tr.querySelectorAll('td')).forEach((td, i) => {
+          const label = labels[i] ?? '';
+          if (td.getAttribute(LABEL_ATTR) !== label) td.setAttribute(LABEL_ATTR, label);
+        });
+      }
+    }
+    // The row blocks are `display: block`, which drops a table's semantics in WebKit: the roles
+    // give a screen reader its table, rows and headers back. Written and removed with the mark.
+    setRole(table, wide ? 'table' : null);
+    table.querySelectorAll('thead, tbody').forEach((g) => setRole(g, wide ? 'rowgroup' : null));
+    rows.forEach((tr) => setRole(tr, wide ? 'row' : null));
+    table.querySelectorAll('th').forEach((th) => setRole(th, wide ? 'columnheader' : null));
+    table.querySelectorAll('td').forEach((td) => setRole(td, wide ? 'cell' : null));
     table.querySelectorAll('th, td').forEach((cell) => {
       const fits = holdsItsWidth(cell.textContent ?? '');
       // Written only on change: an attribute set on every commit of a streaming answer is a

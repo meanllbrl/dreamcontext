@@ -505,6 +505,9 @@ Verbs for the Assistant that lives in the desktop app's notch, above every proje
 
 | Command | What it does |
 |---|---|
+| `assistant recall <query…> [--vault <v>…] [--top <n>] [--types <a,b>]` | Search the Assistant's own memory and EVERY registered project's brain, grouped per project (best 3 each; a project the query names leads with twice the room). Each hit: `type`, `path` (for `read`), absolute `file`, fenced `text`. Use keywords, not the sentence. |
+| `assistant index [--vault <v>…]` | Every project's knowledge index (path, name, description, tags), on demand. Never in the briefing. |
+| `assistant read <vault> (<path> \| --session <id>) [--offset <n>] [--limit <n>]` | A file in that project's `_dream_context/` (Markdown, `core/CHANGELOG.json`, `core/RELEASES.json`; secrets, credentials, `..` and symlinks out are refused), or a past session of that project's own folder: owner and agent words only, never tool output, from the END by default. Long reads say `next` / `earlier`. |
 | `assistant projects` | Every registered project: what it is, what is active, live chats counted `{working, stale, asking, idle}`. |
 | `assistant sessions [--vault <v>] [--status <s>]` | Live chats across every project, status `starting\|working\|asking\|idle\|gone`; each row also carries `activity` (adds `stale`, and a `starting` chat past 30 s reads `idle`) and `lastFrameAt`. |
 | `assistant watch <sessionId> [--until idle\|asking\|any] [--timeout 590]` | Wait for a chat to reach a state; returns at once if it has ended. |
@@ -519,7 +522,7 @@ Verbs for the Assistant that lives in the desktop app's notch, above every proje
 | `assistant notify "<text>" [--level info\|attention]` | A notice in the notch; `attention` pulses the pill. |
 | `assistant look [--display <n>]` | Screenshot the owner's screen(s) (macOS) and print the image paths to Read. Only on the owner's own request: gated like `chat`, a proposal once the session has read project output. No Screen Recording permission → `screen_permission`, and the Privacy pane opens. Shots are deleted after 30 min. |
 
-Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `agent` / `answer` / `broadcast` run or become a proposal the owner approves in the notch; project-derived output comes back wrapped in `<untrusted-project-output>`.
+Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `agent` / `answer` / `broadcast` run or become a proposal the owner approves in the notch; project-derived output comes back wrapped in `<untrusted-project-output>`. `recall` / `index` / `read` are reads: free at every level (pre-approved even under `ask`), and serving project text taints the session like `sessions` does.
 
 ## Window control — a chat drives its own window
 

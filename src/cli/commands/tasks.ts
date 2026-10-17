@@ -8,6 +8,7 @@ import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
+import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
 import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
@@ -512,6 +513,25 @@ async function resolveTaskSlug(backend: TaskBackend, name: string): Promise<stri
   // Pre-refactor parity: ambiguity printed its hint AND the not-found line.
   error(`Task not found: ${name}`);
   return null;
+}
+
+
+/**
+ * The sleep-eval close gate: a sub-task of a parent gated by the eval baseline may not move
+ * to a done-kind status until a run made for it scores no lower than the baseline (minus the
+ * set's tolerance). Prints why and returns true when the close must be refused.
+ */
+async function blockOnSleepEvalGate(backend: TaskBackend, root: string, slug: string): Promise<boolean> {
+  const task = await backend.get(slug);
+  const gate = checkCloseGate(root, slug, task?.parent_task ?? null);
+  if (!gate.applies) return false;
+  if (gate.ok) {
+    info(gate.message);
+    return false;
+  }
+  error(gate.message);
+  process.exitCode = 1;
+  return true;
 }
 
 export function registerTasksCommand(program: Command): void {
@@ -1533,6 +1553,7 @@ export function registerTasksCommand(program: Command): void {
       const current = await backend.get(slug);
       if (blockOnMissingRequired('complete', slug, current?.custom_fields, ensureContextRoot(),
           (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
+      if (await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
 
       await backend.complete(slug, summary);
       success(`Task completed: ${slug}`);
@@ -1569,6 +1590,7 @@ export function registerTasksCommand(program: Command): void {
         if (blockOnMissingRequired(isDone(defs, newStatus) ? 'complete' : `move to ${newStatus}`, slug, cur?.custom_fields, ensureContextRoot(),
             (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       }
+      if (isDone(defs, newStatus) && await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
 
       const reason = reasonParts.join(' ').trim();
       const headerLabel = isDone(defs, newStatus) ? 'Completed'

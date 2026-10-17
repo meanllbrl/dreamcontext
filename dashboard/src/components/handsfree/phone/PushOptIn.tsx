@@ -7,18 +7,24 @@ import { registerServiceWorker } from './phoneState';
  * The phone's notification opt-in (Mac mode), in the session drawer. iPhone web push needs the
  * app on the Home Screen, a fixed https address (a quick tunnel's changes every start, which an
  * installed app cannot follow) and a tap to grant permission, so the row says which step is next.
+ * Any other phone browser (Android Chrome, Firefox) subscribes from a plain tab, so there the
+ * button shows on a quick address too (owner, 2026-10-17, on Android: no notification ever came):
+ * the subscription lives until Mac mode ends, which signs the phone out anyway, and the next
+ * start asks once more.
  */
 
 export type PushOptInState =
   | 'hidden'        // not the phone surface, or this browser has no web push at all
-  | 'quick'         // a quick tunnel address: notifications need the fixed address
-  | 'install'       // a browser tab: add to Home Screen first
-  | 'off'           // the installed app, not subscribed yet: offer the button
+  | 'quick'         // an iPhone on a quick tunnel address: notifications need the fixed address
+  | 'install'       // an iPhone browser tab: add to Home Screen first
+  | 'off'           // push works here (the iPhone app, or any other phone browser), not subscribed yet: offer the button
   | 'on'            // subscribed on this device
-  | 'blocked';      // the owner said no (iOS Settings → Notifications to undo)
+  | 'blocked';      // the owner said no (iOS Settings or the browser's site settings to undo)
 
 export interface PushEnv {
   phone: boolean;
+  /** iPhone / iPad: web push only for a Home Screen app, on one stable origin. */
+  ios: boolean;
   hostname: string;
   standalone: boolean;
   pushSupported: boolean;
@@ -29,11 +35,26 @@ export interface PushEnv {
 /** Pure: which step the opt-in row shows. */
 export function pushOptInState(e: PushEnv): PushOptInState {
   if (!e.phone) return 'hidden';
-  if (/\.trycloudflare\.com$/i.test(e.hostname)) return 'quick';
-  if (!e.standalone) return 'install';
+  const quick = isQuickAddress(e.hostname);
+  if (e.ios) {
+    if (quick) return 'quick';
+    if (!e.standalone) return 'install';
+  }
+  // Not an iPhone and no web push (an in-app browser, say): a fixed address would not help.
   if (!e.pushSupported) return 'hidden';
   if (e.permission === 'denied') return 'blocked';
   return e.permission === 'granted' && e.subscribed ? 'on' : 'off';
+}
+
+/** A quick tunnel's address, new on every Mac mode start. */
+export function isQuickAddress(hostname: string): boolean {
+  return /\.trycloudflare\.com$/i.test(hostname);
+}
+
+function isIos(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  // iPadOS reports a Mac; a Mac has no touch points.
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function isStandalone(): boolean {
@@ -125,9 +146,11 @@ export function PushOptIn() {
     return () => { live = false; };
   }, [tick]);
 
+  const hostname = typeof location !== 'undefined' ? location.hostname : '';
   const state = pushOptInState({
     phone: isMacPhoneSurface(),
-    hostname: typeof location !== 'undefined' ? location.hostname : '',
+    ios: isIos(),
+    hostname,
     standalone: isStandalone(),
     pushSupported: pushSupported(),
     permission: pushSupported() ? Notification.permission : 'default',
@@ -152,6 +175,7 @@ export function PushOptIn() {
       {state === 'install' && <p className="mchat-push-note">{t('handsfree.push.install')}</p>}
       {state === 'blocked' && <p className="mchat-push-note">{t('handsfree.push.blocked')}</p>}
       {state === 'on' && <p className="mchat-push-note">{t('handsfree.push.on')}</p>}
+      {(state === 'on' || state === 'off') && isQuickAddress(hostname) && <p className="mchat-push-note" data-testid="push-quick-note">{t('handsfree.push.quickNote')}</p>}
       {state === 'off' && (
         <button type="button" className="mchat-push-btn" onClick={() => void turnOn()} disabled={busy} data-testid="push-enable">
           {busy ? t('handsfree.push.enabling') : t('handsfree.push.enable')}
