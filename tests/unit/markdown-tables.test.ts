@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   holdsItsWidth, decorateMarkdownTables, FIT_ATTR, WRAP_ATTR, FIT_MAX_CHARS, TABLE_SCROLL_CLASS,
+  LABEL_ATTR, STACK_MIN_COLS, WIDE_ATTR,
 } from '../../dashboard/src/lib/markdownTables.js';
 
 // ─── The smallest honest DOM ────────────────────────────────────────────────────────
@@ -63,8 +64,9 @@ class El {
   setAttribute(name: string, value: string): void { this.attrs.set(name, value); }
   removeAttribute(name: string): void { this.attrs.delete(name); }
   hasAttribute(name: string): boolean { return this.attrs.has(name); }
+  getAttribute(name: string): string | null { return this.attrs.get(name) ?? null; }
 
-  /** Supports only the two selectors the pass uses: `table` and `th, td`. */
+  /** Supports only the tag-list selectors the pass uses (`table`, `tr`, `th, td`, `thead, tbody`, ...). */
   querySelectorAll(selector: string): El[] {
     const wanted = selector.split(',').map((s) => s.trim());
     const out: El[] = [];
@@ -212,5 +214,44 @@ describe('decorateMarkdownTables', () => {
 
     const empty = new El('div');
     expect(() => decorateMarkdownTables(empty as unknown as HTMLElement)).not.toThrow();
+  });
+});
+
+// The owner, 2026-10-17: a phone chat card may not scroll sideways, so a table too wide for the
+// phone's column is drawn there as one block per row; these are the marks that stylesheet reads.
+describe('decorateMarkdownTables — the phone\'s row blocks', () => {
+  const eight = ['Module', 'File', 'Before', 'After', 'Drift', 'Orders', 'Owner', 'Status'];
+
+  it(`marks a table of ${STACK_MIN_COLS}+ columns wide and labels every body cell with its header`, () => {
+    const { root, table } = tableOf([eight, ['module1', 'src/module1/file1.ts', '10.005', '10.00', '0.01', '113', 'team-1', 'fixed']]);
+    decorateMarkdownTables(root as unknown as HTMLElement);
+    expect(table.hasAttribute(WIDE_ATTR)).toBe(true);
+    const body = table.children[1].children;
+    expect(body.map((c) => c.attrs.get(LABEL_ATTR))).toEqual(eight);
+    // The header cells carry no label: they are the labels.
+    expect(table.children[0].children.some((c) => c.attrs.has(LABEL_ATTR))).toBe(false);
+    // Drawn as blocks, it keeps its table semantics for a screen reader.
+    expect(table.getAttribute('role')).toBe('table');
+    expect(table.children.map((tr) => tr.getAttribute('role'))).toEqual(['row', 'row']);
+    expect(table.children[0].children.every((th) => th.getAttribute('role') === 'columnheader')).toBe(true);
+    expect(body.every((td) => td.getAttribute('role') === 'cell')).toBe(true);
+  });
+
+  it('leaves a table that fits alone: no wide mark, no labels', () => {
+    const { root, table } = tableOf([['Task', 'Status', 'Why'], ['recall', 'done', 'it spans nine channels']]);
+    decorateMarkdownTables(root as unknown as HTMLElement);
+    expect(table.hasAttribute(WIDE_ATTR)).toBe(false);
+    expect(table.querySelectorAll('td').some((c) => c.attrs.has(LABEL_ATTR))).toBe(false);
+    expect(table.querySelectorAll('table, tr, th, td').concat(table).some((c) => c.attrs.has('role'))).toBe(false);
+  });
+
+  it('labels a row that streamed in after the first pass', () => {
+    const { root, table } = tableOf([eight, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']]);
+    decorateMarkdownTables(root as unknown as HTMLElement);
+    const tr = new El('tr');
+    for (const t of ['i', 'j', 'k', 'l', 'm', 'n', 'o', 'p']) tr.appendChild(new El('td', t));
+    table.appendChild(tr);
+    decorateMarkdownTables(root as unknown as HTMLElement);
+    expect(tr.children.map((c) => c.attrs.get(LABEL_ATTR))).toEqual(eight);
   });
 });

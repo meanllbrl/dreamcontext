@@ -75,7 +75,7 @@ import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
 import { runWindowVerb, type WindowVerbDeps } from './windowVerbs';
 import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
-import { generationOf, mergeStoredRoster, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
+import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
 import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
@@ -394,6 +394,15 @@ export function AgentSurface() {
   // Mac mode's phone opens on the Sohbetler list (AC21); a chat opens over it and ‹ comes back.
   const macPhone = isMobile && isMacPhoneSurface();
   const [phoneView, setPhoneView] = useState<'list' | 'chat'>('list');
+  // Two screens, so the move between them says which way it went: a chat comes in from the right,
+  // the list comes back from the left. Set in the render that changes the view (React's
+  // adjust-state-on-change pattern), so the first frame of the new screen already animates.
+  const [phoneNavFrom, setPhoneNavFrom] = useState(phoneView);
+  const [phoneNav, setPhoneNav] = useState<'push' | 'pop' | null>(null);
+  if (phoneNavFrom !== phoneView) {
+    setPhoneNavFrom(phoneView);
+    setPhoneNav(phoneView === 'chat' ? 'push' : 'pop');
+  }
   // The phone's back gesture leaves a chat for the list, never the app: an entry is pushed while
   // a chat is open and unwound when it closes by any other route (the drawer's rule). The entry
   // carries a marker unique to this visit and only THAT entry is unwound: a reload keeps an old
@@ -638,6 +647,9 @@ export function AgentSurface() {
   // The roster generation the last GET answered (`baseGeneration` of every PUT). A PUT based on
   // an older one is refused (409 `roster_stale`) and this surface re-hydrates instead.
   const rosterGenRef = useRef<number | undefined>(undefined);
+  // Mac mode's phone: the stored tabs the last restore could not judge (the Mac did not answer
+  // live-chats), kept on every save so an unreachable Mac never deletes them.
+  const unrestoredRef = useRef<SavedMeta[]>([]);
   // Bumped to pull the roster again (a stale PUT).
   const [rehydrateNonce, setRehydrateNonce] = useState(0);
   const rehydrateRoster = useCallback(() => {
@@ -990,9 +1002,27 @@ export function AgentSurface() {
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
         // shell marker). What's left is agents + chats.
-        const saved = Array.isArray(res.sessions)
+        const stored = Array.isArray(res.sessions)
           ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()))
           : [];
+        // Mac mode's phone brings back only the chats the Mac is running now, adopted below with
+        // no spawn; every other stored tab stays a closed chat (rosterRehydrate.ts `phoneRestorable`).
+        // A tunnel's passing 502 gets one more try. Still no answer restores nothing, and the
+        // stored tabs ride along on every save until a restore can judge them (`carriedUnrestored`).
+        let saved = stored;
+        let unrestored: SavedMeta[] = [];
+        if (isMacPhoneSurface()) {
+          const ask = () => scopedApi.get<LiveChatsWire>('/agent/live-chats');
+          const live = await ask().catch(() => ask()).catch((err: unknown) => {
+            console.warn('[phone restore] the Mac did not say which chats it runs: restoring none', err);
+            return null;
+          });
+          saved = phoneRestorable(stored, live);
+          if (!live) unrestored = stored;
+        }
+        // Only the run still current writes it: a cancelled run landing late must not wipe the
+        // newer run's carry (its next save would then delete the stored tabs after all).
+        if (!cancelled) unrestoredRef.current = unrestored;
         // WHAT IS ALREADY ON SCREEN WHEN THE ROSTER LANDS, and why that is not rare.
         // Any tab present at this point was opened between this effect starting and its
         // fetch returning. The D7 automation-attention opener is the case that made this
@@ -1055,7 +1085,11 @@ export function AgentSurface() {
               // through whichever Claude surface the user has chosen (`claudeKind`), exactly
               // like any other tab, while the roster keeps `kind: 'automation'` so the glyph
               // survives the restore.
-              const s = spawn(m.bypass, m.sessionId, true, claudeKind);
+              // Mac mode's phone only reaches here for a chat the Mac is running: adopt it
+              // passively like the chat branch below, never supersede the Mac's process.
+              const s = isMacPhoneSurface()
+                ? spawn(m.bypass, m.sessionId, true, claudeKind, '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', 'passive')
+                : spawn(m.bypass, m.sessionId, true, claudeKind);
               return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, automation: m.automation, ...(m.titleByAgent ? { titleByAgent: true } : {}) };
             }
             // An agent OR chat tab with a pinned conversation auto-RESUMES its real Claude
@@ -1184,7 +1218,7 @@ export function AgentSurface() {
         // is always the one this surface is actually running under.
         chatPermissionMode,
         ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
-        sessions: sessionList
+        sessions: [...sessionList
           .filter((m) => m.kind !== 'shell')
           .map((m) => ({
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
@@ -1200,6 +1234,7 @@ export function AgentSurface() {
             ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
             ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
           })),
+          ...carriedUnrestored(unrestoredRef.current, new Set(sessionList.map((m) => m.claudeId)))],
       };
       // `baseGeneration` = the last GET's; a 409 roster_stale re-hydrates and never re-sends
       // this body; anything else stays best-effort (rosterRehydrate.ts `putOutcome`).
@@ -1376,6 +1411,8 @@ export function AgentSurface() {
     // composer deliberately does NOT revoke them on unmount, because a respawn unmounts a pane
     // whose chips are still wanted.
     if (kind === 'chat' && claudeId) dropScratch(claudeId);
+    // A conversation closed here is closed: it no longer rides along as an unjudged stored tab.
+    if (claudeId) unrestoredRef.current = unrestoredRef.current.filter((m) => m.sessionId !== claudeId);
 
     // dispose is hardened, but NEVER let a teardown throw block the actual removal —
     // one click must always make the tab disappear.
@@ -3781,7 +3818,9 @@ export function AgentSurface() {
             session the file — its path is written to the vault temp dir and injected
             (readline for a terminal, composer draft for a chat). The listeners live on
             the surface HOST as native DOM handlers — see the drag-drop effect above. */}
-        {isMobile && (
+        {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):
+            the other open chats live on the list, not in a band above the chat. */}
+        {isMobile && !macPhone && (
           <PhoneChatStack
             tabs={stackTabs}
             activeId={mobileActive?.id ?? ''}
@@ -3933,6 +3972,7 @@ export function AgentSurface() {
         /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
+        data-phone-nav={macPhone && phoneNav ? phoneNav : undefined}
         /* The live pane count, for the focus-widening math in CSS — the focused pane's
            extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
            and that cap cannot be computed without N. Read by BOTH the pane row and the tab
