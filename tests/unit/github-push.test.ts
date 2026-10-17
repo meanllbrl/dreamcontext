@@ -88,7 +88,8 @@ describe('github PUSH (A3/A7, mocked transport)', () => {
 
     const issue = [...fake.issues.values()][0];
     expect(issue.state).toBe('open');
-    expect(labelNames(issue)).toEqual(['a', 'priority:high', 'urgency:medium', 'version:v1']);
+    // Urgency is retired (C3): a card that holds none sends no urgency label.
+    expect(labelNames(issue)).toEqual(['a', 'priority:high', 'version:v1']);
     expect(issue.body).toContain('## Why');
     expect(issue.body).not.toContain('## Changelog'); // changelog → comments
   });
@@ -151,7 +152,7 @@ describe('github PUSH (A3/A7, mocked transport)', () => {
     await backend.sync('push');
     const patch = fake.requests.find((r) => r.method === 'PATCH')!;
     expect((patch.body as { labels: string[] }).labels.sort()).toEqual(
-      ['dc:in-progress', 'keep', 'priority:low', 'urgency:medium'],
+      ['dc:in-progress', 'keep', 'priority:low'],
     );
   });
 

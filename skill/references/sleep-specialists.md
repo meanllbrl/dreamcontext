@@ -37,7 +37,7 @@ Work gets **discussed** here that does not **belong** here: a connected vault's 
 
 **Why the cap names every unfiled candidate.** Going over is not possible (`tasks create` refuses), so the decision that matters is WHICH ones. The next cycle, or the owner, should be able to pick up whatever you did not file.
 
-**Creating.** The orchestrator should already have ensured an active planning version; verify it. The file slug derives from the task name. `--by sleep` names you as the filer, but the bar applies either way: a live sleep lock is the evidence, not the flag. The `-w` should be far longer than the 40-character floor; padding to get over it produces exactly the unreadable task the bar exists to prevent.
+**Creating.** Never plan what you file (no cycle, no `-v`, no priority): placing work is the owner's call. The file slug derives from the task name. `--by sleep` names you as the filer, but the bar applies either way: a live sleep lock is the evidence, not the flag. The `-w` should be far longer than the 40-character floor; padding to get over it produces exactly the unreadable task the bar exists to prevent.
 
 ### 2.5. Person attribution (multi-person projects only)
 
@@ -175,7 +175,7 @@ Sessions often end before commit, which is why uncommitted work counts. Coherent
 
 The feed holds exactly ONE announcement per version, so a released version with no entry is a hole in the release history that nobody notices until much later. Authoring one needs real screenshots (and clips) captured by driving the app, which is awake work. Releasing is the user's decision.
 
-The active planning version (the "current sprint") is persisted in `state/.active-version.json` and re-validated against `RELEASES.json` on every read, so a released or missing pointer auto-clears. New tasks without an explicit `--version` auto-attach to it; entries without one float unattached. Set or switch it with `dreamcontext core releases active <version>`, clear with `--clear`, print with no argument.
+Planning lives in cycles (`core/CYCLES.json`, `dreamcontext cycle show`): a date range with one goal, one active at a time. New tasks land in no cycle and no version; sleep reports on the cycle but never plans, carries or closes. Planning releases are retired; a release is compiled from what closed since the previous one.
 
 ### B0a. Two-observation gate (preferences & decisions)
 

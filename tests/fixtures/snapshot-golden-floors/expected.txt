@@ -141,10 +141,6 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 (search: `dreamcontext memory recall "<q>" --types changelog` · browse: `dreamcontext changelog list --page 1`)
 
-## Upcoming Versions
-
-- v0.3.0 (2 task(s))
-
 ## Latest Release
 
 - v0.2.0 (2026-01-05): Budget ladder with lazy rungs
@@ -221,7 +217,7 @@ Recall already spans these. To search one directly: `dreamcontext memory recall 
 
 
 ---
-_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (2322 tok vs 2000 tok).
+_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (2311 tok vs 2000 tok).
 Demoted to their floors: people-roster, extended-core, tasks, bookmarks, changelog, releases, features, knowledge-index, connected-projects.
 Every demoted item keeps its file path above, and `dreamcontext memory recall "<keywords>"` surfaces the full content —
 but you are reading a thinner brain than this project has. FIX: slim the core files below their

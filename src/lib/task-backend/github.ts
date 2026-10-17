@@ -48,6 +48,8 @@ import { readJournal, type JournalEntry, type NewJournalEntry } from '../task-jo
 import { cardHasChangelog, foldCardChangelog } from '../task-card.js';
 import { withTaskFileLock } from '../task-file-lock.js';
 import { loadFamily } from '../task-parent.js';
+import { activeCycle, readCycles } from '../cycles.js';
+import { cycleOfCard, mergeOrder, orderNeedsPush, pushPriority, remotePlacement } from '../task-order.js';
 import { applyRemoteParentLink, holdOpenParent, noteParentLinkFailure, parentLinkSettled } from './parent-sync.js';
 import {
   applyRemoteComments,
@@ -750,6 +752,24 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
   }
 
+  /** The active cycle's id (null when none, or when the store cannot be read). */
+  protected activeCycleId(): string | null {
+    try {
+      return activeCycle(readCycles(this.contextRoot).cycles)?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Whether a cycle id is in this machine's core/CYCLES.json. */
+  protected knowsCycle(id: string): boolean {
+    try {
+      return readCycles(this.contextRoot).cycles.some((c) => c.id === id);
+    } catch {
+      return false;
+    }
+  }
+
   protected async pushTask(
     slug: string,
     adapter: ApiAdapter,
@@ -796,11 +816,22 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // GitHub, so we always send everything the map derives for this task — a
     // `backlog` tag rides verbatim as a label, no special-casing needed).
     // Override-declared `select` custom fields ride here as `<key>:<value>`.
+    // Order rides as the priority label (now → high, next → medium, later →
+    // low) for a card on the new model; a legacy card sends its own priority.
+    // The cycle label is built from the card's OWN value, resolved or not yet
+    // synced, so an id this machine cannot resolve is never dropped, and a task
+    // moved out of its cycle locally loses the stale label. `version:` is the
+    // card's value as before (a pull writes a remote version into the card first).
+    const pushBase = entry?.base_snapshot ? (matter(entry.base_snapshot.body).data as Record<string, unknown>) : null;
+    const sentPriority = pushPriority(task.raw, pushBase, entry?.remote_priority, this.activeCycleId());
     const labels = labelsToGitHub({
       tags: stripPersonTags(task.tags),
-      priority: task.priority,
-      urgency: task.urgency,
+      priority: sentPriority,
+      // Urgency is retired: only a card that still holds one sends it (the
+      // reader's 'medium' default must not become a label on every new card).
+      urgency: typeof task.raw.urgency === 'string' && task.raw.urgency.trim() ? task.raw.urgency : null,
       version: task.version,
+      cycle: cycleOfCard(task.raw),
       status: task.status,
       selectFields: this.selectFieldDefs().map((d) => ({
         key: d.key,
@@ -954,6 +985,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       pendingPush: false,
       remote_parent: remoteParent,
       parent_link_stuck: linkStuck,
+      remote_priority: sentPriority,
       ...journalSyncPatch(journal),
     });
     // Same rule as the ClickUp backend (#185): a push must not advance the global
@@ -1484,8 +1516,18 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     const selectDefs = this.selectFieldDefs();
     const bodyDefs = this.bodyFieldDefs();
-    const { tags: remoteTags, priority: remotePriority, urgency: remoteUrgency, version: remoteVersion, customFields: remoteSelectFields } =
-      labelsFromGitHub(issue.labels, selectDefs.map((d) => d.key));
+    const {
+      tags: remoteTags, priority: remotePriority, urgency: remoteUrgency, version: remoteVersion,
+      cycle: remoteCycle, priorityLabel: remotePriorityLabel, customFields: remoteSelectFields,
+    } = labelsFromGitHub(issue.labels, selectDefs.map((d) => d.key));
+    const activeCycleId = this.activeCycleId();
+    // A cycle id this machine does not hold yet is written anyway (it resolves
+    // when core/CYCLES.json arrives by git); a pull never creates a cycle.
+    const noteUnknownCycle = (slugForNote: string, id: string | null): void => {
+      if (id && !this.knowsCycle(id)) {
+        report.warnings.push(`pull ${slugForNote}: cycle ${id} is not in core/CYCLES.json yet — kept on the card as "cycle not yet synced"; it resolves when the brain repo syncs.`);
+      }
+    };
     // Dates + custom fields live in marked blocks inside the issue body — parse
     // them out, then strip the blocks so the prose that goes into the 3-way
     // merge is block-free.
@@ -1587,6 +1629,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         parent_task: null,
         related_feature: null,
         version: remoteVersion,
+        ...(remoteCycle ? { cycle: remoteCycle } : {}),
         rice: null,
         start_date: remoteStart,
         due_date: remoteDue,
@@ -1603,6 +1646,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         );
       }
       const written = this.writeMirror(slug, fm, remoteBody);
+      noteUnknownCycle(slug, remoteCycle);
       // Comments become journal entries; a journal that outlived its card (a
       // rebuilt mirror) recognises its own comments instead of re-importing them.
       // Whatever local history predates this link stays local (like a bootstrap).
@@ -1619,6 +1663,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        remote_priority: remotePriorityLabel,
         ...journalSyncPatch(journal),
       });
       this.ledger.advanceWatermark(remoteTime);
@@ -1711,12 +1756,30 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       statusM.value = heldOpen.keep;
       statusM.winner = 'local';
     }
-    const priorityM = scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
-    const urgencyM = scalar(
-      (baseFm?.urgency as string | undefined),
-      local.urgency,
-      remoteUrgency ?? local.urgency,
-    );
+    // Cycle and order (C3): a card on the new model merges its cycle label and
+    // its order (through the priority label) and never takes a priority or an
+    // urgency from the remote; a legacy card keeps the priority merge below.
+    const orderM = mergeOrder({
+      base: baseFm,
+      local: local.raw,
+      remoteCycle,
+      remotePriority: remotePriorityLabel,
+      activeCycleId,
+      lastRemotePriority: entry?.remote_priority,
+      scalar,
+    });
+    const priorityM = orderM.newModel
+      ? { value: local.priority, winner: 'none' as const }
+      : scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
+    const urgencyM = orderM.newModel
+      ? { value: local.urgency, winner: 'none' as const }
+      : scalar(
+        (baseFm?.urgency as string | undefined),
+        local.urgency,
+        remoteUrgency ?? local.urgency,
+      );
+    const cycleWin = { value: orderM.cycle, winner: orderM.cycleWinner };
+    const orderWin = { value: orderM.queue, winner: orderM.orderWinner };
     const nameM = scalar(baseFm?.name as string | undefined, local.name, issue.title);
     const tagsM = scalar(baseTagInfo?.tags, stripPersonTags(local.tags), remoteTags);
     const versionM = scalar(baseTagInfo?.version, local.version, remoteVersion);
@@ -1757,7 +1820,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (m.winner === 'remote') anyCustomRemoteWin = true;
     }
 
-    const scalarResults = [statusM, priorityM, urgencyM, nameM, tagsM, versionM, assigneeM, dueM, startM];
+    const scalarResults = [statusM, priorityM, urgencyM, nameM, tagsM, versionM, assigneeM, dueM, startM, cycleWin, orderWin];
     const anyLocalWin = scalarResults.some((r) => r.winner === 'local') || anyCustomLocalWin;
     const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote') || anyCustomRemoteWin;
     const remoteAddedEntries = remoteAddedCount > 0;
@@ -1787,6 +1850,14 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       ...(declaredFieldKeys.length > 0 ? { custom_fields: customFieldsM } : {}),
     };
     delete merged.assignee;
+    if (orderM.newModel) {
+      // Retired keys are never introduced by a pull; a legacy value already on
+      // the card stays as it was.
+      if (!('priority' in local.raw)) delete merged.priority;
+      if (!('urgency' in local.raw)) delete merged.urgency;
+      if (orderM.cycle !== cycleOfCard(local.raw)) merged.cycle = orderM.cycle;
+      if (orderM.queue !== (local.raw.queue ?? null)) merged.queue = orderM.queue;
+    }
 
     // LOCAL-ONLY GUARD — the merge above may only author the fields this backend
     // maps; `objectives:` and everything else the remote cannot express must
@@ -1794,7 +1865,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // field dropped here is gone for good (2026-07-27: 72 task→objective links
     // lost in one pull). The guard restores anything the merge would have lost
     // AND names it, so a mapping regression is loud instead of silent.
-    const guarded = preserveLocalOnlyFields(local.raw, merged);
+    // cycle and queue are remote-carried here (the cycle label, the priority
+    // label): a remote that clears them is a legitimate merge outcome.
+    const guarded = preserveLocalOnlyFields(local.raw, merged, ['cycle', 'queue']);
     if (guarded.rescued.length > 0) {
       report.warnings.push(
         `pull ${slug}: local-only field(s) ${guarded.rescued.sort().join(', ')} would have been dropped by the ` +
@@ -1810,8 +1883,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const rendered = this.renderMirror(fm, mergedBody);
     if (rendered !== localRaw) this.ledger.backupMirror(slug, localRaw);
     const written = this.writeMirrorContent(slug, rendered);
+    if (cycleWin.winner === 'remote') noteUnknownCycle(slug, orderM.cycle);
 
-    const keptLocal = anyLocalWin || proseLocalKept || localUnposted;
+    const keptLocal = anyLocalWin || proseLocalKept || localUnposted ||
+      (orderM.newModel && orderNeedsPush(orderM, remoteCycle));
     if (keptLocal) {
       const remoteRender = this.renderMirror(
         {
@@ -1819,7 +1894,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
           name: issue.title,
           status: remoteStatus,
           priority: remotePriority,
-          urgency: remoteUrgency ?? fm.urgency,
+          // A card without urgency (retired) and a remote without one: no key.
+          ...((remoteUrgency ?? fm.urgency) !== undefined ? { urgency: remoteUrgency ?? fm.urgency } : {}),
           tags: withPersonTags(remoteTags, remoteAssignees),
           version: remoteVersion,
           start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG)
@@ -1829,6 +1905,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
             ? null
             : remoteDue,
           ...(declaredFieldKeys.length > 0 ? { custom_fields: remoteCustomBase } : {}),
+          ...(orderM.newModel ? remotePlacement(local.raw, remoteCycle, remotePriorityLabel, activeCycleId) : {}),
         },
         remoteBody,
       );
@@ -1837,6 +1914,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(remoteRender), body: remoteRender },
         localHash: hashContent(remoteRender),
         pendingPush: true,
+        remote_priority: remotePriorityLabel,
         ...journalSyncPatch(journal),
       });
     } else {
@@ -1845,6 +1923,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        remote_priority: remotePriorityLabel,
         ...journalSyncPatch(journal),
       });
       this.ledger.dequeueFor(slug, this.nowMs());
@@ -1869,6 +1948,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         ['name', nameM, local.name],
         ['tags', tagsM, stripPersonTags(local.tags)],
         ['version', versionM, local.version],
+        ['cycle', cycleWin, cycleOfCard(local.raw)],
+        ['queue', orderWin, local.raw.queue ?? null],
         ['assignees', assigneeM, assigneeSlugsOf(local.raw, local.tags)],
         ['due_date', dueM, (local.raw.due_date as string | null | undefined) ?? null],
         ['start_date', startM, (local.raw.start_date as string | null | undefined) ?? null],

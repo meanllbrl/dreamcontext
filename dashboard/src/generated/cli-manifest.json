@@ -906,7 +906,7 @@
     },
     {
       "path": "core releases active",
-      "desc": "Get or set the active planning version (used as default for new tasks)",
+      "desc": "Deprecated: planning is a cycle now (dreamcontext cycle show). Gets or sets the legacy active planning version",
       "args": [
         "[version]"
       ]
@@ -1173,6 +1173,58 @@
         "--conviction",
         "--headline",
         "--concession"
+      ]
+    },
+    {
+      "path": "cycle",
+      "desc": "Cycles: a dated time box with one goal, one active at a time (apart from the queue and from releases)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "cycle close",
+      "desc": "Close a cycle: every unfinished leaf is carried into the next cycle, sent back to Next, or cancelled",
+      "args": [
+        "[cycle]"
+      ],
+      "valueFlags": [
+        "--carry",
+        "--back",
+        "--cancel",
+        "--all",
+        "--into"
+      ]
+    },
+    {
+      "path": "cycle list",
+      "desc": "List cycles (number, status, dates, done/total leaves, goal)",
+      "args": []
+    },
+    {
+      "path": "cycle new",
+      "desc": "Open a planned cycle (default length: the last cycle's, else tasks.cycleDefaultWeeks, else 1 week)",
+      "args": [],
+      "valueFlags": [
+        "-g",
+        "--goal",
+        "-w",
+        "--weeks",
+        "--end",
+        "--start"
+      ]
+    },
+    {
+      "path": "cycle show",
+      "desc": "Show a cycle: goal, days left, progress over leaves, its work grouped under parents",
+      "args": [
+        "[cycle]"
+      ]
+    },
+    {
+      "path": "cycle start",
+      "desc": "Make a planned cycle the active one (refused while another is active)",
+      "args": [
+        "<cycle>"
       ]
     },
     {
@@ -3175,6 +3227,14 @@
       ]
     },
     {
+      "path": "tasks plan",
+      "desc": "Plan a task into a cycle or a queue (Now / Next / Later). A parent brings its open sub-tasks with it",
+      "args": [
+        "<task>",
+        "<target>"
+      ]
+    },
+    {
       "path": "tasks priority",
       "desc": "Print or set a task's priority (logs \"priority: old -> new\" to the task changelog)",
       "args": [
@@ -3186,6 +3246,17 @@
       "path": "tasks provision",
       "desc": "Create the recommended fields on the remote task container (urgency, summary, RICE, …)",
       "args": []
+    },
+    {
+      "path": "tasks rank",
+      "desc": "Order a task inside its cycle or queue (importance is rank, not priority)",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--before",
+        "--after"
+      ]
     },
     {
       "path": "tasks ready",

@@ -135,7 +135,8 @@ describe('clickup PULL + merge (M4, mocked transport)', () => {
   });
 
   it('PULL updates existing mirror files and creates new ones', async () => {
-    await backend.create({ name: 'Born Local', variant: 'cli' });
+    // A legacy card (it holds a priority): the remote priority lands as a priority.
+    await backend.create({ name: 'Born Local', priority: 'medium', variant: 'cli' });
     await backend.sync('push');
 
     seedRemote('Born Remote', { description: '## Why\n\nmade in the cloud\n' });

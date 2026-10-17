@@ -304,6 +304,18 @@ describe('git-sync/sync-engine — runBrainSync', () => {
   });
 
   // ── pull-only ─────────────────────────────────────────────────────────
+  it('the deterministic merge\'s notes reach the result (a second active cycle demoted is reported)', async () => {
+    const state = makeState({ aheadCount: 1, mergeConflicts: ['_dream_context/core/CYCLES.json'] });
+    const deps = baseDeps(state);
+    const note = '_dream_context/core/CYCLES.json: two cycles were active after a merge: kept #1 (cy_aaaa1111, started 2026-10-16); #2 (cy_bbbb2222, started 2026-10-17) is planned again.';
+    deps.resolveConflicts = () => ({ resolved: ['_dream_context/core/CYCLES.json'], deferredToAgent: [], deferredToHuman: [], notes: [note] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps);
+    expect(result.action).toBe('pushed');
+    expect(result.mergeNotes).toEqual([note]);
+    const clean = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(makeState({ dirty: ['knowledge/x.md'] })));
+    expect(clean.mergeNotes).toBeUndefined();
+  });
+
   it('pull-only: clean merge delivers content and never pushes (P2/C6)', async () => {
     const state = makeState({ aheadCount: 2, shaSequence: ['sha-before', 'sha-after'] });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, baseDeps(state));

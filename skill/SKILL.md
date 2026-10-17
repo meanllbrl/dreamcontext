@@ -143,7 +143,7 @@ Two routing rules that override surface reading:
 | "make an agent", "ajan oluştur", **or the problem-shape:** "one someone reused by jobs, tasks and chat" | **Agent**: `agents/<slug>.md` | WHO does the work: prompt, model, home board; no schedule. Not a person | `dreamcontext agents create <slug> --title "…" --prompt "…"` |
 | "every evening at 6pm, summarize today", "her akşam / her cuma / her gün", **or the problem-shape:** "it happens on its own while nobody is at the keyboard" | **Automation**: `automations/<slug>.md` | A schedule plus a job for the agent it picks, run unattended. **Private to this machine by default** (say so; `automations share <slug>` shares it) | `dreamcontext automations create <slug> --agent <a> --title "…" --days <daily\|mon,wed> --at HH:MM` (capture protocol → [automations.md](references/automations.md)) |
 | "board / whiteboard / control panel / kontrol paneli / pano" | **Whiteboard**: `whiteboards/<slug>/` | A widget canvas; not a knowledge `.excalidraw.md` or a Tasks board view. A metric on it is a live `insight` widget, never a drawn chart | `dreamcontext whiteboard create "<name>"`, `whiteboard add <slug> insight` |
-| "version / release / sprint / milestone" | **Release entry** — `RELEASES.json` | A planning version or shipped release | `dreamcontext core releases add` |
+| "sprint" · "release" | **Cycle** · **Release** (`core/`) | Dated box + goal · what shipped | `cycle new` · `core releases add` |
 | "add a teammate", "who am I", "kim çalışıyor" | **Person** — `people/<slug>.md` (constitution) + a row in `people/people.json` (roster) | A **human who works in this vault**; the constitution renders verbatim when they are ACTIVE on this machine. **Not knowledge** | `dreamcontext people add "<Name>" --email <address>`; `dreamcontext people whoami [--set <slug>]` binds THIS machine |
 
 **Litmus tests when unsure:**
@@ -310,7 +310,7 @@ These are the defaults: the deep and overdue edges follow the configured Must Sl
 **The flow (the top-level session orchestrates; a sub-agent can't reliably fan out further):**
 1. Tell the user you're consolidating.
 2. `dreamcontext sleep start` — pins the epoch (safe clearing).
-3. Build a brief inline (cheap CLI): read `state/.sleep.json`, `git status --short`, `git log` since last sleep, `dreamcontext core releases active`.
+3. Build a brief inline (cheap CLI): read `state/.sleep.json`, `git status --short`, `git log` since last sleep, `dreamcontext cycle show`.
 4. Dispatch specialists **in parallel** (one message, multiple Agent calls; never inline, never sequential): sleep-tasks + sleep-state always; sleep-product, sleep-migration and sleep-learn only when their signals fire (sleep-product: knowledge/feature/research signals; sleep-migration: `dreamcontext migrations pending` has output; sleep-learn: learning is enabled and a thesis is due). Over-fire sleep-product when unsure: it no-ops cheaply.
 5. Wait for reports, then `dreamcontext reflect` (promote only genuinely load-bearing terms).
 6. If `core/objectives/` is non-empty, run `dreamcontext roadmap` and surface any 🔴 SLIPPING objectives.
@@ -330,7 +330,8 @@ A task is a **card** (`state/<slug>.md`, ≤ 12,000 chars) plus a **journal** (`
 **Naming: a task name is a short plain sentence saying what the task does** ("Fix the login redirect loop"), never a type-prefixed slug. **`-w/--why` is mandatory.** A card is born with `## Why` only; a section appears on first `tasks insert`. Never insert placeholder content.
 
 ```bash
-dreamcontext tasks create "Readable sentence name" -d "..." -p high -w "Why this matters"
+dreamcontext tasks create "Readable sentence name" -d "..." -w "Why this matters"
+dreamcontext tasks plan <name> now  # or next/later
 dreamcontext tasks show <name>  # read it: parent first (sub-tasks: --parent <p>)
 dreamcontext tasks insert <name> acceptance_criteria "API returns 200…"  # enrich
 dreamcontext tasks log <name> "Implemented pagination"  # journal (MANDATORY)
@@ -344,7 +345,7 @@ Status: `todo → in_progress → in_review → completed` by default. **Evidenc
 
 **Objectives.** When the project has objectives, propose `objectives: [slug-a, slug-b]` links for tasks you create (`tasks create --objectives a,b` or `dreamcontext tasks objectives <task> a,b`); **never overwrite a non-empty `objectives:` list**, it is a PO decision → [tasks-and-features.md](references/tasks-and-features.md).
 
-**RICE, due dates, tags/people, the Workflow flowchart, versioning, and multi-product** → [tasks-and-features.md](references/tasks-and-features.md).
+**Cycles, RICE, dates, tags/people, Workflow, multi-product** → [tasks-and-features.md](references/tasks-and-features.md).
 **Syncing tasks to a cloud backend (ClickUp _or_ GitHub — one at a time)** → [integrations.md](references/integrations.md).
 
 ---

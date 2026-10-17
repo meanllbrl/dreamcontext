@@ -147,10 +147,6 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 (search: `dreamcontext memory recall "<q>" --types changelog` · browse: `dreamcontext changelog list --page 1`)
 
-## Upcoming Versions
-
-- v0.3.0: Byte-aware demotion rungs (2 task(s))
-
 ## Latest Release
 
 - v0.2.0 (2026-01-05): Budget ladder with lazy rungs

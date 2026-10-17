@@ -31,6 +31,8 @@ import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import { listPending } from '../../lib/peer-mail.js';
 import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
 import { loadFamily, rollupOf, type Family } from '../../lib/task-parent.js';
+import { activeCycle, cycleProgress, daysLeft, nextPlannedCycle, readCycles } from '../../lib/cycles.js';
+import { today } from '../../lib/id.js';
 import { listInsights, readCache } from '../../lib/lab/store.js';
 import { listTheses } from '../../lib/theses/store.js';
 import type { ThesisManifest } from '../../lib/theses/types.js';
@@ -58,7 +60,7 @@ import {
   FEATURES_L2_CHARS, FEATURES_ROSTER_CHARS,
   PINNED_ITEM_CHARS, PINNED_KNOWLEDGE_CHARS,
   BOOKMARKS_L1_CHARS, BOOKMARK_ITEM_CHARS,
-  EXTENDED_CORE_L1_CHARS, EXTENDED_CORE_SUMMARY_CHARS, RELEASES_L1_CHARS, RELEASES_LATEST_SUMMARY_CHARS,
+  EXTENDED_CORE_L1_CHARS, EXTENDED_CORE_SUMMARY_CHARS, RELEASES_LATEST_SUMMARY_CHARS,
   CONNECTED_PEER_ID_CHARS, PATTERN_BRIEF_CHARS, PATTERNS_FLOOR_CHARS,
   CONNECTED_L1_CHARS, CONNECTED_L2_CHARS, PEOPLE_ROSTER_L1_CHARS,
   OBJECTIVES_L2_CHARS, OBJECTIVE_ITEM_CHARS, THESES_CLAIM_CHARS,
@@ -566,6 +568,32 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
  * gone) stays its own entry and names its parent. A board with no parents is
  * returned untouched (byte-identical render).
  */
+/**
+ * The snapshot's Cycle lines: the active cycle (number, goal, days left,
+ * leaves done/total), else the next planned one. Empty when there are no
+ * cycles. Never throws: a broken store must not break the snapshot.
+ */
+export function renderCycleLines(root: string, now: string = today()): string[] {
+  try {
+    const { cycles, notes } = readCycles(root);
+    if (cycles.length === 0) return [];
+    const out: string[] = [];
+    const active = activeCycle(cycles);
+    if (active) {
+      const p = cycleProgress(loadFamily(join(root, 'state')), loadStatuses(root), active.id);
+      out.push(`- #${active.number}: ${active.goal} — ${daysLeft(active, now)} day(s) left (${active.start} → ${active.end}), ${p.done}/${p.total} done`);
+    } else {
+      const next = nextPlannedCycle(cycles);
+      if (!next) return [];
+      out.push(`- No active cycle. Next: #${next.number}: ${next.goal} (${next.start} → ${next.end}); start it with \`dreamcontext cycle start ${next.number}\``);
+    }
+    for (const n of notes) out.push(`  ⚠ ${n}`);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export function foldSubTasks(entries: ActiveTaskEntry[], family: Family, statuses: readonly StatusDef[]): ActiveTaskEntry[] {
   if (family.children.size === 0) return entries;
   const onBoard = new Set(entries.map((e) => e.slug));
@@ -1952,88 +1980,64 @@ export function measureSnapshot(
     }
   }
 
-  // 7.5. Releases (planning + latest released). Demotion drops the version
-  // summaries and the latest release's roll-up counts, keeping every version
-  // NUMBER — which is what a session actually needs to know it is working toward
-  // v0.23.0. Full detail is one `RELEASES.json` read away.
+  // 7.5. Cycle + latest release. The cycle is the plan (number, goal, days
+  // left, leaves done/total); a release is an outcome. Legacy `planning`
+  // entries in RELEASES.json are no longer shown: planning lives in cycles.
+  // Demotion keeps the cycle line and drops the release's roll-up counts.
+  const cycleLines = renderCycleLines(root);
   const releasesPath = join(root, 'core', 'RELEASES.json');
   let releasesRung: (() => string) | null = null;
+  let latestReleased: Record<string, unknown> | null = null;
   if (existsSync(releasesPath)) {
     try {
       const releases = readJsonArray<Record<string, unknown>>(releasesPath);
-      if (releases.length > 0) {
-        const planning = releases.filter(r => r.status === 'planning');
-        // 'superseded' entries were never published, and the ARRAY ORDER of a
-        // hand-edited RELEASES.json is not a timeline — pick the latest
-        // actually-released version by semver, not by position. (This vault's
-        // own file had a superseded 0.20.2 sitting above 0.21.0, and the
-        // snapshot proudly called it the Latest Release.)
-        const released = releases.filter(r => r.status !== 'planning' && r.status !== 'superseded');
-        const latestReleased = released.length > 0
-          ? [...released].sort((a, b) =>
-            compareVersions(String(b.version ?? ''), String(a.version ?? '')))[0]
-          : null;
-        // Empty fields disappear instead of rendering as '()' or a dangling
-        // ':'. `sumCap` bounds the summary at the demoted rung (word-safe) —
-        // level 0 keeps the full narrative.
-        const latestLine = (latest: Record<string, unknown>, sumCap?: number): string => {
-          const date = String(latest.date ?? '');
-          const rawSum = String(latest.summary ?? '');
-          const sum = sumCap === undefined ? rawSum : capAtWordBoundary(rawSum, sumCap);
-          const brk = latest.breaking ? ' (BREAKING)' : '';
-          return `- ${String(latest.version ?? '')}${date ? ` (${date})` : ''}${brk}${sum ? `: ${sum}` : ''}`;
-        };
-
-        releasesRung = (): string => {
-          const out: string[] = [];
-          if (planning.length > 0) {
-            out.push('## Upcoming Versions\n');
-            out.push(...packToCharBudget(
-              planning,
-              (p) => {
-                const taskCount = Array.isArray(p.tasks) ? p.tasks.length : 0;
-                return `- ${String(p.version ?? '')}${taskCount > 0 ? ` (${taskCount} task(s))` : ''}`;
-              },
-              RELEASES_L1_CHARS,
-              (rest) => namedRosterTail(
-                rest.map((p) => String(p.version ?? '')), RELEASES_L1_CHARS,
-                'planned version(s)', '`_dream_context/core/RELEASES.json`',
-              ),
-            ));
-            out.push('');
-          }
-          if (latestReleased) {
-            out.push('## Latest Release\n');
-            out.push(latestLine(latestReleased, RELEASES_LATEST_SUMMARY_CHARS));
-            out.push('');
-          }
-          return out.join('\n');
-        };
-
-        if (planning.length > 0) {
-          parts.push('## Upcoming Versions\n');
-          for (const p of planning) {
-            const ver = String(p.version ?? '');
-            const sum = String(p.summary ?? '');
-            const taskCount = Array.isArray(p.tasks) ? p.tasks.length : 0;
-            parts.push(`- ${ver}: ${sum}${taskCount > 0 ? ` (${taskCount} task(s))` : ''}`);
-          }
-          parts.push('');
-        }
-
-        if (latestReleased) {
-          const taskCount = Array.isArray(latestReleased.tasks) ? latestReleased.tasks.length : 0;
-          const featCount = Array.isArray(latestReleased.features) ? latestReleased.features.length : 0;
-          parts.push('## Latest Release\n');
-          parts.push(latestLine(latestReleased));
-          if (taskCount > 0 || featCount > 0) {
-            parts.push(`  Includes: ${taskCount} task(s), ${featCount} feature(s)`);
-          }
-          parts.push('');
-        }
-      }
+      // 'superseded' entries were never published, and the ARRAY ORDER of a
+      // hand-edited RELEASES.json is not a timeline — pick the latest
+      // actually-released version by semver, not by position. (This vault's
+      // own file had a superseded 0.20.2 sitting above 0.21.0, and the
+      // snapshot proudly called it the Latest Release.)
+      const released = releases.filter(r => r.status !== 'planning' && r.status !== 'superseded');
+      latestReleased = released.length > 0
+        ? [...released].sort((a, b) =>
+          compareVersions(String(b.version ?? ''), String(a.version ?? '')))[0]
+        : null;
     } catch {
       // skip if malformed
+    }
+  }
+  // Empty fields disappear instead of rendering as '()' or a dangling
+  // ':'. `sumCap` bounds the summary at the demoted rung (word-safe) —
+  // level 0 keeps the full narrative.
+  const latestLine = (latest: Record<string, unknown>, sumCap?: number): string => {
+    const date = String(latest.date ?? '');
+    const rawSum = String(latest.summary ?? '');
+    const sum = sumCap === undefined ? rawSum : capAtWordBoundary(rawSum, sumCap);
+    const brk = latest.breaking ? ' (BREAKING)' : '';
+    return `- ${String(latest.version ?? '')}${date ? ` (${date})` : ''}${brk}${sum ? `: ${sum}` : ''}`;
+  };
+  if (cycleLines.length > 0 || latestReleased) {
+    releasesRung = (): string => {
+      const out: string[] = [];
+      if (cycleLines.length > 0) out.push('## Cycle\n', ...cycleLines, '');
+      if (latestReleased) {
+        out.push('## Latest Release\n');
+        out.push(latestLine(latestReleased, RELEASES_LATEST_SUMMARY_CHARS));
+        out.push('');
+      }
+      return out.join('\n');
+    };
+    if (cycleLines.length > 0) {
+      parts.push('## Cycle\n', ...cycleLines, '');
+    }
+    if (latestReleased) {
+      const taskCount = Array.isArray(latestReleased.tasks) ? latestReleased.tasks.length : 0;
+      const featCount = Array.isArray(latestReleased.features) ? latestReleased.features.length : 0;
+      parts.push('## Latest Release\n');
+      parts.push(latestLine(latestReleased));
+      if (taskCount > 0 || featCount > 0) {
+        parts.push(`  Includes: ${taskCount} task(s), ${featCount} feature(s)`);
+      }
+      parts.push('');
     }
   }
   // An empty rung list means "no cheaper render exists" — the section still

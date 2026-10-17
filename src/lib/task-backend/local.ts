@@ -119,15 +119,12 @@ function getTaskTemplate(): string {
 id: "{{ID}}"
 name: "{{NAME}}"
 description: "{{DESCRIPTION}}"
-priority: "{{PRIORITY}}"
-urgency: "{{URGENCY}}"
 status: "{{STATUS}}"
 created_at: "{{DATE}}"
 updated_at: "{{DATE}}"
 tags: {{TAGS}}
 parent_task: null
 related_feature: null
-version: {{VERSION}}
 ---
 
 ## Why
@@ -194,6 +191,21 @@ function renderTaskTemplate(
     .replaceAll('{{DATE}}', today())
     .replaceAll('{{WHY}}', input.why || '(To be defined)')
     .replaceAll('{{VERSION}}', input.version ? `"${input.version}"` : 'null');
+}
+
+/**
+ * Priority, urgency and version are retired from the shipped card (the
+ * "when?" axis is cycle / queue / rank). A caller that still passes them (the
+ * legacy dashboard form, a deprecated `-v`) gets them layered on, additively;
+ * `tasks create` passes none, so its card carries none.
+ */
+function layerLegacyOrderFields(filePath: string, input: CreateTaskInput): void {
+  const fields: Record<string, unknown> = {};
+  if (input.priority) fields.priority = input.priority;
+  if (input.urgency) fields.urgency = input.urgency;
+  if (input.version) fields.version = input.version;
+  if (input.queue) fields.queue = input.queue;
+  if (Object.keys(fields).length > 0) updateFrontmatterFields(filePath, fields);
 }
 
 function safeParentRef(raw: unknown): string | null {
@@ -432,6 +444,7 @@ export class LocalTaskBackend implements TaskBackend {
       });
 
       writeFileSync(filePath, content, 'utf-8');
+      layerLegacyOrderFields(filePath, input);
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
       }
@@ -458,6 +471,7 @@ export class LocalTaskBackend implements TaskBackend {
         description: input.description ?? '',
       });
       writeFileSync(filePath, content, 'utf-8');
+      layerLegacyOrderFields(filePath, input);
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
       }

@@ -40,6 +40,8 @@ import {
 } from './clickup-fields.js';
 import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
 import { keyFromDcLabel, parentOf, SHIPPED_STATUS_KEYS } from '../task-status.js';
+import { activeCycle, readCycles } from '../cycles.js';
+import { cycleOfCard, mergeOrder, pushPriority, remotePlacement } from '../task-order.js';
 import { getActivePlanningVersion } from '../active-version.js';
 import { getExistingReleases } from '../release-discovery.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
@@ -814,6 +816,15 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
   }
 
+  /** The active cycle's id (null when none, or when the store cannot be read). */
+  protected activeCycleId(): string | null {
+    try {
+      return activeCycle(readCycles(this.contextRoot).cycles)?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   protected async pushTask(
     slug: string,
     adapter: ApiAdapter,
@@ -892,11 +903,14 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       : null;
     const baseFmDue = (baseSnapshotFm?.due_date as string | null | undefined) ?? null;
     const baseFmStart = (baseSnapshotFm?.start_date as string | null | undefined) ?? null;
+    const sentPriority = pushPriority(task.raw, baseSnapshotFm, entry?.remote_priority, this.activeCycleId());
     const fields = {
       name: task.name,
       description: bodyToDescription(task.body),
       ...(mappedStatus !== null ? { status: mappedStatus } : {}),
-      priority: priorityToClickUp(task.priority),
+      // Order rides as the native priority (now → high, next → normal, later →
+      // low); a card only on legacy priority sends its own.
+      priority: priorityToClickUp(sentPriority),
       ...(startLocal !== null || baseFmStart !== null
         ? { start_date: startDateToClickUp(startLocal), start_date_time: false }
         : {}),
@@ -1191,6 +1205,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       pendingPush: tagOpsFailed,
       remote_parent: remoteParent,
       parent_link_stuck: linkStuck,
+      remote_priority: sentPriority,
       ...journalSyncPatch(journal),
     });
     // NOTE: the push must NOT advance the global pull watermark (#185). The
@@ -1509,6 +1524,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       this.statusDefs(),
     );
     const remotePriority = priorityFromClickUp(remote.priority);
+    // The priority ClickUp actually holds (null when unset), for the order merge and the ledger.
+    const remotePriorityRaw = remote.priority ? remotePriority : null;
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
     const remoteDue = dueDateFromClickUp(remote.due_date);
     const remoteStart = startDateFromClickUp(remote.start_date);
@@ -1618,6 +1635,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        remote_priority: remotePriorityRaw,
         ...journalSyncPatch(journal),
       });
       this.ledger.advanceWatermark(remoteTime);
@@ -1707,7 +1725,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       statusM.value = heldOpen.keep;
       statusM.winner = 'local';
     }
-    const priorityM = scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
+    // Order (C3): a card on the new model merges its order through the native
+    // priority and never takes a priority from ClickUp; a legacy card keeps the
+    // priority merge. ClickUp does not carry the cycle, so it stays local.
+    const activeCycleId = this.activeCycleId();
+    const orderM = mergeOrder({
+      base: baseFm, local: local.raw, remotePriority: remotePriorityRaw, activeCycleId,
+      lastRemotePriority: entry?.remote_priority, scalar,
+    });
+    const priorityM = orderM.newModel
+      ? { value: local.priority, winner: 'none' as const }
+      : scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
+    const orderWin = { value: orderM.queue, winner: orderM.orderWinner };
     const nameM = scalar(baseFm?.name as string | undefined, local.name, remote.name);
     const tagsM = scalar(baseTagInfo?.tags, stripPersonTags(local.tags), remoteTags);
     const versionM = scalar(baseTagInfo?.version, local.version, remoteVersion);
@@ -1748,7 +1777,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       remoteStart,
     );
 
-    const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM, dueM, startM];
+    const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM, dueM, startM, orderWin];
     const anyLocalWin = scalarResults.some((r) => r.winner === 'local')
       || fieldWinners.some((r) => r.winner === 'local');
     const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote')
@@ -1782,6 +1811,11 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // Lean on person tags: a legacy single `assignee` field (spread from
     // local.raw) is folded into the tag set above, so drop it from the mirror.
     delete fm.assignee;
+    if (orderM.newModel) {
+      if (!('priority' in local.raw)) delete fm.priority;
+      if (orderM.cycle !== cycleOfCard(local.raw)) fm.cycle = orderM.cycle;
+      if (orderM.queue !== (local.raw.queue ?? null)) fm.queue = orderM.queue;
+    }
     // Apply custom-field winners (rice subfields rebuild the block — score
     // is always recomputed locally, never trusted from the remote).
     const ricePatch: RiceInput = {};
@@ -1824,7 +1858,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       (RICE_KEYS as string[]).includes(fw.key) ? 'rice'
         : BUILTIN_FIELD_KEYS.has(fw.key) ? fw.key
         : 'custom_fields');
-    const guarded = preserveLocalOnlyFields(local.raw, fm, boundKeys);
+    const guarded = preserveLocalOnlyFields(local.raw, fm, [...boundKeys, ...(orderM.newModel ? ['cycle', 'queue'] : [])]);
     for (const key of guarded.rescued) fm[key] = guarded.fm[key];
     if (guarded.rescued.length > 0) {
       report.warnings.push(
@@ -1863,7 +1897,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ? { custom_fields: { ...((fm.custom_fields as Record<string, unknown>) ?? {}), ...remoteCustom } }
         : {};
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice, ...(orderM.newModel ? remotePlacement(local.raw, undefined, remotePriorityRaw, activeCycleId) : {}) },
         remoteDesc,
       );
       this.ledger.updateTaskSync(slug, {
@@ -1871,6 +1905,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(remoteRender), body: remoteRender },
         localHash: hashContent(remoteRender),
         pendingPush: true,
+        remote_priority: remotePriorityRaw,
         ...journalSyncPatch(journal),
       });
     } else {
@@ -1879,6 +1914,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        remote_priority: remotePriorityRaw,
         ...journalSyncPatch(journal),
       });
       this.ledger.dequeueFor(slug, this.nowMs());
@@ -1904,6 +1940,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ['name', nameM, local.name],
         ['tags', tagsM, stripPersonTags(local.tags)],
         ['version', versionM, local.version],
+        ['queue', orderWin, local.raw.queue ?? null],
         ['assignees', assigneeM, assigneeSlugsOf(local.raw, local.tags)],
         ['due_date', dueM, (local.raw.due_date as string | null | undefined) ?? null],
         ['start_date', startM, (local.raw.start_date as string | null | undefined) ?? null],

@@ -4,12 +4,14 @@ import { input, select, checkbox } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { insertToJsonArray, readJsonArray, writeJsonArray } from '../../lib/json-file.js';
 import { generateId, today } from '../../lib/id.js';
-import { success, error, info, header, formatTable } from '../../lib/format.js';
+import { success, error, info, header, formatTable, warn } from '../../lib/format.js';
+import { isCycleId } from '../../lib/cycles.js';
 import {
   getExistingReleases,
   findUnreleasedTasks,
   findUnreleasedFeatures,
   findUnreleasedChangelog,
+  previousReleaseDate,
 } from '../../lib/release-discovery.js';
 import type { ReleaseEntry } from '../../lib/release-discovery.js';
 import { backPopulateFeatures } from '../../lib/release-backpopulate.js';
@@ -123,13 +125,21 @@ export function registerCoreCommand(program: Command): void {
     .description('Create a release with auto-discovered tasks, features, and changelog entries')
     .option('-V, --ver <version>', 'Version string (e.g., 1.2.0)')
     .option('-s, --summary <summary>', 'Release summary')
-    .option('--status <status>', 'Release status: planning or released (default: released)')
+    .option('--status <status>', 'Release status: released (planning is retired; plan with a cycle)')
     .option('-y, --yes', 'Skip interactive selection, include all discovered items')
     .action(async (opts) => {
       const root = ensureContextRoot();
       const releasesPath = join(root, 'core', 'RELEASES.json');
       const auto = !!opts.yes;
-      const releaseStatus = opts.status === 'planning' ? 'planning' : 'released' as const;
+      // A release is an outcome, compiled from what closed. Planning lives in
+      // cycles now, so a `planning` entry is no longer created.
+      if (opts.status !== undefined && opts.status !== 'released') {
+        error(opts.status === 'planning'
+          ? 'Planning releases are retired: plan with a cycle (dreamcontext cycle new --goal "..."), and record a release once work has shipped.'
+          : `Release status must be 'released', got: ${opts.status}`);
+        process.exitCode = 1;
+        return;
+      }
 
       // 1. Version
       const version = opts.ver ?? (auto ? '' : await input({ message: 'Version (e.g., 1.2.0):' }));
@@ -148,36 +158,6 @@ export function registerCoreCommand(program: Command): void {
       // 2. Summary
       const summary = opts.summary ?? (auto ? '' : await input({ message: 'Summary:' }));
 
-      // For planning releases, skip auto-discovery
-      if (releaseStatus === 'planning') {
-        const releaseEntry: ReleaseEntry = {
-          id: generateId('rel'),
-          version: version.trim(),
-          date: '',
-          summary: summary.trim(),
-          breaking: false,
-          status: 'planning',
-          features: [],
-          tasks: [],
-          changelog: [],
-        };
-        insertToJsonArray(releasesPath, releaseEntry);
-        // Only auto-activate if no active planning version is currently set, to avoid
-        // silently clobbering an intentional choice. User can switch with `releases active <ver>`.
-        const currentActive = getActivePlanningVersion();
-        if (!currentActive) {
-          try {
-            setActivePlanningVersion(version.trim());
-            success(`Planning version ${version.trim()} created and set as active.`);
-          } catch (err: any) {
-            error(`Created planning version but could not set as active: ${err.message}`);
-          }
-        } else {
-          success(`Planning version ${version.trim()} created. Active planning version remains ${currentActive} — switch with: dreamcontext core releases active ${version.trim()}`);
-        }
-        return;
-      }
-
       // 3. Breaking?
       const breaking = auto
         ? false
@@ -190,14 +170,15 @@ export function registerCoreCommand(program: Command): void {
           });
 
       // 4. Auto-discover tasks
-      const unreleasedTasks = findUnreleasedTasks(root);
+      const since = previousReleaseDate(root);
+      const unreleasedTasks = findUnreleasedTasks(root, { since });
       let selectedTaskIds: string[] = [];
       if (unreleasedTasks.length > 0) {
         if (auto) {
           selectedTaskIds = unreleasedTasks.map(t => t.id);
         } else {
           selectedTaskIds = await checkbox({
-            message: `Include completed tasks? (${unreleasedTasks.length} unreleased)`,
+            message: `Include completed tasks? (${unreleasedTasks.length} closed${since ? ` since ${since}` : ''})`,
             choices: unreleasedTasks.map(t => ({
               value: t.id,
               name: `${t.slug} - ${t.name}`,
@@ -252,6 +233,9 @@ export function registerCoreCommand(program: Command): void {
         changelogEntries: selectedChangelog.map(c => c.entry),
         taskIds: selectedTaskIds,
       });
+      const cycles = [...new Set(unreleasedTasks
+        .filter((t) => selectedTaskIds.includes(t.id) && isCycleId(t.cycle))
+        .map((t) => t.cycle as string))];
       const releaseEntry: ReleaseEntry = {
         id: generateId('rel'),
         version: version.trim(),
@@ -263,6 +247,7 @@ export function registerCoreCommand(program: Command): void {
         tasks: selectedTaskIds,
         changelog: selectedChangelog.map(c => c.entry),
         ...(contributors.length > 0 ? { contributors } : {}),
+        ...(cycles.length > 0 ? { cycles } : {}),
       };
 
       // 8. Write to RELEASES.json
@@ -274,7 +259,7 @@ export function registerCoreCommand(program: Command): void {
         info(`Set released_version="${version.trim()}" on ${selectedFeatureIds.length} feature(s).`);
       }
 
-      success(`Release ${version.trim()} recorded (${selectedTaskIds.length} tasks, ${selectedFeatureIds.length} features, ${selectedChangelog.length} changelog entries).`);
+      success(`Release ${version.trim()} recorded (${selectedTaskIds.length} tasks, ${selectedFeatureIds.length} features, ${selectedChangelog.length} changelog entries${cycles.length > 0 ? `, from ${cycles.length} cycle(s)` : ''}).`);
     });
 
   releases
@@ -310,8 +295,9 @@ export function registerCoreCommand(program: Command): void {
     .command('active')
     .argument('[version]', 'Version to set as active planning version (omit to print current)')
     .option('--clear', 'Unset the active planning version')
-    .description('Get or set the active planning version (used as default for new tasks)')
+    .description('Deprecated: planning is a cycle now (dreamcontext cycle show). Gets or sets the legacy active planning version')
     .action((version: string | undefined, opts: { clear?: boolean }) => {
+      warn('releases active is deprecated: planning is a cycle now (dreamcontext cycle show / cycle start). New tasks no longer default into a version.');
       if (opts.clear) {
         clearActivePlanningVersion();
         success('Active planning version cleared.');
@@ -378,12 +364,17 @@ export function registerCoreCommand(program: Command): void {
   releases
     .command('set-status')
     .argument('<version>', 'Existing release version to update')
-    .argument('<status>', 'New status: planning or released')
+    .argument('<status>', 'New status: released (planning is retired)')
     .option('--date <YYYY-MM-DD>', 'Set or update the release date')
     .description('Update the status (and optionally date) of an existing release entry')
     .action((version: string, status: string, opts: { date?: string }) => {
-      if (status !== 'planning' && status !== 'released') {
-        error(`Status must be 'planning' or 'released', got: ${status}`);
+      if (status === 'planning') {
+        error('Planning releases are retired: plan with a cycle (dreamcontext cycle new --goal "...").');
+        process.exitCode = 1;
+        return;
+      }
+      if (status !== 'released') {
+        error(`Status must be 'released', got: ${status}`);
         return;
       }
 

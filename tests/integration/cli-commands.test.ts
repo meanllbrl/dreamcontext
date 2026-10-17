@@ -35,6 +35,18 @@ function prove(dir: string, slug: string): void {
 }
 
 /** A task's journal: its history lives off the card (state/journal/<slug>.md). */
+/**
+ * Give a task the legacy keys an old card holds (`tasks create` writes no
+ * priority, urgency or version since C3), so the legacy setters and filters
+ * stay covered on purpose.
+ */
+function seedLegacy(dir: string, slug: string, fields: Record<string, string>): void {
+  const file = join(dir, '_dream_context', 'state', `${slug}.md`);
+  const text = readFileSync(file, 'utf-8');
+  const lines = Object.entries(fields).map(([k, v]) => `${k}: "${v}"`).join('\n');
+  writeFileSync(file, text.replace(/^status: /m, `${lines}\nstatus: `));
+}
+
 function journalOf(dir: string, slug: string): string {
   const p = join(dir, '_dream_context', 'state', 'journal', `${slug}.md`);
   return existsSync(p) ? readFileSync(p, 'utf-8') : '';
@@ -323,7 +335,8 @@ describe('CLI commands (integration)', () => {
     });
 
     it('prints, sets and no-ops priority and urgency on an existing task', () => {
-      run('tasks create level-task --description "Levels" --priority medium --urgency low -w "test why"', tmpDir);
+      run('tasks create level-task --description "Levels" -w "test why"', tmpDir);
+      seedLegacy(tmpDir, 'level-task', { priority: 'medium', urgency: 'low' });
       const file = join(tmpDir, '_dream_context', 'state', 'level-task.md');
 
       expect(run('tasks priority level-task', tmpDir)).toContain('priority: medium');
@@ -343,7 +356,8 @@ describe('CLI commands (integration)', () => {
     });
 
     it('rejects an invalid priority or urgency with a non-zero exit', () => {
-      run('tasks create bad-level --description "Levels" --priority medium -w "test why"', tmpDir);
+      run('tasks create bad-level --description "Levels" -w "test why"', tmpDir);
+      seedLegacy(tmpDir, 'bad-level', { priority: 'medium' });
       let code = 0;
       try {
         execSync(`node ${CLI} tasks priority bad-level urgent 2>&1`, { cwd: tmpDir, encoding: 'utf-8' });
@@ -460,17 +474,20 @@ parent_task: null
       const output = run('tasks create defaults-test -w "test why"', tmpDir);
       expect(output).toContain('created');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'defaults-test.md'), 'utf-8');
-      expect(content).toContain('priority: "medium"');
+      // C3: no priority, urgency or version on a new card; the order is cycle / queue / rank.
+      expect(content).not.toMatch(/^(priority|urgency|version):/m);
       expect(content).toContain('status: "todo"');
       expect(content).toContain('description: "defaults-test"');
       expect(content).toContain('tags: []');
     });
 
     it('creates a task with --status and --tags flags', () => {
-      run('tasks create flagged-task -d "Flagged" -p high -s in_progress -t "backend,api" -w "test why"', tmpDir);
+      const out = run('tasks create flagged-task -d "Flagged" -p high -s in_progress -t "backend,api" -w "test why"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'flagged-task.md'), 'utf-8');
       expect(content).toContain('status: "in_progress"');
-      expect(content).toContain('priority: "high"');
+      // -p is retired: accepted, warned about, not written.
+      expect(out).toContain('-p/--priority is retired');
+      expect(content).not.toMatch(/^priority:/m);
       expect(content).toContain('"backend"');
       expect(content).toContain('"api"');
     });
@@ -492,9 +509,11 @@ parent_task: null
       expect(output).toContain('Status must be one of');
     });
 
-    it('rejects invalid priority', () => {
+    it('accepts a retired -p value with a warning and writes no priority', () => {
       const output = run('tasks create bad-prio -p urgent -w "test why"', tmpDir);
-      expect(output).toContain('Priority must be one of');
+      expect(output).toContain('-p/--priority is retired');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'bad-prio.md'), 'utf-8');
+      expect(content).not.toMatch(/^priority:/m);
     });
 
     it('lists non-completed tasks by default', () => {
@@ -548,8 +567,11 @@ parent_task: null
     });
 
     it('filters by --version and --priority', () => {
-      run('tasks create v-s5 -d "x" -v S5 -p critical -w "test why"', tmpDir);
-      run('tasks create v-backlog -d "x" -v BACKLOG -p low -w "test why"', tmpDir);
+      run('tasks create v-s5 -d "x" -v S5 -w "test why"', tmpDir);
+      seedLegacy(tmpDir, 'v-s5', { priority: 'critical' });
+      // -v BACKLOG is the Later queue now (no version written).
+      run('tasks create v-backlog -d "x" -v BACKLOG -w "test why"', tmpDir);
+      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'v-backlog.md'), 'utf-8')).toMatch(/^queue: "?later"?$/m);
       expect(run('tasks list --version S5', tmpDir)).toContain('v-s5');
       expect(run('tasks list --version S5', tmpDir)).not.toContain('v-backlog');
       expect(run('tasks list --priority critical', tmpDir)).toContain('v-s5');
@@ -565,7 +587,8 @@ parent_task: null
     });
 
     it('emits JSON with --json', () => {
-      run('tasks create json-task -d "A JSON task" -t memoryos -v S5 -p high -w "test why"', tmpDir);
+      run('tasks create json-task -d "A JSON task" -t memoryos -v S5 -w "test why"', tmpDir);
+      seedLegacy(tmpDir, 'json-task', { priority: 'high' });
       const output = run('tasks list --tag memoryos --json', tmpDir);
       const parsed = JSON.parse(output);
       expect(Array.isArray(parsed)).toBe(true);
@@ -1491,8 +1514,17 @@ parent_task: null
     });
 
     describe('set-status', () => {
+      // Planning entries are no longer created (C3: plan with a cycle), but legacy
+      // ones still exist until they are retired, and must still flip to released.
+      const seedPlanning = (ver: string, summary: string): void => {
+        const file = join(tmpDir, '_dream_context', 'core', 'RELEASES.json');
+        const list = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) : [];
+        list.unshift({ id: `rel_${ver.replace(/\W/g, '')}`, version: ver, date: '', summary, breaking: false, status: 'planning', features: [], tasks: [], changelog: [] });
+        writeFileSync(file, JSON.stringify(list, null, 2));
+      };
+
       it('flips a planning release to released with a date', () => {
-        run('core releases add --ver 0.6.0 --summary "Beta" --status planning', tmpDir);
+        seedPlanning('0.6.0', 'Beta');
         const out = run('core releases set-status 0.6.0 released --date 2026-06-05', tmpDir);
         expect(out).toContain('0.6.0');
         expect(out).toContain('released');
@@ -1512,13 +1544,14 @@ parent_task: null
       });
 
       it('errors on an invalid status value', () => {
-        run('core releases add --ver 0.7.0 --summary "RC" --status planning', tmpDir);
+        seedPlanning('0.7.0', 'RC');
         const out = run('core releases set-status 0.7.0 shipped', tmpDir);
-        expect(out).toContain("must be 'planning' or 'released'");
+        expect(out).toContain("must be 'released'");
+        expect(run('core releases set-status 0.7.0 planning', tmpDir)).toContain('Planning releases are retired');
       });
 
       it('preserves all other fields after update', () => {
-        run('core releases add --ver 0.8.0 --summary "RC2" --status planning', tmpDir);
+        seedPlanning('0.8.0', 'RC2');
         run('core releases set-status 0.8.0 released --date 2026-06-10', tmpDir);
         const releases = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'core', 'RELEASES.json'), 'utf-8'));
         const entry = releases.find((r: any) => r.version === '0.8.0');

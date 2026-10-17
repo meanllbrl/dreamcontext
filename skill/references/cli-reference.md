@@ -140,7 +140,7 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 |---|---|
 | `tasks list` | List/filter/group tasks (excludes terminal — done- and cancelled-kind — tasks by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>` (sprint/milestone), `--priority <level>`, `--feature <slug>`, `--objective <slug>`, `--since YYYY-MM-DD` / `--until YYYY-MM-DD` (inclusive, on `updated_at`), `-g/--group-by tag\|version\|priority\|status`, `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. The snapshot's Active Tasks footer teaches this surface. |
 | `tasks tags` | Distinct task tags with counts. `-a/--all`, `--json`. |
-| `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--objectives <csv>` (roadmap objective slugs this task serves; slugs must exist), `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset), `--by human\|sleep` (who is filing; during a live sleep cycle anything but `human` must clear the filing bar), `--neighbor-checked <slug>` (lifts a review-band filing-bar refusal by naming the nearest task you looked at), `--declined-checked <key>` (lifts a semantic declined-match refusal by naming the declined idea you read; the exact-slug match is never lifted). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
+| `tasks create <name>` | Create a task (writes no priority, urgency or version). Flags: `-d/--description`, `-p/--priority` and `-u/--urgency` (retired: accepted, warned, ignored), `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version` (deprecated: a cycle number/id plans it there, `BACKLOG` = Later, else a legacy label), `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--objectives <csv>` (roadmap objective slugs this task serves; slugs must exist), `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset), `--by human\|sleep` (who is filing; during a live sleep cycle anything but `human` must clear the filing bar), `--neighbor-checked <slug>` (lifts a review-band filing-bar refusal by naming the nearest task you looked at), `--declined-checked <key>` (lifts a semantic declined-match refusal by naming the declined idea you read; the exact-slug match is never lifted). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
 | `tasks decline "<topic>" --reason <text>` | Record an idea the user dropped that never became a task, so no sleep cycle re-files it. Reason mandatory (≥20 chars); key = slugified topic; refuses when a LIVE task with that slug exists (cancel that instead); a tombstoned slug may be declined. Writes `state/.task-declined.json` (synced brain content). |
 | `tasks declined [--json]` | List declined ideas (newest first). |
 | `tasks undecline <key>` | Lift a declined idea (awake decision), so it can be filed again. |
@@ -158,6 +158,8 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 | `tasks log <name> [content...]` | Add an entry to the task's journal (`state/journal/<slug>.md`; cross-session continuity). **Use every session.** |
 | `tasks check <name> <n\|phrase>` | Tick a criterion with evidence. `--run "<cmd>"` runs it and records exit code + scrubbed tail (≤ 2,000 chars) as an `evidence` journal entry, ticking with `cmd:<je_id>`; `--output-file <path> --exit <code>` ingests a command already run; `--evidence commit:<sha>\|shot:<path>`. Refuses a non-zero exit, an unresolved `cmd:`, an unreachable `commit:`, a typed `owner:<date>`, and a phrase matching 0 or >1 criteria. |
 | `tasks show <name>` | The context packet: the parent's card + siblings first, then the card, the newest 3 journal entries and paths, fenced as data (≤ 12,000 chars). `--json`, `--cap <n>`, `--entries <n>`. |
+| `tasks plan <name> <now\|next\|later\|cycle>` | Put a task in the active cycle (`now`), a cycle by number or id, or the Next / Later queue. A parent brings its open sub-tasks (one journal entry each); a parent's own place is derived from its children. Closed tasks and closed cycles are refused. |
+| `tasks rank <name> --before\|--after <task>` | Order a task inside its cycle or queue (importance = rank). Refused across buckets. |
 | `tasks parent <name> <parent\|clear>` | Make a task a sub-task (two levels; parent open and top-level; inherits objectives, feature, cycle when unset) or detach it. `tasks create --parent <p>` does the same at birth. |
 | `tasks bind <name>` / `tasks unbind` | Bind this Claude session (CLAUDE_CODE_SESSION_ID) to a task so its packet returns after a compaction; or clear it. |
 | `tasks approve <name>` | The owner's verdict on a task in review: writes an `approval` journal entry and moves it to done. `--note "<what was checked>"`. Refused from a Claude session or agent run. |
@@ -179,6 +181,16 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, and `changelog` (a journal entry). See [tasks-and-features.md](tasks-and-features.md) for the full protocol.
 
 ---
+
+## Cycles (the planning time box — see [tasks-and-features.md](tasks-and-features.md))
+
+| Command | Purpose |
+|---|---|
+| `cycle new --goal "<sentence>"` | Open a planned cycle. `-w/--weeks <n>` or `--end YYYY-MM-DD`, `--start YYYY-MM-DD` (default: today, or the day after the last open cycle ends). Default length: the last cycle's, else `tasks.cycleDefaultWeeks` in `state/.config.json`, else 1 week. `--json`. |
+| `cycle start <n\|id>` | Make a planned cycle active. Refused while another is active. |
+| `cycle show [n\|id]` | Goal, dates, days left, done/total leaves, the work grouped under parents, carry counts. Default: the active cycle. `--json`. |
+| `cycle close [n\|id]` | Decide every unfinished leaf: `--carry <csv>` (into the next planned cycle, or `--into <n>`), `--back <csv>` (Next queue), `--cancel <csv>`, or `--all carry\|back\|cancel`. Interactive on a TTY; refuses undecided leaves otherwise. Records carried/backed/cancelled and done/total on the cycle. An empty cycle closes as 0/0. |
+| `cycle list` | Every cycle (number, status, dates, done/total, goal) plus cycle ids cards point at that are not synced yet. `--json`. |
 
 ## Roadmap (objectives — the OKR board)
 
@@ -379,9 +391,9 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 | Command | Description |
 |---|---|
 | `core changelog add` | Add a changelog entry. `--type feat\|fix\|refactor\|chore\|docs\|perf\|test\|change`, `--scope`, `--description`, `--summary` (≤200 char), `--references <csv>` (`commit:`/`file:`/`knowledge:`/`feature:`/`task:`/`url:`), `--authors <csv>`, `--supersedes <key>`, `--breaking`. |
-| `core releases add` | Create a release (auto-discovers tasks/features/changelog). `-V/--ver`, `-s/--summary`, `--status planning\|released` (default released), `-y/--yes`. |
+| `core releases add` | Record a release: completed tasks closed since the previous release, features, changelog, and the cycles the tasks came from. `-V/--ver`, `-s/--summary`, `-y/--yes`. `--status planning` is refused (plan with a cycle). |
 | `core releases list` | List recent releases. `-n/--count`. |
-| `core releases active [version]` | Get/set the active planning version (default for new tasks' version). `--clear` to unset. |
+| `core releases active [version]` | Deprecated (planning is a cycle; new tasks no longer default into a version). Reads/sets the legacy pointer. `--clear` to unset. |
 | `core releases show <version>` | Show a release's details. |
 
 ---
@@ -772,7 +784,7 @@ _dream_context/
 ├── core/
 │   ├── 0.soul.md  2.memory.md            ← slot 1 is RETIRED (the user file became people/)
 │   ├── 3.style_guide_and_branding.md  4.tech_stack.md  6.system_flow.md
-│   ├── CHANGELOG.json  RELEASES.json  taxonomy.json
+│   ├── CHANGELOG.json  RELEASES.json  CYCLES.json  taxonomy.json
 ├── people/                           ← WHO works in this vault (`dreamcontext people`)
 │   ├── people.json                   ←   the structural roster: {version, people:{<slug>:{name,emails[],role?}}}
 │   └── <slug>.md                     ←   one constitution per person — verbatim in the snapshot when active,
@@ -799,6 +811,6 @@ _dream_context/
 │   │                                    (the `people` roster key was RETIRED in 0.23.0 → people/people.json)
 │   ├── .brain-local.json             ← gitignored: machine-local state incl. the active-person pin
 │   │                                    (linked-repo LOCAL paths live in ~/.dreamcontext/linked-repos.json, never synced)
-│   ├── .active-version.json          ← current sprint (active planning version)
+│   ├── .active-version.json          ← legacy sprint pointer (deprecated; cycles live in core/CYCLES.json)
 │   ├── .sleep.json  .secrets.json (gitignored)  .active-task
 ```

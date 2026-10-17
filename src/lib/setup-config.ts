@@ -67,6 +67,11 @@ export interface SetupConfig {
    */
   linkedRepos?: LinkedRepo[];
   /**
+   * Task planning settings. `cycleDefaultWeeks`: the length a new cycle gets
+   * when none is asked for and no cycle has been opened yet (default 1).
+   */
+  tasks?: { cycleDefaultWeeks?: number };
+  /**
    * Stable identity for THIS project's synced task rows (#177). Optional escape
    * hatch: when set it pins the value used to stamp/scope rows on a shared
    * remote container, surviving a folder rename or a repo move. Absent ⇒ the id
@@ -567,6 +572,12 @@ function sanitizeContextHandoff(raw: unknown): ContextHandoffConfig | undefined 
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function sanitizeTasksSettings(raw: unknown): SetupConfig['tasks'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const w = (raw as Record<string, unknown>).cycleDefaultWeeks;
+  return typeof w === 'number' && Number.isFinite(w) && w > 0 && w <= 52 ? { cycleDefaultWeeks: w } : undefined;
+}
+
 export function readSetupConfig(projectRoot: string): SetupConfig | null {
   const path = configPath(projectRoot);
   if (!existsSync(path)) return null;
@@ -601,6 +612,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       shareable: typeof parsed.shareable === 'boolean' ? parsed.shareable : undefined,
       brainRepo: sanitizeBrainRepo(parsed.brainRepo),
       linkedRepos: sanitizeLinkedRepos(parsed.linkedRepos),
+      tasks: sanitizeTasksSettings(parsed.tasks),
       // Absent / blank / non-string ⇒ undefined (identity is derived downstream).
       projectId:
         typeof parsed.projectId === 'string' && parsed.projectId.trim() ? parsed.projectId.trim() : undefined,
@@ -649,6 +661,7 @@ export function updateSetupConfig(
     shareable: patch.shareable ?? existing.shareable,
     brainRepo: patch.brainRepo ?? existing.brainRepo,
     linkedRepos: patch.linkedRepos ?? existing.linkedRepos,
+    tasks: patch.tasks ?? existing.tasks,
     projectId: patch.projectId ?? existing.projectId,
     learning: patch.learning ?? existing.learning,
     sleep: patch.sleep ?? existing.sleep,

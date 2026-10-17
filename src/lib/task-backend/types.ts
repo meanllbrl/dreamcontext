@@ -149,6 +149,8 @@ export interface CreateTaskInput {
   parent_task?: string | null;
   /** The cycle this task is planned into (inherited from its parent). */
   cycle?: string | null;
+  /** The queue it waits in when it is in no cycle (`next` | `later`). */
+  queue?: 'next' | 'later' | null;
   /**
    * Which historical template produced the file. The CLI and the dashboard
    * have always written different task skeletons (full template with Workflow

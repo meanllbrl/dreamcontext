@@ -6,6 +6,7 @@ import { registerCoreCommand } from './commands/core.js';
 import { registerFeaturesCommand } from './commands/features.js';
 import { registerKnowledgeCommand } from './commands/knowledge.js';
 import { registerTasksCommand } from './commands/tasks.js';
+import { registerCycleCommand } from './commands/cycle.js';
 import { registerRoadmapCommand } from './commands/roadmap.js';
 import { registerLabCommand } from './commands/lab.js';
 import { registerThesesCommand } from './commands/theses.js';
@@ -141,6 +142,7 @@ export function createProgram(): Command {
   registerKnowledgeCommand(program);
   registerPatternsCommand(program);
   registerTasksCommand(program);
+  registerCycleCommand(program);
   registerWhiteboardCommand(program);
   registerRoadmapCommand(program);
   registerLabCommand(program);

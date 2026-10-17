@@ -104,24 +104,18 @@ dreamcontext core changelog add \
 #### A3. Releases — surface readiness, never auto-release
 
 ```bash
-dreamcontext core releases active                       # current planning version
-dreamcontext core releases show <version>               # full detail
-dreamcontext tasks list --status in_review
+dreamcontext cycle show                                 # the active cycle: goal, days left, done/total
+dreamcontext core releases list                         # what shipped, and when
 dreamcontext tasks list --status completed
 ```
 
-All tasks on the active planning version `completed` (or only `in_review` left) → surface readiness in your report. A cancelled-kind task neither blocks readiness nor counts as shipped.
+Completed work not in any release yet → surface release readiness in your report (a release is compiled from what closed since the previous one). A cancelled-kind task neither blocks readiness nor counts as shipped.
 
 **What's New feed** (here `dashboard/public/announcements.json`): a ready version with no announcement is reported, never authored by you (the `announcements` skill's awake work).
 
 **Never run `dreamcontext core releases add --status released`** unless the user's hint explicitly asks for it.
 
-If no active planning version exists, create one before adding entries, then **set it active** so `sleep-tasks`' auto-attach lands on it:
-
-```bash
-dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>" --yes
-dreamcontext core releases active <version>
-```
+Planning releases are retired: never create one (`--status planning` is refused) and never open or start a cycle. Planning is the owner's.
 
 ### Pass B — Core identity reconciliation
 

@@ -15,6 +15,10 @@ export interface TaskRecord {
   urgency: string;
   tags: string[];
   version: string | null;
+  /** The cycle the task is planned into (`cy_<id>`, maybe not yet synced), or null. */
+  cycle: string | null;
+  /** `next` | `later` outside a cycle, or null (reads as next). */
+  queue: string | null;
   related_feature: string | null;
   parent_task: string | null;
   /** Objective slugs this task serves (many-to-many, local-only). */
@@ -131,6 +135,8 @@ export function toTaskRecord(
     urgency: str(data.urgency, '-'),
     tags: toTags(data.tags),
     version: strOrNull(data.version),
+    cycle: strOrNull(data.cycle),
+    queue: strOrNull(data.queue),
     related_feature: strOrNull(data.related_feature),
     parent_task: strOrNull(data.parent_task),
     objectives: Array.isArray(data.objectives)

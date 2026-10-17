@@ -21,10 +21,11 @@ The sleep agent picks the status that matches reality: `completed` for work that
 ### Create
 ```bash
 dreamcontext tasks create "Readable sentence name" \
-  --description "..." --priority medium --why "What this accomplishes" \
-  [--version v0.9.0] [--person "Ada"] [--due 2026-07-01] [--tags backend,api]
+  --description "..." --why "What this accomplishes" \
+  [--person "Ada"] [--due 2026-07-01] [--tags backend,api]
+dreamcontext tasks plan <name> now|next|later   # where it sits (see Cycles, the queue, releases)
 ```
-Defaults: `priority=medium`, `status=todo`. A task created without `--version` auto-attaches to the **active planning version** (see Versioning).
+Defaults: `status=todo`, no cycle (reads as Next). Nothing lands in a cycle on its own: planning is a person's call. `-p/-u` are retired (accepted, ignored, warned); `-v` is deprecated (a cycle number/id plans it there, `BACKLOG` means Later, anything else is kept as a legacy label).
 
 - **Name = a short plain sentence** describing what the task does ("Fix the login redirect loop"). Never a type-prefixed slug (`feat-x-y`) — the file slug is derived from the name automatically.
 - **`--why` is mandatory.** Creation fails without a non-empty reason; `created_at` covers the "when". A task must be readable months later on its Why alone.
@@ -767,13 +768,12 @@ And tick the matching criterion immediately with its evidence (`dreamcontext tas
 id: "task_abc123"
 name: "Implement auth middleware"
 description: "Add JWT validation to protected routes"
-priority: "high"          # critical | high | medium | low
-urgency: "medium"         # critical | high | medium | low (Eisenhower axis)
 status: "todo"            # todo | in_progress | in_review | completed — or any key declared in overrides/task.md
 created_at: "2026-02-25"
 updated_at: "2026-02-25"
 tags: []                  # includes person:<slug> for assignees
-version: "v0.9.0"         # planning-version association (auto-set to active planning version)
+cycle: "cy_Ab3x9Qzk"       # the cycle it is planned into (or null); `queue: next|later` when in none
+rank: 20                  # order inside its cycle / queue (tasks rank)
 parent_task: null
 related_feature: null     # feature slug for cross-link
 product: null             # multi-product scoping (optional)
@@ -862,19 +862,29 @@ Status values: `planning | in_progress | in_review | active | shipped | deprecat
 
 ---
 
-## Versioning & releases
+## Cycles, the queue, releases
 
-Versions and releases are unified in `RELEASES.json`. A "version" is a release entry with `status: planning`; releasing flips it to `released` with a date. Lifecycle: `planning → released`.
+Three separate things (older cards may still hold `priority`, `urgency`, `version`: read, never written by these paths).
+
+- **Cycle** (`core/CYCLES.json`, git-tracked): a date range plus a one-sentence goal. Random stable id `cy_<nanoid8>`; the number you see is derived from start-date order and never stored or sent anywhere. One is active at a time. A team merge that leaves two active keeps the one that started first and says so (the CYCLES.json merge driver, and every read).
+- **Queue**: `Now` = the active cycle, `Next`, `Later`. Importance is the `rank` inside a cycle or queue, not a priority.
+- **Release** (`RELEASES.json`): an outcome, compiled from what closed since the previous release, with the cycles that work came from. Planning releases are no longer created.
 
 ```bash
-dreamcontext core releases add --ver v0.9.0 --summary "Dashboard improvements" --status planning
-dreamcontext core releases active                # print the active planning version
-dreamcontext core releases active v0.10.0        # switch active planning version
-dreamcontext core releases active --clear        # unset
-dreamcontext core releases list -n 10
-dreamcontext core releases show v0.9.0
+dreamcontext cycle new --goal "Ship the card standard" [--weeks 2 | --end 2026-11-02]   # default: last cycle's length, else tasks.cycleDefaultWeeks (1)
+dreamcontext cycle start <n>                   # refused while another is active
+dreamcontext tasks plan <task> now|next|later|<n>   # a parent brings its open sub-tasks (journaled per child)
+dreamcontext tasks rank <task> --before|--after <task>
+dreamcontext cycle show [<n>]                  # goal, days left, done/total LEAVES, work grouped under parents
+dreamcontext cycle close [<n>] --carry a,b --back c --cancel d   # or --all carry|back|cancel; interactive on a TTY
+dreamcontext cycle list
+dreamcontext core releases add --ver 1.4.0 --summary "..." -y
 ```
-New tasks without `--version` auto-attach to the active planning version, so work is always linked to a milestone. If none exists, the sleep agent creates one. The dashboard Version Manager plans and releases versions; the sleep agent reports release readiness when all of a planning version's tasks are done.
+
+- **Leaves only.** Capacity and progress count tasks without children; a parent is counted through its children, and its own place is derived from them (a lone child in a cycle shows its parent as the header).
+- **The close is a ritual.** Every unfinished leaf is carried into the next planned cycle, sent back to Next, or cancelled; nothing closes undecided. Each carry is recorded on the closed cycle, so a task's carry count is visible (`cycle show`: `carried 2×`). An empty cycle closes as 0/0.
+- **On a remote.** GitHub carries the cycle as the label `cycle:cy_<id>`; GitHub labels and ClickUp's native priority carry the order: a task in any cycle (active or planned) → high, Next → normal, Later → low. Any cycle, not only the active one, on purpose: which cycle is active is read from each machine's own `core/CYCLES.json`, so a machine whose copy is behind must never send normal for a task that is in a cycle. Coming back it is lossy on purpose: urgent / critical / high → Now only if the task is already in the active cycle (else Next), normal → Next, low → Later. A remote cannot put a task into a cycle. A cycle id this machine does not have yet is kept on the card and shown as "cycle not yet synced" until `core/CYCLES.json` arrives; a push never drops it; `version:` labels are never removed. A card that only holds a legacy priority syncs as before.
+- **Sleep never plans.** It files and reconciles tasks; putting work into a cycle is the owner's call.
 
 ---
 

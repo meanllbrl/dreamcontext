@@ -38,6 +38,10 @@ export interface TaskBrief {
   status: string;
   parent: string | null;
   rank: number | null;
+  /** The cycle the card is planned into (`cy_<id>`, possibly not yet synced), or null. */
+  cycle?: string | null;
+  /** `next` | `later` when the card waits outside a cycle; null reads as next. */
+  queue?: string | null;
 }
 
 /** A `parent_task` value as written by people, YAML folding or a remote: a slug or null. */
@@ -65,6 +69,8 @@ export function loadTaskBriefs(stateDir: string): TaskBrief[] {
         status: String(data.status ?? 'todo'),
         parent: normalizeParentRef(data.parent_task),
         rank: typeof data.rank === 'number' && Number.isFinite(data.rank) ? data.rank : null,
+        cycle: typeof data.cycle === 'string' && data.cycle.trim() ? data.cycle.trim() : null,
+        queue: typeof data.queue === 'string' && data.queue.trim() ? data.queue.trim() : null,
       });
     } catch { /* unreadable card: not part of any family */ }
   }

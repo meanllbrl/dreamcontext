@@ -748,21 +748,22 @@ Who is at the keyboard is resolved per machine, never guessed: `DREAMCONTEXT_PER
 dreamcontext core changelog add           # Add changelog entry
 dreamcontext core releases add            # Create release with auto-discovery
 dreamcontext core releases add --yes      # Non-interactive, include all unreleased items
-dreamcontext core releases add --ver v0.2.0 --summary "..." --status planning  # Planning version
 dreamcontext core releases list / show <version>
+dreamcontext cycle new --goal "..." / start <n> / show / close / list   # the planning time box
 ```
 
-Release creation auto-discovers unreleased tasks, features, and changelog entries and back-populates `released_version` on included features. Use `--status planning` for a version placeholder; the dashboard's version manager provides the planning → released transition.
+A release is an outcome: it is compiled from the tasks closed since the previous release (plus features and changelog entries), links the cycles that work came from, and back-populates `released_version` on included features. Planning is a cycle (a date range with one goal, one active at a time), not a release: `--status planning` is refused.
 
 ### Tasks
 
 ```bash
 dreamcontext tasks list [--all] [--status in_progress] [--objective <slug>]
-dreamcontext tasks create <name> [--priority high] [--status in_progress] [--tags "api,auth"] \
-  [--urgency high] [--version v0.2.0] [--start 2026-06-25] [--due 2026-07-01] [--objectives a,b] [--field key=value]
+dreamcontext tasks create <name> [--status in_progress] [--tags "api,auth"] \
+  [--start 2026-06-25] [--due 2026-07-01] [--objectives a,b] [--field key=value]
 dreamcontext tasks start <name> <date|clear>     # set/clear the planned start
 dreamcontext tasks due <name> <date|clear>       # set/clear the due/end
-dreamcontext tasks version <name> [version|clear] # print / set / clear the sprint a task rides
+dreamcontext tasks plan <name> now|next|later|<n> # place it: active cycle, a cycle, or the queue
+dreamcontext tasks rank <name> --before <task>    # order inside its cycle or queue
 dreamcontext tasks field <name> <key> [value|clear] # user-declared custom fields
 dreamcontext tasks tag <name> <tags…> [--remove]
 dreamcontext tasks log <name> <content>          # Log progress to the task's journal (newest first)

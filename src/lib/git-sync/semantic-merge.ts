@@ -27,6 +27,7 @@ import {
   type BoardSpec,
   type Card,
 } from '../lab/boards.js';
+import { CYCLES_REL, mergeCyclesJson } from '../cycles.js';
 import { compact, findOverlaps } from '../lab/grid.js';
 
 /**
@@ -39,6 +40,8 @@ import { compact, findOverlaps } from '../lab/grid.js';
 export type MergeClass =
   | 'changelog-json'
   | 'releases-json'
+  /** `core/CYCLES.json`: union by cycle id, one active (mergeCyclesJson). */
+  | 'cycles-json'
   | 'config-json'
   | 'people-json'
   | 'tasks-map-json'
@@ -65,6 +68,7 @@ export function classifyPath(relPath: string): MergeClass {
   const norm = relPath.replace(/\\/g, '/').replace(/^_dream_context\//, '');
   if (norm === 'core/CHANGELOG.json') return 'changelog-json';
   if (norm === 'core/RELEASES.json') return 'releases-json';
+  if (norm === CYCLES_REL) return 'cycles-json';
   if (norm === 'state/.config.json') return 'config-json';
   if (norm === PEOPLE_JSON_REL) return 'people-json';
   if (norm === 'core/taxonomy.json') return 'taxonomy-json';
@@ -153,7 +157,8 @@ export function mergeReleasesJson(_base: string, ours: string, theirs: string): 
       continue;
     }
     const mergedEntry: Record<string, unknown> = { ...existing };
-    for (const field of ['features', 'tasks', 'changelog']) {
+    for (const field of ['features', 'tasks', 'changelog', 'cycles']) {
+      if (field === 'cycles' && existing[field] === undefined && e[field] === undefined) continue;
       mergedEntry[field] = unionArrayValues(existing[field], e[field]);
     }
     for (const field of ['date', 'summary', 'status', 'breaking']) {
@@ -715,6 +720,12 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
       case 'releases-json':
         mergedContent = mergeReleasesJson(base, ours, theirs).merged;
         break;
+      case 'cycles-json': {
+        const cyc = mergeCyclesJson(base, ours, theirs);
+        mergedContent = cyc.merged;
+        for (const note of cyc.notes) notes.push(`${relPath}: ${note}`);
+        break;
+      }
       case 'config-json':
         mergedContent = mergeConfigJson(base, ours, theirs).merged;
         break;

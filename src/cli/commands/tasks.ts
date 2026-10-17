@@ -45,7 +45,7 @@ import { readSleepState, writeSleepState } from './sleep.js';
 import { withSleepStateLock } from '../../lib/sleep-state-lock.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
-import { getActivePlanningVersion } from '../../lib/active-version.js';
+import { readCycles, resolveCycleRef, type CycleView } from '../../lib/cycles.js';
 import { getExistingReleases } from '../../lib/release-discovery.js';
 import { foldAscii } from '../../lib/fold-ascii.js';
 import { listObjectives } from '../../lib/objectives-store.js';
@@ -86,6 +86,7 @@ import {
 } from '../../lib/task-evidence.js';
 import { refuseSelfApproval } from './agents.js';
 import { registerTaskFamilyCommands } from './tasks-family.js';
+import { registerTaskPlanCommands } from './tasks-plan.js';
 import { checkParentLink, loadFamily, parentCloseBlock, parseChildDecision, rollupOf, type ChildDecision } from '../../lib/task-parent.js';
 import { cardIssuesOfFile } from '../../lib/task-doctor.js';
 import { foldCardChangelog } from '../../lib/task-card.js';
@@ -425,7 +426,7 @@ async function resolvePersonSlug(
 }
 
 /** Render one task as a colorized human-readable line. */
-function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
+function renderTaskLine(t: TaskRecord, opts: { long?: boolean; cycles?: CycleView[] } = {}): string {
   const defs = statusSet();
   const def = defs.find((d) => d.key === t.status);
   // Shipped statuses keep their historical colours; a declared status renders in
@@ -444,7 +445,16 @@ function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
   // belongs to another project sharing the remote container must never read as
   // native, or its `completed` status is mistaken for work done HERE.
   const foreign = t.source_project ? ' ' + chalk.yellow(`⚠ foreign:${t.source_project}`) : '';
-  let line = `  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}${foreign}  ${chalk.dim(t.updated_at)}`;
+  // Where it sits on the "when?" axis. A cycle id the store does not hold yet
+  // (pulled before core/CYCLES.json arrived by git) says so instead of hiding.
+  let place = '';
+  if (t.cycle) {
+    const c = opts.cycles?.find((x) => x.id === t.cycle);
+    place = c ? chalk.dim(` [#${c.number}${c.status === 'active' ? ' now' : ''}]`) : chalk.yellow(' [cycle not yet synced]');
+  } else if (t.queue === 'later') {
+    place = chalk.dim(' [later]');
+  }
+  let line = `  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}${place}${foreign}  ${chalk.dim(t.updated_at)}`;
   if (opts.long) {
     const meta: string[] = [];
     if (t.version) meta.push(`v:${t.version}`);
@@ -637,6 +647,7 @@ export function registerTasksCommand(program: Command): void {
     .command('tasks')
     .description('Create tasks, log progress, insert into sections, and mark complete');
   registerTaskFamilyCommands(tasks);
+  registerTaskPlanCommands(tasks);
 
   // List tasks
   tasks
@@ -732,13 +743,14 @@ export function registerTasksCommand(program: Command): void {
       }
 
       console.log(header('Tasks'));
+      const cycles = readCycles(ensureContextRoot()).cycles;
       if (opts.groupBy) {
         for (const g of groupTasks(matched, opts.groupBy as GroupBy, statusSet())) {
           console.log(`\n  ${chalk.bold(g.key)} ${chalk.dim(`(${g.tasks.length})`)}`);
-          for (const t of g.tasks) console.log(renderTaskLine(t, { long: opts.long }));
+          for (const t of g.tasks) console.log(renderTaskLine(t, { long: opts.long, cycles }));
         }
       } else {
-        for (const t of matched) console.log(renderTaskLine(t, { long: opts.long }));
+        for (const t of matched) console.log(renderTaskLine(t, { long: opts.long, cycles }));
       }
     });
 
@@ -766,12 +778,12 @@ export function registerTasksCommand(program: Command): void {
     .argument('<name>')
     .description('Create a new task')
     .option('-d, --description <desc>', 'Task description')
-    .option('-p, --priority <priority>', 'Priority (critical, high, medium, low)')
-    .option('-u, --urgency <level>', 'Urgency (critical, high, medium, low)')
+    .option('-p, --priority <priority>', 'Retired (ignored): plan with `tasks plan`, order with `tasks rank`')
+    .option('-u, --urgency <level>', 'Retired (ignored): plan with `tasks plan`, order with `tasks rank`')
     .option('-s, --status <status>', 'Status (todo, in_progress, in_review, completed, or any status declared in overrides/task.md)')
     .option('-t, --tags <tags>', 'Comma-separated tags')
     .option('-w, --why <why>', 'Why is this task needed?')
-    .option('-v, --version <version>', 'Version/milestone')
+    .option('-v, --version <version>', 'Deprecated: a cycle number/id plans it there, BACKLOG means Later, anything else is a legacy version label')
     .option('--person <name>', 'Responsible person (records a person:<slug> tag when multi-person; defaults to the active person)')
     .option('--reach <n>', 'RICE reach (integer 1–10)')
     .option('--impact <n>', 'RICE impact (integer 1–5)')
@@ -832,19 +844,13 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
-      const validPriorities = ['critical', 'high', 'medium', 'low'];
       const validStatuses = statusKeys(statusSet());
 
-      const priority = opts.priority || 'medium';
-      if (!validPriorities.includes(priority)) {
-        error(`Priority must be one of: ${validPriorities.join(', ')}`);
-        return;
-      }
-
-      const urgency = opts.urgency || 'medium';
-      if (!validPriorities.includes(urgency)) {
-        error(`Urgency must be one of: ${validPriorities.join(', ')}`);
-        return;
+      // Priority and urgency are retired: the "when?" is the cycle / queue
+      // (`tasks plan`) and importance is the rank inside it (`tasks rank`).
+      // The flags are still accepted so old scripts do not break; nothing is written.
+      for (const [flag, v] of [['-p/--priority', opts.priority], ['-u/--urgency', opts.urgency]] as const) {
+        if (v !== undefined) warn(`${flag} is retired and was ignored: plan the task (dreamcontext tasks plan <task> now|next|later) and rank it (tasks rank).`);
       }
 
       const status = opts.status || 'todo';
@@ -889,7 +895,26 @@ export function registerTasksCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      const version = opts.version || getActivePlanningVersion();
+      // -v is deprecated. A value naming a cycle plans the task into it; BACKLOG
+      // is the Later queue; anything else is kept as a legacy version label.
+      // Nothing defaults a new task into a cycle (sleep never plans).
+      let version: string | null = null;
+      let cycleFromVersion: string | null = null;
+      let queue: 'later' | null = null;
+      if (opts.version !== undefined && opts.version.trim()) {
+        const v = opts.version.trim();
+        const cycle = resolveCycleRef(readCycles(contextRoot).cycles, v);
+        if (cycle && cycle.status !== 'closed') {
+          cycleFromVersion = cycle.id;
+          warn(`-v is deprecated: planned into cycle #${cycle.number}. Next time: dreamcontext tasks plan <task> ${cycle.number}`);
+        } else if (v.toUpperCase() === 'BACKLOG') {
+          queue = 'later';
+          warn('-v BACKLOG is retired: the task waits in the Later queue (dreamcontext tasks plan <task> later).');
+        } else {
+          version = v;
+          warn(`-v is deprecated: "${v}" is kept as a legacy version label, not a plan. Plan it: dreamcontext tasks plan <task> now|next|later`);
+        }
+      }
 
       const riceInput: RiceInput = {};
       if (opts.reach !== undefined) riceInput.reach = Number(opts.reach);
@@ -988,19 +1013,18 @@ export function registerTasksCommand(program: Command): void {
         await backend.create({
           name,
           description,
-          priority,
-          urgency,
           status,
           tags,
           why,
           version,
+          ...(queue ? { queue } : {}),
           rice: riceBlock,
           start_date: opts.start ?? null,
           due_date: opts.due ?? null,
           ...(objectives ? { objectives } : {}),
           ...(customFields ? { custom_fields: customFields } : {}),
           ...(parent ? { parent_task: parent.slug } : {}),
-          ...(parentCycle ? { cycle: parentCycle } : {}),
+          ...(cycleFromVersion ?? parentCycle ? { cycle: cycleFromVersion ?? parentCycle } : {}),
           variant: 'cli',
         });
       } catch (err) {
@@ -1412,6 +1436,19 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
+      // Deprecated: a cycle or BACKLOG is a plan, not a version.
+      const cycle = resolveCycleRef(readCycles(root).cycles, versionRef);
+      if (cycle && cycle.status !== 'closed') {
+        await backend.updateFields(slug, { cycle: cycle.id, queue: null, updated_at: today() });
+        warn(`tasks version is deprecated: ${slug} planned into cycle #${cycle.number}. Next time: dreamcontext tasks plan ${slug} ${cycle.number}`);
+        return;
+      }
+      if (versionRef.trim().toUpperCase() === 'BACKLOG') {
+        await backend.updateFields(slug, { cycle: null, queue: 'later', updated_at: today() });
+        warn(`BACKLOG is retired: ${slug} waits in the Later queue. Next time: dreamcontext tasks plan ${slug} later`);
+        return;
+      }
+
       // Fold against the known versions so a lowercased round-trip (or a typed
       // "s5") resolves to the canonical spelling the board filters by, rather
       // than writing a second near-identical version string.
@@ -1422,14 +1459,12 @@ export function registerTasksCommand(program: Command): void {
       if (match) {
         success(`${slug} → version: ${resolved}`);
       } else {
-        // Not a hard error: BACKLOG and ad-hoc sprints are legitimate values that
-        // never appear in RELEASES.json. But an unregistered version is exactly
-        // what silently hides a task from the board, so say so.
+        // Not a hard error: ad-hoc labels are legal values that never appear
+        // in RELEASES.json. Planning is a cycle now, so point there.
         success(`${slug} → version: ${resolved}`);
         console.log(chalk.dim(
           `Note: "${resolved}" is not in RELEASES.json${known.length > 0 ? ` (known: ${known.join(', ')})` : ''}. ` +
-          `It will not match a sprint bucket on the board. Register it with: ` +
-          `dreamcontext core releases add --ver "${resolved}" --status planning --summary "..." --yes`,
+          `A version is a legacy label; to plan the task use a cycle: dreamcontext tasks plan ${slug} now|next|later`,
         ));
       }
     });

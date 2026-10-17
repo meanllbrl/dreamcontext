@@ -51,6 +51,13 @@ export interface TaskSyncEntry {
    */
   remote_parent?: string | null;
   /**
+   * The priority the remote held at the last sync: what the last pull read or
+   * the last push sent (the backend's priority name or label value). The order
+   * merge judges "the remote moved" against it, and a push carries it through
+   * while the card's placement has not moved. Absent = never recorded.
+   */
+  remote_priority?: string | null;
+  /**
    * A parent link (or detach) the remote would not take: the local parent it
    * was for (`null` = a detach) and how many syncs tried. At
    * {@link PARENT_LINK_MAX_TRIES} the push stops retrying until the local parent

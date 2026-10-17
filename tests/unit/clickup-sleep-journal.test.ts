@@ -97,7 +97,7 @@ describe('remote changes reach the sleep ledger (consolidation visibility)', () 
   });
 
   it('a remote status/field change journals an update entry with the changed fields', async () => {
-    await backend.create({ name: 'Watched Task', variant: 'cli' });
+    await backend.create({ name: 'Watched Task', priority: 'medium', variant: 'cli' });
     await backend.sync('push');
     const before = sleepChanges().length;
     const rid = [...fake.tasks.keys()][0];

@@ -3,8 +3,8 @@ name: sleep-tasks
 description: >
   Sleep-cycle specialist that owns task files. Dispatched by the main agent during the
   sleep flow, in parallel with other specialists. Reconciles task bodies to current truth,
-  bumps statuses, creates new tasks for untracked work, attaches everything to the active
-  planning version.
+  bumps statuses, creates new tasks for untracked work. Never plans: putting work into a
+  cycle is the owner's call.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: claude-opus-5
 effort: medium
@@ -158,11 +158,8 @@ Rank candidates by evidence and file at most that many (`tasks create` refuses p
 **Create a new task only when the rubric says "separate concern" AND it clears the bar:**
 
 ```bash
-dreamcontext core releases active   # verify an active planning version exists; if empty:
-dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>" --yes
-
 # Name = a plain sentence, never a slug. -w is MANDATORY (40+ chars). --by sleep names you as filer.
-dreamcontext tasks create "<short sentence describing the work>" --status in_progress --priority medium \
+dreamcontext tasks create "<short sentence describing the work>" --status in_progress \
   --description "<one-line scope>" --by sleep -w "<who is hurt, by what, at what cost>"
 ```
 
@@ -224,15 +221,13 @@ The single test: **would the user actually want to look at this before it's clos
 
 **Foreign tasks are NOT evidence (#177).** A task carrying `source_project:` (flagged `⚠ FOREIGN` in the snapshot) describes work in ANOTHER repo. Never reconcile, re-status or close a native task on the strength of a foreign one; verify against THIS project's own source first, and flag the ambiguity in your report.
 
-### 5. Version readiness signal (no auto-release)
+### 5. Cycle signal (no planning, no auto-release)
 
 ```bash
-dreamcontext core releases active
-dreamcontext tasks list --status in_review
-dreamcontext tasks list --status completed
+dreamcontext cycle show
 ```
 
-If every task linked to the active version is `completed` (or only `in_review` remains), surface this in your report. Do **not** release — that's the user's call.
+If the active cycle ends within 2 days with open leaves, or every leaf is done, say so in your report. Never plan, carry or close anything (`tasks plan`, `cycle close` are the owner's), and do **not** release — that's the user's call.
 
 ### 6. Backlog grooming — the active list must stay honest
 
@@ -299,7 +294,7 @@ Dropped-but-load-bearing self-check: <none | every signal you saw but did NOT fo
 2. **Clear the filing bar; never pad to get past it.** `--neighbor-checked` and `--declined-checked` are proof you opened what the CLI named, never a way past it.
 3. **Body = current truth, Changelog = history.**
 4. **Status reflects reality, not a reflex** (step 4); never silently delete.
-5. **Always attach to a planning version.**
+5. **Never plan.** No `tasks plan`, no cycle, no `-v`: priority and versions are retired, and placing work is the owner's call.
 6. **Stay in your lane**: flag non-task work, don't write it.
 7. **CLI first** for status/log/insert; **Edit** for surgical body reconciliation.
 8. **Person attribution is multi-person only** (step 2.5).

@@ -2,8 +2,6 @@
 id: task_golden001
 name: Golden Alpha
 description: First golden task
-priority: medium
-urgency: medium
 status: todo
 created_at: '2026-06-11'
 updated_at: '2026-06-11'
