@@ -18,7 +18,7 @@ import { ListeningOverlay } from './ListeningOverlay';
 import { NOTCH_GROW_EASE, drawsOpen, islandClip, planMotion, type IslandRect, type MotionPhase, type MotionRequest } from './notchMotion';
 import {
   EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
-  readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
+  PEEK_TTL_MS, offScreenAsks, peekTtlMs, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
   startsFresh,
 } from './notchModel';
@@ -89,11 +89,6 @@ const FOLD_AFTER_SEND_MS = 450;
 /** A hotkey hold at least this long is speech, even when it ended before the panel opened; a
  *  shorter one was a tap that only opens the panel (Handy draws the same line at 300 ms). */
 const HOLD_TAKE_MS = 350;
-/** An event peek (a chat finished, an automation posted, an account notice) stays this long:
- *  long enough to catch from the corner of an eye (owner, 2026-10-04: 6.5 s was too short). */
-const EVENT_PEEK_MS = 20_000;
-/** "<automation> started" is a shorter peek: it is news, not something to act on. */
-const STARTED_PEEK_MS = 4500;
 /** How long the island stays green after the last turn across every project ends. */
 const DONE_GLOW_MS = 4000;
 /** The peek: as wide as a short sentence plus two buttons, never the whole open panel. */
@@ -102,8 +97,6 @@ const PEEK_W = 460;
 const HOVER_IN_MS = 220;
 /** Leaving a hover peek: this long to come back before it folds. */
 const HOVER_OUT_MS = 350;
-/** A finished hand-off's reply stays in the peek this long (paused while hovered). */
-const FINISHED_PEEK_MS = 7000;
 
 /** Why the peek is down: a hover, a prompt waiting on the owner, a hand-off that just ended, an
  *  inbox event, or the Assistant thinking out loud. */
@@ -673,17 +666,26 @@ export function Notch() {
   canPeekRef.current = canPeek;
   const hoverRef = useRef(false);
 
-  // A prompt the owner has not seen yet drops the peek by itself; it stays until it is
-  // answered or waved away. One already seen (answered, dismissed) never drops it again.
-  const askKeys = glance.filter((c) => c.ask).map((c) => `${c.sessionId}:${c.ask!.id}`).join('|');
+  // A prompt the owner has not seen yet drops the peek by itself; it folds after its TTL
+  // (`PEEK_TTL_MS`) and still waits on the pill and under "Now". One already seen (answered,
+  // dismissed, timed out, or asked in the project on screen) never drops it again.
+  const askKey = (c: GlanceChat) => `${c.sessionId}:${c.ask!.id}`;
+  const askKeys = glance.filter((c) => c.ask).map(askKey).join('|');
+  const peekAsks = offScreenAsks(glance, inbox.lookingAt);
+  const peekAsksRef = useRef(peekAsks);
+  peekAsksRef.current = peekAsks;
   const seenAsks = useRef<Set<string>>(new Set());
   useEffect(() => {
     const keys = askKeys ? askKeys.split('|') : [];
-    const fresh = keys.some((k) => !seenAsks.current.has(k));
+    const fresh = peekAsksRef.current.some((c) => !seenAsks.current.has(askKey(c)));
     for (const k of keys) seenAsks.current.add(k);
     if (fresh && canPeekRef.current) setPeek('ask');
     if (!keys.length) setPeek((p) => (p === 'ask' ? null : p));
   }, [askKeys]);
+  // The owner brought the asking project to the front: the prompt is on his screen now.
+  useEffect(() => {
+    if (!peekAsks.length) setPeek((p) => (p === 'ask' ? null : p));
+  }, [peekAsks.length]);
 
   // A hand-off that was running and is now done or closed: say so, with its reply.
   const phases = useRef(new Map<string, string>());
@@ -709,7 +711,7 @@ export function Notch() {
   }, [finishedId]);
   useEffect(() => {
     if (peek !== 'finished') return;
-    return foldWhenAway(FINISHED_PEEK_MS, () => hoverRef.current, () => setPeek((p) => (p === 'finished' ? null : p)));
+    return foldWhenAway(PEEK_TTL_MS.handoff, () => hoverRef.current, () => setPeek((p) => (p === 'finished' ? null : p)));
   }, [peek, finishedId]);
 
   // ── INBOX PEEKS: something happened elsewhere ─────────────────────────────────────────
@@ -758,14 +760,23 @@ export function Notch() {
   useEffect(() => {
     if ((peek !== 'event' && peek !== 'progress') || !eventPeek) return;
     peekExpiredRef.current = false;
-    const ms = eventPeek.kind === 'progress' ? readingTimeMs(eventPeek.text)
-      : eventPeek.kind === 'started' ? STARTED_PEEK_MS : EVENT_PEEK_MS;
+    const ms = eventPeek.kind === 'progress' ? readingTimeMs(eventPeek.text) : peekTtlMs(eventPeek) ?? PEEK_TTL_MS.finished;
     // A hover the webview DID see folds on leave (onHoverOut); otherwise the OS is asked.
     return foldWhenAway(ms, () => {
       if (hoverRef.current) peekExpiredRef.current = true;
       return hoverRef.current;
     }, () => setPeek((p) => (p === 'event' || p === 'progress' ? null : p)));
   }, [peek, eventPeek]);
+  // A prompt's peek folds too; a new prompt (or a permission over a question) restarts the clock.
+  const askTtl = peekAsks.some((c) => c.ask?.kind === 'permission') ? PEEK_TTL_MS.permission : PEEK_TTL_MS.question;
+  useEffect(() => {
+    if (peek !== 'ask') return;
+    peekExpiredRef.current = false;
+    return foldWhenAway(askTtl, () => {
+      if (hoverRef.current) peekExpiredRef.current = true;
+      return hoverRef.current;
+    }, () => setPeek((p) => (p === 'ask' ? null : p)));
+  }, [peek, askKeys, askTtl]);
 
   // Hover: rest on the pill and it drops; leave and it folds (an event peek for a prompt stays).
   const hoverTimer = useRef<number | null>(null);
@@ -779,10 +790,10 @@ export function Notch() {
     hoverRef.current = false;
     if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
     hoverTimer.current = window.setTimeout(() => setPeek((p) => (p === 'hover' || p === 'finished' ? null : p)), HOVER_OUT_MS);
-    // An event or progress peek that ran out while hovered folds now.
+    // An event, progress or prompt peek that ran out while hovered folds now.
     if (peekExpiredRef.current) {
       peekExpiredRef.current = false;
-      setPeek((p) => (p === 'event' || p === 'progress' ? null : p));
+      setPeek((p) => (p === 'event' || p === 'progress' || p === 'ask' ? null : p));
     }
   }, []);
   useEffect(() => () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current); }, []);
@@ -807,7 +818,8 @@ export function Notch() {
 
   // Seat the peek to its content (re-measured as rows change), and fold back to the pill.
   // An event or progress peek with nothing left to say (its row was acted on) is no peek.
-  const peekShown = !!peek && canPeek && ((peek !== 'event' && peek !== 'progress') || !!eventPeek);
+  const peekShown = !!peek && canPeek && ((peek !== 'event' && peek !== 'progress') || !!eventPeek)
+    && (peek !== 'ask' || peekAsks.length > 0);
   // A peek that dropped BY ITSELF (a prompt, a finished hand-off, an inbox event) also ticks:
   // one soft note and one trackpad tap. A hover is the owner's own doing and a progress line is
   // the Assistant thinking out loud, so both stay silent. A new event replacing the one on
@@ -1492,7 +1504,8 @@ export function Notch() {
   const peekNow: PeekItem | null = !peekShown ? null
     : (peek === 'event' || peek === 'progress') ? eventPeek
       : (() => {
-        const it = peekItem(glance, handoffs, peek === 'finished' ? finishedId : null);
+        // A prompt's peek speaks for the projects off screen; the one in front shows its own.
+        const it = peekItem(peek === 'ask' ? peekAsks : glance, handoffs, peek === 'finished' ? finishedId : null);
         return it.kind === 'summary' ? { ...it, inbox: inboxCount, running: inbox.running } : it;
       })();
   const popped = seatMode === 'window';

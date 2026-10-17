@@ -340,6 +340,49 @@ export function recentFinishedVault(notices: InboxNotice[], now = Date.now()): s
   return null;
 }
 
+/**
+ * How long each kind of peek stays down by itself, then folds (never while the pointer rests
+ * on it; it folds on leave). Owner, 2026-10-17: a prompt's peek used to stay until answered or
+ * waved away. Folding loses nothing: a prompt still turns the pill to "asking" and stays on top
+ * of "Now", a finish keeps its name on the pill (`FINISHED_PILL_MS`) and its inbox row.
+ */
+export const PEEK_TTL_MS = {
+  /** A permission blocks a running turn: the longest look. */
+  permission: 60_000,
+  question: 45_000,
+  /** A hand-off the Assistant ran just ended (its reply is the peek). */
+  handoff: 7_000,
+  /** A chat finished off screen (owner, 2026-10-04: 6.5 s was too short to catch). */
+  finished: 20_000,
+  post: 20_000,
+  /** An account hit its limit / a chat moved accounts: one line, nothing to press. */
+  account: 12_000,
+  /** "<automation> started" is news, not something to act on. */
+  started: 4_500,
+} as const;
+
+/** The TTL of a peek that folds by itself; null for one with no clock (hover, summary, progress). */
+export function peekTtlMs(item: { kind: string; notice?: { kind: string } }): number | null {
+  switch (item.kind) {
+    case 'permission': return PEEK_TTL_MS.permission;
+    case 'question': return PEEK_TTL_MS.question;
+    case 'finished': return PEEK_TTL_MS.handoff;
+    case 'notice': return item.notice?.kind === 'account' ? PEEK_TTL_MS.account : PEEK_TTL_MS.finished;
+    case 'post': return PEEK_TTL_MS.post;
+    case 'started': return PEEK_TTL_MS.started;
+    default: return null;
+  }
+}
+
+/**
+ * The prompts worth a peek: those in a project the owner is NOT looking at. A prompt in the
+ * window in front of him is already on his screen (owner, 2026-10-17: "aynı penceredeyken de
+ * bildirim düşüyor"). `lookingAt` is the presence report (`GET /api/assistant/inbox`).
+ */
+export function offScreenAsks<T extends { vault: string; ask: unknown }>(chats: T[], lookingAt: string | null): T[] {
+  return chats.filter((c) => !!c.ask && c.vault !== lookingAt);
+}
+
 /** An announcement that waits for the peek to be free holds this many; the oldest drop first. */
 export const PEEK_QUEUE_CAP = 3;
 
