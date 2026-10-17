@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -162,6 +162,41 @@ export function resolveLinkedRepos(projectRoot: string, home?: string): Resolved
   });
 }
 
+// ─── the brain/code boundary ────────────────────────────────────────────────────
+
+/** `child` is `parent` itself or lies under it (both already real paths). */
+function isSameOrInside(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
+/**
+ * A linked repo is the CODE half of a split: a separate repo outside the brain. Linking the
+ * brain's own folder, a repo inside it, or a repo that contains it would put code back where
+ * every worktree forks `_dream_context/` (owner, 2026-10-17), so it is refused here — which
+ * covers `dreamcontext link add` and the dashboard route alike. Native real paths on both
+ * sides, so neither a symlinked nor a differently-cased spelling of the brain slips past.
+ */
+function assertOutsideBrain(projectRoot: string, abs: string): void {
+  let brain: string;
+  let target: string;
+  try {
+    // `.native`: the JS realpath keeps the caller's letter case, so on a case-insensitive
+    // filesystem (macOS default) `brain/APP` would pass for `Brain/app`. The native call
+    // returns the on-disk spelling.
+    brain = realpathSync.native(projectRoot);
+    target = realpathSync.native(abs);
+  } catch {
+    return; // unreadable paths are caught by the existence checks; never block on a probe
+  }
+  if (isSameOrInside(target, brain) || isSameOrInside(brain, target)) {
+    throw new LinkedRepoError(
+      `A linked repo must be a separate repo outside the brain: ${abs} ` +
+        (target === brain ? 'is the brain\'s own folder' : isSameOrInside(target, brain) ? 'is inside the brain\'s folder' : 'contains the brain') +
+        '. Put the code in its own folder beside the brain and link that.',
+    );
+  }
+}
+
 // ─── linkRepo ───────────────────────────────────────────────────────────────────
 
 export interface LinkRepoOptions {
@@ -186,6 +221,7 @@ export function linkRepo(projectRoot: string, name: string, path: string, opts: 
   if (!existsSync(abs)) throw new LinkedRepoError(`Path does not exist: ${abs}`);
   if (!statSync(abs).isDirectory()) throw new LinkedRepoError(`Path is not a directory: ${abs}`);
   if (!gitModule.isGitRepo(abs)) throw new LinkedRepoError(`Path is not a git repo: ${abs}`);
+  assertOutsideBrain(projectRoot, abs);
 
   const originUrl = gitModule.getRemoteUrl(abs, 'origin');
   const localCanon = originUrl ? canonicalRemote(originUrl) : null;
@@ -208,6 +244,15 @@ export function linkRepo(projectRoot: string, name: string, path: string, opts: 
       );
     }
     entryCanon = localCanon;
+  }
+
+  // The brain's OWN repo checked out somewhere else (a second clone, a worktree) is still the
+  // brain's repo: folders differ, the origin does not.
+  const brainOrigin = gitModule.getRemoteUrl(projectRoot, 'origin');
+  if (brainOrigin && canonicalRemote(brainOrigin) === entryCanon) {
+    throw new LinkedRepoError(
+      `A linked repo must be a separate repo outside the brain: ${entryCanon} is the brain's own repo.`,
+    );
   }
 
   // Name-collision guard: the same label may not point at a DIFFERENT repo.

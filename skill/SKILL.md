@@ -105,7 +105,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Federation** | Recall across multiple projects (vaults) live, read-only | [integrations.md](references/integrations.md) |
 | **Peer mail (ask another project)** | Connected projects can be **ASKED**: `dreamcontext peer ask <vault> "<q>"` wakes that project's agent; `peer send` hands over a note or work. **Ask vs recall**: recall returns what a peer WROTE DOWN, ask an answer REASONED from its code; reach for ask when recall came back empty | [integrations.md](references/integrations.md) |
 | **✅ Team brain sync (whole project)** | **Yes: a team, or one person across machines, can share ONE brain** via the project's GitHub `origin`, synced at `sleep done`; `/dream-sync` resolves prose conflicts. | [brain-sync.md](references/brain-sync.md) |
-| **Linked repos** | One brain governs **bare code repos** (`dreamcontext link add\|clone\|ls\|rm`): a **pointer to code, not a sync**. | [cli-reference.md](references/cli-reference.md) |
+| **Linked repos** | **No code in the brain**: it governs separate **bare code repos** (`dreamcontext link add\|clone\|ls\|rm`), a pointer | [cli-reference.md](references/cli-reference.md) |
 | **Council** | Structured multi-persona debates with a synthesized verdict | [integrations.md](references/integrations.md) |
 | **Marketing (`mk`)** | Meta marketing skill: cohorts, campaigns, competitor ingest | [integrations.md](references/integrations.md) |
 | **Versions / releases** | Planning versions and releases unify in RELEASES.json | [tasks-and-features.md](references/tasks-and-features.md) |

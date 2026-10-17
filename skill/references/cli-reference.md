@@ -561,10 +561,19 @@ One shared brain can point at the **bare code repos it governs** — products/se
 
 | Command | Description |
 |---|---|
-| `link add <name> <path>` | Register a local checkout the brain governs. Derives the canonical GitHub URL from the repo's `origin` (or pass `--url`); writes `{name,url}` to `.config.json` + `url→path` to the machine-local registry. Requires `path` to be a git repo whose `origin` matches — **no fetch/clone happens**. |
+| `link add <name> <path>` | Register a local checkout the brain governs. Derives the canonical GitHub URL from the repo's `origin` (or pass `--url`); writes `{name,url}` to `.config.json` + `url→path` to the machine-local registry. Requires `path` to be a git repo whose `origin` matches — **no fetch/clone happens**. Refuses the brain's own folder, a repo inside it or containing it, and a second checkout of the brain's own repo (same origin). |
 | `link ls` (alias: `links`) | List governed repos: ✓ present (resolved local path) / ✗ missing on this machine. `--json`. |
 | `link clone <name>` | Clone a **missing** repo from its shared URL to this machine — a normal one-way `git clone`, behind a **trust-gate** (the URL is team-writable). `--dir <dir>`, `--yes`. |
 | `link rm <name>` (alias: `unlink`) | Drop the repo from `.config.json`; the machine-local `url→path` mapping is intentionally **left** (re-link stays instant; other brains keep resolving it). |
+
+**Default layout: code lives OUTSIDE the brain (owner, 2026-10-17).** The brain's folder and repo hold no project code — every worktree of a repo that carries `_dream_context/` forks the brain. A **new project** gets its own folder beside the brain and is linked, never written inside it:
+
+```bash
+mkdir ../<name> && git -C ../<name> init
+dreamcontext link add <name> ../<name> --url <owner>/<repo>   # origin-less is fine; --url names the future GitHub repo
+```
+
+Asked to write code in the brain's repo, push back once and do it only if the user explicitly insists; code already living next to the brain is flagged once, with the split offered. The rule rides the SessionStart snapshot (`## Code lives outside the brain`) so it holds even when this skill never loads.
 
 The SessionStart snapshot shows a cheap **Linked repos** glance (present → the resolved path is handed to the agent so it can Grep/Read the governed code; missing → a `link clone` hint). Fully manageable from the dashboard (Settings → Cloud sync → **Linked repos**; desktop-gated, native folder picker).
 

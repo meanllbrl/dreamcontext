@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import type * as gitModule from '../../src/lib/git-sync/git.js';
 import * as git from '../../src/lib/git-sync/git.js';
@@ -35,15 +35,19 @@ import { execFileSync } from 'node:child_process';
 // ─── Fakes / helpers ───────────────────────────────────────────────────────────
 
 /** A fake git module: records clone calls; canned isGitRepo/origin/remotes. */
-function fakeGit(initial: { isRepo?: boolean; origin?: string | null } = {}) {
+function fakeGit(initial: { isRepo?: boolean; origin?: string | null; brainOrigin?: string | null } = {}) {
   const state = {
     isRepo: initial.isRepo ?? true,
     origin: initial.origin ?? (null as string | null),
+    brainOrigin: initial.brainOrigin ?? (null as string | null),
     cloneCalls: [] as { url: string; dest: string }[],
   };
   const module = {
     isGitRepo: () => state.isRepo,
-    getRemoteUrl: (_cwd: string, name: string) => (name === 'origin' ? state.origin : null),
+    // The brain's project folder has its own origin (`brainOrigin`, none by default), so the
+    // canned origin describes the repo being linked, never the brain itself.
+    getRemoteUrl: (cwd: string, name: string) =>
+      name !== 'origin' ? null : cwd === projectRoot ? state.brainOrigin : state.origin,
     clone: (url: string, dest: string) => { state.cloneCalls.push({ url, dest }); },
   } as unknown as typeof gitModule;
   return { module, state };
@@ -224,6 +228,64 @@ describe('linkRepo', () => {
     const entry = linkRepo(projectRoot, 'api', repoDir, { url: 'acme/api', home, gitModule: module });
     expect(entry.gitRemoteUrl).toBe('https://github.com/acme/api.git');
     expect(getLinkedRepoPath('https://github.com/acme/api.git', home)).toBe(repoDir);
+  });
+
+  // Brain/code boundary (owner, 2026-10-17): a linked repo is a SEPARATE repo outside the brain.
+  it('refuses the brain\'s own folder, a repo inside it, and a repo that contains it — and stores nothing', () => {
+    const { module } = fakeGit({ isRepo: true, origin: null });
+    const inside = join(projectRoot, 'app');
+    mkdirSync(inside, { recursive: true });
+    expect(() => linkRepo(projectRoot, 'self', projectRoot, { url: 'acme/self', home, gitModule: module }))
+      .toThrow(/separate repo outside the brain: .* is the brain's own folder/);
+    expect(() => linkRepo(projectRoot, 'app', inside, { url: 'acme/app', home, gitModule: module }))
+      .toThrow(/is inside the brain's folder/);
+    expect(() => linkRepo(projectRoot, 'parent', dirname(projectRoot), { url: 'acme/parent', home, gitModule: module }))
+      .toThrow(/contains the brain/);
+    expect(readSetupConfig(projectRoot)?.linkedRepos ?? []).toHaveLength(0);
+    expect(getLinkedRepoPath('https://github.com/acme/app.git', home)).toBeNull();
+  });
+
+  it('a symlinked or differently-cased spelling of a path inside the brain is refused too', () => {
+    const { module } = fakeGit({ isRepo: true, origin: null });
+    const inside = join(projectRoot, 'app');
+    mkdirSync(inside, { recursive: true });
+    const alias = `${projectRoot}-alias`;
+    symlinkSync(projectRoot, alias);
+    try {
+      expect(() => linkRepo(projectRoot, 'app', join(alias, 'app'), { url: 'acme/app', home, gitModule: module }))
+        .toThrow(/is inside the brain's folder/);
+      // Only meaningful where the filesystem folds case (macOS default APFS); skipped otherwise.
+      const upper = join(projectRoot, 'APP');
+      if (existsSync(upper)) {
+        expect(() => linkRepo(projectRoot, 'app', upper, { url: 'acme/app', home, gitModule: module }))
+          .toThrow(/is inside the brain's folder/);
+        expect(() => linkRepo(projectRoot, 'self', projectRoot.toUpperCase(), { url: 'acme/self', home, gitModule: module }))
+          .toThrow(/is the brain's own folder/);
+      }
+    } finally {
+      rmSync(alias, { force: true });
+    }
+    expect(readSetupConfig(projectRoot)?.linkedRepos ?? []).toHaveLength(0);
+  });
+
+  it('refuses a second checkout of the brain\'s OWN repo at another path (same origin)', () => {
+    const repoDir = makeRepoDir('brain-clone');
+    const { module } = fakeGit({ origin: 'git@github.com:acme/brain.git', brainOrigin: 'https://github.com/acme/brain' });
+    expect(() => linkRepo(projectRoot, 'brain', repoDir, { home, gitModule: module }))
+      .toThrow(/https:\/\/github\.com\/acme\/brain\.git is the brain's own repo/);
+    expect(readSetupConfig(projectRoot)?.linkedRepos ?? []).toHaveLength(0);
+  });
+
+  it('a sibling folder beside the brain (the new-project layout) links fine', () => {
+    const { module } = fakeGit({ isRepo: true, origin: null });
+    const sibling = `${projectRoot}-code`; // shares the prefix, so a bare startsWith would wrongly refuse it
+    mkdirSync(sibling, { recursive: true });
+    try {
+      const entry = linkRepo(projectRoot, 'code', sibling, { url: 'acme/code', home, gitModule: module });
+      expect(entry.gitRemoteUrl).toBe('https://github.com/acme/code.git');
+    } finally {
+      rmSync(sibling, { recursive: true, force: true });
+    }
   });
 
   it('name-collision guard: the same name pointing at a DIFFERENT repo throws', () => {

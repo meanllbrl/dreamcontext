@@ -79,8 +79,12 @@ import {
  * `## Automations` section now always renders, so a session can discover the
  * subsystem on a vault that has none) ran it a third time — *exactly four
  * added lines* (heading, blank, the one-line zero state, blank) in BOTH
- * goldens. `BASE_SHA` still records the last SHA at which leg (a) was
- * non-circular.
+ * goldens. The code-outside-the-brain rule (2026-10-17: a never-evict
+ * `## Code lives outside the brain` block after the linked-repos glance) ran
+ * it a fourth time — *exactly four added lines* in BOTH goldens, and in the
+ * floor golden the same four plus the budget note's token count (2322 → 2430,
+ * the block itself; no rung moved). `BASE_SHA` still records the last SHA at
+ * which leg (a) was non-circular.
  *
  * `expected.txt` intentionally has NO trailing newline: `generateSnapshot`
  * returns trimmed text and the golden is that text verbatim. An editor or

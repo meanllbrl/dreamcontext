@@ -1184,6 +1184,28 @@ function renderLinkedReposGlance(root: string, style: 'snapshot' | 'briefing'): 
   }
 }
 
+/**
+ * The code-outside-the-brain rule, rendered on EVERY snapshot (owner, 2026-10-17). A brain
+ * that shares its folder or repo with code is forked by every worktree of that repo, so the
+ * default is: brain and code are separate repos, joined by `dreamcontext link`. It rides the
+ * hook rather than the skill because the skill may never load and this is the rule that has
+ * to be in front of the agent before its first file write (knowledge/patterns/
+ * hook-delivered-must-not-miss-rules). Pinned word for word in snapshot-code-outside-brain.test.ts.
+ */
+export function renderCodeOutsideBrainRule(hasLinkedRepos: boolean): string[] {
+  const where = hasLinkedRepos
+    ? 'Code lives in a linked repo above, edited there.'
+    : 'No code repo is linked yet: if code already lives next to the brain, say so once and offer to move it into its own repo and link it.';
+  return [
+    '## Code lives outside the brain\n',
+    `The brain's folder and repo hold NO project code. ${where} ` +
+      'A NEW project gets its own folder beside the brain, never inside it: `git init` it, then ' +
+      '`dreamcontext link add <name> <path> --url <owner>/<repo>`. Asked to write code in the ' +
+      "brain's repo? Push back once (every worktree of it forks `_dream_context/`) and do it only " +
+      'if the user explicitly insists.\n',
+  ];
+}
+
 /** A rendered snapshot together with the ladder verdict that produced it. */
 export interface SnapshotMeasurement {
   /** The FINAL text, banner included. What the hook prints. */
@@ -1286,11 +1308,11 @@ export function measureSnapshot(
   // for, so they must survive even when an oversized snapshot is persisted to
   // a file and only its head is injected as a preview. Rendering + the
   // external-data framing + sanitization live in renderLinkedReposGlance.
+  // The code-outside-the-brain rule rides the same never-evict group, linked repos or not.
   const linkedGlance = renderLinkedReposGlance(root, 'snapshot');
-  if (linkedGlance) {
-    parts.push(...linkedGlance);
-    flushPinned('linked-repos');
-  }
+  if (linkedGlance) parts.push(...linkedGlance);
+  parts.push(...renderCodeOutsideBrainRule(linkedGlance !== null));
+  flushPinned('linked-repos');
 
   // 1. Soul file (full content) — WHO the agent is. NEVER-EVICT, no rungs.
   //
