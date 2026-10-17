@@ -304,6 +304,25 @@ export function assistantAllowedTools(autonomy: Autonomy): string[] {
 }
 
 /**
+ * Claude Code's native plan mode, removed from every chat spawn. 2026-10-17: the owner said
+ * "planla" in a Basic tab and the agent opened EnterPlanMode and wrote plans/*.md, where Chat's
+ * planning is dreamcontext's Plan mode (it ends by creating the task). Basic adds no brief, so
+ * nothing but a deny stops Claude's reflex; the surface briefing says where the request goes.
+ * A SCOPED home-board card already brings its own `--disallowedTools` (board-scope.ts,
+ * BOARD_AGENT_DISALLOWED_TOOLS) and a second flag would collide, so it gets none. An ATTACHED
+ * agent card keeps the pane envelope and is not scoped: it is denied on purpose.
+ * The list is constant across chat spawns, so the prompt cache holds; only the first resume of
+ * an older conversation after the upgrade misses it once. The Chat ExitPlanMode approval UI
+ * (dashboard PlanCard.tsx, chatProtocol.ts, chatSession.ts, ToolCard.tsx) is now idle in Chat
+ * and kept deliberately as a fallback for older transcripts, not a bug to fix; a conversation
+ * that was inside native plan mode before the upgrade may hit one ExitPlanMode tool error on
+ * resume and recover. Cron and RemoteTrigger stay: /loop and /schedule are user-typed skills.
+ */
+export function chatDeniedToolArgs(scopedCard: boolean): string[] {
+  return scopedCard ? [] : ['--disallowedTools', 'EnterPlanMode,ExitPlanMode'];
+}
+
+/**
  * The Assistant reads its OWN settings (the hidden vault's hooks, skills and agents) and not the
  * owner's global ones. Owner, 2026-10-14: every notch turn carried the global plugins and user
  * settings — measured ~9.6k tokens of a ~42k context, for a two-sentence answer — and none of
@@ -1636,6 +1655,8 @@ export function startChatSession(
     ...(spawnModel ? ['--model', spawnModel] : []),
     ...(spawnEffort ? ['--effort', spawnEffort] : []),
     ...(assistantConfig ? assistantAllowedTools(assistantConfig.autonomy) : []),
+    // Variadic, but every later element is a `--` flag, so it swallows nothing.
+    ...chatDeniedToolArgs(scopedCard),
     ...assistantSettingArgs(isAssistant),
     // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
     // seeded with no MCP keys at any depth, so without this flag it would silently lose every

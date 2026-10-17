@@ -368,9 +368,14 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * chat agent learns its window answers to it. Cut from a 600-character first draft to one
    * sentence of verbs plus `--help`; the rules (deferred self restart, --force) live in the
    * verbs' own answers and help text. Actual 13,112; 13,300 keeps ~190 of headroom.
+   *
+   * 13300 -> 13750 on 2026-10-17, a RAISE for 'Claude Code's tools vs dreamcontext' (491
+   * characters), owner-asked: a Basic chat answered 'planla' with Claude's native plan mode;
+   * the deny flag removes the tool, this section says where the request goes instead.
+   * Actual 13,605; 13,750 keeps ~145 of headroom.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(13300);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(13750);
   });
 
   /**
@@ -381,7 +386,21 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13112)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13605)).toBeLessThanOrEqual(20);
+  });
+
+  /**
+   * 2026-10-17: "planla" in a Basic tab opened Claude Code's own plan mode. The spawn denies
+   * EnterPlanMode/ExitPlanMode; this section is what tells the agent where a plan, a schedule,
+   * lasting work and a fact go instead. Without it the deny leaves the agent with no route.
+   */
+  it("says where Claude Code's built-ins go instead (plan, schedules, memory)", () => {
+    expect(CHAT_SURFACE_BRIEFING).toContain("## Claude Code's tools vs dreamcontext");
+    expect(CHAT_SURFACE_BRIEFING).toContain('dreamcontext window mode plan');
+    expect(CHAT_SURFACE_BRIEFING).toContain('dreamcontext automations');
+    expect(CHAT_SURFACE_BRIEFING).toContain("Claude's own memory files");
+    // modeFromSystemPrompt reads line-start `# Mode:` headings; the section must never fake one.
+    expect(CHAT_SURFACE_BRIEFING).not.toMatch(/^# Mode:/m);
   });
 
   /**
