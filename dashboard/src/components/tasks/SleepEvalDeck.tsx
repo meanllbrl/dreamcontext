@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { phoneAllows } from '../../lib/phoneSurface';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import './SleepEvalDeck.css';
@@ -69,6 +70,8 @@ export function useSleepEvalLabels() {
   return useQuery({
     queryKey: ['sleep-eval-labels'],
     queryFn: () => api.get<LabelsResponse>('/sleep-eval/labels'),
+    // The test set stays on the Mac (route-policy deny): the phone does not ask for it.
+    enabled: phoneAllows('GET', '/api/sleep-eval/labels'),
     staleTime: 30_000,
   });
 }

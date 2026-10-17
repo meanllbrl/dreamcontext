@@ -180,6 +180,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/automations/:slug/telegram',
   'POST /api/automations/:slug/telegram',
   'GET /api/app/machine',
+  'GET /api/sleep-eval/labels',
+  'POST /api/sleep-eval/labels',
 ];
 
 /** A registered pattern as a matcher (the router's own rule). */
