@@ -1,15 +1,35 @@
 import { useEffect, useState } from 'react';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
+import { MAC_THERMAL_STATES, type MacThermal } from '../macContract';
 
 /**
- * The phone's view of Mac mode: `GET /api/handsfree/phone` (the laptop's battery and whether it
- * may sleep again), polled only on the phone surface. Mounting the chip also registers the
+ * The phone's view of Mac mode: `GET /api/handsfree/phone` (the laptop's battery, whether it
+ * may sleep again, and whether it is slowing heavy work to cool down), polled only on the phone surface. Mounting the chip also registers the
  * hands-free service worker there (offline page, notifications).
  */
 
 export interface PhoneState {
   battery: { percent: number | null; charging: boolean };
   sleepAllowed: boolean;
+  thermal: MacThermal;
+}
+
+/** A `GET /api/handsfree/phone` body → the chip's state; null when it is not a Mac payload.
+ *  Every field is type-checked: an older server (no `thermal`) reads as not slowing anything. */
+export function parsePhonePayload(body: unknown): PhoneState | null {
+  const b = body as { mode?: string; battery?: { percent?: unknown; charging?: unknown }; sleepAllowed?: unknown; thermal?: { state?: unknown; slowed?: unknown } } | null;
+  if (b?.mode !== 'mac') return null;
+  const percent = typeof b.battery?.percent === 'number' ? b.battery.percent : null;
+  const ts = b.thermal?.state;
+  const slowed = b.thermal?.slowed;
+  return {
+    battery: { percent, charging: b.battery?.charging !== false },
+    sleepAllowed: b.sleepAllowed === true,
+    thermal: {
+      state: typeof ts === 'string' && (MAC_THERMAL_STATES as readonly string[]).includes(ts) ? ts as MacThermal['state'] : null,
+      slowed: typeof slowed === 'number' && Number.isInteger(slowed) && slowed > 0 ? slowed : 0,
+    },
+  };
 }
 
 const ROUTE = '/api/handsfree/phone';
@@ -48,11 +68,8 @@ async function poll(): Promise<void> {
   try {
     const res = await fetch(ROUTE, { cache: 'no-store', credentials: 'same-origin' });
     if (res.status === 200 && res.headers.get('X-Dreamcontext-Surface') === 'mac') {
-      const body = await res.json() as { mode?: string; battery?: { percent?: unknown; charging?: unknown }; sleepAllowed?: unknown };
-      if (body?.mode === 'mac') {
-        const percent = typeof body.battery?.percent === 'number' ? body.battery.percent : null;
-        emit({ battery: { percent, charging: body.battery?.charging !== false }, sleepAllowed: body.sleepAllowed === true });
-      }
+      const next = parsePhonePayload(await res.json());
+      if (next) emit(next);
     }
     // A 401 (signed out) or a transient failure keeps the last known state.
   } catch {

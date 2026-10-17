@@ -1309,7 +1309,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         stopClaudeUpdate?.();
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
-        const macDone = isDesktop() && macSession().isOn() ? macSession().stop().catch(() => undefined) : Promise.resolve();
+        const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
         void macDone.finally(() => {
           // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
           // when this server exits — SIGKILL from the parent would skip this, but a

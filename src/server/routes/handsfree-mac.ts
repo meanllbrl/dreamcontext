@@ -125,7 +125,11 @@ function verifyPowerSeam(): Partial<MacSessionDeps> {
     }
     return { code: 0, stdout: '', stderr: '' };
   };
-  return { powerRun: run, batteryPollMs: 2000, sudoersInstalled: () => true, installSudoers: async () => 'ok', removeSudoers: async () => 'ok' };
+  // A verify must never slow the owner's real processes: the thermal reading stays nominal.
+  return {
+    powerRun: run, batteryPollMs: 2000, sudoersInstalled: () => true, installSudoers: async () => 'ok', removeSudoers: async () => 'ok',
+    readThermal: async () => 'nominal',
+  };
 }
 
 /** The process's Mac session (created on first use) over the real OS adapters. */

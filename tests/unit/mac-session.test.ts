@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { MacSession, MacModeError, readMacState, statePathOf, type MacSessionDeps } from '../../src/lib/handsfree/mac/session.js';
 import { HandsfreeAuth, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase, sha256Hex } from '../../src/server/handsfree-auth.js';
 import type { PowerRunner } from '../../src/lib/handsfree/mac/power.js';
+import { ThermalGovernor, thermalPendingPathOf, type LedgerEntry } from '../../src/lib/handsfree/mac/thermal.js';
+import { BG_PRI, NORMAL_PRI, T0, World, lstartOf } from '../helpers/thermal-world.js';
 
 const CUSTOM = 'Battery Power:\n lowpowermode         0\nAC Power:\n lowpowermode         1\n';
 
@@ -16,6 +18,7 @@ let events: string[];
 let battText: string;
 let origin: string | null;
 let notes: Array<[string, string]>;
+let world: World;
 
 function powerRun(): PowerRunner {
   return async (file, args) => {
@@ -60,6 +63,10 @@ function deps(over: Partial<MacSessionDeps> = {}): MacSessionDeps {
     isAlive: () => false,
     commandOf: () => '',
     kill: vi.fn(),
+    // Never the real osascript/ps/taskpolicy: a fake process table.
+    thermalRun: world.run,
+    readThermal: world.readThermal,
+    thermalPollMs: 60_000,
     ...over,
   };
 }
@@ -70,6 +77,7 @@ beforeEach(async () => {
   auth = new HandsfreeAuth({ dir });
   events = [];
   notes = [];
+  world = new World();
   origin = null;
   battText = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t80%; charging;";
 });
@@ -230,6 +238,158 @@ describe('crash recovery (AC12)', () => {
     mkdirSync(join(home, '.dreamcontext', 'handsfree-mac'), { recursive: true });
     expect(await new MacSession(deps()).recoverOnBoot()).toBe(false);
     void sha256Hex;
+  });
+});
+
+describe('the thermal governor in the session (AC6, AC7)', () => {
+  beforeEach(async () => { auth.store.setPassphrase(await hashPassphrase('a b c d e f')); });
+  const pendingPath = () => thermalPendingPathOf(home);
+  const entry = (pid: number): LedgerEntry => ({ pid, lstart: lstartOf(T0), clampedAt: T0 + 1000, kind: 'root', state: 'clamped' });
+
+  async function hotSession(over: Partial<MacSessionDeps> = {}, burners = [10]) {
+    for (const pid of burners) world.add({ pid });
+    world.steady = 'serious';
+    let phone: (() => { thermal: { state: string | null; slowed: number } }) | null = null;
+    const s = new MacSession(deps({ thermalPollMs: 5, setPhoneSource: (src) => { phone = src as typeof phone; }, ...over }));
+    await s.start({ vaults: ['proj'] });
+    await vi.waitFor(() => expect(s.status().thermal.slowed).toBe(burners.length), { timeout: 2000 });
+    return { s, phone: () => phone };
+  }
+
+  it('the ledger is written to state.json; status and the phone payload carry thermal', async () => {
+    const { s, phone } = await hotSession();
+    expect(readMacState(home)!.clamped).toEqual([expect.objectContaining({ pid: 10, kind: 'root', state: 'clamped' })]);
+    expect(s.status().thermal).toEqual({ state: 'serious', slowed: 1 });
+    expect(phone()!().thermal).toEqual({ state: 'serious', slowed: 1 });
+    await s.stop();
+  });
+
+  it('Return releases every slowed process; no pending file, state cleared', async () => {
+    const { s } = await hotSession();
+    expect(world.procs.get(10)!.pri).toBe(BG_PRI);
+    await s.stop();
+    expect(world.procs.get(10)!.pri).toBe(NORMAL_PRI);
+    expect(existsSync(pendingPath())).toBe(false);
+    expect(existsSync(statePathOf(home))).toBe(false);
+    expect(s.status().thermal).toEqual({ state: null, slowed: 0 });
+  });
+
+  it('sleep and Low Power Mode are restored BEFORE the release starts (a slow release never delays power)', async () => {
+    const { s } = await hotSession();
+    const spy = vi.spyOn(ThermalGovernor.prototype, 'releaseAll').mockImplementation(async () => {
+      events.push('releaseAll:start');
+      await new Promise((r) => setTimeout(r, 50));
+      return [];
+    });
+    try {
+      events = [];
+      await s.stop();
+      const power = events.indexOf('/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0');
+      expect(power).toBeGreaterThanOrEqual(0);
+      expect(power).toBeLessThan(events.indexOf('releaseAll:start'));
+    } finally { spy.mockRestore(); }
+  });
+
+  it('stop({shutdown:true}) returns within the 800 ms deadline + slack; what it could not release waits in the pending file', async () => {
+    const burners = Array.from({ length: 10 }, (_, i) => 10 + i);
+    const { s } = await hotSession({}, burners);
+    world.onTaskpolicy = async (flag) => { if (flag === '-B') await new Promise((r) => setTimeout(r, 150)); };
+    const t = Date.now();
+    await s.stop({ shutdown: true });
+    const took = Date.now() - t;
+    expect(took).toBeLessThan(800 + 400);
+    const pending = JSON.parse(readFileSync(pendingPath(), 'utf8')) as LedgerEntry[];
+    const stillSlow = burners.filter((p) => world.procs.get(p)!.pri === BG_PRI);
+    expect(stillSlow.length).toBeGreaterThan(0);
+    expect(pending.map((e) => e.pid).sort()).toEqual(stillSlow.sort());
+    expect(statSync(pendingPath()).mode & 0o777).toBe(0o600);
+    expect(existsSync(statePathOf(home))).toBe(false);
+  });
+
+  it('Return then quitting the app (a second, overlapping stop) waits for the first release: nothing is left slowed unrecorded', async () => {
+    const burners = [10, 11, 12];
+    const { s } = await hotSession({}, burners);
+    world.onTaskpolicy = async (flag) => { if (flag === '-B') await new Promise((r) => setTimeout(r, 150)); };
+    const first = s.stop();
+    await new Promise((r) => setTimeout(r, 20));
+    // The server exits as soon as the SIGTERM path's stop resolves: judge the world at THAT moment.
+    await s.stop({ shutdown: true });
+    const pending = existsSync(pendingPath()) ? (JSON.parse(readFileSync(pendingPath(), 'utf8')) as LedgerEntry[]).map((e) => e.pid) : [];
+    const recorded = new Set([...pending, ...(readMacState(home)?.clamped ?? []).map((e) => e.pid)]);
+    const stillSlow = burners.filter((p) => world.procs.get(p)!.pri === BG_PRI);
+    expect(stillSlow.filter((p) => !recorded.has(p))).toEqual([]);   // nothing slowed without a record
+    expect(stillSlow).toEqual([]);   // the second stop waited for the first, unbounded release
+    expect(s.status().phase).toBe('off');
+    await first;
+  });
+
+  it('the shutdown deadline counts from stop(), not from the release: a slow tunnel stop leaves less time', async () => {
+    const burners = [10, 11, 12, 13, 14];
+    const slowTunnel: MacSessionDeps['makeSupervisor'] = (_o, e) => {
+      const f = fakeSupervisor()(); const st = f.start;
+      f.start = vi.fn(async () => { const r = await st(); e.onUrl(r.url, false); return r; });
+      f.stop = vi.fn(async () => { await new Promise((r) => setTimeout(r, 600)); });
+      return f;
+    };
+    const { s } = await hotSession({ makeSupervisor: slowTunnel }, burners);
+    world.onTaskpolicy = async (flag) => { if (flag === '-B') await new Promise((r) => setTimeout(r, 150)); };
+    const t = Date.now();
+    await s.stop({ shutdown: true });
+    expect(Date.now() - t).toBeLessThan(800 + 300);
+    const pending = (JSON.parse(readFileSync(pendingPath(), 'utf8')) as LedgerEntry[]).map((e) => e.pid).sort();
+    const stillSlow = burners.filter((p) => world.procs.get(p)!.pri === BG_PRI).sort();
+    expect(stillSlow.length).toBeGreaterThan(0);
+    expect(pending).toEqual(stillSlow);
+  });
+
+  it('a ps failure at Return leaves the entry in the pending file; the next start releases it and deletes the file', async () => {
+    const { s } = await hotSession();
+    world.psFails = true;
+    await s.stop();
+    expect(JSON.parse(readFileSync(pendingPath(), 'utf8')).map((e: LedgerEntry) => e.pid)).toEqual([10]);
+    expect(world.procs.get(10)!.pri).toBe(BG_PRI);
+    world.psFails = false;
+    world.steady = 'nominal';
+    await s.start({ vaults: ['proj'] });
+    expect(world.procs.get(10)!.pri).toBe(NORMAL_PRI);
+    expect(existsSync(pendingPath())).toBe(false);
+    await s.stop();
+  });
+
+  it('the SIGTERM path passes shutdown: true', () => {
+    const src = readFileSync(join(__dirname, '../../src/server/index.ts'), 'utf8');
+    expect(src).toContain('macSession().stop({ shutdown: true })');
+  });
+
+  it('boot recovery releases a crashed run\'s state.clamped and the pending file', async () => {
+    world.add({ pid: 30, pri: BG_PRI });
+    world.add({ pid: 31, pri: BG_PRI });
+    mkdirSync(join(home, '.dreamcontext', 'handsfree-mac'), { recursive: true });
+    writeFileSync(statePathOf(home), JSON.stringify({ on: true, serverPid: 99999, tunnelPid: null, tunnelBin: null, startedAt: 'x', priorLpm: null, sleepDisabledByUs: true, url: null, mode: 'quick', clamped: [entry(30)] }));
+    writeFileSync(pendingPath(), JSON.stringify([entry(31)]));
+    expect(await new MacSession(deps()).recoverOnBoot()).toBe(true);
+    expect(world.procs.get(30)!.pri).toBe(NORMAL_PRI);
+    expect(world.procs.get(31)!.pri).toBe(NORMAL_PRI);
+    expect(existsSync(pendingPath())).toBe(false);
+    expect(existsSync(statePathOf(home))).toBe(false);
+  });
+
+  it('the pending file is released at the top of boot recovery, even with no state to recover', async () => {
+    world.add({ pid: 32, pri: BG_PRI });
+    mkdirSync(join(home, '.dreamcontext', 'handsfree-mac'), { recursive: true });
+    writeFileSync(pendingPath(), JSON.stringify([entry(32)]));
+    expect(await new MacSession(deps()).recoverOnBoot()).toBe(false);
+    expect(world.procs.get(32)!.pri).toBe(NORMAL_PRI);
+    expect(existsSync(pendingPath())).toBe(false);
+  });
+
+  it('uninstall releases the pending file before it deletes the Mac folder', async () => {
+    world.add({ pid: 33, pri: BG_PRI });
+    mkdirSync(join(home, '.dreamcontext', 'handsfree-mac'), { recursive: true });
+    writeFileSync(pendingPath(), JSON.stringify([entry(33)]));
+    await new MacSession(deps({ removeSudoers: async () => 'ok' })).uninstall();
+    expect(world.procs.get(33)!.pri).toBe(NORMAL_PRI);
+    expect(existsSync(join(home, '.dreamcontext', 'handsfree-mac'))).toBe(false);
   });
 });
 

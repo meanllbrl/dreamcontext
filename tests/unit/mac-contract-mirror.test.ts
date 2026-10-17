@@ -13,6 +13,14 @@ describe('mac contract mirror', () => {
     expect(dash.MAC_ROUTES).toEqual(server.MAC_ROUTES);
   });
 
+  it('the thermal governor constants and state list agree', () => {
+    expect(dash.MAC_THERMAL_POLL_MS).toBe(server.MAC_THERMAL_POLL_MS);
+    expect(dash.MAC_THERMAL_RELEASE_TICKS).toBe(server.MAC_THERMAL_RELEASE_TICKS);
+    expect(dash.MAC_THERMAL_STATES).toEqual(server.MAC_THERMAL_STATES);
+    expect(server.MAC_THERMAL_POLL_MS).toBe(20_000);
+    expect(server.MAC_THERMAL_RELEASE_TICKS).toBe(6);
+  });
+
   it('the passive probe stays well under the client connect timeout', async () => {
     const { CONNECT_TIMEOUT_MS } = await import('../../dashboard/src/components/sleepy/chatSession.js');
     expect(server.HOLDER_PROBE_MS * 3).toBeLessThanOrEqual(CONNECT_TIMEOUT_MS);

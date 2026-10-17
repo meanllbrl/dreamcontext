@@ -21,6 +21,7 @@
   background: var(--color-success);
 }
 
-.dc-hf-chip[data-mac='low'] .dc-hf-chip-dot {
+.dc-hf-chip[data-mac='low'] .dc-hf-chip-dot,
+.dc-hf-chip[data-mac='warm'] .dc-hf-chip-dot {
   background: var(--color-warning);
 }
