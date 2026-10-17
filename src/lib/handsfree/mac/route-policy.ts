@@ -114,6 +114,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'DELETE /api/task-overrides/statuses/:key': allow(PROJECT_WRITE),
   'GET /api/tasks/:slug': allow(READ),
   'GET /api/tasks/:slug/readiness': allow(READ),
+  'GET /api/tasks/:slug/journal': allow(READ),
   'DELETE /api/tasks/:slug': allow(PROJECT_WRITE),
   'PATCH /api/tasks/:slug': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
