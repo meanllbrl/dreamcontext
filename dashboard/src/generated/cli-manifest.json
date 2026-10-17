@@ -191,6 +191,14 @@
       ]
     },
     {
+      "path": "assistant index",
+      "desc": "Every project's knowledge index (path, name, description) — when recall did not find it",
+      "args": [],
+      "valueFlags": [
+        "--vault"
+      ]
+    },
+    {
       "path": "assistant look",
       "desc": "Screenshot the owner's screen(s) and print the image paths to Read — only when the owner asks",
       "args": [],
@@ -222,6 +230,31 @@
       "path": "assistant projects",
       "desc": "Every registered project: what it is, what is active, live chats",
       "args": []
+    },
+    {
+      "path": "assistant read",
+      "desc": "Read a file in a project's brain (a path recall or index gave), or a past session with --session",
+      "args": [
+        "<vault>",
+        "[path]"
+      ],
+      "valueFlags": [
+        "--session",
+        "--offset",
+        "--limit"
+      ]
+    },
+    {
+      "path": "assistant recall",
+      "desc": "Search your own memory and every project's brain; each project's best hits",
+      "args": [
+        "<query...>"
+      ],
+      "valueFlags": [
+        "--vault",
+        "--top",
+        "--types"
+      ]
     },
     {
       "path": "assistant send",

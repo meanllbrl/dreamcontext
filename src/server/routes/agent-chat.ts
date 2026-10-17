@@ -296,11 +296,17 @@ export function assistantPermissionMode(autonomy: Autonomy): 'default' | 'auto' 
  * `dreamcontext assistant …` Bash call otherwise pays the auto-mode classifier (measured
  * 11-26 s each on Spidey's context). The matcher refuses compound commands (`;`, `&&`, `|`,
  * `$(…)`, a second line — security review 2026-09-27), and the server's gated()/decide()
- * stays the real guard for send/answer/broadcast. `ask` must keep prompting (the CLI prompt
- * IS the approval for the free verbs there); `bypass` needs nothing. Never on any other spawn.
+ * stays the real guard for send/answer/broadcast. `ask` keeps prompting for every other verb
+ * (the CLI prompt IS the approval for the free verbs there), but the READS pass: a recall, an
+ * index or a file read writes nothing, and asking the owner before each one is the slowness
+ * they asked to remove (owner, 2026-10-17). `bypass` needs nothing. Never on any other spawn.
  */
+export const ASSISTANT_READ_TOOLS = ['recall', 'index', 'read'].map((v) => `Bash(dreamcontext assistant ${v}:*)`);
+
 export function assistantAllowedTools(autonomy: Autonomy): string[] {
-  return autonomy === 'auto' ? ['--allowedTools', 'Bash(dreamcontext assistant:*)'] : [];
+  if (autonomy === 'auto') return ['--allowedTools', 'Bash(dreamcontext assistant:*)'];
+  if (autonomy === 'ask') return ['--allowedTools', ASSISTANT_READ_TOOLS.join(',')];
+  return [];
 }
 
 /**

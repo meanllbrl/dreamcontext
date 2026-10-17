@@ -18,6 +18,7 @@ import {
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
   handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
+  handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
 import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
@@ -462,6 +463,9 @@ export function buildRouter(): Router {
   router.get('/api/assistant/projects', handleAssistantProjects);
   router.get('/api/assistant/sessions', handleAssistantSessions);
   router.get('/api/assistant/watch', handleAssistantWatch);
+  router.get('/api/assistant/recall', handleAssistantRecall);
+  router.get('/api/assistant/index', handleAssistantIndex);
+  router.get('/api/assistant/read', handleAssistantRead);
   router.post('/api/assistant/broadcast', handleAssistantBroadcast);
   router.post('/api/assistant/ui/:verb', handleAssistantUi);
   // A project chat's agent drives its own window (dreamcontext window …); token-gated per chat.

@@ -580,9 +580,19 @@ all; switching it off mid-reply stops the voice at once. Plus the corrector's vo
 project's name, first**, because those are the nouns the Assistant is spoken to about. A normal
 vault's vocabulary never gets the other projects.
 
+**It knows; it delegates the work (2026-10-17).** A question a brain already answers (a link,
+a file path, a decision, what was picked) is answered from that brain: `assistant recall`, then
+`assistant read` the hit, then the answer. A project's agent is asked only for what no brain
+holds or what needs its live code, git, PRs or tests, and every action inside a project still
+goes to that project's own agent. A session digest is a summary that can lose the conclusion;
+`read <vault> --session <id>` reads the session's own end.
+
 **Its verbs — only its own session can run them.**
 
 ```bash
+dreamcontext assistant recall '<keywords>' [--vault v] [--top n]   # its memory + every project's brain, per project
+dreamcontext assistant index [--vault v]              # every project's knowledge index, on demand
+dreamcontext assistant read <vault> (<path> | --session <id>)   # a brain file, or a past session's end
 dreamcontext assistant projects                       # every project: what it is, what is active, live chats
 dreamcontext assistant sessions [--vault v] [--status working|asking|idle]
 dreamcontext assistant watch <sessionId> [--until idle|asking|any] [--timeout 590]

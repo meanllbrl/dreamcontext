@@ -77,6 +77,9 @@ function print(r: CallResult): void {
 
 const ui = (verb: string, body: Record<string, unknown>) => callAssistant('POST', `/api/assistant/ui/${verb}`, body).then(print);
 
+/** A repeatable option: every `--vault x` adds one. */
+const collect = (value: string, previous: string[]) => [...previous, value];
+
 export function registerAssistantCommand(program: Command): void {
   const a = program
     .command('assistant')
@@ -104,6 +107,46 @@ export function registerAssistantCommand(program: Command): void {
     .action(async (sessionId: string, o: { until: string; timeout: string }) => {
       const p = new URLSearchParams({ session: sessionId, until: o.until, timeout: o.timeout });
       print(await callAssistant('GET', `/api/assistant/watch?${p}`));
+    });
+
+  // Reads: the Assistant answers from the brains itself instead of asking a project's agent.
+  a.command('recall <query...>')
+    .description('Search your own memory and every project\'s brain; each project\'s best hits')
+    .option('--vault <vault>', 'Only this project (repeatable)', collect, [])
+    .option('--top <n>', 'Hits per project', '3')
+    .option('--types <types>', 'Comma-separated subset: knowledge,feature,task,memory,changelog,objective,insight,thesis,whiteboard,core')
+    .action(async (words: string[], o: { vault: string[]; top: string; types?: string }) => {
+      const p = new URLSearchParams({ q: words.join(' '), top: o.top });
+      for (const v of o.vault) p.append('vault', v);
+      if (o.types) p.set('types', o.types);
+      print(await callAssistant('GET', `/api/assistant/recall?${p}`));
+    });
+
+  a.command('index')
+    .description('Every project\'s knowledge index (path, name, description) — when recall did not find it')
+    .option('--vault <vault>', 'Only this project (repeatable)', collect, [])
+    .action(async (o: { vault: string[] }) => {
+      const p = new URLSearchParams();
+      for (const v of o.vault) p.append('vault', v);
+      print(await callAssistant('GET', `/api/assistant/index${p.size ? `?${p}` : ''}`));
+    });
+
+  a.command('read <vault> [path]')
+    .description('Read a file in a project\'s brain (a path recall or index gave), or a past session with --session')
+    .option('--session <id>', 'A past session of that project (a digest\'s file name): its END, the owner\'s and agent\'s words')
+    .option('--offset <n>', 'Start at this character (a long read says where the next or earlier part starts)')
+    .option('--limit <n>', 'At most this many characters', '40000')
+    .action(async (vault: string, path: string | undefined, o: { session?: string; offset?: string; limit: string }) => {
+      if (!path === !o.session) {
+        process.stderr.write('name a path, or --session <id>\n');
+        process.exitCode = 1;
+        return;
+      }
+      const p = new URLSearchParams({ vault, limit: o.limit });
+      if (path) p.set('path', path);
+      if (o.session) p.set('session', o.session);
+      if (o.offset) p.set('offset', o.offset);
+      print(await callAssistant('GET', `/api/assistant/read?${p}`));
     });
 
   a.command('broadcast <message>')

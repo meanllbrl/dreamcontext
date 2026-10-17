@@ -216,17 +216,28 @@ afterEach(() => {
 // ─── --allowedTools ─────────────────────────────────────────────────────────────────
 
 describe('assistantAllowedTools', () => {
-  it('pre-approves the assistant verbs under auto only', () => {
+  const READS = 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*)';
+  const expected = { auto: 'Bash(dreamcontext assistant:*)', ask: READS, bypass: null } as const;
+
+  it('pre-approves every assistant verb under auto, only the three reads under ask, nothing under bypass', () => {
     expect(assistantAllowedTools('auto')).toEqual(['--allowedTools', 'Bash(dreamcontext assistant:*)']);
-    expect(assistantAllowedTools('ask')).toEqual([]);
+    expect(assistantAllowedTools('ask')).toEqual(['--allowedTools', READS]);
     expect(assistantAllowedTools('bypass')).toEqual([]);
   });
 
+  it('under ask, no verb that writes, sends or drives a window is pre-approved', () => {
+    const ask = assistantAllowedTools('ask')[1];
+    for (const verb of ['send', 'answer', 'broadcast', 'chat', 'close', 'open', 'agent', 'look', 'notify', 'focus', 'tile']) {
+      expect(ask).not.toContain(`assistant ${verb}`);
+    }
+    expect(ask).not.toContain('assistant:*');
+  });
+
   for (const autonomy of ['auto', 'ask', 'bypass'] as const) {
-    it(`the __assistant__ spawn under ${autonomy} ${autonomy === 'auto' ? 'carries' : 'carries no'} --allowedTools`, () => {
+    it(`the __assistant__ spawn under ${autonomy} carries ${expected[autonomy] ?? 'no --allowedTools'}`, () => {
       makeAssistantVault(autonomy);
       const { child } = spawnChat({ mode: 'assistant' });
-      expect(flagValue(child, '--allowedTools')).toBe(autonomy === 'auto' ? 'Bash(dreamcontext assistant:*)' : null);
+      expect(flagValue(child, '--allowedTools')).toBe(expected[autonomy]);
     });
   }
 
@@ -332,7 +343,7 @@ describe('the Assistant carries its own settings, not the owner\'s global ones',
 // ─── Autonomy change respawns a live Assistant ──────────────────────────────────────
 
 describe('autonomy auto → ask while the Assistant lives', () => {
-  it('respawns it in place with --resume and without --allowedTools, before the next turn', async () => {
+  it('respawns it in place with --resume and only the read verbs pre-approved, before the next turn', async () => {
     makeAssistantVault('auto', { conversationId: CONV });
     state.transcripts.add(CONV);
     const { ws, child: first } = spawnChat({ mode: 'assistant', resumeId: CONV });
@@ -355,7 +366,7 @@ describe('autonomy auto → ask while the Assistant lives', () => {
     first.emit('close', 0);
     expect(spawned).toHaveLength(2);
     const second = spawned[1];
-    expect(argvOf(second)).not.toContain('--allowedTools');
+    expect(flagValue(second, '--allowedTools')).toBe(assistantAllowedTools('ask')[1]);
     expect(flagValue(second, '--permission-mode')).toBe('default');
     expect(flagValue(second, '--resume')).toBe(CONV);
     expect(ws.close).not.toHaveBeenCalled();
