@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { sendJson } from '../middleware.js';
 import { listVaults } from '../../lib/vaults.js';
-import { isPhoneSocket } from '../phone-origin.js';
+import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
 
 /**
  * GET /api/vaults — list every registered vault and identify the current one
@@ -26,9 +26,11 @@ export async function handleVaultsGet(
   // `exists` flags vaults whose folder is gone (deleted/moved) so the UI can
   // skip or disable them — capturing into a missing path just fails otherwise.
   const vaults = listVaults().map((v) => ({ ...v, exists: existsSync(resolve(v.path)) }));
-  // A Mac-mode phone gets NAMES only (its drawer lists projects): never a path on this disk.
+  // A Mac-mode phone sees ONLY the projects chosen at start (AC16), by name: never a path,
+  // never another project on this Mac. `current` = the one chosen project, else none.
   if (isPhoneSocket(_req)) {
-    sendJson(res, 200, { vaults: vaults.map((v) => ({ name: v.name, exists: v.exists })), current: null });
+    const only = vaults.filter((v) => isMacExposed(v.name));
+    sendJson(res, 200, { vaults: only.map((v) => ({ name: v.name, exists: v.exists })), current: only.length === 1 ? only[0].name : null });
     return;
   }
   // In launcher mode there is no pinned project, so `current` is null.

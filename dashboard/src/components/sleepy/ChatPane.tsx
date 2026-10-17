@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
-import { isMacPhoneSurface } from '../../lib/cloudSurface';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';

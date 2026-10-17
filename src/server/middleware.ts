@@ -1,18 +1,10 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isSameOriginAsHost, remoteAccessEnabled } from './remote-access.js';
-import { CLOUD_FORWARDED_ORIGIN, CLOUD_WS_PATHS, classifyCloudRoute, classifyMacRoute, cloudPhase, type CloudPhase, type CloudRouteClass } from './cloud-mode.js';
 import { isMacOriginAllowed, macProbeNonce } from './phone-origin.js';
 import { MAC_PROBE_HEADER, MAC_SURFACE_HEADER, MAC_WS_PATHS } from '../lib/handsfree/mac/contract.js';
-import {
-  TRANSFER_NONCE_HEADER,
-  carriesTransferAuth,
-  deviceCookieValue,
-  handsfreeAuth,
-  hasValidDeviceSession,
-  hasValidTransferProof,
-  clearDeviceCookieHeader,
-} from './handsfree-auth.js';
-import { redirectToMacChat, redirectToTripChat, sendSealedPage } from './handsfree-login.js';
+import { classifyMacRoute, type MacRouteClass, type RouteMatcher } from '../lib/handsfree/mac/route-policy.js';
+import { deviceCookieValue, hasValidDeviceSession, clearDeviceCookieHeader } from './handsfree-auth.js';
+import { redirectToMacChat } from './handsfree-login.js';
 
 const MAX_BODY_SIZE = 1_048_576; // 1MB
 
@@ -129,34 +121,18 @@ export function handleCors(req: IncomingMessage, res: ServerResponse): boolean {
   return false;
 }
 
-// ─── Cloud mode (hands-free): the public forwarded port ─────────────────────
+// ─── Mac mode's phone listener (hands-free) ─────────────────────────────────
 //
-// GitHub's forwarder connects on loopback with `Host: localhost:8080` (W0), so in cloud mode
-// NOTHING is trusted for being loopback and nothing is derived from Host. A request passes on
-// exactly one credential for its route class: none (public), the device cookie (the phone),
-// or the transfer proof (the laptop) — the last two are never interchangeable.
-
-/** The origins a cloud write or WS upgrade may carry: the forwarder's rewrite of our own
- *  public origin, plus `DC_HF_ORIGIN` itself for a client that reaches us unrewritten. */
-export function cloudAllowedOrigins(): string[] {
-  const out = [CLOUD_FORWARDED_ORIGIN];
-  const own = process.env.DC_HF_ORIGIN;
-  if (own) out.push(own.replace(/\/+$/, ''));
-  return out;
-}
-
-/** A missing Origin is refused too: in the cloud every legitimate writer sends one. */
-export function isCloudOriginAllowed(req: IncomingMessage): boolean {
-  const origin = req.headers.origin;
-  return typeof origin === 'string' && cloudAllowedOrigins().includes(origin);
-}
+// cloudflared connects on loopback, so on the phone listener NOTHING is trusted for being
+// loopback. A request passes on exactly one credential for its route class: none (public) or
+// a Mac device cookie (the phone).
 
 function isWriteMethod(method: string): boolean {
   const m = method.toUpperCase();
   return m !== 'GET' && m !== 'HEAD' && m !== 'OPTIONS';
 }
 
-function cloudPathname(req: IncomingMessage): string {
+function phonePathname(req: IncomingMessage): string {
   try {
     return new URL(req.url || '/', 'http://localhost').pathname;
   } catch {
@@ -169,46 +145,32 @@ function wantsHtml(req: IncomingMessage): boolean {
   return /text\/html/.test(String(req.headers.accept || ''));
 }
 
-/**
- * What differs between the two phone surfaces the gate serves: the hands-free cloud's public
- * forwarded port, and Mac mode's phone listener (a Cloudflare tunnel into this laptop). Both
- * arrive on loopback, so neither trusts loopback; each passes on exactly one credential per
- * route class.
- */
+/** What the phone gate needs to know about its surface (Mac mode's phone listener). */
 export interface PhoneGateCtx {
   /** Stamped on every response, refusals included. */
   headers: Readonly<Record<string, string>>;
-  classify: (method: string, pathname: string) => CloudRouteClass;
+  classify: (method: string, pathname: string) => MacRouteClass;
   /** The Origin a write must carry (a missing Origin is refused too). */
   originAllowed: (req: IncomingMessage) => boolean;
-  phase: () => CloudPhase;
-  /** A public route passed (the cloud's health nonce, the Mac probe value). */
+  /** A public route passed (the Mac probe value). */
   onPublic: (req: IncomingMessage, res: ServerResponse, pathname: string) => void;
   /** A signed-in HTML navigation to `/`: true when it answered (a redirect into a chat). */
   landing: (req: IncomingMessage, res: ServerResponse) => boolean;
 }
 
-export const CLOUD_GATE_CTX: PhoneGateCtx = {
-  headers: { 'X-Dreamcontext-Cloud': '1' },
-  classify: (m, p) => classifyCloudRoute(m, p),
-  originAllowed: (req) => isCloudOriginAllowed(req),
-  phase: () => cloudPhase(),
-  // /api/health hands out the nonce the laptop's next transfer proof signs.
-  onPublic: (_req, res, pathname) => { if (pathname === '/api/health') res.setHeader(TRANSFER_NONCE_HEADER, handsfreeAuth().issueNonce()); },
-  landing: (req, res) => redirectToTripChat(req, res),
-};
-
-export const MAC_GATE_CTX: PhoneGateCtx = {
+/** The Mac phone listener's context; `match` is the main server's router (route-policy.ts). */
+export function macGateCtx(match: RouteMatcher): PhoneGateCtx {
+  return {
   headers: {
     [MAC_SURFACE_HEADER]: 'mac',
     // Nothing on the phone listener may be framed by another site (clickjacking a chat).
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "frame-ancestors 'none'",
+    // No response is ever sniffed into another type (D9a), public ones included.
+    'X-Content-Type-Options': 'nosniff',
   },
-  classify: (m, p) => classifyMacRoute(m, p),
+  classify: (m, p) => classifyMacRoute(m, p, match),
   originAllowed: (req) => isMacOriginAllowed(req),
-  // No trip, no phases: the laptop IS the machine.
-  phase: () => 'active',
   onPublic: (_req, res, pathname) => {
     const nonce = macProbeNonce();
     if (pathname === '/api/health' && nonce) res.setHeader(MAC_PROBE_HEADER, nonce);
@@ -218,23 +180,15 @@ export const MAC_GATE_CTX: PhoneGateCtx = {
     }
   },
   landing: (req, res) => redirectToMacChat(req, res),
-};
-
-/**
- * The cloud gate, replacing checkNetworkAuth → handleCors → isCrossSiteWrite in cloud mode.
- * Returns true when the request may proceed; otherwise it has answered. Never logs headers,
- * bodies or query strings.
- */
-export function cloudGate(req: IncomingMessage, res: ServerResponse): boolean {
-  return phoneGate(req, res, CLOUD_GATE_CTX);
+  };
 }
 
-/** Mac mode's phone listener gate: default-deny, the Mac allow-list, a MAC device session. */
-export function macPhoneGate(req: IncomingMessage, res: ServerResponse): boolean {
-  return phoneGate(req, res, MAC_GATE_CTX);
+/** Mac mode's phone listener gate: the route policy, a MAC device session. */
+export function macPhoneGate(req: IncomingMessage, res: ServerResponse, match: RouteMatcher): boolean {
+  return phoneGate(req, res, macGateCtx(match));
 }
 
-/** The shared phone gate (cloud or Mac, by `ctx`). */
+/** The phone gate, by `ctx`. */
 export function phoneGate(req: IncomingMessage, res: ServerResponse, ctx: PhoneGateCtx): boolean {
   for (const [name, value] of Object.entries(ctx.headers)) res.setHeader(name, value);
   const method = (req.method || 'GET').toUpperCase();
@@ -250,44 +204,30 @@ export function phoneGate(req: IncomingMessage, res: ServerResponse, ctx: PhoneG
     return false;
   }
 
-  const pathname = cloudPathname(req);
+  const pathname = phonePathname(req);
+  // D9b: an API request another site's page made is refused, GETs included (SameSite=Lax would
+  // still carry the cookie on a cross-site top-level GET). A request without the header is
+  // judged by the Origin rule above.
+  const site = req.headers['sec-fetch-site'];
+  if ((pathname === '/api' || pathname.startsWith('/api/')) && typeof site === 'string' && site !== 'same-origin' && site !== 'none') {
+    sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
+    return false;
+  }
   const cls = ctx.classify(method, pathname);
   if (cls === 'unavailable') {
-    sendError(res, 403, 'cloud_unavailable', 'This is not available on the cloud machine.');
+    sendError(res, 403, 'phone_unavailable', 'This is not available on the phone.');
     return false;
   }
   if (cls === 'public') {
     ctx.onPublic(req, res, pathname);
     return true;
   }
-  if (cls === 'transfer') {
-    if (deviceCookieValue(req) !== null) {
-      sendError(res, 403, 'credential_mismatch', 'A device session cannot call a transfer route.');
-      return false;
-    }
-    if (!hasValidTransferProof(req)) {
-      sendError(res, 401, 'unauthorized', 'Transfer proof required.');
-      return false;
-    }
-    return true;
-  }
-
-  // Device class: the phone's UI and its allow-listed API.
-  if (carriesTransferAuth(req)) {
-    sendError(res, 403, 'credential_mismatch', 'The transfer credential cannot call a device route.');
-    return false;
-  }
+  // Device class: the phone's UI and its allowed API.
   const htmlNavigation = !pathname.startsWith('/api/') && (method === 'GET' || method === 'HEAD') && wantsHtml(req);
-  // AC3: a sealed cloud serves only the sealed page to a navigation, signed in or not (it also
-  // forgets the offline worker); the API keeps the JSON 503 below.
-  if (htmlNavigation && ctx.phase() === 'sealed') {
-    sendSealedPage(req, res);
-    return false;
-  }
   if (!hasValidDeviceSession(req)) {
     if (htmlNavigation) {
       // A cookie the server no longer accepts (revoked, password changed, expired): the login
-      // page is told so it unregisters the offline worker (AC16). No cookie: a plain first visit.
+      // page says this device was signed out. No cookie: a plain first visit.
       const stale = deviceCookieValue(req) !== null;
       res.writeHead(302, {
         Location: stale ? '/login?revoked=1' : '/login',
@@ -300,41 +240,18 @@ export function phoneGate(req: IncomingMessage, res: ServerResponse, ctx: PhoneG
     sendError(res, 401, 'unauthorized', 'Sign in on this device first.');
     return false;
   }
-  const phase = ctx.phase();
-  if (phase === 'sealed') {
-    sendError(res, 503, 'cloud_sealed', 'This project is back on your laptop.');
-    return false;
-  }
-  if (phase === 'quiescing' && isWriteMethod(method)) {
-    sendError(res, 423, 'cloud_quiescing', 'Your laptop is taking this project back.');
-    return false;
-  }
-  // AC3: `/` on the phone opens the trip's project chat, never the launcher.
+  // `/` on the phone opens a chat, never the launcher.
   if (htmlNavigation && ctx.landing(req, res)) return false;
   return true;
 }
 
 /**
- * The cloud's WebSocket gate: the status to refuse an upgrade with, or null to let it
- * through. Only the chat socket, only with a device session, our Origin and phase active.
- */
-export function cloudUpgradeRefusal(req: IncomingMessage): number | null {
-  if (!CLOUD_WS_PATHS.includes(cloudPathname(req))) return 403;
-  if (!isCloudOriginAllowed(req)) return 403;
-  if (carriesTransferAuth(req)) return 403;
-  if (!hasValidDeviceSession(req)) return 401;
-  if (cloudPhase() !== 'active') return 403;
-  return null;
-}
-
-/**
  * The Mac phone listener's WebSocket gate: only the chat socket, only the tunnel's own Origin
- * (none until the URL is known), never a transfer credential, and a MAC device session.
+ * (none until the URL is known), and a MAC device session.
  */
 export function macUpgradeRefusal(req: IncomingMessage): number | null {
-  if (!MAC_WS_PATHS.includes(cloudPathname(req))) return 403;
+  if (!MAC_WS_PATHS.includes(phonePathname(req))) return 403;
   if (!isMacOriginAllowed(req)) return 403;
-  if (carriesTransferAuth(req)) return 403;
   if (!hasValidDeviceSession(req)) return 401;
   return null;
 }
@@ -346,10 +263,3 @@ export function rejectMacUpgrade(socket: import('node:stream').Duplex, code: num
   socket.destroy();
 }
 
-/** Answer a refused cloud upgrade on the raw socket, with the cloud header like every
- *  other cloud response. */
-export function rejectCloudUpgrade(socket: import('node:stream').Duplex, code: number): void {
-  const text = code === 401 ? 'Unauthorized' : 'Forbidden';
-  socket.write(`HTTP/1.1 ${code} ${text}\r\nX-Dreamcontext-Cloud: 1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  socket.destroy();
-}

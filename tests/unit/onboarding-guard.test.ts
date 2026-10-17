@@ -20,7 +20,6 @@ vi.mock('../../src/lib/onboarding/fixes.js', async (orig) => ({
 const { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } = await import('../../src/server/routes/onboarding.js');
 const { handleAgentInstall, handleAgentInstallStatus } = await import('../../src/server/routes/agent-terminal.js');
 const { isLoopbackHostHeader } = await import('../../src/server/routes/agent-spawn-shared.js');
-const { classifyCloudRoute } = await import('../../src/server/cloud-mode.js');
 const { resetInstallRunsForTests } = await import('../../src/server/install-runs.js');
 
 interface ReqOpts { remote?: string; host?: string; headers?: Record<string, string> }
@@ -49,7 +48,6 @@ const WRITE_ROUTES: Array<[string, (q: IncomingMessage, s: ServerResponse) => Pr
 
 beforeEach(() => {
   vi.stubEnv('DREAMCONTEXT_DESKTOP', '1');
-  vi.stubEnv('DREAMCONTEXT_CLOUD', '');
   resetInstallRunsForTests();
   getReadiness.mockReset().mockResolvedValue({ version: 1, checks: [], plan: [], activeFixes: [] });
   runFix.mockReset().mockResolvedValue({ ok: true });
@@ -67,10 +65,6 @@ describe('local-desktop guard', () => {
       });
       it('403 without the desktop flag', async () => {
         vi.stubEnv('DREAMCONTEXT_DESKTOP', '');
-        expect(await statusOf(handler, req(method, url, body))).toBe(403);
-      });
-      it('403 in cloud mode', async () => {
-        vi.stubEnv('DREAMCONTEXT_CLOUD', '1');
         expect(await statusOf(handler, req(method, url, body))).toBe(403);
       });
       it('passes the guard from this machine in the desktop app', async () => {
@@ -99,10 +93,6 @@ describe('local-read guard (readiness)', () => {
   it('403 for a foreign Host', async () => { expect(await read({ host: 'evil.example:4173' })).toBe(403); });
   it('403 for Sec-Fetch-Site: cross-site', async () => { expect(await read({ headers: { 'sec-fetch-site': 'cross-site' } })).toBe(403); });
   it('403 for a foreign Origin', async () => { expect(await read({ headers: { origin: 'https://evil.example' } })).toBe(403); });
-  it('403 in cloud mode', async () => {
-    vi.stubEnv('DREAMCONTEXT_CLOUD', '1');
-    expect(await read()).toBe(403);
-  });
 });
 
 describe('isLoopbackHostHeader', () => {
@@ -117,10 +107,3 @@ describe('isLoopbackHostHeader', () => {
   });
 });
 
-describe('cloud classification', () => {
-  it('the onboarding routes are unavailable in the hands-free cloud', () => {
-    expect(classifyCloudRoute('POST', '/api/onboarding/fix')).toBe('unavailable');
-    expect(classifyCloudRoute('POST', '/api/onboarding/fix/cancel')).toBe('unavailable');
-    expect(classifyCloudRoute('GET', '/api/onboarding/readiness')).toBe('unavailable');
-  });
-});

@@ -14,7 +14,7 @@ import { ptyPresent } from './agent-terminal.js';
  *  - `POST /api/onboarding/fix { fix }`: start one fix as a background run. Local desktop.
  *  - `POST /api/onboarding/fix/cancel { runId }`: stop it. Local desktop.
  * Progress is polled through the shared `/api/agent/install/status?id=`.
- * Vault-agnostic (there is no project yet) and never part of the cloud allowlist.
+ * Vault-agnostic (there is no project yet) and never reachable from the phone.
  */
 
 /** The check whose row each fix belongs to: where `blocked` and `manual` are read from. */

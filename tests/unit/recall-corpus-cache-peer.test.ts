@@ -8,7 +8,6 @@ import { buildCorpusCached, peerCacheDir } from '../../src/lib/recall-corpus-cac
 import { crossVaultRecall } from '../../src/lib/federation-recall.js';
 import { addVault } from '../../src/lib/vaults.js';
 import { writeSetupConfig, type SetupConfig } from '../../src/lib/setup-config.js';
-import { DREAM_EXCLUDED_DIRS } from '../../src/lib/handsfree/manifest.js';
 
 // A connected peer is READ, never written. Its corpus cache lives under the reader's home
 // (`<home>/.dreamcontext/recall-cache/<hash>/corpus.json`); the current vault keeps its own
@@ -162,9 +161,3 @@ describe('crossVaultRecall through the cache', () => {
   });
 });
 
-describe('hands-free manifest', () => {
-  it('never travels the recall cache', () => {
-    expect(DREAM_EXCLUDED_DIRS).toContain('.recall-cache');
-    expect(DREAM_EXCLUDED_DIRS).toContain('.embeddings');
-  });
-});

@@ -14,10 +14,12 @@
  * Never throws; every fs call is guarded.
  */
 
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { resolveAgentSession } from './agent-session-map.js';
+import { listVaults } from './vaults.js';
 
 export interface TranscriptLocation {
   mainPath: string | null;
@@ -262,4 +264,115 @@ export function subagentIdFromPath(p: string): string {
   const b = basename(p);
   const m = b.match(/^agent-(.+)\.jsonl$/);
   return m ? m[1] : b;
+}
+
+// ─── Whose conversation is this? (hands-free: the projects chosen at start) ──────────────
+
+/** How far into a transcript the launch dir is looked for. Measured over 3399 real
+ *  transcripts: lines 0-1 never carry `cwd`; the first one appears by line 9 / 23 KB. */
+export const OWNER_SCAN_BYTES = 64 * 1024;
+export const OWNER_SCAN_LINES = 50;
+
+/** `mine`: the transcript's launch dir belongs to one of the asked projects. `other`: it exists
+ *  and belongs elsewhere — or names no launch dir within the bound, or cannot be read: FAIL
+ *  CLOSED. `none`: there is no transcript (a new tab, or a live chat Claude has not flushed). */
+export type TranscriptOwner = 'mine' | 'other' | 'none';
+
+/** One place a conversation can belong: a registered project root, or one of its git
+ *  worktrees (owned by that project). Realpaths. */
+export interface OwnerCandidate { path: string; owner: string }
+
+/** The first record's `cwd` (the launch dir; a later `cd` is ignored), or null. Never throws. */
+export function transcriptLaunchCwd(path: string): string | null {
+  let buf: Buffer;
+  try {
+    const fd = openSync(path, 'r');
+    try {
+      buf = Buffer.alloc(OWNER_SCAN_BYTES);
+      buf = buf.subarray(0, readSync(fd, buf, 0, OWNER_SCAN_BYTES, 0));
+    } finally { closeSync(fd); }
+  } catch { return null; }
+  const lines = buf.toString('utf-8').split('\n').slice(0, OWNER_SCAN_LINES);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let rec: unknown;
+    try { rec = JSON.parse(line); } catch { continue; }
+    const cwd = (rec as { cwd?: unknown } | null)?.cwd;
+    if (typeof cwd === 'string' && cwd) return cwd;
+  }
+  return null;
+}
+
+function real(p: string): string | null {
+  try { return realpathSync(p); } catch { return null; }
+}
+
+/** Is `p` the dir `root` or inside it (realpaths; never a bare string prefix)? */
+function within(p: string, root: string): boolean {
+  return p === root || p.startsWith(root.endsWith('/') ? root : root + '/');
+}
+
+/**
+ * Every registered project root plus its git worktrees, each owned by its project. A project's
+ * worktrees count only when the project IS its repo's top level (`git rev-parse
+ * --show-toplevel` equals the root): a project inside a parent repo never inherits the
+ * parent's worktrees. A linked code repo's worktree is nobody's here (`other`), intended.
+ */
+export function buildOwnerCandidates(roots: readonly string[], git: (cwd: string, args: string[]) => string = runGit): OwnerCandidate[] {
+  const out: OwnerCandidate[] = [];
+  for (const root of roots) {
+    const r = real(root);
+    if (!r) continue;
+    out.push({ path: r, owner: r });
+    let top: string | null = null;
+    try { top = real(git(r, ['rev-parse', '--show-toplevel']).trim()); } catch { /* not a repo */ }
+    if (top !== r) continue;
+    let list = '';
+    try { list = git(r, ['worktree', 'list', '--porcelain']); } catch { continue; }
+    for (const line of list.split('\n')) {
+      if (!line.startsWith('worktree ')) continue;
+      const wt = real(line.slice('worktree '.length).trim());
+      if (wt && wt !== r) out.push({ path: wt, owner: r });
+    }
+  }
+  return out;
+}
+
+function runGit(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+}
+
+let candidateCache: { key: string; list: OwnerCandidate[] } | null = null;
+
+/** {@link buildOwnerCandidates} over the registry, rebuilt only when the registry changes. */
+export function registeredOwnerCandidates(home?: string): OwnerCandidate[] {
+  const roots = listVaults(home).map((v) => v.path);
+  const key = JSON.stringify(roots);
+  if (candidateCache?.key !== key) candidateCache = { key, list: buildOwnerCandidates(roots) };
+  return candidateCache.list;
+}
+
+/** Drop the cached candidate set (each Mac-mode start, and tests). */
+export function resetOwnerCandidates(): void { candidateCache = null; }
+
+/**
+ * THE chokepoint every id-taking phone route calls on the exact transcript it resolved (a
+ * sub-agent's by its parent's). `projectRoots`: the projects the request may see. The CLOSEST
+ * candidate owning the launch dir decides (the longest match), so a chosen /p/foo does not own
+ * a registered /p/foo/sub's chats, and /p/foo never owns /p/foo-bar.
+ */
+export function transcriptOwnerCheck(path: string | null, projectRoots: readonly string[], candidates: readonly OwnerCandidate[]): TranscriptOwner {
+  if (!path) return 'none';
+  if (!existsSync(path)) return 'none';
+  const cwd = transcriptLaunchCwd(path);
+  if (!cwd) return 'other';
+  const at = real(cwd);
+  if (!at) return 'other';
+  let best: OwnerCandidate | null = null;
+  for (const c of candidates) {
+    if (within(at, c.path) && (!best || c.path.length > best.path.length)) best = c;
+  }
+  if (!best) return 'other';
+  const mine = projectRoots.map(real).filter((r): r is string => !!r);
+  return mine.includes(best.owner) ? 'mine' : 'other';
 }

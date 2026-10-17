@@ -274,6 +274,8 @@ export type ChatEvent =
    * REMEMBERED observation: an earlier turn was refused, so this one moves before trying.
    * The last two exist because the forecast was measured wrong on 2026-09-05 (a refused
    * account read 6% three minutes later), and a surface that only forecasts cannot recover.
+   * `come_home` is the one move nothing forced: an account higher in the owner's list can serve
+   * again and the conversation is still small, so it goes back while the move is cheap.
    */
   /** Which account the server ACTUALLY spawned this process on. Differs from the session's
    *  requested `accountId` when none was requested and the default skipped a full one. */
@@ -282,7 +284,7 @@ export type ChatEvent =
       kind: 'account-switch';
       switched: boolean;
       reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-        | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
+        | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home';
       accountId: string;
       fromAccountId?: string;
       email?: string;
@@ -1110,7 +1112,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       switched: obj.switched === true,
       reason: reason === 'limit_near' || reason === 'limit_hit' || reason === 'limit_known'
         || reason === 'needs_relogin' || reason === 'all_exhausted' || reason === 'stayed_put'
-        || reason === 'switch_stalled'
+        || reason === 'switch_stalled' || reason === 'come_home'
         ? reason
         : 'auto_switch_disabled',
       accountId: str(obj.accountId) ?? '',

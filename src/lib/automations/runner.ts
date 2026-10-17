@@ -3,7 +3,6 @@ import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve as resolvePath, sep as pathSep } from 'node:path';
-import { handsfreeSpawnRefusal } from '../peer-delivery.js';
 import { homedir } from 'node:os';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
 import { recordNotification } from '../notification-log.js';
@@ -1086,28 +1085,12 @@ function waitForExit(
   });
 }
 
-// ─── Live detached runs (hands-free go/return cut them) ─────────────────────
-//
-// Every child `executeClaudeDetached` spawns is registered here at birth (the pid exists)
-// and removed at death ('exit' or 'error'), so the map is bounded by the live-run count.
-// Keyed by pid: a detached child leads its own process group, so pid === pgid.
-
-const detachedRuns = new Map<number, { pid: number; cwd: string }>();
-
-function registerDetachedRun(child: ChildProcess, cwd: string): void {
-  const pid = child.pid as number;
-  detachedRuns.set(pid, { pid, cwd });
-  const death = (): void => { detachedRuns.delete(pid); };
-  child.once('exit', death);
-  child.once('error', death);
-}
-
 function realpathOrResolve(p: string): string {
   try { return realpathSync.native(p); } catch { return resolvePath(p); }
 }
 
 /** Is `path` inside (or equal to) any of `roots`, after realpath on both sides? Case-insensitive
- *  on macOS and Windows, like the hands-free lock itself (`trip-state.ts`). */
+ *  on macOS and Windows. */
 export function pathUnderAny(path: string, roots: readonly string[]): boolean {
   const ci = process.platform === 'darwin' || process.platform === 'win32';
   const norm = (s: string): string => (ci ? s.toLowerCase() : s);
@@ -1116,19 +1099,6 @@ export function pathUnderAny(path: string, roots: readonly string[]): boolean {
     const root = norm(realpathOrResolve(r));
     return p === root || p.startsWith(root.endsWith(pathSep) ? root : root + pathSep);
   });
-}
-
-/** Detached `claude` runs whose cwd is under any of `roots`. */
-export function detachedRunsUnder(roots: string[]): Array<{ pid: number; cwd: string }> {
-  return [...detachedRuns.values()].filter((r) => pathUnderAny(r.cwd, roots)).map((r) => ({ ...r }));
-}
-
-/** Cut every detached run under `roots` (whole process group, plus the processes its hooks
- *  detached from it) and resolve once they have all exited. Resolves to how many runs matched. */
-export async function cutDetachedRunsUnder(roots: string[]): Promise<number> {
-  const runs = detachedRunsUnder(roots);
-  if (runs.length > 0) await cutProcessGroups(runs.map((r) => r.pid));
-  return runs.length;
 }
 
 function signalAlive(target: number): boolean {
@@ -1282,8 +1252,6 @@ export interface ClaudeExecOptions {
 export interface ClaudeExecution {
   /** false ⇒ the exec itself failed (`child.pid` was null) and nothing ran. */
   spawned: boolean;
-  /** Set (with `spawned: false`) when the cwd is inside a hands-free locked root: nothing ran. */
-  refused?: string;
   timedOut: boolean;
   exitCode: number | null;
   stdout: string;
@@ -1310,15 +1278,6 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
   const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
   const logFn = opts.log ?? (() => {});
   const nowFn = opts.now ?? (() => new Date());
-
-  // Hands-free: refused BEFORE anything spawns, reported as a failed exec (every caller
-  // already handles `spawned: false`) with the reason in `refused` and the stderr tail.
-  const refused = handsfreeSpawnRefusal(opts.cwd, opts.home);
-  if (refused) {
-    logFn(refused);
-    const at = nowFn();
-    return { spawned: false, refused, timedOut: false, exitCode: null, stdout: '', stderrTail: refused, startedAt: at, finishedAt: at, result: null };
-  }
 
   const spawnOptions: Parameters<SpawnImpl>[2] = {
     cwd: opts.cwd,
@@ -1358,7 +1317,6 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     };
   }
 
-  registerDetachedRun(child, opts.cwd);
   opts.onSpawned?.(child, startedAt);
 
   const collectors = attachOutputCollectors(child);

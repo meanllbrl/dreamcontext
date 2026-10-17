@@ -18,7 +18,7 @@
  *  • a detached child that is BUSY is never reaped for lack of a socket, up to
  *    {@link DETACH_BUSY_CAP_MS} after it lost its socket.
  *
- * THE ACTIVITY CONTRACT (pinned for the cloud's idle clock, decision D14): the snapshot below
+ * THE ACTIVITY CONTRACT: the snapshot below
  * reports, per live child, whether a turn is running, when the current turn started and when
  * the last one ended. Those three move ONLY on turn edges. A reconnect, a reattach, a WS ping
  * and a chat-history replay fetch never touch them, so a phone that keeps reconnecting, or a
@@ -139,7 +139,7 @@ export function markTurnEnded(entry: LiveChatEntry, now = Date.now()): void {
   entry.lastTurnEndedAt = now;
 }
 
-/** The read-only view the cloud's idle clock (wave 2) reads. */
+/** A read-only view of the live chats (the phone's landing and its live-chat list read it). */
 export function liveChatsSnapshot(): readonly LiveChatSnapshotEntry[] {
   const live = [...liveChats.values()].map((e) => Object.freeze({
     conversationId: e.conversationId,
@@ -159,37 +159,10 @@ export function liveChatsSnapshot(): readonly LiveChatSnapshotEntry[] {
   return Object.freeze([...live, ...draining]);
 }
 
-/**
- * Cut every live chat whose snapshot matches `pred` (PINNED for the hands-free go/return and
- * the cloud's `cut`): each child's whole process group gets SIGTERM, then SIGKILL after
- * {@link CUT_KILL_GRACE_MS}; resolves once they all exited, with the conversation ids cut.
- * The sessions stay resumable: only the processes end, never a transcript.
- */
-export async function cutLiveChats(pred: (e: LiveChatSnapshotEntry) => boolean): Promise<string[]> {
-  const ids: string[] = [];
-  const entries: LiveChatEntry[] = [...liveChats.values(), ...drainingChats];
-  await Promise.all(entries.map(async (entry) => {
-    const snap = liveChatsSnapshot().find((s) => s.conversationId === entry.conversationId && (s.draining === true) === drainingChats.has(entry));
-    if (!snap || !pred(snap) || !entry.cut) return;
-    ids.push(entry.conversationId);
-    try { await entry.cut(); } catch { /* already gone */ }
-  }));
-  return ids;
-}
-
 /** Signal a child's process group (it is spawned as a group leader); falls back to the child. */
 export function signalGroup(child: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }, signal: NodeJS.Signals): void {
   try {
     if (child.pid) { process.kill(-child.pid, signal); return; }
   } catch { /* not a group leader (or gone): signal the child itself */ }
   try { child.kill(signal); } catch { /* gone */ }
-}
-
-/** Live and draining chats by their child's pid (= its process group), for labelling a
- *  process scan (D22: the scan finds the work, the registry only names it). */
-export function liveChatsByPgid(): Map<number, { conversationId: string; busy: boolean; startedAt: number | null; draining: boolean }> {
-  const out = new Map<number, { conversationId: string; busy: boolean; startedAt: number | null; draining: boolean }>();
-  for (const e of liveChats.values()) if (e.pid) out.set(e.pid, { conversationId: e.conversationId, busy: e.busy, startedAt: e.turnStartedAt, draining: false });
-  for (const e of drainingChats) if (e.pid) out.set(e.pid, { conversationId: e.conversationId, busy: true, startedAt: e.turnStartedAt ?? drainingSince.get(e) ?? null, draining: true });
-  return out;
 }

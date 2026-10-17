@@ -1,6 +1,8 @@
 import type { IncomingMessage } from 'node:http';
-import { isCloud } from './cloud-mode.js';
+import { dirname } from 'node:path';
 import { isTailnetAddress } from './remote-access.js';
+import { listVaults } from '../lib/vaults.js';
+import { registeredOwnerCandidates, resetOwnerCandidates, transcriptOwnerCheck } from '../lib/transcript-locate.js';
 
 /**
  * Per-request ORIGIN: which listener a request arrived on.
@@ -29,17 +31,11 @@ export function isPhoneSocket(req: { socket?: object | null } | null | undefined
   return !!s && phoneSockets.has(s);
 }
 
-/** The PHONE surface (trust meaning): the hands-free cloud, or a Mac-mode phone socket. */
-export function isPhoneRequest(req: { socket?: object | null } | null | undefined): boolean {
-  return isCloud() || isPhoneSocket(req);
-}
-
-export type RequestSurface = 'desktop' | 'tailnet' | 'mac-phone' | 'cloud';
+export type RequestSurface = 'desktop' | 'tailnet' | 'mac-phone';
 
 /** Which surface one request belongs to. */
 export function requestSurface(req: IncomingMessage): RequestSurface {
   if (isPhoneSocket(req)) return 'mac-phone';
-  if (isCloud()) return 'cloud';
   if (isTailnetAddress(req.socket?.remoteAddress)) return 'tailnet';
   return 'desktop';
 }
@@ -76,6 +72,41 @@ export function setMacProbeNonce(nonce: string | null): void {
 
 export function macProbeNonce(): string | null {
   return probeNonce;
+}
+
+// ─── The exposed projects (chosen at start) ─────────────────────────────────
+
+let exposedVaults: readonly string[] = [];
+
+/** Set per start (Mac session): the registered names of the projects the owner chose. The phone
+ *  sees and reaches only these; an empty list (Mac mode off) exposes nothing. */
+export function setMacExposedVaults(names: readonly string[]): void {
+  exposedVaults = Object.freeze([...new Set(names)]);
+  // A start re-reads every project's worktrees (one may have been added since the last run).
+  resetOwnerCandidates();
+}
+
+export function macExposedVaults(): readonly string[] {
+  return exposedVaults;
+}
+
+export function isMacExposed(name: string | null | undefined): boolean {
+  return !!name && exposedVaults.includes(name);
+}
+
+/**
+ * AC16's id guard: true when a PHONE request must not see the transcript at `path`, because the
+ * conversation belongs to a project the owner did not choose (or its owner cannot be proven).
+ * `contextRoot`: the gate's root for this request; null (a vault-agnostic route with several
+ * projects chosen) = any chosen project. `none` (no transcript yet) is never refused here: the
+ * caller's own rules decide a new tab or an unflushed live chat. The laptop is never refused.
+ */
+export function phoneTranscriptRefused(req: Pick<IncomingMessage, 'socket'>, contextRoot: string | null, path: string | null): boolean {
+  if (!isPhoneSocket(req)) return false;
+  const roots = contextRoot
+    ? [dirname(contextRoot)]
+    : listVaults().filter((v) => exposedVaults.includes(v.name)).map((v) => v.path);
+  return transcriptOwnerCheck(path, roots, registeredOwnerCandidates()) === 'other';
 }
 
 // ─── Cloudflare's own headers (the main listener's backstop) ────────────────

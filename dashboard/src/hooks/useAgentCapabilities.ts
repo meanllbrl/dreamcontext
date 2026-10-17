@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
-import { cloudAllows } from '../lib/cloudSurface';
+import { phoneAllows } from '../lib/phoneSurface';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import {
   FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats, type UsageLimitsResponse,
@@ -143,6 +143,9 @@ export interface ClaudeAccountWire {
   state: 'ok' | 'needs-relogin';
   limits: UsageLimitWire[];
   fetchedAtMs: number | null;
+  /** The API refused this account; it stays out until then (epoch ms). */
+  refusedUntil?: number;
+  refusedWindow?: 'session' | 'weekly';
 }
 
 /** How auto-switch picks the next account. Mirrors `SwitchStrategy` on the server. */
@@ -157,6 +160,8 @@ export interface SwitchWeights {
 
 export interface ClaudeAccountsResponse {
   accounts: ClaudeAccountWire[];
+  /** Where a new chat would open now (the server's own spawn decision). Absent on an older server. */
+  nextSessionAccountId?: string | null;
   autoSwitch: boolean;
   switchStrategy: SwitchStrategy;
   switchWeights: SwitchWeights;
@@ -188,8 +193,10 @@ export function useClaudeAccounts(enabled: boolean) {
     queryKey: ['agent-claude-accounts'],
     queryFn: () => api.get<ClaudeAccountsResponse>('/agent/accounts'),
     enabled,
-    refetchInterval: enabled ? 300_000 : false,
-    staleTime: 240_000,
+    // Every chat turn writes its account's usage to disk (claude-usage-meter.ts) and the route
+    // only reads files, so a short interval is what keeps the panel as current as the chats.
+    refetchInterval: enabled ? 30_000 : false,
+    staleTime: 20_000,
     retry: false,
     placeholderData: NO_ACCOUNTS,
   });
@@ -329,9 +336,9 @@ export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean)
   return useQuery({
     queryKey: ['agent-goal-live', claudeId],
     queryFn: () => api.get<GoalLiveResponse>(`/agent/goal-live?claudeId=${encodeURIComponent(claudeId!)}`),
-    // Not served on the hands-free cloud (cloudSurface.ts): no poll there at all.
-    enabled: enabled && !!claudeId && cloudAllows('GET', '/api/agent/goal-live'),
-    refetchInterval: enabled && cloudAllows('GET', '/api/agent/goal-live') ? 2_000 : false,
+    // Not served on the phone (phoneSurface.ts): no poll there at all.
+    enabled: enabled && !!claudeId && phoneAllows('GET', '/api/agent/goal-live'),
+    refetchInterval: enabled && phoneAllows('GET', '/api/agent/goal-live') ? 2_000 : false,
     staleTime: 1_500,
     retry: false,
     placeholderData: GOAL_LIVE_INACTIVE,
@@ -384,9 +391,9 @@ export function useAgentCouncilLive(claudeId: string | undefined, enabled: boole
   return useQuery({
     queryKey: ['agent-council-live', claudeId],
     queryFn: () => api.get<CouncilLiveResponse>(`/agent/council-live?claudeId=${encodeURIComponent(claudeId!)}`),
-    // Not served on the hands-free cloud (cloudSurface.ts): no poll there at all.
-    enabled: enabled && !!claudeId && cloudAllows('GET', '/api/agent/council-live'),
-    refetchInterval: enabled && cloudAllows('GET', '/api/agent/council-live') ? 2_000 : false,
+    // Not served on the phone (phoneSurface.ts): no poll there at all.
+    enabled: enabled && !!claudeId && phoneAllows('GET', '/api/agent/council-live'),
+    refetchInterval: enabled && phoneAllows('GET', '/api/agent/council-live') ? 2_000 : false,
     staleTime: 1_500,
     retry: false,
     placeholderData: COUNCIL_LIVE_INACTIVE,

@@ -3,8 +3,6 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost } from '../desktop.js';
-import { isCloud } from '../cloud-mode.js';
-import { runWorkerOp } from '../cloud-worker.js';
 import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
 import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
@@ -175,20 +173,10 @@ export async function handleAgentTaskProgress(
     return;
   }
 
-  if (isCloud()) {
-    // The task file sits in dcuser's tree: read it as dcuser (a planted symlink never makes
-    // dcserver read anything).
-    try {
-      sendJson(res, 200, await runWorkerOp({ op: 'read', params: { kind: 'task-progress', contextRoot, query: { slug } }, timeoutMs: 60_000 }));
-    } catch {
-      sendJson(res, 200, degraded(slug, 'unreadable', `"${slug}" could not be read from disk.`));
-    }
-    return;
-  }
   sendJson(res, 200, computeTaskProgress(contextRoot, slug));
 }
 
-/** The task's progress (also run inside the cloud's dcuser worker). `slug` is already validated. */
+/** The task's progress. `slug` is already validated. */
 export function computeTaskProgress(contextRoot: string, slug: string): unknown {
   if (!isSafeTaskSlug(slug)) return degraded(slug, 'unreadable', 'Task slug is missing or not a safe file name.');
   const file = join(contextRoot, 'state', `${slug}.md`);
@@ -289,18 +277,6 @@ export async function handleAgentSessionFacts(
   } catch { /* unparseable URL — falls back to the project root, same as no id */ }
 
   const projectRoot = projectRootOf(contextRoot);
-  if (isCloud()) {
-    // The claim and the stream registry live in THIS process; the transcript and the git
-    // reading run as dcuser (a dcuser-planted fsmonitor or hook never runs as dcserver).
-    const known = claimedCheckout(session || null, projectRoot) ?? sessionCheckout(session || null, projectRoot);
-    let facts: unknown = UNKNOWN_SESSION_FACTS;
-    try {
-      facts = await runWorkerOp({ op: 'read', params: { kind: 'session-facts', contextRoot, query: { session, dir: known === projectRoot ? '' : known } }, timeoutMs: 60_000 });
-    } catch { /* unknown */ }
-    const dir = known ?? projectRoot;
-    sendJson(res, 200, { ...(facts as object), elsewhere: editsElsewhere(session || null, dir) });
-    return;
-  }
   // The facts are read AT the session's checkout; `worktreeAllowed` alone is asked of the
   // VAULT (third argument), because it is a property of the brain rather than of the folder
   // the agent happens to be standing in. See readSessionFacts.
@@ -347,14 +323,4 @@ export function resolveSessionDir(
   return claimedCheckout(session, projectRoot)
     ?? transcriptCheckout(session, projectRoot, opts)
     ?? sessionCheckout(session, projectRoot);
-}
-
-/** Cloud only, inside the dcuser worker: the facts of the session's checkout. */
-export function computeSessionFacts(contextRoot: string, q: Record<string, string>): unknown {
-  const projectRoot = projectRootOf(contextRoot);
-  const session = sanitizeUuid(q.session ?? null);
-  const dir = (q.dir && q.dir.startsWith('/') ? q.dir : null)
-    ?? transcriptCheckout(session || null, projectRoot)
-    ?? projectRoot;
-  return readSessionFacts(dir, Date.now(), projectRoot);
 }

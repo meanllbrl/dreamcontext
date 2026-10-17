@@ -33,6 +33,6 @@ describe('stale-server banner: which side is older', () => {
     const i18n = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'context', 'I18nContext.tsx'), 'utf8');
     expect(i18n).toContain("'staleServer.olderPage': 'This window is running an older page ({page}) than the dashboard server ({server}). Reload it with Cmd+R.',");
     expect(i18n).toMatch(/'staleServer\.olderPage': 'Bu pencere/);
-    expect(i18n).not.toMatch(/'(handsfree\.banner\.other|handsfree\.button\.elsewhere|staleServer)[^']*': '[^']*—/); // no em dashes
+    expect(i18n).not.toMatch(/'(staleServer)[^']*': '[^']*—/); // no em dashes
   });
 });

@@ -254,10 +254,9 @@ describe('the Assistant carries its own settings, not the owner\'s global ones',
   });
 
   it('keeps the owner\'s MCP servers by reference, which only a sandbox needed before', () => {
-    expect(sharesUserMcp({ isAssistant: true, isRealHomeAccount: true, cloud: false })).toBe(true);
-    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: true, cloud: false })).toBe(false);
-    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: false, cloud: false })).toBe(true);
-    expect(sharesUserMcp({ isAssistant: true, isRealHomeAccount: true, cloud: true })).toBe(false);
+    expect(sharesUserMcp({ isAssistant: true, isRealHomeAccount: true })).toBe(true);
+    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: true })).toBe(false);
+    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: false })).toBe(true);
   });
 
   it('the real-account Assistant spawn points --mcp-config at the shared copy of ~/.claude.json\'s servers', () => {

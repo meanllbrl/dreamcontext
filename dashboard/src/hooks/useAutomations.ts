@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
-import { cloudAllows } from '../lib/cloudSurface';
+import { phoneAllows } from '../lib/phoneSurface';
 import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
 
 /**
@@ -1022,8 +1022,8 @@ export function useAgentFeed(
   return useQuery({
     queryKey: ['automations-feed'],
     queryFn: () => api.get<AgentFeed>('/automations/threads'),
-    // Not served on the hands-free cloud (cloudSurface.ts): no poll there at all.
-    enabled: cloudAllows('GET', '/api/automations/threads'),
+    // Not served on the phone (phoneSurface.ts): no poll there at all.
+    enabled: phoneAllows('GET', '/api/automations/threads'),
     // Fast while a run is in flight — one this window started, or one the feed
     // itself reports holding a slot — so its answer lands as it is written.
     refetchInterval: (query) => (

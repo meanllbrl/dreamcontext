@@ -17,10 +17,8 @@ import {
   isValidVerifier,
   loginClientKey,
   normalizePassphrase,
-  setHandsfreeAuthForTests,
+  setMacHandsfreeAuthForTests,
   sha256Hex,
-  transferAuthorization,
-  transferKeyFromSecret,
   verifyPassphrase,
   type ScryptVerifier,
 } from '../../src/server/handsfree-auth.js';
@@ -30,7 +28,6 @@ let clock: number;
 const now = () => clock;
 let verifier: ScryptVerifier;
 const PASS = 'abacus zoom yodel t-shirt zebra kettle';
-const TRANSFER_SECRET = 'transfer-secret-for-tests';
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'hf-auth-'));
@@ -39,17 +36,13 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  setHandsfreeAuthForTests(null);
+  setMacHandsfreeAuthForTests(null);
   rmSync(dir, { recursive: true, force: true });
 });
 
-function push(generation: number, v = verifier) {
-  return { generation, passphrase: v, transferSha256: sha256Hex(TRANSFER_SECRET) };
-}
-
 function service(): HandsfreeAuth {
   const auth = new HandsfreeAuth({ dir, now, sleep: async () => {} });
-  auth.store.installVerifiers(push(1));
+  auth.store.setPassphrase(verifier);
   return auth;
 }
 
@@ -90,50 +83,28 @@ describe('passphrase', { timeout: 30_000 }, () => {
   });
 });
 
-describe('verifier store', () => {
-  it('only lets the generation go up, and a higher one signs every device out', () => {
+describe('device store', () => {
+  it('a new passphrase bumps the generation, signs every device out and survives a restart', () => {
     const store = new HandsfreeAuthStore({ dir, now });
-    expect(store.installVerifiers(push(1))).toMatchObject({ ok: true, generation: 1, changed: true });
+    expect(store.setPassphrase(verifier)).toEqual({ generation: 1 });
     const id = store.createDevice();
     expect(store.isValidDevice(id)).toBe(true);
-
-    // Idempotent re-push of the same generation keeps the devices.
-    expect(store.installVerifiers(push(1))).toMatchObject({ ok: true, changed: false });
-    expect(store.isValidDevice(id)).toBe(true);
-
-    // Same generation, different content: refused. Lower: refused.
-    expect(store.installVerifiers({ ...push(1), transferSha256: sha256Hex('other') })).toMatchObject({ ok: false, error: 'generation_conflict' });
-    expect(store.installVerifiers(push(0))).toMatchObject({ ok: false });
-
-    // A password change (higher generation) revokes all.
-    expect(store.installVerifiers(push(2))).toMatchObject({ ok: true, generation: 2 });
+    expect(store.setPassphrase(verifier)).toEqual({ generation: 2 });
     expect(store.isValidDevice(id)).toBe(false);
-    expect(store.installVerifiers(push(1))).toMatchObject({ ok: false, error: 'stale_generation', generation: 2 });
-  });
-
-  it('revoke-all needs a higher generation and survives a restart', () => {
-    const store = new HandsfreeAuthStore({ dir, now });
-    store.installVerifiers(push(3));
-    const id = store.createDevice();
-    expect(store.revokeAllDevices(3)).toMatchObject({ ok: false, error: 'stale_generation' });
-    expect(store.isValidDevice(id)).toBe(true);
-    expect(store.revokeAllDevices(4)).toMatchObject({ ok: true, generation: 4 });
 
     const reloaded = new HandsfreeAuthStore({ dir, now });
-    expect(reloaded.generation).toBe(4);
-    expect(reloaded.isValidDevice(id)).toBe(false);
+    expect(reloaded.generation).toBe(2);
     expect(reloaded.passphraseVerifier).toEqual(verifier);
   });
 
   it('stores only the sha256 of a device id, for 30 days', () => {
     const store = new HandsfreeAuthStore({ dir, now });
-    store.installVerifiers(push(1));
+    store.setPassphrase(verifier);
     const id = store.createDevice();
     expect(Buffer.from(id, 'base64url')).toHaveLength(32);
     const file = readFileSync(join(dir, 'auth.json'), 'utf-8');
     expect(file).not.toContain(id);
     expect(file).toContain(sha256Hex(id));
-    expect(file).not.toContain(TRANSFER_SECRET);
 
     expect(new HandsfreeAuthStore({ dir, now }).isValidDevice(id)).toBe(true);
     clock += DEVICE_TTL_MS - 1;
@@ -144,7 +115,7 @@ describe('verifier store', () => {
 
   it('forgets one device on logout', () => {
     const store = new HandsfreeAuthStore({ dir, now });
-    store.installVerifiers(push(1));
+    store.setPassphrase(verifier);
     const a = store.createDevice();
     const b = store.createDevice();
     store.revokeDevice(a);
@@ -157,7 +128,6 @@ describe('verifier store', () => {
     writeFileSync(join(dir, 'auth.json'), '{not json');
     const store = new HandsfreeAuthStore({ dir, now });
     expect(store.passphraseVerifier).toBeNull();
-    expect(store.transferKey()).toBeNull();
   });
 });
 
@@ -203,7 +173,7 @@ describe('login limiter', () => {
     expect(lim.check('xff:owner')).toEqual({ allowed: true, delayMs: 0 });
   });
 
-  it('keys clients on the single X-Forwarded-For value the forwarder sets', () => {
+  it('off a phone socket, keys clients on the X-Forwarded-For value', () => {
     const req = (h: Record<string, string>, remote = '127.0.0.1') =>
       ({ headers: h, socket: { remoteAddress: remote } }) as unknown as IncomingMessage;
     expect(loginClientKey(req({ 'x-forwarded-for': '203.0.113.9' }))).toBe('xff:203.0.113.9');
@@ -233,7 +203,7 @@ describe('attemptLogin', { timeout: 30_000 }, () => {
   it('applies the global delay through the injected sleep', async () => {
     const slept: number[] = [];
     const auth = new HandsfreeAuth({ dir, now, sleep: async (ms) => { slept.push(ms); } });
-    auth.store.installVerifiers(push(1));
+    auth.store.setPassphrase(verifier);
     for (let i = 0; i < 31; i++) auth.limiter.recordFailure(`xff:10.0.0.${i}`);
     expect(await auth.attemptLogin(PASS, 'xff:owner')).toMatchObject({ ok: true });
     expect(slept).toEqual([500]);
@@ -263,63 +233,21 @@ describe('device cookie', () => {
     expect(h).not.toContain('Domain=');
   });
 
-  it('hasValidDeviceSession reads the cookie against the store', () => {
+  it('hasValidDeviceSession reads the cookie against the Mac store, on a phone socket only', async () => {
+    const { markPhoneSocket } = await import('../../src/server/phone-origin.js');
     const auth = service();
-    setHandsfreeAuthForTests(auth);
+    setMacHandsfreeAuthForTests(auth);
     const id = auth.store.createDevice();
-    const req = (cookie?: string) => ({ headers: cookie ? { cookie } : {} }) as unknown as IncomingMessage;
+    const phone = {};
+    markPhoneSocket(phone);
+    const req = (cookie?: string, socket: object = phone) => ({ socket, headers: cookie ? { cookie } : {} }) as unknown as IncomingMessage;
     expect(hasValidDeviceSession(req(`other=1; ${DEVICE_COOKIE}=${id}`))).toBe(true);
     expect(hasValidDeviceSession(req(`${DEVICE_COOKIE}=${id}x`))).toBe(false);
     expect(hasValidDeviceSession(req())).toBe(false);
+    // The desktop never authenticates by cookie.
+    expect(hasValidDeviceSession(req(`${DEVICE_COOKIE}=${id}`, {}))).toBe(false);
   });
 });
-
-describe('transfer proof', () => {
-  const key = transferKeyFromSecret(TRANSFER_SECRET);
-
-  it('the stored value is sha256 of the secret, and the secret never rides the header', () => {
-    expect(key.toString('hex')).toBe(sha256Hex(TRANSFER_SECRET));
-    const auth = service();
-    const header = transferAuthorization(key, auth.issueNonce(), 'POST', '/api/handsfree/trip');
-    expect(header).not.toContain(TRANSFER_SECRET);
-    expect(header).not.toContain(key.toString('hex'));
-  });
-
-  it('accepts a proof once, bound to its method and target', () => {
-    const auth = service();
-    const nonce = auth.issueNonce();
-    const header = transferAuthorization(key, nonce, 'POST', '/api/handsfree/trip');
-    expect(auth.verifyTransferProof(header, 'GET', '/api/handsfree/trip')).toBe(false);
-    expect(auth.verifyTransferProof(header, 'POST', '/api/handsfree/seal')).toBe(false);
-    expect(auth.verifyTransferProof(header, 'POST', '/api/handsfree/trip')).toBe(true);
-    expect(auth.verifyTransferProof(header, 'POST', '/api/handsfree/trip')).toBe(false); // replay
-  });
-
-  it('refuses a forged, expired or keyless proof', () => {
-    const auth = service();
-    const wrongKey = transferKeyFromSecret('not-it');
-    expect(auth.verifyTransferProof(transferAuthorization(wrongKey, auth.issueNonce(), 'GET', '/x'), 'GET', '/x')).toBe(false);
-    // A nonce the server did not sign.
-    expect(auth.verifyTransferProof(transferAuthorization(key, `${clock.toString(36)}.aaaa.bbbb`, 'GET', '/x'), 'GET', '/x')).toBe(false);
-    // Expired.
-    const old = auth.issueNonce();
-    clock += 121_000;
-    expect(auth.verifyTransferProof(transferAuthorization(key, old, 'GET', '/x'), 'GET', '/x')).toBe(false);
-    // The raw secret as a bearer is not a proof.
-    expect(auth.verifyTransferProof(`Bearer ${TRANSFER_SECRET}`, 'GET', '/x')).toBe(false);
-    // No transfer key installed.
-    const bare = new HandsfreeAuth({ dir: mkdtempSync(join(tmpdir(), 'hf-auth-bare-')), now });
-    expect(bare.verifyTransferProof(transferAuthorization(key, bare.issueNonce(), 'GET', '/x'), 'GET', '/x')).toBe(false);
-  });
-
-  it('a nonce from another server process is refused', () => {
-    const a = service();
-    const b = new HandsfreeAuth({ dir, now });
-    expect(b.verifyTransferProof(transferAuthorization(key, a.issueNonce(), 'GET', '/x'), 'GET', '/x')).toBe(false);
-  });
-});
-
-// ─── Mac mode (AC2/AC4/AC5/AC11) ────────────────────────────────────────────
 
 describe('Mac mode: QR login token (AC4)', () => {
   it('is 256-bit, single-use, kept only as a hash, and a newer mint invalidates the older', async () => {
@@ -402,31 +330,19 @@ describe('Mac mode: passphrase, devices and the limiter (AC2/AC5/AC11)', () => {
     expect(outcomes.every((o) => !o.ok)).toBe(true);
   });
 
-  it('a Mac logout revokes the Mac device only, never a cloud one', async () => {
-    const { handleHandsfreeLogout, setMacHandsfreeAuthForTests } = await import('../../src/server/handsfree-auth.js');
+  it('a Mac logout revokes that device only', async () => {
+    const { handleHandsfreeLogout } = await import('../../src/server/handsfree-auth.js');
     const { markPhoneSocket } = await import('../../src/server/phone-origin.js');
-    const macDir = mkdtempSync(join(tmpdir(), 'hf-mac-'));
-    const mac = new HandsfreeAuth({ dir: macDir, now });
-    const cloud = new HandsfreeAuth({ dir, now });
+    const mac = new HandsfreeAuth({ dir, now });
     mac.store.setPassphrase(verifier);
-    cloud.store.setPassphrase(verifier);
     setMacHandsfreeAuthForTests(mac);
-    setHandsfreeAuthForTests(cloud);
-    try {
-      const macId = mac.store.createDevice();
-      const cloudId = cloud.store.createDevice();
-      const sock = {};
-      markPhoneSocket(sock);
-      const res = { setHeader() {}, writeHead() { return res; }, end() {} } as never;
-      // A phone presenting the cloud's id on the Mac listener: nothing in the cloud store moves.
-      handleHandsfreeLogout({ socket: sock, headers: { cookie: `${DEVICE_COOKIE}=${cloudId}` } } as unknown as IncomingMessage, res);
-      expect(cloud.store.isValidDevice(cloudId)).toBe(true);
-      handleHandsfreeLogout({ socket: sock, headers: { cookie: `${DEVICE_COOKIE}=${macId}` } } as unknown as IncomingMessage, res);
-      expect(mac.store.isValidDevice(macId)).toBe(false);
-      expect(cloud.store.isValidDevice(cloudId)).toBe(true);
-    } finally {
-      setMacHandsfreeAuthForTests(null);
-      rmSync(macDir, { recursive: true, force: true });
-    }
+    const a = mac.store.createDevice();
+    const b = mac.store.createDevice();
+    const sock = {};
+    markPhoneSocket(sock);
+    const res = { setHeader() {}, writeHead() { return res; }, end() {} } as never;
+    handleHandsfreeLogout({ socket: sock, headers: { cookie: `${DEVICE_COOKIE}=${a}` } } as unknown as IncomingMessage, res);
+    expect(mac.store.isValidDevice(a)).toBe(false);
+    expect(mac.store.isValidDevice(b)).toBe(true);
   });
 });

@@ -122,6 +122,9 @@ export async function handlePeerLogo(
     res.writeHead(200, {
       'Content-Type': logo.mime,
       'Content-Length': bytes.length,
+      // A logo may be an SVG: navigated to directly it stays inert (no script, opaque origin).
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'X-Content-Type-Options': 'nosniff',
       // Short-lived: a swapped logo should show up on the next pane without a
       // hard reload, while repeat renders within a session stay free.
       'Cache-Control': 'private, max-age=300',

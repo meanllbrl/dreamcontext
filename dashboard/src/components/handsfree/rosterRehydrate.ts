@@ -1,21 +1,11 @@
 /**
- * The agent surface's roster against a hands-free Return, as PURE decisions (AgentSurface calls
- * these; `tests/unit/handsfree-roster-rehydrate.test.ts` covers them).
+ * The agent surface's roster PUT protocol, as PURE decisions (AgentSurface calls these;
+ * `tests/unit/handsfree-roster-rehydrate.test.ts` covers them).
  *
- * The stored roster carries a `generation` that only a Return's merge bumps. Every PUT names
- * the generation it was based on (`baseGeneration`); a PUT from before a merge gets 409
- * `roster_stale`, and the surface then RE-HYDRATES from the stored roster instead of sending its
- * old body again. The laptop coming home (away/returning -> home) re-hydrates too, so sessions
- * started on the phone appear, and a tab change made here while PUTs were refused (the lock)
- * gives way to the merged roster.
+ * The stored roster carries a `generation`. Every PUT names the generation it was based on
+ * (`baseGeneration`); a stale one gets 409 `roster_stale`, and the surface then RE-HYDRATES
+ * from the stored roster instead of sending its old body again.
  */
-
-export type HandsfreePhaseLike = 'home' | 'going' | 'away' | 'returning' | null;
-
-/** The away/returning -> home edge (the first status read, null -> home, is not one). */
-export function rehydrateOnPhase(prev: HandsfreePhaseLike, next: HandsfreePhaseLike): boolean {
-  return next === 'home' && (prev === 'away' || prev === 'returning');
-}
 
 /** The PUT body: the payload plus the generation it was based on (omitted before any GET). */
 export function withBaseGeneration<T extends object>(payload: T, generation: number | undefined): T & { baseGeneration?: number } {

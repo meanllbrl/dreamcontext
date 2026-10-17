@@ -23,7 +23,8 @@ import { useEffect, useState } from 'react';
 export const MOBILE_WIDTH_QUERY = '(max-width: 768px)';
 export const COARSE_POINTER_QUERY = '(pointer: coarse)';
 
-function readIsMobile(): boolean {
+/** The same answer, read once (for an initial state). */
+export function readIsMobile(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   return window.matchMedia(MOBILE_WIDTH_QUERY).matches
     && window.matchMedia(COARSE_POINTER_QUERY).matches;

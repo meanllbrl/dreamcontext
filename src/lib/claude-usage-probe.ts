@@ -1,12 +1,11 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { isCloud, spawnAsWorker } from '../server/cloud-mode.js';
 import { join } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { ensureSandbox } from './claude-account-sandbox.js';
-import { awaitClaudeAccountIdle, claudeAuthStatus, CLOUD_REFRESH_HARD_LIMIT_MS, holdClaudeAccountDir, killGroup, PROBE_TIMEOUT_MS, resetClaudeAuthCache } from './claude-auth.js';
+import { claudeAuthStatus, PROBE_TIMEOUT_MS, resetClaudeAuthCache } from './claude-auth.js';
 import { readUsageLimits, usageReadingIsCurrent, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
 import { parseUsageReport, withLockedReasons } from './claude-usage-report.js';
 
@@ -149,15 +148,9 @@ function reportText(stdout: string | undefined): string {
   return text;
 }
 
-/** Spawn `claude -p "/usage" --output-format json` in `configDir` and capture its report.
- *  The cloud first waits (inside the budget) for any sign-in check or refresh on that dir. */
+/** Spawn `claude -p "/usage" --output-format json` in `configDir` and capture its report. */
 async function defaultRunProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
-  if (!isCloud()) return spawnUsageProbe(configDir, timeoutMs);
-  const startedAt = Date.now();
-  await awaitClaudeAccountIdle(configDir, timeoutMs);
-  const left = timeoutMs - (Date.now() - startedAt);
-  if (left <= 0) return { timedOut: true };
-  return spawnUsageProbe(configDir, left);
+  return spawnUsageProbe(configDir, timeoutMs);
 }
 
 function spawnUsageProbe(configDir: string, timeoutMs: number): Promise<ProbeRun> {
@@ -174,35 +167,13 @@ function spawnUsageProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
     try {
       // stdout is PIPED now — it is where the answer is. stderr stays ignored: it carries
       // update notices and warnings, never the report.
-      child = isCloud()
-        // The cloud: as dcuser through the one worker chokepoint, pointed at this account only.
-        ? spawnAsWorker('/bin/bash', ['-lc', 'claude -p "/usage" --output-format json'], {
-          cwd: tmpdir(),
-          ...(isRealHomeConfigDir(configDir) ? {} : { account: { configDir } }),
-          stdio: ['ignore', 'pipe', 'ignore'],
-        })
-        // The laptop: a cwd outside every hands-free locked root, so the probe's own session
-        // never lands in a project that is away.
-        : bin
-          ? spawn(bin, ['-p', '/usage', '--output-format', 'json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env })
-          : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env });
+      // A cwd outside every project, so the probe's own session never lands in one.
+      child = bin
+        ? spawn(bin, ['-p', '/usage', '--output-format', 'json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env })
+        : spawn(shell, ['-ilc', 'claude -p "/usage" --output-format json'], { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], env });
     } catch (err) {
       resolveOut({ timedOut: false, error: (err as Error)?.message ?? String(err) });
       return;
-    }
-
-    // The cloud (AC17): this `claude` may be refreshing the account's token. It is never killed
-    // mid-run (that left the CLI's refresh lock held for the next chat turn); the dir counts as
-    // busy until it exits, and only the hard limit kills its group.
-    const cloud = isCloud();
-    let hardTimer: ReturnType<typeof setTimeout> | null = null;
-    if (cloud) {
-      holdClaudeAccountDir(configDir, new Promise<void>((exited) => {
-        child.once('close', () => exited());
-        child.once('error', () => exited());
-        hardTimer = setTimeout(() => { killGroup(child); exited(); }, CLOUD_REFRESH_HARD_LIMIT_MS);
-        hardTimer.unref?.();
-      }).finally(() => { if (hardTimer) clearTimeout(hardTimer); }));
     }
 
     let stdout = '';
@@ -220,7 +191,7 @@ function spawnUsageProbe(configDir: string, timeoutMs: number): Promise<ProbeRun
       resolveOut(v);
     };
     const timer = setTimeout(() => {
-      if (!cloud) { try { child.kill(); } catch { /* already gone */ } }
+      try { child.kill(); } catch { /* already gone */ }
       done({ timedOut: true });
     }, timeoutMs);
 

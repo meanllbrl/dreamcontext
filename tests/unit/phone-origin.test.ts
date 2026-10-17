@@ -5,11 +5,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage } from 'node:http';
-import { carriesCloudflareHeaders, isPhoneRequest, isPhoneSocket, markPhoneSocket, requestSurface, isMacOriginAllowed, setMacPublicOrigin } from '../../src/server/phone-origin.js';
+import { carriesCloudflareHeaders, isPhoneSocket, markPhoneSocket, requestSurface, isMacOriginAllowed, setMacPublicOrigin } from '../../src/server/phone-origin.js';
 import { isLoopback } from '../../src/server/routes/agent-spawn-shared.js';
 import { isLoopbackPeer, checkNetworkAuth } from '../../src/server/network-auth.js';
 import { isAgentRequest } from '../../src/server/desktop.js';
-import { DEVICE_COOKIE, HandsfreeAuth, authFor, hashPassphrase, macHandsfreeAuth, setMacHandsfreeAuthForTests, setHandsfreeAuthForTests, handsfreeAuth } from '../../src/server/handsfree-auth.js';
+import { DEVICE_COOKIE, HandsfreeAuth, authFor, hashPassphrase, macHandsfreeAuth, setMacHandsfreeAuthForTests } from '../../src/server/handsfree-auth.js';
 
 function req(socket: object, headers: Record<string, string> = {}): IncomingMessage {
   return { socket, headers, method: 'GET', url: '/' } as unknown as IncomingMessage;
@@ -20,9 +20,8 @@ let dir: string;
 let mac: HandsfreeAuth;
 
 beforeEach(async () => {
-  for (const k of ['DREAMCONTEXT_DESKTOP', 'DREAMCONTEXT_CLOUD']) saved[k] = process.env[k];
+  for (const k of ['DREAMCONTEXT_DESKTOP']) saved[k] = process.env[k];
   process.env.DREAMCONTEXT_DESKTOP = '1';
-  delete process.env.DREAMCONTEXT_CLOUD;
   dir = mkdtempSync(join(tmpdir(), 'phone-origin-'));
   mac = new HandsfreeAuth({ dir });
   mac.store.setPassphrase(await hashPassphrase('a b c d e f'));
@@ -31,7 +30,6 @@ beforeEach(async () => {
 afterEach(() => {
   for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   setMacHandsfreeAuthForTests(null);
-  setHandsfreeAuthForTests(null);
   setMacPublicOrigin(null);
   rmSync(dir, { recursive: true, force: true });
 });
@@ -49,7 +47,6 @@ describe('per-request origin', () => {
     expect(isPhoneSocket(req(desk))).toBe(false);
     expect(requestSurface(req(phone))).toBe('mac-phone');
     expect(requestSurface(req(desk))).toBe('desktop');
-    expect(isPhoneRequest(req(desk))).toBe(false);
   });
 
   it('the network token gate never waves a phone socket through for being loopback', () => {
@@ -73,16 +70,11 @@ describe('per-request origin', () => {
     expect(isAgentRequest(req({ remoteAddress: '10.0.0.5' }, { cookie: `${DEVICE_COOKIE}=${id}` }))).toBe(false);
   });
 
-  it('authFor: phone → Mac store, cloud → cloud store, desktop → none', () => {
+  it('authFor: phone → Mac store, desktop → none', () => {
     const phone = {};
     markPhoneSocket(phone);
     expect(authFor(req(phone))).toBe(macHandsfreeAuth());
     expect(authFor(req({}))).toBeNull();
-    process.env.DREAMCONTEXT_CLOUD = '1';
-    const cloud = new HandsfreeAuth({ dir });
-    setHandsfreeAuthForTests(cloud);
-    expect(authFor(req({}))).toBe(handsfreeAuth());
-    expect(authFor(req(phone))).toBe(macHandsfreeAuth());
   });
 
   it('the Origin must be exactly the tunnel origin, and none is allowed before it is known', () => {

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
 import { basename, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
@@ -648,11 +649,13 @@ export async function handleBrainScrubIgnore(
 // ─── GET /api/brain/team/updates (cache-only, NO network) ────────────────────
 
 export async function handleBrainTeamUpdates(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
   if (!gate(res)) return;
-  const vaults = listVaults().map((v) => {
+  // A phone (hands-free) sees only the projects chosen at start (AC16).
+  const phone = isPhoneSocket(req);
+  const vaults = listVaults().filter((v) => !phone || isMacExposed(v.name)).map((v) => {
     const projectRoot = v.path;
     const config = readSetupConfig(projectRoot);
     const enabled = resolveBrainSyncEnabled(projectRoot, config);

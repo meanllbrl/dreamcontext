@@ -4,7 +4,7 @@
 // tabs kept, no duplicates). The pure decisions AgentSurface.tsx calls.
 import { describe, it, expect } from 'vitest';
 import {
-  generationOf, mergeStoredRoster, putOutcome, rehydrateOnPhase, withBaseGeneration,
+  generationOf, mergeStoredRoster, putOutcome, withBaseGeneration,
 } from '../../dashboard/src/components/handsfree/rosterRehydrate.js';
 
 const tab = (claudeId: string, title: string, id = `s-${claudeId}`) => ({ id, claudeId, title });
@@ -84,13 +84,3 @@ describe('PUT generation and the stale answer', () => {
   });
 });
 
-describe('the home edge', () => {
-  it('re-hydrates on away/returning -> home only', () => {
-    expect(rehydrateOnPhase('away', 'home')).toBe(true);
-    expect(rehydrateOnPhase('returning', 'home')).toBe(true);
-    expect(rehydrateOnPhase(null, 'home')).toBe(false);
-    expect(rehydrateOnPhase('home', 'home')).toBe(false);
-    expect(rehydrateOnPhase('going', 'home')).toBe(false);
-    expect(rehydrateOnPhase('home', 'away')).toBe(false);
-  });
-});

@@ -1,17 +1,5 @@
-import { describe, it, expect, vi, afterAll } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, vi } from 'vitest';
 import { runUpgrade } from '../../src/cli/commands/upgrade.js';
-import { beginGoing, setPhase } from '../../src/lib/handsfree/trip-state.js';
-
-/**
- * Test isolation: every non-check upgrade reads the hands-free trip state (AC18 refuses an
- * upgrade while away). It is read from this empty temp HOME, never the developer's real
- * ~/.dreamcontext/handsfree, where a real away trip would refuse every upgrade below.
- */
-const HOME = mkdtempSync(join(tmpdir(), 'upgrade-home-'));
-afterAll(() => rmSync(HOME, { recursive: true, force: true }));
 
 describe('runUpgrade --check', () => {
   it('does NOT call the installer when --check is true', () => {
@@ -67,7 +55,7 @@ describe('runUpgrade --check', () => {
       // runUpgrade is async; await it and inject no-op vault/app deps so the
       // cascade tail (app + per-project refresh) is deterministic and never
       // touches live machine state during the test.
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         installer,
         latestVersion,
         appInstalledCheck: () => false,
@@ -126,7 +114,7 @@ describe('runUpgrade — one command refreshes app + every project', () => {
     const spy = silence();
     const order: string[] = [];
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         installer,
         yes: true,
         appInstalledCheck: () => true,
@@ -147,7 +135,7 @@ describe('runUpgrade — one command refreshes app + every project', () => {
     const spy = silence();
     let appCalled = false;
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         installer,
         yes: true,
         appInstalledCheck: () => false,
@@ -165,7 +153,7 @@ describe('runUpgrade — one command refreshes app + every project', () => {
     let projCalled = false;
     let appCalled = false;
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         installer,
         // no `yes`, no `confirmAll` injected, and vitest stdin is not a TTY
         appInstalledCheck: () => true,
@@ -184,7 +172,7 @@ describe('runUpgrade — one command refreshes app + every project', () => {
     const spy = silence();
     let projCalled = false;
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         installer,
         appInstalledCheck: () => false,
         vaultLister: () => [{ name: 'alpha', path: '/tmp/alpha' }],
@@ -201,7 +189,7 @@ describe('runUpgrade — one command refreshes app + every project', () => {
     const spy = silence();
     const updated: string[] = [];
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         installer,
         appInstalledCheck: () => false,
         vaultLister: () => [
@@ -221,7 +209,7 @@ describe('runUpgrade — one command refreshes app + every project', () => {
     const spy = silence();
     const attempted: string[] = [];
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         installer,
         yes: true,
         appInstalledCheck: () => false,
@@ -276,7 +264,7 @@ describe('runUpgrade refreshes a stale automations notifier', () => {
     const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await runUpgrade(false, { home: HOME, ...base, installer: vi.fn(), notifierState: state(), notifierBuilder });
+      await runUpgrade(false, { ...base, installer: vi.fn(), notifierState: state(), notifierBuilder });
       expect(notifierBuilder).toHaveBeenCalledTimes(1);
     } finally { consoleSpy.mockRestore(); }
   });
@@ -285,7 +273,7 @@ describe('runUpgrade refreshes a stale automations notifier', () => {
     const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         ...base, installer: vi.fn(), notifierState: state({ scriptCurrent: true }), notifierBuilder,
       });
       expect(notifierBuilder).not.toHaveBeenCalled();
@@ -298,7 +286,7 @@ describe('runUpgrade refreshes a stale automations notifier', () => {
     const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         ...base, installer: vi.fn(), notifierState: state({ bundlePresent: false }), notifierBuilder,
       });
       expect(notifierBuilder).not.toHaveBeenCalled();
@@ -309,7 +297,7 @@ describe('runUpgrade refreshes a stale automations notifier', () => {
     const notifierBuilder = vi.fn(() => ({ built: true, path: '/fake', reason: null }));
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await runUpgrade(false, { home: HOME,
+      await runUpgrade(false, {
         ...base, installer: vi.fn(), notifierState: state({ supported: false }), notifierBuilder,
       });
       expect(notifierBuilder).not.toHaveBeenCalled();
@@ -321,7 +309,7 @@ describe('runUpgrade refreshes a stale automations notifier', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       await expect(
-        runUpgrade(false, { home: HOME, ...base, installer: vi.fn(), notifierState: state(), notifierBuilder }),
+        runUpgrade(false, { ...base, installer: vi.fn(), notifierState: state(), notifierBuilder }),
       ).resolves.toBeUndefined();
       const printed = consoleSpy.mock.calls.flat().join(' ');
       expect(printed).toContain('osacompile missing');
@@ -330,31 +318,3 @@ describe('runUpgrade refreshes a stale automations notifier', () => {
   });
 });
 
-describe('runUpgrade while hands-free is away (AC18)', () => {
-  it('refuses: nothing is installed, no app or project update runs, exit code 1, the trip is named', async () => {
-    const away = mkdtempSync(join(tmpdir(), 'upgrade-away-'));
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
-    const prevExit = process.exitCode;
-    try {
-      await beginGoing('t-20261009-0a0b0c0d', [], away);
-      await setPhase('away', 't-20261009-0a0b0c0d', away);
-      const installer = vi.fn();
-      const appUpdater = vi.fn(() => ({ ok: true }));
-      const projectUpdater = vi.fn();
-      await runUpgrade(false, {
-        home: away, installer, yes: true, appInstalledCheck: () => true, appUpdater,
-        vaultLister: () => [{ name: 'alpha', path: '/tmp/alpha' }], projectUpdater,
-      });
-      expect(installer).not.toHaveBeenCalled();
-      expect(appUpdater).not.toHaveBeenCalled();
-      expect(projectUpdater).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(1);
-      expect(logs.join('\n')).toMatch(/Upgrade refused: hands-free mode is away \(trip t-20261009-0a0b0c0d\)/);
-    } finally {
-      spy.mockRestore();
-      process.exitCode = prevExit;
-      rmSync(away, { recursive: true, force: true });
-    }
-  });
-});

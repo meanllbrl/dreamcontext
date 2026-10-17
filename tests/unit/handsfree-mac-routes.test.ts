@@ -2,7 +2,7 @@
 // credential ever returned, AC2 passphrase shown once) behind the laptop gate.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -13,11 +13,11 @@ vi.mock('../../src/lib/automations/notifier.js', async (orig) => ({
   notifyViaBundle: (title: string, body: string) => { posted.push([title, body]); return true; },
 }));
 
-const { handsfreeMacRoutes, setMacSessionForTests, macSession, macModeOn } = await import('../../src/server/routes/handsfree-mac.js');
-const { handleHandsfreeGo } = await import('../../src/server/routes/handsfree.js');
+const { handsfreeMacRoutes, setMacSessionForTests, macSession } = await import('../../src/server/routes/handsfree-mac.js');
 const { MacSession } = await import('../../src/lib/handsfree/mac/session.js');
 const { HandsfreeAuth, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase, notifyMacSignIn, setMacHandsfreeAuthForTests } = await import('../../src/server/handsfree-auth.js');
 const { markPhoneSocket } = await import('../../src/server/phone-origin.js');
+const { addVault } = await import('../../src/lib/vaults.js');
 
 let home: string;
 let auth: InstanceType<typeof HandsfreeAuth>;
@@ -55,23 +55,25 @@ function fakeSession() {
     hashPassphrase: (p) => hashPassphrase(p), generatePassphrase: () => generatePassphrase(),
     startListener: async () => ({ port: 40001 }), stopListener: async () => {},
     setPublicOrigin: () => {}, setProbeNonce: () => {}, setPhoneSource: () => {}, releasePhoneSessions: () => 0,
-    cloudTripActive: () => false, notify: () => {},
+    notify: () => {},
     powerRun: async (file, args) => ({ code: 0, stdout: args.join(' ') === '-g custom' ? 'Battery Power:\n lowpowermode 0\nAC Power:\n lowpowermode 0\n' : '', stderr: '' }),
     ensureBinary: async () => '/x/cloudflared-1',
     makeSupervisor: (_o, e) => ({ pid: 1, url: 'https://a-b.trycloudflare.com', start: async () => { e.onUrl('https://a-b.trycloudflare.com', false); return { child: new EventEmitter() as never, url: 'https://a-b.trycloudflare.com', mode: 'quick' as const }; }, stop: async () => {} }),
     probe: async () => true,
     sudoersInstalled: () => true, installSudoers: async () => 'ok',
+    readThermal: async () => 'nominal',   // never slow the machine's real processes
   });
 }
 
 beforeEach(() => {
-  for (const k of ['DREAMCONTEXT_DESKTOP', 'DREAMCONTEXT_CLOUD', 'HOME']) saved[k] = process.env[k];
+  for (const k of ['DREAMCONTEXT_DESKTOP', 'HOME']) saved[k] = process.env[k];
   process.env.DREAMCONTEXT_DESKTOP = '1';
-  delete process.env.DREAMCONTEXT_CLOUD;
   home = mkdtempSync(join(tmpdir(), 'mac-routes-'));
   process.env.HOME = home;
   auth = new HandsfreeAuth({ dir: ensureMacHandsfreeDir(home) });
   setMacHandsfreeAuthForTests(auth);
+  mkdirSync(join(home, 'proj', '_dream_context'), { recursive: true });
+  addVault('proj', join(home, 'proj'));
   setMacSessionForTests(fakeSession());
   posted.length = 0;
 });
@@ -111,7 +113,7 @@ describe('setup, start and secrets', () => {
     await call(handsfreeMacRoutes.setup, req('POST', '/api/handsfree/mac/setup', { body: {} }));
     const raws: string[] = [];
     raws.push((await call(handsfreeMacRoutes.status, req('GET', '/x'))).raw);
-    raws.push((await call(handsfreeMacRoutes.start, req('POST', '/x'))).raw);
+    raws.push((await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj'] } }))).raw);
     raws.push((await call(handsfreeMacRoutes.devices, req('GET', '/x'))).raw);
     raws.push((await call(handsfreeMacRoutes.qr, req('POST', '/x'))).raw);
     for (const r of raws) {
@@ -122,22 +124,25 @@ describe('setup, start and secrets', () => {
     expect(status.fixedHostname).toBe('phone.example.com');
   });
 
+  it('AC16: start needs { vaults } of registered projects: none = mac_no_project, unknown = mac_unknown_project (both 400)', async () => {
+    await call(handsfreeMacRoutes.setup, req('POST', '/x', { body: {} }));
+    const none = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: [] } }));
+    expect(none.status).toBe(400);
+    expect(none.body.error).toBe('mac_no_project');
+    expect((await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vault: 'proj' } }))).body.error).toBe('mac_no_project');
+    const unknown = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj', 'nope'] } }));
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error).toBe('mac_unknown_project');
+    expect(macSession().isOn()).toBe(false);
+    const ok = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj'] } }));
+    expect(ok.body.exposedVaults).toEqual(['proj']);
+  });
+
   it('start → on with the URL; the QR route mints a one-time link', async () => {
     await call(handsfreeMacRoutes.setup, req('POST', '/x', { body: {} }));
-    const s = await call(handsfreeMacRoutes.start, req('POST', '/x'));
+    const s = await call(handsfreeMacRoutes.start, req('POST', '/x', { body: { vaults: ['proj'] } }));
     expect(s.body).toMatchObject({ phase: 'on', url: 'https://a-b.trycloudflare.com' });
     expect(String((await call(handsfreeMacRoutes.qr, req('POST', '/x'))).body.url)).toMatch(/^https:\/\/a-b\.trycloudflare\.com\/login\?t=/);
-  });
-});
-
-describe('AC15: mutual exclusion with cloud trips', () => {
-  it('the cloud go is refused with handsfree_mac_on while Mac mode is on', async () => {
-    await call(handsfreeMacRoutes.setup, req('POST', '/x', { body: {} }));
-    await call(handsfreeMacRoutes.start, req('POST', '/x'));
-    expect(macModeOn()).toBe(true);
-    const r = await call((q, s) => handleHandsfreeGo(q, s, {}, '/tmp/x/_dream_context'), req('POST', '/api/handsfree/go', { body: {} }));
-    expect(r.status).toBe(409);
-    expect(r.body.error).toBe('handsfree_mac_on');
   });
 });
 

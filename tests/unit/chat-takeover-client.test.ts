@@ -41,8 +41,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  const { setCloudSurfaceForTests } = await import('../../dashboard/src/lib/cloudSurface');
-  setCloudSurfaceForTests(null);
+  const { setPhoneSurfaceForTests } = await import('../../dashboard/src/lib/phoneSurface');
+  setPhoneSurfaceForTests(null);
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -96,13 +96,13 @@ describe('chat client takeover (AC8)', () => {
   });
 
   it('a plain resume (a respawn: account, mode, Resume) never reattaches, on any surface; an explicit tap sends reattach=1', async () => {
-    const { setCloudSurfaceForTests } = await import('../../dashboard/src/lib/cloudSurface');
-    setCloudSurfaceForTests('mac');
+    const { setPhoneSurfaceForTests } = await import('../../dashboard/src/lib/phoneSurface');
+    setPhoneSurfaceForTests('mac');
     const r = await open(true);
     expect(FakeWebSocket.all[0].url).not.toMatch(/reattach=/);
     r.dispose();
     FakeWebSocket.all = [];
-    setCloudSurfaceForTests(null);
+    setPhoneSurfaceForTests(null);
     const a = await open(true);
     expect(FakeWebSocket.all[0].url).not.toMatch(/reattach=/);
     a.dispose();
@@ -112,8 +112,8 @@ describe('chat client takeover (AC8)', () => {
   });
 
   it('a roster restore opens passive; on the Mac phone surface a 4401 goes to the login page', async () => {
-    const { setCloudSurfaceForTests } = await import('../../dashboard/src/lib/cloudSurface');
-    setCloudSurfaceForTests('mac');
+    const { setPhoneSurfaceForTests } = await import('../../dashboard/src/lib/phoneSurface');
+    setPhoneSurfaceForTests('mac');
     const s = await open(true, 'passive');
     expect(FakeWebSocket.all[0].url).toMatch(/[?&]reattach=passive(&|$)/);
     FakeWebSocket.all[0].open();

@@ -749,3 +749,7 @@
   filter: brightness(1.08);
   color: var(--color-accent-text);
 }
+
+/* Phone: a compact header row (the bar above already says "Map"). */
+body[data-phone] .brain-header { padding: var(--space-1) var(--m-pad); gap: var(--space-2); }
+body[data-phone] .brain-title { font-size: var(--font-size-base); }

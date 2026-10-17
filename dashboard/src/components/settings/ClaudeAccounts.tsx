@@ -202,7 +202,7 @@ export function ClaudeAccounts() {
   // The machine's own account signs in through a terminal pane, which needs the embedded
   // terminal and the CLI — same gate as the System doctor's Sign in.
   const canSignInPrimary = !!(caps?.embeddedTerminal && caps?.claudeCli);
-  const { data, isLoading } = useClaudeAccounts(true);
+  const { data, isLoading, dataUpdatedAt } = useClaudeAccounts(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [addEmail, setAddEmail] = useState('');
@@ -216,6 +216,8 @@ export function ClaudeAccounts() {
   const [dragId, setDragId] = useState<string | null>(null);
 
   const serverAccounts = data?.accounts ?? [];
+  // Where a new chat really opens now. An older server does not say; then it is the top row.
+  const startsHereId = data?.nextSessionAccountId ?? serverAccounts[0]?.id ?? null;
   const autoSwitch = data?.autoSwitch ?? true;
   const strategy: SwitchStrategy = data?.switchStrategy ?? 'score';
   const savedWeights: SwitchWeights = data?.switchWeights ?? DEFAULT_WEIGHTS;
@@ -384,8 +386,10 @@ export function ClaudeAccounts() {
   if (isLoading) return <p className="settings-field-hint">Loading accounts…</p>;
 
   // ONE clock for the whole paint, so two rows can never disagree about how much of their
-  // windows is left — the comparison between rows is what this panel is for.
-  const now = Date.now();
+  // windows is left — the comparison between rows is what this panel is for. Read with
+  // `dataUpdatedAt`, which moves on every refetch even when the numbers did not: without it an
+  // unchanged answer repaints nothing, and "back in 1h 5m" stands still for an hour.
+  const now = Math.max(Date.now(), dataUpdatedAt);
 
   return (
     <div className="dc-accts">
@@ -399,7 +403,9 @@ export function ClaudeAccounts() {
         <>
           <div className="dc-acct-toolbar">
             <span className="dc-acct-toolbar-note">
-              Drag to set the priority — new sessions start at the top, and a switch between equally free accounts follows this order.
+              Drag to set the order. A new chat opens on the highest account that has room. A chat
+              moves to another account only when it hits a limit, and moves back up the list while it
+              is still short.
             </span>
             <div className="dc-acct-toolbar-right">
               {refreshNote && <span className="dc-acct-refresh-note">{refreshNote}</span>}
@@ -424,7 +430,7 @@ export function ClaudeAccounts() {
               return (
                 <li
                   key={a.id}
-                  className={`dc-acct${stale ? ' is-stale' : ''}${i === 0 ? ' is-top' : ''}${dragId === a.id ? ' is-dragging' : ''}`}
+                  className={`dc-acct${stale ? ' is-stale' : ''}${a.id === startsHereId ? ' is-top' : ''}${dragId === a.id ? ' is-dragging' : ''}`}
                   draggable
                   onDragStart={() => setDragId(a.id)}
                   onDragEnd={() => setDragId(null)}
@@ -438,7 +444,17 @@ export function ClaudeAccounts() {
                       <span className="dc-acct-rank" aria-hidden="true">{i + 1}</span>
                       <span className="dc-acct-who">{a.email || a.id}</span>
                       {a.tier && <span className="dc-acct-plan">Claude {planLabel(a.tier)}</span>}
-                      {i === 0 && <span className="dc-acct-tag dc-acct-tag--top">new sessions start here</span>}
+                      {a.id === startsHereId && <span className="dc-acct-tag dc-acct-tag--top">new chats start here</span>}
+                      {/* The API's own refusal, said in words: the bar beside it can trail it, and
+                          "97%" does not say "no chat goes here for another hour". */}
+                      {a.refusedUntil && a.refusedUntil > now && (
+                        <span
+                          className="dc-acct-tag dc-acct-tag--refused"
+                          title={`Claude refused this account on its ${a.refusedWindow === 'weekly' ? 'weekly limit' : a.refusedWindow === 'session' ? '5-hour limit' : 'limit'}. No chat is sent here before ${resetLabel(a.refusedUntil).replace(/^resets /, '')}.`}
+                        >
+                          limit hit · back in {fmtLeft(a.refusedUntil - now)}
+                        </span>
+                      )}
                       {a.isPrimary && <span className="dc-acct-tag">this machine</span>}
                       {org && <span className="dc-acct-tag">{org}</span>}
                     </div>
@@ -517,10 +533,13 @@ export function ClaudeAccounts() {
                         Sign in again
                       </button>
                     )}
-                    {!a.isPrimary && (
+                    {/* Only on a row that needs it. Drawn on every row, a healthy account read as
+                        one asking to be signed in (owner, 2026-10-16). A token that lapsed without
+                        the folder knowing shows up as `needs-relogin` on the next refresh. */}
+                    {!a.isPrimary && (stale || probeNotes[a.id] === 'needs-relogin') && (
                       <button
                         type="button"
-                        className={`btn btn--sm ${stale || probeNotes[a.id] === 'needs-relogin' ? 'btn--primary' : 'btn--secondary'}`}
+                        className="btn btn--sm btn--primary"
                         disabled={busy !== ''}
                         onClick={() => void run(`relogin-${a.id}`, async () => {
                           await api.post('/agent/accounts/relogin', { id: a.id });

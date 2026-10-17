@@ -2,8 +2,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isAgentRequest, isDesktop } from '../desktop.js';
-import { isCloud } from '../cloud-mode.js';
-import { runWorkerOp } from '../cloud-worker.js';
 import { isLoopback } from './agent-spawn-shared.js';
 import { executeClaudeDetached } from '../../lib/automations/runner.js';
 import {
@@ -33,6 +31,8 @@ import { ensureSandbox, sandboxHasIdentity } from '../../lib/claude-account-sand
 import { claudeAuthStatus, resetClaudeAuthCache } from '../../lib/claude-auth.js';
 import { readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
 import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
+import { readAccountRejections } from '../../lib/claude-limit-rejections.js';
+import { chatSpawnAccount } from '../../lib/automations/account.js';
 
 /**
  * The multi-account surface: list the accounts, add one through the CLI's OWN OAuth flow,
@@ -76,6 +76,13 @@ interface AccountWire {
   limits: UsageLimitWire[];
   /** When the CLI last refreshed that cache, so a stale reading can be labelled. */
   fetchedAtMs: number | null;
+  /**
+   * The API REFUSED this account and it stays out until then (`claude-limit-rejections.ts`).
+   * The percentages can trail a refusal, so the row has to say it in so many words: a 97% bar
+   * reads as "nearly full", not as "no chat will be sent here for another hour".
+   */
+  refusedUntil?: number;
+  refusedWindow?: 'session' | 'weekly';
 }
 
 function guard(req: IncomingMessage, res: ServerResponse): boolean {
@@ -87,9 +94,8 @@ function guard(req: IncomingMessage, res: ServerResponse): boolean {
 }
 
 /**
- * List, switch and preferred: also the phone's (hands-free cloud, device session). Adding,
- * signing in again, removing and reordering stay desktop + loopback: a cloud login is the
- * entrypoint's `claude-login` over `gh codespace ssh` (D13), never a route.
+ * List, switch and preferred: also the phone's (Mac mode, device session). Adding, signing in
+ * again, removing and reordering stay desktop + loopback.
  */
 function agentGuard(req: IncomingMessage, res: ServerResponse): boolean {
   if (!isAgentRequest(req)) {
@@ -97,20 +103,6 @@ function agentGuard(req: IncomingMessage, res: ServerResponse): boolean {
     return false;
   }
   return true;
-}
-
-/** Cloud account state (D13): signed in = the sandbox's own `claude auth status --json`
- *  (token presence included), read as dcuser; never the laptop-side identity heuristic. */
-async function cloudAccountState(dir: string): Promise<{ ok: boolean; limits: UsageLimitWire[]; fetchedAtMs: number | null }> {
-  let ok = false;
-  try { ok = (await claudeAuthStatus(dir)).loggedIn === true; } catch { /* unknown = not signed in */ }
-  if (!ok) return { ok, limits: [], fetchedAtMs: null };
-  try {
-    const reading = await runWorkerOp<{ limits: UsageLimitWire[]; fetchedAtMs: number | null }>({ op: 'read', params: { kind: 'usage-limits', configDir: dir }, timeoutMs: 30_000 });
-    return { ok, limits: reading.limits ?? [], fetchedAtMs: reading.fetchedAtMs ?? null };
-  } catch {
-    return { ok, limits: [], fetchedAtMs: null };
-  }
 }
 
 /**
@@ -126,22 +118,11 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
   const home = homedir();
   const accounts = listClaudeAccounts(home);
 
-  if (isCloud()) {
-    const wire: AccountWire[] = [];
-    for (const acc of accounts) {
-      const st = await cloudAccountState(resolveConfigDir(acc.id, home));
-      wire.push({
-        id: acc.id, email: acc.email, organizationName: acc.organizationName, tier: acc.tier,
-        preferred: acc.preferred, isPrimary: acc.configDir === null,
-        state: st.ok ? 'ok' : 'needs-relogin', limits: st.limits, fetchedAtMs: st.fetchedAtMs,
-      });
-    }
-    sendJson(res, 200, { accounts: wire, autoSwitch: autoSwitchEnabled(home), switchStrategy: switchStrategyFor(home), switchWeights: switchWeightsFor(home) });
-    return;
-  }
 
+  const refusals = readAccountRejections(home);
   const wire: AccountWire[] = accounts.map((acc) => {
     const dir = acc.configDir ?? home;
+    const refusal = refusals[acc.id];
     const hasIdentity = sandboxHasIdentity(dir, home);
     let limits: UsageLimitWire[] = [];
     let fetchedAtMs: number | null = null;
@@ -160,11 +141,21 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
       state: hasIdentity ? 'ok' : 'needs-relogin',
       limits,
       fetchedAtMs,
+      ...(refusal ? { refusedUntil: refusal.until } : {}),
+      ...(refusal && (refusal.window === 'session' || refusal.window === 'weekly') ? { refusedWindow: refusal.window } : {}),
     };
   });
 
+  // Where a new chat would open RIGHT NOW — the spawn's own decision, not the top row. The top
+  // row is the owner's priority; this is what that priority comes to with the accounts as they
+  // stand. Owner, 2026-10-16: "new sessions start here" sat on an account at 100% that the API
+  // had refused, while new chats were really opening elsewhere.
+  let nextSessionAccountId: string | null = null;
+  try { nextSessionAccountId = chatSpawnAccount({ home }).id; } catch { /* the panel falls back to the top row */ }
+
   sendJson(res, 200, {
     accounts: wire,
+    nextSessionAccountId,
     autoSwitch: autoSwitchEnabled(home),
     switchStrategy: switchStrategyFor(home),
     switchWeights: switchWeightsFor(home),
@@ -374,7 +365,7 @@ export async function handleAgentAccountsPreferred(req: IncomingMessage, res: Se
   const body = await parseJsonBody(req);
   const id = typeof body?.id === 'string' ? body.id : '';
   try {
-    await setPreferredClaudeAccount(id); // the cloud writes it as dcuser: THIS write must land
+    await setPreferredClaudeAccount(id);
   } catch (err) {
     sendError(res, err instanceof ClaudeAccountError ? 422 : 500, 'account_error', (err as Error).message);
     return;
@@ -469,7 +460,7 @@ export async function handleAgentAccountsAutoSwitch(req: IncomingMessage, res: S
     return;
   }
   try {
-    await setAutoSwitchEnabled(body.enabled); // the cloud writes it as dcuser; a failed write is not a 200
+    await setAutoSwitchEnabled(body.enabled);
   } catch (err) {
     sendError(res, 500, 'account_error', (err as Error).message);
     return;

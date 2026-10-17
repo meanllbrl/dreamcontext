@@ -26,7 +26,6 @@ import type { ProjectRollup } from '../sleepy/agentStatus';
 import { ProjectInstance, type PendingAppLink, type PendingStartIntent } from '../../ProjectInstance';
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
 import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
-import { HandsfreeBanner } from '../handsfree/HandsfreeBanner';
 import { HandsfreeButton } from '../handsfree/HandsfreeButton';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
@@ -948,7 +947,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       <div className="window-chrome">
         <div className="window-chrome-banners" ref={bannersRef}>
           <UpgradeRelaunchBanner />
-          <HandsfreeBanner />
           <StaleServerBanner />
         </div>
 

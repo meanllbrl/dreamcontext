@@ -2,7 +2,6 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { mediaContentType, serveMedia } from './media.js';
-import { isCloud } from './cloud-mode.js';
 import { isPhoneSocket } from './phone-origin.js';
 import { findRetainedAsset, retainBuildAssets } from './retained-assets.js';
 
@@ -41,28 +40,24 @@ export function cacheControlFor(pathname: string, ext: string): string {
   return 'public, max-age=31536000, immutable';
 }
 
-/** The flag the dashboard reads synchronously before its first render (`dashboard/src/lib/cloudSurface.ts`). */
-export const CLOUD_SURFACE_META = '<meta name="dreamcontext-surface" content="cloud" />';
-
-/** The same flag for a Mac-mode phone socket: the phone surface, minus trip/phase/quiesce. */
+/** The flag the dashboard reads synchronously before its first render
+ *  (`dashboard/src/lib/phoneSurface.ts`): a Mac-mode phone socket. */
 export const MAC_SURFACE_META = '<meta name="dreamcontext-surface" content="mac" />';
 
-export type IndexSurface = 'cloud' | 'mac' | null;
+export type IndexSurface = 'mac' | null;
 
 /** Which surface marker one request's index.html carries. */
 export function indexSurfaceFor(req: IncomingMessage): IndexSurface {
-  if (isPhoneSocket(req)) return 'mac';
-  return isCloud() ? 'cloud' : null;
+  return isPhoneSocket(req) ? 'mac' : null;
 }
 
 /**
- * The SPA's index.html as served: on the hands-free CLOUD it carries {@link CLOUD_SURFACE_META},
- * on a Mac-mode phone socket {@link MAC_SURFACE_META}, so the page never calls a route its
- * listener refuses (AC4). The SPA index has no CSP (only the phone's own login/sealed pages
- * do), so a plain meta tag is safe. `true`/`false` keep the cloud-only meaning.
+ * The SPA's index.html as served: on a Mac-mode phone socket it carries {@link MAC_SURFACE_META},
+ * so the page knows it is the phone surface before its first render. The SPA index has no CSP
+ * (only the phone's own login/offline pages do), so a plain meta tag is safe.
  */
-export function indexHtmlFor(content: Buffer, surface: boolean | IndexSurface = isCloud()): Buffer {
-  const meta = surface === true || surface === 'cloud' ? CLOUD_SURFACE_META : surface === 'mac' ? MAC_SURFACE_META : null;
+export function indexHtmlFor(content: Buffer, surface: IndexSurface = null): Buffer {
+  const meta = surface === 'mac' ? MAC_SURFACE_META : null;
   if (!meta) return content;
   const html = content.toString('utf8');
   const at = html.search(/<head[^>]*>/i);

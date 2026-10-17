@@ -12,15 +12,10 @@ import {
 import { sendJson, sendError, isForeignOriginUpgrade } from '../middleware.js';
 import { serveMedia } from '../media.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
-import { cloudChatRootRefusal, cloudPhase, cloudWorkDir, isCloud, readFileAsWorker, spawnAsWorker } from '../cloud-mode.js';
-import { isCloudOriginAllowed } from '../middleware.js';
-import { recordCloudAction } from '../cloud-idle.js';
-import { authFor, deviceIdHash, handsfreeAuth, macHandsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
-import { isMacOriginAllowed, isPhoneRequest, isPhoneSocket } from '../phone-origin.js';
+import { authFor, deviceIdHash, macHandsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
+import { isMacExposed, isMacOriginAllowed, isPhoneSocket, phoneTranscriptRefused } from '../phone-origin.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HOLDER_PROBE_MS, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
-import { runWorkerOp } from '../cloud-worker.js';
-import { handsfreeSpawnRefusal } from '../../lib/peer-delivery.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
@@ -48,7 +43,7 @@ import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js
 import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
-import { awaitClaudeAccountIdle, claudeAuthStatus, CLOUD_AUTH_MAX_WAIT_MS } from '../../lib/claude-auth.js';
+import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import {
   accountEnvFor, autoSwitchEnabled, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir, sandboxDirFor,
   switchStrategyFor, switchWeightsFor,
@@ -57,17 +52,18 @@ import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-s
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
 import { readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse } from '../../lib/claude-usage.js';
 import {
-  SWITCH_THRESHOLD_PERCENT, chooseAccount, shouldProbe, shouldSwitchAway, type AccountReading,
+  SWITCH_THRESHOLD_PERCENT, chooseAccount, provenPastThreshold, shouldProbe, shouldSwitchAway, type AccountReading, type ChooseResult,
 } from '../../lib/claude-account-switch.js';
 import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
-import { readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
+import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
+import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
-import { registerChat, isDelegatedConversation, listChats, type ChatHandle } from '../../lib/assistant/chat-registry.js';
+import { registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -322,11 +318,9 @@ export function assistantSettingArgs(isAssistant: boolean): string[] {
 /**
  * Does this spawn get the user's MCP servers through the shared `--mcp-config` file? A sandboxed
  * account always does (its own config has none). So does the Assistant on the real account,
- * because {@link assistantSettingArgs} cut it off from `~/.claude.json`'s user scope. Never in
- * the cloud.
+ * because {@link assistantSettingArgs} cut it off from `~/.claude.json`'s user scope.
  */
-export function sharesUserMcp(o: { isAssistant: boolean; isRealHomeAccount: boolean; cloud: boolean }): boolean {
-  if (o.cloud) return false;
+export function sharesUserMcp(o: { isAssistant: boolean; isRealHomeAccount: boolean }): boolean {
   return !o.isRealHomeAccount || o.isAssistant;
 }
 
@@ -334,20 +328,6 @@ export function sharesUserMcp(o: { isAssistant: boolean; isRealHomeAccount: bool
  * `--mcp-config` is variadic (`<configs...>`): every file rides in ONE flag, and the flag must
  * stay the LAST argv element or it swallows whatever follows. Null entries drop out.
  */
-/** A POSIX single-quoted shell word: the shell takes any content verbatim (' becomes '\''). */
-export function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-/**
- * The cloud's mode-note hook command: the hook output itself, base64 (only [A-Za-z0-9+/=], no
- * quote or shell metacharacter), decoded at run time. No file: the hook runs as dcuser, which
- * cannot open a file the server (dcserver) wrote 0600.
- */
-export function inlineModeNoteCommand(hookOutput: string): string {
-  return `echo ${Buffer.from(hookOutput, 'utf-8').toString('base64')} | base64 -d`;
-}
-
 /** bash/zsh's own noise when `-i` runs without a terminal: never the error the user needs to see. */
 const SHELL_JOB_CONTROL_NOISE = [
   /^(?:\/bin\/)?(?:ba)?sh: cannot set terminal process group \(-?\d+\): Inappropriate ioctl for device\s*$/,
@@ -629,9 +609,9 @@ export function shouldRejectAutomationResume(
 
 // ─── WS upgrade ─────────────────────────────────────────────────────────────────────
 
-// ─── Cloud device sockets follow their device (AC3) ─────────────────────────────────
+// ─── Phone device sockets follow their device (AC3) ─────────────────────────────────
 //
-// The cloud checks a device session when a chat socket opens. A socket already open, and the
+// Mac mode checks a device session when a phone chat socket opens. A socket already open, and the
 // child it drives (detached or not), must not outlive its device: revoke-all, a password
 // change and a single logout notify handsfree-auth's listener, and every session whose owning
 // device is no longer valid is closed with 4401 and cut. Each frame re-checks too (defence in
@@ -646,28 +626,34 @@ export const DEVICE_REVOKED_CLOSE = 4401;
  * device of the socket bound to it RIGHT NOW (kept across a detach, cleared the moment a
  * desktop socket adopts it), whoever spawned it.
  */
-export interface DeviceTag { store: 'mac' | 'cloud'; idHash: string }
+export interface DeviceTag { store: 'mac'; idHash: string }
 
 const socketDevice = new WeakMap<object, DeviceTag>();
+/** Whether a phone socket last said its chat is visible on screen (`{type:'visibility'}`). */
+const socketVisible = new WeakMap<object, boolean>();
+
+/**
+ * The device (id hash) whose phone shows chat `sessionId` (its pin id) on screen right now, or
+ * null: the chat's live holder is a phone socket that said it is visible. A chat the laptop
+ * holds, or an unpinned one (no live entry), suppresses nothing.
+ */
+export function phoneDeviceShowing(sessionId: string): string | null {
+  const holder = findLiveChat(sessionId)?.holder?.() ?? null;
+  if (!holder) return null;
+  const tag = socketDevice.get(holder);
+  return tag && socketVisible.get(holder) === true ? tag.idHash : null;
+}
 /** Every live chat session in this process — desktop-spawned ones included, because a phone
  *  may adopt any of them. */
 const deviceSessions = new Set<{ device: () => DeviceTag | null; revoke: () => void; releasePhone: () => boolean }>();
 let deviceRevocationArmed = false;
 
-export function tagCloudDeviceSocket(ws: object, idSha256: string): void {
-  socketDevice.set(ws, { store: 'cloud', idHash: idSha256 });
-}
-
 export function tagDeviceSocket(ws: object, tag: DeviceTag): void {
   socketDevice.set(ws, tag);
 }
 
-function storeOf(tag: DeviceTag) {
-  return tag.store === 'mac' ? macHandsfreeAuth().store : handsfreeAuth().store;
-}
-
 function deviceStillValid(tag: DeviceTag): boolean {
-  return storeOf(tag).isValidDeviceHash(tag.idHash);
+  return macHandsfreeAuth().store.isValidDeviceHash(tag.idHash);
 }
 
 function armDeviceRevocation(): void {
@@ -713,13 +699,76 @@ export function deviceSessionCountForTests(): number {
 export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only in the desktop app.'); return; }
   const byPath = new Map(listVaults().map((v) => [v.path.replace(/\/+$/, ''), v.name]));
-  const chats: LiveChatWire[] = liveChatsSnapshot()
+  // A phone sees only the chosen projects' chats (AC16), never an unregistered folder's.
+  const phone = isPhoneSocket(req);
+  const visible = (vault: string | null): boolean => !phone || (vault !== null && isMacExposed(vault));
+  const registry = listChats();
+  const snapshot = liveChatsSnapshot();
+  const chats: LiveChatWire[] = snapshot
     .filter((e) => !e.draining)
     .map((e) => {
       const vault = byPath.get(e.projectRoot.replace(/\/+$/, '')) ?? null;
-      return { conversationId: e.conversationId, vault, title: vault ? liveChatTitle(e.projectRoot, e.conversationId) : null, busy: e.busy };
-    });
-  sendJson(res, 200, { chats });
+      const entries = registry.filter((r) => r.conversationId === e.conversationId);
+      return {
+        conversationId: e.conversationId, vault, title: vault ? liveChatTitle(e.projectRoot, e.conversationId) : null,
+        busy: e.busy, state: liveChatState(e.busy, entries.map((r) => r.status)),
+        lastLine: vault ? liveChatLastLine(entries) : null,
+        updatedAt: liveChatUpdatedAt(e, entries),
+      };
+    })
+    .filter((c) => visible(c.vault));
+  // AC18: conversations still finishing after a takeover — never listed as a past chat either.
+  const draining = snapshot
+    .filter((e) => e.draining && visible(byPath.get(e.projectRoot.replace(/\/+$/, '')) ?? null))
+    .map((e) => e.conversationId);
+  sendJson(res, 200, { chats, draining });
+}
+
+/** AC18: what the drawer says about a live chat. A question waiting wins; then a turn running
+ *  (the live entry's own `busy`, or a registry entry working); else idle. A chat that is only
+ *  `starting` has been sent nothing (the CLI announces itself on the first message; a sent
+ *  message makes it busy), so it is idle: "Working" there would never end. */
+export function liveChatState(busy: boolean, statuses: readonly ChatStatus[]): LiveChatWire['state'] {
+  const live = statuses.filter((s) => s !== 'gone');
+  if (live.includes('asking')) return 'asking';
+  if (busy || live.includes('working')) return 'working';
+  return 'idle';
+}
+
+/** AC21: when a live chat last moved (epoch ms), for the list's age: a turn starting or ending,
+ *  or a registry entry changing state (a question, a permission). null when none is known. */
+export function liveChatUpdatedAt(
+  e: { turnStartedAt: number | null; lastTurnEndedAt: number | null },
+  entries: readonly Pick<ChatEntry, 'updatedAt'>[],
+): number | null {
+  const times = [e.turnStartedAt ?? 0, e.lastTurnEndedAt ?? 0, ...entries.map((r) => Date.parse(r.updatedAt) || 0)];
+  const newest = Math.max(...times);
+  return newest > 0 ? newest : null;
+}
+
+/** AC19: the one line the phone stack shows under a live chat. A waiting question wins (its text);
+ *  a permission shows only its TOOL NAME (never the command or path, as the push does); else the
+ *  last line of the newest assistant text. Whitespace collapsed, clipped to 140 with `…`. */
+export function liveChatLastLine(entries: readonly Pick<ChatEntry, 'status' | 'pendingQuestion' | 'lastAssistantText'>[]): string | null {
+  const live = entries.filter((e) => e.status !== 'gone');
+  const clip = (t: string): string | null => {
+    const one = t.replace(/\s+/g, ' ').trim();
+    if (!one) return null;
+    return one.length > 140 ? `${one.slice(0, 139)}…` : one;
+  };
+  const asking = live.find((e) => e.pendingQuestion);
+  if (asking?.pendingQuestion) {
+    const q = asking.pendingQuestion;
+    return q.isPermission ? clip(q.toolName) : clip(q.text.split('\n').find((l) => l.trim()) ?? '');
+  }
+  for (const e of [...live].reverse()) {
+    const newest = e.lastAssistantText[e.lastAssistantText.length - 1];
+    if (!newest) continue;
+    const lines = newest.split('\n').map((l) => l.trim()).filter(Boolean);
+    const line = clip(lines[lines.length - 1] ?? '');
+    if (line) return line;
+  }
+  return null;
 }
 
 /** The tab title a live conversation carries in the desktop roster (or the phone's), if any. */
@@ -844,13 +893,8 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // (the listener's upgrade gate checked these first; again here so this never relies on
       // its order). The Assistant never runs for a phone.
       if (assistant || !isAgentRequest(req) || !isMacOriginAllowed(req)) { rejectUpgrade(socket, 403); return; }
-    } else if (isCloud()) {
-      // Hands-free cloud: GitHub's forwarder makes every peer loopback, so only a live device
-      // session, our own Origin and phase active open a chat (the cloud gate checked these
-      // before the upgrade was emitted; checked again here so this listener never relies on
-      // its order). The Assistant never runs in the cloud.
-      if (assistant || !isAgentRequest(req) || !isCloudOriginAllowed(req)) { rejectUpgrade(socket, 403); return; }
-      if (cloudPhase() !== 'active') { rejectUpgrade(socket, 403); return; }
+      // AC16: only the projects chosen at start — a chat of any other project is refused.
+      if (!isMacExposed(vault)) { rejectUpgrade(socket, 403); return; }
     } else if (assistant) {
       if (!isDesktop() || !isLoopback(req)) { rejectUpgrade(socket, 403); return; }
       // …and only from the app's own pages: a website the owner visits is loopback too.
@@ -936,11 +980,17 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // OTHER connection naming it is a respawn (account, mode, Resume) and the child must give
       // the conversation up, exactly as a closed socket made it do before detaching existed.
       const live = findLiveChat(resumeId);
-      const adoptable = reattach && live && live.projectRoot === projectRoot ? live : null;
+      const ctx = join(projectRoot, '_dream_context');
+      const open = chatOpenDecision({
+        phone, live, projectRoot, reattach,
+        foreignTranscript: phone && [resumeId, sessionId].some((cid) => !!cid && phoneTranscriptRefused(req, ctx, liveTranscriptPath(ctx, cid))),
+      });
+      if (open.refuse) { rejectUpgrade(socket, 403); return; }
+      const adoptable = open.adopt;
       // PROVISIONAL: a second tab opening the same conversation is refused below while the
       // first one still holds it, and a refused open must not cost the first pane its detach.
       // So the mark is withdrawn unless this open is actually accepted.
-      let pendingSupersede = live && !reattach ? live.supersede() : null;
+      let pendingSupersede = open.supersede ? open.supersede.supersede() : null;
       const settleSupersede = (accepted: boolean): void => {
         pendingSupersede?.(accepted);
         pendingSupersede = null;
@@ -954,19 +1004,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // target, or the conversation reads as still-held and the spawn silently starts a new,
       // unpinned one. No-op unless a resume was asked for and is genuinely still held.
       if (!adoptable) await awaitResumeHandoff(join(projectRoot, '_dream_context'), resumeId);
-      // Cloud (AC17): a sign-in check may be refreshing this account's token right now; a chat
-      // started under it hits the CLI's refresh lock on its first turn. Wait for it (bounded);
-      // other accounts never wait.
-      if (isCloud() && !adoptable) {
-        await awaitCloudChatAccount(account);
-        if (socket.destroyed) return;
-      }
 
       const wss = new WebSocketServer({ noServer: true });
-      // A phone (the cloud, or a Mac-mode phone socket): the device this socket proved (its
-      // store and its id's hash) owns whatever it opens or adopts.
-      const deviceHash = isPhoneRequest(req) && authFor(req) ? deviceIdHash(req) : null;
-      const deviceTag: DeviceTag | null = deviceHash ? { store: phone ? 'mac' : 'cloud', idHash: deviceHash } : null;
+      // A Mac-mode phone socket: the device this socket proved (its id's hash) owns whatever it
+      // opens or adopts.
+      const deviceHash = phone && authFor(req) ? deviceIdHash(req) : null;
+      const deviceTag: DeviceTag | null = deviceHash ? { store: 'mac', idHash: deviceHash } : null;
       wss.handleUpgrade(req, socket, head, (ws) => {
         if (deviceTag) tagDeviceSocket(ws, deviceTag);
         if (adoptable && passive) {
@@ -997,52 +1040,36 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         let accepted = false;
         startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
         settleSupersede(accepted);
-        // D14: opening a session is a real owner action (a reattach is not: it is a reconnect).
-        if (accepted) recordCloudAction();
       });
     })();
   });
 }
 
 /**
- * Cloud (AC17): resolve until no sign-in check or token refresh we started is running against
- * the account this chat will spawn on (at most {@link CLOUD_AUTH_MAX_WAIT_MS}). An account that
- * does not resolve waits for nothing: `startChatSession` reports that refusal itself.
+ * What a chat open does with the live child already holding its conversation (if any).
+ * A reattach ADOPTS it; any other open naming it is a respawn and SUPERSEDES it (the child gives
+ * the conversation up). Both only within the SAME project: a tab of another project naming the
+ * id displaces nothing (it is then refused as held, downstream). A phone (AC16) is refused
+ * outright when the conversation runs under another project, or its transcript belongs to a
+ * project the owner did not choose; the running chat is left untouched.
  */
-export async function awaitCloudChatAccount(account: string, maxWaitMs: number = CLOUD_AUTH_MAX_WAIT_MS): Promise<void> {
-  let dir: string;
-  try { dir = resolveConfigDir(account || null); } catch { return; }
-  await awaitClaudeAccountIdle(dir, maxWaitMs);
+export function chatOpenDecision<L extends { projectRoot: string }>(o: {
+  phone: boolean; live: L | null | undefined; projectRoot: string; reattach: boolean; foreignTranscript: boolean;
+}): { refuse: true } | { refuse: false; adopt: L | null; supersede: L | null } {
+  const same = !!o.live && o.live.projectRoot === o.projectRoot;
+  if (o.phone && ((o.live && !same) || o.foreignTranscript)) return { refuse: true };
+  return { refuse: false, adopt: o.reattach && same ? o.live! : null, supersede: !o.reattach && same ? o.live! : null };
 }
 
-/**
- * The credential dir an account's turns run on, for the switch decision. On the laptop it is the
- * register's own `configDir` (account #0 = the real HOME); on the hands-free cloud EVERY account,
- * the laptop's #0 included, runs on its own sandbox (D13, `resolveConfigDir`), and the real
- * ~/.claude there holds no login.
- */
+/** The credential dir an account's turns run on, for the switch decision: the register's own
+ *  `configDir` (account #0 = the real HOME). */
 function accountDecisionDir(acc: { id: string; configDir: string | null }): string {
-  return isCloud() ? sandboxDirFor(acc.id) : (acc.configDir ?? homedir());
+  return acc.configDir ?? homedir();
 }
 
-/**
- * One account's reading for the switch decision. The laptop probes (`probeAccountForDecision`).
- * The cloud cannot: that probe seeds the sandbox as the server, and dcserver may not write into
- * dcuser's 0700 sandbox, so every candidate read as `unknown` and nothing was ever eligible. The
- * cloud asks what its account list asks (D13): the sandbox's own `claude auth status --json`,
- * then its cached usage read as dcuser. Signed in with no current numbers is
- * `healthy-unmeasured` (a last-resort target), never "unreadable".
- */
+/** One account's reading for the switch decision. */
 async function readAccountForDecision(dir: string): Promise<ProbeOutcome> {
-  if (!isCloud()) return probeAccountForDecision(dir);
-  const auth = await claudeAuthStatus(dir);
-  if (auth.loggedIn === false) return { status: 'needs-relogin', reason: 'This account is signed out on the cloud.' };
-  if (auth.loggedIn !== true) return { status: 'unknown', reason: auth.error ?? 'The sign-in check did not answer.' };
-  try {
-    const reading = await runWorkerOp<UsageLimitsResponse>({ op: 'read', params: { kind: 'usage-limits', configDir: dir }, timeoutMs: 30_000 });
-    if (reading.limits.length > 0 && usageReadingIsCurrent(reading)) return { status: 'ok', limits: reading };
-  } catch { /* no reading: still signed in */ }
-  return { status: 'healthy-unmeasured', reason: 'Signed in on the cloud; no current usage numbers.' };
+  return probeAccountForDecision(dir);
 }
 
 // ─── Chat session (child_process ↔ WebSocket bridge) ──────────────────────────────────
@@ -1109,6 +1136,94 @@ const INTERRUPT_KILL_GRACE_MS = 1500;
 const BLIND_PROBE_COOLDOWN_MS = 60_000;
 
 /**
+ * Below this much context, a conversation may change account WITHOUT being forced to — the
+ * point where a move costs little, which in practice is a fresh session or the first turns
+ * after a handoff or a compaction (this machine's sessions open at ~40-65k: system prompt,
+ * tools and the SessionStart snapshot).
+ *
+ * The prompt cache belongs to the ORGANIZATION. A conversation moved to an account of another
+ * organization re-reads its whole context uncached on the first request there, and that read
+ * is billed to the very quota the move was meant to spare. Owner, 2026-10-16: a switch should
+ * not be made with a full session, it should happen after a handoff or in a new session. So
+ * two rules hang off this number:
+ *   • coming HOME (a move nothing forces) happens only under it;
+ *   • a FORCED move above it stays inside the conversation's organization when it can
+ *     (`keepOrg` in `chooseAccount`), where the cache survives the move.
+ */
+export const CHEAP_MOVE_MAX_CONTEXT_TOKENS = 80_000;
+
+/**
+ * Why a pane is being moved. `come_home` is the one move nothing forces: the account above
+ * this one in the owner's list can serve again and the conversation is small enough to move
+ * cheaply. The client draws it as its own notice (chatProtocol's `account_switch`).
+ */
+type SwitchCause = 'limit_near' | 'needs_relogin' | 'limit_hit' | 'limit_known' | 'come_home';
+
+/**
+ * Panes whose account the SYSTEM chose, keyed by pinned conversation id → that account.
+ *
+ * A respawn always names its account on the URL, so the URL alone cannot tell "the owner
+ * picked this" from "auto-switch moved us here" — and treating every move as a hand pick is
+ * how a session never came home. A pane counts as auto-placed when it opened with no account
+ * (the default chose) or reopened on exactly the account the system last moved it to;
+ * anything else is a hand pick and stays put.
+ *
+ * Bounded (oldest dropped past {@link AUTO_PLACED_MAX}): an entry outlives its process on
+ * purpose, because the respawn that reads it is a new process. Lost on a server restart,
+ * which is harmless — restored tabs open with no account and are auto-placed again.
+ */
+const autoPlacedAccounts = new Map<string, string>();
+
+/**
+ * The account each pane was last FORCED off (by pinned conversation id), and until when it may
+ * not come home to it.
+ *
+ * Coming home decides from DISK (`chatSpawnAccount`); a forced move decides from a live probe
+ * whose number is never written down. The two disagree exactly at the threshold — disk 89%,
+ * probe 90% — so without this a small chat was forced off, came home on the next message, was
+ * forced off again, every message. Kept until the binding window resets (30 min when that is
+ * unknown, e.g. a sign-out), or until that account serves a turn somewhere after the move, which
+ * puts a fresh reading on disk that the two paths then share.
+ */
+const forcedOffAccounts = new Map<string, { accountId: string; at: number; until: number }>();
+const FORCED_OFF_DEFAULT_MS = 30 * 60_000;
+/**
+ * How far under the switch threshold an account just forced off must read before a pane goes
+ * back to it early (`meterShowsRoomSince`). Two points covers the disk/probe disagreement at the
+ * threshold (the meter rounds to a tenth) without waiting for a reset that has plainly come.
+ */
+const COME_HOME_MARGIN_PERCENT = 2;
+
+/**
+ * The account the OWNER picked for each pane, by pinned conversation id.
+ *
+ * A hand-picked account stays put, and when a limit forces the pane off it, that account is
+ * where the pane goes home to — not the top of the list, which the owner chose not to use here.
+ * Set when a pane opens on an account the system did not place; cleared when a pane opens with
+ * no account at all (a restored tab, where the pick is already gone).
+ */
+const handPickedAccounts = new Map<string, string>();
+
+const AUTO_PLACED_MAX = 500;
+/** Set one pane's entry, newest last, dropping the oldest past {@link AUTO_PLACED_MAX}. */
+function notePane<V>(map: Map<string, V>, conversationId: string, value: V): void {
+  if (!conversationId) return;
+  map.delete(conversationId);
+  map.set(conversationId, value);
+  while (map.size > AUTO_PLACED_MAX) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+function noteForcedOff(conversationId: string, entry: { accountId: string; at: number; until: number }): void {
+  if (entry.accountId) notePane(forcedOffAccounts, conversationId, entry);
+}
+function noteAutoPlaced(conversationId: string, accountId: string): void {
+  if (accountId) notePane(autoPlacedAccounts, conversationId, accountId);
+}
+
+/**
  * How long an announced account switch may stay unperformed, counted from the turn boundary
  * with a socket attached, before the held messages are sent on the current account instead.
  * The client restarts the instant it reads `turnInFlight: false`, so a minute only elapses when
@@ -1156,13 +1271,6 @@ function closeLingerMs(): number {
 /** After the linger window's SIGTERM, how long to wait before SIGKILL. */
 export const CLOSE_KILL_GRACE_MS = 5000;
 
-/** Drop undefined values (the worker env takes strings only). */
-function definedEnv(env: Record<string, string | undefined>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) if (typeof v === 'string') out[k] = v;
-  return out;
-}
-
 /** Exported for tests (agent-chat-close-reap.test.ts drives it with a mocked spawn + a
  *  fake ws to pin the socket-gone → drain → kill lifecycle); production callers reach it
  *  only through `attachAgentChat`'s upgrade handler. */
@@ -1180,31 +1288,6 @@ export function startChatSession(
   let ownerDevice: DeviceTag | null = socketDevice.get(initialWs) ?? null;
   const { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt } = opts;
 
-  // Hands-free cloud: only phase active spawns (quiescing = the laptop is taking the project
-  // back; sealed = it has). Covers a respawn in place too, not only a new socket.
-  if (isCloud() && cloudPhase() !== 'active') {
-    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'cloud_quiescing', message: 'Your laptop is taking this project back; no new agent starts now.' })); } catch { /* gone */ }
-    try { ws.close(); } catch { /* already closed */ }
-    return;
-  }
-  // Smoke #5 (Critical): in the cloud an agent runs ONLY inside the trip's own roots, never in
-  // the codespace's checkout or wherever else a name resolves; anything else is refused here,
-  // at the one chokepoint every chat spawn (and respawn) passes.
-  const outsideTrip = isCloud() ? cloudChatRootRefusal(projectRoot) : null;
-  if (outsideTrip) {
-    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'cloud_not_trip', message: outsideTrip })); } catch { /* gone */ }
-    try { ws.close(); } catch { /* already closed */ }
-    return;
-  }
-  // Hands-free (AC6): while this project is away in the cloud, the laptop never starts an
-  // agent inside it — the cloud copy is the live one, and work here would be lost at Return.
-  // One message for every spawn chokepoint (lane F's peer-delivery.ts).
-  const refusal = isCloud() ? null : handsfreeSpawnRefusal(projectRoot);
-  if (refusal) {
-    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'handsfree_away', message: `Refused: ${refusal}.` })); } catch { /* gone */ }
-    try { ws.close(); } catch { /* already closed */ }
-    return;
-  }
   const contextRoot = join(projectRoot, '_dream_context');
   const isAssistant = mode === 'assistant';
   const assistantConfig = isAssistant ? (readAssistantConfig() ?? DEFAULT_ASSISTANT_CONFIG) : null;
@@ -1227,13 +1310,11 @@ export function startChatSession(
   // cache already shows as full (or a recorded refusal) is skipped here, so the chat opens on
   // one with room instead of restarting on the first message (`chatSpawnAccount`). An account
   // somebody picked is never second-guessed at spawn.
-  const spawnAccount = account || (isCloud() ? '' : (chatSpawnAccount().id ?? ''));
+  const spawnAccount = account || (chatSpawnAccount().id ?? '');
   let accountConfigDir: string;
   try {
     accountConfigDir = resolveConfigDir(spawnAccount || null);
-    // In the cloud the sandbox is dcuser's (0700): the entrypoint's `claude-login` built it as
-    // dcuser (D13), and dcserver must not write into it.
-    if (!isCloud()) ensureSandbox(accountConfigDir);
+    ensureSandbox(accountConfigDir);
   } catch (err) {
     // A named refusal, not a silent fallback to some other account.
     try {
@@ -1244,10 +1325,10 @@ export function startChatSession(
   }
   const accountEnv = accountEnvFor(accountConfigDir);
   const isRealHomeAccount = isRealHomeConfigDir(accountConfigDir);
-  const mcpConfigPath = sharesUserMcp({ isAssistant, isRealHomeAccount, cloud: isCloud() }) ? ensureSharedMcpConfig() : null;
+  const mcpConfigPath = sharesUserMcp({ isAssistant, isRealHomeAccount }) ? ensureSharedMcpConfig() : null;
   // The Assistant's hands (mouse, keyboard, screen — computer-mcp.ts): its spawn ONLY, macOS
   // only. Each call is an MCP tool call, so under `ask` the owner approves it in the notch.
-  const computerMcpPath = isAssistant && process.platform === 'darwin' && !isCloud() ? ensureComputerMcpConfig() : null;
+  const computerMcpPath = isAssistant && process.platform === 'darwin' ? ensureComputerMcpConfig() : null;
   // Recorded beside `spawnAuthEpoch` so the live panel can be labelled with the account it is
   // really billing, and so the chooser knows which account NOT to move away from on a tie.
   const activeAccountId = spawnAccount
@@ -1265,6 +1346,12 @@ export function startChatSession(
     (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
   ) ?? '';
   const pinId = resumeId || sessionId;
+  // Who chose this pane's account — see `autoPlacedAccounts`. Only an auto-placed pane comes home.
+  const accountAutoPlaced = !account || autoPlacedAccounts.get(pinId) === account;
+  if (accountAutoPlaced) noteAutoPlaced(pinId, activeAccountId);
+  else autoPlacedAccounts.delete(pinId);
+  if (!account) handPickedAccounts.delete(pinId);
+  else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
   const freshPin = !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
     ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
@@ -1344,8 +1431,8 @@ export function startChatSession(
   const scopedCard = !!envelope?.permissionArgs;
   // The project's Playwright MCP, re-declared headless with a loopback CDP port so its browser
   // never takes the screen and the pane can show it live (browser-override.ts). Not for a
-  // scoped card (no MCP at all) and not in the cloud (no screen to protect, no port to share).
-  const browserOverride = scopedCard || isCloud() ? null : prepareBrowserOverride(projectRoot);
+  // scoped card (no MCP at all).
+  const browserOverride = scopedCard ? null : prepareBrowserOverride(projectRoot);
 
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
@@ -1386,12 +1473,9 @@ export function startChatSession(
   if (initialPrompt && deferPrompt) {
     submitPrompt = '';
     if (!resumeTarget) {
-      // The cloud's child runs as dcuser, and its UserPromptSubmit hook must read AND delete this
-      // file: it goes into dcuser's own 2770 work dir (group dcwork, a fresh random name, O_EXCL),
-      // never dcserver's 0600 /tmp file the hook cannot open.
-      const parked = join(isCloud() ? cloudWorkDir() : tmpdir(), `dreamcontext-deferred-${randomUUID()}.txt`);
+      const parked = join(tmpdir(), `dreamcontext-deferred-${randomUUID()}.txt`);
       try {
-        writeFileSync(parked, initialPrompt, isCloud() ? { encoding: 'utf-8', mode: 0o640, flag: 'wx' } : { encoding: 'utf-8', mode: 0o600 });
+        writeFileSync(parked, initialPrompt, { encoding: 'utf-8', mode: 0o600 });
         deferredEnv = { DREAMCONTEXT_DEFERRED_PROMPT: parked };
         cleanupDeferred = () => { try { rmSync(parked, { force: true }); } catch { /* tmp cleanup */ } };
       } catch { /* degrade to promptless boot */ }
@@ -1405,8 +1489,6 @@ export function startChatSession(
   // degrades to the un-briefed agent we had before, never to a failed spawn.
   let briefingArg: string[] = [];
   let cleanupBriefing = () => { /* nothing written */ };
-  /** Cloud-only argv values carried INLINE (prose / JSON): single-quoted into the script. */
-  const inlineArgs = new Set<string>();
   // The project's approved agents, callable as sub-agents from any Chat tab (not the Assistant's,
   // not a card's): an `--agents` definition each, and a roster in the briefing so the model knows
   // it can (lib/automations/chat-subagents.ts). Read at every spawn, so a new or re-approved agent
@@ -1421,16 +1503,12 @@ export function startChatSession(
   if (subagents) {
     try {
       const json = JSON.stringify(subagents.agents);
-      if (isCloud()) {
-        agentsArg = ['--agents', json];
-        inlineArgs.add(json);
-      } else {
-        const file = join(tmpdir(), `dreamcontext-chat-agents-${randomUUID()}.json`);
-        if (!isShellSafePath(file)) throw new Error('unsafe tmpdir');
-        writeFileSync(file, json, { encoding: 'utf-8', mode: 0o600 });
-        agentsArg = ['--agents', file];
-        cleanupAgents = () => { try { rmSync(file, { force: true }); } catch { /* tmp cleanup */ } };
-      }
+      const file = join(tmpdir(), `dreamcontext-chat-agents-${randomUUID()}.json`);
+      if (!isShellSafePath(file)) throw new Error('unsafe tmpdir');
+      writeFileSync(file, json, { encoding: 'utf-8', mode: 0o600 });
+      agentsArg = ['--agents', file];
+      cleanupAgents = () => { try { rmSync(file, { force: true }); } catch { /* tmp cleanup */ } };
+      
     } catch { agentsArg = []; subagents = null; }
   }
   try {
@@ -1461,16 +1539,10 @@ export function startChatSession(
     // when their file could not be written), so the model is never told about agents it lacks.
     const modeBrief = [ownBrief, subagents?.roster ?? ''].filter(Boolean).join('\n\n');
     const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
-    if (isCloud()) {
-      // The cloud's child (dcuser) cannot open dcserver's 0600 file: the text rides inline,
-      // single-quoted into the script (see `inlineArgs`), with no file anyone could swap.
-      briefingArg = ['--append-system-prompt', briefing];
-      inlineArgs.add(briefing);
-    } else {
-      writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
-      briefingArg = ['--append-system-prompt-file', brief];
-      cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
-    }
+    writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
+    briefingArg = ['--append-system-prompt-file', brief];
+    cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
+    
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
 
   // ── A RESUMED conversation is told its mode — its system prompt cannot be ───────────
@@ -1495,37 +1567,23 @@ export function startChatSession(
       if (state && sources.length) {
         const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
         const note = modeNoteHookOutput(modeSwitchNote(state.held, mode, brief));
-        if (isCloud()) {
-          // The hook runs as dcuser: no dcserver file to `cat`; the note itself rides in the
-          // (inline) settings, base64 so the command holds no quote or shell metacharacter.
-          Object.assign(spawnSettings, JSON.parse(modeNoteSettings(inlineModeNoteCommand(note), sources)));
-        } else {
-          const id = randomUUID();
-          const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
-          if (!isShellSafePath(out)) throw new Error('unsafe tmpdir');
-          writeFileSync(out, note, { encoding: 'utf-8', mode: 0o600 });
-          tmpFiles.push(out);
-          Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${out}"`, sources)));
-        }
+        const id = randomUUID();
+        const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
+        if (!isShellSafePath(out)) throw new Error('unsafe tmpdir');
+        writeFileSync(out, note, { encoding: 'utf-8', mode: 0o600 });
+        tmpFiles.push(out);
+        Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${out}"`, sources)));
+        
       }
     } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
   }
   try {
-    if (isCloud()) {
-      // `--settings` takes a JSON string too (claude --help: <file-or-json>). Inline in the
-      // cloud: the dcuser child could not read dcserver's 0600 file (smoke #4: every phone chat
-      // died with EACCES), and a file in a dir dcuser can write could be swapped by another
-      // agent to drop these carve-outs. Nothing on disk at all.
-      const json = JSON.stringify(spawnSettings);
-      modeNoteArg = ['--settings', json];
-      inlineArgs.add(json);
-    } else {
-      const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
-      if (!isShellSafePath(settings)) throw new Error('unsafe tmpdir');
-      writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
-      tmpFiles.push(settings);
-      modeNoteArg = ['--settings', settings];
-    }
+    const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
+    if (!isShellSafePath(settings)) throw new Error('unsafe tmpdir');
+    writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
+    tmpFiles.push(settings);
+    modeNoteArg = ['--settings', settings];
+    
   } catch { /* no carve-outs and no mode note this spawn — auto mode keeps its defaults */ }
   if (tmpFiles.length) {
     cleanupModeNote = () => {
@@ -1594,12 +1652,7 @@ export function startChatSession(
   // value (UUID / model alias / effort level), so plain double-quoting is sufficient —
   // none of them can contain a shell metacharacter. (`Bash(dreamcontext assistant:*)` is a
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
-  // The cloud's inline prose/JSON (`inlineArgs`) can hold anything: single-quoted, which the
-  // shell takes verbatim. Every other element keeps the double quotes above.
-  // In the cloud the login shell's own init (`bash -ilc`: /etc/profile, profile.d, bashrc) may
-  // change directory; smoke #5's chat ran in the codespace's checkout. The script itself goes to
-  // the trip root first, and claude never starts anywhere else.
-  const script = `${isCloud() ? `cd -- ${shellSingleQuote(projectRoot)} && ` : ''}exec claude ${argv.map((a) => (inlineArgs.has(a) ? shellSingleQuote(a) : `"${a}"`)).join(' ')}`;
+  const script = `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
 
   // An agent-chat process exports its tab's STABLE roster id so the SessionStart/Stop
   // hooks (which inherit this env through `claude`) record roster id → live conversation
@@ -1640,19 +1693,8 @@ export function startChatSession(
     })
     : null;
   const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
-  // The cloud spawns every agent as dcuser through the one worker chokepoint: an allow-listed
-  // env (never the server's own, so no DC_HF_*, transfer secret or GitHub token), only THIS
-  // account's CLAUDE_CONFIG_DIR, and bash (the image has no zsh). Its own process group either
-  // way, so a hands-free cut can end the whole tree (cutLiveChats).
-  const child: ChildProcessWithoutNullStreams = isCloud()
-    ? spawnAsWorker('/bin/bash', ['-ilc', script], {
-      cwd: projectRoot,
-      account: { configDir: accountConfigDir },
-      env: definedEnv(childEnv),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: true,
-    }) as ChildProcessWithoutNullStreams
-    : spawn(process.env.SHELL || '/bin/zsh', ['-ilc', script], {
+  // Its own process group, so the whole tree can be ended at once.
+  const child: ChildProcessWithoutNullStreams = spawn(process.env.SHELL || '/bin/zsh', ['-ilc', script], {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
@@ -1734,8 +1776,25 @@ export function startChatSession(
    *     client's own flag, i.e. the behaviour that shipped before this feature. The dangerous
    *     direction is a count that is too LOW while a turn runs, and every stdin write of a
    *     user frame increments.
+   *
+   * A MAIN `result` NOW SETS IT TO ZERO, NOT ONE LESS (measured on claude 2.1.301, 2026-10-16).
+   * A user frame written mid-turn (a steer) is FOLDED into the running turn: two frames, one
+   * `result`. Counting down left one turn owed forever after every steer, and a count that
+   * never reaches zero is not the safe direction after all: the switch gate waits on it with the
+   * held message keeping the client busy, the stall release only arms at zero, and an idle
+   * interrupt answers with a bare `control_response` — so the pane read "Working…" for 69
+   * minutes with Stop doing nothing (owner video, 2026-10-14). A frame the CLI did NOT fold
+   * (a slash command, a frame raced against the `result`) runs as its own turn afterwards, and
+   * every turn opens with `system:init` — which re-opens the count (see the frame reader). An
+   * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
+  /** The request id of the interrupt last written, so ITS `control_response` can be told apart
+   *  from a model or mode switch's. */
+  let interruptRequestId: string | null = null;
+  /** Armed when the CLI acked an interrupt: if no `result` follows, nothing was running and the
+   *  turn is closed here (`settleAfterInterrupt`). */
+  let interruptSettleTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * The last text WE handed to the CLI, kept so the post-hoc switch can resubmit the exact
    * turn the API refused. Without it a limit landing mid-turn can only be announced, and the
@@ -1782,7 +1841,6 @@ export function startChatSession(
 
   /**
    * The owning device was signed out (an incident: revoke-all, logout, a password change).
-   *  • Cloud: close its socket (4401) and end what it started, as always.
    *  • Mac: close the phone socket (4401) within the notification; a RUNNING turn is cut (an
    *    attacker cannot keep a turn going by disconnecting first: a detached child keeps its last
    *    holder as owner); an idle child just detaches, adoptable by the desktop.
@@ -1879,15 +1937,27 @@ export function startChatSession(
     if (live) markTurnStarted(live);
     armDetachReap();
   };
+  /** A main `result`: the CLI has answered every user frame written before it, folded steers
+   *  included (see `turnsInFlight`). */
   const closeTurn = (): void => {
-    turnsInFlight = Math.max(0, turnsInFlight - 1);
-    if (turnsInFlight === 0) {
-      outstandingAsks.clear();
-      if (live) markTurnEnded(live);
-      // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
-      reannounceSwitch();
-    }
+    turnsInFlight = 0;
+    outstandingAsks.clear();
+    if (live) markTurnEnded(live);
+    // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
+    reannounceSwitch();
     armDetachReap();
+  };
+  /**
+   * The CLI acked an interrupt and no `result` followed: nothing was running, or what was
+   * running ended without saying so. Stop must still stop, so the turn is closed HERE and the
+   * client is told it is idle — without this an idle ack left a pane "Working…" with a Stop
+   * that could no longer reach anything.
+   */
+  const settleAfterInterrupt = (): void => {
+    interruptSettleTimer = null;
+    if (!alive) return;
+    if (turnsInFlight > 0) closeTurn();
+    sendMeta({ subtype: 'turn_state', busy: false });
   };
 
   // Auto-submit the (non-deferred) initial prompt as the first stdin frame — see the
@@ -2044,6 +2114,7 @@ export function startChatSession(
     // stale count here would be a lie about the one thing only this side can report.
     turnsInFlight = 0;
     clearInterruptTimers();
+    if (interruptSettleTimer) { clearTimeout(interruptSettleTimer); interruptSettleTimer = null; }
     clearLingerTimers();
     clearDetachTimers();
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
@@ -2304,6 +2375,24 @@ export function startChatSession(
       if (interruptWatchdog && (obj.type === 'result' || obj.type === 'control_response')) {
         clearInterruptTimers();
       }
+      // …but an ack is not a turn end: an IDLE CLI acks an interrupt and sends no `result` at
+      // all (measured on 2.1.301). Give a real abort the same window to land its `result`.
+      if (obj.type === 'control_response' && interruptRequestId
+        && (obj.response as { request_id?: unknown } | undefined)?.request_id === interruptRequestId) {
+        interruptRequestId = null;
+        if (interruptSettleTimer) clearTimeout(interruptSettleTimer);
+        interruptSettleTimer = setTimeout(settleAfterInterrupt, INTERRUPT_WATCHDOG_MS);
+      }
+      if (obj.type === 'result' && obj.parent_tool_use_id === undefined && interruptSettleTimer) {
+        clearTimeout(interruptSettleTimer); interruptSettleTimer = null;
+      }
+      // Every turn opens with `system:init`, ours or not: a frame the CLI queued behind the turn
+      // that just closed, or a turn it started itself (a background task finishing). Counted so
+      // a switch never restarts over it — an idle child emits no `init`, so this never opens a
+      // turn that is not running.
+      if (obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && turnsInFlight === 0) {
+        openTurn();
+      }
 
       // The turn is over. Tracked HERE, from the CLI's own frame, because the client's `busy`
       // is set OPTIMISTICALLY the moment a user frame is written (chatSession.ts's `writeUser`)
@@ -2401,6 +2490,9 @@ export function startChatSession(
       // A SUB-AGENT's rejection counts too, and deliberately so: it drew on the same account
       // quota, and the main turn it belongs to is about to fail for the same reason.
       const limit = readLimitSignal(obj);
+      // Every turn states this account's usage exactly; kept, so the panel and the chooser read
+      // what the account said a moment ago rather than a cache up to an hour old.
+      if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
       if (limit) onLimitRejected(limit);
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
@@ -2588,6 +2680,73 @@ export function startChatSession(
   let lastBlindProbeAt = 0;
 
   /**
+   * Is this conversation small enough that moving it to ANY account costs little? See
+   * `CHEAP_MOVE_MAX_CONTEXT_TOKENS`. Before the first answer the size is unknown: a fresh session
+   * is small, but a resumed one carries its whole transcript and is not.
+   */
+  const contextIsCheapToMove = (): boolean => (lastMainContext > 0
+    ? lastMainContext < CHEAP_MOVE_MAX_CONTEXT_TOKENS
+    : !resumeTarget);
+
+  /** One `rate_limit_event`: record the reading, and end a refusal the API has just outlived. */
+  const noteTurnUsage = (frame: unknown): void => {
+    const reading = readUsageMeterFrame(frame);
+    if (reading) recordUsageMeter(accountConfigDir, reading);
+    // The API just SERVED a turn here with room in the window it once refused, so that refusal
+    // is over — an estimated 20-minute exile, or a window that reopened early. Narrow on purpose
+    // (`meterEndsRefusal`): a weekly or per-model refusal, or one a few seconds old, stands.
+    const refusal = activeAccountId ? readAccountRejections()[activeAccountId] : undefined;
+    if (refusal && meterEndsRefusal(frame, refusal)) clearAccountRejection(activeAccountId);
+  };
+
+  /**
+   * Where this pane should go home to, or null. Home is the account a new chat would open on
+   * now (`chatSpawnAccount` — disk only, no probe), and the move is taken only when ALL hold:
+   *   • nothing forces it — this is the unforced path, so it is never worth an expensive move;
+   *   • it is cheap: the context is small (`contextIsCheapToMove` — a new session, or just
+   *     after a handoff or compaction), so the uncached re-read on the new account is small;
+   *   • the system placed this pane (`autoPlacedAccounts`): a hand-picked account stays put;
+   *   • home is HIGHER in the owner's list than where the pane is. Only ever up, so two
+   *     accounts can never trade a pane back and forth.
+   * A pane the owner put on an account by hand (`handPickedAccounts`) and a limit later forced
+   * off goes home to THAT account, once it has room, wherever it sits in the list.
+   */
+  const comeHomeTarget = (): string | null => {
+    if (isAssistant || !contextIsCheapToMove()) return null;
+    if (autoPlacedAccounts.get(pinId) !== activeAccountId) return null;
+    const accounts = listClaudeAccounts();
+    const picked = handPickedAccounts.get(pinId);
+    const pickedAccount = picked ? accounts.find((a) => a.id === picked) : undefined;
+    if (picked && !pickedAccount) handPickedAccounts.delete(pinId);   // removed from the register
+    let home: string;
+    if (pickedAccount) {
+      if (pickedAccount.id === activeAccountId || readAccountRejections()[pickedAccount.id]) return null;
+      let reading: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
+      try { reading = readUsageLimits(accountDecisionDir(pickedAccount)); } catch { /* unread: no proof it is full */ }
+      if (provenPastThreshold(reading)) return null;
+      home = pickedAccount.id;
+    } else {
+      const next = chatSpawnAccount().id;
+      if (!next || next === activeAccountId) return null;
+      home = next;
+    }
+    // Never straight back onto the account this pane was just forced off (`forcedOffAccounts`),
+    // until its window resets or it has served a turn since with clear room.
+    const forced = forcedOffAccounts.get(pinId);
+    if (forced && Date.now() >= forced.until) forcedOffAccounts.delete(pinId);
+    else if (forced && forced.accountId === home) {
+      const target = accounts.find((a) => a.id === home);
+      const served = target ? readUsageMeter(accountDecisionDir(target)) : null;
+      if (!meterShowsRoomSince(served, forced.at, SWITCH_THRESHOLD_PERCENT, COME_HOME_MARGIN_PERCENT)) return null;
+    }
+    if (pickedAccount) return home;
+    const order = accounts.map((a) => a.id);
+    const here = order.indexOf(activeAccountId);
+    const there = order.indexOf(home);
+    return there >= 0 && (here < 0 || there < here) ? home : null;
+  };
+
+  /**
    * Ask every account where the next turn should go, and announce the answer.
    *
    * Extracted so the PRE-EMPTIVE path (percent nearing the threshold) and the POST-HOC path
@@ -2599,7 +2758,7 @@ export function startChatSession(
    */
   const decideAndAnnounce = async (
     text: string,
-    cause: 'limit_near' | 'needs_relogin' | 'limit_hit' | 'limit_known',
+    cause: SwitchCause,
     activeReading: AccountReading,
     /** When the account we are LEAVING comes back, when a recorded refusal says so. Carried
      *  so `limit_known` can name the time instead of only the fact. */
@@ -2632,6 +2791,13 @@ export function startChatSession(
       // the next turn of every open pane, without a restart.
       strategy: switchStrategyFor(),
       weights: switchWeightsFor(),
+      // A conversation carrying a large context moves inside its organization when it can: the
+      // prompt cache is the organization's, so there the move costs no re-read
+      // (`CHEAP_MOVE_MAX_CONTEXT_TOKENS`).
+      ...(contextIsCheapToMove() ? {} : {
+        keepOrg: accounts.find((a) => a.id === activeAccountId)?.organizationUuid || null,
+        orgOf: Object.fromEntries(accounts.map((a) => [a.id, a.organizationUuid])),
+      }),
     });
 
     // Nothing eligible, or the winner is the account we are already on.
@@ -2666,7 +2832,31 @@ export function startChatSession(
     // never touches `~/.claude.json`, so that fingerprint could not move even in principle.
     // The client restarts the conversation on the named account at the TURN BOUNDARY and
     // resubmits the held text.
-    const target = accounts.find((a) => a.id === choice.accountId)!;
+    // When the window that forces this move reopens, for `forcedOffAccounts`: the latest reset
+    // among the active account's windows at or past the threshold.
+    const now = Date.now();
+    const binding = (activeReading.limits?.limits ?? [])
+      .filter((l) => l.resetsAt > now && (l.percent >= SWITCH_THRESHOLD_PERCENT || l.lockedReason))
+      .map((l) => l.resetsAt);
+    return announceMove(choice, cause, text, resubmit, previousResetAt, binding.length > 0 ? Math.max(...binding) : undefined);
+  };
+
+  /**
+   * Announce a move to `choice.accountId`: hold the turn, tell the client where it goes, and let
+   * the turn boundary perform it. Shared by the chooser's decision above and by coming home,
+   * which needs no chooser round (its target is the account a new chat would open on).
+   */
+  const announceMove = (
+    choice: Pick<ChooseResult, 'accountId' | 'sessionPercent' | 'weeklyPercent' | 'unmeasured' | 'rejected'>,
+    cause: SwitchCause,
+    text: string,
+    resubmit: boolean,
+    previousResetAt?: number,
+    /** When the window forcing this move reopens, if known (see `forcedOffAccounts`). */
+    forcedOffResetAt?: number,
+  ): boolean => {
+    const target = listClaudeAccounts().find((a) => a.id === choice.accountId);
+    if (!target) return false;
     switchPending = true;
     recordAccountSwitch({
       fromAccountId: activeAccountId, toAccountId: target.id,
@@ -2675,6 +2865,15 @@ export function startChatSession(
       until: previousResetAt ?? null,
     });
     heldTexts = resubmit && text ? [text] : [];
+    // The system chose this account, so the reopened pane is still free to come home later.
+    noteAutoPlaced(pinId, target.id);
+    if (cause !== 'come_home' && activeAccountId) {
+      // Until the window that forced it reopens; unknown (a sign-out, an unread window) → 30 min.
+      const now = Date.now();
+      const until = previousResetAt && previousResetAt > now ? previousResetAt : forcedOffResetAt ?? now + FORCED_OFF_DEFAULT_MS;
+      noteForcedOff(pinId, { accountId: activeAccountId, at: now, until });
+    }
+    if (observedConversation) noteAutoPlaced(observedConversation, target.id);
     // `turnInFlight` and the held texts are added per send by `reannounceSwitch`:
     //
     // `turnInFlight` is whether a turn is REALLY running in the CLI right now. The client's
@@ -2831,6 +3030,32 @@ export function startChatSession(
     // account it is on is itself refused, and then the chooser picks the top eligible one, so
     // it walks back rather than snapping back. Closing that is the `auto-switch brings the
     // session home` task, which is where it belongs for BOTH strategies.
+    // ── Coming home, where it is cheap ──────────────────────────────────────────────
+    // Both modes, before either one's forecast: a pane that was moved down the list goes back
+    // up when the account above it can serve again AND the conversation is still small enough
+    // that the move costs little (`comeHomeTarget`). A long conversation is not moved for this;
+    // its next cheap point is a handoff or a new session. Never while a turn is running: this
+    // message would be a steer, and a move nothing forces must not hold it back from that turn
+    // and replay it on another account after a restart.
+    if (resubmit && turnsInFlight === 0) {
+      const home = comeHomeTarget();
+      if (home) {
+        const target = accounts.find((a) => a.id === home);
+        let reading: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
+        try { if (target) reading = readUsageLimits(accountDecisionDir(target)); } catch { /* no numbers, still a move */ }
+        // Only a window still open is reported; a rolled-over one says nothing about the new one.
+        const pct = (key: 'session' | 'weekly') => reading.limits.find((l) => l.key === key && l.resetsAt > Date.now())?.percent;
+        const sessionPercent = pct('session');
+        const weeklyPercent = pct('weekly');
+        return announceMove({
+          accountId: home,
+          ...(sessionPercent === undefined ? {} : { sessionPercent }),
+          ...(weeklyPercent === undefined ? {} : { weeklyPercent }),
+          rejected: [],
+        }, 'come_home', text, resubmit);
+      }
+    }
+
     if (switchStrategyFor() === 'sequential') return false;
 
     // A reading we cannot TRUST is not a reason to skip the check — it is the reason to make
@@ -2990,7 +3215,7 @@ export function startChatSession(
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
       message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
-      taskId?: string; enabled?: boolean;
+      taskId?: string; enabled?: boolean; visible?: boolean;
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
@@ -2998,13 +3223,11 @@ export function startChatSession(
     // that follows ends the child as it always did, instead of detaching it for a reattach.
     if (msg.type === 'end') { endOnSocketGone = true; return; }
 
+    // The phone says whether this chat is on its screen (D2): a push for it skips that device
+    // while it is. Only a phone socket's word counts; the laptop sends none.
+    if (msg.type === 'visibility') { socketVisible.set(ws, msg.visible === true); return; }
+
     if (msg.type === 'user' && typeof msg.text === 'string' && msg.text) {
-      if (isCloud() && cloudPhase() !== 'active') {
-        // Quiescing: no new turn starts (the return snapshot must not move under it).
-        try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', code: 'cloud_quiescing', message: 'Your laptop is taking this project back; this message was not sent.' })); } catch { /* closing */ }
-        return;
-      }
-      recordCloudAction(); // D14: a send or a steer
       // An autonomy respawn is waiting for the running turn to end: the owner's next message
       // is for the successor — it must not run under the old permissions. (Only user frames:
       // an answer or an interrupt belongs to the turn in flight.)
@@ -3151,7 +3374,6 @@ export function startChatSession(
 
     if (msg.type === 'answer' && typeof msg.requestId === 'string' && msg.requestId && msg.requestId.length <= 200
       && (msg.behavior === 'allow' || msg.behavior === 'deny')) {
-      recordCloudAction(); // D14: answering the agent is the owner acting
       const response = msg.behavior === 'allow'
         ? { behavior: 'allow', updatedInput: msg.updatedInput ?? {} }
         : { behavior: 'deny', message: typeof msg.message === 'string' && msg.message ? msg.message : 'Denied' };
@@ -3197,14 +3419,15 @@ export function startChatSession(
     }
 
     if (msg.type === 'interrupt') {
-      recordCloudAction(); // D14: a stop is the owner acting
       // Empirically verified against claude 2.1.218 (scratch-dir experiment): a
       // control_request{subtype:'interrupt'} on stdin aborts the in-flight turn — the CLI
       // echoes a control_response, emits a synthetic rejected tool_result + "[Request
       // interrupted by user for tool use]", then a `result` frame with
       // terminal_reason:"aborted_tools", all within ~4.1s API duration. `system:init`
       // advertises this as the `interrupt_receipt_v1` capability.
-      writeStdin({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
+      interruptRequestId = randomUUID();
+      writeStdin({ type: 'control_request', request_id: interruptRequestId, request: { subtype: 'interrupt' } });
+      registry?.interrupted();
       clearInterruptTimers();
       interruptWatchdog = setTimeout(() => {
         interruptWatchdog = null;
@@ -3240,6 +3463,7 @@ export function startChatSession(
 // existing importer — including this file's own handlers and
 // `tests/unit/agent-chat-history.test.ts` — keeps its import path.
 import { parseTranscriptHistory } from '../../lib/transcript-history.js';
+import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 
 export {
   parseTranscriptHistory,
@@ -3291,6 +3515,8 @@ export async function handleAgentChatHistory(
   const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
   const path = findFirstTranscriptPath([liveId, id]);
   if (!path) { sendJson(res, 200, { items: [] }); return; }
+  // AC16: a phone reads only the chosen projects' conversations (a sub-agent's by its parent's).
+  if (phoneTranscriptRefused(req, contextRoot, path)) { sendError(res, 403, 'phone_unavailable', 'Hands-free does not serve that conversation.'); return; }
 
   const subagent = sanitizeSubagentId(url.searchParams.get('subagent'));
   if (subagent) {
@@ -3310,9 +3536,8 @@ export async function handleAgentChatHistory(
   sendJson(res, 200, { items: parseTranscriptHistory(raw) });
 }
 
-/** A transcript, read as dcuser in the cloud (the CLI writes them 0600 there). */
+/** A transcript's text. */
 async function readTranscript(path: string): Promise<string> {
-  if (isCloud()) return (await readFileAsWorker(path)).toString('utf-8');
   return readFileSync(path, 'utf-8');
 }
 
@@ -3354,20 +3579,10 @@ export async function handleAgentBackgroundOutput(
   const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!claudeId) { sendError(res, 400, 'invalid_claude_id', 'Query parameter "claudeId" is required.'); return; }
 
-  // In the cloud the CLI writes these files as dcuser under /tmp/claude-<dcuser uid>/: the path
-  // is derived from the READER's uid, so the whole read runs in the dcuser worker.
-  if (isCloud()) {
-    try {
-      sendJson(res, 200, await runWorkerOp({ op: 'read', params: { kind: 'bg-output', contextRoot, query: { taskId, claudeId } }, timeoutMs: 30_000 }));
-    } catch {
-      sendJson(res, 200, { taskId, content: '', size: 0, truncated: false, exists: false });
-    }
-    return;
-  }
   sendJson(res, 200, computeBackgroundOutput(contextRoot, taskId, claudeId));
 }
 
-/** The tail of one background shell's output (also run inside the cloud's dcuser worker). */
+/** The tail of one background shell's output. */
 export function computeBackgroundOutput(contextRoot: string, taskId: string, claudeId: string): Record<string, unknown> {
   // The output directory is keyed by the LIVE conversation uuid, which is what the CLI was
   // spawned with — the roster id the client holds may be a stale pin, so resolve it the same
@@ -3542,8 +3757,7 @@ function addGrant(contextRoot: string, abs: string): void {
 function resolveServablePath(
   contextRoot: string,
   rawPath: string,
-  /** The hands-free cloud passes false: project root only, grants refused (its grants file
-   *  lives in dcuser's tree, so an agent could plant one). */
+  /** A phone socket passes false: project root only, grants refused. */
   opts: { grants: boolean } = { grants: true },
 ): { abs: string } | { deny: 'invalid' | 'needs_grant' | 'outside'; abs?: string } {
   const ref = resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, rawPath);
@@ -3607,7 +3821,6 @@ export async function handleAgentFile(
   const rawPath = url.searchParams.get('path');
   if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
 
-  if (isCloud()) { await serveAgentFileCloud(req, res, rawPath, contextRoot, url.searchParams.get('raw') === '1'); return; }
 
   // A Mac-mode phone: the project root only, grants ignored — a grant is the desktop owner's
   // consent for THEIR screen, and the phone is another trust level.
@@ -3673,119 +3886,6 @@ export async function handleAgentFile(
   sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content });
 }
 
-/** Raw media the cloud streams through the worker is buffered: capped well below the desktop's. */
-const CLOUD_MEDIA_MAX_BYTES = 32 * 1024 * 1024;
-
-export type CloudFileRead =
-  | { kind: 'dir'; entries: Array<{ name: string; kind: 'dir' | 'file'; size: number | null }>; total: number; truncated: boolean }
-  | { kind: 'file'; size: number; base64?: string }
-  | { kind: 'refused'; status: number; code: string; message: string };
-
-/**
- * One read of the hands-free cloud's file route, run INSIDE the dcuser worker (dcuser cannot
- * open dcserver's 0700 files at all). Project root only, grants refused; the final path must
- * not be a symlink, its parent's realpath must be inside the project's realpath, and the file
- * is opened O_NOFOLLOW and checked with fstat on that very fd.
- */
-export function cloudFileRead(contextRoot: string, rawPath: string, want: 'meta' | 'read', maxBytes: number): CloudFileRead {
-  const resolved = resolveServablePath(contextRoot, rawPath, { grants: false });
-  if ('deny' in resolved) {
-    if (resolved.abs) {
-      try {
-        if (lstatSync(resolved.abs).isSymbolicLink()) return { kind: 'refused', status: 403, code: 'symlink_refused', message: 'A symlink is not opened on the cloud machine.' };
-      } catch { /* absent: the refusal below */ }
-    }
-    return resolved.deny === 'outside'
-      ? { kind: 'refused', status: 403, code: 'outside_project', message: 'Only files inside the project can be opened on the cloud machine.' }
-      : { kind: 'refused', status: 400, code: 'invalid_path', message: 'That path cannot be read.' };
-  }
-  const abs = resolved.abs;
-  const notFound: CloudFileRead = { kind: 'refused', status: 404, code: 'not_found', message: `File not found: ${rawPath}` };
-  let lst: ReturnType<typeof lstatSync>;
-  try { lst = lstatSync(abs); } catch { return notFound; }
-  if (lst.isSymbolicLink()) return { kind: 'refused', status: 403, code: 'symlink_refused', message: 'A symlink is not opened on the cloud machine.' };
-  try {
-    const root = realpathSync.native(projectRootOf(contextRoot));
-    // A folder (never a link here) is checked itself, so the project root folder passes; a
-    // file through its parent, so the leaf is never followed.
-    const parent = realpathSync.native(lst.isDirectory() ? abs : dirname(abs));
-    if (parent !== root && !isInside(root, parent)) return { kind: 'refused', status: 403, code: 'outside_project', message: 'Only files inside the project can be opened on the cloud machine.' };
-  } catch { return notFound; }
-  if (lst.isDirectory()) {
-    const MAX_ENTRIES = 300;
-    let names: string[];
-    try { names = readdirSync(abs); } catch { return { kind: 'refused', status: 500, code: 'read_failed', message: 'Failed to read the folder.' }; }
-    const entries = names.slice(0, MAX_ENTRIES).map((name) => {
-      try {
-        const st = lstatSync(join(abs, name));
-        return { name, kind: st.isDirectory() ? 'dir' as const : 'file' as const, size: st.isDirectory() ? null : st.size };
-      } catch {
-        return { name, kind: 'file' as const, size: null };
-      }
-    });
-    entries.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1));
-    return { kind: 'dir', entries, total: names.length, truncated: names.length > MAX_ENTRIES };
-  }
-  if (!lst.isFile()) return { kind: 'refused', status: 404, code: 'not_found', message: `Not a file: ${rawPath}` };
-  let fd: number;
-  try { fd = openSync(abs, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch { return { kind: 'refused', status: 403, code: 'symlink_refused', message: 'That file cannot be opened.' }; }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || st.ino !== lst.ino || st.dev !== lst.dev) return { kind: 'refused', status: 409, code: 'changed', message: 'The file changed while it was opened.' };
-    if (want === 'meta') return { kind: 'file', size: st.size };
-    if (st.size > maxBytes) return { kind: 'refused', status: 413, code: 'too_large', message: 'File exceeds the size cap.' };
-    const buf = Buffer.alloc(st.size);
-    let got = 0;
-    while (got < st.size) {
-      const n = readSync(fd, buf, got, st.size - got, got);
-      if (n === 0) break;
-      got += n;
-    }
-    return { kind: 'file', size: got, base64: buf.subarray(0, got).toString('base64') };
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** The cloud's GET /api/agent/file: every byte read as dcuser (cloudFileRead in the worker). */
-async function serveAgentFileCloud(req: IncomingMessage, res: ServerResponse, rawPath: string, contextRoot: string, wantsRaw: boolean): Promise<void> {
-  const ext = extname(rawPath).toLowerCase();
-  const rawType = AGENT_FILE_RAW_CONTENT_TYPE[ext];
-  const raw = wantsRaw && (ext === '.svg' || !!rawType);
-  const maxBytes = raw && ext !== '.svg' ? CLOUD_MEDIA_MAX_BYTES : AGENT_FILE_MAX_BYTES;
-  let r: CloudFileRead;
-  try {
-    r = await runWorkerOp<CloudFileRead>({ op: 'read', params: { kind: 'agent-file', contextRoot, query: { path: rawPath, want: 'read', maxBytes: String(maxBytes) } }, timeoutMs: 60_000 });
-  } catch {
-    sendError(res, 500, 'read_failed', 'Failed to read file.');
-    return;
-  }
-  if (r.kind === 'refused') { sendError(res, r.status, r.code, r.message); return; }
-  if (r.kind === 'dir') { sendJson(res, 200, { path: rawPath, type: 'dir', entries: r.entries, truncated: r.truncated, total: r.total }); return; }
-  const buf = Buffer.from(r.base64 ?? '', 'base64');
-  if (raw) {
-    if (ext === '.svg') res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-    if (ext === '.svg' || AGENT_FILE_DOC_CONTENT_TYPE[ext]) res.setHeader('Content-Disposition', 'inline');
-    res.writeHead(200, { 'Content-Type': ext === '.svg' ? 'image/svg+xml' : rawType, 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
-    res.end(req.method === 'HEAD' ? undefined : buf);
-    return;
-  }
-  sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content: buf.toString('utf-8') });
-}
-
-/** The board-assets read for the cloud's worker: project root only, grants refused. */
-export async function computeBoardAssetsCloud(contextRoot: string, rawPath: string): Promise<{ files: unknown }> {
-  const r = cloudFileRead(contextRoot, rawPath, 'read', AGENT_FILE_MAX_BYTES * 8);
-  if (r.kind === 'refused') throw Object.assign(new Error(r.message), { code: r.code, status: r.status });
-  if (r.kind !== 'file') throw Object.assign(new Error(`Board not found: ${rawPath}`), { code: 'not_found', status: 404 });
-  const resolved = resolveServablePath(contextRoot, rawPath, { grants: false }) as { abs: string };
-  const boardDir = dirname(resolved.abs);
-  const files = await resolveBoardAssets(Buffer.from(r.base64 ?? '', 'base64').toString('utf-8'), [
-    projectRootOf(contextRoot), contextRoot, boardDir, join(boardDir, 'assets'), join(boardDir, 'Attachments'),
-  ], rawPath);
-  return { files };
-}
-
 /** One directory's entries (capped), newest-looking first: folders, then files by name. */
 function sendDirListing(res: ServerResponse, rawPath: string, abs: string): void {
   const MAX_ENTRIES = 300;
@@ -3834,17 +3934,6 @@ export async function handleAgentBoardAssets(
   const rawPath = url.searchParams.get('path');
   if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
 
-  if (isCloud()) {
-    // The board and its images are dcuser's files: the whole read runs in the worker, project
-    // root only (grants refused).
-    try {
-      sendJson(res, 200, await runWorkerOp({ op: 'read', params: { kind: 'board-assets', contextRoot, query: { path: rawPath } }, timeoutMs: 60_000 }));
-    } catch (err) {
-      const e = err as { status?: number; code?: string; message?: string };
-      sendError(res, e.status && e.status < 500 ? e.status : 404, e.code ?? 'not_found', e.message ?? `Board not found: ${rawPath}`);
-    }
-    return;
-  }
   const resolved = isPhoneSocket(req) ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
   if ('deny' in resolved) {
     if (resolved.deny === 'needs_grant') {

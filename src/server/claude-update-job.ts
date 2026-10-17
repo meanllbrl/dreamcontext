@@ -24,13 +24,12 @@ export interface ClaudeUpdateJobGate {
 }
 
 /**
- * Why the job must not run here, or null when it should. Same env reads as isDesktop()/isCloud(),
+ * Why the job must not run here, or null when it should. Same env read as isDesktop(),
  * plus the orphan sweep's app-owned-server rule: a builder- or verify-launched `dashboard`
  * inherits DREAMCONTEXT_DESKTOP=1 (often under a scratch HOME, so no shared throttle and blind
  * to the real opt-out), but its ppid is not DREAMCONTEXT_PARENT_PID, so it never updates.
  */
 export function claudeUpdateJobDisabledReason(env: NodeJS.ProcessEnv, ppid: number = process.ppid): string | null {
-  if (env.DREAMCONTEXT_CLOUD === '1') return 'cloud server';
   if (env.DREAMCONTEXT_DESKTOP !== '1') return 'not the desktop app';
   if (env.VITEST || env.NODE_ENV === 'test') return 'test run';
   if (env.DREAMCONTEXT_CLAUDE_AUTOUPDATE === '0') return 'DREAMCONTEXT_CLAUDE_AUTOUPDATE=0';

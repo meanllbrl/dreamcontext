@@ -2,8 +2,18 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
+
+/* ── Phone (body[data-phone]) ─────────────────────────────────────────────────────────
+   No window chrome (a phone has no window), the rail as an off-canvas drawer, a 12px
+   page gutter. The page itself starts right under the one 44px bar. */
+body[data-phone] .window-chrome-bar { display: none; }
+.shell[data-phone] .shell-main {
+  padding: var(--m-pad) var(--m-pad) calc(var(--m-pad) + env(safe-area-inset-bottom, 0px));
+}
+.shell[data-phone] .sidebar-glide { display: none; }
 
 .shell-body {
   display: flex;

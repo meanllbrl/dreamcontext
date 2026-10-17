@@ -7,7 +7,6 @@ import { promptInput } from '../../lib/prompt.js';
 import { readJsonObject, writeJsonObject, readJsonArray, writeJsonArray } from '../../lib/json-file.js';
 import { today } from '../../lib/id.js';
 import { header, success, error, warn, info } from '../../lib/format.js';
-import { taskSyncHandsfreeSkip } from './tasks.js';
 import { migrateDataStructures, fenceExistingDataStructures } from '../../lib/data-structures-migration.js';
 import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { ProgressBar } from '../../lib/progress.js';
@@ -839,9 +838,7 @@ export function registerSleepCommand(program: Command): void {
       // itself under the rate ceiling (so one pass syncs everything) and retries
       // transient failures. Still best-effort: a sync failure must never fail
       // `sleep done` — but it must NEVER fail SILENTLY either.
-      const taskSyncSkip = taskSyncHandsfreeSkip(root);
-      if (taskSyncSkip) info(chalk.dim(taskSyncSkip));
-      else try {
+      try {
         const backend = getTaskBackend(root);
         if (backend.name !== 'local') {
           // The consolidation touches every reconciled task, so this sync can
@@ -920,7 +917,7 @@ export function registerSleepCommand(program: Command): void {
           // run) would leave an earlier background pull's flag stuck `true`
           // forever, even though `sleep done` is exactly the kind of
           // "task-backend sync actually ran" event that should clear it.
-          if (!taskSyncSkip && (result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync)) {
+          if ((result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync)) {
             const backend = getTaskBackend(root);
             if (backend.name !== 'local') {
               await backend.sync('both');

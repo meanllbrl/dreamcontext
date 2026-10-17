@@ -58,7 +58,6 @@ import { ApiError } from '../../lib/task-backend/api-adapter.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
 import { readAppManifest } from '../../cli/commands/app.js';
-import { readTripState } from '../../lib/handsfree/trip-state.js';
 import {
   consolidationDepth,
   inspectSleepLock,
@@ -1382,6 +1381,9 @@ export async function handleLauncherLogo(
     res.writeHead(200, {
       'Content-Type': logo.mime,
       'Content-Length': bytes.length,
+      // A logo may be an SVG: navigated to directly it stays inert (no script, opaque origin).
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'X-Content-Type-Options': 'nosniff',
       // Same short TTL as the peer logo: a swapped file shows on the next launch,
       // repeat renders within a session stay free.
       'Cache-Control': 'private, max-age=300',
@@ -1681,17 +1683,7 @@ export async function handleLauncherUpgrade(
   res: ServerResponse,
   _params: Record<string, string>,
   _contextRoot: string | null,
-  /** Overridable only for tests — every real call reads this machine's real hands-free state. */
-  home?: string,
 ): Promise<void> {
-  // Hands-free (AC18): the cloud machine runs this laptop's exact build until Return. Refused
-  // HERE because this route names no vault, so the per-vault lock middleware never sees it.
-  const trip = readTripState(home);
-  if (trip.phase !== 'home') {
-    sendError(res, 409, 'handsfree_away', trip.unreadable
-      ?? `Upgrade refused: hands-free mode is ${trip.phase} (trip ${trip.tripId ?? '?'}), and the cloud machine must keep running this laptop's exact build. Return first, then upgrade.`);
-    return;
-  }
   if (upgradeRun?.state === 'running') {
     sendJson(res, 200, { ok: true, state: 'running' });
     return;

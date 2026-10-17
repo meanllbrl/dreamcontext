@@ -87,6 +87,10 @@ export interface ChatEntry {
   /** Set when the Assistant started this chat (a delegation). Rides the entry's own lifetime:
    *  a respawn of the same conversation inherits it via {@link isDelegatedConversation}. */
   origin?: 'assistant';
+  /** How the last top-level turn ended, stamped BEFORE the move to `idle` is emitted: when, and
+   *  whether the owner interrupted it. `resultSeq` is unique across the process (a respawned
+   *  chat gets a fresh entry and must never repeat an earlier number). */
+  lastTurn?: { endedAt: string; interrupted: boolean; resultSeq: number };
 }
 
 export interface ChatHandle {
@@ -94,6 +98,8 @@ export interface ChatHandle {
   observe(frame: Record<string, unknown>): void;
   userSent(text: string): void;
   answered(requestId?: string): void;
+  /** The owner interrupted the running turn (the bridge wrote the interrupt request). */
+  interrupted(): void;
   exited(): void;
 }
 
@@ -108,6 +114,8 @@ export interface WatchResult {
 }
 
 const entries = new Map<string, ChatEntry>();
+/** Process-wide turn counter for {@link ChatEntry.lastTurn}. */
+let resultSeq = 0;
 const waiters = new Map<string, Set<Waiter>>();
 const deathTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -243,6 +251,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
   };
   entries.set(init.sessionId, e);
   let dead = false;
+  let interruptAsked = false;
   const openTools = new Set<string>();
   const alive = () => { e.lastFrameAt = new Date().toISOString(); };
   const syncTools = () => { e.toolsInFlight = openTools.size; };
@@ -292,14 +301,22 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         e.pendingQuestion = null;
         openTools.clear();
         syncTools();
+        e.lastTurn = { endedAt: new Date().toISOString(), interrupted: interruptAsked, resultSeq: ++resultSeq };
+        interruptAsked = false;
         setStatus(e, 'idle');
       }
     },
     userSent(text) {
       if (dead) return;
       alive();
+      // A new turn: an interrupt asked for while nothing ran belongs to no turn.
+      if (e.status !== 'working' && e.status !== 'asking') interruptAsked = false;
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
       setStatus(e, 'working');
+    },
+    interrupted() {
+      if (dead) return;
+      interruptAsked = true;
     },
     answered(requestId) {
       if (dead) return;

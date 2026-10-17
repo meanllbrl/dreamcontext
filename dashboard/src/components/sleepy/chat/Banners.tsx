@@ -304,7 +304,7 @@ function OtherAccounts({ rejected, exclude, accounts }: {
 type AccountMove = {
   switched: boolean;
   reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-    | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
+    | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home';
   accountId: string;
   fromAccountId?: string;
   email?: string;
@@ -328,6 +328,7 @@ function moveSentence(move: AccountMove, who: string, when: string): string {
   if (move.switched) {
     if (move.reason === 'needs_relogin') return `Moved to ${who} — the previous account needs to sign in again.`;
     if (move.reason === 'limit_hit') return `That message hit the limit on the previous account. Resending it on ${who}${landed}.`;
+    if (move.reason === 'come_home') return `Back on ${who}, higher in your list${landed}. This chat is still short, so moving it costs little.`;
     if (move.reason === 'limit_known') return `The previous account is still at its limit${when ? ` until ${when}` : ''}, so this went to ${who}${landed}.`;
     return `Moved to ${who}${landed}.`;
   }
@@ -353,6 +354,7 @@ function moveSentence(move: AccountMove, who: string, when: string): string {
  *   • limit_known  — an EARLIER turn was refused, so this one moved before trying. It must not
  *                    borrow limit_hit's headline: this message did not fail.
  *   • limit_near / other switched — moved ahead of the limit.
+ *   • come_home    — nothing forced it: a higher account serves again and the chat is small.
  *   • needs_relogin — the old account is signed out; offers to sign it back in.
  *   • unmeasured   — a last-resort pick: the destination says "usage unknown", never meters.
  *   • all_exhausted / stayed_put — nowhere to go: WHEN work resumes is the big number.
@@ -382,9 +384,11 @@ export function AccountSwitchBanner({ move, onDismiss }: {
       : move.reason === 'limit_known' ? 'Still at limit — sent on another account'
       : move.reason === 'needs_relogin' ? 'Signed out — moved to another account'
       : move.reason === 'limit_near' ? 'Moved before the limit'
+      : move.reason === 'come_home' ? 'Moved back up your account order'
       : 'Moved to another account';
     const fromState = move.reason === 'needs_relogin' ? 'signed out'
       : move.reason === 'limit_near' ? 'near its limit'
+      : move.reason === 'come_home' ? 'lower in your order'
       : when ? `at limit · back ${when}` : 'at its limit';
     const canReloginFrom = move.reason === 'needs_relogin' && from?.account && !from.account.isPrimary;
     return (

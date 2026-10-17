@@ -2,10 +2,6 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../middleware.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { getUpgradeReadyVersion } from '../lifecycle.js';
-import { checkoutCompromised, isCloud } from '../cloud-mode.js';
-import { buildFingerprint } from '../cloud-fingerprint.js';
-import { carriesTransferAuth, handsfreeAuth, hasValidTransferProof } from '../handsfree-auth.js';
-import { cloudServices } from './handsfree-cloud.js';
 import { isPhoneSocket } from '../phone-origin.js';
 
 /**
@@ -43,27 +39,6 @@ export async function handleHealthGet(
     sendJson(res, 200, { version: dreamcontextVersion() });
     return;
   }
-  if (isCloud()) {
-    // Public on the forwarded port: build identity only. The trip fields need the transfer
-    // proof (the cloud gate already put a fresh nonce on this response).
-    const body: Record<string, unknown> = { version: dreamcontextVersion(), fingerprint: buildFingerprint() };
-    if (carriesTransferAuth(req) && hasValidTransferProof(req)) {
-      const rec = cloudServices().state.get();
-      Object.assign(body, {
-        phase: rec.phase,
-        tripId: rec.tripId,
-        laptopId: rec.laptopId,
-        epoch: rec.epoch,
-        sealedEpoch: rec.sealedEpoch,
-        sealBlocked: rec.sealBlocked,
-        verifierGeneration: handsfreeAuth().store.generation,
-        supersededLaptopIds: rec.supersededLaptopIds,
-        checkoutCompromised: checkoutCompromised(),
-      });
-    }
-    sendJson(res, 200, body);
-    return;
-  }
   sendJson(res, 200, {
     ok: true,
     contextRoot,
@@ -75,7 +50,5 @@ export async function handleHealthGet(
     // this running server (else null). The bundle uses it to auto-relaunch the
     // app onto the new version without any manual quit/reopen.
     upgradeReady: getUpgradeReadyVersion(),
-    // The build identity the hands-free cloud compares against (cloud-fingerprint.ts).
-    fingerprint: buildFingerprint(),
   });
 }

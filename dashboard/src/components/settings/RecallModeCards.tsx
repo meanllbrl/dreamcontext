@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
-import { isPhoneSurface } from '../../lib/cloudSurface';
+import { isPhoneSurface } from '../../lib/phoneSurface';
 import { useCloudRecallStatus, useDisableCloudRecall, type CloudTier } from '../../hooks/useCloudRecall';
 import {
   useRecallOptions,
@@ -417,7 +417,7 @@ export function RecallModeCards({ recallMode, saving, onSelectMode }: RecallMode
     );
   };
 
-  // The cloud tiers cannot be set from the hands-free cloud machine (the routes refuse it).
+  // The cloud tiers cannot be set from the phone (the routes refuse it).
   const mainOptions = MAIN_OPTIONS.filter((id) => !(cloudSurface && isCloudTier(id)));
   const heroOptions = options && cloudSurface && isCloudTier(options.recommendation.option) ? undefined : options;
 

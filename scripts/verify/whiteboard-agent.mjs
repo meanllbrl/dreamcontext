@@ -903,9 +903,8 @@ async function runTheme(theme) {
 
     // ── W10 ───────────────────────────────────────────────────────────────────────────────
     check('W10 no page errors', pageErrors.length === 0, pageErrors.join(' | '));
-    // The hands-free phone probe answers 404 outside cloud mode by design (handsfree-login.ts),
-    // and the dashboard asks it on every page: not this board's request, so not counted here.
-    const ours = (x) => !x.includes('/api/handsfree/phone');
+    // The hands-free phone chip only polls on the phone surface, so nothing is filtered here.
+    const ours = () => true;
     check('W10 no console errors', consoleErrors.filter(ours).length === 0, consoleErrors.filter(ours).join(' | '));
     check('W10 no failed requests', badResponses.filter(ours).length === 0, badResponses.filter(ours).join(' | '));
   } catch (err) {

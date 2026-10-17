@@ -5,9 +5,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { cloudGate, cloudUpgradeRefusal, handleCors, rejectCloudUpgrade, isCrossSiteWrite, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
-import { carriesCloudflareHeaders, isPhoneSocket, markPhoneSocket } from './phone-origin.js';
-import { isCloud } from './cloud-mode.js';
+import { handleCors, isCrossSiteWrite, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
+import { carriesCloudflareHeaders, isPhoneSocket, macExposedVaults, markPhoneSocket } from './phone-origin.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
 import { isDesktop } from './desktop.js';
@@ -255,17 +254,9 @@ import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
-import { registerHandsfreeCloudRoutes } from './routes/handsfree-cloud.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
 import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
-import {
-  handleHandsfreeStatus, handleHandsfreeJob, handleHandsfreeReceipt, handleHandsfreeGo, handleHandsfreeReturn, handleHandsfreeResume,
-  handleHandsfreeRollback, handleHandsfreeAbandon, handleHandsfreeRevokeAll, handsfreeLockRefusal, sendHandsfreeAway,
-  isBodySelectorRoute, screenBodySelectedVault,
-} from './routes/handsfree.js';
-import { handleHandsfreePreflight, handleHandsfreeCut } from './routes/handsfree.js';
-import { isAway } from '../lib/handsfree/trip-state.js';
 import { handleAdminShutdown } from './routes/admin.js';
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../lib/manifest.js';
 import { prepareDashboardEnv } from '../lib/session-origin.js';
@@ -277,12 +268,6 @@ export interface ServerOptions {
   open: boolean;
   /** Network interface to bind. Defaults to loopback (127.0.0.1). */
   host?: string;
-  /**
-   * PINNED for the hands-free cloud (lane D): listen on this inherited, already-bound socket fd
-   * (the root supervisor holds port 8080 and hands it to every server instance) instead of
-   * binding port/host.
-   */
-  listenFd?: number;
 }
 
 /**
@@ -296,11 +281,8 @@ export function buildRouter(): Router {
   // Health
   router.get('/api/health', handleHealthGet);
 
-  // Hands-free. The cloud's transfer routes (`/api/handsfree/cloud/*`, 404 off the cloud) and
-  // its phone login; the laptop's own routes (desktop + loopback + same-site only).
-  registerHandsfreeCloudRoutes(router);
-  // The phone's sign-in/out: the cloud's store, or the Mac store on a Mac-mode phone socket
-  // (`authFor`); the desktop has no device store, so 404 there.
+  // Hands-free. The phone's sign-in/out: the Mac store on a Mac-mode phone socket (`authFor`);
+  // the desktop has no device store, so 404 there.
   router.post('/api/handsfree/login', async (req, res) => {
     if (!authFor(req)) { sendError(res, 404, 'not_found', 'No route: POST /api/handsfree/login'); return; }
     await handleHandsfreeLogin(req, res);
@@ -310,17 +292,6 @@ export function buildRouter(): Router {
     handleHandsfreeLogout(req, res);
   });
   router.get('/api/handsfree/phone', handleHandsfreePhone);
-  router.get('/api/handsfree/status', handleHandsfreeStatus);
-  router.get('/api/handsfree/jobs/current', handleHandsfreeJob);
-  router.post('/api/handsfree/jobs/current/cut', handleHandsfreeCut);
-  router.get('/api/handsfree/preflight', handleHandsfreePreflight);
-  router.get('/api/handsfree/receipt', handleHandsfreeReceipt);
-  router.post('/api/handsfree/go', handleHandsfreeGo);
-  router.post('/api/handsfree/return', handleHandsfreeReturn);
-  router.post('/api/handsfree/resume', handleHandsfreeResume);
-  router.post('/api/handsfree/rollback', handleHandsfreeRollback);
-  router.post('/api/handsfree/abandon', handleHandsfreeAbandon);
-  router.post('/api/handsfree/devices/revoke-all', handleHandsfreeRevokeAll);
   // Mac mode (hands-free from this laptop through a tunnel): the main listener's panel routes.
   registerHandsfreeMacRoutes(router);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
@@ -401,7 +372,7 @@ export function buildRouter(): Router {
   router.get('/api/recall/haiku', handleRecallHaikuGet);
   router.get('/api/recall', handleRecallGet);
   // Opt-in cloud recall tiers (Settings): status, key, consent, index. Every handler guards itself
-  // (loopback Host, same-origin Origin, loopback socket, never in the hands-free cloud).
+  // (loopback Host, same-origin Origin, loopback socket).
   router.get('/api/recall/options', recallOptionsRoutes.options);
   router.get('/api/recall/cloud/status', recallCloudRoutes.status);
   router.post('/api/recall/cloud/key', recallCloudRoutes.setKey);
@@ -929,6 +900,7 @@ export type ApiVaultGate =
  * refused, and the refusal says what was missing and how to supply it.
  */
 export function apiVaultGate(req: IncomingMessage, pathname: string, pinnedRoot: string | null): ApiVaultGate {
+  if (isPhoneSocket(req)) return phoneVaultGate(req, pathname);
   const hv = resolveRequestVault(req);
   if (hv === 'INVALID') return { ok: false, status: 400, error: 'invalid_vault', message: 'Unknown or invalid vault.' };
   if (hv === 'FORBIDDEN') return { ok: false, status: 403, error: 'assistant_local_only', message: 'The dreamcontext Assistant is only reachable from this machine\'s desktop app.' };
@@ -968,6 +940,35 @@ export function requestedVaultName(req: Pick<IncomingMessage, 'headers' | 'metho
 }
 
 /**
+ * AC16 — the projects chosen at start. On a phone socket an API request runs against a CHOSEN
+ * project, never the server's pinned root. Every vault the request names (the header, and
+ * `?vault=` on ANY method) must be chosen, else 403; when both are named they must agree. A
+ * request naming none runs against the one chosen project, or, when several are chosen, is
+ * 400 `phone_vault_required` on a vault-scoped route (the phone SPA always names its project);
+ * a vault-agnostic route then runs without a root. Nothing chosen (Mac mode off) = 403.
+ */
+export function phoneVaultGate(req: Pick<IncomingMessage, 'headers' | 'method' | 'url'>, pathname = ''): ApiVaultGate {
+  const exposed = macExposedVaults();
+  const registered = new Map(listVaults().map((x) => [x.name, x.path]));
+  const chosen = exposed.filter((n) => registered.has(n));
+  if (!chosen.length) return { ok: false, status: 403, error: 'phone_unavailable', message: 'Hands-free is not serving a project.' };
+  const header = req.headers['x-dreamcontext-vault'];
+  let query: string | null = null;
+  try { query = new URL(req.url || '/', 'http://localhost').searchParams.get('vault'); } catch { /* unparseable: no vault named */ }
+  const named = [...new Set([typeof header === 'string' ? header : null, query].filter((n): n is string => !!n))];
+  if (named.some((n) => !chosen.includes(n))) {
+    return { ok: false, status: 403, error: 'phone_unavailable', message: 'Hands-free does not serve that project.' };
+  }
+  if (named.length > 1) return { ok: false, status: 400, error: 'invalid_vault', message: 'The request names two different projects.' };
+  const name = named[0] ?? (chosen.length === 1 ? chosen[0] : null);
+  if (!name) {
+    if (isVaultAgnostic(pathname)) return { ok: true, root: null };
+    return { ok: false, status: 400, error: 'phone_vault_required', message: 'Several projects are open on the phone: name one (x-dreamcontext-vault).' };
+  }
+  return { ok: true, root: join(registered.get(name)!, '_dream_context') };
+}
+
+/**
  * STRICT per-request vault resolver. Reads the vault NAME ({@link requestedVaultName})
  * and resolves it to a context root WITHOUT any filesystem-path fallback.
  *
@@ -988,9 +989,8 @@ export function resolveRequestVault(req: IncomingMessage): string | null | 'INVA
   // generic REST surface (history, attachments, file preview, voice), but ONLY from this
   // machine's desktop app. A network-token holder on a `--host` bind is refused outright.
   if (isAssistantVault(h)) {
-    // Desktop + loopback only — and never in cloud mode, where GitHub's forwarder makes every
-    // request loopback.
-    if (isCloud() || !isLoopback(req) || !isDesktop()) return 'FORBIDDEN';
+    // Desktop + loopback only (a phone socket is never loopback).
+    if (!isLoopback(req) || !isDesktop()) return 'FORBIDDEN';
     return assistantExists() ? assistantContextRoot() : 'INVALID';
   }
   // Reject anything path-shaped or containing null bytes / dots.
@@ -1038,16 +1038,14 @@ export interface RequestHandlerCtx {
   router: Router;
   dashboardDir: string;
   contextRoot: string | null;
-  /** The hands-free cloud (process-global environment, never per request). */
-  cloud: boolean;
 }
 
 /**
- * The HTTP handler: gate → API router (vault gate, hands-free lock) → phone pages → static SPA.
+ * The HTTP handler: gate → API router (vault gate) → phone pages → static SPA.
  * The main listener and Mac mode's phone listener share everything but the gate.
  */
 export function makeRequestHandler(ctx: RequestHandlerCtx): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const { gate, router, dashboardDir, contextRoot, cloud } = ctx;
+  const { gate, router, dashboardDir, contextRoot } = ctx;
   return async (req, res) => {
     try {
       if (!gate(req, res)) return;
@@ -1066,34 +1064,17 @@ export function makeRequestHandler(ctx: RequestHandlerCtx): (req: IncomingMessag
             return;
           }
           const effRoot = vaultGate.root;
-          // Hands-free (D3/AC6): the ONE lock middleware. A mutating request scoped to a
-          // project that is on the cloud machine is refused; /api/handsfree/* is exempt.
-          const away = cloud ? null : handsfreeLockRefusal(method, url.pathname, effRoot);
-          if (away) {
-            sendHandsfreeAway(res, away);
-            return;
-          }
-          // ...and a vault-agnostic route that names its vault in the body or query.
-          let handlerReq = req;
-          if (!cloud && isBodySelectorRoute(method, url.pathname) && isAway()) {
-            const screened = await screenBodySelectedVault(req, url);
-            if ('lock' in screened) {
-              sendHandsfreeAway(res, screened.lock);
-              return;
-            }
-            handlerReq = screened.req;
-          }
           // Vault-agnostic routes ignore the context root; cast keeps the
           // handler signature satisfied while the null is harmless there.
-          await match.handler(handlerReq, res, match.params, effRoot as string);
+          await match.handler(req, res, match.params, effRoot as string);
         } else {
           sendError(res, 404, 'not_found', `No route: ${method} ${url.pathname}`);
         }
         return;
       }
 
-      // The phone's login, service worker and offline page (cloud), the Mac login page (a
-      // phone socket); the SW and the offline page are 404 elsewhere.
+      // The phone's login, service worker and offline page (a Mac-mode phone socket); the SW
+      // and the offline page are 404 elsewhere.
       if (handlePhonePages(req, res, url)) return;
 
       // Static files (dashboard SPA)
@@ -1101,9 +1082,9 @@ export function makeRequestHandler(ctx: RequestHandlerCtx): (req: IncomingMessag
     } catch (err) {
       // Log the real error server-side; return a generic body so internal
       // paths / exception details never leak to the browser (defense in depth).
-      // The cloud and the phone listener never log a query string (it can carry a session, a
-      // resume id or a one-time login token).
-      const shown = cloud || isPhoneSocket(req) ? (req.url ?? '/').split('?')[0] : (req.url ?? '/');
+      // The phone listener never logs a query string (it can carry a session, a resume id or a
+      // one-time login token).
+      const shown = isPhoneSocket(req) ? (req.url ?? '/').split('?')[0] : (req.url ?? '/');
       console.error(`[server] unhandled error: ${req.method ?? 'GET'} ${shown}`, err);
       sendError(res, 500, 'internal_error', 'Internal server error');
     }
@@ -1111,7 +1092,7 @@ export function makeRequestHandler(ctx: RequestHandlerCtx): (req: IncomingMessag
 }
 
 /**
- * The laptop's own gate (main listener, not the cloud): Mac mode's backstop first — a request
+ * The laptop's own gate (main listener): Mac mode's backstop first — a request
  * carrying a Cloudflare edge header came through a tunnel and reaches nothing here — then the
  * network token (non-loopback binds), CORS and the cross-site write guard, as before.
  */
@@ -1191,11 +1172,10 @@ export async function startPhoneListener(opts: { port?: number } = {}): Promise<
   const main = mainServer;
   const sockets = new Set<Duplex>();
   const server = createServer(makeRequestHandler({
-    gate: (req, res) => macPhoneGate(req, res),
+    gate: (req, res) => macPhoneGate(req, res, (m, p) => main.router.match(m, p)),
     router: main.router,
     dashboardDir: main.dashboardDir,
     contextRoot: main.contextRoot,
-    cloud: false,
   }));
   server.on('connection', (socket) => {
     markPhoneSocket(socket);
@@ -1257,42 +1237,19 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   // every non-loopback request behind a per-process token so LAN neighbors
   // (shared wifi, offices, cafés) can't reach the unauthenticated API.
   const loopbackBind = host === '127.0.0.1' || host === 'localhost' || host === '::1';
-  // Cloud mode (hands-free) has its own gate: GitHub's forwarder arrives on loopback, so the
-  // network token's loopback bypass would let the whole internet in. No token there.
-  const cloud = isCloud();
-  const networkToken = loopbackBind || cloud ? null : generateNetworkToken();
+  const networkToken = loopbackBind ? null : generateNetworkToken();
 
   return new Promise((resolvePromise, reject) => {
     const server = createServer(makeRequestHandler({
-      gate: cloud
-        ? (req, res) => cloudGate(req, res)
-        : (req, res) => mainLaptopGate(req, res, networkToken),
+      gate: (req, res) => mainLaptopGate(req, res, networkToken),
       router,
       dashboardDir,
       contextRoot,
-      cloud,
     }));
     mainServer = { server, router, dashboardDir, contextRoot };
     configureMacListener({ start: () => startPhoneListener(), stop: () => stopPhoneListener() });
 
-    // Cloud mode: every WebSocket upgrade passes the cloud gate BEFORE any upgrade listener
-    // sees it (device session, our Origin, phase active, chat socket only). A refused upgrade
-    // is answered here and never emitted, so no listener can act on it.
-    if (cloud) {
-      const emit = server.emit.bind(server) as (event: string | symbol, ...args: unknown[]) => boolean;
-      server.emit = ((event: string | symbol, ...args: unknown[]) => {
-        if (event === 'upgrade') {
-          const refusal = cloudUpgradeRefusal(args[0] as IncomingMessage);
-          if (refusal !== null) {
-            rejectCloudUpgrade(args[1] as import('node:stream').Duplex, refusal);
-            return true;
-          }
-        }
-        return emit(event, ...args);
-      }) as typeof server.emit;
-    } else {
-      attachMainListenerBackstop(server);
-    }
+    attachMainListenerBackstop(server);
 
     // Agent terminal: bridge a WebSocket to a node-pty running real Claude Code.
     // Self-gates (desktop + loopback + node-pty present); a no-op otherwise.
@@ -1316,7 +1273,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     const onListening = () => {
       const shownHost = host === '127.0.0.1' ? 'localhost' : host;
       const url = `http://${shownHost}:${port}`;
-      console.log(options.listenFd !== undefined ? `\n  Dashboard: listening on inherited fd ${options.listenFd}\n` : `\n  Dashboard: ${url}\n`);
+      console.log(`\n  Dashboard: ${url}\n`);
       if (networkToken) {
         console.log(`  WARNING: bound to ${host} — the dashboard is reachable from your network.`);
         console.log('  Other devices must use a tokenized URL (sets a cookie on first visit):');
@@ -1353,7 +1310,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         stopClaudeUpdate?.();
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
-        const macDone = isDesktop() && macSession().isOn() ? macSession().stop().catch(() => undefined) : Promise.resolve();
+        const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
         void macDone.finally(() => {
           // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
           // when this server exits — SIGKILL from the parent would skip this, but a
@@ -1396,7 +1353,6 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // Headless claude spawns never run the CLI's TUI-only updater; this does. Self-gates to desktop.
       stopClaudeUpdate = startClaudeUpdateJob();
     };
-    if (options.listenFd !== undefined) server.listen({ fd: options.listenFd }, onListening);
-    else server.listen(port, host, onListening);
+    server.listen(port, host, onListening);
   });
 }

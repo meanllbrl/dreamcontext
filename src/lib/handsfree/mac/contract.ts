@@ -4,8 +4,8 @@
  * The work stays on the laptop. While Mac mode is on, the same server process runs a second
  * HTTP listener (the "phone listener", 127.0.0.1 only) and a Cloudflare tunnel points at it.
  * Every socket that listener accepts is a PHONE socket: never loopback, never trusted for
- * being local, served only the allow-list below with a Mac device session (a separate store
- * from the cloud's, `~/.dreamcontext/handsfree-mac/`).
+ * being local, served only what `route-policy.ts` allows, with a Mac device session (its own store,
+ * `~/.dreamcontext/handsfree-mac/`).
  *
  * Mirrored for the dashboard in `dashboard/src/components/handsfree/macContract.ts`; a drift
  * test (tests/unit/mac-contract-mirror.test.ts) keeps the two equal.
@@ -66,6 +66,11 @@ export interface MacStatus {
   deviceCount: number;
   /** The last start/stop failure, a {@link MacErrorCode}. */
   lastError: MacErrorCode | null;
+  /** The projects this run exposes (registered names, chosen at start): the phone sees and
+   *  reaches only these. Empty while off. */
+  exposedVaults: string[];
+  /** The thermal governor: the last reading and how many processes it slows now. */
+  thermal: MacThermal;
 }
 
 /** One signed-in phone as the sheet lists it (never the session id). */
@@ -81,6 +86,7 @@ export interface MacPhonePayload {
   mode: 'mac';
   battery: MacBattery;
   sleepAllowed: boolean;
+  thermal: MacThermal;
 }
 
 /** GET /api/agent/live-chats — names, never paths. */
@@ -90,14 +96,24 @@ export interface LiveChatWire {
   vault: string | null;
   title: string | null;
   busy: boolean;
+  /** What the drawer says (AC18): a question/permission waiting, a turn running, or idle. */
+  state: 'working' | 'asking' | 'idle';
+  /** The phone stack's last line (AC19): the question waiting, a permission's TOOL NAME only,
+   *  else the newest assistant text's last line; whitespace collapsed, 140 chars. */
+  lastLine: string | null;
+  /** The list's age (AC21): when the chat last moved, epoch ms; null when unknown. */
+  updatedAt: number | null;
 }
+
+/** GET /api/agent/live-chats's body: running chats, plus conversations still finishing after a
+ *  takeover (`draining`, ids only) so the drawer lists neither of them as a past chat. */
+export interface LiveChatsWire { chats: LiveChatWire[]; draining: string[] }
 
 // ─── Error codes ────────────────────────────────────────────────────────────
 
 export const MAC_ERROR_CODES = [
   'mac_not_setup',
   'mac_sudo_missing',
-  'mac_cloud_trip_active',
   'mac_already_on',
   'mac_not_on',
   'mac_tunnel_failed',
@@ -108,17 +124,35 @@ export const MAC_ERROR_CODES = [
   'mac_unsupported_platform',
   /** The fixed hostname already has a DNS record; setup again with `overwrite: true` to replace it. */
   'mac_hostname_in_use',
+  /** Start named no project. */
+  'mac_no_project',
+  /** Start named a project that is not registered (or whose folder is gone). */
+  'mac_unknown_project',
 ] as const;
 export type MacErrorCode = typeof MAC_ERROR_CODES[number];
-
-/** The cloud refusing to go while Mac mode is on (POST /api/handsfree/go). */
-export const CLOUD_REFUSED_MAC_ON = 'handsfree_mac_on';
 
 // ─── Battery ────────────────────────────────────────────────────────────────
 
 /** Discharging and at or below this → sleep is allowed again (disablesleep 0), no re-arm. */
 export const MAC_BATTERY_FLOOR_PERCENT = 15;
 export const MAC_BATTERY_POLL_MS = 60_000;
+
+// ─── Thermal governor ───────────────────────────────────────────────────────
+
+/** macOS `NSProcessInfo.thermalState`, 0..3. */
+export const MAC_THERMAL_STATES = ['nominal', 'fair', 'serious', 'critical'] as const;
+export type MacThermalState = typeof MAC_THERMAL_STATES[number];
+/** How often the governor reads the thermal state. */
+export const MAC_THERMAL_POLL_MS = 20_000;
+/** Consecutive nominal (or unreadable) readings before every slowed process is released: 2 min. */
+export const MAC_THERMAL_RELEASE_TICKS = 6;
+
+export interface MacThermal {
+  /** The last reading; null before the first one or when it could not be read. */
+  state: MacThermalState | null;
+  /** Processes slowed right now (clamped roots + inherited children). */
+  slowed: number;
+}
 
 // ─── The reachability probe ─────────────────────────────────────────────────
 
@@ -130,7 +164,7 @@ export const MAC_BATTERY_POLL_MS = 60_000;
  */
 export const MAC_PROBE_HEADER = 'X-Dreamcontext-Mac-Probe';
 /** Marks every phone-listener response (the login page reads it to tell "refused" from a
- *  network error, the way the cloud's pages read X-Dreamcontext-Cloud). */
+ *  network error). */
 export const MAC_SURFACE_HEADER = 'X-Dreamcontext-Surface';
 
 // ─── Login token (the QR) ───────────────────────────────────────────────────
@@ -139,7 +173,7 @@ export const MAC_LOGIN_TOKEN_TTL_MS = 5 * 60_000;
 /** The QR carries `https://<url>/login?t=<token>`. */
 export const MAC_LOGIN_TOKEN_PARAM = 't';
 
-// ─── The phone listener's allow-list ────────────────────────────────────────
+// ─── The phone listener's public routes (the API policy: route-policy.ts) ────
 
 /** Reachable with no credential at all. */
 export const MAC_PUBLIC_ROUTES: readonly string[] = [
@@ -147,6 +181,14 @@ export const MAC_PUBLIC_ROUTES: readonly string[] = [
   'POST /api/handsfree/login',
   'GET /api/health',
   'GET /manifest.webmanifest',
+  // The service worker and its offline page load while signed out (the worker installs before
+  // a session exists, and the offline page is what it shows when the Mac is not reachable).
+  'GET /handsfree-sw.js',
+  'GET /handsfree-offline.html',
+  // The icons of the installed app (browsers fetch manifest icons without cookies).
+  'GET /icons/icon-192.png',
+  'GET /icons/icon-512.png',
+  'GET /icons/apple-touch-icon-180.png',
 ];
 
 /** The only WebSocket the phone opens. PTY, Assistant and browser-mirror are refused. */

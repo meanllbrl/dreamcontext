@@ -374,20 +374,20 @@ Here the agent also knows it isn't in a terminal, so it can hand you the thing i
 
 > **In development** — built and under review, not in a release yet.
 
-Leave the laptop and keep working from your phone. **Go** moves the active project (the vault, its linked repos, their worktrees and their Claude sessions) to your own GitHub Codespace and locks it on the laptop. The phone opens a link, signs in with a passphrase and drives the same Chat, and a turn keeps running while the phone is in your pocket. **Return** brings everything back to the laptop: commits, branches, the stash, staged and unstaged changes, files and every session started on the phone. Then it seals and stops the cloud machine and shows a receipt.
+Leave the laptop and keep working from your phone. The work never leaves the Mac: the desktop app opens a Cloudflare tunnel link to itself, the phone signs in with a one-tap QR or a 6-word passphrase and drives the same chats, and the Mac stays awake with the lid closed (Low Power Mode on) until **Return**.
 
 ```bash
-dreamcontext handsfree setup      # GitHub sign-in in the browser, creates your private codespace, prints the passphrase once
-dreamcontext handsfree account-login --all   # sign each Claude account in on the cloud machine
-dreamcontext handsfree go         # take the project to the cloud; prints the phone link
-dreamcontext handsfree return     # bring everything home
+dreamcontext handsfree mac setup   # one admin prompt (the sleep permission), prints the phone passphrase once
+dreamcontext handsfree mac start   # opens the tunnel for this project (or --project a --project b); prints the phone link
+dreamcontext handsfree mac stop    # Return: phones signed out, tunnel closed, sleep restored
 ```
 
-- **Setup needs only a GitHub login.** No card and no other service: it runs on your own Codespaces quota, and the machine stops itself 15 minutes after both you and your agent go quiet (a running turn keeps it up for at most 2 hours). A stopped machine shows a **Wake** button on the phone.
-- **The phone gets a link and a 6-word passphrase.** A device stays signed in for 30 days. `dreamcontext handsfree password` issues a new passphrase and `handsfree devices revoke --all` signs every phone out.
-- **Nothing is deleted when both sides changed.** If you also worked on the laptop while away, that repo is parked under `refs/handsfree/<trip>/*` and conflicting files go to a conflicts folder; your laptop copy wins. Every file Return overwrites is backed up first, so **Roll back** undoes it. A file deleted on the phone is listed, never deleted on the laptop. **Abandon** unlocks the laptop at once, and the next go recovers the cloud work first.
-- Also in the desktop app: a hands-free button in the window bar, a QR code for the phone, a banner while away, and the receipt with Resume / Roll back.
-- **Or keep the work on the Mac.** The sheet's default, *From this Mac*, needs no cloud machine: the desktop app opens a Cloudflare tunnel link to itself, the phone signs in with a one-tap QR or the passphrase and drives the same chats, and the Mac stays awake with the lid closed (Low Power Mode on) until **Return**. One admin prompt at setup; `dreamcontext handsfree mac setup | start | stop` from the terminal.
+- **The phone gets a link and a 6-word passphrase** (or the one-tap QR in the app). A device stays signed in for 30 days; `handsfree mac password` issues a new passphrase and `handsfree mac devices revoke-all` signs every phone out.
+- **You choose the projects.** Start lists your projects with the current one checked; the phone sees and reaches only the checked ones. To change them, Return and start again.
+- **The phone gets the whole dashboard**, not just the chat: tasks, knowledge, Lab, whiteboards, roadmap, automations and the rest. What stays on the Mac: Settings, the launcher, Mac mode itself, windows, the Assistant, installers, secrets and voice.
+- **Install it as an app, and it buzzes when Claude needs you.** On the fixed address, add the page to the Home Screen, sign in once inside the app and turn on notifications in the chat drawer. The phone is notified when Claude asks a question, needs a permission or finishes a turn; a tap opens that chat. A chat already open on the phone's screen does not buzz it.
+- **A fixed address keeps the phone app.** `handsfree mac tunnel fixed <hostname>` puts the link on your own Cloudflare domain, so it is the same every time; a quick address changes on every start, so an installed app and its notifications need the fixed one.
+- In the desktop app: a hands-free button in the window bar opens the Mac panel (setup, the projects to open, start, the QR, battery, signed-in phones, Return), and Settings → Hands-free sets the fixed address.
 
 ## Built for Teams
 

@@ -50,7 +50,7 @@ let home: string;
 let root: string;
 let routes: RecallCloudRoutes;
 let build: ReturnType<typeof vi.fn>;
-const ENV = ['DREAMCONTEXT_CLOUD', 'DREAMCONTEXT_RECALL_OPENROUTER_KEY', 'OPENROUTER_API_KEY'];
+const ENV = ['DREAMCONTEXT_RECALL_OPENROUTER_KEY', 'OPENROUTER_API_KEY'];
 
 const MUTATIONS: Array<{ name: string; pick: (r: RecallCloudRoutes) => Handler; url: string; body: unknown }> = [
   { name: 'key', pick: (r) => r.setKey, url: '/api/recall/cloud/key', body: { key: KEY } },
@@ -171,23 +171,6 @@ describe('the guard on read routes', () => {
   it('does not answer under the same rules a write needs (read guard is the weaker of the two)', () => {
     expect(requireLocalDashboardRead(req('GET', '/x'))).toBe(true);
     expect(requireLocalDashboardWrite(req('GET', '/x', undefined, { origin: null }))).toBe(false);
-  });
-});
-
-describe('hands-free cloud mode', () => {
-  it('makes every route unavailable, even for a perfect request', async () => {
-    vi.stubEnv('DREAMCONTEXT_CLOUD', '1');
-    for (const m of MUTATIONS) {
-      const r = await call(m.pick(routes), req('POST', m.url, m.body), root);
-      expect(r.status).toBe(403);
-      expect(r.json.error).toBe('cloud_unavailable');
-    }
-    for (const g of READS) {
-      const r = await call(g.pick(routes), req('GET', g.url), root);
-      expect(r.status).toBe(403);
-      expect(r.json.error).toBe('cloud_unavailable');
-    }
-    expect(existsSync(join(home, '.dreamcontext'))).toBe(false);
   });
 });
 

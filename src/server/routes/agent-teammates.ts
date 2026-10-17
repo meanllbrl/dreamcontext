@@ -2,11 +2,17 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { sendJson } from '../middleware.js';
 import { isAgentHost } from '../desktop.js';
-import { isCloud } from '../cloud-mode.js';
-import { runWorkerOp } from '../cloud-worker.js';
 import { sanitizeUuid } from './agent-spawn-shared.js';
 import { goalLiveRunFor } from './agent-terminal.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { phoneTranscriptRefused } from '../phone-origin.js';
+
+/** AC16: a phone sees a pane's teammates only when the PANE's conversation is a chosen
+ *  project's (teammate ids are already pane-bound by `authorized()`). */
+function phonePaneRefused(req: IncomingMessage, contextRoot: string, claudeId: string | undefined): boolean {
+  const id = sanitizeUuid(claudeId ?? null);
+  return !!id && phoneTranscriptRefused(req, contextRoot, liveTranscriptPath(contextRoot, id));
+}
 import { parseTranscriptHistory } from '../../lib/transcript-history.js';
 import { TEAMMATE_SESSION_RE } from '../../lib/goal-live.js';
 import {
@@ -158,17 +164,15 @@ export async function handleAgentTeammates(
 ): Promise<void> {
   if (!isAgentHost() || !contextRoot) { sendJson(res, 200, { teammates: [] }); return; }
   const query = Object.fromEntries(new URL(req.url || '/', `http://${req.headers.host}`).searchParams);
+  if (phonePaneRefused(req, contextRoot, query.claudeId)) { sendJson(res, 200, { teammates: [] }); return; }
   try {
-    // Teammate transcripts are dcuser's 0600 files in the cloud: the same read runs as dcuser.
-    sendJson(res, 200, isCloud()
-      ? await runWorkerOp({ op: 'read', params: { kind: 'teammates', contextRoot, query }, timeoutMs: 60_000 })
-      : await computeTeammates(contextRoot, query));
+    sendJson(res, 200, await computeTeammates(contextRoot, query));
   } catch {
     sendJson(res, 200, { teammates: [] });
   }
 }
 
-/** The teammate list (also run inside the cloud's dcuser worker). */
+/** The teammate list. */
 export async function computeTeammates(contextRoot: string, q: Record<string, string>): Promise<{ teammates: TeammateWire[] }> {
   const claudeId = sanitizeUuid(q.claudeId ?? null);
   if (!claudeId) return { teammates: [] };
@@ -205,16 +209,15 @@ export async function handleAgentTeammateHistory(
 ): Promise<void> {
   if (!isAgentHost() || !contextRoot) { sendJson(res, 200, { items: [] }); return; }
   const query = Object.fromEntries(new URL(req.url || '/', `http://${req.headers.host}`).searchParams);
+  if (phonePaneRefused(req, contextRoot, query.claudeId)) { sendJson(res, 200, { items: [] }); return; }
   try {
-    sendJson(res, 200, isCloud()
-      ? await runWorkerOp({ op: 'read', params: { kind: 'teammate-history', contextRoot, query }, timeoutMs: 60_000 })
-      : computeTeammateHistory(contextRoot, query));
+    sendJson(res, 200, computeTeammateHistory(contextRoot, query));
   } catch {
     sendJson(res, 200, { items: [] });
   }
 }
 
-/** One teammate's history (also run inside the cloud's dcuser worker). */
+/** One teammate's history. */
 export function computeTeammateHistory(contextRoot: string, q: Record<string, string>): { items: unknown[] } {
   const claudeId = sanitizeUuid(q.claudeId ?? null);
   const session = (q.session ?? '').trim().toLowerCase();

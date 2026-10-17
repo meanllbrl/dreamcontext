@@ -29,10 +29,9 @@ afterEach(() => {
 });
 
 describe('claudeUpdateJobDisabledReason', () => {
-  it('runs only in the desktop app, never in the cloud or a test run', () => {
+  it('runs only in the desktop app, never in a test run', () => {
     expect(claudeUpdateJobDisabledReason(APP_ENV, 4242)).toBeNull();
     expect(claudeUpdateJobDisabledReason({}, 4242)).toBe('not the desktop app');
-    expect(claudeUpdateJobDisabledReason({ ...APP_ENV, DREAMCONTEXT_CLOUD: '1' }, 4242)).toBe('cloud server');
     expect(claudeUpdateJobDisabledReason({ ...APP_ENV, VITEST: 'true' }, 4242)).toBe('test run');
     expect(claudeUpdateJobDisabledReason({ ...APP_ENV, NODE_ENV: 'test' }, 4242)).toBe('test run');
     expect(claudeUpdateJobDisabledReason({ ...APP_ENV, DREAMCONTEXT_CLAUDE_AUTOUPDATE: '0' }, 4242)).toBe('DREAMCONTEXT_CLAUDE_AUTOUPDATE=0');
