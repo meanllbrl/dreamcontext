@@ -140,9 +140,10 @@ describe('clickup PUSH (M3, mocked transport)', () => {
     expect(report.errors).toEqual([]);
     const remoteId = mapFile()[0].remoteId;
     const comments = fake.comments.get(remoteId) ?? [];
-    // 3 = the template "Created" entry + the two log entries
-    expect(comments).toHaveLength(3);
-    expect(report.commentsAdded).toBe(3);
+    // 2 = the two log entries; the journal's `created` entry stays local
+    expect(comments).toHaveLength(2);
+    expect(report.commentsAdded).toBe(2);
+    expect(comments.every((c) => /<!-- je:je_[A-Za-z0-9]+ -->/.test(c.comment_text))).toBe(true);
     expect(comments.some((c) => c.comment_text.includes('did a thing'))).toBe(true);
     expect(comments.some((c) => c.comment_text.includes('did another'))).toBe(true);
   });

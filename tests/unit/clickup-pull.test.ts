@@ -71,6 +71,12 @@ function mirror(slug: string): string {
   return readFileSync(join(contextRoot, 'state', `${slug}.md`), 'utf-8');
 }
 
+/** The task's journal (its history, off the card). */
+function journal(slug: string): string {
+  const p = join(contextRoot, 'state', 'journal', `${slug}.md`);
+  return existsSync(p) ? readFileSync(p, 'utf-8') : '';
+}
+
 function syncStateFile(): { watermark: number | null; tasks: Record<string, any> } {
   return JSON.parse(readFileSync(join(contextRoot, 'state', '.tasks-sync.json'), 'utf-8'));
 }
@@ -155,7 +161,8 @@ describe('clickup PULL + merge (M4, mocked transport)', () => {
     expect(report.errors).toEqual([]);
     expect(report.conflicts).toEqual([]);
 
-    const merged = mirror('union-task');
+    expect(mirror('union-task')).not.toContain('## Changelog');
+    const merged = journal('union-task');
     expect(occurrences(merged, 'from clickup')).toBe(1);
     expect(occurrences(merged, 'from disk')).toBe(1);
     expect(occurrences(merged, 'Task created.')).toBe(1);
@@ -166,7 +173,7 @@ describe('clickup PULL + merge (M4, mocked transport)', () => {
 
     // and a re-sync stays stable (idempotent union)
     await backend.sync('both');
-    const again = mirror('union-task');
+    const again = journal('union-task');
     expect(occurrences(again, 'from clickup')).toBe(1);
     expect(occurrences(again, 'from disk')).toBe(1);
     const commentsAfter = fake.comments.get(remoteIdOf('union-task'))!;
@@ -198,7 +205,7 @@ describe('clickup PULL + merge (M4, mocked transport)', () => {
     const merged2 = mirror('lww-task');
     expect(merged2).toContain('status: in_progress'); // local won
     expect(merged2).toContain('updated_by: alice');
-    expect(merged2).toContain('just a remote comment'); // remote comment still merged in
+    expect(journal('lww-task')).toContain('just a remote comment'); // remote comment still merged in
     expect(syncStateFile().tasks['lww-task'].pendingPush).toBe(true);
   });
 

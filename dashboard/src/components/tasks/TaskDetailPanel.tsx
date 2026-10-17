@@ -21,6 +21,7 @@ import { initMermaid, normalizeMermaidSvg } from '../../lib/mermaidRender';
 import { TaskSection, TaskField, EmptyField, RequiredField } from './detail/TaskSection';
 import { useSectionCollapse } from './detail/useSectionCollapse';
 import { AssignToAgentComposer, TaskAgentFace } from './AssignToAgentComposer';
+import { TaskJournalStrip } from './TaskJournalStrip';
 import { useAgents, findAgent } from '../../hooks/useAgents';
 import { taskAgent } from './boardModel';
 import { tr } from '../../lib/assignToAgent';
@@ -472,9 +473,14 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const isBacklog = task.tags.some(x => x.toLowerCase() === 'backlog');
   const removeBacklogTag = () => handleTagsChange(task.tags.filter(x => x.toLowerCase() !== 'backlog'));
 
+  // A refusal (the evidence gate's 409 names every unproven criterion, one per
+  // line) stays long enough to read; a newer error restarts the clock.
+  const mutationErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (mutationErrorTimer.current) clearTimeout(mutationErrorTimer.current); }, []);
   const onMutationError = (err: Error) => {
     setMutationError(err.message);
-    setTimeout(() => setMutationError(null), 5000);
+    if (mutationErrorTimer.current) clearTimeout(mutationErrorTimer.current);
+    mutationErrorTimer.current = setTimeout(() => setMutationError(null), 8000);
   };
 
   const handleStatusChange = (status: string) => {
@@ -689,6 +695,11 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
     if (!task.body) return '';
     return marked.parse(task.body) as string;
   }, [task.body]);
+  // React 19 re-applies `dangerouslySetInnerHTML` whenever the prop OBJECT is
+  // new, so an inline `{ __html }` reset the body on every re-render and undid
+  // the checkbox enabling below (the criteria could not be ticked). One object
+  // per bodyHtml keeps the DOM until the body really changes.
+  const bodyInnerHtml = useMemo(() => ({ __html: bodyHtml }), [bodyHtml]);
 
   const bodyRef = useRef<HTMLDivElement>(null);
   // bodySourceRef: last known SERVER body. Updated whenever the task prop
@@ -1037,7 +1048,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
         <div className="detail-zones">
           <div className="detail-body">
             {mutationError && (
-              <div className="error-state" style={{ marginBottom: 'var(--space-3)' }}>{mutationError}</div>
+              <div className="error-state" role="alert" style={{ marginBottom: 'var(--space-3)', whiteSpace: 'pre-line' }}>{mutationError}</div>
             )}
 
           {/*
@@ -1423,7 +1434,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             <div
               ref={bodyRef}
               className="markdown-body"
-              dangerouslySetInnerHTML={{ __html: bodyHtml }}
+              dangerouslySetInnerHTML={bodyInnerHtml}
             />
           ) : (
             <p className="detail-empty">No content.</p>
@@ -1432,15 +1443,16 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
           {/* Divider */}
           <hr className="detail-divider" />
 
-          {/* Changelog Add */}
+          {/* History: the newest journal entries, then add one */}
           <div className="changelog-section">
             <h3 className="changelog-title">{t('tasks.changelog')}</h3>
+            <TaskJournalStrip slug={task.slug} />
             <form onSubmit={handleAddChangelog} className="changelog-add">
               <input
                 className="field-input"
                 value={changelogEntry}
                 onChange={e => setChangelogEntry(e.target.value)}
-                placeholder="Add a changelog entry..."
+                placeholder={t('tasks.history_placeholder')}
               />
               <button
                 type="submit"

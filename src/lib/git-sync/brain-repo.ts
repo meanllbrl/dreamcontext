@@ -252,6 +252,8 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
       '',
       '# Tasks are a local mirror under a remote task backend — issues/ClickUp are source of truth.',
       'state/*.md',
+      '# Task journals travel with their cards: through the backend, never the brain repo.',
+      'state/journal/',
     );
   }
   return `${lines.join('\n')}\n`;

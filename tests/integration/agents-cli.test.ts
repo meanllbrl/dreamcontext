@@ -240,7 +240,9 @@ describe('tasks assign-agent', () => {
     const text = readFileSync(path, 'utf-8');
     expect(text).toMatch(/^agent: scout$/m);
     expect(text).toMatch(/^status: in_progress$/m);
-    expect(text.match(/- Run [^\n]*: \w[\w-]*\. Document: /g)).toHaveLength(1);
+    const journal = readFileSync(join(projectDir, '_dream_context', 'state', 'journal', 'fix-login.md'), 'utf-8');
+    expect(journal.match(/- Run [^\n]*: \w[\w-]*\. Document: /g)).toHaveLength(1);
+    expect(text).not.toContain('## Changelog');
   });
 
   it('refuses inside an agent run, writing nothing', () => {

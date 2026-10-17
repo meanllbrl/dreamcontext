@@ -500,6 +500,26 @@ export function useFeatureOptions() {
   });
 }
 
+/** One journal entry as `GET /api/tasks/:slug/journal` serves it. */
+export interface TaskJournalEntry {
+  id: string;
+  date: string;
+  kind: 'created' | 'log' | 'evidence' | 'status' | 'approval' | 'sleep' | 'remote';
+  label: string;
+  actor: string | null;
+  body: string;
+}
+
+/** The task's newest journal entries (history lives beside the card, not in it). */
+export function useTaskJournal(slug: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['tasks', slug, 'journal'],
+    queryFn: () => api.get<{ total: number; entries: TaskJournalEntry[] }>(`/tasks/${slug}/journal`),
+    enabled: !!slug,
+  });
+}
+
 export function useAddTaskChangelog() {
   const queryClient = useQueryClient();
   const api = useApi();

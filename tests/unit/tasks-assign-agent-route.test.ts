@@ -101,7 +101,7 @@ describe('POST /api/tasks/:slug/assign-agent', () => {
     const text = readFileSync(taskPath('fix-login'), 'utf-8');
     expect(text).toMatch(/^agent: scout$/m);
     expect(text).toMatch(/^status: in_progress$/m);
-    expect(text).toContain('- Run ');
+    expect(readFileSync(join(contextRoot, 'state', 'journal', 'fix-login.md'), 'utf-8')).toContain('- Run ');
   });
 
   it('409 for an agent approved only through its job, naming the Agents page; nothing written or run', async () => {

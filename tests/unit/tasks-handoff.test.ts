@@ -82,7 +82,10 @@ describe('tasks handoff', () => {
   it('writes every part as ONE changelog entry and sets the task in_progress', async () => {
     await cli('tasks', 'handoff', 'ship-the-thing', ...STATE, 'Ping the owner before merging.');
     const md = taskFile('ship-the-thing');
-    const entry = md.slice(md.indexOf('- Handoff'));
+    const journal = readFileSync(join(stateDir, 'journal', 'ship-the-thing.md'), 'utf-8');
+    const entry = journal.slice(journal.indexOf('log: Handoff [je_'));
+    expect(journal.split(/\n(?=### )/).filter((e) => e.includes('log: Handoff [je_'))).toHaveLength(1);
+    expect(md).not.toContain('Handoff');
     expect(entry).toContain('**Done:** Parser done and green');
     expect(entry).toContain('**Next:** Write the serializer');
     expect(entry).toContain('**Decisions:** Kept the tokenizer streaming');

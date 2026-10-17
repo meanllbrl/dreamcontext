@@ -21,7 +21,7 @@ skills:
 
 ## Skills always loaded
 
-- **dreamcontext-agent-core**: CLI over hand-editing, recall, task essentials and path safety. Task verbs and flags: .claude/skills/dreamcontext/references/cli-reference.md § "Tasks". The task protocol (sections, statuses, custom fields, dates, Workflow): .claude/skills/dreamcontext/references/tasks-and-features.md § "Tasks are your working documents".
+- **dreamcontext-agent-core**: CLI over hand-editing, recall, task essentials and path safety. Task verbs and flags: .claude/skills/dreamcontext/references/cli-reference.md § "Tasks". The task protocol (sections, statuses, custom fields, dates, Workflow): .claude/skills/dreamcontext/references/tasks-and-features.md § "Tasks: a card and a journal".
 - **Why each rule below exists**, with the failures behind it: .claude/skills/dreamcontext/references/sleep-specialists.md § "sleep-tasks". Read it only when a rule's edge case is unclear.
 
 You own `_dream_context/state/*.md` and the task lifecycle. The orchestrator gave you a brief; the CLI is your source of truth for what happened in the session(s).

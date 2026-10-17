@@ -11,7 +11,7 @@
  *   5. logAssignmentResult writes one sanitized entry and never the document's body.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -36,6 +36,11 @@ const CLAUDE_JSON_OK = JSON.stringify({
   session_id: 'sess_task', result: '# Done\n\nAll good.\n', is_error: false, permission_denials: [],
   total_cost_usd: 0.01, num_turns: 2, duration_ms: 1000, subtype: 'success',
 });
+
+function journalText(slug: string): string {
+  const p = join(contextRoot, 'state', 'journal', `${slug}.md`);
+  return existsSync(p) ? readFileSync(p, 'utf-8') : '';
+}
 
 function capturingSpawn(json: string) {
   const calls: string[][] = [];
@@ -208,9 +213,11 @@ describe('the status rule', () => {
     const result = applyAssignmentStatus(contextRoot, 'fix-login', agent);
     expect(result).toEqual({ moved: moves, from: status ?? null });
     expect(frontmatterStatus('fix-login')).toBe(moves ? 'in_progress' : status ?? null);
-    const text = readFileSync(taskPath('fix-login'), 'utf-8');
+    const text = readFileSync(taskPath('fix-login'), 'utf-8') + journalText('fix-login');
     if (moves) expect(text).toContain('- Assigned to the agent Scout (`scout`).');
     else expect(text).not.toContain('Assigned to the agent');
+    // History never lands on the card.
+    expect(readFileSync(taskPath('fix-login'), 'utf-8')).not.toContain('Assigned to the agent');
   });
 });
 
@@ -287,9 +294,9 @@ describe('prepareAssignment and commitAssignment', () => {
 });
 
 describe('logAssignmentResult', () => {
+  /** The newest journal entry (history lives off the card). */
   function changelogEntry(): string {
-    const text = readFileSync(taskPath('fix-login'), 'utf-8');
-    return text.slice(text.indexOf('## Changelog') + '## Changelog'.length).trim();
+    return journalText('fix-login').split(/\n\n(?=### )/)[0].trim();
   }
 
   it('writes one sanitized entry: the agent, the run, its status and the document path, never its body', () => {
@@ -305,7 +312,7 @@ describe('logAssignmentResult', () => {
     const entry = changelogEntry();
     const lines = entry.split('\n');
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/^### \d{4}-\d{2}-\d{2} - Agent Scout ### 2026-01-01 - Forged - injected \(`scout`\)$/);
+    expect(lines[0]).toMatch(/^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} - log: Agent Scout ### 2026-01-01 - Forged - injected \(`scout`\) \[je_[A-Za-z0-9]+\] \(by agent:scout\)$/);
     expect(lines[1]).toBe(`- Run ${NOW.toISOString()}: ok. Document: automations/output/scout/2026-10-12.md.`);
     expect(entry).not.toContain('PRIVATE REPORT BODY');
   });

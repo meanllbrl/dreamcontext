@@ -12,6 +12,7 @@ import { unionTaskMap, type TaskMapEntry } from '../task-backend/sync-state.js';
 import { TASKS_MAP_REL } from '../task-backend/paths.js';
 import { PEOPLE_JSON_REL, PEOPLE_SCHEMA_VERSION } from '../people-store.js';
 import { inspectJsonArray } from '../json-file.js';
+import { normalizeEntryText, parseEntries, parseJournal } from '../task-journal.js';
 import { addPath, readOursTheirsBase } from './git.js';
 import { loadStatuses } from '../overrides.js';
 import { DEFAULT_STATUSES, pickMergedStatus, type StatusDef } from '../task-status.js';
@@ -42,6 +43,8 @@ export type MergeClass =
   | 'people-json'
   | 'tasks-map-json'
   | 'task-md'
+  /** `state/journal/<slug>.md` — a task's history: union of entries by id (mergeTaskJournal). */
+  | 'task-journal'
   | 'knowledge-md'
   | 'feature-md'
   | 'taxonomy-json'
@@ -66,6 +69,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (norm === PEOPLE_JSON_REL) return 'people-json';
   if (norm === 'core/taxonomy.json') return 'taxonomy-json';
   if (norm === TASKS_MAP_REL) return 'tasks-map-json';
+  if (/^state\/journal\/[^/]+\.md$/.test(norm)) return 'task-journal';
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
   if (/^knowledge\/features\//.test(norm)) return 'feature-md';
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
@@ -365,10 +369,17 @@ export function mergeTaskMd(
 
   const bodyMerge = merge3Bodies(baseParsed.content, oursParsed.content, theirsParsed.content);
   const sections: SectionBlock[] = splitSections(bodyMerge.merged);
+  // History is the journal: a card never gains a Changelog here. A side that
+  // still carried one (an old machine) keeps its entries in the card, where the
+  // next write folds them into the journal (copy-counted) — never dropped.
   const clIdx = sections.findIndex((s) => s.name.toLowerCase() === 'changelog');
-  const clContent = renderChangelogEntries(unioned);
-  if (clIdx >= 0) sections[clIdx] = { ...sections[clIdx], content: clContent };
-  else sections.push({ name: 'Changelog', content: clContent });
+  if (unioned.length === 0) {
+    if (clIdx >= 0) sections.splice(clIdx, 1);
+  } else {
+    const clContent = renderChangelogEntries(unioned);
+    if (clIdx >= 0) sections[clIdx] = { ...sections[clIdx], content: clContent };
+    else sections.push({ name: 'Changelog', content: clContent });
+  }
   const mergedBody = joinSections(sections);
 
   const mergedData: Record<string, unknown> = {
@@ -378,6 +389,42 @@ export function mergeTaskMd(
   };
   const merged = matter.stringify(mergedBody, mergedData);
   return { merged, sibling: null, ...(pick.unknown.length > 0 ? { unknownStatuses: pick.unknown } : {}) };
+}
+
+// ─── state/journal/<slug>.md — union of entries by id ───────────────────────
+//
+// A journal only ever grows at the top, so a two-sided edit is two sets of new
+// entries. Entries with an explicit `[je_…]` id merge by id; id-less (legacy)
+// entries by text with copy counting, so an entry both sides already held is
+// kept once and two genuine repeats both survive. Newest first by date.
+
+export function mergeTaskJournal(_base: string, ours: string, theirs: string): { merged: string } {
+  const oursEntries = parseJournal(ours);
+  const ids = new Set(oursEntries.filter((e) => e.explicitId).map((e) => e.id));
+  const have = new Map<string, number>();
+  for (const e of oursEntries) {
+    if (e.explicitId) continue;
+    const n = normalizeEntryText(e.text);
+    have.set(n, (have.get(n) ?? 0) + 1);
+  }
+  const theirsOnly: string[] = [];
+  for (const e of parseJournal(theirs)) {
+    if (e.explicitId) {
+      if (!ids.has(e.id)) theirsOnly.push(e.text);
+      continue;
+    }
+    const n = normalizeEntryText(e.text);
+    const left = have.get(n) ?? 0;
+    if (left > 0) have.set(n, left - 1);
+    else theirsOnly.push(e.text);
+  }
+  const all = [...parseEntries(theirsOnly), ...oursEntries];
+  // Stable: same-date entries keep their incoming order.
+  const sorted = all
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => (b.e.date || '').localeCompare(a.e.date || '') || a.i - b.i)
+    .map(({ e }) => e.text);
+  return { merged: sorted.length > 0 ? `${sorted.join('\n\n')}\n` : '' };
 }
 
 // ─── whiteboards/<slug>/<slug>.excalidraw.md — element-level merge ───────────
@@ -694,6 +741,9 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         }
         break;
       }
+      case 'task-journal':
+        mergedContent = mergeTaskJournal(base, ours, theirs).merged;
+        break;
       case 'whiteboard-md': {
         const board = mergeWhiteboardMd(base, ours, theirs);
         if (board.needsAgent) {

@@ -2368,7 +2368,7 @@ export function startChatSession(
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/clear' }] } });
 
             const continuePrompt = `Handoff: continue task ${pending.title} (${pending.task}). `
-              + `Read _dream_context/state/${pending.task}.md first, then carry on from its latest changelog entry.`;
+              + `Read _dream_context/state/${pending.task}.md first, then carry on from the newest entry of _dream_context/state/journal/${pending.task}.md.`;
             openTurn();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
 

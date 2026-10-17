@@ -662,7 +662,7 @@ describe('renderHandoffBanner', () => {
     expect(text).toContain('(my-task)');
     expect(text).toContain('205k');
     expect(text).toContain('_dream_context/state/my-task.md');
-    expect(text).toContain('latest changelog entry');
+    expect(text).toContain('that entry is the handoff');
   });
 
   it('omits the size when it was never measured', () => {

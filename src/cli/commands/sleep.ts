@@ -785,11 +785,10 @@ export function registerSleepCommand(program: Command): void {
           });
           info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
         } else if (plan.action === 'refresh' || plan.action === 'refresh-absorbing') {
-          await backend.addChangelog(
-            plan.slug,
-            `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
-            { fallbackAppend: true },
-          );
+          await backend.addJournal(plan.slug, {
+            kind: 'sleep',
+            body: `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
+          });
           info(plan.action === 'refresh'
             ? `Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`
             : `Curator chore was merged into ${plan.slug}; logged ${buckets.orphan.length} orphan tags there instead of re-filing it.`);

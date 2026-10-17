@@ -78,6 +78,10 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
     expect(wave).toMatch(/`FAILED 2x` after\s+a second fix = STOP and put it to the owner/);
     expect(wave).toMatch(/timeout under load is the machine/);
     expect(wave).toMatch(/Tick that wave's criteria \(only what is demonstrably true\)/);
+    // Evidence changes status (C1): the tick records the green check's output through the task.
+    expect(wave).toContain('> "$ROOT/tmp/develop/$S/check-wN.out" 2>&1; echo "exit $?"');
+    expect(wave).toContain('dreamcontext tasks check "$S" <n> --output-file "$ROOT/tmp/develop/$S/check-wN.out" --exit 0');
+    expect(wave).toMatch(/--evidence shot:<path>/);
     expect(wave).toMatch(/a plan that\s+turns out to be wrong = STOP/);
   });
 
@@ -425,7 +429,7 @@ describe('no tick without evidence, in both recipes', () => {
 
     it(`${name}: a tick carries its evidence, and a run with an unticked criterion does not close`, () => {
       const waves = at('## 2.', '## 3.');
-      expect(waves).toMatch(/A tick needs its evidence in the same log line/);
+      expect(waves).toMatch(/A tick goes through `tasks check`, never an edit of the card/);
       expect(waves).toMatch(/No evidence = no tick, and a run with an unticked criterion\s+does not close/);
     });
 

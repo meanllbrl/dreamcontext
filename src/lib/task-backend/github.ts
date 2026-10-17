@@ -19,8 +19,6 @@ import {
   labelNamesOf,
   labelsFromGitHub,
   labelsToGitHub,
-  normalizeEntry,
-  splitChangelogEntries,
   statusFromGitHub,
   statusToGitHub,
   unknownDcLabels,
@@ -46,12 +44,24 @@ import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
 import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
-import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { readJournal, type JournalEntry, type NewJournalEntry } from '../task-journal.js';
+import { cardHasChangelog, foldCardChangelog } from '../task-card.js';
+import { withTaskFileLock } from '../task-file-lock.js';
+import {
+  applyRemoteComments,
+  commentBodyFor,
+  entriesToPost,
+  journalSyncPatch,
+  journalSyncState,
+  seedPostedFromBase,
+  type JournalSyncState,
+  type RemoteComment,
+} from './journal-sync.js';
+import { merge3Bodies, mergeScalar, planAssigneeHeal } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
-  type AddChangelogOptions,
   type AssigneeDrift,
   type CreateTaskInput,
   type InsertSectionOptions,
@@ -299,9 +309,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     this.recordLocalMutation(slug, 'push');
   }
 
-  async addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void> {
-    await super.addChangelog(slug, entry, opts);
+  /** Every history write (`addChangelog` included) lands here: queue a push for it. */
+  async addJournal(slug: string, entry: NewJournalEntry): Promise<JournalEntry> {
+    const written = await super.addJournal(slug, entry);
     this.recordLocalMutation(slug, 'push');
+    return written;
   }
 
   /**
@@ -734,16 +746,17 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   ): Promise<void> {
     const path = this.taskPath(slug);
     if (!existsSync(path)) return;
+    // A card still carrying a Changelog (an old CLI wrote it) folds into the
+    // journal first, so the issue body and the comments both see the new shape.
+    if (cardHasChangelog(readFileSync(path, 'utf-8'))) {
+      withTaskFileLock(this.brainRoot(), slug, () => foldCardChangelog(path));
+    }
     const task = (await super.get(slug))!;
     const enqueueCutoff = this.nowMs();
 
     const entry = this.ledger.taskSync(slug);
-    const baseEntries = entry?.base_snapshot
-      ? changelogEntriesOfBody(entry.base_snapshot.body)
-      : [];
-    const currentEntries = splitChangelogEntries(task.changelog);
-    const baseNorm = new Set(baseEntries.map(normalizeEntry));
-    const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
+    const journal = this.journalState(slug);
+    const toPost = entriesToPost(readJournal(this.stateDir, slug), journal.posted);
 
     // assignees: every person:<slug> tag (plus the legacy field), resolved to
     // GitHub logins via the collaborator cache. A slug that resolves to NO
@@ -886,19 +899,23 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       report.pushed++;
     }
 
-    // Changelog → issue comments (union-merged remotely; only entries the remote
-    // hasn't seen yet, so re-runs post nothing). Bulk first sync keeps a
-    // never-synced task's pre-existing history LOCAL (see pushLocal) —
-    // base_snapshot below absorbs it, so only future entries become comments.
+    // Journal → issue comments: only shareable entries the remote has not seen
+    // (posted_journal_ids), each with its `je:` marker, so re-runs post nothing.
+    // Bulk first sync keeps a never-synced task's pre-existing history LOCAL
+    // (see pushLocal): it is marked as seen, so only future entries post.
     const backfillChangelog = !(!entry?.base_snapshot && (bootstrap || wasMapped));
-    for (const entryText of backfillChangelog ? newEntries : []) {
-      const comment = await adapter.request<GitHubComment>(
-        'POST',
-        `${this.issuesPath(owner, repo)}/${remoteId}/comments`,
-        { body: { body: entryText } },
-      );
-      serverTime = githubTimeMs(comment.created_at) ?? serverTime;
-      report.commentsAdded++;
+    for (const je of toPost) {
+      if (backfillChangelog) {
+        const comment = await adapter.request<GitHubComment>(
+          'POST',
+          `${this.issuesPath(owner, repo)}/${remoteId}/comments`,
+          { body: { body: commentBodyFor(je) } },
+        );
+        serverTime = githubTimeMs(comment.created_at) ?? serverTime;
+        journal.commentMap[String(comment.id)] = je.id;
+        report.commentsAdded++;
+      }
+      journal.posted.add(je.id);
     }
 
     const raw = readFileSync(path, 'utf-8');
@@ -907,6 +924,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       base_snapshot: { hash: hashContent(raw), body: raw },
       localHash: hashContent(raw),
       pendingPush: false,
+      ...journalSyncPatch(journal),
     });
     // Same rule as the ClickUp backend (#185): a push must not advance the global
     // pull watermark. "I wrote at T" is not "I have pulled everything up to T",
@@ -1250,7 +1268,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         if (existsSync(path)) {
           const raw = readFileSync(path, 'utf-8');
           const syncEntry = this.ledger.taskSync(entry.slug);
-          const localChanged = !syncEntry?.localHash || hashContent(raw) !== syncEntry.localHash;
+          // Unposted journal entries are unsaved local work too.
+          const localChanged = !syncEntry?.localHash || hashContent(raw) !== syncEntry.localHash
+            || entriesToPost(readJournal(this.stateDir, entry.slug), this.journalState(entry.slug).posted).length > 0;
           if (localChanged) {
             const savedTo = this.saveConflictCopy(entry.slug, raw, null);
             report.conflicts.push({ slug: entry.slug, savedTo, reason: 'remote_deleted' });
@@ -1335,9 +1355,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
 
     const remoteComments = await this.fetchIssueComments(adapter, owner, repo, remoteId);
-    const remoteEntries = remoteComments
-      .map((c) => (c.body ?? '').trim())
-      .filter(Boolean);
+    const remoteJournal: RemoteComment[] = remoteComments
+      .filter((c) => (c.body ?? '').trim())
+      .map((c) => ({ id: String(c.id), body: c.body ?? '', author: c.user?.login ?? null, createdAt: c.created_at ?? null }));
 
     const selectDefs = this.selectFieldDefs();
     const bodyDefs = this.bodyFieldDefs();
@@ -1459,13 +1479,24 @@ export class GitHubTaskBackend extends LocalTaskBackend {
           `(the remote does not carry them; verify them before relying on the task).`,
         );
       }
-      const written = this.writeMirror(slug, fm, remoteBody, remoteEntries);
+      const written = this.writeMirror(slug, fm, remoteBody);
+      // Comments become journal entries; a journal that outlived its card (a
+      // rebuilt mirror) recognises its own comments instead of re-importing them.
+      // Whatever local history predates this link stays local (like a bootstrap).
+      const newSlug = slug;
+      const journal = this.journalState(newSlug);
+      if (remoteJournal.length > 0) {
+        withTaskFileLock(this.brainRoot(), newSlug, () =>
+          applyRemoteComments(this.stateDir, newSlug, remoteJournal, journal));
+      }
+      for (const je of readJournal(this.stateDir, newSlug)) journal.posted.add(je.id);
       this.ledger.recordMapping({ slug, dcId: fm.id as string, backend: this.name, remoteId });
       this.ledger.updateTaskSync(slug, {
         last_synced_at: remoteTime ?? 0,
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        ...journalSyncPatch(journal),
       });
       this.ledger.advanceWatermark(remoteTime);
       report.pulled++;
@@ -1482,6 +1513,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     // EXISTING mirror → merge.
     const path = this.taskPath(slug);
+    const mergeSlug = slug;
+    if (cardHasChangelog(readFileSync(path, 'utf-8'))) {
+      withTaskFileLock(this.brainRoot(), mergeSlug, () => foldCardChangelog(path));
+    }
     const entry = this.ledger.taskSync(slug);
     const localRaw = readFileSync(path, 'utf-8');
     const local = (await this.getLocal(slug))!;
@@ -1505,11 +1540,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         }
       : null;
 
-    // ── changelog: union (conflict-free by construction) ──
-    const localEntries = splitChangelogEntries(local.changelog);
-    const mergedEntries = unionChangelog(localEntries, remoteEntries);
-    const remoteNorm = new Set(remoteEntries.map(normalizeEntry));
-    const localOnlyEntries = localEntries.filter((e) => !remoteNorm.has(normalizeEntry(e)));
+    // ── history: remote comments fold into the journal (conflict-free by construction) ──
+    const journal = this.journalState(mergeSlug);
+    const remoteAddedCount = remoteJournal.length === 0 ? 0 : withTaskFileLock(this.brainRoot(), mergeSlug, () =>
+      applyRemoteComments(this.stateDir, mergeSlug, remoteJournal, journal));
+    const localUnposted = entriesToPost(readJournal(this.stateDir, mergeSlug), journal.posted).length > 0;
 
     // ── prose: 3-way with base; missing base → GitHub wins + conflict copy ──
     const localBody = bodyToIssueBody(local.body).trim();
@@ -1595,7 +1630,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const scalarResults = [statusM, priorityM, urgencyM, nameM, tagsM, versionM, assigneeM, dueM, startM];
     const anyLocalWin = scalarResults.some((r) => r.winner === 'local') || anyCustomLocalWin;
     const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote') || anyCustomRemoteWin;
-    const remoteAddedEntries = mergedEntries.length > localEntries.length;
+    const remoteAddedEntries = remoteAddedCount > 0;
     const remoteContributed = anyRemoteWin || remoteAddedEntries || mergedBody !== localBody;
 
     for (const reason of conflicts) {
@@ -1642,11 +1677,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // git history to fall back on — keep the pre-pull bytes first. Only when the
     // bytes actually MOVE: a no-op merge writing a copy of itself would push a
     // real backup out of the keep window.
-    const rendered = this.renderMirror(fm, mergedBody, mergedEntries);
+    const rendered = this.renderMirror(fm, mergedBody);
     if (rendered !== localRaw) this.ledger.backupMirror(slug, localRaw);
     const written = this.writeMirrorContent(slug, rendered);
 
-    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
+    const keptLocal = anyLocalWin || proseLocalKept || localUnposted;
     if (keptLocal) {
       const remoteRender = this.renderMirror(
         {
@@ -1666,13 +1701,13 @@ export class GitHubTaskBackend extends LocalTaskBackend {
           ...(declaredFieldKeys.length > 0 ? { custom_fields: remoteCustomBase } : {}),
         },
         remoteBody,
-        remoteEntries,
       );
       this.ledger.updateTaskSync(slug, {
         last_synced_at: remoteTime ?? entry?.last_synced_at ?? 0,
         base_snapshot: { hash: hashContent(remoteRender), body: remoteRender },
         localHash: hashContent(remoteRender),
         pendingPush: true,
+        ...journalSyncPatch(journal),
       });
     } else {
       this.ledger.updateTaskSync(slug, {
@@ -1680,6 +1715,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        ...journalSyncPatch(journal),
       });
       this.ledger.dequeueFor(slug, this.nowMs());
     }
@@ -1757,7 +1793,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (existsSync(path)) {
         const raw = readFileSync(path, 'utf-8');
         const syncEntry = this.ledger.taskSync(slug);
-        const localChanged = !syncEntry?.localHash || hashContent(raw) !== syncEntry.localHash;
+        // Unposted journal entries are unsaved local work too.
+          const localChanged = !syncEntry?.localHash || hashContent(raw) !== syncEntry.localHash
+            || entriesToPost(readJournal(this.stateDir, slug), this.journalState(slug).posted).length > 0;
         if (localChanged) {
           const savedTo = this.saveConflictCopy(slug, raw, remoteTime);
           report.conflicts.push({ slug, savedTo, reason: 'remote_deleted' });
@@ -1944,26 +1982,23 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     return candidate;
   }
 
-  /** Compose a mirror file (frontmatter + prose body + Changelog section). */
-  protected renderMirror(
-    fm: Record<string, unknown>,
-    body: string,
-    changelogEntries: string[],
-  ): string {
-    const changelog = changelogEntries.length > 0
-      ? `## Changelog\n<!-- LIFO: newest at top -->\n\n${changelogEntries.join('\n\n')}\n`
-      : '';
-    const composed = `${body.trim()}\n${changelog ? `\n${changelog}` : ''}`;
-    return matter.stringify(composed, fm);
+  /** Compose a mirror CARD (frontmatter + prose body). History is the journal, never the card. */
+  protected renderMirror(fm: Record<string, unknown>, body: string): string {
+    return matter.stringify(`${body.trim()}\n`, fm);
   }
 
-  protected writeMirror(
-    slug: string,
-    fm: Record<string, unknown>,
-    body: string,
-    changelogEntries: string[],
-  ): string {
-    return this.writeMirrorContent(slug, this.renderMirror(fm, body, changelogEntries));
+  protected writeMirror(slug: string, fm: Record<string, unknown>, body: string): string {
+    return this.writeMirrorContent(slug, this.renderMirror(fm, body));
+  }
+
+  /** The task's journal sync state; a pre-journal ledger entry is seeded from its base snapshot. */
+  protected journalState(slug: string): JournalSyncState {
+    const entry = this.ledger.taskSync(slug);
+    const state = journalSyncState(entry);
+    if (entry && entry.posted_journal_ids === undefined && entry.base_snapshot) {
+      seedPostedFromBase(readJournal(this.stateDir, slug), entry.base_snapshot.body, state.posted);
+    }
+    return state;
   }
 
   /** Write already-composed mirror bytes (callers that render first to diff them). */
@@ -1996,22 +2031,6 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 /** Epoch-ms (server time) → YYYY-MM-DD frontmatter date. */
 function dateOf(ms: number | null): string {
   return new Date(ms ?? 0).toISOString().split('T')[0];
-}
-
-/** Extract the changelog entries from a stored base-snapshot body. */
-function changelogEntriesOfBody(body: string): string[] {
-  const lines = body.split('\n');
-  const section: string[] = [];
-  let inChangelog = false;
-  for (const line of lines) {
-    const h = line.match(/^(#{2})\s+(.+)$/);
-    if (h) {
-      inChangelog = h[2].trim().toLowerCase() === 'changelog';
-      continue;
-    }
-    if (inChangelog) section.push(line);
-  }
-  return splitChangelogEntries(section.join('\n'));
 }
 
 /** One pickable repo, with its full path (onboarding picker). */

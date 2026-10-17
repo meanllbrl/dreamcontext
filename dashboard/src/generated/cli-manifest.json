@@ -3020,6 +3020,16 @@
       "group": true
     },
     {
+      "path": "tasks approve",
+      "desc": "Approve a task in review: the owner's verdict, recorded in the journal, closes it (never from an agent)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--note"
+      ]
+    },
+    {
       "path": "tasks assign-agent",
       "desc": "Assign a task to an agent: sets agent:, moves an open task to in_progress, and runs the agent on it now",
       "args": [
@@ -3031,11 +3041,28 @@
       ]
     },
     {
+      "path": "tasks check",
+      "desc": "Tick a criterion with evidence: --run a command (recorded in the journal, ticked as cmd:<id>), or --evidence commit:<sha> | shot:<path>",
+      "args": [
+        "<name>",
+        "<criterion>"
+      ],
+      "valueFlags": [
+        "--run",
+        "--output-file",
+        "--exit",
+        "--evidence"
+      ]
+    },
+    {
       "path": "tasks complete",
-      "desc": "Mark a task as completed",
+      "desc": "Mark a task as completed (evidence-gated: every criterion proven by cmd:/commit:, nothing observed)",
       "args": [
         "<name>",
         "[summary...]"
+      ],
+      "valueFlags": [
+        "--reason"
       ]
     },
     {
@@ -3107,7 +3134,7 @@
     },
     {
       "path": "tasks doctor",
-      "desc": "Validate Workflow flowchart is in sync with Acceptance Criteria",
+      "desc": "Check task cards: the card standard (template comments, long names/Why, card size, open tasks without criteria, unproven or stale reviews) and Workflow drift; folds a Changelog back into the journal",
       "args": [
         "[name]"
       ]
@@ -3188,7 +3215,7 @@
     },
     {
       "path": "tasks log",
-      "desc": "Add a changelog entry to a task (cross-session continuity)",
+      "desc": "Add an entry to a task's journal (cross-session continuity)",
       "args": [
         "<name>",
         "[content...]"
@@ -3197,6 +3224,11 @@
     {
       "path": "tasks members",
       "desc": "List people with access to the remote task container (assignee candidates)",
+      "args": []
+    },
+    {
+      "path": "tasks migrate-journal",
+      "desc": "Move every task card's Changelog into its journal now (the 0.33.0 migration; idempotent, backs up to tmp/)",
       "args": []
     },
     {
@@ -3258,11 +3290,14 @@
     },
     {
       "path": "tasks status",
-      "desc": "Change a task's status (logs the change; stamps start_date on the first active-kind status if unset, due_date on completed)",
+      "desc": "Change a task's status (logs the change; review/done are evidence-gated; stamps start_date on the first active-kind status if unset, due_date on completed)",
       "args": [
         "<name>",
         "<new-status>",
         "[reason...]"
+      ],
+      "valueFlags": [
+        "--reason"
       ]
     },
     {

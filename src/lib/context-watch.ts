@@ -374,7 +374,7 @@ export function renderNudge(
       '',
       'Finish the turn you are in, then hand off before starting anything new:',
       ...steps,
-      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
+      'It writes all of that into the task journal as one entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
       '',
       'This is still your call, but it is no longer a quiet one: if you are continuing in this session anyway, TELL THE USER in your next message and say why. Do not continue silently.',
       `(Next reminder at ~${k(next)}.)`,
@@ -384,7 +384,7 @@ export function renderNudge(
       '',
       'Hand off unless you have a reason not to — write your whole state into the task in one command:',
       ...steps,
-      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
+      'It writes all of that into the task journal as one entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
       '',
       `There are two good reasons to keep going: the task is nearly done, or the state genuinely cannot be written down. "I am in the middle of something" is not one of them — that is what --done and --next are for. Past ${k(cfg.hardAt)} this gets blunter.`,
       `(Next reminder at ~${k(next)}.)`,
@@ -764,7 +764,7 @@ export function renderHandoffBanner(record: HandoffRecord): string {
   const size = record.contextTokens ? ` that reached ${k(record.contextTokens)} tokens` : '';
   return [
     `>> HANDOFF: continuing task ${record.title} (${record.task}) from a session${size}.`,
-    `Read _dream_context/state/${record.task}.md — its latest changelog entry is the handoff — before anything else.`,
+    `Read _dream_context/state/${record.task}.md and the newest entry of _dream_context/state/journal/${record.task}.md — that entry is the handoff — before anything else.`,
   ].join('\n');
 }
 

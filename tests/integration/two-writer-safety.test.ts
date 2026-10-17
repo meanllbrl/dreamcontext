@@ -50,7 +50,8 @@ describe('two processes logging to the SAME task', () => {
     );
     for (const p of procs) expect(p.status).toBe(0);
 
-    const body = readFileSync(join(ctx(), 'state', 'the-contended-task.md'), 'utf8');
+    // History lives in the task's journal, not its card.
+    const body = readFileSync(join(ctx(), 'state', 'journal', 'the-contended-task.md'), 'utf8');
     for (const tag of ['A', 'B']) {
       for (let i = 0; i < 50; i++) {
         expect(body, `${tag}-${i} is missing — a write was lost`).toContain(`${tag}-${i}`);

@@ -164,11 +164,28 @@ describe('github PUSH (A3/A7, mocked transport)', () => {
     expect(report.errors).toEqual([]);
     const number = Number(mapFile()[0].remoteId);
     const cmts = fake.comments.get(number) ?? [];
-    // 3 = template "Created" + the two log entries.
-    expect(cmts).toHaveLength(3);
-    expect(report.commentsAdded).toBe(3);
+    // 2 = the two log entries; the journal's `created` entry stays local.
+    expect(cmts).toHaveLength(2);
+    expect(report.commentsAdded).toBe(2);
     expect(cmts.some((c) => c.body.includes('did a thing'))).toBe(true);
     expect(cmts.some((c) => c.body.includes('did another'))).toBe(true);
+    // Oldest first, and each carries its journal id marker.
+    expect(cmts[0].body).toContain('did a thing');
+    expect(cmts.every((c) => /<!-- je:je_[A-Za-z0-9]+ -->/.test(c.body))).toBe(true);
+    // The card never holds history.
+    expect(readFileSync(join(contextRoot, "state", "logged.md"), "utf-8")).not.toContain('## Changelog');
+  });
+
+  it('evidence and sleep entries never leave the machine', async () => {
+    await backend.create({ name: 'Private', variant: 'cli' });
+    await backend.addJournal('private', { kind: 'evidence', body: '- cmd: npm test\n- exit: 0' });
+    await backend.addJournal('private', { kind: 'sleep', body: '- consolidated' });
+    await backend.addJournal('private', { kind: 'log', body: '- shared progress' });
+    const report = await backend.sync('push');
+    expect(report.errors).toEqual([]);
+    const cmts = fake.comments.get(Number(mapFile()[0].remoteId)) ?? [];
+    expect(cmts.map((c) => c.body).join('\n')).not.toMatch(/npm test|consolidated/);
+    expect(cmts).toHaveLength(1);
   });
 
   it('PUSH re-run is idempotent: no duplicate issues, no duplicate comments, zero writes', async () => {

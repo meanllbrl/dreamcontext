@@ -11,6 +11,17 @@ import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
 import { withTaskFileLock } from '../task-file-lock.js';
+import {
+  appendJournalEntry,
+  moveJournal,
+  readJournal,
+  readJournalRaw,
+  retireJournal,
+  type JournalEntry,
+  type NewJournalEntry,
+  kindOfLabel,
+} from '../task-journal.js';
+import { CARD_CEILING, foldCardChangelog } from '../task-card.js';
 import { dateUpdatesForStatus } from '../task-dates.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
 import {
@@ -119,17 +130,8 @@ version: {{VERSION}}
 ---
 
 ## Why
-<!-- What problem does this solve? What breaks if we don't do it? Be concrete — name the user, the friction, the cost. -->
 
 {{WHY}}
-
-<!-- Other sections (User Stories, Acceptance Criteria, Workflow, Constraints & Decisions, Technical Details, Notes) are created on first insert — \`dreamcontext tasks insert <task> <section> "…"\`. A section that has nothing to say doesn't exist. -->
-
-## Changelog
-<!-- LIFO: newest at top. Auto-prepended by \`dreamcontext tasks log\`. -->
-
-### {{DATE}} - Created
-- Task created.
 `;
 }
 
@@ -277,7 +279,8 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
     constraints: readSectionSafe(filePath, 'Constraints & Decisions'),
     technical_details: readSectionSafe(filePath, 'Technical Details'),
     notes: readSectionSafe(filePath, 'Notes'),
-    changelog: readSectionSafe(filePath, 'Changelog'),
+    // History is the journal; a card not folded yet still shows its old section.
+    changelog: readSectionSafe(filePath, 'Changelog') || readJournalRaw(dirname(filePath), slug).trim(),
     sections,
     body: content.trim(),
     rawBody: content,
@@ -484,12 +487,6 @@ version: ${versionYaml}${riceYaml}
 ## Why
 
 ${input.why || '(To be defined)'}
-
-## Changelog
-<!-- LIFO: newest entry at top -->
-
-### ${dateStr} - Created
-- Task created.
 `;
       writeFileSync(filePath, content, 'utf-8');
       if (input.start_date) {
@@ -519,6 +516,9 @@ ${input.why || '(To be defined)'}
       }
     }
 
+    // History starts in the journal, never on the card.
+    appendJournalEntry(this.stateDir, slug, { kind: 'created', body: '- Task created.' });
+
     return readTaskFile(filePath, this.statusDefs());
   }
 
@@ -542,6 +542,9 @@ ${input.why || '(To be defined)'}
       } else {
         updateFrontmatterFields(path, fields);
       }
+      // A body that still carries a `## Changelog` (an old client, a pasted
+      // card) is folded into the journal on the way in — never kept, never lost.
+      foldCardChangelog(path);
       return readTaskFile(path, this.statusDefs());
     });
   }
@@ -553,35 +556,65 @@ ${input.why || '(To be defined)'}
     opts: InsertSectionOptions,
   ): Promise<void> {
     const path = this.requirePath(slug);
-    withTaskFileLock(this.brainRoot(), slug, () =>
-      insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false));
+    // History is the journal: a `Changelog` insert lands there, not on the card.
+    if (sectionName.trim().toLowerCase() === 'changelog') {
+      await this.addChangelog(slug, content);
+      return;
+    }
+    withTaskFileLock(this.brainRoot(), slug, () => {
+      foldCardChangelog(path);
+      // The card ceiling. Criteria stay insertable past it, so sleep's first
+      // choice (a criterion in an existing task) still works on a legacy card.
+      if (sectionName.trim().toLowerCase() !== 'acceptance criteria') {
+        const size = readFileSync(path, 'utf-8').length;
+        if (size + content.length > CARD_CEILING) {
+          throw new TaskBackendError(
+            'invalid_input',
+            `Card ceiling: ${slug} would be ${size + content.length} chars (limit ${CARD_CEILING}). ` +
+              'A card holds what the work is and how it is proven; put history in the journal ' +
+              '(`dreamcontext tasks log`) and long material in knowledge (`dreamcontext knowledge create`).',
+          );
+        }
+      }
+      insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false);
+    });
   }
 
-  async addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void> {
+  /**
+   * Legacy entry point: a formatted `### <date> - <label>\n<body>` block. Its
+   * label picks the journal kind (`Completed` → status, `Created` → created,
+   * anything else → log) and is kept as the entry's label.
+   */
+  async addChangelog(slug: string, entry: string, _opts?: AddChangelogOptions): Promise<void> {
+    const m = /^###\s+\S+(?:\s+\d{2}:\d{2})?\s+-\s+(.*)\n?([\s\S]*)$/.exec(entry.trim());
+    if (!m) {
+      await this.addJournal(slug, { kind: 'log', body: entry.trim() });
+      return;
+    }
+    const { kind, rest } = kindOfLabel(m[1]);
+    const generic = /^(session update|update|dashboard update)$/i.test(rest) || rest === kind;
+    await this.addJournal(slug, { kind, ...(generic || !rest ? {} : { label: rest }), body: m[2].trim() });
+  }
+
+  async addJournal(slug: string, entry: NewJournalEntry): Promise<JournalEntry> {
     const path = this.requirePath(slug);
     // `tasks log` is the single most concurrent task write there is — the
     // foreground logs progress while a background cycle reconciles the board —
-    // and it is a read-modify-write of the same section, so it is exactly where
-    // an interleave drops an entry.
-    withTaskFileLock(this.brainRoot(), slug, () => {
-      try {
-        insertToSection(path, 'Changelog', entry, 'top');
-      } catch (err) {
-        if (!opts?.fallbackAppend) throw err;
-        // No Changelog section: append at EOF (pre-refactor CLI fallback).
-        const existing = readFileSync(path, 'utf-8');
-        writeFileSync(path, existing.trimEnd() + '\n\n' + entry + '\n', 'utf-8');
-      }
+    // and the journal is a read-modify-write, so it shares the card's lock.
+    return withTaskFileLock(this.brainRoot(), slug, () => {
+      foldCardChangelog(path);
+      return appendJournalEntry(this.stateDir, slug, entry);
     });
+  }
+
+  async readJournal(slug: string): Promise<JournalEntry[]> {
+    if (!isSafeTaskSlug(slug)) return [];
+    return readJournal(this.stateDir, slug);
   }
 
   async complete(slug: string, summary?: string): Promise<TaskData> {
     const now = today();
-    await this.addChangelog(
-      slug,
-      `### ${now} - Completed\n- ${summary ?? 'Task completed.'}`,
-      { fallbackAppend: true },
-    );
+    await this.addJournal(slug, { kind: 'status', label: 'Completed', body: `- ${summary ?? 'Task completed.'}` });
     // Completing stamps the REAL end of the window, so the timeline shows what
     // happened rather than what was planned (see lib/task-dates.ts). Lives here
     // rather than in the CLI so every backend and every caller of `complete()`
@@ -595,7 +628,13 @@ ${input.why || '(To be defined)'}
     // Read the id BEFORE unlinking — a tombstone that can name the task id stays
     // traceable through a remote backend's mapping.
     const doomed = await this.get(slug).catch(() => null);
-    withTaskFileLock(this.brainRoot(), slug, () => rmSync(path));
+    withTaskFileLock(this.brainRoot(), slug, () => {
+      rmSync(path);
+      // The journal is history, not litter: it moves beside the tombstone.
+      try { retireJournal(this.stateDir, slug); } catch (err) {
+        console.error(`Warning: could not retire the journal of ${slug}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
     // A deleted FILE proves nothing later; this marker does. Without it a sleep
     // cycle re-files a chore somebody deliberately consolidated away.
     appendTombstone(this.brainRoot(), {
@@ -649,7 +688,10 @@ ${input.why || '(To be defined)'}
     // for the rename), then move the file to the new slug. The id-map migration
     // is layered on by the remote backends' override.
     await this.updateFields(slug, { name: trimmed, updated_at: today() });
-    withTaskFileLock(this.brainRoot(), slug, () => renameSync(path, this.taskPath(newSlug)));
+    withTaskFileLock(this.brainRoot(), slug, () => {
+      renameSync(path, this.taskPath(newSlug));
+      moveJournal(this.stateDir, slug, newSlug);
+    });
     // A rename retires the OLD slug just as surely as a delete does: anything
     // that remembers it (a sleep cycle's fixed-slug lookup, a wikilink) must be
     // pointed at where the work went rather than concluding it never existed.

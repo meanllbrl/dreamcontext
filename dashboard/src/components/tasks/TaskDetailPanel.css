@@ -676,6 +676,60 @@
   flex: 1;
 }
 
+/* History strip: the newest journal entries */
+.journal-strip {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.journal-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--color-border);
+}
+
+.journal-entry--approval,
+.journal-entry--evidence {
+  border-left-color: var(--color-success, var(--color-border));
+}
+
+.journal-entry-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.journal-entry-kind {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-entry-meta,
+.journal-entry-more {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.journal-entry-body {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ── Mermaid (Workflow flowchart) ── */
 
 .markdown-body .mermaid-rendered {

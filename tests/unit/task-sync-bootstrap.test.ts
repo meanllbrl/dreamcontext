@@ -90,12 +90,14 @@ function makeGitHubBackend(fake: FakeGitHub): GitHubTaskBackend {
 
 async function createMany(backend: ClickUpTaskBackend | GitHubTaskBackend, n: number): Promise<void> {
   for (let i = 0; i < n; i++) {
-    await backend.create({
+    const task = await backend.create({
       name: `Bulk Task ${String(i).padStart(3, '0')}`,
       urgency: 'high',
       description: `summary ${i}`,
       variant: 'cli',
     });
+    // One shareable journal entry each (a `created` entry stays local).
+    await backend.addChangelog(task.slug, `### 2026-06-11 - Session Update\n- started ${i}`);
   }
 }
 
@@ -132,7 +134,7 @@ describe('bulk first sync (ClickUp)', () => {
 
     const report = await backend.sync('push');
     expect(report.errors).toEqual([]);
-    // Every fresh task carries its "Created" changelog entry → 1 comment each.
+    // Every fresh task carries one logged journal entry → 1 comment each.
     expect(report.commentsAdded).toBe(2);
     expect(fake.requests.filter((r) => r.method === 'POST' && r.path.endsWith('/comment'))).toHaveLength(2);
   });
@@ -253,8 +255,9 @@ describe('review fixes', () => {
     const fake = makeFakeClickUp();
     const backend = makeClickUpBackend(fake);
     await backend.create({ name: 'Solo', variant: 'cli' });
+    await backend.addChangelog('solo', '### 2026-06-11 - Session Update\n- first note');
     const first = await backend.sync('push');
-    expect(first.commentsAdded).toBe(1); // the "Created" entry, non-bootstrap
+    expect(first.commentsAdded).toBe(1); // the logged entry, non-bootstrap
 
     // Simulate the crash window: mapping survives, per-task sync entry lost.
     new SyncLedger(contextRoot).removeTaskSync('solo');

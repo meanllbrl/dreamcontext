@@ -234,7 +234,8 @@ function countTaskDocsOnDisk(contextRoot: string): number {
   const dir = join(contextRoot, 'state');
   if (!existsSync(dir)) return 0;
   try {
-    return fg.sync('**/*.md', { cwd: dir, onlyFiles: true }).length;
+    // Same scope as the recall task corpus: a task's journal is history, not a task.
+    return fg.sync('**/*.md', { cwd: dir, onlyFiles: true, ignore: ['journal/**'] }).length;
   } catch {
     return 0;
   }

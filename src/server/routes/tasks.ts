@@ -35,10 +35,15 @@ import {
   DEFAULT_STATUSES,
   SHIPPED_STATUS_KEYS,
   STATUS_KINDS,
+  isDone,
+  isReview,
   normalizeStatusKey,
   statusKeys,
   type StatusKind,
 } from '../../lib/task-status.js';
+import { criteriaOfBody, describeGate, gateStatus, setCriterion } from '../../lib/task-evidence.js';
+import { newJournalEntryId, type NewJournalEntry } from '../../lib/task-journal.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -1158,12 +1163,56 @@ export async function handleTasksUpdate(
     }
   }
 
+  // ── Evidence (the dashboard is the owner's surface) ──
+  // A box the owner ticks here is proven by the owner: the tick names an
+  // approval entry (`owner:<je_id>`). An unticked box drops its ref. A move to
+  // review/done passes the same evidence gate as the CLI, except that moving a
+  // REVIEW task to done is the owner's approval. Order matters: the gate runs
+  // on the final body first, the card is written next, and only then do the
+  // journal entries land — a refused or failed save leaves no approval behind
+  // (approvals are shared to the remote) and no status move that never happened.
+  let actor: string | null = null;
+  try { actor = resolveActivePerson(contextRoot).slug; } catch { /* nobody resolved */ }
+  const pendingJournal: NewJournalEntry[] = [];
+  if (bodyChanged && newBody !== null) {
+    const before = criteriaOfBody(oldContent);
+    let nextBody: string = newBody;
+    for (const c of criteriaOfBody(newBody)) {
+      const prev = before.find((b) => b.n === c.n && b.text === c.text) ?? before.find((b) => b.text === c.text);
+      if (c.checked && !c.evidence && !(prev?.checked && prev.evidence)) {
+        const id = newJournalEntryId();
+        pendingJournal.push({ id, kind: 'approval', actor: actor ?? 'owner', body: `- ticked in the dashboard: ${c.text}` });
+        nextBody = setCriterion(nextBody, c.n, true, `owner:${id}`);
+      } else if (c.checked && !c.evidence && prev?.checked && prev.evidence) {
+        nextBody = setCriterion(nextBody, c.n, true, prev.evidence);
+      } else if (!c.checked && c.evidence) {
+        nextBody = setCriterion(nextBody, c.n, false, null);
+      }
+    }
+    newBody = nextBody;
+  }
+  if (updates.status && updates.status !== existing.status) {
+    const statuses = loadStatuses(contextRoot);
+    const target = updates.status as string;
+    if (isDone(statuses, target) && isReview(statuses, existing.status)) {
+      pendingJournal.push({ kind: 'approval', actor: actor ?? 'owner', body: `- approved in the dashboard (${existing.status} → ${target})` });
+    } else if (isDone(statuses, target) || isReview(statuses, target)) {
+      const gate = gateStatus(newBody ?? oldContent, isDone(statuses, target) ? 'done' : 'review');
+      if (!gate.ok) {
+        sendError(res, 409, 'evidence_required', describeGate(slug, target, gate));
+        return;
+      }
+    }
+    pendingJournal.push({ kind: 'status', label: target, actor: actor ?? 'owner', body: '- moved in the dashboard' });
+  }
+
   updates.updated_at = today();
   const task = await backend.updateFields(
     slug,
     updates,
     bodyChanged && newBody !== null ? { body: newBody } : undefined,
   );
+  for (const entry of pendingJournal) await backend.addJournal(slug, entry);
 
   // Bidirectional invariant: the feature side (related_tasks membership)
   // follows every task-side related_feature change.
@@ -1228,6 +1277,35 @@ export async function handleTasksChangelog(
   });
 
   sendJson(res, 200, { success: true });
+}
+
+/** Journal entries the task panel shows under the card (A9). */
+export const PANEL_JOURNAL_LIMIT = 5;
+
+/**
+ * GET /api/tasks/:slug/journal — the task's newest journal entries (default 5, max 50).
+ * History left the card for `state/journal/<slug>.md`; the panel reads it here.
+ */
+export async function handleTasksJournal(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const backend = backendFor(contextRoot);
+  if ((await backend.get(slug)) === null) {
+    sendError(res, 404, 'not_found', `Task not found: ${slug}`);
+    return;
+  }
+  const asked = Number(new URL(req.url ?? '', 'http://x').searchParams.get('limit'));
+  const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, 50) : PANEL_JOURNAL_LIMIT;
+  const all = await backend.readJournal(slug);
+  sendJson(res, 200, {
+    total: all.length,
+    entries: all.slice(0, limit).map(({ id, date, kind, label, actor, body }) => ({ id, date, kind, label, actor, body })),
+  });
 }
 
 /**

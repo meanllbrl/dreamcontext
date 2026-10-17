@@ -75,10 +75,11 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [showAuthor, setShowAuthor] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
   const [dismissedAlert, setDismissedAlert] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; tone: 'ok' | 'error' } | null>(null);
 
-  const flash = useCallback((msg: string) => { setToast(msg); }, []);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 1900); return () => clearTimeout(t); }, [toast]);
+  const flash = useCallback((msg: string, tone: 'ok' | 'error' = 'ok') => { setToast({ msg, tone }); }, []);
+  // A refusal (the evidence gate's 409 names every unproven criterion) stays long enough to read.
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), toast.tone === 'error' ? 8000 : 1900); return () => clearTimeout(t); }, [toast]);
 
   // Open the task the ⌘K palette / Brain map navigated to in the TaskDetailPanel.
   useFocusTarget(focus, (slug) => setSelectedSlug(slug));
@@ -167,8 +168,10 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     const field = s.groupBy as Dim;
     const value = colValue === 'none' && (field === 'version' || field === 'assignee') ? null : colValue;
     if ((task[field as keyof Task] ?? 'none') === (value ?? 'none')) return;
-    updateTask.mutate({ slug: task.slug, updates: { [field]: value } as Partial<Task> });
-    flash(`Updated ${field}`);
+    updateTask.mutate(
+      { slug: task.slug, updates: { [field]: value } as Partial<Task> },
+      { onSuccess: () => flash(`Updated ${field}`), onError: (err: Error) => flash(err.message, 'error') },
+    );
   }, [dragId, tasks, s.groupBy, updateTask, flash, endDrag]);
 
   // ── right-click context menu ─────────────────────────────────────────────────────
@@ -178,7 +181,12 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     setCtxMenu({ x: e.clientX, y: e.clientY, task });
   }, []);
   const ctxSetStatus = useCallback((task: Task, status: string) => {
-    if (task.status !== status) { updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }); flash(`Moved to ${sm.labelOf(status)}`); }
+    if (task.status !== status) {
+      updateTask.mutate(
+        { slug: task.slug, updates: { status } as Partial<Task> },
+        { onSuccess: () => flash(`Moved to ${sm.labelOf(status)}`), onError: (err: Error) => flash(err.message, 'error') },
+      );
+    }
     setCtxMenu(null);
   }, [updateTask, flash, sm]);
   const ctxSetPriority = useCallback((task: Task, priority: string) => {
@@ -410,7 +418,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 
       {toast && (
         <div className="bd-pop" style={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 11, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)', fontSize: 13, color: 'var(--color-text)' }}>
-          <span style={{ color: 'var(--color-accent)' }}>✓</span>{toast}
+          <span aria-hidden="true" style={{ color: toast.tone === 'error' ? 'var(--color-error)' : 'var(--color-accent)' }}>{toast.tone === 'error' ? '!' : '✓'}</span>
+          <span role={toast.tone === 'error' ? 'alert' : 'status'} style={{ whiteSpace: 'pre-line', maxWidth: 560 }}>{toast.msg}</span>
         </div>
       )}
     </div>

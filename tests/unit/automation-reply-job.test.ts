@@ -406,6 +406,7 @@ describe('agentActivity — whether an agent is working, asked of its run lock',
 describe('a task-assignment run logs its result on the task', () => {
   const FIRE = new Date('2026-10-12T09:00:00.000Z');
 
+  const journalOf = (card: string) => join(contextRoot, 'state', 'journal', card.split('/').pop()!);
   function seedTask(): string {
     mkdirSync(join(contextRoot, 'state'), { recursive: true });
     const path = join(contextRoot, 'state', 'fix-login.md');
@@ -442,8 +443,10 @@ describe('a task-assignment run logs its result on the task', () => {
     expect(runAutomation.mock.calls[0][2]).toMatchObject({
       ask: 'Hurry.', fireAt: FIRE, target: 'agent', task: { slug: 'fix-login', name: 'Fix login' },
     });
-    const text = readFileSync(path, 'utf-8');
-    expect(text).toMatch(/### \d{4}-\d{2}-\d{2} - Agent Scout \(`scout`\)\n- Run 2026-10-12T09:00:00\.000Z: ok\. Document: automations\/output\/scout\/2026-10-12\.md\./);
+    // History lives in the task's journal (state/journal/<slug>.md), never the card.
+    const text = readFileSync(journalOf(path), 'utf-8');
+    expect(text).toMatch(/### \d{4}-\d{2}-\d{2}[^\n]* - [^\n]*Agent Scout \(`scout`\)[^\n]*\n- Run 2026-10-12T09:00:00\.000Z: ok\. Document: automations\/output\/scout\/2026-10-12\.md\./);
+    expect(readFileSync(path, 'utf-8')).not.toContain('## Changelog');
     expect(text.match(/- Run /g)).toHaveLength(1);
   });
 
@@ -454,7 +457,7 @@ describe('a task-assignment run logs its result on the task', () => {
       text: '', fireAt: FIRE, target: 'agent', task: { slug: 'fix-login', name: 'Fix login' },
     });
     expect((await settledRun('scout'))?.status).toBe('error');
-    expect(readFileSync(path, 'utf-8')).toContain('- Run 2026-10-12T09:00:00.000Z: failed. Document: none.');
+    expect(readFileSync(journalOf(path), 'utf-8')).toContain('- Run 2026-10-12T09:00:00.000Z: failed. Document: none.');
     expect(queuedFire(projectRoot, 'scout', home)).toBeNull();
   });
 

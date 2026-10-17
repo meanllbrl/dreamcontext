@@ -1,5 +1,6 @@
 import type { RiceFields } from '../rice.js';
 import type { TaskFilter, TaskRecord } from '../task-query.js';
+import type { JournalEntry, NewJournalEntry } from '../task-journal.js';
 
 /**
  * Pluggable task backend — issue #11.
@@ -100,6 +101,10 @@ export interface TaskData {
   constraints: string;
   technical_details: string;
   notes: string;
+  /**
+   * The task's history as raw text: its journal (`state/journal/<slug>.md`), or
+   * — on a card not yet folded — the legacy in-card `## Changelog` section.
+   */
   changelog: string;
   sections: string[];
   /** Body with surrounding whitespace trimmed (dashboard display form). */
@@ -158,8 +163,9 @@ export interface InsertSectionOptions {
 
 export interface AddChangelogOptions {
   /**
-   * When the task has no `## Changelog` section: append the raw entry at EOF
-   * (CLI behavior) instead of throwing (server-route behavior).
+   * Legacy flag from when history lived in the card (append at EOF when the
+   * card had no `## Changelog`). History is the journal now, which always
+   * exists to be written, so it is accepted and ignored.
    */
   fallbackAppend?: boolean;
 }
@@ -329,8 +335,16 @@ export interface TaskBackend {
     content: string,
     opts: InsertSectionOptions,
   ): Promise<void>;
-  /** `entry` is the fully formatted changelog block (callers own the label format). */
+  /**
+   * `entry` is a formatted `### <date> - <label>` block; it is written to the
+   * task's JOURNAL (never the card) with its kind read from the label. Prefer
+   * {@link addJournal} in new code.
+   */
   addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void>;
+  /** Prepend one entry to the task's journal; returns it with its stable id. */
+  addJournal(slug: string, entry: NewJournalEntry): Promise<JournalEntry>;
+  /** The task's journal, newest entry first (empty when none). */
+  readJournal(slug: string): Promise<JournalEntry[]>;
   complete(slug: string, summary?: string): Promise<TaskData>;
   /**
    * Delete a task (remote backends propagate the deletion on sync).

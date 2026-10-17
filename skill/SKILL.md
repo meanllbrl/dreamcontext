@@ -82,7 +82,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | Capability | What it is | Reference |
 |---|---|---|
 | **Structured memory** | soul + the active person's constitution + memory + knowledge + tasks, auto-loaded each session | this file |
-| **Tasks** | Working documents: changelog, RICE, status lifecycle, dates, assignees, project-declared custom fields | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Tasks** | Card + journal, evidence gates, RICE, status lifecycle, dates, assignees, project-declared custom fields | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Roadmap / Objectives** | PO-authored OKR board in `core/objectives/`: many-to-many task links, dependency DAG, forecast and slip detection (`dreamcontext roadmap`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Lab / Insights** | Curated **metrics** synced from APIs or scripts into `lab/insights/`, cached, KR-bindable; Funnel analytics and app renders; **funnel explorer** (`lab create --preset funnel-explorer`). **Boards (Beta)** compose them: `lab/boards/<slug>.md`, cards of catalog blocks (`lab block list`) plus saved HTML blocks (`lab/blocks/`). Never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
@@ -136,7 +136,7 @@ Two routing rules that override surface reading:
 | "I have a thesis: X improves Y", "track this hypothesis" | **Thesis** — `theses/<slug>.md` | A falsifiable OPTIMIZATION claim; confidence is DERIVED, never asserted | `dreamcontext theses create "<claim>"` (quality bar and offer-and-confirm first; layer off → offer `theses enable`, never capture silently → [learning.md](references/learning.md)) |
 | "document this", "write up the research / decision / how X works" | **Knowledge** — `knowledge/…` | Durable **prose**: research, decisions, rationale, domain context. It doesn't refresh itself and it isn't work to do | `dreamcontext knowledge create <name>` |
 | "the X feature", what a shipped capability is | **Feature PRD** — `knowledge/features/` | Retrospective **product doc** (user stories + acceptance criteria) | Sleep agent ONLY — never during active work |
-| any work over ~5 minutes, "let's build / fix X" | **Task** — `state/<slug>.md` | A **working document** with lifecycle, changelog, criteria | `dreamcontext tasks create` (check for an existing one first) |
+| any work over ~5 minutes, "let's build / fix X" | **Task** — `state/<slug>.md` | A **card** + journal, criteria, lifecycle | `dreamcontext tasks create` (check for an existing one first) |
 | a moment worth remembering, a correction, a decision made | **Bookmark** | A salience-tagged marker for the sleep agent | `dreamcontext bookmark add "…" -s N --task <slug>` |
 | "we solve this class of problem THIS way", **or the problem-shape:** the same approach worked twice | **Pattern** — `knowledge/patterns/<slug>.md` | A portable solution shape, written awake; the prompt hook injects every pattern your message names. **When the user contradicts or extends an injected pattern, UPDATE that pattern file before finishing the task.** Adding a FEATURE? `knowledge/patterns/feature-integration-pattern.md` is MANDATORY | plain knowledge file under `knowledge/patterns/` (offer-and-confirm when agent-initiated) |
 | "remind me when / next time X comes up" | **Trigger** | Prospective memory — fires when context matches | `dreamcontext trigger add <when> <remind>` |
@@ -194,7 +194,7 @@ The SessionStart hook injects this automatically every session — answer from i
 
 ### Load Based on Task Intent
 
-Feature work → `knowledge/features/<name>.md`; UI, copy, design → `core/3.style_guide_and_branding.md`; architecture, infra → `core/4.tech_stack.md`; schemas → `knowledge/data-structures/<product>.md`; continuing work → `state/<task>.md` (its Changelog is where you left off); "what shipped?" → `core/CHANGELOG.json` / `RELEASES.json`. Projects vary: `ls _dream_context/core/`, never assume a fixed list.
+Feature work → `knowledge/features/<name>.md`; UI, copy, design → `core/3.style_guide_and_branding.md`; architecture, infra → `core/4.tech_stack.md`; schemas → `knowledge/data-structures/<product>.md`; continuing work → `state/<task>.md` (its journal is where you left off); "what shipped?" → `core/CHANGELOG.json` / `RELEASES.json`. Projects vary: `ls _dream_context/core/`, never assume a fixed list.
 
 ---
 
@@ -233,7 +233,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
 5. **Work over ~5 minutes needs a task — but don't fork tasks.** FIRST check the snapshot (and `memory recall "<keywords>" --types task`) for one that covers it and **extend it** (scope, a criterion, a sub-step); create a new task only for a genuinely separate concern. After a plan is approved, offer to save it as, or fold it into, a task.
    **When the user drops, cancels or says no to work that has NO task yet, record it:** `dreamcontext tasks decline "<topic>" --reason "<why not>"`, or the next sleep may file it as a task.
 
-6. **Mark checkboxes as you go.** When you finish a user story or acceptance criterion, flip `- [ ]` to `- [x]` with Edit immediately, not at sleep, and keep the `## Workflow` mermaid block in sync. Verify with `dreamcontext tasks doctor <name>`.
+6. **Tick criteria with evidence as you go.** When a criterion is proven, `dreamcontext tasks check <name> <n> --run "<cmd>"` at once; never flip a box with Edit (an unproven tick blocks review). Keep `## Workflow` in sync; verify with `tasks doctor <name>`.
 
 7. **Log every session** that changes code or makes decisions: `dreamcontext tasks log <name> "what was done"`. This is the cross-session continuity mechanism.
 
@@ -325,20 +325,20 @@ For non-file-change work (decisions, architecture talk): `dreamcontext sleep add
 
 ## Tasks — essentials
 
-Tasks are your **working documents**: all context, decisions, user stories, acceptance criteria, constraints, notes, and progress go in the task body. The auto-loaded snapshot already lists active tasks — answer "what am I working on?" from it.
+A task is a **card** (`state/<slug>.md`, ≤ 12,000 chars) plus a **journal** (`state/journal/<slug>.md`) for its history. The snapshot lists active tasks; answer "what am I working on?" from it.
 
-**Naming: a task name is a short plain sentence saying what the task does** ("Fix the login redirect loop"), never a type-prefixed slug; the slug derives from the name. **`-w/--why` is mandatory.** Tasks scaffold lean (`## Why` and `## Changelog`); a section appears on first `tasks insert`. Never insert placeholder content.
+**Naming: a task name is a short plain sentence saying what the task does** ("Fix the login redirect loop"), never a type-prefixed slug. **`-w/--why` is mandatory.** A card is born with `## Why` only; a section appears on first `tasks insert`. Never insert placeholder content.
 
 ```bash
-dreamcontext tasks create "Readable sentence name" -d "..." -p high -w "Why this matters"   # create (-w REQUIRED)
-dreamcontext tasks list --status todo --tag backend                       # filter (composable)
-dreamcontext tasks insert <name> acceptance_criteria "API returns 200…"   # enrich a section
-dreamcontext tasks log <name> "Implemented pagination"                    # progress (MANDATORY)
-dreamcontext tasks status <name> in_review "Ready for review"             # bump status
-dreamcontext tasks complete <name> "summary"                             # done
+dreamcontext tasks create "Readable sentence name" -d "..." -p high -w "Why this matters"
+dreamcontext tasks list --status todo --tag backend  # filter
+dreamcontext tasks insert <name> acceptance_criteria "API returns 200…"  # enrich a section
+dreamcontext tasks log <name> "Implemented pagination"  # journal (MANDATORY)
+dreamcontext tasks check <name> <n> --run "npm test"  # tick WITH evidence
+dreamcontext tasks status <name> in_review "Ready for review"  # gated
 ```
 
-Status: `todo → in_progress → in_review → completed` by default. A project may **declare more** in `overrides/task.md` (`dreamcontext tasks statuses` lists them). When a **cancelled-kind** status exists, abandoned or superseded work goes THERE, not to `in_review "confirm close"`.
+Status: `todo → in_progress → in_review → completed` by default. **Evidence changes status:** review/done need every criterion proven (rule 6); only `cmd:`/`commit:` proof with nothing `(observed)` skips review, the owner approves the rest, never an agent. A project may **declare more** in `overrides/task.md` (`dreamcontext tasks statuses` lists them). When a **cancelled-kind** status exists, abandoned or superseded work goes THERE, not to `in_review "confirm close"`.
 
 **Custom fields.** When `overrides/task.md` declares them, **set every declared field** when you create or reconcile a task (`dreamcontext tasks field <slug> <key> <value>` or `tasks create --field key=value`). **REQUIRED fields are mandatory**, and **[ASK THE USER]** fields are asked, never guessed. Values show inline in the snapshot and `tasks list --long` → [tasks-and-features.md](references/tasks-and-features.md).
 

@@ -47,7 +47,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, 'assistant'>, string> = {
-  basic: '1.0', plan: '1.1', develop: '1.2', train: '0.1',
+  basic: '1.0', plan: '1.1', develop: '1.3', train: '0.1',
 };
 
 /**
@@ -258,7 +258,7 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
   ITSELF; never paste a diff. Record its verdict first. FAIL → fix exactly the findings, then
   re-review. The SAME finding twice → STOP and put it to
   the owner; never merge past it. You do not sign off on your own work.
-- **No tick without evidence** in its \`dreamcontext tasks log <slug> "…"\` line: the check's
+- **No tick without evidence**: \`dreamcontext tasks check <slug> <n>\` with the check's
   output, or, for what the owner sees, screenshots you READ at a phone and a desktop width
   plus the console output. Green tests on an app that does not open are not evidence. No
   observed criterion on a task the owner opens: add one first. UI: load \`design\` first.

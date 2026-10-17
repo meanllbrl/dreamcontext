@@ -26,6 +26,21 @@ function run(cmd: string, cwd: string, env?: NodeJS.ProcessEnv): string {
 }
 
 /**
+ * One proven criterion, so the evidence gate lets the task close (these tests are
+ * about the CLI verbs, not evidence; the gate reads a ref's kind, never re-resolves it).
+ */
+function prove(dir: string, slug: string): void {
+  const file = join(dir, '_dream_context', 'state', `${slug}.md`);
+  writeFileSync(file, `${readFileSync(file, 'utf-8')}\n## Acceptance Criteria\n\n- [x] It works (evidence: commit:abc1234)\n`);
+}
+
+/** A task's journal: its history lives off the card (state/journal/<slug>.md). */
+function journalOf(dir: string, slug: string): string {
+  const p = join(dir, '_dream_context', 'state', 'journal', `${slug}.md`);
+  return existsSync(p) ? readFileSync(p, 'utf-8') : '';
+}
+
+/**
  * Pin the git identity the CLI (and therefore `init`'s person creation) sees:
  * global + system config are redirected, so the person a fresh vault gets is the
  * same on a developer laptop and in CI. `identity: null` = a machine that never
@@ -199,8 +214,8 @@ describe('CLI commands (integration)', () => {
       expect(out).toContain('drop-me → cancelled');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'drop-me.md'), 'utf-8');
       expect(content).toMatch(/status:\s*"?cancelled"?/);
-      expect(content).toContain('Cancelled');
-      expect(content).toContain('superseded by keep-me');
+      expect(journalOf(tmpDir, 'drop-me')).toContain('Cancelled');
+      expect(journalOf(tmpDir, 'drop-me')).toContain('superseded by keep-me');
       // A cancelled task stamps no dates.
       expect(content).not.toMatch(/due_date:\s*"?\d{4}/);
 
@@ -283,12 +298,14 @@ describe('CLI commands (integration)', () => {
       expect(existsSync(join(tmpDir, '_dream_context', 'state', 'my-task.md'))).toBe(true);
     });
 
-    it('creates a task with the lean scaffold (Why + Changelog only)', () => {
+    it('creates a task with the lean card (Why only; history in the journal)', () => {
       run('tasks create lean-task --description "Test lean" --priority medium --why "Testing the lean scaffold"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'lean-task.md'), 'utf-8');
       expect(content).toContain('## Why');
       expect(content).toContain('Testing the lean scaffold');
-      expect(content).toContain('## Changelog');
+      expect(content).not.toContain('## Changelog');
+      expect(content).not.toContain('<!--');
+      expect(journalOf(tmpDir, 'lean-task')).toContain('- Task created.');
       expect(content).toContain('related_feature: null');
       // Empty sections are not scaffolded — they appear on first insert.
       expect(content).not.toContain('## User Stories');
@@ -317,13 +334,12 @@ describe('CLI commands (integration)', () => {
       let content = readFileSync(file, 'utf-8');
       expect(content).toMatch(/^priority: "?high"?$/m);
       expect(content).toMatch(/^urgency: "?critical"?$/m);
-      expect(content).toContain('- priority: medium -> high');
-      expect(content).toContain('- urgency: low -> critical');
+      expect(journalOf(tmpDir, 'level-task')).toContain('- priority: medium -> high');
+      expect(journalOf(tmpDir, 'level-task')).toContain('- urgency: low -> critical');
 
-      // Same value: nothing written — no second changelog line.
+      // Same value: nothing written — no second journal line.
       expect(run('tasks priority level-task high', tmpDir)).toContain('no change');
-      content = readFileSync(file, 'utf-8');
-      expect(content.match(/- priority: /g)).toHaveLength(1);
+      expect(journalOf(tmpDir, 'level-task').match(/- priority: /g)).toHaveLength(1);
     });
 
     it('rejects an invalid priority or urgency with a non-zero exit', () => {
@@ -365,9 +381,11 @@ describe('CLI commands (integration)', () => {
     it('inserts into task changelog with auto-date header', () => {
       run('tasks create cl-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks insert cl-test changelog "Added pagination support"', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'cl-test.md'), 'utf-8');
-      expect(content).toContain('Added pagination support');
-      expect(content).toMatch(/### \d{4}-\d{2}-\d{2} - Update/);
+      const card = readFileSync(join(tmpDir, '_dream_context', 'state', 'cl-test.md'), 'utf-8');
+      expect(card).not.toContain('Added pagination support');
+      const journal = journalOf(tmpDir, 'cl-test');
+      expect(journal).toContain('Added pagination support');
+      expect(journal).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} - log \[je_[A-Za-z0-9]+\]/);
     });
 
     it('rejects unknown task section', () => {
@@ -408,26 +426,34 @@ parent_task: null
     it('logs progress to a task', () => {
       run('tasks create log-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks log log-test "Implemented feature X"', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'log-test.md'), 'utf-8');
-      expect(content).toContain('Implemented feature X');
+      expect(journalOf(tmpDir, 'log-test')).toContain('Implemented feature X');
     });
 
     it('completes a task without a summary in non-interactive mode (no hang)', () => {
       run('tasks create no-summary --description "Test" --priority low -w "test why"', tmpDir);
+      prove(tmpDir, 'no-summary');
       // `run` invokes via execSync with no TTY; the bare form must not block on a prompt.
       const output = run('tasks complete no-summary', tmpDir);
       expect(output).toContain('completed');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'no-summary.md'), 'utf-8');
       expect(content).toMatch(/status:\s*"?completed"?/);
-      expect(content).toContain('Task completed.');
+      expect(journalOf(tmpDir, 'no-summary')).toContain('Task completed.');
+    });
+
+    it('refuses to complete a task with no criteria (nothing proves it is done)', () => {
+      run('tasks create unproven --description "Test" --priority low -w "test why"', tmpDir);
+      const out = run('tasks complete unproven "All done"', tmpDir);
+      expect(out).toContain('no acceptance criteria');
+      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'unproven.md'), 'utf-8')).not.toContain('status: completed');
     });
 
     it('completes a task', () => {
       run('tasks create done-task --description "Test" --priority low -w "test why"', tmpDir);
+      prove(tmpDir, 'done-task');
       run('tasks complete done-task "All done"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'done-task.md'), 'utf-8');
       expect(content).toContain('status: completed');
-      expect(content).toContain('All done');
+      expect(journalOf(tmpDir, 'done-task')).toContain('All done');
     });
 
     it('creates a task with only --why (uses defaults, no prompts)', () => {
@@ -1383,6 +1409,7 @@ parent_task: null
 
     it('auto-discovers completed tasks', () => {
       run('tasks create auth -d "Build auth" -p high -w "test why"', tmpDir);
+      prove(tmpDir, 'auth');
       run('tasks complete auth "Done"', tmpDir);
       const output = run('core releases add --ver 1.0.0 --summary "Auth release" --yes', tmpDir);
       expect(output).toContain('1 tasks');

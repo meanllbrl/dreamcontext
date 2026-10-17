@@ -37,6 +37,14 @@ export interface TaskSyncEntry {
   lastLocalChangeAt?: number;
   /** True while local changes await a push. */
   pendingPush?: boolean;
+  /**
+   * Journal entry ids the remote already has (posted by this machine, or pulled
+   * from it). Push sends only shareable entries NOT in this set. Absent = never
+   * recorded (a pre-journal ledger): seeded from `base_snapshot` on first use.
+   */
+  posted_journal_ids?: string[];
+  /** Remote comment id → journal entry id, so a re-pull never re-imports a comment. */
+  comment_entry_ids?: Record<string, string>;
 }
 
 export interface SyncStateFile {

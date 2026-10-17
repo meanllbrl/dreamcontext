@@ -177,9 +177,9 @@ export function insertToSection(
 
   if (!section) {
     if (createIfMissing) {
-      // Sections are scaffolded on first insert (lean template). Keep Changelog
-      // as the last section: new sections slot in right before it when present,
-      // else append at the end of the file body. Re-locate after the splice.
+      // Sections are scaffolded on first insert (lean template). A doc that
+      // still has a Changelog (a feature PRD, a legacy card) keeps it last: new
+      // sections slot in right before it; else append at the end of the body. Re-locate after the splice.
       const changelog = sectionName === 'Changelog'
         ? null
         : findSection(parseSections(lines.join('\n')), 'Changelog');
@@ -190,6 +190,8 @@ export function insertToSection(
         }
         lines.splice(changelog.startLine, 0, ...insertion);
       } else {
+        // No Changelog (a card): append at the end, one blank line before the header.
+        while (lines.length > 0 && (lines[lines.length - 1]?.trim() ?? '') === '') lines.pop();
         lines.push('', `## ${sectionName}`);
       }
       section = findSection(parseSections(lines.join('\n')), sectionName);

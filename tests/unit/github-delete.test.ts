@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, realpathSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -145,8 +145,11 @@ describe('github SOFT-delete propagation (A4)', () => {
     expect(report.conflicts).toHaveLength(1);
     expect(report.conflicts[0].reason).toBe('remote_deleted');
     const saved = readFileSync(report.conflicts[0].savedTo, 'utf-8');
-    expect(saved).toContain('unpushed note');
     expect(saved).toContain('precious text');
+    // The unpushed note is history: it lives in the journal, retired beside the tombstone.
+    const retired = readdirSync(join(contextRoot, 'state', 'journal', '.deleted'));
+    expect(retired.some((f) => f.startsWith('edited-then-closed--'))).toBe(true);
+    expect(readFileSync(join(contextRoot, 'state', 'journal', '.deleted', retired[0]), 'utf-8')).toContain('unpushed note');
     expect(existsSync(join(contextRoot, 'state', 'edited-then-closed.md'))).toBe(false);
   });
 

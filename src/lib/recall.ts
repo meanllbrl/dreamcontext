@@ -1117,7 +1117,8 @@ export function buildCorpusWith(
     docs.push(...loadMarkdownDocs(join(contextRoot, 'theses'), 'thesis', contextRoot, undefined, memo));
   }
   if (types.has('task')) {
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot, undefined, memo));
+    // A task's journal is its history, not a task: it never surfaces as one.
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot, ['journal/**'], memo));
     // Session digests fold under the task channel (continuous capture, C1/C3).
     docs.push(...loadDigestDocsMemo(contextRoot, memo));
   }

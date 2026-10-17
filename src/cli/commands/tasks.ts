@@ -51,7 +51,7 @@ import { foldAscii } from '../../lib/fold-ascii.js';
 import { listObjectives } from '../../lib/objectives-store.js';
 import { resolveFeature, applyTaskFeatureLink, anyFeaturesExist } from '../../lib/feature-links.js';
 import { loadTaskOverride, loadStatuses, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
-import { isActive, isCancelled, isDone, isReview, statusKeys, type StatusDef } from '../../lib/task-status.js';
+import { DONE_STATUS_KEY as DONE_KEY, isActive, isCancelled, isDone, isReview, statusKeys, type StatusDef } from '../../lib/task-status.js';
 import { describeStatusMappings } from '../../lib/task-backend/status-mapping.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
@@ -70,6 +70,23 @@ import {
 import { planDedup, applyDedup, type DedupPlan } from '../../lib/task-backend/dedup.js';
 import { ProgressBar } from '../../lib/progress.js';
 import { hardRefreshTasks } from '../../lib/task-backend/hard-refresh.js';
+import { formatJournalMigrationReport, migrateTaskJournals } from '../../lib/task-journal-migration.js';
+import {
+  criteriaOfBody,
+  describeGate,
+  evidenceEntryBody,
+  gateStatus,
+  pickCriterion,
+  readEvidenceOutput,
+  redactEvidenceTail,
+  runEvidenceCommand,
+  setCriterion,
+  validateRef,
+} from '../../lib/task-evidence.js';
+import { refuseSelfApproval } from './agents.js';
+import { cardIssuesOfFile } from '../../lib/task-doctor.js';
+import { foldCardChangelog } from '../../lib/task-card.js';
+import { withTaskFileLock } from '../../lib/task-file-lock.js';
 import type { SyncOptions } from '../../lib/task-backend/types.js';
 import {
   GROUP_BY_FIELDS,
@@ -506,6 +523,55 @@ function blockOnMissingRequired(
   error(`Cannot ${action} "${slug}": required custom field(s) unset — ${names}. This project requires them on every task.`);
   printRequiredHints(missing, fix);
   error('Set them, or pass --allow-missing-required (or DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1) for a draft.');
+  process.exitCode = 1;
+  return true;
+}
+
+/** The person acting, as a journal actor (`null` when nobody is resolved). */
+function actorOf(): string | null {
+  try {
+    return resolveActivePerson(ensureContextRoot()).slug;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The evidence gate (code, not prose): a review- or done-kind status needs every
+ * criterion ticked with an evidence ref; done directly also needs cmd:/commit:/
+ * owner: refs only and nothing (observed). `--force --reason` passes it, never
+ * from an agent's environment, and is journaled with its reason. Returns true
+ * when the move is BLOCKED.
+ */
+async function blockOnEvidence(
+  backend: TaskBackend,
+  slug: string,
+  newStatus: string,
+  defs: StatusDef[],
+  force: { force?: boolean; reason?: string },
+): Promise<boolean> {
+  const target = isDone(defs, newStatus) ? 'done' : isReview(defs, newStatus) ? 'review' : null;
+  if (!target) return false;
+  const cur = await backend.get(slug);
+  const gate = gateStatus(cur?.rawBody ?? '', target);
+  if (gate.ok) return false;
+  if (force.force) {
+    if (refuseSelfApproval(process.env)) return true;
+    if (!force.reason?.trim()) {
+      error('--force needs --reason "<why the evidence gate does not apply>".');
+      process.exitCode = 1;
+      return true;
+    }
+    const open = [...gate.unproven, ...gate.reviewOnly].map((c) => `${c.n}. ${c.text}`).join('; ');
+    await backend.addJournal(slug, {
+      kind: 'status',
+      label: `forced → ${newStatus}`,
+      actor: actorOf(),
+      body: `- forced past the evidence gate: ${force.reason.trim()}\n- unproven: ${open}`,
+    });
+    return false;
+  }
+  error(describeGate(slug, newStatus, gate));
   process.exitCode = 1;
   return true;
 }
@@ -1519,6 +1585,7 @@ export function registerTasksCommand(program: Command): void {
         success(`Inserted into ${prep.sectionName} in ${slug}.md`);
       } catch (err: any) {
         error(err.message);
+        process.exitCode = 1;
       }
     });
 
@@ -1527,8 +1594,10 @@ export function registerTasksCommand(program: Command): void {
     .command('complete')
     .argument('<name>')
     .argument('[summary...]', 'Completion summary')
-    .description('Mark a task as completed')
-    .action(async (name: string, summaryParts: string[]) => {
+    .description('Mark a task as completed (evidence-gated: every criterion proven by cmd:/commit:, nothing observed)')
+    .option('--force', 'Pass the evidence gate (needs --reason; refused from an agent environment; journaled)')
+    .option('--reason <why>', 'Why the evidence gate does not apply (with --force)')
+    .action(async (name: string, summaryParts: string[], opts: { force?: boolean; reason?: string }) => {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
@@ -1544,6 +1613,7 @@ export function registerTasksCommand(program: Command): void {
       const current = await backend.get(slug);
       if (blockOnMissingRequired('complete', slug, current?.custom_fields, ensureContextRoot(),
           (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
+      if (await blockOnEvidence(backend, slug, 'completed', statusSet(), opts)) return;
 
       await backend.complete(slug, summary);
       success(`Task completed: ${slug}`);
@@ -1559,8 +1629,10 @@ export function registerTasksCommand(program: Command): void {
     .argument('<name>')
     .argument('<new-status>', 'todo, in_progress, in_review, completed, or any status declared in overrides/task.md (`tasks statuses`)')
     .argument('[reason...]', 'Optional reason for the status change')
-    .description('Change a task\'s status (logs the change; stamps start_date on the first active-kind status if unset, due_date on completed)')
-    .action(async (name: string, newStatus: string, reasonParts: string[]) => {
+    .description('Change a task\'s status (logs the change; review/done are evidence-gated; stamps start_date on the first active-kind status if unset, due_date on completed)')
+    .option('--force', 'Pass the evidence gate (needs --reason; refused from an agent environment; journaled)')
+    .option('--reason <why>', 'Why the evidence gate does not apply (with --force)')
+    .action(async (name: string, newStatus: string, reasonParts: string[], opts: { force?: boolean; reason?: string }) => {
       const defs = statusSet();
       const validStatuses = statusKeys(defs);
       if (!validStatuses.includes(newStatus)) {
@@ -1579,6 +1651,7 @@ export function registerTasksCommand(program: Command): void {
         const cur = await backend.get(slug);
         if (blockOnMissingRequired(isDone(defs, newStatus) ? 'complete' : `move to ${newStatus}`, slug, cur?.custom_fields, ensureContextRoot(),
             (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
+        if (await blockOnEvidence(backend, slug, newStatus, defs, opts)) return;
       }
 
       const reason = reasonParts.join(' ').trim();
@@ -1602,6 +1675,118 @@ export function registerTasksCommand(program: Command): void {
       await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
       success(`Task ${slug} → ${newStatus}`);
       reportDateStamps(newStatus, dates, before?.due_date);
+    });
+
+  // Tick a criterion WITH its evidence (the only way an agent ticks one)
+  tasks
+    .command('check')
+    .argument('<name>')
+    .argument('<criterion>', 'The criterion: its number, or a phrase that matches exactly one')
+    .description('Tick a criterion with evidence: --run a command (recorded in the journal, ticked as cmd:<id>), or --evidence commit:<sha> | shot:<path>')
+    .option('--run <command>', 'Run this command now; exit 0 ticks the criterion, anything else refuses')
+    .option('--output-file <path>', 'Ingest the output of a command you already ran (with --exit)')
+    .option('--exit <code>', 'The exit code of that command (with --output-file)')
+    .option('--evidence <ref>', 'commit:<sha> (reachable in a linked repo) or shot:<project-relative path>')
+    .action(async (name: string, which: string, opts: { run?: string; outputFile?: string; exit?: string; evidence?: string }) => {
+      const modes = [opts.run !== undefined, opts.outputFile !== undefined, opts.evidence !== undefined].filter(Boolean).length;
+      if (modes !== 1) {
+        error('Give exactly one of --run "<command>", --output-file <path> --exit <code>, or --evidence <ref>.');
+        process.exitCode = 1;
+        return;
+      }
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const cur = await backend.get(slug);
+      if (!cur) return;
+      const pick = pickCriterion(criteriaOfBody(cur.rawBody), which);
+      if (!pick.ok) {
+        error(pick.reason);
+        for (const c of pick.candidates.slice(0, 20)) console.log(`  ${c.n}. ${c.checked ? '[x]' : '[ ]'} ${c.text}`);
+        process.exitCode = 1;
+        return;
+      }
+      const criterion = pick.criterion;
+      const contextRoot = ensureContextRoot();
+      const projectRoot = dirname(contextRoot);
+      const ctx = { stateDir: getStateDir(), slug, projectRoot };
+
+      let ref: string;
+      if (opts.evidence !== undefined) {
+        const check = validateRef(opts.evidence.trim(), ctx);
+        if (!check.ok) {
+          error(check.reason);
+          process.exitCode = 1;
+          return;
+        }
+        ref = opts.evidence.trim();
+        await backend.addJournal(slug, { kind: 'evidence', actor: actorOf(), body: evidenceEntryBody({ criterion, ref }) });
+      } else {
+        let output: string;
+        let exit: number;
+        let command: string;
+        if (opts.run !== undefined) {
+          command = opts.run;
+          ({ output, exit } = runEvidenceCommand(command, process.cwd()));
+        } else {
+          if (opts.exit === undefined || !/^-?\d+$/.test(opts.exit)) {
+            error('--output-file needs --exit <code> (the exit code of the command that wrote it).');
+            process.exitCode = 1;
+            return;
+          }
+          command = `(ingested) ${opts.outputFile}`;
+          const read = readEvidenceOutput(opts.outputFile!);
+          if (read === null) {
+            error(`Cannot read ${opts.outputFile}.`);
+            process.exitCode = 1;
+            return;
+          }
+          output = read;
+          exit = Number(opts.exit);
+        }
+        const tail = redactEvidenceTail(output, projectRoot);
+        if (exit !== 0) {
+          error(`Exit ${exit}: criterion ${criterion.n} NOT ticked — evidence must pass.`);
+          console.log(tail.split('\n').slice(-15).join('\n'));
+          process.exitCode = 1;
+          return;
+        }
+        const entry = await backend.addJournal(slug, {
+          kind: 'evidence', actor: actorOf(), body: evidenceEntryBody({ criterion, command, exit, tail }),
+        });
+        ref = `cmd:${entry.id}`;
+      }
+
+      const fresh = await backend.get(slug);
+      await backend.updateFields(slug, { updated_at: today() }, { body: setCriterion(fresh?.rawBody ?? cur.rawBody, criterion.n, true, ref) });
+      success(`Criterion ${criterion.n} ticked (evidence: ${ref}): ${criterion.text}`);
+    });
+
+  // The owner's verdict: review → done, recorded in the journal
+  tasks
+    .command('approve')
+    .argument('<name>')
+    .description('Approve a task in review: the owner\'s verdict, recorded in the journal, closes it (never from an agent)')
+    .option('--note <text>', 'What you checked')
+    .action(async (name: string, opts: { note?: string }) => {
+      if (refuseSelfApproval(process.env)) return;
+      const defs = statusSet();
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const cur = await backend.get(slug);
+      if (!cur) return;
+      if (!isReview(defs, cur.status)) {
+        error(`${slug} is ${cur.status}; only a task in review is approved.`);
+        process.exitCode = 1;
+        return;
+      }
+      const note = opts.note?.trim();
+      await backend.addJournal(slug, { kind: 'approval', actor: actorOf(), body: `- approved${note ? `: ${note}` : ''}` });
+      const now = today();
+      const dates = dateUpdatesForStatus(DONE_KEY, cur, now, defs);
+      await backend.updateFields(slug, { status: DONE_KEY, updated_at: now, ...dates });
+      success(`Task ${slug} approved → ${DONE_KEY}`);
     });
 
   // Read-only view of the project's status set + how each maps to the remotes
@@ -1695,7 +1880,7 @@ export function registerTasksCommand(program: Command): void {
     .command('log')
     .argument('<name>')
     .argument('[content...]', 'Log entry content')
-    .description('Add a changelog entry to a task (cross-session continuity)')
+    .description('Add an entry to a task\'s journal (cross-session continuity)')
     .action(async (name: string, contentParts: string[]) => {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
@@ -1761,7 +1946,7 @@ export function registerTasksCommand(program: Command): void {
       const root = ensureContextRoot();
 
       // 1. The state, through the SAME changelog path `tasks log` uses — the banner
-      //    tells the next session to read "the latest changelog entry", so the whole
+      //    tells the next session to read "the newest journal entry", so the whole
       //    handoff has to land there as ONE entry and nowhere else.
       const note = noteParts.join(' ').trim();
       await backend.addChangelog(slug, renderHandoffEntry(today(), opts, note), { fallbackAppend: true });
@@ -2120,9 +2305,19 @@ export function registerTasksCommand(program: Command): void {
   // (the default checks stay LOCAL-ONLY by design — issue #11; the optional
   //  `--remote` assignee-drift probe is the one network check, opt-in — #78)
   tasks
+    .command('migrate-journal')
+    .description("Move every task card's Changelog into its journal now (the 0.33.0 migration; idempotent, backs up to tmp/)")
+    .option('--dry-run', 'Report what would move and the byte ledger; write nothing')
+    .action((opts: { dryRun?: boolean }) => {
+      const report = migrateTaskJournals(ensureContextRoot(), { dryRun: !!opts.dryRun });
+      console.log(formatJournalMigrationReport(report, !!opts.dryRun));
+      if (report.failed.length > 0) process.exitCode = 1;
+    });
+
+  tasks
     .command('doctor')
     .argument('[name]', 'Task name (omit to check every task)')
-    .description('Validate Workflow flowchart is in sync with Acceptance Criteria')
+    .description('Check task cards: the card standard (template comments, long names/Why, card size, open tasks without criteria, unproven or stale reviews) and Workflow drift; folds a Changelog back into the journal')
     .option('--remote', 'Also check the remote backend for assignee drift (requires a token; #78)')
     .action(async (name: string | undefined, opts: { remote?: boolean }) => {
       const dir = getStateDir();
@@ -2139,22 +2334,35 @@ export function registerTasksCommand(program: Command): void {
       if (files.length === 0) return;
 
       let drift = 0;
-      console.log(header(name ? `Workflow check: ${basename(files[0], '.md')}` : 'Workflow check'));
+      const counts = new Map<string, number>();
+      const defs = statusSet();
+      console.log(header(name ? `Task check: ${basename(files[0], '.md')}` : 'Task check'));
 
       for (const file of files) {
         const slug = basename(file, '.md');
-        const issues = checkWorkflow(file);
+        // A card that regained a Changelog (an old CLI, a pull) folds into its journal here.
+        let folded: number | null = null;
+        try { folded = withTaskFileLock(ensureContextRoot(), slug, () => foldCardChangelog(file)); } catch { /* busy: next run */ }
+        const issues = [
+          ...checkWorkflow(file).map((m) => ({ code: 'workflow-drift', message: m })),
+          ...cardIssuesOfFile(file, defs),
+        ];
+        if (folded !== null) console.log(`  ${chalk.cyan('folded')}  ${slug}: Changelog moved into its journal (+${folded} entries)`);
         if (issues.length === 0) {
-          console.log(`  ${chalk.green('ok')}      ${slug}`);
+          if (name) console.log(`  ${chalk.green('ok')}      ${slug}`);
         } else {
           drift++;
-          console.log(`  ${chalk.red('drift')}   ${slug}`);
-          for (const issue of issues) console.log(`            ${chalk.dim('-')} ${issue}`);
+          console.log(`  ${chalk.yellow('check')}   ${slug}`);
+          for (const issue of issues) {
+            counts.set(issue.code, (counts.get(issue.code) ?? 0) + 1);
+            console.log(`            ${chalk.dim('-')} ${issue.message}`);
+          }
         }
       }
 
       if (drift > 0) {
-        error(`${drift} task(s) have flowchart drift. Update the \`## Workflow\` mermaid block to match Acceptance Criteria.`);
+        const summary = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ');
+        error(`${drift} of ${files.length} task(s) need attention: ${summary}.`);
         process.exitCode = 1;
       } else {
         success(`All ${files.length} task(s) clean.`);

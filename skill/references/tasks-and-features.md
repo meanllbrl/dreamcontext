@@ -1,10 +1,14 @@
 # Tasks & Features — full protocol
 
-## Tasks are your working documents
+## Tasks: a card and a journal
 
-All context, decisions, user stories, acceptance criteria, constraints, technical details, notes, and progress live in the **task body**. Features are retrospective product docs updated only during sleep — never put in-progress context in a feature.
+A task is two files. The **card**, `state/<slug>.md`, holds what the work IS: Why, Acceptance Criteria, Constraints & Decisions, Technical Details, Notes (plus User Stories and Workflow when needed). It carries no history and no template comments, and stays under **12,000 chars** (`tasks insert` refuses past it, except into Acceptance Criteria; overflow goes to the journal via `tasks log`, or to knowledge). The **journal**, `state/journal/<slug>.md`, holds what HAPPENED: every `tasks log`, status change, evidence record and approval, newest first, each entry headed `### YYYY-MM-DD HH:MM - <kind> [je_<id>]` (kinds: `created`, `log`, `evidence`, `status`, `approval`, `sleep`, `remote`). The id is permanent: evidence refs, sync and merge use it. Features are retrospective product docs updated only during sleep — never put in-progress context in a feature.
 
-The auto-loaded snapshot already lists every non-completed task with status, priority, and last-updated date. Answer "what am I working on?" / "which tasks are active?" directly from it — no tool calls. Only read the full file when you need the body (the **Changelog** section is where the previous session left off).
+The auto-loaded snapshot already lists every non-completed task with status, priority, and last-updated date. Answer "what am I working on?" / "which tasks are active?" directly from it — no tool calls. Read the card when you need the plan, and the newest journal entries when you need where the previous session left off.
+
+- **The journal is not a task.** Recall never returns it as one; with a remote task backend it travels through the backend (GitHub/ClickUp comments), never the brain repo; a git merge unions entries by id.
+- **A Changelog that comes back is folded.** A card that regains `## Changelog` (an older CLI, an old merge driver, a pull) is folded into its journal on the next write to that task or the next `tasks doctor`, deduplicated by normalised text with copy counting: nothing is dropped, nothing is doubled.
+- **Migration.** `dreamcontext update` to 0.33.0 moves every card's Changelog into its journal once (`dreamcontext tasks migrate-journal [--dry-run]` runs it by hand): backup under `_dream_context/tmp/pre-migration-<stamp>/`, template comments stripped, old ticked criteria marked `(evidence: legacy)`, a byte ledger proving card + journal + stripped = original. It is idempotent, leaves `state/archive/` alone, and retries on its next run when a task is locked or a sync is running.
 
 ### Lifecycle
 ```
@@ -24,7 +28,7 @@ Defaults: `priority=medium`, `status=todo`. A task created without `--version` a
 
 - **Name = a short plain sentence** describing what the task does ("Fix the login redirect loop"). Never a type-prefixed slug (`feat-x-y`) — the file slug is derived from the name automatically.
 - **`--why` is mandatory.** Creation fails without a non-empty reason; `created_at` covers the "when". A task must be readable months later on its Why alone.
-- **Lean scaffold.** New tasks contain only `## Why` and `## Changelog`. Every other section (`user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`) is created on first `tasks insert` — in canonical position, before Changelog. Never insert placeholders to "complete" the shape; a section with nothing to say shouldn't exist.
+- **Lean card.** A new card contains only `## Why`; its journal starts with a `created` entry. Every other section (`user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`) is created on first `tasks insert`, in canonical position. Never insert placeholders to "complete" the shape; a section with nothing to say shouldn't exist.
 - **`--neighbor-checked <slug>` / `--declined-checked <key>` — proof of having looked (sleep only).** During a sleep cycle the filing bar refuses a task whose nearest existing task is semantically close, or that looks like an idea somebody declined. Both refusals name the exact flag that lifts them, and each takes the **slug/key it named** — passing a different one is refused again. They are not bypasses: they say "I read that neighbor / that declined reason, and this is genuinely separate". A near-verbatim duplicate (the merge band) has no flag at all; fold it in instead. A person filing their own task during a background cycle uses `--by human`, which is never checked. When the CLI prints `neighbor check skipped (…)` the semantic floor is OFF for that run — do the keyword dedup yourself (`memory recall "<topic>" --types task`) and check `tasks declined` by hand.
 
 ### Declining an idea (work that never became a task)
@@ -50,19 +54,40 @@ dreamcontext tasks insert <name> acceptance_criteria "API returns 200 with pagin
 dreamcontext tasks insert <name> constraints "Use native fetch, no axios"
 dreamcontext tasks insert <name> technical_details "Key file: src/api/tasks.ts (Express router)"
 dreamcontext tasks insert <name> notes "Edge case: empty results return [] not null"
-dreamcontext tasks insert <name> changelog "Implemented pagination for /api/tasks"
+dreamcontext tasks insert <name> changelog "Implemented pagination for /api/tasks"   # goes to the journal
 ```
-Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, `changelog`. A missing section is created on first insert (before Changelog); `workflow` holds the mermaid flowchart — add it only when the task is big enough to need one (`tasks doctor` validates it against the criteria once present).
+Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, and `changelog` (kept as a name: it writes a journal entry, never a card section). A missing section is created on first insert; `workflow` holds the mermaid flowchart — add it only when the task is big enough to need one (`tasks doctor` validates it against the criteria once present).
 
 ### Lifecycle commands
 ```bash
-dreamcontext tasks log <name> "what was done"        # changelog entry — MANDATORY each session
+dreamcontext tasks log <name> "what was done"        # journal entry — MANDATORY each session
 dreamcontext tasks status <name> in_progress "reason" # bump status; first in_progress auto-stamps start_date if unset, completed stamps due_date with the real end
 dreamcontext tasks status <name> in_review "reason"  # bump status (logs automatically; any declared status key works too)
 dreamcontext tasks statuses                        # the project's status set: key, kind, order, colour, GitHub/ClickUp mapping
-dreamcontext tasks complete <name> "summary"         # mark complete
-dreamcontext tasks delete <name> --yes               # delete (propagates to remote on sync)
+dreamcontext tasks complete <name> "summary"         # mark complete (same evidence gate as status completed)
+dreamcontext tasks check <name> <n|phrase> --run "npm test"   # tick a criterion WITH evidence (below)
+dreamcontext tasks approve <name> [--note "what I checked"]  # the owner's verdict: review → done (never from an agent)
+dreamcontext tasks doctor [name]                     # card-standard checks + Workflow drift
+dreamcontext tasks delete <name> --yes               # delete (propagates to remote on sync; the journal moves to state/journal/.deleted/)
 ```
+
+### Evidence changes status
+
+A criterion is ticked only with a reference to its proof: `- [x] <text> (evidence: <ref>)`.
+
+| ref | means | written by |
+|---|---|---|
+| `cmd:<je_id>` | an `evidence` journal entry: the command, its exit code and a scrubbed output tail (≤ 2,000 chars) | `tasks check --run "<cmd>"`, or `--output-file <path> --exit <code>` for a command already run |
+| `commit:<sha>` | a commit reachable from the current branch of the project or a linked repo | `tasks check --evidence commit:<sha>` |
+| `shot:<path>` | a project-relative screenshot that exists (no symlinks, nothing outside the project) | `tasks check --evidence shot:<path>` |
+| `owner:<je_id>` | an `approval` journal entry | a tick in the dashboard, `tasks approve` |
+| `legacy` | ticked before evidence existed (the migration) | the migration only |
+
+- **`tasks check` refuses** a non-zero exit (nothing is ticked), a `cmd:` that names no evidence entry, a `commit:` that is not reachable, a typed `owner:<date>`, and a phrase that matches zero or several criteria (it lists the candidates). Never flip a box with Edit: the gate counts an unreferenced tick as unproven.
+- **The gate.** A move to a review- or done-kind status (`tasks status`, `tasks complete`, a dashboard drag) is refused while any criterion is unticked or has no ref, and lists them. **Done directly** also needs every ref to be `cmd:` or `commit:` and no criterion marked `(observed)`; `shot:`, `owner:`, `legacy` and observed criteria reach review, and the owner closes them. A task with no criteria cannot close on its own word: done is refused (nothing proves it), review is open, and the owner closes it from there (or `--force --reason`). A body line starting `###` is demoted inside a journal entry, so a log can never forge an entry.
+- **The owner's paths.** `tasks approve` (review → done, writes an `approval` entry) and the dashboard (a ticked box writes an approval entry, then `owner:<its id>`; dragging a review card to done is an approval). `--force --reason "<why>"` passes the gate and is journaled. `approve` and `--force` are refused from a Claude session or agent run: an accident guard, not a security boundary; every approval and force is a journal entry with its actor.
+- **Evidence never leaves the machine.** `evidence` and `sleep` entries are not posted to GitHub/ClickUp; a card pulled from another machine keeps its refs and is not re-resolved.
+- **`tasks doctor`** reports: a template HTML comment, a name over 80 chars, a Why over 600 chars, a card over 12,000 chars, an open task with no criteria, a review task with unproven criteria, a review older than 7 days, and a typed owner date. It also folds a card's returned Changelog into its journal.
 
 ### Filtering & discovery
 ```bash
@@ -148,7 +173,7 @@ In the dashboard: **Assign to agent** on the task (pick an agent, optional note)
 - **Assign versus Delegate.** **Assign to agent** runs a named agent from the Agents page under its own approved prompt, unattended. **Delegate to Claude** opens a live Claude session on the task that you watch and steer.
 - **The status rule.** Assigning moves the task to `in_progress` only when it has no status or an open-kind one (`todo` and declared children). It never moves a task out of active, review, done, cancelled or an unknown status. Assigning itself is allowed at any status.
 - **What the agent gets.** The task name (capped at 200 characters) and a `--note` arrive fenced as data, never as instructions. A note typed in the dashboard is the owner speaking and goes in as the run's ask. The agent's own human gates stay on: a `## Flow` `hitl` node or `review` still stops it to ask.
-- **The result.** The agent logs its own entries with `tasks log`. On top of that the run writes exactly one sanitized entry: ``### <date> - Agent <title> (`slug`)`` and `- Run <runId>: <status>. Document: <path or none>.`, never the document body. The changelog syncs to ClickUp/GitHub like any other entry, so only the status and the document path leave the machine.
+- **The result.** The agent logs its own entries with `tasks log`. On top of that the run writes exactly one sanitized entry: ``### <date> - Agent <title> (`slug`)`` and `- Run <runId>: <status>. Document: <path or none>.`, never the document body. The journal entry syncs to ClickUp/GitHub like any other log, so only the status and the document path leave the machine.
 - **First use: approval.** The agent must be approved **to run** on this machine (a scheduled agent's automation approval does not count). Otherwise the CLI refuses with "Approve it on the Agents page", and the dashboard composer shows the review with **Approve and assign**. A disabled agent, an unknown agent or task, or an over-long note is refused too.
 - **Who may assign.** The owner, from the dashboard or their own terminal. An agent run cannot (`tasks assign-agent` refuses inside one).
 - **How long.** An assigned run uses the agent's call settings: a 15-minute timeout unless a former on-call agent carried its own.
@@ -718,7 +743,7 @@ Every task file has a `## Workflow` mermaid block near the top: one node per acc
 ```bash
 dreamcontext tasks doctor <name>     # checks flowchart ⇄ acceptance-criteria sync (all tasks if omitted)
 ```
-And flip the matching `- [ ]` → `- [x]` in the Acceptance Criteria list immediately — don't wait for sleep.
+And tick the matching criterion immediately with its evidence (`dreamcontext tasks check <name> <n> --run "<cmd>"`) — don't wait for sleep.
 
 ---
 
@@ -857,7 +882,7 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
 
 ### Capability summaries: tasks, roadmap, Lab, people
 
-- **Tasks**: Working documents with changelog, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`)
+- **Tasks**: a card plus its journal, evidence-gated status, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`)
 - **Roadmap / Objectives**: PO-authored OKR board: objectives in `core/objectives/`, many-to-many task links (`objectives:` frontmatter), dependency DAG with full forecast cascade, target vs forecast slip detection, `dreamcontext roadmap` (+ `--json`)
 - **Lab / Insights**: Curated analytics **metrics** ("insights") synced from HTTP APIs or local scripts into the brain: manifests in `lab/insights/`, cached series every session, roadmap Key-Result binding (`lab bind` / the dashboard's objective dialogs — one feeder per objective, seeds `metric.current` on connect), dashboard Lab page. **Funnel analytics**: `--render funnel` + a `funnel-set/v1` payload gives a routed multi-page view — all-funnels comparison table + per-funnel step lane with drop badges, arc gesture, filters, breakdowns, compare (`/lab/<slug>`). **App insights (`--render app`)**: a script builds a multi-page, interactive, full-screen-capable body itself — `{ data, app }`, where `data` is a `dataset/v1` bundle and `app` declares an ordered list of sandboxed html pages wired to the host over a postMessage bridge (`lab.navigate`/`lab.data`/`lab.onRoute`) — no React component required. Routes to `/lab/<slug>` and `/lab/<slug>/p/<pageId>`, full screen via `?fs=1`. An agent reads a body it did not author with `lab body <slug> [--page]` and slices its numbers with `lab query <slug> [--where]`. `matrix/v1` (`--render breakdown`) is DEPRECATED for new insights — existing ones keep rendering, no migration forced. **An insight is NOT a knowledge file** — create with `dreamcontext lab create`, never `knowledge create`
 - **People (constitutions + roster)**: One constitution file per person (`people/<slug>.md`), a structural roster (`people/people.json`), machine-local active-person resolution, `person:<slug>` tags → ClickUp/GitHub assignees
@@ -886,9 +911,9 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
 
 **Naming: a task name is a short plain sentence saying what the task does** — "Fix the login redirect loop", "Dashboard renders the summary as a paragraph". Never a type-prefixed slug (`feat-x-y`, `fix-login-redirect`) — the slug is derived automatically from the name; you never write slug-style names yourself.
 
-**`-w/--why` is mandatory** — creation fails without it. New tasks scaffold lean: only `## Why` and `## Changelog` exist at birth; every other section appears when you first `tasks insert` into it. Never insert placeholder content to "fill out" a task — a section with nothing to say shouldn't exist.
+**`-w/--why` is mandatory** — creation fails without it. A new card has only `## Why` (history goes to its journal); every other section appears when you first `tasks insert` into it. Never insert placeholder content to "fill out" a task — a section with nothing to say shouldn't exist.
 
-Status: `todo → in_progress → in_review → completed` by default. A project may **declare more** in `_dream_context/overrides/task.md` (`statuses:` frontmatter — e.g. `planned`, `cancelled`), each living **under one of the four** and carrying a semantic `kind` (`open | active | review | done | cancelled`) that drives every derived behaviour. A cloud backend only ever sees the PARENT (so nothing has to be created on GitHub/ClickUp); the child rides beside it as a `dc:<key>` marker. `dreamcontext tasks statuses` lists the set with its parent and remote mapping. When a **cancelled-kind** status exists, abandoned / superseded / obsoleted work goes THERE (it leaves progress counts, is never overdue, closes the GitHub issue) — not to `in_review "confirm close"`. Your SessionStart briefing names the declared keys. Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, `changelog` — created on first insert, slotted before Changelog.
+Status: `todo → in_progress → in_review → completed` by default. A project may **declare more** in `_dream_context/overrides/task.md` (`statuses:` frontmatter — e.g. `planned`, `cancelled`), each living **under one of the four** and carrying a semantic `kind` (`open | active | review | done | cancelled`) that drives every derived behaviour. A cloud backend only ever sees the PARENT (so nothing has to be created on GitHub/ClickUp); the child rides beside it as a `dc:<key>` marker. `dreamcontext tasks statuses` lists the set with its parent and remote mapping. When a **cancelled-kind** status exists, abandoned / superseded / obsoleted work goes THERE (it leaves progress counts, is never overdue, closes the GitHub issue) — not to `in_review "confirm close"`. Your SessionStart briefing names the declared keys. Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes` — created on first insert; `changelog` writes a journal entry.
 **Custom fields (if this project declares them).** When `_dream_context/overrides/task.md` exists, every task carries project-defined custom fields. Their **values are surfaced to you inline** — in the snapshot's Active Tasks block and in `dreamcontext tasks list --long` — so you can see them without opening the file; unset **required** fields show as `⚠ UNSET (required)`. When you create or reconcile a task, **set every declared field** (`dreamcontext tasks field <slug> <key> <value>` or `tasks create --field key=value`). **REQUIRED fields are mandatory — never create or complete a task with a required field left empty.** Fields marked **[ASK THE USER]** (`ask: true`) capture a human judgment (e.g. a time estimate) — **ask the user for the value when creating the task instead of guessing it.** The full schema + sync behavior → [tasks-and-features.md](references/tasks-and-features.md).
 **Objectives (roadmap links).** When the project has objectives (`core/objectives/` non-empty — they're in your snapshot), every task should declare which it serves: `objectives: [slug-a, slug-b]` in frontmatter (many-to-many — one task often lifts several outcomes). Set at creation (`tasks create --objectives a,b`) or later (`dreamcontext tasks objectives <task> a,b`). **Propose objective links for tasks you create; never overwrite a non-empty `objectives:` list — an existing value is a PO decision that sticks.** The field is local-only (never synced to a cloud backend). Rollups, forecasts, and slip detection are computed — `dreamcontext roadmap` / `--json`. Full model → [tasks-and-features.md](references/tasks-and-features.md).
 
@@ -917,8 +942,8 @@ dreamcontext tasks handoff <slug> \
   --style "<how you are working, or none>" --files "<files in flight + line anchors, or none>"
 ```
 
-That entry is the whole handoff: a fresh session is told to read the task's **latest
-changelog entry** before anything else, so write it for someone who was not here. The
+That entry is the whole handoff: a fresh session is told to read the task's **newest
+journal entry** before anything else, so write it for someone who was not here. The
 command **refuses** — and writes nothing — while any part is missing or `--done`/`--next`
 is under a sentence; fix what it names and re-run. On success it writes the entry, sets the
 task `in_progress`, records the request, and writes a partial session digest.
