@@ -42,6 +42,9 @@ export interface PastSession {
   title: string;
   /** `title` is a remembered tab name, not a clipped first prompt — the client may show it whole. */
   named: boolean;
+  /** Present only on a queried listing: the title or message line that holds the query's first
+   *  word, one-lined and clipped around it ({@link matchSnippet}), so a hit says WHY it matched. */
+  match?: string;
   /** Most recent thing the user said, one-lined. '' when it would just repeat the title. */
   preview: string;
   /** Last write to the transcript (ms epoch) — "when did I last talk to this session". */
@@ -60,6 +63,38 @@ export interface PastSession {
  *  shipping every session's prompts to the client would be megabytes for a list view. */
 interface IndexedSession extends PastSession {
   haystack: string;
+  /** The haystack's lines in their own case (title, harvested prompts, last prompt), for the
+   *  match snippet. Bounded like the haystack. */
+  lines: string[];
+}
+
+/**
+ * Search case folding, Turkish-aware and length-preserving: İ, I and ı all fold to i (a default
+ * toLowerCase turns İ into i + a combining dot, so "istanbul" never found "İstanbul"). Same
+ * length, so {@link matchSnippet}'s index into the folded line cuts the original. Mirrored in
+ * dashboard/src/components/sleepy/phoneList.ts (drift test in tests/unit/phone-chat-list).
+ */
+export function foldCase(s: string): string {
+  return s.replace(/[İIı]/g, 'i').toLowerCase();
+}
+
+/**
+ * The line a hit is shown by: the first of `lines` holding `token` (case-insensitive),
+ * whitespace collapsed, clipped to about `radius` characters either side of the word with `…`
+ * where it was cut. '' when no line holds it (a branch-only hit).
+ */
+export function matchSnippet(lines: readonly string[], token: string, radius = 60): string {
+  const t = foldCase(token);
+  if (!t) return '';
+  for (const raw of lines) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    const at = foldCase(line).indexOf(t);
+    if (at < 0) continue;
+    const from = Math.max(0, at - radius);
+    const to = Math.min(line.length, at + t.length + radius);
+    return `${from > 0 ? '…' : ''}${line.slice(from, to).trim()}${to < line.length ? '…' : ''}`;
+  }
+  return '';
 }
 
 // ─── Agent runs vs. your own conversations ───────────────────────────────────
@@ -351,10 +386,18 @@ export function summarizeTranscript(
     ? ''
     : lastLabel;
 
-  const haystack = [title, ...headScan.prompts, lastRaw, headScan.gitBranch]
+  const haystack = foldCase([title, ...headScan.prompts, lastRaw, headScan.gitBranch]
     .join('\n')
-    .slice(0, HAYSTACK_MAX)
-    .toLowerCase();
+    .slice(0, HAYSTACK_MAX));
+  // The same text in its own case, for the snippet; bounded to the haystack's budget.
+  const lines: string[] = [];
+  let budget = HAYSTACK_MAX;
+  for (const l of [title, ...headScan.prompts, lastRaw]) {
+    if (!l || budget <= 0) continue;
+    const cut = l.slice(0, budget);
+    lines.push(cut);
+    budget -= cut.length;
+  }
 
   return {
     id,
@@ -371,6 +414,7 @@ export function summarizeTranscript(
     // START of the prompt.
     agentRun: isAgentRun(promptLabel(firstRaw)),
     haystack,
+    lines,
   };
 }
 
@@ -548,12 +592,13 @@ export function listPastSessions(
         // The first prompt stops being the title, so a one-turn session shows it underneath
         // instead of nothing.
         preview: summary.preview || summary.title,
-        haystack: `${named.toLowerCase()}\n${summary.haystack}`,
+        haystack: `${foldCase(named)}\n${summary.haystack}`,
+        lines: [named, ...summary.lines],
       }
       : summary);
   }
 
-  const tokens = (opts.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  const tokens = foldCase(opts.query ?? '').split(/\s+/).filter(Boolean);
   const matched = tokens.length === 0
     ? all
     : all.filter((s) => tokens.every((t) => s.haystack.includes(t)));
@@ -564,7 +609,9 @@ export function listPastSessions(
   const shown = opts.includeAgentRuns ? matched : matched.filter((s) => !s.agentRun);
   const agentRuns = matched.length - shown.length;
 
-  // `haystack` is stripped here — it is the index, not the payload.
-  const sessions = shown.slice(0, limit).map(({ haystack: _drop, ...rest }) => rest);
+  // `haystack` and `lines` are stripped here — they are the index, not the payload. A queried
+  // listing says why each row matched (the line holding the first word).
+  const sessions = shown.slice(0, limit).map(({ haystack: _drop, lines, ...rest }) =>
+    tokens.length ? { ...rest, match: matchSnippet(lines, tokens[0]) } : rest);
   return { sessions, total: shown.length, agentRuns, truncated };
 }

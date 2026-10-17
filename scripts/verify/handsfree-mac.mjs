@@ -473,7 +473,7 @@ try {
   // The first visit's "What's New" popup (same as the desktop's) is dismissed first.
   const dismiss = async (page) => { for (let i = 0; i < 3; i++) { const x = page.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await page.waitForTimeout(300); } };
   await dismiss(phone);
-  report.check('the phone shows the mobile chat surface', await until(async () => (await pvis('.mchat-head-btn').count()) > 0, 20000));
+  report.check('the phone opens on its Sohbetler list (AC21)', await until(async () => (await pvis('[data-testid="phone-list"]').count()) > 0, 20000));
   await phone.screenshot({ path: join(SHOTS, 'phone-390-chat.png') });
   const reuseCtx = await phoneBrowser.newContext({ ...devices['iPhone 13'] });
   const reuse = await reuseCtx.newPage();
@@ -490,31 +490,29 @@ try {
   report.check('the passphrase signs the second phone in', await until(async () => reuse.url().includes('vault=proj'), 25000), reuse.url());
   await reuseCtx.close();
 
-  // ── M4: the phone adopts the desktop's running chat (drawer → "Mac'te açık") ───────
+  // ── M4: the phone adopts the desktop's running chat (the list's Mac row) ───────
   console.log('\n── M4: takeover — phone adopts the running desktop chat, zero spawns');
   const desktopRoster = join(PROJ, '_dream_context', 'state', '.agent-sessions.json');
   const rosterBefore = existsSync(desktopRoster) ? readFileSync(desktopRoster, 'utf8') : '';
   const spawnsBefore = spawnLog().spawns.length;
-  await pvis('.mchat-head-btn').first().click();
-  report.check('the drawer lists BOTH live desktop chats under "Mac\'te açık"', await until(async () => (await phone.locator('[data-testid="mac-live-row"]').count()) >= 2, 15000));
-  report.check('AC16: one chosen project: its name, no project list', await until(async () => (await phone.locator('[data-testid="mchat-project-fixed"]').filter({ hasText: 'proj' }).count()) > 0, 10000)
-    && (await phone.locator('.mchat-project-row').count()) === 0);
+  report.check('the list shows BOTH live desktop chats as open "Mac" rows', await until(async () => (await phone.locator('[data-testid="mac-live-row"]').count()) >= 2, 15000));
+  report.check('AC16: one chosen project: no project switch on the list', (await phone.locator('[data-testid="list-projects"]').count()) === 0);
   const states = await phone.locator('[data-testid="mac-live-state"]').allInnerTexts();
   report.check('AC18: each live row reads its state (Working / Waiting for you / Idle)', states.length >= 2 && states.every((t) => /^(Working|Waiting for you|Idle)$/.test(t.trim())), JSON.stringify(states));
   await phone.waitForTimeout(1500); // the past list has loaded (its transcripts hold the live chats too)
   const liveIds = await phone.locator('[data-testid="mac-live-row"]').evaluateAll((els) => els.map((e) => e.dataset.id));
   const pastIds = await phone.locator('[data-testid="past-row"]').evaluateAll((els) => els.map((e) => e.dataset.id));
   // Not vacuous: the server's past-chats list DOES hold the running chats (their transcripts exist);
-  // the drawer is what keeps them out of "Past chats".
+  // the list is what keeps them out of Kapalı.
   const rawPast = await phone.evaluate(async () => {
     const r = await fetch('/api/agent/chat-sessions?limit=50', { headers: { accept: 'application/json', 'x-dreamcontext-vault': 'proj' } });
     return r.ok ? (await r.json()).sessions.map((x) => x.id) : [`HTTP ${r.status}`];
   });
-  report.check('AC18: a chat running on the Mac is listed once (under "Open on Mac", not under past chats, though the past list holds it)',
+  report.check('AC18: a chat running on the Mac is listed once (open, as a Mac row; not under Kapalı, though the past list holds it)',
     liveIds.length >= 2 && liveIds.some((id) => rawPast.includes(id)) && !pastIds.some((id) => liveIds.includes(id)), JSON.stringify({ liveIds, pastIds, rawPast }));
   report.check('zero refusal banners and zero spawns on opening the project', (await pvis('.chat-banner-ended').count()) === 0 && spawnLog().spawns.length === spawnsBefore);
-  await phone.screenshot({ path: join(SHOTS, 'phone-390-drawer.png') });
-  report.check('the drawer fits a phone', await noOverflow(phone));
+  await phone.screenshot({ path: join(SHOTS, 'phone-390-list.png') });
+  report.check('the list fits a phone', await noOverflow(phone));
   await phone.locator('[data-testid="mac-live-row"]').filter({ hasText: 'Chat 1' }).first().click();
   const phoneText = async () => (await pvis('.chat-pane').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
   report.check('the phone shows the running turn (ticks keep coming)', await until(async () => /\[TICK-\d+\]/.test(await phoneText()), 20000));
@@ -537,7 +535,11 @@ try {
   await phone.reload({ waitUntil: 'domcontentloaded' });
   await phone.waitForTimeout(2500);
   await dismiss(phone);
-  report.check('after the reload the phone shows "Buraya al" again (passive restore)', await until(async () => (await pvis('.chat-banner-taken').count()) > 0, 25000));
+  // A reload starts on the list (AC21): the restored chat is a row; opening it shows its banner.
+  report.check('after the reload the phone opens on its list, the restored chat a row there', await until(async () => (await pvis('[data-testid="phone-list"]').count()) > 0
+    && (await phone.locator('[data-testid="list-tab-row"]').filter({ hasText: 'Chat 1' }).count()) > 0, 25000));
+  await phone.locator('[data-testid="list-tab-row"]').filter({ hasText: 'Chat 1' }).first().click();
+  report.check('after the reload the phone shows "Buraya al" again (passive restore)', await until(async () => (await pvis('[data-testid="phone-list"]').count()) === 0 && (await pvis('.chat-banner-taken').count()) > 0, 25000));
   await desk.waitForTimeout(2000);
   report.check('the desktop socket stayed open (no eviction, no reconnect)', (await dvis('.chat-banner-taken').count()) === 0
     && (await desk.evaluate(() => window.__chatSockets.length)) === deskSocketsBefore
@@ -658,8 +660,9 @@ try {
     await new Promise((r) => second.on('open', r));
     await sleep(1500);
     // Back to the chat the phone held before (chat 1), so the suppression check below is on it.
-    await pvis('.mchat-head-btn').first().click();
-    await phone.locator('.mchat-row').filter({ hasText: 'Chat 1' }).first().locator('.mchat-row-main').click().catch(() => {});
+    await pvis('[data-testid="chat-back"]').first().click().catch(() => {});
+    await until(async () => (await pvis('[data-testid="phone-list"]').count()) > 0, 8000);
+    await phone.locator('[data-testid="list-tab-row"]').filter({ hasText: 'Chat 1' }).first().click().catch(() => {});
     await phone.waitForTimeout(1500);
   }
   // Suppression (D2): the chat the phone shows on screen does not buzz the phone.

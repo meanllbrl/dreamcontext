@@ -10,7 +10,7 @@ import { mkdirSync, rmSync, statSync, writeFileSync, utimesSync } from 'node:fs'
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  listPastSessions, resolveProjectDir, summarizeTranscript, scanChunk, oneLine,
+  listPastSessions, matchSnippet, resolveProjectDir, summarizeTranscript, scanChunk, oneLine,
   claudeProjectDirName, clearTranscriptSessionCaches, promptLabel, isAgentRun,
 } from '../../src/lib/transcript-sessions.js';
 
@@ -249,6 +249,25 @@ describe('listPastSessions', () => {
     expect(listPastSessions(PROJECT, { home, query: 'migration ledger' }).sessions.map((s) => s.id)).toEqual([S1]);
     expect(listPastSessions(PROJECT, { home, query: 'MIGRATION' }).total).toBe(1);
     expect(listPastSessions(PROJECT, { home, query: 'nothing here' }).total).toBe(0);
+  });
+
+  it('a queried row says why it matched: the message line holding the first word, clipped around it (AC22)', () => {
+    writeSession(S1, transcript(['first topic', 'later we discussed the Migration   ledger for the v2 schema']));
+    const [row] = listPastSessions(PROJECT, { home, query: 'migration' }).sessions;
+    expect(row.match).toBe('later we discussed the Migration ledger for the v2 schema');
+    expect(Object.keys(row)).not.toContain('lines');
+    // An unqueried listing carries no match at all.
+    expect(listPastSessions(PROJECT, { home }).sessions[0].match).toBeUndefined();
+  });
+
+  it('matchSnippet: first holding line, whitespace collapsed, clipped with … both sides; none -> empty', () => {
+    expect(matchSnippet(['title', 'a  needle\there'], 'NEEDLE')).toBe('a needle here');
+    const long = `${'x'.repeat(100)} needle ${'y'.repeat(100)}`;
+    const s = matchSnippet([long], 'needle', 10);
+    expect(s.startsWith('…') && s.endsWith('…') && s.includes('needle')).toBe(true);
+    expect(s.length).toBeLessThanOrEqual(10 + 6 + 10 + 2 + 2);
+    expect(matchSnippet(['nothing'], 'needle')).toBe('');
+    expect(matchSnippet(['x'], '')).toBe('');
   });
 
   it('matches the branch too', () => {

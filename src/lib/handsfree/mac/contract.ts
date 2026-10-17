@@ -95,6 +95,11 @@ export interface LiveChatWire {
   busy: boolean;
   /** What the drawer says (AC18): a question/permission waiting, a turn running, or idle. */
   state: 'working' | 'asking' | 'idle';
+  /** The phone stack's last line (AC19): the question waiting, a permission's TOOL NAME only,
+   *  else the newest assistant text's last line; whitespace collapsed, 140 chars. */
+  lastLine: string | null;
+  /** The list's age (AC21): when the chat last moved, epoch ms; null when unknown. */
+  updatedAt: number | null;
 }
 
 /** GET /api/agent/live-chats's body: running chats, plus conversations still finishing after a

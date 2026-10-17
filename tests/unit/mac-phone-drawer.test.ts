@@ -57,9 +57,9 @@ describe('parked adoption (macAdopt.ts)', () => {
 
   it('is taken once, by the named project only', async () => {
     const { setPendingMacAdopt, takePendingMacAdopt } = await import('../../dashboard/src/components/handsfree/macAdopt');
-    setPendingMacAdopt({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true, state: 'asking' });
+    setPendingMacAdopt({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true, state: 'asking', lastLine: 'Ship it?', updatedAt: 5 });
     expect(takePendingMacAdopt('beta')).toBeNull();
-    expect(takePendingMacAdopt('alpha')).toEqual({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true, state: 'asking' });
+    expect(takePendingMacAdopt('alpha')).toEqual({ conversationId: 'c1', vault: 'alpha', title: 'x', busy: true, state: 'asking', lastLine: 'Ship it?', updatedAt: 5 });
     expect(takePendingMacAdopt('alpha')).toBeNull();
   });
 });

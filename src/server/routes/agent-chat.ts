@@ -63,7 +63,7 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
-import { registerChat, isDelegatedConversation, listChats, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -708,9 +708,12 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
     .filter((e) => !e.draining)
     .map((e) => {
       const vault = byPath.get(e.projectRoot.replace(/\/+$/, '')) ?? null;
+      const entries = registry.filter((r) => r.conversationId === e.conversationId);
       return {
         conversationId: e.conversationId, vault, title: vault ? liveChatTitle(e.projectRoot, e.conversationId) : null,
-        busy: e.busy, state: liveChatState(e.busy, registry.filter((r) => r.conversationId === e.conversationId).map((r) => r.status)),
+        busy: e.busy, state: liveChatState(e.busy, entries.map((r) => r.status)),
+        lastLine: vault ? liveChatLastLine(entries) : null,
+        updatedAt: liveChatUpdatedAt(e, entries),
       };
     })
     .filter((c) => visible(c.vault));
@@ -722,12 +725,50 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
 }
 
 /** AC18: what the drawer says about a live chat. A question waiting wins; then a turn running
- *  (the live entry's own `busy`, or a registry entry starting/working); else idle. */
+ *  (the live entry's own `busy`, or a registry entry working); else idle. A chat that is only
+ *  `starting` has been sent nothing (the CLI announces itself on the first message; a sent
+ *  message makes it busy), so it is idle: "Working" there would never end. */
 export function liveChatState(busy: boolean, statuses: readonly ChatStatus[]): LiveChatWire['state'] {
   const live = statuses.filter((s) => s !== 'gone');
   if (live.includes('asking')) return 'asking';
-  if (busy || live.includes('working') || live.includes('starting')) return 'working';
+  if (busy || live.includes('working')) return 'working';
   return 'idle';
+}
+
+/** AC21: when a live chat last moved (epoch ms), for the list's age: a turn starting or ending,
+ *  or a registry entry changing state (a question, a permission). null when none is known. */
+export function liveChatUpdatedAt(
+  e: { turnStartedAt: number | null; lastTurnEndedAt: number | null },
+  entries: readonly Pick<ChatEntry, 'updatedAt'>[],
+): number | null {
+  const times = [e.turnStartedAt ?? 0, e.lastTurnEndedAt ?? 0, ...entries.map((r) => Date.parse(r.updatedAt) || 0)];
+  const newest = Math.max(...times);
+  return newest > 0 ? newest : null;
+}
+
+/** AC19: the one line the phone stack shows under a live chat. A waiting question wins (its text);
+ *  a permission shows only its TOOL NAME (never the command or path, as the push does); else the
+ *  last line of the newest assistant text. Whitespace collapsed, clipped to 140 with `…`. */
+export function liveChatLastLine(entries: readonly Pick<ChatEntry, 'status' | 'pendingQuestion' | 'lastAssistantText'>[]): string | null {
+  const live = entries.filter((e) => e.status !== 'gone');
+  const clip = (t: string): string | null => {
+    const one = t.replace(/\s+/g, ' ').trim();
+    if (!one) return null;
+    return one.length > 140 ? `${one.slice(0, 139)}…` : one;
+  };
+  const asking = live.find((e) => e.pendingQuestion);
+  if (asking?.pendingQuestion) {
+    const q = asking.pendingQuestion;
+    return q.isPermission ? clip(q.toolName) : clip(q.text.split('\n').find((l) => l.trim()) ?? '');
+  }
+  for (const e of [...live].reverse()) {
+    const newest = e.lastAssistantText[e.lastAssistantText.length - 1];
+    if (!newest) continue;
+    const lines = newest.split('\n').map((l) => l.trim()).filter(Boolean);
+    const line = clip(lines[lines.length - 1] ?? '');
+    if (line) return line;
+  }
+  return null;
 }
 
 /** The tab title a live conversation carries in the desktop roster (or the phone's), if any. */

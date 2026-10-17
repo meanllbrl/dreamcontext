@@ -39,7 +39,9 @@ describe('live chat state (AC18)', () => {
     expect(liveChatState(true, ['asking'])).toBe('asking');
     expect(liveChatState(false, ['working', 'asking'])).toBe('asking');
     expect(liveChatState(true, [])).toBe('working');
-    expect(liveChatState(false, ['starting'])).toBe('working');
+    // Opened and sent nothing: idle, never a "Working" that does not end (AC21 review).
+    expect(liveChatState(false, ['starting'])).toBe('idle');
+    expect(liveChatState(true, ['starting'])).toBe('working');
     expect(liveChatState(false, ['idle'])).toBe('idle');
     expect(liveChatState(false, ['gone'])).toBe('idle');
   });

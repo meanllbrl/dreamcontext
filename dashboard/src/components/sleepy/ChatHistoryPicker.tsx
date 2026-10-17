@@ -32,6 +32,8 @@ export interface PastSession {
    *  older server, which reads as a first prompt. */
   named?: boolean;
   preview: string;
+  /** A queried listing only: the title or message line that holds the first word. */
+  match?: string;
   /** ms epoch — last write to the transcript. */
   updatedAt: number;
   startedAt: number | null;

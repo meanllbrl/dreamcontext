@@ -45,7 +45,7 @@ export interface MacDevice { id: string; label: string; createdAt: string }
 
 export interface MacPhonePayload { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean }
 
-export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle' }
+export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle'; lastLine: string | null; updatedAt: number | null }
 
 export interface LiveChatsWire { chats: LiveChatWire[]; draining: string[] }
 
